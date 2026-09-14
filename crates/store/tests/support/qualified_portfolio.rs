@@ -2128,6 +2128,23 @@ async fn release_check(
         })
         .await
         .unwrap());
+    let sibling = Box::pin(store.create_release(
+        actor,
+        "release-sibling",
+        &intent,
+        |id, size| f.read(id, size),
+        |object| {
+            std::future::ready(
+                f.objects
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| StoreError::Integrity),
+            )
+        },
+    ))
+    .await
+    .unwrap()
+    .resource;
+    release_decision_checks(pool, store, actor, &view, &sibling).await;
     let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(pool)
         .await
@@ -2178,7 +2195,7 @@ async fn release_check(
             .fetch_one(pool)
             .await
             .unwrap(),
-        1
+        2
     );
     assert!(store
         .discard_unpublished_operator_artifact(orphan, |id| std::future::ready(
@@ -2199,4 +2216,146 @@ async fn release_check(
     .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.resource.valid_until, view.valid_until);
+}
+
+async fn release_decision_checks(
+    pool: &PgPool,
+    store: &Store,
+    actor: &store::authority::Actor,
+    release: &contracts::delivery::ReleaseViewV1,
+    sibling: &contracts::delivery::ReleaseViewV1,
+) {
+    use contracts::{control::ListQuery, delivery::*, forward::ForwardEnvironmentV1};
+    let downstream: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM app.downstream_integrations WHERE name='Controlled weights source'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let downstream = downstream.to_string().try_into().unwrap();
+    let request = ReleaseRejectV1 {
+        schema_version: SchemaV1,
+        downstream_id: downstream,
+        environment: ForwardEnvironmentV1::Live,
+        expected_latest_decision_id: None,
+        reason_code: "OPERATOR_DECLINED".into(),
+        reason: "Controlled original rejection".into(),
+    };
+    let (first, replay) = tokio::join!(
+        store.reject_release(actor, "reject-original", release.id, &request),
+        store.reject_release(actor, "reject-original", release.id, &request)
+    );
+    let (first, replay) = (first.unwrap(), replay.unwrap());
+    assert_ne!(first.replayed, replay.replayed);
+    assert_eq!(first.resource.id, replay.resource.id);
+    assert_eq!(first.resource.ordinal, 1);
+    assert!(matches!(
+        store
+            .reject_release(actor, "reject-stale", sibling.id, &request)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let paper = ReleaseRejectV1 {
+        environment: ForwardEnvironmentV1::Paper,
+        ..request.clone()
+    };
+    assert_eq!(
+        store
+            .reject_release(actor, "reject-paper", release.id, &paper)
+            .await
+            .unwrap()
+            .resource
+            .ordinal,
+        1
+    );
+    let reopen = ReleaseReopenV1 {
+        schema_version: SchemaV1,
+        expected_latest_decision_id: first.resource.id,
+        reason_code: "OPERATOR_RECONSIDERED".into(),
+        reason: "Controlled reconsideration, not approval".into(),
+    };
+    let next = store
+        .reopen_release(actor, "reopen-original", first.resource.id, &reopen)
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(next.decision, ReleaseDecisionV1::Reopen);
+    assert_eq!(next.ordinal, 2);
+    assert_eq!(next.supersedes_decision_id, Some(first.resource.id));
+    assert!(
+        store
+            .reopen_release(actor, "reopen-original", first.resource.id, &reopen)
+            .await
+            .unwrap()
+            .replayed
+    );
+    assert!(matches!(
+        store
+            .reopen_release(actor, "reopen-stale", first.resource.id, &reopen)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let current = ReleaseRejectV1 {
+        expected_latest_decision_id: Some(next.id),
+        ..request
+    };
+    let (left, right) = tokio::join!(
+        store.reject_release(actor, "race-a", release.id, &current),
+        store.reject_release(actor, "race-b", sibling.id, &current)
+    );
+    let winner = match (left, right) {
+        (Ok(a), Err(StoreError::Conflict)) | (Err(StoreError::Conflict), Ok(a)) => a.resource,
+        other => panic!("one Candidate-wide winner: {other:?}"),
+    };
+    assert_eq!(winner.ordinal, 3);
+    let page = store
+        .release_decisions(
+            actor,
+            release.id,
+            &ListQuery {
+                cursor: None,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.items[0].id, winner.id);
+    assert!(page.next_cursor.is_some());
+    let older = store
+        .release_decisions(
+            actor,
+            sibling.id,
+            &ListQuery {
+                cursor: page.next_cursor,
+                limit: 100,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(older.items.len(), 3);
+    assert!(older
+        .items
+        .iter()
+        .all(|r| r.candidate_id == release.candidate_id));
+    assert!(
+        sqlx::query("UPDATE app.release_decisions SET reason='overwrite' WHERE id=$1")
+            .bind(first.resource.id.as_uuid())
+            .execute(pool)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.approvals")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.handoff_offers")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        0
+    );
 }

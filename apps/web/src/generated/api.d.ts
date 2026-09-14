@@ -1284,6 +1284,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/release-decisions/{id}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reopen_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/releases": {
         parameters: {
             query?: never;
@@ -1310,6 +1326,38 @@ export interface paths {
         get: operations["get_release"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/releases/{id}/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_release_decisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/releases/{id}/rejections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reject_release"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2623,6 +2671,29 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_ReleaseDecisionViewV1: {
+            replayed: boolean;
+            resource: {
+                candidate_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                decided_at: string;
+                decided_by: string;
+                decision: components["schemas"]["ReleaseDecisionV1"];
+                downstream_id: components["schemas"]["Id"];
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                id: components["schemas"]["Id"];
+                /** Format: int32 */
+                ordinal: number;
+                project_id: components["schemas"]["Id"];
+                reason: string;
+                reason_code: string;
+                release_id: components["schemas"]["Id"];
+                supersedes_decision_id?: null | components["schemas"]["Id"];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_ReleaseViewV1: {
             replayed: boolean;
             resource: {
@@ -3664,6 +3735,14 @@ export interface components {
             request: components["schemas"]["ReleaseCreateV1"];
         } | {
             /** @enum {string} */
+            operation: "RELEASE_REJECT";
+            request: components["schemas"]["ReleaseRejectV1"];
+        } | {
+            /** @enum {string} */
+            operation: "RELEASE_REOPEN";
+            request: components["schemas"]["ReleaseReopenV1"];
+        } | {
+            /** @enum {string} */
             operation: "CYCLE_START";
             request: components["schemas"]["CycleStartIntent"];
         } | {
@@ -3757,7 +3836,7 @@ export interface components {
             target_id: components["schemas"]["Id"];
         };
         /** @enum {string} */
-        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
+        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
         /** @enum {string} */
         PackageOriginV1: "DEMO" | "REAL";
         /** @enum {string} */
@@ -4304,6 +4383,29 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        Page_ReleaseDecisionViewV1: {
+            items: {
+                candidate_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                decided_at: string;
+                decided_by: string;
+                decision: components["schemas"]["ReleaseDecisionV1"];
+                downstream_id: components["schemas"]["Id"];
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                id: components["schemas"]["Id"];
+                /** Format: int32 */
+                ordinal: number;
+                project_id: components["schemas"]["Id"];
+                reason: string;
+                reason_code: string;
+                release_id: components["schemas"]["Id"];
+                supersedes_decision_id?: null | components["schemas"]["Id"];
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         Page_RunSnapshotV1: {
             items: {
                 active_attempt_id?: null | components["schemas"]["Id"];
@@ -4633,6 +4735,41 @@ export interface components {
         ReleaseCreateV1: {
             candidate_id: components["schemas"]["Id"];
             evaluation_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        ReleaseDecisionV1: "REJECT" | "REOPEN";
+        ReleaseDecisionViewV1: {
+            candidate_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at: string;
+            decided_by: string;
+            decision: components["schemas"]["ReleaseDecisionV1"];
+            downstream_id: components["schemas"]["Id"];
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            id: components["schemas"]["Id"];
+            /** Format: int32 */
+            ordinal: number;
+            project_id: components["schemas"]["Id"];
+            reason: string;
+            reason_code: string;
+            release_id: components["schemas"]["Id"];
+            supersedes_decision_id?: null | components["schemas"]["Id"];
+        };
+        ReleaseRejectV1: {
+            downstream_id: components["schemas"]["Id"];
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            expected_latest_decision_id?: null | components["schemas"]["Id"];
+            reason: string;
+            reason_code: string;
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        ReleaseReopenV1: {
+            expected_latest_decision_id: components["schemas"]["Id"];
+            reason: string;
+            reason_code: string;
             schema_version: components["schemas"]["SchemaV1"];
         };
         ReleaseViewV1: {
@@ -11892,6 +12029,84 @@ export interface operations {
             };
         };
     };
+    reopen_release: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseReopenV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_ReleaseDecisionViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     create_release: {
         parameters: {
             query?: never;
@@ -12012,6 +12227,150 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_release_decisions: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ReleaseDecisionViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reject_release: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseRejectV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_ReleaseDecisionViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

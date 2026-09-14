@@ -80,3 +80,55 @@ pub struct TargetPackageV1 {
     #[schema(min_items = 1, max_items = 256)]
     pub provenance_artifact_refs: Vec<Id>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseRejectV1 {
+    pub schema_version: crate::SchemaV1,
+    pub downstream_id: Id,
+    pub environment: crate::forward::ForwardEnvironmentV1,
+    pub expected_latest_decision_id: Option<Id>,
+    #[schema(min_length = 1, max_length = 120)]
+    pub reason_code: String,
+    #[schema(min_length = 1, max_length = 2000)]
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseReopenV1 {
+    pub schema_version: crate::SchemaV1,
+    pub expected_latest_decision_id: Id,
+    #[schema(min_length = 1, max_length = 120)]
+    pub reason_code: String,
+    #[schema(min_length = 1, max_length = 2000)]
+    pub reason: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ReleaseDecisionV1 {
+    Reject,
+    Reopen,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseDecisionViewV1 {
+    pub id: Id,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub project_id: Id,
+    pub release_id: Id,
+    pub candidate_id: Id,
+    pub downstream_id: Id,
+    pub environment: crate::forward::ForwardEnvironmentV1,
+    pub ordinal: u32,
+    pub decision: ReleaseDecisionV1,
+    pub supersedes_decision_id: Option<Id>,
+    #[schema(min_length = 1, max_length = 120)]
+    pub reason_code: String,
+    #[schema(min_length = 1, max_length = 2000)]
+    pub reason: String,
+    pub decided_at: chrono::DateTime<chrono::Utc>,
+    pub decided_by: String,
+}

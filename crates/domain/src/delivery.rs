@@ -121,3 +121,8 @@ pub fn target_package(
     }
     Ok(())
 }
+
+pub fn decision_reason(code: &str, reason: &str) -> Result<(), DomainError> {
+    text(code, 1, 120, false)?;
+    text(reason, 1, 2000, true)
+}

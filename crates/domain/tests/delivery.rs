@@ -140,3 +140,39 @@ fn package_preserves_original_targets_and_mandate_without_order_fields() {
         assert!(serde_json::from_value::<TargetPackageV1>(value).is_err());
     }
 }
+
+#[test]
+fn release_decisions_require_bounded_reasons_and_exact_wire_fields() {
+    use contracts::{
+        control::OperatorCommand,
+        delivery::{ReleaseRejectV1, ReleaseReopenV1},
+        forward::ForwardEnvironmentV1,
+    };
+    let r = ReleaseRejectV1 {
+        schema_version: SchemaV1,
+        downstream_id: Id::new(),
+        environment: ForwardEnvironmentV1::Paper,
+        expected_latest_decision_id: None,
+        reason_code: "REJECTED".into(),
+        reason: "User decision".into(),
+    };
+    domain::control::command(&OperatorCommand::ReleaseReject(r.clone())).unwrap();
+    let reopen = ReleaseReopenV1 {
+        schema_version: SchemaV1,
+        expected_latest_decision_id: Id::new(),
+        reason_code: "RECONSIDERED".into(),
+        reason: "User reconsideration".into(),
+    };
+    domain::control::command(&OperatorCommand::ReleaseReopen(reopen)).unwrap();
+    for (code, reason) in [
+        ("".to_owned(), "reason".to_owned()),
+        ("a".repeat(121), "reason".into()),
+        ("CODE".into(), " ".into()),
+        ("CODE".into(), "a".repeat(2001)),
+    ] {
+        assert!(domain::delivery::decision_reason(&code, &reason).is_err());
+    }
+    let mut raw = serde_json::to_value(r).unwrap();
+    raw["approval_id"] = json!(Id::new());
+    assert!(serde_json::from_value::<ReleaseRejectV1>(raw).is_err());
+}

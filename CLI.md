@@ -1,5 +1,11 @@
 # CLI 命令
 
+`client release reject RELEASE_UUID`读取ReleaseRejectV1；`client release reconsider DECISION_UUID`
+读取ReleaseReopenV1，字段/最新决定CAS见DESIGN A7.1。需要对应精确目标的
+RELEASE_REJECT/RELEASE_REOPEN人工grant。`client release decisions RELEASE_UUID`
+按cursor/limit读取同Candidate跨Release历史。201是追加决定，不是审批、恢复旧授权或撤单。
+未知响应保留原body/key；409后先重读最新决定，不自动改expected_latest_decision_id。
+
 `client release create`从stdin读取`{"schema_version":1,"candidate_id":"UUID","evaluation_id":"UUID"}`，
 POST /api/v2/releases，需原Candidate的RELEASE_CREATE人工grant及Idempotency-Key。
 201仅表示不可变Package/Release已冻结，不是审批或交付。`client release show UUID`

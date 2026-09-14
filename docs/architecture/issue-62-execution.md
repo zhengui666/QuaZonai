@@ -1,5 +1,36 @@
 # Issue62 implementation evidence
 
+## Candidate-scoped human decision history, 2026-09-14
+
+POST /api/v2/releases/{id}/rejections, POST /api/v2/release-decisions/{id}/reopen
+and GET /api/v2/releases/{id}/decisions now share the original Operator command
+receipts and native Candidate row lock. CLI release reject/reconsider/decisions
+use the same strict DTOs. Reasons are bounded, decisions retain original creation
+and decision times, and history includes sibling Releases of the same Candidate.
+REOPEN requires the exact latest REJECT; a stale expected ID returns Conflict.
+The existing immutable table and grant operation constraints were reused without
+rewriting migrations, adding dependencies or creating a workflow framework.
+
+verify-n6JTbs passed workspace check, formatting, strict Clippy and 22 real PG/TCP
+checks with source unchanged. Two new CLI tests verify exact human grants and
+changed-body rejection. Original controlled Release tests now verify same-key
+replay, cross-Release stale rejection, PAPER/LIVE separation, exact REOPEN,
+competing different-key appends with one Candidate-wide winner, original history
+pagination and native rejection of historical UPDATE. No Approval or Handoff was
+created by these operations. Fixtures remain controlled protocol declarations,
+not real-market/model acceptance. Earlier verify-7hUNO7 passed before the final
+request schema bounds, creation time and native CLI tests were added.
+
+All 142 contracts/domain tests passed. web-verify-IrIRxC generated all six allowed
+contracts twice identically with handwriting unchanged. Frontend typecheck,
+505 Vitest tests, five PWA tests and Vite build passed. UI was not modified, so
+browser tests were not rerun; existing chunk-size warning remains.
+
+Approval/Offer/Claim consumption of this history remains to be implemented and
+verified, including ensuring REOPEN never revives an earlier approval. Downstream
+readiness, actual native positive Study, delivery/feedback/automation, outstanding
+UI and complete acceptance remain open. No push, GitHub review, merge or closure.
+
 ## Release creation, original Package and HTTP/CLI, 2026-09-14
 
 The resumed local owner retained the interrupted Release transaction and completed

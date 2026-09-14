@@ -129,7 +129,20 @@ pub enum Alpha {
 #[derive(Subcommand)]
 pub enum Release {
     Create,
-    Show { id: String },
+    Reject {
+        id: String,
+    },
+    Reconsider {
+        id: String,
+    },
+    Decisions {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
+    Show {
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -532,6 +545,32 @@ impl Command {
                 )?,
             },
             Self::Release(command) => match command {
+                Release::Reject { id } => Request::write::<
+                    contracts::delivery::ReleaseRejectV1,
+                    CommandResult<contracts::delivery::ReleaseDecisionViewV1>,
+                >(
+                    POST,
+                    action("/api/v2/releases", id, "rejections")?,
+                    201,
+                    true,
+                )?,
+                Release::Reconsider { id } => Request::write::<
+                    contracts::delivery::ReleaseReopenV1,
+                    CommandResult<contracts::delivery::ReleaseDecisionViewV1>,
+                >(
+                    POST,
+                    action("/api/v2/release-decisions", id, "reopen")?,
+                    201,
+                    true,
+                )?,
+                Release::Decisions { id, page } => {
+                    Request::get::<Page<contracts::delivery::ReleaseDecisionViewV1>>(action(
+                        "/api/v2/releases",
+                        id,
+                        "decisions",
+                    )?)
+                    .page(page)?
+                }
                 Release::Create => Request::write::<
                     contracts::delivery::ReleaseCreateV1,
                     CommandResult<contracts::delivery::ReleaseViewV1>,

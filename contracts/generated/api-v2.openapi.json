@@ -8128,6 +8128,101 @@
         ],
         "type": "object"
       },
+      "CommandResult_ReleaseDecisionViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "candidate_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "decided_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "decided_by": {
+                "type": "string"
+              },
+              "decision": {
+                "$ref": "#/components/schemas/ReleaseDecisionV1"
+              },
+              "downstream_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "environment": {
+                "$ref": "#/components/schemas/ForwardEnvironmentV1"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "ordinal": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "reason": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "reason_code": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              "release_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "supersedes_decision_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "created_at",
+              "project_id",
+              "release_id",
+              "candidate_id",
+              "downstream_id",
+              "environment",
+              "ordinal",
+              "decision",
+              "reason_code",
+              "reason",
+              "decided_at",
+              "decided_by"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_ReleaseViewV1": {
         "additionalProperties": false,
         "properties": {
@@ -12993,6 +13088,42 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "RELEASE_REJECT"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ReleaseRejectV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "RELEASE_REOPEN"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ReleaseReopenV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "CYCLE_START"
                 ],
                 "type": "string"
@@ -13422,6 +13553,8 @@
           "PORTFOLIO_BUILD",
           "PORTFOLIO_SIMULATE",
           "RELEASE_CREATE",
+          "RELEASE_REJECT",
+          "RELEASE_REOPEN",
           "BRIEF_FREEZE",
           "CYCLE_START",
           "INTEGRATION_SECRET_REGISTER",
@@ -16045,6 +16178,110 @@
         ],
         "type": "object"
       },
+      "Page_ReleaseDecisionViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "candidate_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "decided_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "decided_by": {
+                  "type": "string"
+                },
+                "decision": {
+                  "$ref": "#/components/schemas/ReleaseDecisionV1"
+                },
+                "downstream_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "environment": {
+                  "$ref": "#/components/schemas/ForwardEnvironmentV1"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "ordinal": {
+                  "format": "int32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "reason": {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "maxLength": 120,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "release_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "supersedes_decision_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "created_at",
+                "project_id",
+                "release_id",
+                "candidate_id",
+                "downstream_id",
+                "environment",
+                "ordinal",
+                "decision",
+                "reason_code",
+                "reason",
+                "decided_at",
+                "decided_by"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_RunSnapshotV1": {
         "additionalProperties": false,
         "properties": {
@@ -17449,6 +17686,161 @@
           "schema_version",
           "candidate_id",
           "evaluation_id"
+        ],
+        "type": "object"
+      },
+      "ReleaseDecisionV1": {
+        "enum": [
+          "REJECT",
+          "REOPEN"
+        ],
+        "type": "string"
+      },
+      "ReleaseDecisionViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_by": {
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ReleaseDecisionV1"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "ordinal": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "supersedes_decision_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "project_id",
+          "release_id",
+          "candidate_id",
+          "downstream_id",
+          "environment",
+          "ordinal",
+          "decision",
+          "reason_code",
+          "reason",
+          "decided_at",
+          "decided_by"
+        ],
+        "type": "object"
+      },
+      "ReleaseRejectV1": {
+        "additionalProperties": false,
+        "properties": {
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "expected_latest_decision_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "downstream_id",
+          "environment",
+          "reason_code",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ReleaseReopenV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_latest_decision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_latest_decision_id",
+          "reason_code",
+          "reason"
         ],
         "type": "object"
       },
@@ -29908,6 +30300,134 @@
         ]
       }
     },
+    "/api/v2/release-decisions/{id}/reopen": {
+      "post": {
+        "operationId": "reopen_release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseReopenV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_ReleaseDecisionViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Release"
+        ]
+      }
+    },
     "/api/v2/releases": {
       "post": {
         "operationId": "create_release",
@@ -30126,6 +30646,248 @@
           },
           {
             "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Release"
+        ]
+      }
+    },
+    "/api/v2/releases/{id}/decisions": {
+      "get": {
+        "operationId": "list_release_decisions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ReleaseDecisionViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Release"
+        ]
+      }
+    },
+    "/api/v2/releases/{id}/rejections": {
+      "post": {
+        "operationId": "reject_release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseRejectV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_ReleaseDecisionViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
           }
         ],
         "tags": [

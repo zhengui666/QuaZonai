@@ -56,6 +56,12 @@ Sealed机会绑定原Attempt并按根血缘累计，失败和取消不退款；�
 不要为尚未接通的可信数据登记/Brief冻结/Worker 路径编造成功结果或使用 SQL 后门。
 
 
+### 交付人工决定
+
+release reject/reconsider/decisions见CLI；写入需要原目标的近期Operator授权。
+REOPEN只追加原最新REJECT的后继，不恢复任何审批。Mission不得调用或借用人工grant。
+不同Release共享原Candidate/下游/环境的决定历史，不能换UUID绕过拒绝。
+
 ### 研究产物
 
 TargetPackageV1不接受订单字段；内部Store.create_release要求精确Candidate的

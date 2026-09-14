@@ -367,6 +367,15 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route("/api/v2/releases/{id}", get(release::get))
         .route(
+            "/api/v2/releases/{id}/rejections",
+            post(release::reject).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route("/api/v2/releases/{id}/decisions", get(release::decisions))
+        .route(
+            "/api/v2/release-decisions/{id}/reopen",
+            post(release::reopen).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
             "/api/v2/portfolio-studies",
             post(portfolio::study).layer(DefaultBodyLimit::max(128 * 1024)),
         )
@@ -520,7 +529,7 @@ control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
-release::create,release::get,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,
+release::create,release::get,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,
 execution_assumptions::list,execution_assumptions::get,execution_assumptions::create,
 forward::weights,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,

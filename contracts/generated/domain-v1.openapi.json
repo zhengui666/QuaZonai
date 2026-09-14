@@ -13459,6 +13459,42 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "RELEASE_REJECT"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ReleaseRejectV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "RELEASE_REOPEN"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ReleaseReopenV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "CYCLE_START"
                 ],
                 "type": "string"
@@ -13888,6 +13924,8 @@
           "PORTFOLIO_BUILD",
           "PORTFOLIO_SIMULATE",
           "RELEASE_CREATE",
+          "RELEASE_REJECT",
+          "RELEASE_REOPEN",
           "BRIEF_FREEZE",
           "CYCLE_START",
           "INTEGRATION_SECRET_REGISTER",
@@ -15229,6 +15267,161 @@
           "schema_version",
           "candidate_id",
           "evaluation_id"
+        ],
+        "type": "object"
+      },
+      "ReleaseDecisionV1": {
+        "enum": [
+          "REJECT",
+          "REOPEN"
+        ],
+        "type": "string"
+      },
+      "ReleaseDecisionViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_by": {
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ReleaseDecisionV1"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "ordinal": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "supersedes_decision_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "project_id",
+          "release_id",
+          "candidate_id",
+          "downstream_id",
+          "environment",
+          "ordinal",
+          "decision",
+          "reason_code",
+          "reason",
+          "decided_at",
+          "decided_by"
+        ],
+        "type": "object"
+      },
+      "ReleaseRejectV1": {
+        "additionalProperties": false,
+        "properties": {
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "expected_latest_decision_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "downstream_id",
+          "environment",
+          "reason_code",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ReleaseReopenV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_latest_decision_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_latest_decision_id",
+          "reason_code",
+          "reason"
         ],
         "type": "object"
       },

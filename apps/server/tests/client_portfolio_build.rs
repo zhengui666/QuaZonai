@@ -30,12 +30,25 @@ async fn release_cli_requires_its_own_exact_human_intent(pool: PgPool) {
     check_intent(pool, "create").await;
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_rejection_cli_binds_exact_intent(pool: PgPool) {
+    check_intent(pool, "reject").await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_reconsideration_cli_binds_exact_intent(pool: PgPool) {
+    check_intent(pool, "reconsider").await;
+}
+
 async fn check_intent(pool: PgPool, command: &str) {
-    let release = command == "create";
+    let decision = matches!(command, "reject" | "reconsider");
+    let release = command == "create" || decision;
     let group = if release { "release" } else { "portfolio" };
     let simulation = command != "build";
     let operation = match command {
         "create" => "RELEASE_CREATE",
+        "reject" => "RELEASE_REJECT",
+        "reconsider" => "RELEASE_REOPEN",
         "study" => "PORTFOLIO_STUDY",
         "simulate" => "PORTFOLIO_SIMULATE",
         _ => "PORTFOLIO_BUILD",
@@ -91,14 +104,21 @@ async fn check_intent(pool: PgPool, command: &str) {
     if release {
         body = json!({"schema_version":1,"candidate_id":mandate.id,"evaluation_id":contracts::Id::new()});
     }
+    if decision {
+        body = json!({"schema_version":1,"expected_latest_decision_id":mandate.id,"reason_code":"USER_DECISION","reason":"Controlled command intent"});
+        if command == "reject" {
+            body["downstream_id"] = json!(contracts::Id::new());
+            body["environment"] = json!("PAPER");
+            body["expected_latest_decision_id"] = Value::Null;
+        }
+    }
+    let target = mandate.id.to_string();
+    let mut denied_arguments = vec!["--idempotency-key", "build", group, command];
+    if decision {
+        denied_arguments.push(&target);
+    }
     let (origin, _listener) = listen(&f).await;
-    let denied = invoke(
-        &origin,
-        &file,
-        &["--idempotency-key", "build", group, command],
-        body.clone(),
-    )
-    .await;
+    let denied = invoke(&origin, &file, &denied_arguments, body.clone()).await;
     assert!(!denied.status.success());
     assert!(denied.stdout.is_empty());
     let now = f
@@ -111,7 +131,7 @@ async fn check_intent(pool: PgPool, command: &str) {
     let human = invoke(&origin, &file, &["--idempotency-key","build-human","operator-grant"], json!({"schema_version":1,"command":{"operation":operation,"request":body},"target_id":mandate.id,"code":totp.generate((now/30+1)*30)})).await;
     assert!(human.status.success(), "portfolio human intent failed");
     let grant: Value = serde_json::from_slice(&human.stdout).unwrap();
-    let arguments = [
+    let mut arguments = vec![
         "--idempotency-key",
         "build",
         "--operator-grant",
@@ -119,6 +139,9 @@ async fn check_intent(pool: PgPool, command: &str) {
         group,
         command,
     ];
+    if decision {
+        arguments.push(&target);
+    }
     for _ in 0..2 {
         let rejected = invoke(&origin, &file, &arguments, body.clone()).await;
         assert!(!rejected.status.success());
@@ -130,7 +153,11 @@ async fn check_intent(pool: PgPool, command: &str) {
         );
     }
     let mut changed = body;
-    changed[if release { "evaluation_id" } else { "cycle_id" }] = json!(contracts::Id::new());
+    if decision {
+        changed["reason_code"] = json!("CHANGED_DECISION");
+    } else {
+        changed[if release { "evaluation_id" } else { "cycle_id" }] = json!(contracts::Id::new());
+    }
     let rejected = invoke(&origin, &file, &arguments, changed).await;
     assert_eq!(
         serde_json::from_slice::<Value>(&rejected.stderr).unwrap()["status"],

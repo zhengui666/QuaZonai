@@ -7,15 +7,17 @@ use crate::{
 };
 use axum::{
     extract::{
-        rejection::{JsonRejection, PathRejection},
-        Path, State,
+        rejection::{JsonRejection, PathRejection, QueryRejection},
+        Path, Query, State,
     },
     http::{HeaderMap, StatusCode},
     Json,
 };
 use contracts::{
-    control::CommandResult,
-    delivery::{ReleaseCreateV1, ReleaseViewV1},
+    control::{CommandResult, ListQuery, Page},
+    delivery::{
+        ReleaseCreateV1, ReleaseDecisionViewV1, ReleaseRejectV1, ReleaseReopenV1, ReleaseViewV1,
+    },
     Id,
 };
 use store::StoreError;
@@ -93,4 +95,56 @@ pub async fn get(
 ) -> Result<Json<ReleaseViewV1>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     Ok(Json(state.store.release(&actor, id).await?))
+}
+
+#[utoipa::path(post,path="/api/v2/releases/{id}/rejections",operation_id="reject_release",tag="Release",request_body=ReleaseRejectV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<ReleaseDecisionViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
+pub async fn reject(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    headers: HeaderMap,
+    body: Result<Json<ReleaseRejectV1>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<ReleaseDecisionViewV1>>), ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            state
+                .store
+                .reject_release(&actor, idempotency_key(&headers)?, id, &json(body)?)
+                .await?,
+        ),
+    ))
+}
+#[utoipa::path(post,path="/api/v2/release-decisions/{id}/reopen",operation_id="reopen_release",tag="Release",request_body=ReleaseReopenV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<ReleaseDecisionViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
+pub async fn reopen(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    headers: HeaderMap,
+    body: Result<Json<ReleaseReopenV1>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<ReleaseDecisionViewV1>>), ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            state
+                .store
+                .reopen_release(&actor, idempotency_key(&headers)?, id, &json(body)?)
+                .await?,
+        ),
+    ))
+}
+#[utoipa::path(get,path="/api/v2/releases/{id}/decisions",operation_id="list_release_decisions",tag="Release",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<ReleaseDecisionViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn decisions(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<ReleaseDecisionViewV1>>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state.store.release_decisions(&actor, id, &query).await?,
+    ))
 }

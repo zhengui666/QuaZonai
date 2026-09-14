@@ -2690,6 +2690,19 @@ release_decisions [append-only; operator only]
 
 unique(candidate_id,downstream_id,environment,ordinal)；release属于candidate。锁candidate并按expected_latest_decision_id CAS追加，首次只REJECT；REOPEN引用最新REJECT且近期Operator认证，不能自批。活动REJECT阻断相同candidate/downstream/environment的新推荐、审批、offer、claim/自动授权，另建Release UUID不绕过；REOPEN不恢复旧审批。Claim后的拒绝仅限制未来操作，无撤单权限。人工拒绝与downstream REJECTED分离并有审计。
 
+人工拒绝HTTP为POST /api/v2/releases/{id}/rejections，ReleaseRejectV1含
+schema_version=1、downstream_id、environment=PAPER|LIVE、expected_latest_decision_id
+（首次null）、reason_code（1..120字符）及reason（1..2000字符）。重新考虑为
+POST /api/v2/release-decisions/{id}/reopen，ReleaseReopenV1含schema_version=1、
+expected_latest_decision_id（必填且等于路径）、同样的reason_code/reason。
+分别绑定精确Release的RELEASE_REJECT或精确Decision的RELEASE_REOPEN近期人工授权。
+两者在原Candidate锁内比较该candidate/downstream/environment的最新Decision，
+冲突409；成功201只追加历史，不改旧Release、Approval、Handoff或执行事实。
+失效/归档项目及停用下游仍允许人工记录拒绝或重新考虑，后者不授予新准入资格。
+GET /api/v2/releases/{id}/decisions分页返回该Candidate跨Release的全部原决定，
+Operator及精确项目RESEARCH_READ的CLI可读。client release reject/reconsider/decisions
+复用这些端点；未知提交结果保留原请求与幂等键，不能改键强行越过最新决定。
+
 审批的 `evidence_set_id` 必须属于 Release 的精确 Candidate 所在项目，且已冻结，
 用途只能为 `PORTFOLIO|FORWARD`，其中必须包含 Release 所引用评估的报告及方法版本
 产物（同一报告可只登记一次）。因此同项目但无关的证据集合、Discovery 输入、草稿或
