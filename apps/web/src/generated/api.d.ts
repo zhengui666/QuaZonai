@@ -1556,6 +1556,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/projects/{id}/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_releases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/release-decisions/{id}/reopen": {
         parameters: {
             query?: never;
@@ -5207,6 +5223,29 @@ export interface components {
                 reason_code: string;
                 release_id: components["schemas"]["Id"];
                 supersedes_decision_id?: null | components["schemas"]["Id"];
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_ReleaseViewV1: {
+            items: {
+                /** Format: date-time */
+                asof: string;
+                candidate_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                environment: components["schemas"]["PackageOriginV1"];
+                evaluation_id: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                mandate_id: components["schemas"]["Id"];
+                market_capability_version: string;
+                package_artifact_id: components["schemas"]["Id"];
+                package_schema_version: components["schemas"]["PackageSchemaVersion"];
+                project_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                valid_from: string;
+                /** Format: date-time */
+                valid_until: string;
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -14191,6 +14230,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_MandateViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_releases: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ReleaseViewV1"];
                 };
             };
             401: {

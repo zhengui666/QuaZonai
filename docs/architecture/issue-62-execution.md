@@ -4735,3 +4735,12 @@ verify-QLotT2首次完整Live定向通过。补充回滚/撤权断言后的verif
 额度专项使用真实当前UTC日，不改变时钟或历史记录：新下游先由原生人工审批/Offer创建Live，再冻结max_rebalances_per_day=1的AUTO_PAPER政策。原同一Candidate自动Paper成功，数据库当天两个Offer、一个distinct Candidate；重复消费不读文件且不新增Offer。没有绕过已领取Candidate不可重复Paper的规则。
 
 最终verify-HjhW7s通过workspace/all-targets编译、格式、严格Clippy与完整Live定向用例（含上述两个场景及既有原证据变更拒绝/回滚/撤权重放），验证期间源文件不变、隔离PG已停止。本次只增加测试和证据，产品实现未变。实际Worker单tick调度/IO不等同完整部署daemon、真实多日行情、OCI科学或生产模型验收；后代Candidate再反馈、交付UI和其余T01–T42/main恢复迁移仍待完成。未push、未review、未合并或关闭Issue。
+
+
+### 2026-09-14：Release 冻结界面与原版本分页
+
+复用原Release事务与元数据映射，新增项目内ID倒序分页HTTP/CLI；精确项目RESEARCH_READ及既有跨项目404隐藏语义不变。Ant Design组合候选从原独立PORTFOLIO/PASS确认冻结，只提交原Candidate/Evaluation；未知响应同键同请求重试，离线禁止新提交。交付页读取原Release分页/详情，保留原期限及来源，明确冻结不是审批。审批/Offer/自动化政策操作界面仍未完成。
+
+verify-k8Clgr：workspace/all-targets编译、格式、严格Clippy与29项原生测试（client_portfolio_build10、portfolio_study_http19）全部通过，源文件不变，隔离PG停止。原资格链创建的两个Release验证原ID分页；实际HTTP和CLI验证空列表、非法limit及真实其他项目隔离。此前verify-v9mGlo指出映射多余借用及测试将既有404误写为403，已修正，未放宽权限。
+
+web-verify-DyagBY：真实Rust合同导出及客户端生成逐字节可复现，手写源不变；TypeScript、505项单元及5项静态文件检查、wire精度检查、Vite构建、Codex浏览器子集和267项全浏览器测试通过。1440/768/390视口覆盖分页、跨项目错误响应、独立评估限制、未知请求重试、离线与无障碍。浏览器使用显式受控响应，只证明界面行为；真实数据库资格由上述原生链验证，不能替代完整T01–T42部署验收。本阶段未push、未review、未合并或关闭Issue。

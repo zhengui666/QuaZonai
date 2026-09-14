@@ -162,6 +162,78 @@ async fn http(
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .unwrap();
+    let foreign = store
+        .create_project(
+            actor,
+            "release-list-other-project",
+            &ProjectCreate {
+                schema_version: SchemaV1,
+                name: "Release list isolation".into(),
+                description: "Native read boundary".into(),
+                fork_from_project_id: None,
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    let release_url = format!("{origin}/api/v2/projects/{}/releases", f.data.project);
+    assert_eq!(
+        client.get(&release_url).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let empty = client
+        .get(&release_url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(empty.status(), reqwest::StatusCode::OK);
+    let empty: contracts::control::Page<contracts::delivery::ReleaseViewV1> =
+        empty.json().await.unwrap();
+    assert!(empty.items.is_empty());
+    assert!(empty.next_cursor.is_none());
+    assert_eq!(
+        client
+            .get(format!("{release_url}?limit=0"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        client
+            .get(format!("{origin}/api/v2/projects/{}/releases", foreign.id))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+    use std::os::unix::fs::PermissionsExt;
+    let release_credential = directory.path().join("release-read-credential");
+    std::fs::write(&release_credential, &token).unwrap();
+    std::fs::set_permissions(&release_credential, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let listed = client::invoke(
+        &origin,
+        &release_credential,
+        &[
+            "release",
+            "list",
+            &f.data.project.to_string(),
+            "--limit",
+            "1",
+        ],
+        serde_json::Value::Null,
+    )
+    .await;
+    assert!(listed.status.success());
+    let listed: contracts::control::Page<contracts::delivery::ReleaseViewV1> =
+        serde_json::from_slice(&listed.stdout).unwrap();
+    assert!(listed.items.is_empty());
+    assert!(listed.next_cursor.is_none());
     let post = || {
         client
             .post(format!("{origin}/api/v2/portfolio-studies"))

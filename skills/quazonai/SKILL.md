@@ -79,7 +79,9 @@ REOPEN只追加原最新REJECT的后继，不恢复任何审批。Mission不得�
 
 TargetPackageV1不接受订单字段；内部Store.create_release要求精确Candidate的
 RELEASE_CREATE人工授权和原PORTFOLIO/PASS，服务端组装，不接受包上传或强制通过。
-client release create/show及POST/GET /api/v2/releases已接通，具体字段见CLI；
+client release create/show/list及原生HTTP已接通，list按精确项目RESEARCH_READ分页，具体字段见CLI；
+浏览器组合候选的独立PORTFOLIO/PASS可确认冻结，交付页只读原Release列表/详情；
+未知结果必须保持原请求/键，REAL来源不代表Live审批。
 成功创建仍待验收，201仅冻结版本，不得以结构通过替代当前资格或审批。
 
 POST /api/v2/artifacts 仅在凭据明确具有项目 ARTIFACT_SUBMIT 时使用，提交

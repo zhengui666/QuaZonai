@@ -68,6 +68,9 @@ RELEASE_REJECT/RELEASE_REOPEN人工grant。`client release decisions RELEASE_UUI
 POST /api/v2/releases，需原Candidate的RELEASE_CREATE人工grant及Idempotency-Key。
 201仅表示不可变Package/Release已冻结，不是审批或交付。`client release show UUID`
 读取GET /api/v2/releases/{id}的原版本，CLI需精确项目RESEARCH_READ。
+`client release list PROJECT_UUID --limit 20 [--cursor RELEASE_UUID]`读取
+GET /api/v2/projects/{id}/releases，按原ID倒序分页，limit为1–100；同样需要
+精确项目RESEARCH_READ。列表与详情只读原元数据，不返回Package正文或刷新资格。
 未知提交保持原请求/键重试；不能覆盖权重、有效期、来源或上传包绕过PORTFOLIO/PASS。
 完整原生成功链路和下游交付仍待验收。
 

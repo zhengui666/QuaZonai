@@ -10,6 +10,7 @@ import { AuthBoundary, VerifyDialog } from './auth';
 import { Projects } from './projects';
 import { Alphas } from './alphas';
 import { Portfolios } from './portfolio';
+import { Delivery } from './delivery';
 import { Runs } from './runs';
 import { Settings } from './settings';
 import { PwaUpdate } from './pwa';
@@ -60,10 +61,6 @@ const navigation = [
   { key: 'runs', label: '运行', icon: <PlayCircleOutlined aria-hidden /> },
   { key: 'settings', label: '设置', icon: <SettingOutlined aria-hidden /> },
 ];
-function PendingDomain({ title, description }: { title: string; description: string }) {
-  return <><Typography.Title level={1}>{title}</Typography.Title><Result status="warning" title="尚未接通可验收的产品接口" subTitle={description} />
-    <Alert showIcon type="info" title="这不是空数据，也不是已完成的功能。" description="不会用示例收益、虚构资格、假审批或假交付填充页面。研究草稿和运行记录可从主导航访问。" /></>;
-}
 function Console({ session, signedOut }: { session: Schema['BrowserSession']; signedOut: () => void }) {
   const [active, setActive] = useState('research');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -99,7 +96,7 @@ function Console({ session, signedOut }: { session: Schema['BrowserSession']; si
   switch (active) {
     case 'alpha': content = <Alphas />; break;
     case 'portfolio': content = <Portfolios />; break;
-    case 'delivery': content = <PendingDomain title="交付" description="准确版本的审批、Paper / Live 分离和下游确认尚未形成可用界面。当前没有批准或执行订单按钮。" />; break;
+    case 'delivery': content = <Delivery />; break;
     case 'runs': content = <Runs />; break;
     case 'settings': content = <Settings session={session} verify={() => setVerify(true)} />; break;
     default: content = <Projects />;

@@ -3097,6 +3097,7 @@ HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本
 | POST /portfolio-candidates | mandate/alpha_version_ids/decision_asof/input_set_id → 202 | Operator/受限Agent建议；qz portfolio build |
 | GET /portfolio-candidates/{id} | Alpha/资产/cash、风险成本容量余量诊断 | Operator；qz portfolio show |
 | POST /releases | candidate_id → freeze包，独立组合模拟/政策PASS | Operator/受控服务；qz release create |
+| GET /projects/{id}/releases | 原项目不可变Release，id倒序cursor/limit分页；不返回Package正文，不重新授予有效性 | Operator/精确项目RESEARCH_READ CLI；client release list PROJECT_UUID |
 | GET /releases/{id} | exact版本/asof/expiry/证据/市场 | Operator；qz release show |
 | POST /releases/{id}/approvals | environment/downstream_id/expiry/近期验证 | Operator；qz release approve |
 | POST /approvals/{id}/revoke | reason/expected context，claimed不伪撤销 | Operator；qz approval revoke |

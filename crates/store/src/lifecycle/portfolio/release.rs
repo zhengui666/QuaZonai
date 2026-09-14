@@ -4,28 +4,52 @@ use contracts::delivery::{
     PackageOriginV1, PackageTargetV1, ReleaseCreateV1, ReleaseViewV1, TargetPackageV1,
 };
 
+fn view(row: &PgRow) -> Result<ReleaseViewV1, StoreError> {
+    Ok(ReleaseViewV1 {
+        id: db::id(row.try_get("id")?)?,
+        project_id: db::id(row.try_get("project_id")?)?,
+        candidate_id: db::id(row.try_get("candidate_id")?)?,
+        mandate_id: db::id(row.try_get("mandate_id")?)?,
+        evaluation_id: db::id(row.try_get("evaluation_id")?)?,
+        package_artifact_id: db::id(row.try_get("package_artifact_id")?)?,
+        package_schema_version: db::enum_value(row, "package_schema_version")?,
+        market_capability_version: row.try_get("market_capability_version")?,
+        asof: row.try_get("asof")?,
+        valid_from: row.try_get("valid_from")?,
+        valid_until: row.try_get("valid_until")?,
+        environment: db::enum_value(row, "environment")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
 impl Store {
+    pub async fn releases(
+        &self,
+        actor: &Actor,
+        project: Id,
+        query: &contracts::control::ListQuery,
+    ) -> Result<contracts::control::Page<ReleaseViewV1>, StoreError> {
+        domain::control::list(query)?;
+        let mut tx = self.pool.begin().await?;
+        crate::evidence::authorize(&mut tx, actor, project).await?;
+        sqlx::query("SELECT id FROM app.projects WHERE id=$1")
+            .bind(project.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+        let rows = sqlx::query("SELECT r.*,c.project_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND ($2::uuid IS NULL OR r.id<$2) ORDER BY r.id DESC LIMIT $3").bind(project.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let items = rows.iter().map(view).collect::<Result<Vec<_>, _>>()?;
+        tx.commit().await?;
+        Ok(crate::control::page(items, query.limit, |v| v.id))
+    }
+
     pub async fn release(&self, actor: &Actor, id: Id) -> Result<ReleaseViewV1, StoreError> {
         let mut tx = self.pool.begin().await?;
         let row = sqlx::query("SELECT r.*,c.project_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE r.id=$1")
             .bind(id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
         let project = db::id(row.try_get("project_id")?)?;
         crate::evidence::authorize(&mut tx, actor, project).await?;
-        let view = ReleaseViewV1 {
-            id,
-            project_id: project,
-            candidate_id: db::id(row.try_get("candidate_id")?)?,
-            mandate_id: db::id(row.try_get("mandate_id")?)?,
-            evaluation_id: db::id(row.try_get("evaluation_id")?)?,
-            package_artifact_id: db::id(row.try_get("package_artifact_id")?)?,
-            package_schema_version: db::enum_value(&row, "package_schema_version")?,
-            market_capability_version: row.try_get("market_capability_version")?,
-            asof: row.try_get("asof")?,
-            valid_from: row.try_get("valid_from")?,
-            valid_until: row.try_get("valid_until")?,
-            environment: db::enum_value(&row, "environment")?,
-            created_at: row.try_get("created_at")?,
-        };
+        let view = view(&row)?;
         tx.commit().await?;
         Ok(view)
     }

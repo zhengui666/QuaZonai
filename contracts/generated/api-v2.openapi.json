@@ -18426,6 +18426,96 @@
         ],
         "type": "object"
       },
+      "Page_ReleaseViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "asof": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "candidate_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "environment": {
+                  "$ref": "#/components/schemas/PackageOriginV1"
+                },
+                "evaluation_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "mandate_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "market_capability_version": {
+                  "type": "string"
+                },
+                "package_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "package_schema_version": {
+                  "$ref": "#/components/schemas/PackageSchemaVersion"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "valid_from": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "valid_until": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "candidate_id",
+                "mandate_id",
+                "evaluation_id",
+                "package_artifact_id",
+                "package_schema_version",
+                "market_capability_version",
+                "asof",
+                "valid_from",
+                "valid_until",
+                "environment",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_RunSnapshotV1": {
         "additionalProperties": false,
         "properties": {
@@ -34849,6 +34939,120 @@
         ],
         "tags": [
           "Portfolio mandates"
+        ]
+      }
+    },
+    "/api/v2/projects/{id}/releases": {
+      "get": {
+        "operationId": "list_releases",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ReleaseViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Release"
         ]
       }
     },

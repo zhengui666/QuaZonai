@@ -208,6 +208,11 @@ pub enum Approval {
 #[derive(Subcommand)]
 pub enum Release {
     Create,
+    List {
+        project_id: String,
+        #[command(flatten)]
+        page: List,
+    },
     Approve {
         id: String,
     },
@@ -741,6 +746,14 @@ impl Command {
                 Request::get::<contracts::delivery::ApprovalViewV1>(item("/api/v2/approvals", id)?)
             }
             Self::Release(command) => match command {
+                Release::List { project_id, page } => {
+                    Request::get::<Page<contracts::delivery::ReleaseViewV1>>(action(
+                        "/api/v2/projects",
+                        project_id,
+                        "releases",
+                    )?)
+                    .page(page)?
+                }
                 Release::Approve { id } => Request::write::<
                     contracts::delivery::ReleaseApproveV1,
                     CommandResult<contracts::delivery::ApprovalViewV1>,

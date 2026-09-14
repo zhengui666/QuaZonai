@@ -41,7 +41,7 @@ export function Portfolios() {
   const { blocked } = useContext(GuardContext);
   return <Space orientation="vertical" size="large" className="full-width">
     <Typography.Title level={1}>组合</Typography.Title>
-    <Alert showIcon type="info" title="不可变组合配置与原始候选快照" description="配置保存和候选查询不是 Alpha 资格、科学 PASS 或交付授权。候选详情可明确请求原政策 Study；网页构建与 Release 交付尚未接通，不会填充示例收益。" />
+    <Alert showIcon type="info" title="不可变组合配置与原始候选快照" description="配置保存和候选查询不是 Alpha 资格、科学 PASS 或交付授权。候选详情可请求原政策 Study，并从独立评估冻结目标包；冻结不是审批或交付。网页构建仍待接通，不会填充示例收益。" />
     <ResourceSelect label="选择组合所属项目" value={project} onChange={setProject} disabled={blocked} queryKey={['portfolio-projects']} load={async (cursor, signal) => {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };

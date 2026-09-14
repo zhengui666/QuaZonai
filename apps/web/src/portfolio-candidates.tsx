@@ -6,6 +6,7 @@ import type { Schema } from './api';
 import { NoData, Pager, QueryPanel, useOnline } from './ui';
 import { EvaluationDetail } from './alphas';
 import { PortfolioStudy } from './portfolio-study';
+import { ReleaseCreate } from './release-create';
 
 type Candidate = Schema['CandidateViewV1'];
 const snapshotNotice = '这是原发布时的不可变记录。历史 VALID 和目标权重不表示当前资格或 Release 授权；不得当成真实账户仓位。';
@@ -37,6 +38,7 @@ export function Candidates({ project }: { project: string }) {
 
 function Detail({ id, project, close }: { id: string; project: string; close: () => void }) {
   const [study, setStudy] = useState(false);
+  const [freezing, setFreezing] = useState<Schema['EvaluationView']>();
   const online = useOnline();
   const query = useQuery({ queryKey: ['portfolio-candidate', project, id], queryFn: async ({ signal }) => {
     const detail = dataOf(await api.GET('/api/v2/portfolio-candidates/{id}', { params: { path: { id } }, signal }));
@@ -44,7 +46,7 @@ function Detail({ id, project, close }: { id: string; project: string; close: ()
     return detail;
   } });
   const header = query.data?.header;
-  return <Drawer title="不可变候选快照" open onClose={() => { if (!study) close(); }} closable={!study} maskClosable={!study} width={900}>
+  return <Drawer title="不可变候选快照" open onClose={() => { if (!study && !freezing) close(); }} closable={!study && !freezing} maskClosable={!study && !freezing} width={900}>
     <Alert showIcon type="info" title="历史状态不授予当前资格" description={snapshotNotice} />
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       {header && query.data && <>
@@ -61,14 +63,16 @@ function Detail({ id, project, close }: { id: string; project: string; close: ()
           { title: '资产', dataIndex: 'instrument_id' }, { title: '目标权重', dataIndex: 'target_weight' }, { title: '币种', dataIndex: 'currency' },
           { title: '起始', dataIndex: 'asof', render: displayTime }, { title: '截止', dataIndex: 'valid_until', render: displayTime },
         ]} />
-        {!query.isError && <CandidateEvaluations id={id} project={project} />}
+        {!query.isError && <CandidateEvaluations id={id} project={project} freeze={setFreezing} canFreeze={header.origin === 'REAL' && header.execution_status === 'SUCCEEDED' && header.evidence_status === 'VALID'} />}
       </>}
     </QueryPanel>
+    {freezing && <ReleaseCreate project={project} candidate={id} evaluation={freezing} close={() => setFreezing(undefined)} />}
     {study && header && <PortfolioStudy candidate={header} close={() => setStudy(false)} />}
   </Drawer>;
 }
 
-function CandidateEvaluations({ id, project }: { id: string; project: string }) {
+function CandidateEvaluations({ id, project, freeze, canFreeze }: { id: string; project: string; canFreeze: boolean; freeze: (evaluation: Schema['EvaluationView']) => void }) {
+  const online = useOnline();
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const [selected, setSelected] = useState<string>();
   const cursor = history.at(-1);
@@ -84,6 +88,7 @@ function CandidateEvaluations({ id, project }: { id: string; project: string }) 
       <Table<Schema['EvaluationView']> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 850 }} locale={{ emptyText: <NoData text="尚无已发表的候选评估；不代表通过，也不会自动运行模拟。" /> }} columns={[
         { title: '评估', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>评估 {item.id.slice(-8)}</Button> },
         { title: '评估类型', dataIndex: 'evaluation_kind' },
+        { title: '目标包', key: 'release', render: (_, item) => <Button disabled={!online || !canFreeze || query.isError || query.isFetching || item.evaluation_kind !== 'PORTFOLIO' || item.execution_status !== 'SUCCEEDED' || item.evidence_status !== 'VALID' || item.decision !== 'PASS' || item.origin !== 'REAL' || !item.unexpired_at_read} onClick={() => freeze(item)}>冻结目标包</Button> },
         { title: '执行状态', dataIndex: 'execution_status' }, { title: '证据状态', dataIndex: 'evidence_status' },
         { title: '科学决策（非资格）', dataIndex: 'decision' }, { title: '来源', dataIndex: 'origin' },
         { title: '原有效期', key: 'validity', render: (_, item) => item.valid_until ? `${displayTime(item.valid_until)} · ${item.unexpired_at_read ? '读取时未过期' : '读取时已过期'}` : '未授予有效期' },

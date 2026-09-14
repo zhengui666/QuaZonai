@@ -2171,6 +2171,38 @@ pub(super) async fn original_releases(
     .await
     .unwrap()
     .resource;
+    let first = store
+        .releases(
+            actor,
+            view.project_id,
+            &contracts::control::ListQuery {
+                cursor: None,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.items[0].id, sibling.id);
+    assert_eq!(first.next_cursor, Some(sibling.id));
+    let last = store
+        .releases(
+            actor,
+            view.project_id,
+            &contracts::control::ListQuery {
+                cursor: first.next_cursor,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(last.items.len(), 1);
+    assert_eq!(last.items[0].id, view.id);
+    assert!(last.next_cursor.is_none());
+    assert!(matches!(
+        store.releases(actor, Id::new(), &Default::default()).await,
+        Err(StoreError::NotFound)
+    ));
     Some((view, sibling, intent))
 }
 

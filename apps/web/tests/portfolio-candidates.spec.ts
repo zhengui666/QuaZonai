@@ -196,3 +196,45 @@ for (const empty of [false, true]) test(`candidate snapshot preserves original f
   await expect(detail.getByRole('button', { name: /审批|交付/ })).toHaveCount(0);
   expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual([]);
 });
+
+for (const kind of ['PORTFOLIO', 'FORWARD'] as const) test(`Release freezes exact independent evaluation with lost-response retry: ${kind}`, async ({ page, context }) => {
+  await fixture(page);
+  const original: Schema['EvaluationView'] = { ...evaluation, evaluation_kind: kind, execution_status: 'SUCCEEDED', evidence_status: 'VALID', decision: 'PASS', origin: 'REAL', valid_until: '2030-09-13T00:00:00Z', unexpired_at_read: true };
+  const release: Schema['ReleaseViewV1'] = { id: id(101), project_id: project.id, candidate_id: header.id, mandate_id: header.mandate_id, evaluation_id: original.id, package_artifact_id: id(102), package_schema_version: '1', market_capability_version: 'controlled-market/1', environment: 'REAL', asof: header.decision_asof, valid_from: header.created_at, valid_until: original.valid_until!, created_at: header.created_at };
+  const writes: { body: unknown; key: string | null }[] = [];
+  await page.route('**/api/v2/**', async route => {
+    const request = route.request(); const path = new URL(request.url()).pathname;
+    if (path.endsWith('/portfolio-mandates')) return reply(route, { schema_version: 1, items: [], next_cursor: null });
+    if (path.endsWith('/portfolio-candidates')) return reply(route, { schema_version: 1, items: [{ ...header, origin: 'REAL' }], next_cursor: null });
+    if (path === `/api/v2/portfolio-candidates/${header.id}`) return reply(route, { header: { ...header, origin: 'REAL' }, members: [], targets: [] });
+    if (path === `/api/v2/portfolio-candidates/${header.id}/evaluations`) return reply(route, { schema_version: 1, items: [original], next_cursor: null });
+    if (path === '/api/v2/releases' && request.method() === 'POST') {
+      writes.push({ body: request.postDataJSON() as unknown, key: await request.headerValue('Idempotency-Key') });
+      if (writes.length === 1) return route.abort('failed');
+      return reply(route, { schema_version: 1, replayed: true, resource: release }, 201);
+    }
+    if (path === `/api/v2/releases/${release.id}`) return reply(route, release);
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '组合');
+  await page.getByRole('combobox', { name: '选择组合所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: project.name }).click();
+  await page.getByRole('tab', { name: '候选快照', exact: true }).click();
+  await page.getByRole('button', { name: header.id, exact: true }).click();
+  const freeze = page.getByRole('button', { name: '冻结目标包', exact: true });
+  if (kind === 'FORWARD') { await expect(freeze).toBeDisabled(); expect(writes).toEqual([]); return; }
+  await freeze.click();
+  const dialog = page.getByRole('dialog', { name: '确认冻结目标包', exact: true });
+  const submit = dialog.getByRole('button', { name: '确认冻结 Release', exact: true });
+  await context.setOffline(true); await expect(submit).toBeDisabled();
+  await context.setOffline(false); await submit.click();
+  await expect(dialog.getByText('冻结结果尚未确认，重试保留原候选、评估与幂等键。', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: '重试同一冻结请求', exact: true }).click();
+  await expect(dialog.getByText('原目标包已冻结。', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0]); expect(writes[0]?.key).toBeTruthy();
+  expect(writes[0]?.body).toEqual({ schema_version: 1, candidate_id: header.id, evaluation_id: original.id });
+  expect((await new AxeBuilder({ page }).include('.ant-modal').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+  await dialog.getByRole('button', { name: '查看原目标包', exact: true }).click();
+  const detail = page.getByRole('dialog', { name: '原始目标包版本', exact: true });
+  await expect(detail.getByText(release.package_artifact_id, { exact: true })).toBeVisible();
+});

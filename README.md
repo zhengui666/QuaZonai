@@ -14,6 +14,7 @@
 | Portfolio Mandate | 真实 API/CLI 与 Ant Design 配置创建、列表及不可变详情；原 Operator 事务/项目版本锁及 Runtime 模型、镜像、政策和执行引用检查；不是完整 Candidate/Release 交付 |
 | Candidate 快照 | Store／API／CLI／Ant Design 查询已封口的原始头、成员和目标；保留执行、求解、证据状态与精确 Decimal，取消/失效候选不补目标。历史快照不授予当前资格，完整正向构建、独立验证与 Release 仍待验收 |
 | Candidate 保持模拟 | Store／HTTP／CLI 从原 Candidate、费用及 Forward 来源申请原生 Run，冻结可用时间并保留原有效期；独立人工授权与原预算入队。不是策略 walk-forward 或已发表 Evaluation，完整科学与交付链仍待验收 |
+| Release 冻结与查询 | HTTP/CLI及Ant Design从原候选独立评估确认冻结，按项目分页查看原版本/详情；未知结果保留原请求与幂等键。201不授审批，读取不刷新期限，完整交付仍待验收 |
 | Release 人工审批 | 原 Package/来源重验、PAPER/LIVE许可、下游新鲜观察、决定CAS与原报告引用同事务冻结；HTTP/CLI原授权及历史读取。人工Offer已接通原审批重验、重复版本防护和前后版本关联；下游Claim/ACK、显式审批撤销与Worker到期/撤销补记、原生能力观察自动刷新已接通；自动 Paper/Live 原生消费已接通，界面尚未接通，协议fixture不是生产验收 |
 | 冻结自动化政策 | 原生HTTP/CLI与精确人工grant冻结版本、项目revision CAS、历史分页及追加撤销；旧版本与已领取事实不改写。自动 Paper/Live 原生消费已接通，界面尚未接通，登记不是交付 |
 | 领域基础 | 精确UUIDv7/bigint/Decimal、预算、租约/终态、Codex覆盖及required指标判定；不是完整数据库权限证明 |

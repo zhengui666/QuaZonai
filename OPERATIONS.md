@@ -7,6 +7,9 @@
 目标包正文、Release创建/读取HTTP和CLI已接通。创建要求原Candidate及独立
 PORTFOLIO/PASS，返回201只冻结版本，不批准Paper/Live或下游交付；完整成功链路仍待验收。
 响应未知时保留原请求和幂等键重试，读取不会延长目标有效期。
+浏览器在“组合”选择原候选及独立PORTFOLIO/PASS评估，确认“冻结目标包”；
+服务器仍须重验原资格与许可。“交付”可按项目分页查看原Release与详情，
+REAL表示原来源，不是Live审批。审批、Offer和自动化政策操作界面仍待完成。
 
 当前单基础币种 Nautilus 0.63.0 配置中，CurrencyPair 必须明确选择 MARGIN；
 Equity 支持 CASH 或 MARGIN。系统拒绝不支持的账户/资产类组合，不自动切换账户

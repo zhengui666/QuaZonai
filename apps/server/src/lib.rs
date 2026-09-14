@@ -382,6 +382,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             post(release::create).layer(DefaultBodyLimit::max(4096)),
         )
         .route("/api/v2/releases/{id}", get(release::get))
+        .route("/api/v2/projects/{id}/releases", get(release::list))
         .route(
             "/api/v2/releases/{id}/approvals",
             post(release::approve).layer(DefaultBodyLimit::max(16 * 1024)),
@@ -596,7 +597,7 @@ control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
-automation::authorize_automation,automation::revoke_automation,automation::automation_policy,automation::automation_policies,automation::automation_revocations,release::ack,release::revoke_approval,release::revocations,release::claim,release::offer,release::handoff,release::handoffs,release::create,release::get,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,
+automation::authorize_automation,automation::revoke_automation,automation::automation_policy,automation::automation_policies,automation::automation_revocations,release::ack,release::revoke_approval,release::revocations,release::claim,release::offer,release::handoff,release::handoffs,release::create,release::get,release::list,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,
 execution_assumptions::list,execution_assumptions::get,execution_assumptions::create,
 forward::weights,forward::message,forward::list,forward::window,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
