@@ -52,7 +52,7 @@ server client --origin https://research.example --credential-file /private/cli.t
 | `codex login/logout` | stdin CodexAccountRequestV1；SYSTEM Profile 的原生账号命令，202为接受，不是认证成功 |
 | `codex login-cancel` | stdin CodexLoginCancelV1；绑定operation_id及操作revision；取消意图不冒充原生取消结果 |
 | `codex login-status <id>` | CodexAccountOperationV1；只读指定操作，不输出设备码、不重启登录 |
-| `downstream list/show <id>/create/update <id>` | DownstreamCreate/DownstreamUpdate；配置不是下游订单执行授权 |
+| `downstream list/show <id>/create/update <id>/probe <id>/readiness <id>` | DownstreamCreate/DownstreamUpdate；配置不是下游订单执行授权 |
 | `input-set list --project-id <id>/show <id>/create` | InputSetCreate；同一不可变数据、许可与用途校验 |
 | `policy list --project-id <id>/show <id>/create` | EvaluationPolicyCreate；登记不证明方法或数据已经可用 |
 | `experiment list --project-id <id>/show <id>/propose` | ExperimentProposalV1；PENDING不等于运行或合格 |
@@ -573,11 +573,20 @@ Production 只接受 HTTPS origin；literal-loopback HTTP 还须配置和部署�
 
 ## Runtime 探测与版本化 readiness
 
-下游原生能力合同为 `GET /downstream/v1/capabilities` / `DownstreamCapabilitiesV1`，
-只描述 target-only Package 版本、PAPER/LIVE 环境、市场合同、accepting_targets 与
-checked_at。当前已实现内部受限网络方法，尚未接入下游 probe/readiness 的 HTTP/CLI
-和数据库观察，不把保存配置或单次网络返回当作 Approval/Offer/Claim 准入。
-原生 TCP 回归：`cargo test --locked -p server --test downstream_transport`。
+`POST /api/v2/integrations/downstreams/{id}/probe` / `client downstream probe <id>`
+接收 DownstreamProbeRequestV1：schema_version=1、expected_revision，需要近期人工认证
+或精确 DOWNSTREAM_PROBE 单次grant。200只表示观察已记录，检查 outcome 与 readiness。
+`GET /api/v2/integrations/downstreams/{id}/readiness` / `client downstream readiness <id>`
+只读；DOCTOR_READ可用，不启动网络。返回原观察、配置revision、可用版本/环境交集。
+探测开始后60秒失效；配置修改或较新失败不能用旧成功、较早开始的迟到响应或回执
+重放覆盖。accepting_targets=false、空交集、过期和未探测都没有交付准入资格。
+
+serve 的 `--downstream-targets` / `DOWNSTREAM_TARGETS` 使用下述 origin/addresses 格式，
+与 RUNTIME_TARGETS 独立，默认[]。原生下游固定 GET /downstream/v1/capabilities，只读
+DownstreamCapabilitiesV1 target-only合同。网络在事务外，总请求10秒；完成采纳总期限
+20秒，ArtifactStore与不可变观察/回执关联。审批、Offer/Claim尚未接通，不能据此宣称
+完成交付。回归：隔离PostgreSQL执行 `cargo test --locked -p store --test downstream`、
+`cargo test --locked -p server --test downstream_http --test downstream_transport`。
 
 `POST /api/v2/integrations/runtimes/{id}/probe` 接收 schema_version=1、expected_revision，
 需要近期人类认证或 RUNTIME_PROBE 单次 CLI grant。响应200表示探测已记录；必须检查

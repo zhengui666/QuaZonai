@@ -36,6 +36,7 @@ impl DownstreamTransport {
     }
 
     pub async fn capabilities(&self) -> Result<DownstreamCapabilitiesV1, RuntimeProbeFailure> {
+        let started_at = chrono::Utc::now();
         let mut url = self.http.origin.clone();
         url.set_path("/downstream/v1/capabilities");
         let response = self
@@ -52,6 +53,11 @@ impl DownstreamTransport {
             .map_err(RuntimeRequestError::probe)?;
         domain::delivery::downstream_capabilities(&capabilities, chrono::Utc::now())
             .map_err(|_| RuntimeProbeFailure::ContractUnsupported)?;
+        // Classify stale native replies as failed observations before Store
+        // publication, so a previous successful probe cannot mask this failure.
+        if capabilities.checked_at < started_at - chrono::Duration::seconds(5) {
+            return Err(RuntimeProbeFailure::ContractUnsupported);
+        }
         Ok(capabilities)
     }
 }

@@ -10,6 +10,63 @@ pub enum DownstreamDeliveryModeV1 {
     TargetOnly,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DownstreamProbeRequestV1 {
+    pub schema_version: crate::SchemaV1,
+    pub expected_revision: crate::Revision,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(
+    tag = "status",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
+pub enum DownstreamProbeOutcomeV1 {
+    Available {
+        capabilities: DownstreamCapabilitiesV1,
+    },
+    Unavailable {
+        reason: crate::runtime::RuntimeProbeFailure,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DownstreamProbeViewV1 {
+    pub id: Id,
+    pub downstream_id: Id,
+    pub integration_revision: crate::Revision,
+    pub snapshot_artifact_id: Id,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+    pub valid_until: chrono::DateTime<chrono::Utc>,
+    pub outcome: DownstreamProbeOutcomeV1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DownstreamReadinessState {
+    NotChecked,
+    Disabled,
+    Stale,
+    Unavailable,
+    Available,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DownstreamReadinessV1 {
+    pub schema_version: crate::SchemaV1,
+    pub downstream_id: Id,
+    pub integration_revision: crate::Revision,
+    pub state: DownstreamReadinessState,
+    pub latest_observation: Option<DownstreamProbeViewV1>,
+    pub available_package_versions: Vec<PackageSchemaVersion>,
+    pub available_environments: Vec<crate::forward::ForwardEnvironmentV1>,
+}
+
 /// Native observation only. This does not authorize approval or delivery.
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

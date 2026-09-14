@@ -73,7 +73,7 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         }
         OperatorCommand::CycleStart(_) => Ok(()),
         OperatorCommand::IntegrationSecretRegister(r) => crate::settings::secret_intent(r),
-        OperatorCommand::RuntimeProbe(_) => Ok(()),
+        OperatorCommand::RuntimeProbe(_) | OperatorCommand::DownstreamProbe(_) => Ok(()),
         OperatorCommand::RuntimeCreate(r) => crate::settings::runtime_create(r),
         OperatorCommand::RuntimeUpdate(r) => crate::settings::runtime_update(r),
         OperatorCommand::DownstreamCreate(r) => {

@@ -5,8 +5,11 @@ description: Read the QuaZonai contract and run currently implemented native ver
 Read ../../DESIGN.md and ../../AGENTS.md before changes. Actual commands are in ../../CLI.md and ../../README.md. The workspace is under rewrite: do not use deleted Python/legacy commands, invent production API endpoints, or mark synthetic native probes as qualified evidence. GitHub Codex is review-only. No approval, downstream control, database/Secret/sealed access is granted to an Agent by this skill.
 
 下游原生能力传输验证：`cargo test --locked -p server --test downstream_transport`。
-固定target-only合同和真实TCP边界已实现；观察持久化、probe/readiness入口与审批消费
-尚未接通，不能把该协议fixture当生产readiness或交付验收。
+固定target-only合同和真实TCP边界、不可变观察及downstream probe/readiness HTTP/CLI
+已接通；原生PG验证 `cargo test --locked -p store --test downstream`，完整人工grant/
+HTTP/TCP/文件链 `cargo test --locked -p server --test downstream_http`。独立部署
+DOWNSTREAM_TARGETS默认拒绝，精确配置版本/60秒有效期不可由重放刷新。审批消费尚未
+接通，不把协议fixture当生产下游或交付验收。
 
 组合指标薄适配只消费原Nautilus Returns组；日均收益不年化，波动率/Sharpe保留
 252日原生约定。缺值不填零，不从canonical position收益回退；该映射不授予

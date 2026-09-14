@@ -11,6 +11,7 @@ pub mod codex_profiles;
 pub mod control;
 pub mod cycles;
 pub mod data;
+pub mod downstream;
 pub mod error;
 pub mod evidence;
 pub mod execution_assumptions;
@@ -114,6 +115,7 @@ pub struct AppState {
     pub artifact_store: Option<Arc<integrations::artifacts::ArtifactStore>>,
     pub artifact_slots: Arc<Semaphore>,
     pub integration_slots: Arc<Semaphore>,
+    pub downstream_targets: Arc<runtime_transport::RuntimeTargets>,
     pub runtime_targets: Arc<runtime_transport::RuntimeTargets>,
     pub codex_deployment: Arc<codex_profiles::CodexDeployment>,
 }
@@ -129,6 +131,7 @@ impl AppState {
             artifact_store: None,
             artifact_slots: Arc::new(Semaphore::new(4)),
             integration_slots: Arc::new(Semaphore::new(4)),
+            downstream_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
             runtime_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
             codex_deployment: Arc::new(codex_profiles::CodexDeployment::default()),
         }
@@ -139,6 +142,10 @@ impl AppState {
     }
     pub fn with_artifact_store(mut self, store: integrations::artifacts::ArtifactStore) -> Self {
         self.artifact_store = Some(Arc::new(store));
+        self
+    }
+    pub fn with_downstream_targets(mut self, targets: runtime_transport::RuntimeTargets) -> Self {
+        self.downstream_targets = Arc::new(targets);
         self
     }
     pub fn with_runtime_targets(mut self, targets: runtime_transport::RuntimeTargets) -> Self {
@@ -294,6 +301,14 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route(
             "/api/v2/integrations/downstreams/{id}",
             get(settings::downstream).patch(settings::update_downstream),
+        )
+        .route(
+            "/api/v2/integrations/downstreams/{id}/probe",
+            post(downstream::probe).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
+            "/api/v2/integrations/downstreams/{id}/readiness",
+            get(downstream::readiness),
         )
         .route("/api/v2/data/validate", post(data::validate))
         .route("/api/v2/runs", get(runs::list))
@@ -537,7 +552,7 @@ experiments::propose,experiments::list,experiments::get,
 evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::qualifications,evidence::evaluations,evidence::candidate_evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
-runtime::probe,runtime::readiness,
+runtime::probe,runtime::readiness,downstream::probe,downstream::readiness,
 codex_profiles::profiles,codex_profiles::profile,codex_profiles::homes,codex_profiles::create,
 codex_profiles::update,codex_profiles::update_selected,codex_profiles::probe,codex_profiles::models,codex_profiles::account,
 codex_profiles::account::login_start,codex_profiles::account::logout,codex_profiles::account::login_cancel,

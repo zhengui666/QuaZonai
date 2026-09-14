@@ -374,6 +374,8 @@ pub enum Downstream {
     Show { id: String },
     Create,
     Update { id: String },
+    Probe { id: String },
+    Readiness { id: String },
 }
 #[derive(Subcommand)]
 pub enum InputSet {
@@ -931,6 +933,22 @@ impl Command {
                         200,
                         true,
                     )?
+                }
+                Downstream::Probe { id } => Request::write::<
+                    contracts::delivery::DownstreamProbeRequestV1,
+                    CommandResult<contracts::delivery::DownstreamProbeViewV1>,
+                >(
+                    POST,
+                    action("/api/v2/integrations/downstreams", id, "probe")?,
+                    200,
+                    true,
+                )?,
+                Downstream::Readiness { id } => {
+                    Request::get::<contracts::delivery::DownstreamReadinessV1>(action(
+                        "/api/v2/integrations/downstreams",
+                        id,
+                        "readiness",
+                    )?)
                 }
             },
             Self::InputSet(command) => match command {

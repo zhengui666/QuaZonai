@@ -551,8 +551,11 @@ Runtime 的 `enabled` 和配置能力列表不代表可用。Cycle / standalone 
 
 下游内部原生能力读取固定为 `/downstream/v1/capabilities`，SYSTEM_CA TLS与部署限定
 地址，禁止重定向/环境代理/自动重试；总请求10秒、响应64KiB。它只接受target-only
-合同；`accepting_targets=false`原样保留，不伪装为可交付。当前尚无下游观察持久化和
-probe/readiness用户入口，不能用配置保存或这项网络测试证明审批、领取或真实交易验收。
+合同；`accepting_targets=false`原样保留，不伪装为可交付。使用 `client downstream probe <id>`
+（精确DOWNSTREAM_PROBE人工grant）记录真实观察，`client downstream readiness <id>`只读。
+需为serve配置独立DOWNSTREAM_TARGETS（默认[]），不会继承Runtime允许列表。观察固定
+在探测开始后60秒失效；更新配置后重新探测。原回执重放不刷新时间，较早探测的迟到
+响应不能覆盖新探测失败。审批/领取尚未接通，不能把观察成功当作交付或真实交易验收。
 
 Cycle 启动须明确提供 `researcher_profile` 和 `reviewer_profile`，各包含 Codex Profile 的 `profile_id` 与当前 `expected_revision`。两个选择随本周期冻结，不属于可重复使用的 Brief；可以明确选择同一 Profile，但研究和独立审阅使用不同 Thread。缺失、过期版本或正在登录/注销的配置不能启动。随后修改 Profile 不会修改旧周期或旧回执，也不能让旧周期自动采用新模型/账号配置；应以新选择启动新周期。历史没有选择的记录只保留原事实，不补造账号。
 

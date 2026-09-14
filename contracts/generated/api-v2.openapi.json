@@ -7181,6 +7181,66 @@
         ],
         "type": "object"
       },
+      "CommandResult_DownstreamProbeViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "downstream_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "integration_revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/components/schemas/DownstreamProbeOutcomeV1"
+              },
+              "snapshot_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "started_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "valid_until": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "downstream_id",
+              "integration_revision",
+              "snapshot_artifact_id",
+              "started_at",
+              "observed_at",
+              "valid_until",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_DownstreamView": {
         "additionalProperties": false,
         "properties": {
@@ -9831,6 +9891,64 @@
         ],
         "type": "object"
       },
+      "DownstreamCapabilitiesV1": {
+        "additionalProperties": false,
+        "description": "Native observation only. This does not authorize approval or delivery.",
+        "properties": {
+          "accepted_package_versions": {
+            "items": {
+              "$ref": "#/components/schemas/PackageSchemaVersion"
+            },
+            "maxItems": 1,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "accepting_targets": {
+            "type": "boolean"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "delivery_mode": {
+            "$ref": "#/components/schemas/DownstreamDeliveryModeV1"
+          },
+          "environments": {
+            "items": {
+              "$ref": "#/components/schemas/ForwardEnvironmentV1"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "market_capability_versions": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "delivery_mode",
+          "accepted_package_versions",
+          "environments",
+          "market_capability_versions",
+          "accepting_targets",
+          "checked_at"
+        ],
+        "type": "object"
+      },
       "DownstreamConfigurationV1": {
         "additionalProperties": false,
         "properties": {
@@ -9893,6 +10011,12 @@
         ],
         "type": "object"
       },
+      "DownstreamDeliveryModeV1": {
+        "enum": [
+          "TARGET_ONLY"
+        ],
+        "type": "string"
+      },
       "DownstreamEnvironments": {
         "enum": [
           "PAPER",
@@ -9900,6 +10024,163 @@
           "BOTH"
         ],
         "type": "string"
+      },
+      "DownstreamProbeOutcomeV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "capabilities": {
+                "$ref": "#/components/schemas/DownstreamCapabilitiesV1"
+              },
+              "status": {
+                "enum": [
+                  "AVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "capabilities",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/RuntimeProbeFailure"
+              },
+              "status": {
+                "enum": [
+                  "UNAVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DownstreamProbeRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "DownstreamProbeViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "integration_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/DownstreamProbeOutcomeV1"
+          },
+          "snapshot_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "downstream_id",
+          "integration_revision",
+          "snapshot_artifact_id",
+          "started_at",
+          "observed_at",
+          "valid_until",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "DownstreamReadinessState": {
+        "enum": [
+          "NOT_CHECKED",
+          "DISABLED",
+          "STALE",
+          "UNAVAILABLE",
+          "AVAILABLE"
+        ],
+        "type": "string"
+      },
+      "DownstreamReadinessV1": {
+        "additionalProperties": false,
+        "properties": {
+          "available_environments": {
+            "items": {
+              "$ref": "#/components/schemas/ForwardEnvironmentV1"
+            },
+            "type": "array"
+          },
+          "available_package_versions": {
+            "items": {
+              "$ref": "#/components/schemas/PackageSchemaVersion"
+            },
+            "type": "array"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "integration_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "latest_observation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DownstreamProbeViewV1"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DownstreamReadinessState"
+          }
+        },
+        "required": [
+          "schema_version",
+          "downstream_id",
+          "integration_revision",
+          "state",
+          "available_package_versions",
+          "available_environments"
+        ],
+        "type": "object"
       },
       "DownstreamUpdate": {
         "additionalProperties": false,
@@ -13178,6 +13459,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "DOWNSTREAM_PROBE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DownstreamProbeRequestV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "RUNTIME_CREATE"
                 ],
                 "type": "string"
@@ -13559,6 +13858,7 @@
           "CYCLE_START",
           "INTEGRATION_SECRET_REGISTER",
           "RUNTIME_PROBE",
+          "DOWNSTREAM_PROBE",
           "RUNTIME_CREATE",
           "RUNTIME_UPDATE",
           "DOWNSTREAM_CREATE",
@@ -27014,6 +27314,249 @@
         ],
         "tags": [
           "Integration settings"
+        ]
+      }
+    },
+    "/api/v2/integrations/downstreams/{id}/probe": {
+      "post": {
+        "operationId": "probe_downstream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DownstreamProbeRequestV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_DownstreamProbeViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Downstream readiness"
+        ]
+      }
+    },
+    "/api/v2/integrations/downstreams/{id}/readiness": {
+      "get": {
+        "operationId": "downstream_readiness",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownstreamReadinessV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Downstream readiness"
         ]
       }
     },

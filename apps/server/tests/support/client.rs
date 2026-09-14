@@ -17,6 +17,13 @@ impl Drop for Listener {
 }
 
 pub async fn listen(f: &support::Fixture) -> (String, Listener) {
+    listen_with_downstream_targets(f, server::runtime_transport::RuntimeTargets::default()).await
+}
+
+pub async fn listen_with_downstream_targets(
+    f: &support::Fixture,
+    targets: server::runtime_transport::RuntimeTargets,
+) -> (String, Listener) {
     let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = socket.local_addr().unwrap();
     let origin = format!("http://{address}");
@@ -29,7 +36,7 @@ pub async fn listen(f: &support::Fixture) -> (String, Listener) {
         .unwrap(),
         server::WebPolicy::new(&origin, address, true).unwrap(),
     );
-    let state = state.with_artifact_store(
+    let state = state.with_downstream_targets(targets).with_artifact_store(
         integrations::artifacts::ArtifactStore::open(&f._state.path().join("artifacts")).unwrap(),
     );
     let app = server::router(state, tower_sessions::cookie::Key::generate());

@@ -72,6 +72,10 @@ async fn native_boundary_rejects_incompatible_stale_duplicate_or_secret_response
         ),
         (
             "checked_at",
+            json!(chrono::Utc::now() - chrono::Duration::seconds(10)),
+        ),
+        (
+            "checked_at",
             json!(chrono::Utc::now() + chrono::Duration::seconds(30)),
         ),
         ("broker_credentials", json!("forbidden-field")),

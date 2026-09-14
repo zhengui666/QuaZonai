@@ -87,6 +87,14 @@ enum Command {
             hide_env_values = true
         )]
         runtime_targets: String,
+        /// Independent deployment allowlist for target-only downstream probes.
+        #[arg(
+            long,
+            env = "DOWNSTREAM_TARGETS",
+            default_value = "[]",
+            hide_env_values = true
+        )]
+        downstream_targets: String,
         /// Deployment-owned JSON file of native Codex homes and executable bindings.
         #[arg(long, env = "CODEX_DEPLOYMENT", hide_env_values = true)]
         codex_deployment: Option<PathBuf>,
@@ -139,17 +147,17 @@ fn parse_id(value: &str) -> Result<Id, &'static str> {
     Id::try_from(value.to_owned()).map_err(|_| "expected a canonical UUIDv7")
 }
 
-fn parse_runtime_targets(
+fn parse_integration_targets(
     text: &str,
     development_http: bool,
 ) -> Result<server::runtime_transport::RuntimeTargets, &'static str> {
     if text.len() > 65536 {
-        return Err("RUNTIME_TARGETS exceeds deployment configuration limit");
+        return Err("integration targets exceed deployment configuration limit");
     }
     let targets = serde_json::from_str::<Vec<server::runtime_transport::RuntimeTarget>>(text)
-        .map_err(|_| "invalid RUNTIME_TARGETS deployment configuration")?;
+        .map_err(|_| "invalid integration targets deployment configuration")?;
     server::runtime_transport::RuntimeTargets::new(targets, development_http)
-        .map_err(|_| "RUNTIME_TARGETS contains an unsafe or inconsistent endpoint")
+        .map_err(|_| "integration targets contain an unsafe or inconsistent endpoint")
 }
 
 fn load_codex_deployment(
@@ -347,7 +355,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             mission_api_origin,
             mission_workspaces,
         } => {
-            let targets = parse_runtime_targets(&runtime_targets, development_http)?;
+            let targets = parse_integration_targets(&runtime_targets, development_http)?;
             let missions = if let Some(path) = codex_deployment {
                 Some(server::worker::mission::MissionLauncher::new(
                     load_codex_deployment(Some(&path))?,
@@ -389,11 +397,14 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             public_url,
             development_http,
             runtime_targets,
+            downstream_targets,
             codex_deployment,
         } => {
             let codex = load_codex_deployment(codex_deployment.as_deref())?;
             let policy = WebPolicy::new(&public_url, bind, development_http)?;
-            let targets = parse_runtime_targets(&runtime_targets, development_http)?;
+            let targets = parse_integration_targets(&runtime_targets, development_http)?;
+            let downstream_targets =
+                parse_integration_targets(&downstream_targets, development_http)?;
             let (vault, key) = load_state(&state_dir)?;
             let store = Store::connect(&database.database_url).await?;
             store.verify_runtime_role().await?;
@@ -413,7 +424,8 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 AppState::new(store, vault, policy)
                     .with_artifact_store(objects)
                     .with_codex_deployment(codex)
-                    .with_runtime_targets(targets),
+                    .with_runtime_targets(targets)
+                    .with_downstream_targets(downstream_targets),
                 key,
             );
             let listener = tokio::net::TcpListener::bind(bind).await?;

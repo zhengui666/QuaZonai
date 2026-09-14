@@ -19,6 +19,7 @@ pub mod data;
 pub mod data_registration;
 pub mod data_validation;
 mod db;
+pub mod downstream;
 pub mod evidence;
 pub mod execution_assumptions;
 pub mod experiments;

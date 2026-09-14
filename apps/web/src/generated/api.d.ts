@@ -948,6 +948,38 @@ export interface paths {
         patch: operations["update_downstream"];
         trace?: never;
     };
+    "/api/v2/integrations/downstreams/{id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["probe_downstream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/integrations/downstreams/{id}/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["downstream_readiness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/integrations/runtimes": {
         parameters: {
             query?: never;
@@ -2461,6 +2493,23 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_DownstreamProbeViewV1: {
+            replayed: boolean;
+            resource: {
+                downstream_id: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                integration_revision: components["schemas"]["Revision"];
+                /** Format: date-time */
+                observed_at: string;
+                outcome: components["schemas"]["DownstreamProbeOutcomeV1"];
+                snapshot_artifact_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                started_at: string;
+                /** Format: date-time */
+                valid_until: string;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_DownstreamView: {
             replayed: boolean;
             resource: {
@@ -3098,6 +3147,17 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        /** @description Native observation only. This does not authorize approval or delivery. */
+        DownstreamCapabilitiesV1: {
+            accepted_package_versions: components["schemas"]["PackageSchemaVersion"][];
+            accepting_targets: boolean;
+            /** Format: date-time */
+            checked_at: string;
+            delivery_mode: components["schemas"]["DownstreamDeliveryModeV1"];
+            environments: components["schemas"]["ForwardEnvironmentV1"][];
+            market_capability_versions: string[];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         DownstreamConfigurationV1: {
             accepted_package_versions: components["schemas"]["PackageSchemaVersion"][];
             development_http: boolean;
@@ -3112,7 +3172,46 @@ export interface components {
             schema_version: components["schemas"]["SchemaV1"];
         };
         /** @enum {string} */
+        DownstreamDeliveryModeV1: "TARGET_ONLY";
+        /** @enum {string} */
         DownstreamEnvironments: "PAPER" | "LIVE" | "BOTH";
+        DownstreamProbeOutcomeV1: {
+            capabilities: components["schemas"]["DownstreamCapabilitiesV1"];
+            /** @enum {string} */
+            status: "AVAILABLE";
+        } | {
+            reason: components["schemas"]["RuntimeProbeFailure"];
+            /** @enum {string} */
+            status: "UNAVAILABLE";
+        };
+        DownstreamProbeRequestV1: {
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        DownstreamProbeViewV1: {
+            downstream_id: components["schemas"]["Id"];
+            id: components["schemas"]["Id"];
+            integration_revision: components["schemas"]["Revision"];
+            /** Format: date-time */
+            observed_at: string;
+            outcome: components["schemas"]["DownstreamProbeOutcomeV1"];
+            snapshot_artifact_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            valid_until: string;
+        };
+        /** @enum {string} */
+        DownstreamReadinessState: "NOT_CHECKED" | "DISABLED" | "STALE" | "UNAVAILABLE" | "AVAILABLE";
+        DownstreamReadinessV1: {
+            available_environments: components["schemas"]["ForwardEnvironmentV1"][];
+            available_package_versions: components["schemas"]["PackageSchemaVersion"][];
+            downstream_id: components["schemas"]["Id"];
+            integration_revision: components["schemas"]["Revision"];
+            latest_observation?: null | components["schemas"]["DownstreamProbeViewV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+            state: components["schemas"]["DownstreamReadinessState"];
+        };
         DownstreamUpdate: {
             configuration: components["schemas"]["DownstreamConfigurationV1"];
             credential_ref?: null | components["schemas"]["Id"];
@@ -3755,6 +3854,10 @@ export interface components {
             request: components["schemas"]["RuntimeProbeRequestV1"];
         } | {
             /** @enum {string} */
+            operation: "DOWNSTREAM_PROBE";
+            request: components["schemas"]["DownstreamProbeRequestV1"];
+        } | {
+            /** @enum {string} */
             operation: "RUNTIME_CREATE";
             request: components["schemas"]["RuntimeCreate"];
         } | {
@@ -3836,7 +3939,7 @@ export interface components {
             target_id: components["schemas"]["Id"];
         };
         /** @enum {string} */
-        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
+        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
         /** @enum {string} */
         PackageOriginV1: "DEMO" | "REAL";
         /** @enum {string} */
@@ -9969,6 +10072,163 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    probe_downstream: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DownstreamProbeRequestV1"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_DownstreamProbeViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    downstream_readiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownstreamReadinessV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

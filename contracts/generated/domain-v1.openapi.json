@@ -8267,6 +8267,163 @@
         ],
         "type": "string"
       },
+      "DownstreamProbeOutcomeV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "capabilities": {
+                "$ref": "#/components/schemas/DownstreamCapabilitiesV1"
+              },
+              "status": {
+                "enum": [
+                  "AVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "capabilities",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/RuntimeProbeFailure"
+              },
+              "status": {
+                "enum": [
+                  "UNAVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DownstreamProbeRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "DownstreamProbeViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "integration_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/DownstreamProbeOutcomeV1"
+          },
+          "snapshot_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "downstream_id",
+          "integration_revision",
+          "snapshot_artifact_id",
+          "started_at",
+          "observed_at",
+          "valid_until",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "DownstreamReadinessState": {
+        "enum": [
+          "NOT_CHECKED",
+          "DISABLED",
+          "STALE",
+          "UNAVAILABLE",
+          "AVAILABLE"
+        ],
+        "type": "string"
+      },
+      "DownstreamReadinessV1": {
+        "additionalProperties": false,
+        "properties": {
+          "available_environments": {
+            "items": {
+              "$ref": "#/components/schemas/ForwardEnvironmentV1"
+            },
+            "type": "array"
+          },
+          "available_package_versions": {
+            "items": {
+              "$ref": "#/components/schemas/PackageSchemaVersion"
+            },
+            "type": "array"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "integration_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "latest_observation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DownstreamProbeViewV1"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DownstreamReadinessState"
+          }
+        },
+        "required": [
+          "schema_version",
+          "downstream_id",
+          "integration_revision",
+          "state",
+          "available_package_versions",
+          "available_environments"
+        ],
+        "type": "object"
+      },
       "DownstreamUpdate": {
         "additionalProperties": false,
         "properties": {
@@ -13613,6 +13770,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "DOWNSTREAM_PROBE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/DownstreamProbeRequestV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "RUNTIME_CREATE"
                 ],
                 "type": "string"
@@ -13994,6 +14169,7 @@
           "CYCLE_START",
           "INTEGRATION_SECRET_REGISTER",
           "RUNTIME_PROBE",
+          "DOWNSTREAM_PROBE",
           "RUNTIME_CREATE",
           "RUNTIME_UPDATE",
           "DOWNSTREAM_CREATE",

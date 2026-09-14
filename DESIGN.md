@@ -233,6 +233,9 @@ Approval/Offer/Claim 在事务内重新验证版本、撤销、资格、REAL 数
 
 下游原生探测固定 GET `/downstream/v1/capabilities`，使用登记的 DOWNSTREAM 凭据及部署允许的精确 origin/socket，SYSTEM_CA 原生 TLS；仅部署显式允许的 literal loopback 开发端点可 HTTP。禁止重定向、环境代理、自动重试；连接3秒、整个请求及读取10秒，响应最多64KiB。响应 `DownstreamCapabilitiesV1` 严格字段为 schema_version=1、delivery_mode=TARGET_ONLY、accepted_package_versions（当前唯一版本字符串1）、environments（不重复的PAPER/LIVE，1–2项）、market_capability_versions（不重复非空字符串，1–64项，每项1–200字符）、accepting_targets（布尔）、checked_at（UTC时间）。不接收账户、订单、仓位或执行权限字段。checked_at 不得晚于本机5秒或早于本机60秒，采纳观察时还须绑定本次探测开始时间及精确配置revision；自报接受目标不构成QZ审批。接受版本、环境与市场合同必须同时匹配登记配置和原Package，accepting_targets=false阻止新交付。响应不保存或展示凭据反射、任意错误正文。观察持久化、期限和事务消费另按上述readiness门禁执行；仅网络方法存在不表示已实现审批准入。
 
+人工下游探测为 POST `/api/v2/integrations/downstreams/{id}/probe`，请求 `DownstreamProbeRequestV1`（schema_version=1、expected_revision），需要近期Operator认证或精确DOWNSTREAM_PROBE单次grant。200只表示记录了AVAILABLE/UNAVAILABLE观察，不能视为交付成功。准备和完成分别使用短事务，网络在事务外；完成时重新核对身份、grant、配置revision、enabled和20秒总采纳期限。本次checked_at不得早于探测开始5秒；不可变qz.downstream_probe/1产物和观察行、原命令回执原子关联，失败回滚并精确回收未引用文件。观察有效期固定为探测开始后60秒，重放不能延长。最近观察按服务端started_at排序，较早开始的迟到响应不得覆盖较新探测失败。GET `/api/v2/integrations/downstreams/{id}/readiness`只读当前revision和最近观察，返回NOT_CHECKED/DISABLED/STALE/UNAVAILABLE/AVAILABLE、available_package_versions、available_environments；有效范围取登记配置与真实观察交集，accepting_targets=false或空交集为UNAVAILABLE。真正配置更新使旧revision观察失效，记录探测不修改配置revision。审批仍须匹配原Package市场合同，readiness不是审批。部署DOWNSTREAM_TARGETS与RUNTIME_TARGETS使用同一严格格式但独立允许列表，默认[]。
+
+
 Paper/Live 分开审批。MANUAL/AUTO_PAPER/AUTO_HANDOFF 是显式 Operator 授权的不可变政策，不是 Agent 可开启的布尔开关。自动晋级需要完整足量连续且新鲜 Paper、有效未撤销政策、资格/Release/数据新鲜、无活动阻塞劣化、下游兼容；任何缺失分别阻断。停用仅阻止未来授权，不撤销已执行交易。
 
 Forward 按 downstream/external_message_id 去重；保留 stream/sequence/revision/supersedes 和覆盖窗口；迟到、重传、重叠、gap、partial、correction 不重复累计独立样本。完整窗口交原生指标评估形成 HEALTHY/WATCH/DEGRADED/INSUFFICIENT_DATA Observation，再 Wake，再项目状态/冷却/预算校验启动新 Cycle；相同 Observation 不产生两个自动 Cycle。缺数据不等于健康或劣化。PAUSED/ARCHIVED 不开新 Cycle，保留待处理 Wake 和已有风险观察。

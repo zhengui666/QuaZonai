@@ -1,5 +1,51 @@
 # Issue62 implementation evidence
 
+## Downstream observations and Operator probe/readiness, 2026-09-14
+
+POST /api/v2/integrations/downstreams/{id}/probe and GET /readiness now connect
+the native downstream client to immutable qz.downstream_probe/1 ArtifactStore
+objects, PostgreSQL observations and original Operator receipts. CLI downstream
+probe/readiness uses those same DTOs. DOWNSTREAM_PROBE is an exact-target human
+grant; DOCTOR_READ permits the pure read only. Serve has a separate, default-empty
+DOWNSTREAM_TARGETS deployment allowlist using the existing native target parser.
+
+Preparation and completion use short authority/configuration transactions around
+native network I/O. Completion rechecks authority, revision, enabled state and the
+20-second acceptance deadline after local publication. Observations expire at
+started_at+60 seconds; metadata publication leaves configuration revision intact.
+Latest means latest probe start, so an older late success cannot mask newer failure.
+Readiness takes configured/observed package and environment intersections, rejects
+maintenance or empty intersections, and returns stale after expiry/config changes.
+Old response timestamps are classified as unavailable at the native boundary;
+Store independently checks their binding to its original ticket. Replays preserve
+original expiry. No approval, delivery authority or scientific qualification is
+granted by these observations.
+
+Final verify-05UOGH passed workspace check, formatting, strict Clippy, 142 contracts/
+domain tests, 11 real PostgreSQL tests and 36 HTTP/CLI/TCP/TLS/OpenAPI checks with
+source unchanged. The real-time expiry test waits for the actual 60-second window;
+other checks cover same-key racing, newer failure ordering, revision changes,
+maintenance, empty intersections, immutable rows and publication/deadline rollback.
+Native TOTP/AEAD/CLI tests use the exact human grant, fail an actual database insert
+after native file publication, verify cleanup, retry once, replay without another
+request, and read the actual original artifact bytes. A separate case proves the
+Runtime allowlist cannot authorize downstream traffic. All remote content remains
+controlled protocol fixtures, not production downstream/account/market acceptance.
+The verifier-owned PostgreSQL instance was confirmed stopped.
+
+Initial checks found a test DbCounter construction error, a shared test-helper
+warning, and duplicate OpenAPI operation IDs that confused Runtime frontend types.
+These were fixed at source; existing global operation-ID/reference tests are now
+included in the focused verifier. web-verify-jFUbs3 regenerated all six outputs
+twice identically with handwritten source unchanged. Frontend typecheck, 505 Vitest
+tests, five PWA tests and Vite build passed; only the existing chunk-size warning
+remains. No UI layout changed and no browser run is claimed for this stage.
+
+Actual Approval/Offer/Claim consumption, decision-based invalidation of old
+approvals after REOPEN, automatic-policy readiness refresh, downstream UI and full
+delivery/feedback/native acceptance remain outstanding. No push, review, merge or
+Issue closure was performed.
+
 ## Native downstream capability transport, 2026-09-14
 
 DownstreamCapabilitiesV1 defines the strict target-only capability response at
