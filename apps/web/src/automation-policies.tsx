@@ -5,12 +5,14 @@ import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ResourceSelect } from './resource-select';
 import { Requirements } from './evaluation-policies';
+import { PolicyRevoke } from './approval-revoke';
 import { counterRules } from './budget-fields';
 import { ErrorNotice, Pager, QueryPanel, useGuard, useOnline } from './ui';
 
 type Content = Schema['AutomationPolicyContentV1'];
 export function AutomationPolicies({ project }: { project: string }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]); const [creating, setCreating] = useState(false);
+  const [revoking, setRevoking] = useState<Schema['AutomationPolicyViewV1']>();
   const query = useQuery({ queryKey: ['automation-policies', project, history.at(-1)], queryFn: async ({ signal }) => {
     const page = dataOf(await api.GET('/api/v2/projects/{id}/automation-policies', { params: { path: { id: project }, query: { cursor: history.at(-1), limit: 25 } }, signal }));
     if (page.items.some(item => item.project_id !== project)) throw new Error('自动化政策不属于当前项目。');
@@ -21,11 +23,12 @@ export function AutomationPolicies({ project }: { project: string }) {
     <Button onClick={() => setCreating(true)}>冻结自动化政策</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['AutomationPolicyViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }} onHeaderRow={() => ({ tabIndex: 0 })} columns={[
-        { title: '原政策', dataIndex: 'id' }, { title: '模式', key: 'mode', render: (_, item) => item.content.mode },
+        { title: '原政策', dataIndex: 'id' }, { title: '管理', key: 'revoke', render: (_, item) => <Button danger disabled={query.isError || query.isFetching} onClick={() => setRevoking(item)}>撤销政策</Button> }, { title: '模式', key: 'mode', render: (_, item) => item.content.mode },
         { title: '原期限', key: 'until', render: (_, item) => displayTime(item.content.valid_until) }, { title: '授权于', dataIndex: 'authorized_at', render: displayTime },
       ]} expandable={{ expandedRowRender: item => <pre tabIndex={0} aria-label="原自动化政策" className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(item, null, 2)}</pre> }} />
     </QueryPanel>
     <Pager history={history} next={query.isError ? undefined : query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
+    {revoking && <PolicyRevoke policy={revoking} close={() => setRevoking(undefined)} />}
     {creating && <PolicyEditor project={project} close={() => setCreating(false)} />}
   </Space>;
 }

@@ -4812,3 +4812,10 @@ TypeScript、Vite构建通过，delivery/portfolio-candidates共69项三视口�
 交付页新增自动化政策分页/原版本展开及完整冻结表单，绑定原项目revision，选择既有同项目Mandate/启用下游；模式、样本数、精确时长、每日额度、晋级/维持两组独立指标及期限均显式填写。复用原评估政策Requirements字段与counterRules，不新增指标引擎。允许新再平衡默认false；未知响应保留原完整body/key，保存不代表Worker执行或Paper/Live交付。政策撤销界面仍待完成。
 
 TypeScript、Vite构建通过，automation-policies/evaluation-policies/delivery共54项三视口定向浏览器回归通过（1.8分钟）。新表单用例验证超过JS安全整数的项目revision及秒数、两组独立阈值、默认未启用与丢失响应原键重试；共享评估政策字段的原用例同步通过。受控HTTP响应不是原生政策准入/自动交付证明；完整T01–T42、构建与部署仍待验收，未push/review/merge/close。
+
+
+### 2026-09-15：网页自动化政策撤销
+
+自动化政策行新增撤销入口，复用审批撤销的日期/历史/重试组件；分支调用原生policy或approval端点，各自验证原目标字段。政策只提交reason，审批仍提交reason_code；原CAS、最早生效约束、未知请求同键重试和Claim/ACK保留语义不变，没有新增领域引擎。
+
+TypeScript与Vite构建通过，automation-policies/delivery共42项三视口浏览器回归通过（48.8秒）。新增原政策历史/立即撤销/丢失响应重放用例确认精确路径、原最新ID及无审批reason_code；既有审批预约时间/离线/原键用例同步通过。浏览器fixture不替代原生撤权竞争或完整T01–T42；构建界面、全链与部署仍待验收，未push/review/merge/close。

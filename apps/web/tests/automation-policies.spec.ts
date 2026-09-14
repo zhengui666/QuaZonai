@@ -61,3 +61,37 @@ test('Automation authorization preserves project revision and independent requir
   expect(writes[0]!.body.content.degradation_metric_requirements[0]!.threshold_low).toBe('-0.1');
   expect(writes[0]!.body.content.enabled_for_new_rebalances).toBe(false);
 });
+
+test('Policy revocation uses its original policy and never sends an approval reason code', async ({ page }) => {
+  await fixture(page);
+  const requirement: Schema['MetricRequirementV1'] = { schema_version: 1, metric_code: 'MEAN', scope: 'portfolio', comparator: 'GE', threshold_low: '0', threshold_high: null, minimum_observations: '2', method_allowlist: ['controlled/1'], required: true };
+  const policy: Schema['AutomationPolicyViewV1'] = { id: id(800), project_id: project.id, created_at: '2026-09-13T00:00:00Z', authorized_at: '2026-09-13T00:00:00Z', content: { mode: 'AUTO_HANDOFF', mandate_id: id(80), downstream_id: id(85), required_paper_observations: 2, minimum_paper_elapsed_seconds: '86400', max_feedback_age_seconds: '3600', promotion_metric_requirements: [requirement], degradation_metric_requirements: [requirement], valid_until: '2099-01-01T00:00:00Z', enabled_for_new_rebalances: true, max_rebalances_per_day: 1 } };
+  const old: Schema['PolicyRevocationViewV1'] = { id: id(801), automation_policy_id: policy.id, created_at: policy.created_at, effective_at: policy.content.valid_until, reason: 'Original future revocation' };
+  const writes: { path: string; body: unknown; key: string | undefined }[] = [];
+  await page.route('**/api/v2/**', route => {
+    const request = route.request(); const path = new URL(request.url()).pathname;
+    if (path === `/api/v2/projects/${project.id}/releases`) return reply(route, { schema_version: 1, items: [], next_cursor: null });
+    if (path === `/api/v2/projects/${project.id}/automation-policies`) return reply(route, { schema_version: 1, items: [policy], next_cursor: null });
+    if (path === `/api/v2/automation-policies/${policy.id}/revocations`) return reply(route, { schema_version: 1, items: [old], next_cursor: null });
+    if (path === `/api/v2/automation-policies/${policy.id}/revoke`) {
+      const body = request.postDataJSON() as Schema['PolicyRevokeV1']; writes.push({ path, body, key: request.headers()['idempotency-key'] });
+      if (writes.length === 1) return route.abort('failed');
+      return reply(route, { schema_version: 1, replayed: true, resource: { ...old, id: id(802), effective_at: policy.created_at, reason: body.reason } }, 201);
+    }
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: project.name }).click();
+  await page.getByRole('tab', { name: '自动化政策', exact: true }).click();
+  await page.getByRole('button', { name: '撤销政策', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: '撤销原自动化政策', exact: true });
+  await expect(modal.getByText(old.reason, { exact: true })).toBeVisible();
+  await expect(modal.getByLabel('原因代码', { exact: true })).toHaveCount(0);
+  await modal.getByLabel('撤销原因', { exact: true }).fill('Stop future policy authority');
+  await modal.getByRole('button', { name: '确认追加撤销', exact: true }).click();
+  await modal.getByRole('button', { name: '重试同一撤销', exact: true }).click();
+  await expect(modal.getByText('原撤销已追加。', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1]);
+  expect(writes[0]!.body).toEqual({ schema_version: 1, expected_latest_revocation_id: old.id, effective_at: null, reason: 'Stop future policy authority' });
+});
