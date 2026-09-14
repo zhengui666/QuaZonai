@@ -263,6 +263,60 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
         contracts::evidence::MetricStatus::Ok
     );
     assert!(simulation.orders.get() > 0 && simulation.returns.len() >= 2);
+    // Exercise the publisher's actual metric adapter with Docker output, not
+    // controlled statistic declarations. This is still a synthetic catalog,
+    // not Store qualification or a REAL/PIT scientific acceptance claim.
+    let native_request = report.simulation_request.unwrap();
+    let source = manifest
+        .artifacts
+        .iter()
+        .find(|a| a.schema.name == "qz.portfolio_study")
+        .unwrap()
+        .storage_ref;
+    let evaluation = Id::new();
+    let (metrics, capabilities) = domain::execution::portfolio_simulation_metrics(
+        evaluation,
+        source,
+        &native_request,
+        &simulation,
+    )
+    .unwrap();
+    assert_eq!(metrics.len(), 3);
+    assert_eq!(capabilities.len(), 3);
+    for (metric, native_key) in metrics.iter().zip([
+        "Average (Return)",
+        "Returns Volatility (252 days)",
+        "Sharpe Ratio (252 days)",
+    ]) {
+        let statistic = simulation
+            .statistics
+            .iter()
+            .find(|s| {
+                s.group == contracts::science::NativeStatisticGroup::Returns
+                    && s.native_key == native_key
+            })
+            .unwrap();
+        assert!(statistic.value.is_some());
+        assert_eq!(metric.value, statistic.value);
+        assert_eq!(metric.status, contracts::evidence::MetricStatus::Ok);
+        assert_eq!(metric.evaluation_id, evaluation);
+        assert_eq!(metric.source_artifact_id, source);
+        assert_eq!(metric.scope, "portfolio");
+        assert_eq!(metric.method_version, "0.63.0");
+        assert_eq!(
+            metric.observation_count.get(),
+            simulation.returns.len() as u64
+        );
+    }
+    let mut foreign = native_request;
+    foreign.settings.starting_capital = "1".parse().unwrap();
+    assert!(domain::execution::portfolio_simulation_metrics(
+        evaluation,
+        source,
+        &foreign,
+        &simulation
+    )
+    .is_err());
 }
 
 async fn native_candidate_simulation(sequence: bool) {

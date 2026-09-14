@@ -3,6 +3,24 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Actual OCI Study output to independent metric adapter, 2026-09-14
+
+The existing real Docker rolling Study test now sends the original downloaded
+simulation request/result to the same domain metric adapter used by the Store
+publisher. All three metric values must exactly equal Nautilus Returns statistics,
+retain the evaluation/source references, portfolio scope, native method version
+and actual daily observation count. Reusing the result with a different starting
+capital must fail. No statistics or qualification records are hand-filled.
+
+On 4534f084 plus this test patch, verify-Mx31Wx passed workspace/all-target check,
+format and strict Clippy with source unchanged. owner-oci-vFYXba passed actual OCI
+acceptance with source unchanged and image
+sha256:2690f1ac7972a6b3e37c53ffc528ce4ade9dee93951f33992323daf5d9fd426b.
+This connects actual native output to the publication metric adapter, not the full
+Operator HTTP/Store/Worker acceptance chain. The catalog remains controlled and
+does not establish REAL/PIT qualification or T42. No production logic/dependency
+changes, push, review request, merge or Issue closure occurred in this stage.
+
 ## Explicit Study submission UI, 2026-09-14
 
 Candidate detail now offers an explicit Study request, retaining the original
