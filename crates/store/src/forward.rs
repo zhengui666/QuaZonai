@@ -48,6 +48,41 @@ async fn authority(
 }
 
 impl Store {
+    pub async fn downstream_weight_snapshots(
+        &self,
+        actor: &Actor,
+        project: Id,
+        query: &contracts::control::ListQuery,
+    ) -> Result<contracts::control::Page<DownstreamWeightsViewV1>, StoreError> {
+        domain::control::list(query)?;
+        let mut tx = self.pool.begin().await?;
+        crate::evidence::authorize(&mut tx, actor, project).await?;
+        sqlx::query("SELECT id FROM app.projects WHERE id=$1")
+            .bind(project.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+        let rows = sqlx::query("SELECT * FROM app.forward_weight_snapshots WHERE project_id=$1 AND ($2::uuid IS NULL OR id<$2) ORDER BY id DESC LIMIT $3")
+            .bind(project.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let items = rows
+            .iter()
+            .map(|row| {
+                Ok(DownstreamWeightsViewV1 {
+                    id: db::id(row.try_get("id")?)?,
+                    project_id: db::id(row.try_get("project_id")?)?,
+                    downstream_id: db::id(row.try_get("downstream_id")?)?,
+                    environment: db::enum_value(row, "environment")?,
+                    report_artifact_id: db::id(row.try_get("report_artifact_id")?)?,
+                    content: serde_json::from_value(row.try_get("content")?)
+                        .map_err(|_| StoreError::Integrity)?,
+                    received_at: row.try_get("received_at")?,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        tx.commit().await?;
+        Ok(crate::control::page(items, query.limit, |item| item.id))
+    }
+
     /// The producer holds this same project lock through commit; unknown outcomes
     /// must settle before deciding whether its allocated object is unreferenced.
     pub async fn discard_unpublished_forward_artifact<F, Fut>(

@@ -421,6 +421,10 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             post(release::offer).layer(DefaultBodyLimit::max(16 * 1024)),
         )
         .route("/api/v2/projects/{id}/handoffs", get(release::handoffs))
+        .route(
+            "/api/v2/projects/{id}/forward-weight-snapshots",
+            get(forward::weight_snapshots),
+        )
         .route("/api/v2/handoffs/{id}", get(release::handoff))
         .route(
             "/api/v2/handoffs/{id}/ack",
@@ -601,7 +605,7 @@ research::evaluation_policies,research::evaluation_policy,research::create_evalu
 brief::list,brief::get,brief::create,brief::update,
 automation::authorize_automation,automation::revoke_automation,automation::automation_policy,automation::automation_policies,automation::automation_revocations,release::ack,release::revoke_approval,release::revocations,release::claim,release::offer,release::handoff,release::handoffs,release::create,release::get,release::list,release::approvals,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,
 execution_assumptions::list,execution_assumptions::get,execution_assumptions::create,
-forward::weights,forward::message,forward::list,forward::window,
+forward::weight_snapshots,forward::weights,forward::message,forward::list,forward::window,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
 experiments::propose,experiments::list,experiments::get,
 evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::qualifications,evidence::evaluations,evidence::candidate_evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,

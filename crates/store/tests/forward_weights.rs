@@ -135,6 +135,31 @@ async fn downstream_original_message_is_atomic_immutable_and_replays_across_conc
     let (a, b) = (a.unwrap(), b.unwrap());
     assert_eq!(a.resource.id, b.resource.id);
     assert_ne!(a.replayed, b.replayed);
+    let query = ListQuery {
+        cursor: None,
+        limit: 1,
+    };
+    let first = store
+        .downstream_weight_snapshots(&operator, request.project_id, &query)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&first.items[0]).unwrap(),
+        serde_json::to_value(&a.resource).unwrap()
+    );
+    assert_eq!(first.next_cursor, None);
+    assert!(matches!(
+        store
+            .downstream_weight_snapshots(&actor, request.project_id, &query)
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(matches!(
+        store
+            .downstream_weight_snapshots(&operator, Id::new(), &query)
+            .await,
+        Err(StoreError::NotFound)
+    ));
     let replay = store
         .submit_downstream_weights(&actor, &request, |_| async {
             panic!("replay must not publish")
@@ -182,6 +207,32 @@ async fn downstream_original_message_is_atomic_immutable_and_replays_across_conc
     .await
     .unwrap();
     assert_eq!(count, 1);
+    let mut next = request.clone();
+    next.external_message_id = "second-original-weights".into();
+    let second = store
+        .submit_downstream_weights(&actor, &next, |_| async { Ok(()) })
+        .await
+        .unwrap()
+        .resource;
+    let page = store
+        .downstream_weight_snapshots(&operator, request.project_id, &query)
+        .await
+        .unwrap();
+    assert_eq!(page.items[0].id, second.id);
+    assert_eq!(page.next_cursor, Some(second.id));
+    let previous = store
+        .downstream_weight_snapshots(
+            &operator,
+            request.project_id,
+            &ListQuery {
+                cursor: page.next_cursor,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(previous.items[0].id, a.resource.id);
+    assert_eq!(previous.next_cursor, None);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

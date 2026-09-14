@@ -3790,3 +3790,8 @@ Paper 审批不可转用 Live 或别的下游。相关复合 FK 是最低关联�
 RunEventV1.payload 的原生生成schema明确 type=object，required=[schema_version]，schema_version整数严格为1，允许其他公开扩展属性。运行时仍检查65536字节上限，已知run.created/run.state_changed负载严格按RunStatePayload验证；未知兼容事件不得伪造状态投影。对象schema不能代替已知事件语义、权限或负载大小检查。
 
 Brief 草稿成员替换要求部署迁移仅对 app.brief_data_bindings 追加 DELETE 授权；不得对所有 app 表或任何历史账本授予 DELETE/TRUNCATE/TRIGGER。该单表 DELETE 仍经父 Brief 行锁和 DRAFT 状态触发器；FROZEN 后拒绝全部成员改动。必须使用真实非所有者运行身份执行新增/替换/冻结拒绝回归，不能只用数据库owner证明可运行。
+
+
+### 原权重快照查询（构建输入选择）
+
+GET `/api/v2/projects/{id}/forward-weight-snapshots`按原ID倒序分页该项目的DownstreamWeightsViewV1（cursor/limit，1–100）。Operator或精确项目RESEARCH_READ CLI可读，沿用原快照/报告引用/原时点和期限，不读文件、不刷新资格或生成新快照。下游写入身份不因此获得研究读取权限。CLI为`client forward weights PROJECT_UUID`。构建继续重验所选原快照的来源、环境、币种、资产与有效期，列表存在不是准入证据。

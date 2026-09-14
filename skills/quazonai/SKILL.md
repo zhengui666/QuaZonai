@@ -301,3 +301,6 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 同事务绑定唯一新 Cycle，不发放 Operator 身份或交付权限。无 Agent/HTTP 手动强制
 消费入口；可用 `cargo test --locked -p store --test forward_evaluation --test cycles`
 验证原生事务和受控协议，不能把该测试称为真实多日反馈/模型/OCI验收。
+
+构建选择原下游权重时可用client forward weights PROJECT_UUID分页读取，需精确
+项目RESEARCH_READ；只读原快照，不能把读取当作当前资格或伪造缺失起始权重。

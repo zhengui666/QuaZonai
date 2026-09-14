@@ -953,3 +953,7 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 `client approval list RELEASE_UUID --limit 20 [--cursor APPROVAL_UUID]`读取
 GET /api/v2/releases/{id}/approvals，按原ID倒序分页该Release全部历史审批。
 需精确项目RESEARCH_READ；历史审批不等于当前可交付，列表不刷新期限或隐藏已失效版本。
+
+`client forward weights PROJECT_UUID --limit 20 [--cursor SNAPSHOT_UUID]`读取
+GET /api/v2/projects/{id}/forward-weight-snapshots，需精确项目RESEARCH_READ。
+按原ID倒序分页原权重、下游/环境、报告引用和期限，不刷新来源或授予Build资格。

@@ -17040,6 +17040,69 @@
         ],
         "type": "object"
       },
+      "Page_DownstreamWeightsViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "$ref": "#/components/schemas/PortfolioCurrentWeightsV1"
+                },
+                "downstream_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "environment": {
+                  "$ref": "#/components/schemas/ForwardEnvironmentV1"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "received_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "report_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "downstream_id",
+                "environment",
+                "report_artifact_id",
+                "content",
+                "received_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_EvaluationPolicyView": {
         "additionalProperties": false,
         "properties": {
@@ -34634,6 +34697,120 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_ForwardMessageViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Forward"
+        ]
+      }
+    },
+    "/api/v2/projects/{id}/forward-weight-snapshots": {
+      "get": {
+        "operationId": "list_downstream_weight_snapshots",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DownstreamWeightsViewV1"
                 }
               }
             },

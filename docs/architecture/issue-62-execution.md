@@ -4819,3 +4819,10 @@ TypeScript、Vite构建通过，automation-policies/evaluation-policies/delivery
 自动化政策行新增撤销入口，复用审批撤销的日期/历史/重试组件；分支调用原生policy或approval端点，各自验证原目标字段。政策只提交reason，审批仍提交reason_code；原CAS、最早生效约束、未知请求同键重试和Claim/ACK保留语义不变，没有新增领域引擎。
 
 TypeScript与Vite构建通过，automation-policies/delivery共42项三视口浏览器回归通过（48.8秒）。新增原政策历史/立即撤销/丢失响应重放用例确认精确路径、原最新ID及无审批reason_code；既有审批预约时间/离线/原键用例同步通过。浏览器fixture不替代原生撤权竞争或完整T01–T42；构建界面、全链与部署仍待验收，未push/review/merge/close。
+
+
+### 2026-09-15：构建输入的原权重快照查询
+
+新增项目forward-weight-snapshots分页API及client forward weights，复用原DownstreamWeightsViewV1与研究读取授权，保留原精确内容/报告引用/期限，无文件读取或新资格判定；下游写入身份不获得该研究读取权限。为构建表单提供真实来源选择，Build仍重新验证原环境/资产/币种/有效期。
+
+verify-fFQRUg的domain144及HTTP25项通过、Store27通过1失败；唯一失败为新增第二条快照后旧全局回执计数仍要求1。调整测试顺序，在新增快照前保留原并发同消息唯一回执断言，再验证两页；verify-wkgDPw通过workspace/all-targets编译、格式、严格Clippy及全部3项forward_weights测试，源文件不变、隔离PG停止。web-verify-KWli6e真实Rust导出/客户端生成逐字节可复现、手写源不变。未将首次失败整轮标为通过，未更改产品幂等或权限。Build网页及完整T01–T42仍待完成，未push/review/merge/close。

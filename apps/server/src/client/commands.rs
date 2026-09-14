@@ -136,6 +136,11 @@ pub enum Alpha {
 
 #[derive(Subcommand)]
 pub enum Forward {
+    Weights {
+        project_id: String,
+        #[command(flatten)]
+        page: List,
+    },
     Submit,
     Window {
         id: String,
@@ -681,6 +686,14 @@ impl Command {
                 }
             },
             Self::Forward(command) => match command {
+                Forward::Weights { project_id, page } => {
+                    Request::get::<Page<contracts::forward::DownstreamWeightsViewV1>>(action(
+                        "/api/v2/projects",
+                        project_id,
+                        "forward-weight-snapshots",
+                    )?)
+                    .page(page)?
+                }
                 Forward::Window { id, stream } => {
                     let mut request = Request::get::<contracts::forward::ForwardWindowViewV1>(
                         action("/api/v2/handoffs", id, "forward-window")?,
