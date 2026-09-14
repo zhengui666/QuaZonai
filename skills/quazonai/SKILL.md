@@ -275,3 +275,5 @@ Codex账号操作仅供人工设置页或精确Operator grant的CLI使用，不�
 202只表示接受人工操作，UNKNOWN和等待截止不能宣称取消成功；操作结束后须重新探测。
 
 冻结政策管理见CLI automation authorize/list/show/revoke/revocations及DESIGN A7.0。授权绑定原项目revision与完整指标/范围/期限，撤销绑定原政策与最新撤销CAS。版本不可改写，最早撤销不能推迟；自动消费尚未实现，不得把登记视为自动审批、Paper验收或Live交付。
+
+Worker下游刷新使用独立DOWNSTREAM_TARGETS与原DOWNSTREAM vault引用，原生短租约限制同下游并发。只刷新未领取Offer或当前有效自动政策所需观察，固定60秒观察期不延长；失败/过期不授予准入。探测发布与清理共用下游行锁，未知提交保留已引用对象。自动观察刷新不是冻结政策审批消费。

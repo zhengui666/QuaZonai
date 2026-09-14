@@ -23,6 +23,7 @@ pub struct Worker {
     objects: Arc<ArtifactStore>,
     targets: Arc<RuntimeTargets>,
     parallelism: usize,
+    downstream_targets: Arc<RuntimeTargets>,
     missions: Option<Arc<mission::MissionLauncher>>,
 }
 
@@ -77,8 +78,14 @@ impl Worker {
             objects: Arc::new(objects),
             targets: Arc::new(targets),
             parallelism,
+            downstream_targets: Arc::new(RuntimeTargets::default()),
             missions: None,
         })
+    }
+
+    pub fn with_downstream_targets(mut self, targets: RuntimeTargets) -> Self {
+        self.downstream_targets = Arc::new(targets);
+        self
     }
 
     pub fn with_missions(mut self, launcher: Arc<mission::MissionLauncher>) -> Self {
@@ -90,6 +97,7 @@ impl Worker {
         let owner = format!("worker/{}", Id::new());
         let mut jobs = JoinSet::new();
         let mut missions = JoinSet::new();
+        let mut probes = JoinSet::new();
         while !*shutdown.borrow() {
             if self.store.reconcile_handoffs().await.is_err() {
                 tracing::warn!("Offer expiry deferred; claim still checks the database clock");
@@ -103,6 +111,19 @@ impl Worker {
                 if !matches!(result, Ok(Ok(()))) {
                     tracing::warn!("Mission deferred with its original identity and reservation");
                 }
+            }
+            while let Some(result) = probes.try_join_next() {
+                if !matches!(result, Ok(Ok(()))) {
+                    tracing::warn!("downstream refresh deferred under its original reservation");
+                }
+            }
+            if probes.is_empty() {
+                probes.spawn(crate::downstream::refresh(
+                    self.store.clone(),
+                    self.vault.clone(),
+                    self.objects.clone(),
+                    self.downstream_targets.clone(),
+                ));
             }
             if jobs.len() < self.parallelism {
                 let remaining = (self.parallelism - jobs.len()).min(32) as i32;
@@ -153,6 +174,11 @@ impl Worker {
                 result = missions.join_next(), if !missions.is_empty() => {
                     if !matches!(result, Some(Ok(Ok(())))) { tracing::warn!("Mission deferred with its original identity and reservation"); }
                 }
+            }
+        }
+        while let Some(result) = probes.join_next().await {
+            if !matches!(result, Ok(Ok(()))) {
+                tracing::warn!("downstream refresh left for bounded retry");
             }
         }
         // Stop new work; let already bounded I/O and local publication reach a

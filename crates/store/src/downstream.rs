@@ -31,6 +31,22 @@ pub struct ProbeTicket {
     started_at: DateTime<Utc>,
 }
 
+/// Trusted Worker reservation, never accepted from a client or Agent.
+pub struct RefreshTicket {
+    pub snapshot: DownstreamSnapshot,
+    downstream_id: Id,
+    revision: Revision,
+    started_at: DateTime<Utc>,
+    lease_id: Id,
+}
+impl RefreshTicket {
+    pub fn downstream_id(&self) -> Id {
+        self.downstream_id
+    }
+}
+
+const REFRESH_NEEDED: &str = "(EXISTS(SELECT 1 FROM app.handoff_offers h WHERE h.downstream_id=d.id AND h.state='OFFERED' AND h.expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM app.projects p JOIN app.automation_policies policy ON policy.id=p.current_automation_policy_id AND policy.project_id=p.id WHERE policy.downstream_id=d.id AND p.state='ACTIVE' AND policy.mode<>'MANUAL' AND policy.enabled_for_new_rebalances AND policy.authorized_at<=clock_timestamp() AND policy.valid_until>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM app.policy_revocations r WHERE r.automation_policy_id=policy.id AND r.effective_at<=clock_timestamp())))";
+
 fn observation(row: &PgRow) -> Result<DownstreamProbeViewV1, StoreError> {
     let document: serde_json::Value = row.try_get("outcome")?;
     Ok(DownstreamProbeViewV1 {
@@ -181,24 +197,22 @@ impl Store {
         if !row.try_get::<bool, _>("enabled")? {
             return Err(domain::DomainError::CapabilityUnavailable("downstream_disabled").into());
         }
-        let now = sqlx::query_scalar("SELECT clock_timestamp()")
+        let resource = publish_observation(
+            &mut tx,
+            ticket.downstream_id,
+            revision,
+            ticket.started_at,
+            &outcome,
+            publish,
+            "OPERATOR",
+        )
+        .await?;
+        commands::recheck_authority(&mut tx, &ticket.actor, &prepared).await?;
+        let result = commands::finish(&mut tx, prepared, resource, 200).await?;
+        let completed_at = sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(&mut *tx)
             .await?;
-        let bytes = encode(&outcome, ticket.started_at, now)?;
-        let size = bytes.len() as i64;
-        let artifact = Id::new();
-        publish(artifact, bytes).await?;
-        commands::recheck_authority(&mut tx, &ticket.actor, &prepared).await?;
-        let observed_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
-            .fetch_one(&mut *tx)
-            .await?;
-        encode(&outcome, ticket.started_at, observed_at)?;
-        sqlx::query("INSERT INTO app.artifacts(id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,'REPORT','application/json','qz.downstream_probe','1','LOCAL',$2,'1',$3,'OPERATOR','REAL','OPERATOR','AUDIT')")
-            .bind(artifact.as_uuid()).bind(artifact.to_string()).bind(size).execute(&mut *tx).await?;
-        let row = sqlx::query("INSERT INTO app.downstream_probe_observations(downstream_id,integration_revision,snapshot_artifact_id,started_at,observed_at,valid_until,outcome) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *")
-            .bind(ticket.downstream_id.as_uuid()).bind(revision.get() as i64).bind(artifact.as_uuid()).bind(ticket.started_at).bind(observed_at).bind(ticket.started_at+Duration::seconds(60)).bind(json!({"schema_version":1,"result":outcome})).fetch_one(&mut *tx).await?;
-        commands::recheck_authority(&mut tx, &ticket.actor, &prepared).await?;
-        let result = commands::finish(&mut tx, prepared, observation(&row)?, 200).await?;
+        encode(&outcome, ticket.started_at, completed_at)?;
         tx.commit().await?;
         Ok(result)
     }
@@ -274,4 +288,133 @@ pub(crate) async fn readiness(
         available_package_versions: versions,
         available_environments: environments,
     })
+}
+
+async fn publish_observation<F, Fut>(
+    tx: &mut Transaction<'_, Postgres>,
+    downstream: Id,
+    revision: Revision,
+    started_at: DateTime<Utc>,
+    outcome: &DownstreamProbeOutcomeV1,
+    publish: F,
+    creator: &str,
+) -> Result<DownstreamProbeViewV1, StoreError>
+where
+    F: FnOnce(Id, Vec<u8>) -> Fut,
+    Fut: std::future::Future<Output = Result<(), StoreError>>,
+{
+    let now = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut **tx)
+        .await?;
+    let bytes = encode(outcome, started_at, now)?;
+    let size = bytes.len() as i64;
+    let artifact = Id::new();
+    publish(artifact, bytes).await?;
+    let observed_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut **tx)
+        .await?;
+    encode(outcome, started_at, observed_at)?;
+    sqlx::query("INSERT INTO app.artifacts(id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,'REPORT','application/json','qz.downstream_probe','1','LOCAL',$2,'1',$3,'OPERATOR','REAL',$4,'AUDIT')").bind(artifact.as_uuid()).bind(artifact.to_string()).bind(size).bind(creator).execute(&mut **tx).await?;
+    let row=sqlx::query("INSERT INTO app.downstream_probe_observations(downstream_id,integration_revision,snapshot_artifact_id,started_at,observed_at,valid_until,outcome) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *")
+        .bind(downstream.as_uuid()).bind(revision.get() as i64).bind(artifact.as_uuid()).bind(started_at).bind(observed_at).bind(started_at+Duration::seconds(60)).bind(json!({"schema_version":1,"result":outcome})).fetch_one(&mut **tx).await?;
+    observation(&row)
+}
+impl Store {
+    pub async fn prepare_downstream_refresh(&self) -> Result<Option<RefreshTicket>, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let row=sqlx::query(&format!("SELECT d.* FROM app.downstream_integrations d LEFT JOIN app.downstream_probe_refresh refresh ON refresh.downstream_id=d.id WHERE d.enabled AND {REFRESH_NEEDED} AND (refresh.next_attempt_at IS NULL OR refresh.next_attempt_at<=clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM app.downstream_probe_observations o WHERE o.id=(SELECT latest.id FROM app.downstream_probe_observations latest WHERE latest.downstream_id=d.id ORDER BY latest.started_at DESC,latest.id DESC LIMIT 1) AND o.integration_revision=d.revision AND o.valid_until>clock_timestamp()+interval '15 seconds') ORDER BY refresh.next_attempt_at NULLS FIRST,d.id LIMIT 1 FOR UPDATE OF d SKIP LOCKED"))
+            .fetch_optional(&mut *tx).await?;
+        let Some(row) = row else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+        let downstream_id = db::id(row.try_get("id")?)?;
+        let started_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&mut *tx)
+            .await?;
+        let lease_id = Id::new();
+        sqlx::query("INSERT INTO app.downstream_probe_refresh(downstream_id,lease_id,lease_until,next_attempt_at) VALUES($1,$2,$3,$4) ON CONFLICT(downstream_id) DO UPDATE SET lease_id=excluded.lease_id,lease_until=excluded.lease_until,next_attempt_at=excluded.next_attempt_at")
+            .bind(downstream_id.as_uuid()).bind(lease_id.as_uuid()).bind(started_at+Duration::seconds(20)).bind(started_at+Duration::seconds(30)).execute(&mut *tx).await?;
+        let ticket = RefreshTicket {
+            snapshot: DownstreamSnapshot {
+                endpoint: row.try_get("endpoint")?,
+                credential_ref: row
+                    .try_get::<String, _>("credential_ref")?
+                    .try_into()
+                    .map_err(|_| StoreError::Integrity)?,
+                development_http: row.try_get("development_http")?,
+            },
+            downstream_id,
+            revision: db::revision(row.try_get("revision")?)?,
+            started_at,
+            lease_id,
+        };
+        tx.commit().await?;
+        Ok(Some(ticket))
+    }
+    pub async fn complete_downstream_refresh<F, Fut>(
+        &self,
+        ticket: RefreshTicket,
+        outcome: DownstreamProbeOutcomeV1,
+        publish: F,
+    ) -> Result<DownstreamProbeViewV1, StoreError>
+    where
+        F: FnOnce(Id, Vec<u8>) -> Fut,
+        Fut: std::future::Future<Output = Result<(), StoreError>>,
+    {
+        let mut tx = self.pool.begin().await?;
+        let exists=sqlx::query(&format!("SELECT d.id FROM app.downstream_integrations d JOIN app.downstream_probe_refresh r ON r.downstream_id=d.id WHERE d.id=$1 AND d.revision=$2 AND d.enabled AND r.lease_id=$3 AND r.lease_until>clock_timestamp() AND {REFRESH_NEEDED} FOR UPDATE OF d,r"))
+            .bind(ticket.downstream_id.as_uuid()).bind(ticket.revision.get() as i64).bind(ticket.lease_id.as_uuid()).fetch_optional(&mut *tx).await?;
+        if exists.is_none() {
+            return Err(StoreError::Conflict);
+        }
+        let result = publish_observation(
+            &mut tx,
+            ticket.downstream_id,
+            ticket.revision,
+            ticket.started_at,
+            &outcome,
+            publish,
+            "RUNTIME",
+        )
+        .await?;
+        // Recheck after SQL triggers or lock waits, not only after filesystem I/O.
+        let completed_at = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&mut *tx)
+            .await?;
+        encode(&outcome, ticket.started_at, completed_at)?;
+        tx.commit().await?;
+        Ok(result)
+    }
+}
+
+impl Store {
+    /// Serialize uncertain cleanup against both manual and Worker publication.
+    pub async fn discard_unpublished_downstream_artifact<F, Fut>(
+        &self,
+        downstream: Id,
+        artifact: Id,
+        discard: F,
+    ) -> Result<bool, StoreError>
+    where
+        F: FnOnce(Id) -> Fut,
+        Fut: std::future::Future<Output = Result<(), StoreError>>,
+    {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET LOCAL lock_timeout = '5s'")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SELECT id FROM app.downstream_integrations WHERE id=$1 FOR UPDATE")
+            .bind(downstream.as_uuid())
+            .fetch_one(&mut *tx)
+            .await?;
+        let referenced:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 OR (storage_backend='LOCAL' AND storage_object_ref=$2))").bind(artifact.as_uuid()).bind(artifact.to_string()).fetch_one(&mut *tx).await?;
+        if referenced {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        discard(artifact).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
 }

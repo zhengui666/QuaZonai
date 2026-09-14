@@ -1,5 +1,42 @@
 # Issue62 implementation evidence
 
+## Trusted Worker downstream observation refresh, 2026-09-14
+
+Worker reuses the original downstream transport, secret resolution, strict capability
+contract and immutable observation publisher. It uses an independent deployment
+DOWNSTREAM_TARGETS allowlist, never Runtime targets or an Agent/Operator impersonation.
+It reserves at most one probe locally; migration 067's per-downstream native reservation
+serializes multiple Workers. Eligible work is an unexpired OFFERED or an ACTIVE Project's
+current effective, unrevoked, enabled automatic policy. Fresh observations are retained;
+refresh begins with at most 15 seconds remaining, adoption ends after 20 seconds and
+retry is no earlier than 30 seconds after start. Original observation TTL stays 60 seconds.
+Preparation/commit recheck native configuration and reservation, and network I/O remains
+outside the transactions. The publisher marks Worker artifacts RUNTIME and creates no
+approval/Offer/Claim. Shutdown stops acquiring probes and waits for bounded active I/O.
+
+Cleanup now waits for the same downstream row held by both publication paths before
+checking native artifact references. This closes a race where an uncertain Worker
+commit could bypass the old Operator-only cleanup lock. Final database-clock checks
+also reject observation/receipt inserts delayed past the adoption deadline.
+
+Over 97e363f7 plus this patch, verify-vKu3Hd passed all-target check/fmt/strict Clippy and
+233 tests (142 contracts/domain, 47 PG, 44 HTTP/CLI/Worker), including real original
+Package -> Offer -> two Workers -> pinned TCP -> refreshed observation -> Claim/ACK.
+The fixture waits for the original immutable freshness window; only mutable reservation
+fields are changed for failure/lost-lease injection. Exactly one actual HTTP request is
+observed across two Workers, failed publication leaves no observation, a lost lease
+cannot publish and the native RUNTIME observation retains its original 60-second TTL.
+
+After the cleanup/deadline fixes, final verify-oHAqrh passed check/fmt/strict Clippy and
+25 targeted tests: six PostgreSQL downstream checks, 18 manual/native-transport/Worker
+HTTP tests, and the original Package/dual-Worker/Claim chain. A real transaction races
+cleanup against publication and preserves the committed reference; a 21-second SQL
+trigger delay rolls back observation, artifact metadata and receipt. Sources stayed
+unchanged and owned PostgreSQL stopped. Public HTTP schemas and frontend are unchanged.
+These controlled native protocols are not actual market/model/OCI science acceptance.
+Frozen-policy approval consumption, Forward/promotion/Wake and full product acceptance
+remain unfinished; no push, review request, merge or Issue closure occurred here.
+
 ## Operator-frozen automation policy management, 2026-09-14
 
 Native Store/HTTP/CLI management now reuses the original immutable automation_policies

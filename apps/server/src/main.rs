@@ -112,6 +112,13 @@ enum Command {
             hide_env_values = true
         )]
         runtime_targets: String,
+        #[arg(
+            long,
+            env = "DOWNSTREAM_TARGETS",
+            default_value = "[]",
+            hide_env_values = true
+        )]
+        downstream_targets: String,
         #[arg(long, env = "DEVELOPMENT_HTTP", default_value_t = false)]
         development_http: bool,
         #[arg(long, env = "WORKER_PARALLELISM", default_value_t = 2)]
@@ -349,6 +356,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             database,
             state_dir,
             runtime_targets,
+            downstream_targets,
             development_http,
             parallelism,
             codex_deployment,
@@ -356,6 +364,8 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             mission_workspaces,
         } => {
             let targets = parse_integration_targets(&runtime_targets, development_http)?;
+            let downstream_targets =
+                parse_integration_targets(&downstream_targets, development_http)?;
             let missions = if let Some(path) = codex_deployment {
                 Some(server::worker::mission::MissionLauncher::new(
                     load_codex_deployment(Some(&path))?,
@@ -373,7 +383,8 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let vault =
                 SecretVault::open(&state_dir.join("secrets"), &state_dir.join("master.key"))?;
             let objects = ArtifactStore::open(&state_dir.join("artifacts"))?;
-            let worker = server::worker::Worker::new(store, vault, objects, targets, parallelism)?;
+            let worker = server::worker::Worker::new(store, vault, objects, targets, parallelism)?
+                .with_downstream_targets(downstream_targets);
             let worker = if let Some(launcher) = missions {
                 worker.with_missions(std::sync::Arc::new(launcher))
             } else {

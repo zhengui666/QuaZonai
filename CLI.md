@@ -639,12 +639,20 @@ Production 只接受 HTTPS origin；literal-loopback HTTP 还须配置和部署�
 探测开始后60秒失效；配置修改或较新失败不能用旧成功、较早开始的迟到响应或回执
 重放覆盖。accepting_targets=false、空交集、过期和未探测都没有交付准入资格。
 
-serve 的 `--downstream-targets` / `DOWNSTREAM_TARGETS` 使用下述 origin/addresses 格式，
+serve 和 worker 的 `--downstream-targets` / `DOWNSTREAM_TARGETS` 使用下述 origin/addresses 格式，
 与 RUNTIME_TARGETS 独立，默认[]。原生下游固定 GET /downstream/v1/capabilities，只读
 DownstreamCapabilitiesV1 target-only合同。网络在事务外，总请求10秒；完成采纳总期限
 20秒，ArtifactStore与不可变观察/回执关联。人工审批/Offer/Claim已消费该观察，完整交付链尚未验收，不能据此宣称
 完成交付。回归：隔离PostgreSQL执行 `cargo test --locked -p store --test downstream`、
 `cargo test --locked -p server --test downstream_http --test downstream_transport`。
+
+Worker现自动刷新尚未到期的未领取Offer及ACTIVE项目当前有效自动政策所需的下游；
+每个进程最多一个探测，跨进程使用原生数据库短租约。观察还剩15秒以上不重复请求，
+失败/崩溃至少30秒后重试，完成采纳限20秒，原观察期限仍为开始后60秒。配置和租约
+失效、发布失败或数据库写入超时会回滚；清理等待同一下游发布锁，未知提交不删已引用
+文件。使用同一STATE_DIR原DOWNSTREAM凭据和独立部署允许列表，不继承Runtime目标。
+关闭Worker停止新领取并等待已开始的有界I/O。自动刷新不创建审批或交付；冻结政策
+自动消费与完整交付仍待实现。
 
 `POST /api/v2/integrations/runtimes/{id}/probe` 接收 schema_version=1、expected_revision，
 需要近期人类认证或 RUNTIME_PROBE 单次 CLI grant。响应200表示探测已记录；必须检查

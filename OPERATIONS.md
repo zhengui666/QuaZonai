@@ -553,9 +553,9 @@ Runtime 的 `enabled` 和配置能力列表不代表可用。Cycle / standalone 
 地址，禁止重定向/环境代理/自动重试；总请求10秒、响应64KiB。它只接受target-only
 合同；`accepting_targets=false`原样保留，不伪装为可交付。使用 `client downstream probe <id>`
 （精确DOWNSTREAM_PROBE人工grant）记录真实观察，`client downstream readiness <id>`只读。
-需为serve配置独立DOWNSTREAM_TARGETS（默认[]），不会继承Runtime允许列表。观察固定
+需为serve和worker配置独立DOWNSTREAM_TARGETS（默认[]），不会继承Runtime允许列表。观察固定
 在探测开始后60秒失效；更新配置后重新探测。原回执重放不刷新时间，较早探测的迟到
-响应不能覆盖新探测失败。人工审批与领取会重验该观察；完整交付链尚未验收，观察成功不是交付或真实交易验收。
+响应不能覆盖新探测失败。Worker会在原观察临近到期时，用每下游唯一短租约刷新未领取Offer或当前有效自动政策需要的观察；失败/崩溃后按原期限重试，不延长旧观察。人工审批与领取会重验该观察；完整交付链尚未验收，观察成功不是交付或真实交易验收。
 
 人工审批使用 `client release approve RELEASE_UUID`，具体请求及单次人工grant见CLI。
 服务端校验原Package与当前来源许可、期限、资格、下游版本/环境，并冻结原报告引用。

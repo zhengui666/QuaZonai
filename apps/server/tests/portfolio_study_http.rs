@@ -281,20 +281,42 @@ async fn claim_http(
         capability_verifier, format_machine_token, random_capability,
     };
     use std::{fs, os::unix::fs::PermissionsExt};
+    let web = support::fixture(pool.clone()).await;
+    let vault = integrations::secrets::SecretVault::open(
+        &web._state.path().join("secrets"),
+        &web._state.path().join("master.key"),
+    )
+    .unwrap();
+    const PROBE_SECRET: &str = "disposable-worker-probe-credential";
+    let probe_credential = vault.put("DOWNSTREAM", PROBE_SECRET.as_bytes()).unwrap();
+    let probe_socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let probe_address = probe_socket.local_addr().unwrap();
+    let probe_endpoint = format!("http://{probe_address}");
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = calls.clone();
+    let market = release.market_capability_version.clone();
+    let probe_app=axum::Router::new().route("/downstream/v1/capabilities",axum::routing::get(move |headers:axum::http::HeaderMap| {
+        assert!(headers[axum::http::header::AUTHORIZATION]==format!("Bearer {PROBE_SECRET}"),"probe fixture bearer mismatch");
+        counted.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+        let market=market.clone();
+        async move {axum::Json(serde_json::json!({"schema_version":1,"delivery_mode":"TARGET_ONLY","accepted_package_versions":["1"],"environments":["PAPER"],"market_capability_versions":[market],"accepting_targets":true,"checked_at":chrono::Utc::now()}))}
+    }));
+    let probe_server =
+        tokio::spawn(async move { axum::serve(probe_socket, probe_app).await.unwrap() });
     let down = store
         .create_downstream(
             operator,
             "claim-http-downstream",
             &DownstreamCreate {
                 schema_version: SchemaV1,
-                credential_ref: Id::new(),
+                credential_ref: probe_credential,
                 configuration: DownstreamConfigurationV1 {
                     name: "Claim HTTP protocol fixture".into(),
-                    endpoint: "https://claim.example".into(),
+                    endpoint: probe_endpoint.clone(),
                     accepted_package_versions: vec![PackageSchemaVersion::V1],
                     environments: DownstreamEnvironments::Paper,
                     enabled: true,
-                    development_http: false,
+                    development_http: true,
                 },
             },
             |_| async { Ok(()) },
@@ -367,12 +389,116 @@ async fn claim_http(
     .await
     .unwrap()
     .resource;
-    let web = support::fixture(pool.clone()).await;
-    let vault = integrations::secrets::SecretVault::open(
+    // Wait for the original immutable observation's refresh window; never edit its TTL.
+    assert!(store.prepare_downstream_refresh().await.unwrap().is_none());
+    tokio::time::sleep(std::time::Duration::from_secs(46)).await;
+    let (a, b) = tokio::join!(
+        store.prepare_downstream_refresh(),
+        store.prepare_downstream_refresh()
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_ne!(a.is_some(), b.is_some());
+    let ticket = a.or(b).unwrap();
+    let failed = store
+        .complete_downstream_refresh(
+            ticket,
+            DownstreamProbeOutcomeV1::Unavailable {
+                reason: contracts::runtime::RuntimeProbeFailure::EndpointDenied,
+            },
+            |_, _| async { Err(StoreError::Integrity) },
+        )
+        .await;
+    assert!(matches!(failed, Err(StoreError::Integrity)));
+    assert!(store.prepare_downstream_refresh().await.unwrap().is_none());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM app.downstream_probe_observations WHERE downstream_id=$1"
+        )
+        .bind(down.id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap(),
+        1
+    );
+    // Fault injection changes only the mutable retry reservation, never observed evidence.
+    sqlx::query("UPDATE app.downstream_probe_refresh SET lease_until=clock_timestamp()-interval '1 second',next_attempt_at=clock_timestamp() WHERE downstream_id=$1").bind(down.id.as_uuid()).execute(pool).await.unwrap();
+    let stale = store.prepare_downstream_refresh().await.unwrap().unwrap();
+    sqlx::query("UPDATE app.downstream_probe_refresh SET lease_id=$2,lease_until=clock_timestamp()-interval '1 second',next_attempt_at=clock_timestamp() WHERE downstream_id=$1").bind(down.id.as_uuid()).bind(Id::new().as_uuid()).execute(pool).await.unwrap();
+    assert!(matches!(
+        store
+            .complete_downstream_refresh(
+                stale,
+                DownstreamProbeOutcomeV1::Unavailable {
+                    reason: contracts::runtime::RuntimeProbeFailure::EndpointDenied
+                },
+                |_, _| async { panic!("lost reservation must not publish") }
+            )
+            .await,
+        Err(StoreError::Conflict)
+    ));
+    let worker_vault = integrations::secrets::SecretVault::open(
         &web._state.path().join("secrets"),
         &web._state.path().join("master.key"),
     )
     .unwrap();
+    let worker = server::worker::Worker::new(
+        store.clone(),
+        worker_vault,
+        integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
+        server::runtime_transport::RuntimeTargets::default(),
+        1,
+    )
+    .unwrap()
+    .with_downstream_targets(
+        server::runtime_transport::RuntimeTargets::new(
+            vec![server::runtime_transport::RuntimeTarget {
+                origin: probe_endpoint,
+                addresses: vec![probe_address],
+            }],
+            true,
+        )
+        .unwrap(),
+    );
+    let (shutdown, observed) = tokio::sync::watch::channel(false);
+    let first = tokio::spawn(worker.clone().run(observed.clone()));
+    let second = tokio::spawn(worker.run(observed));
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM app.downstream_probe_observations WHERE downstream_id=$1",
+            )
+            .bind(down.id.as_uuid())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if count == 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("native Worker probe must publish within its deadline");
+    shutdown.send(true).unwrap();
+    first.await.unwrap().unwrap();
+    second.await.unwrap().unwrap();
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let readiness = store.downstream_readiness(operator, down.id).await.unwrap();
+    assert_eq!(readiness.state, DownstreamReadinessState::Available);
+    let latest = readiness.latest_observation.unwrap();
+    assert_eq!(
+        latest.valid_until - latest.started_at,
+        chrono::Duration::seconds(60)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT created_by FROM app.artifacts WHERE id=$1")
+            .bind(latest.snapshot_artifact_id.as_uuid())
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        "RUNTIME"
+    );
+    assert!(store.prepare_downstream_refresh().await.unwrap().is_none());
     let principal = store
         .create_principal(
             operator,
@@ -528,4 +654,5 @@ async fn claim_http(
         assert!(result.resource.acknowledged_at.is_some());
     }
     listener.abort_all();
+    probe_server.abort();
 }

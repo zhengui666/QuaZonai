@@ -43,28 +43,7 @@ pub async fn probe(
             ProbePreparation::Replay(result) => return Ok(*result),
             ProbePreparation::Pending(ticket) => *ticket,
         };
-        let snapshot = ticket.snapshot.clone();
-        let native = tokio::task::spawn_blocking(move || {
-            let credential = vault
-                .read(snapshot.credential_ref, "DOWNSTREAM")
-                .map_err(|_| contracts::runtime::RuntimeProbeFailure::Authentication)?;
-            DownstreamTransport::new(
-                &targets,
-                &snapshot.endpoint,
-                snapshot.development_http,
-                &credential,
-            )
-        })
-        .await
-        .map_err(|_| StoreError::SecretCleanup)?;
-        let observed = match native {
-            Ok(native) => native.capabilities().await,
-            Err(reason) => Err(reason),
-        };
-        let outcome = match observed {
-            Ok(capabilities) => DownstreamProbeOutcomeV1::Available { capabilities },
-            Err(reason) => DownstreamProbeOutcomeV1::Unavailable { reason },
-        };
+        let outcome = observe(ticket.snapshot.clone(), vault, targets).await?;
         let mut publication = None;
         let publishing_objects = objects.clone();
         let result = store
@@ -78,21 +57,7 @@ pub async fn probe(
                 }
             })
             .await;
-        if let Some(artifact) = publication.filter(|_| result.is_err()) {
-            let cleanup = store
-                .discard_unpublished_operator_artifact(artifact, move |artifact| async move {
-                    tokio::task::spawn_blocking(move || objects.discard_unpublished(artifact))
-                        .await
-                        .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
-                })
-                .await;
-            if cleanup.is_err() {
-                // The original failure remains the response. Never delete on an
-                // uncertain database read or expose storage/native diagnostics.
-                tracing::warn!(artifact_id = %artifact, "downstream_probe_cleanup_deferred");
-            }
-        }
+        cleanup(&store, id, objects, publication.filter(|_| result.is_err())).await;
         result
     })
     .await?;
@@ -107,4 +72,87 @@ pub async fn readiness(
 ) -> Result<Json<DownstreamReadinessV1>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     Ok(Json(state.store.downstream_readiness(&actor, id).await?))
+}
+
+pub(crate) async fn observe(
+    snapshot: store::downstream::DownstreamSnapshot,
+    vault: std::sync::Arc<integrations::secrets::SecretVault>,
+    targets: std::sync::Arc<crate::runtime_transport::RuntimeTargets>,
+) -> Result<DownstreamProbeOutcomeV1, StoreError> {
+    let native = tokio::task::spawn_blocking(move || {
+        let credential = vault
+            .read(snapshot.credential_ref, "DOWNSTREAM")
+            .map_err(|_| contracts::runtime::RuntimeProbeFailure::Authentication)?;
+        DownstreamTransport::new(
+            &targets,
+            &snapshot.endpoint,
+            snapshot.development_http,
+            &credential,
+        )
+    })
+    .await
+    .map_err(|_| StoreError::SecretCleanup)?;
+    let observed = match native {
+        Ok(native) => native.capabilities().await,
+        Err(reason) => Err(reason),
+    };
+    Ok(match observed {
+        Ok(capabilities) => DownstreamProbeOutcomeV1::Available { capabilities },
+        Err(reason) => DownstreamProbeOutcomeV1::Unavailable { reason },
+    })
+}
+async fn cleanup(
+    store: &store::Store,
+    downstream: Id,
+    objects: std::sync::Arc<integrations::artifacts::ArtifactStore>,
+    artifact: Option<Id>,
+) {
+    if let Some(artifact) = artifact {
+        let cleanup = store
+            .discard_unpublished_downstream_artifact(
+                downstream,
+                artifact,
+                move |artifact| async move {
+                    tokio::task::spawn_blocking(move || objects.discard_unpublished(artifact))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                },
+            )
+            .await;
+        if cleanup.is_err() {
+            // The original failure remains the response. Never delete on an
+            // uncertain database read or expose storage/native diagnostics.
+            tracing::warn!(artifact_id = %artifact, "downstream_probe_cleanup_deferred");
+        }
+    }
+}
+
+/// Trusted Worker-only operation; no HTTP/CLI/MCP route accepts its ticket.
+pub(crate) async fn refresh(
+    store: store::Store,
+    vault: std::sync::Arc<integrations::secrets::SecretVault>,
+    objects: std::sync::Arc<integrations::artifacts::ArtifactStore>,
+    targets: std::sync::Arc<crate::runtime_transport::RuntimeTargets>,
+) -> Result<(), StoreError> {
+    let Some(ticket) = store.prepare_downstream_refresh().await? else {
+        return Ok(());
+    };
+    let id = ticket.downstream_id();
+    let outcome = observe(ticket.snapshot.clone(), vault, targets).await?;
+    let mut publication = None;
+    let publishing_objects = objects.clone();
+    let result = store
+        .complete_downstream_refresh(ticket, outcome, |artifact, bytes| {
+            publication = Some(artifact);
+            async move {
+                tokio::task::spawn_blocking(move || publishing_objects.put(artifact, &bytes))
+                    .await
+                    .map_err(|_| StoreError::Integrity)?
+                    .map_err(|_| StoreError::Integrity)
+            }
+        })
+        .await;
+    cleanup(&store, id, objects, publication.filter(|_| result.is_err())).await;
+    result.map(|_| ())
 }

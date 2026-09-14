@@ -332,3 +332,94 @@ async fn publication_failure_and_elapsed_callback_leave_no_observation_or_receip
     let counts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.downstream_probe_observations),(SELECT count(*) FROM app.command_receipts WHERE operation='DOWNSTREAM_PROBE'),(SELECT count(*) FROM app.artifacts WHERE schema_name='qz.downstream_probe')").fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (0, 0, 0));
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn uncertain_cleanup_waits_for_original_publication_and_preserves_committed_reference(
+    pool: PgPool,
+) {
+    let (store, actor, value) = fixture(&pool).await;
+    let ticket = prepare(&store, &actor, &value, "cleanup-race").await;
+    let cleaning_store = store.clone();
+    let mut cleanup = None;
+    let receipt = store
+        .complete_downstream_probe(ticket, available(true), |artifact, bytes| {
+            assert!(!bytes.is_empty());
+            let (started, waiting) = tokio::sync::oneshot::channel();
+            cleanup = Some(tokio::spawn(async move {
+                started.send(()).unwrap();
+                cleaning_store
+                    .discard_unpublished_downstream_artifact(value.id, artifact, |_| async {
+                        panic!("cleanup must not discard a committing original observation")
+                    })
+                    .await
+            }));
+            async move {
+                waiting.await.unwrap();
+                // The native publication holds the same downstream row until commit.
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                Ok(())
+            }
+        })
+        .await
+        .unwrap();
+    assert!(!cleanup.unwrap().await.unwrap().unwrap());
+    let observation = store
+        .downstream_readiness(&actor, value.id)
+        .await
+        .unwrap()
+        .latest_observation
+        .unwrap();
+    assert_eq!(
+        observation.snapshot_artifact_id,
+        receipt.resource.snapshot_artifact_id
+    );
+    let removed = store
+        .discard_unpublished_downstream_artifact(value.id, Id::new(), |_| async { Ok(()) })
+        .await
+        .unwrap();
+    assert!(removed);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn delayed_observation_insert_cannot_commit_past_the_probe_deadline(pool: PgPool) {
+    let (store, actor, value) = fixture(&pool).await;
+    sqlx::raw_sql("CREATE FUNCTION app.delay_probe_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(21); RETURN NEW; END $$; CREATE TRIGGER delay_probe_fixture BEFORE INSERT ON app.downstream_probe_observations FOR EACH ROW EXECUTE FUNCTION app.delay_probe_fixture();").execute(&pool).await.unwrap();
+    let result = store
+        .complete_downstream_probe(
+            prepare(&store, &actor, &value, "delayed-insert").await,
+            available(true),
+            publish,
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable("downstream_probe_expired")
+        ))
+    ));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.downstream_probe_observations")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM app.artifacts WHERE schema_name='qz.downstream_probe'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM app.command_receipts WHERE operation='DOWNSTREAM_PROBE'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+}
