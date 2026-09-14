@@ -13415,6 +13415,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "PORTFOLIO_STUDY"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/PortfolioStudyRequestV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "CYCLE_START"
                 ],
                 "type": "string"

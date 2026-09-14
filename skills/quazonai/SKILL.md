@@ -40,7 +40,8 @@ Store.start_portfolio_study复用原Operator授权、预算和PGMQ，核对原�
 包含Sealed选择观测的研究可用截止；只向原生任务提供唯一PORTFOLIO目录。
 可信Worker发表独立PORTFOLIO结果，复核原三报告及Arrow历史；取消/失败/不可行
 不授PASS，原发表回执才能ACK。现有Candidate评估读取保留原类型，不借HOLD。
-正式Study HTTP/CLI仍未接通，不能声称已完成组合交付。
+正式入口为client portfolio study及POST /api/v2/portfolio-studies，仅六字段意图，
+CLI grant使用PORTFOLIO_STUDY命令，沿用PORTFOLIO_SIMULATE权限；不表示完成组合交付。
 FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，不触发交付。
 新政策分别冻结metric_requirements与sealed_metric_requirements，不能复制分折要求
 冒充封存阈值；历史null不补写，需人工新建完整政策和研究周期。

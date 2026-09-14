@@ -612,7 +612,9 @@ manual_cutoffs:null|Time[2..256]}，必须有组合阈值、同项目PORTFOLIO�
 仍须正式准入核对。列表/详情返回原完整计划，不读原始市场字节。
 Store的start_portfolio_study已实现受Operator授权的原计划准入，严格意图仅为
 schema_version/cycle_id/candidate_id/runtime_id/expected_runtime_revision/limits。
-它绑定原成员、费用和政策，复用预算/PGMQ；目前尚无正式Study HTTP/CLI命令。
+正式入口为POST /api/v2/portfolio-studies及client portfolio study，从stdin读取
+该严格意图，需Idempotency-Key；CLI使用同一PORTFOLIO_STUDY命令签发Operator grant。
+它绑定原成员、费用和政策，复用PORTFOLIO_SIMULATE权限、预算/PGMQ，返回202 Run。
 可信Worker为原Study绑定发表独立PORTFOLIO评估，现有Candidate评估读取保留
 PORTFOLIO与FORWARD类型。完整三报告/Arrow及来源重验、发表回执后才允许ACK；
 取消/失败/不可行不产生PASS，不能调用HOLD结果替代Study或据此自动交付。

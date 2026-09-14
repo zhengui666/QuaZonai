@@ -26,7 +26,8 @@ const metric: Schema['MetricValueV1'] = {
   method_id: 'nautilus-analysis.SharpeRatio', method_version: '0.63.0', source_artifact_id: id(96), higher_is_better: true,
 };
 
-for (const wrongSubject of [false, true]) test(`candidate evaluations preserve original metrics and reject other subjects: wrong=${wrongSubject}`, async ({ page }) => {
+for (const kind of ['FORWARD', 'PORTFOLIO'] as const) for (const wrongSubject of [false, true]) test(`candidate evaluations preserve original metrics and reject other subjects: kind=${kind}, wrong=${wrongSubject}`, async ({ page }) => {
+  const original = { ...evaluation, evaluation_kind: kind };
   await fixture(page);
   await page.route('**/api/v2/**', route => {
     const url = new URL(route.request().url());
@@ -37,9 +38,9 @@ for (const wrongSubject of [false, true]) test(`candidate evaluations preserve o
     if (path === `/api/v2/portfolio-candidates/${header.id}/evaluations`) {
       expect(route.request().method()).toBe('GET');
       if (url.searchParams.has('cursor')) return route.abort('failed');
-      return reply(route, { schema_version: 1, items: [evaluation], next_cursor: evaluation.id });
+      return reply(route, { schema_version: 1, items: [original], next_cursor: evaluation.id });
     }
-    if (path === `/api/v2/evaluations/${evaluation.id}`) return reply(route, wrongSubject ? { ...evaluation, subject_candidate_id: id(99) } : evaluation);
+    if (path === `/api/v2/evaluations/${evaluation.id}`) return reply(route, wrongSubject ? { ...original, subject_candidate_id: id(99) } : original);
     if (path === `/api/v2/evaluations/${evaluation.id}/metrics`) {
       expect(wrongSubject).toBe(false);
       return reply(route, { schema_version: 1, items: [metric, { ...metric, metric_code: 'MISSING_SHARPE', value: null, status: 'INSUFFICIENT_DATA', reason_code: 'PORTFOLIO_DAILY_RETURNS_UNAVAILABLE' }], next_cursor: null });
@@ -56,11 +57,12 @@ for (const wrongSubject of [false, true]) test(`candidate evaluations preserve o
   await expect(candidate.getByRole('button', { name: '上一页', exact: true })).toBeEnabled();
   await candidate.getByRole('button', { name: '上一页', exact: true }).click();
   await candidate.getByRole('button', { name: `评估 ${evaluation.id.slice(-8)}`, exact: true }).click();
-  const detail = page.getByRole('dialog', { name: '候选保持研究评估', exact: true });
+  const detail = page.getByRole('dialog', { name: '候选研究评估', exact: true });
   if (wrongSubject) {
     await expect(detail.getByText('请求未完成，请重试并检查服务状态。', { exact: true })).toBeVisible();
     await expect(detail.getByRole('table')).toHaveCount(0);
   } else {
+    await expect(detail.getByText(kind, { exact: true })).toBeVisible();
     await expect(detail.getByText('缺值：PORTFOLIO_DAILY_RETURNS_UNAVAILABLE', { exact: true })).toBeVisible();
     await expect(detail.getByRole('cell', { name: '0', exact: true })).toBeVisible();
     await expect(detail.getByRole('cell', { name: '252', exact: true }).first()).toBeVisible();

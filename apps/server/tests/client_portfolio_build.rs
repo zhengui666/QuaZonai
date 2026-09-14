@@ -12,20 +12,25 @@ use std::{fs, os::unix::fs::PermissionsExt};
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn portfolio_cli_requires_exact_human_intent_and_never_admits_a_missing_cycle(pool: PgPool) {
-    check_intent(pool, false).await;
+    check_intent(pool, "build").await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn candidate_simulation_cli_requires_its_own_exact_human_intent(pool: PgPool) {
-    check_intent(pool, true).await;
+    check_intent(pool, "simulate").await;
 }
 
-async fn check_intent(pool: PgPool, simulation: bool) {
-    let command = if simulation { "simulate" } else { "build" };
-    let operation = if simulation {
-        "PORTFOLIO_SIMULATE"
-    } else {
-        "PORTFOLIO_BUILD"
+#[sqlx::test(migrations = "../../migrations")]
+async fn portfolio_study_cli_requires_its_own_exact_human_intent(pool: PgPool) {
+    check_intent(pool, "study").await;
+}
+
+async fn check_intent(pool: PgPool, command: &str) {
+    let simulation = command != "build";
+    let operation = match command {
+        "study" => "PORTFOLIO_STUDY",
+        "simulate" => "PORTFOLIO_SIMULATE",
+        _ => "PORTFOLIO_BUILD",
     };
     let f = support::fixture(pool.clone()).await;
     let (enrollment, initial, totp) = support::start(&f).await;
@@ -71,6 +76,9 @@ async fn check_intent(pool: PgPool, simulation: bool) {
             object.remove(key);
         }
         object.insert("candidate_id".into(), json!(mandate.id));
+        if command == "study" {
+            object.remove("input_set_id");
+        }
     }
     let (origin, _listener) = listen(&f).await;
     let denied = invoke(

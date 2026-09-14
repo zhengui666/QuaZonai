@@ -3,6 +3,34 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Formal Study HTTP/CLI and original evaluation views, 2026-09-14
+
+POST /api/v2/portfolio-studies and client portfolio study submit the existing
+strict six-field intent. PORTFOLIO_STUDY is a distinct OperatorCommand using the
+existing PORTFOLIO_SIMULATE permission, exact grant normalization, idempotency,
+budget and object cleanup. No plan, model, input or fee overrides are accepted.
+Candidate evaluation list/detail now accept original PORTFOLIO as well as FORWARD
+records and explicitly display their type; ownership checks remain unchanged.
+
+Verified on fa5b2903 plus this patch, editing and verification serial:
+
+- verify-5qnJJj: workspace check, fmt, strict Clippy and complete evidence suite
+  passed with source unchanged. Native CLI/TCP/PostgreSQL Study test checks its
+  exact human intent, missing Candidate rejection, changed-intent denial and no
+  Run creation. This is not a positive full native Study acceptance test.
+- web-verify-P6DBlJ: native contract generation repeated byte-identically for
+  all six allowed outputs with handwritten sources unchanged; typecheck, unit
+  tests, build, settings browser checks and all 249 three-viewport browser tests
+  passed. Both PORTFOLIO and FORWARD preserve original metrics, missing values
+  and expiry and reject an unrelated Candidate in detail.
+- cargo test --locked -p server --test request_schema_bounds --test
+  openapi_operation_ids --test http_openapi_references: all seven tests passed.
+
+No new dependencies or numerical computation. Study submission UI, positive
+HTTP-to-native full-chain acceptance and remaining delivery contracts still need
+completion; controlled UI/CLI fixtures do not prove scientific PASS or T42.
+No push, Codex review request, merge or Issue closure in this stage.
+
 ## Independent portfolio Study publication, 2026-09-14
 
 The existing candidate publisher now handles original PORTFOLIO/STUDY bindings

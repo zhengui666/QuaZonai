@@ -2094,6 +2094,8 @@ PORTFOLIO_SIMULATE操作。Store从同项目已封口成功VALID Candidate重读
 保存计划仍是研究准备，不启动Run、不读取市场原始字节或证明原生能力与资格。
 正式Study命令只接收schema_version、cycle_id、candidate_id、runtime_id、
 expected_runtime_revision和limits；沿用PORTFOLIO_SIMULATE授权、预算和队列。
+操作入口为POST /api/v2/portfolio-studies与client portfolio study；授权意图
+命令为PORTFOLIO_STUDY，映射同一PORTFOLIO_SIMULATE权限，但不接受HOLD意图替代。
 原Candidate只确定Mandate和完整成员，不提供历史持仓；其目标TTL不限制离线研究。
 模型研究可用截止包括原Discovery/Validation及用于资格选择的Sealed观测，
 取原可用时间的最大值，不用登记墙钟代替历史时间。仅读取Sealed元数据，

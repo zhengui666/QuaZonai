@@ -69,15 +69,16 @@ function CandidateEvaluations({ id, project }: { id: string; project: string }) 
   const cursor = history.at(-1);
   const query = useQuery({ queryKey: ['candidate-evaluations', project, id, cursor], queryFn: async ({ signal }) => {
     const page = dataOf(await api.GET('/api/v2/portfolio-candidates/{id}/evaluations', { params: { path: { id }, query: { cursor, limit: 25 } }, signal }));
-    if (page.items.some(item => item.project_id !== project || item.subject_candidate_id !== id || item.subject_alpha_version_id !== null || item.evaluation_kind !== 'FORWARD')) throw new Error('评估不属于当前候选。');
+    if (page.items.some(item => item.project_id !== project || item.subject_candidate_id !== id || item.subject_alpha_version_id !== null || !['FORWARD', 'PORTFOLIO'].includes(item.evaluation_kind))) throw new Error('评估不属于当前候选。');
     return page;
   } });
   return <Space orientation="vertical" className="full-width">
-    <Typography.Title level={2}>已发表的候选保持研究评估</Typography.Title>
+    <Typography.Title level={2}>已发表的候选研究评估</Typography.Title>
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新候选评估</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['EvaluationView']> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 850 }} locale={{ emptyText: <NoData text="尚无已发表的候选评估；不代表通过，也不会自动运行模拟。" /> }} columns={[
         { title: '评估', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>评估 {item.id.slice(-8)}</Button> },
+        { title: '评估类型', dataIndex: 'evaluation_kind' },
         { title: '执行状态', dataIndex: 'execution_status' }, { title: '证据状态', dataIndex: 'evidence_status' },
         { title: '科学决策（非资格）', dataIndex: 'decision' }, { title: '来源', dataIndex: 'origin' },
         { title: '原有效期', key: 'validity', render: (_, item) => item.valid_until ? `${displayTime(item.valid_until)} · ${item.unexpired_at_read ? '读取时未过期' : '读取时已过期'}` : '未授予有效期' },

@@ -130,6 +130,8 @@ pub enum Portfolio {
     Build,
     /// Hold original Candidate targets in one simulated account; not Evaluation approval.
     Simulate,
+    /// Study the original policy window and complete Candidate cohort; not approval or delivery.
+    Study,
     #[command(subcommand)]
     Candidate(Candidate),
     #[command(subcommand)]
@@ -532,6 +534,12 @@ impl Command {
                     contracts::portfolio::CandidateSimulationRequestV1,
                     CommandResult<RunSnapshotV1>,
                 >(POST, "/api/v2/candidate-simulations", 202, true)?
+            }
+            Self::Portfolio(Portfolio::Study) => {
+                Request::write::<
+                    contracts::portfolio::PortfolioStudyRequestV1,
+                    CommandResult<RunSnapshotV1>,
+                >(POST, "/api/v2/portfolio-studies", 202, true)?
             }
             Self::Portfolio(Portfolio::Candidate(command)) => match command {
                 Candidate::List { project_id, page } => Request::get::<Page<CandidateViewV1>>(

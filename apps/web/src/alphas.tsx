@@ -290,7 +290,7 @@ export function EvaluationDetail({ id, close, candidate }: { id: string; close: 
   const cursor = history.at(-1);
   const query = useQuery({ queryKey: ['evaluation', id, candidate], queryFn: async ({ signal }) => {
     const value = dataOf(await api.GET('/api/v2/evaluations/{id}', { params: { path: { id } }, signal }));
-    if (value.id !== id || (candidate && (value.project_id !== candidate.project || value.subject_candidate_id !== candidate.id || value.subject_alpha_version_id !== null || value.evaluation_kind !== 'FORWARD'))) throw new Error('服务器返回了其他评估记录。');
+    if (value.id !== id || (candidate && (value.project_id !== candidate.project || value.subject_candidate_id !== candidate.id || value.subject_alpha_version_id !== null || !['FORWARD', 'PORTFOLIO'].includes(value.evaluation_kind)))) throw new Error('服务器返回了其他评估记录。');
     return value;
   } });
   const metrics = useQuery({ queryKey: ['evaluation-metrics', id, cursor], enabled: !!query.data && !query.isError,
@@ -300,12 +300,13 @@ export function EvaluationDetail({ id, close, candidate }: { id: string; close: 
       return page;
     } });
   const value = query.data;
-  return <Drawer title={candidate ? '候选保持研究评估' : '正式 Validation 评估'} open width={1000} onClose={close}>
+  return <Drawer title={candidate ? '候选研究评估' : '正式 Validation 评估'} open width={1000} onClose={close}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!value} reload={() => { void query.refetch(); }}>
       {value && <Space orientation="vertical" size="middle" className="full-width break-word">
         <Alert showIcon type="info" title="这是历史科学证据，不是资格或交付批准。" description="缺值和过期不会被补齐；本页不读取报告字节、标签、训练索引或 Sealed 数据。" />
         <Descriptions column={1} items={[
           { key: 'id', label: '评估编号', children: value.id },
+          { key: 'kind', label: '评估类型', children: value.evaluation_kind },
           { key: 'status', label: '执行 / 证据 / 科学决策', children: `${value.execution_status} / ${value.evidence_status} / ${value.decision}` },
           { key: 'subject', label: candidate ? '原候选' : 'Alpha 版本', children: candidate ? value.subject_candidate_id : value.subject_alpha_version_id },
           { key: 'policy', label: '冻结政策', children: value.policy_id },

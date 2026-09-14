@@ -63,6 +63,7 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         OperatorCommand::AlphaEvaluate(r) => crate::data::bounded_native_limits(&r.limits),
         OperatorCommand::PortfolioBuild(r) => crate::portfolio::build_selection(r),
         OperatorCommand::PortfolioSimulate(r) => crate::data::bounded_native_limits(&r.limits),
+        OperatorCommand::PortfolioStudy(r) => crate::data::bounded_native_limits(&r.limits),
         OperatorCommand::CycleStart(_) => Ok(()),
         OperatorCommand::IntegrationSecretRegister(r) => crate::settings::secret_intent(r),
         OperatorCommand::RuntimeProbe(_) => Ok(()),

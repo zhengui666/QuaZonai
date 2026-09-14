@@ -86,6 +86,28 @@ pub async fn simulate(
     .await
 }
 
+#[utoipa::path(post,path="/api/v2/portfolio-studies",operation_id="start_portfolio_study",tag="Portfolio",request_body=PortfolioStudyRequestV1,params(("Idempotency-Key"=String,Header)),responses((status=202,body=CommandResult<contracts::runs::RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn study(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    body: Result<Json<PortfolioStudyRequestV1>, JsonRejection>,
+) -> Result<
+    (
+        StatusCode,
+        Json<CommandResult<contracts::runs::RunSnapshotV1>>,
+    ),
+    ApiError,
+> {
+    run_portfolio(
+        state,
+        actor,
+        headers,
+        contracts::control::OperatorCommand::PortfolioStudy(json(body)?),
+    )
+    .await
+}
+
 async fn run_portfolio(
     state: AppState,
     actor: store::authority::Actor,
@@ -136,6 +158,11 @@ async fn run_portfolio(
             contracts::control::OperatorCommand::PortfolioSimulate(request) => {
                 store
                     .start_candidate_simulation(&actor, &key, &request, read, publish)
+                    .await
+            }
+            contracts::control::OperatorCommand::PortfolioStudy(request) => {
+                store
+                    .start_portfolio_study(&actor, &key, &request, read, publish)
                     .await
             }
             _ => Err(StoreError::Invalid("portfolio_operation")),
