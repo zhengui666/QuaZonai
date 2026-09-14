@@ -4699,3 +4699,10 @@ Wake 失败整体回滚，但不撤销既有 Evaluation；原消息留给 Worker
 - 首次 verify-hyhXdE：编译/格式、原启动14项、新旧Forward3项及Worker检查通过；严格Clippy发现测试模块重复加载，之后改为复用原模块。
 - 最终 verify-pDzDP4：全workspace/all-targets编译、格式、严格Clippy通过；144合同/领域 + 86 PostgreSQL + 25 HTTP/CLI/Worker = 255测试通过。验证期间全部源文件不变，隔离PG退出码0。无wire合同变化，无生成物手改。
 - 尚未完成实际Worker消费成功后到原生模型/新一代Candidate再反馈的整链验收、Live晋级及其余#62合同。未push、未请求最新Head review、未合并、未关闭Issue。
+
+
+### 2026-09-14：Wake 参数发布期间的授权到期
+
+新增原生PG回归先由真实人工授权登记未来撤权时间，再实际写出新Cycle参数，使用数据库时间等待该时间到达。最终来源复核拒绝提交，Cycle/Run admission/PGMQ数量与调用前相同；原参数对象按Project锁确认无引用后清理。下一次消费不读写对象而取消旧Wake，保留DEGRADED原观察。没有修改宿主时钟、改写历史Evaluation或伪造成功Cycle；现有提交前复核已满足该边界，未改产品实现。
+
+verify-f9DuXU：workspace/all-targets编译、格式、严格Clippy通过；分类1 + 原Cycle14 + Forward/Wake4 + Worker1 = 20项定向测试通过，验证期间源文件不变，隔离PG停止。该受控协议/关系测试不是生产模型、多日真实反馈或OCI整链证据。实际Worker成功消费后到Mission及后代反馈链、Live晋级与完整#62验收仍未完成。

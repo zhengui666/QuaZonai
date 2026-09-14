@@ -13,18 +13,36 @@ use sqlx::PgPool;
 use store::StoreError;
 #[sqlx::test(migrations = "../../migrations")]
 async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool: PgPool) {
-    exercise(pool, None).await;
+    exercise(pool, Case::Relational).await;
 }
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_wake_consumes_original_human_context_once(pool: PgPool) {
-    exercise(pool, Some(false)).await;
+    exercise(pool, Case::Native).await;
 }
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_wake_honors_daily_cycle_quota(pool: PgPool) {
-    exercise(pool, Some(true)).await;
+    exercise(pool, Case::DailyQuota).await;
 }
 
-async fn exercise(pool: PgPool, native: Option<bool>) {
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_wake_rechecks_expiry_after_parameter_publication(pool: PgPool) {
+    exercise(pool, Case::Expiry).await;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Case {
+    Relational,
+    Native,
+    DailyQuota,
+    Expiry,
+}
+
+async fn exercise(pool: PgPool, case: Case) {
+    let native = match case {
+        Case::Relational => None,
+        Case::DailyQuota => Some(true),
+        Case::Native | Case::Expiry => Some(false),
+    };
     let human = if let Some(quota) = native {
         Some(human_source(&pool, quota).await)
     } else {
@@ -351,7 +369,12 @@ async fn exercise(pool: PgPool, native: Option<bool>) {
             )
             .await
             .unwrap();
-        let scheduled_at = finished + Duration::minutes(30);
+        let scheduled_at = finished
+            + if case == Case::Expiry {
+                Duration::seconds(20)
+            } else {
+                Duration::minutes(30)
+            };
         future_revocation = store
             .revoke_automation(
                 &operator,
@@ -518,6 +541,54 @@ async fn exercise(pool: PgPool, native: Option<bool>) {
                 assert!(wait <= 15.0);
                 tokio::time::sleep(std::time::Duration::from_secs_f64(wait + 0.02)).await;
                 let before: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.research_cycles),(SELECT count(*) FROM app.run_admissions),(SELECT count(*) FROM pgmq.q_runs)").fetch_one(&pool).await.unwrap();
+                if case == Case::Expiry {
+                    let mut allocated = Vec::new();
+                    let error = store.consume_degradation_wake(wake_id, read, |object| {
+                        allocated.push(object.id);
+                        let writing = publish(object);
+                        let pool = &pool;
+                        async move {
+                            writing.await?;
+                            let remaining: f64 = sqlx::query_scalar("SELECT greatest(0,extract(epoch FROM ($1::timestamptz-clock_timestamp())))::double precision")
+                                .bind(scheduled_at).fetch_one(pool).await?;
+                            assert!(remaining > 0.0 && remaining <= 20.0);
+                            tokio::time::sleep(std::time::Duration::from_secs_f64(remaining + 0.03)).await;
+                            Ok(())
+                        }
+                    }).await.unwrap_err();
+                    assert!(
+                        matches!(error, StoreError::Invalid("wake_source_not_current")),
+                        "{error:?}"
+                    );
+                    assert_eq!(
+                        allocated.len(),
+                        1,
+                        "must reach actual parameter publication"
+                    );
+                    let after: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.research_cycles),(SELECT count(*) FROM app.run_admissions),(SELECT count(*) FROM pgmq.q_runs)").fetch_one(&pool).await.unwrap();
+                    assert_eq!(before, after);
+                    for id in allocated {
+                        assert!(store
+                            .discard_unpublished_forward_artifact(f.project, id, |id| {
+                                assert!(objects.lock().unwrap().remove(&id).is_some());
+                                async { Ok(()) }
+                            })
+                            .await
+                            .unwrap());
+                    }
+                    assert!(store
+                        .consume_degradation_wake(
+                            wake_id,
+                            |_, _| async { panic!("expired source read") },
+                            |_| async { panic!("expired source publish") }
+                        )
+                        .await
+                        .unwrap()
+                        .is_none());
+                    let historical: (String,String,Option<uuid::Uuid>) = sqlx::query_as("SELECT o.classification,w.state,w.consumed_cycle_id FROM app.wake_events w JOIN app.degradation_observations o ON o.id=w.observation_id WHERE w.id=$1").bind(wake_id.as_uuid()).fetch_one(&pool).await.unwrap();
+                    assert_eq!(historical, ("DEGRADED".into(), "CANCELLED".into(), None));
+                    return;
+                }
                 sqlx::query("CREATE FUNCTION app.fail_wake_consume() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='CONSUMED' THEN RAISE EXCEPTION 'controlled consumption failure'; END IF; RETURN NEW; END $$").execute(&pool).await.unwrap();
                 sqlx::query("CREATE TRIGGER fail_wake_consume BEFORE UPDATE ON app.wake_events FOR EACH ROW EXECUTE FUNCTION app.fail_wake_consume()").execute(&pool).await.unwrap();
                 assert!(store
