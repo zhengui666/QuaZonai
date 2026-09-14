@@ -2,7 +2,7 @@
 //! This is NOT a production probe, real OCI execution, or scientific evidence.
 #![allow(dead_code)]
 #[path = "runtime.rs"]
-mod protocol_fixture;
+pub mod protocol_fixture;
 use chrono::{DateTime, Duration, Utc};
 use contracts::{
     runtime::{RuntimeCapabilitiesV1, RuntimeImageV1, RuntimeProbeOutcomeV1},

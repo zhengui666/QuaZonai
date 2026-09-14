@@ -250,12 +250,14 @@ impl Worker {
             tracing::info!(handoff_id=%offer.id,"original frozen policy produced a Paper offer");
         }
         let feedback = self.process_forward(project).await;
+        let wake = self.process_wake(project).await;
         (
             Some(project),
             result
                 .map(|_| ())
                 .map_err(WorkerFailure::from)
-                .and(feedback),
+                .and(feedback)
+                .and(wake),
         )
     }
 
@@ -306,6 +308,58 @@ impl Worker {
                 .is_err()
             {
                 tracing::warn!(artifact_id=%id,"Forward parameter cleanup deferred");
+            }
+        }
+        result?;
+        Ok(())
+    }
+
+    async fn process_wake(&self, project: Id) -> Result<(), WorkerFailure> {
+        let Some(wake) = self.store.prepare_degradation_wake(project).await? else {
+            return Ok(());
+        };
+        let reading = self.objects.clone();
+        let publishing = self.objects.clone();
+        let mut allocated = Vec::new();
+        let result = self
+            .store
+            .consume_degradation_wake(
+                wake,
+                move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+                |object| {
+                    allocated.push(object.id);
+                    let objects = publishing.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+            )
+            .await;
+        for id in allocated.into_iter().filter(|_| result.is_err()) {
+            let objects = self.objects.clone();
+            if self
+                .store
+                .discard_unpublished_forward_artifact(project, id, move |id| async move {
+                    tokio::task::spawn_blocking(move || objects.discard_unpublished(id))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                })
+                .await
+                .is_err()
+            {
+                tracing::warn!(artifact_id=%id,"Wake parameter cleanup deferred");
             }
         }
         result?;

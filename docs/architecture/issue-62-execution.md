@@ -4688,3 +4688,14 @@ Wake 失败整体回滚，但不撤销既有 Evaluation；原消息留给 Worker
 分类消费、故障事务与恢复，不证明实际市场/OCI统计或完整生产链。PENDING Wake
 不是已启动 Cycle；受限自动 Cycle、冷却/每日预算/原生上下文裁决、Live 晋级
 及相应界面与完整验收仍须继续。本阶段未 push、请求 review、合并或关闭 Issue。
+
+
+### 2026-09-14：原生 Wake → 受限 Cycle
+
+- DESIGN A7.10 明确原人工作业上下文继承：原 Candidate Run/Cycle/startup、当前冻结 Brief、真实 CYCLE_START 回执和两个 Profile 原 ID/版本。没有 Operator 伪装、Agent 入口或新增模型/运行时选择。
+- 共用 Store::admit_cycle 原生准备/预算/PGMQ/启动绑定；人工路径保留最终真实授权复核。可信消费在 Project/Wake 锁内复核原观察、Evaluation/window 和完整 Forward 来源/当前政策，发布参数后再次复核；取消失效旧 Wake，保留历史观察。
+- 按所有原项目 Cycle 的 UTC 日额度和冻结冷却延后；暂停不启动。每轮公平预约一项三十秒重试，沿用现有 Worker 项目轮询与未引用对象清理；过期政策的待处理 Wake 仍能被轮询清理。新迁移071约束原 Wake/Cycle 双向绑定并冻结终态，原生研究入队与消费同事务。
+- 原生 PostgreSQL/PGMQ 检查使用真实人工 Brief 更新/冻结/启动，Forward 科学响应和 Candidate/历史 Claim 仍是明确的关系/协议 fixture。覆盖暂停、冷却、日额度、预约并发、消费并发唯一、最后写失败回滚、重放不读写对象、终态不可重开；无原人工上下文拒绝，更正来源取消旧 Wake。未把这些测试称为真实多日反馈、生产 OCI 或模型执行验收。
+- 首次 verify-hyhXdE：编译/格式、原启动14项、新旧Forward3项及Worker检查通过；严格Clippy发现测试模块重复加载，之后改为复用原模块。
+- 最终 verify-pDzDP4：全workspace/all-targets编译、格式、严格Clippy通过；144合同/领域 + 86 PostgreSQL + 25 HTTP/CLI/Worker = 255测试通过。验证期间全部源文件不变，隔离PG退出码0。无wire合同变化，无生成物手改。
+- 尚未完成实际Worker消费成功后到原生模型/新一代Candidate再反馈的整链验收、Live晋级及其余#62合同。未push、未请求最新Head review、未合并、未关闭Issue。

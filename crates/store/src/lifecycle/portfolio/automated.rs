@@ -36,7 +36,7 @@ impl Store {
         &self,
         cursor: Option<Id>,
     ) -> Result<Option<Id>, StoreError> {
-        let id:Option<uuid::Uuid>=sqlx::query_scalar("SELECT p.id FROM app.projects p JOIN app.automation_policies policy ON policy.id=p.current_automation_policy_id AND policy.project_id=p.id WHERE p.state='ACTIVE' AND policy.mode<>'MANUAL' AND policy.enabled_for_new_rebalances AND policy.valid_until>clock_timestamp() AND ($1::uuid IS NULL OR p.id>$1) ORDER BY p.id LIMIT 1")
+        let id:Option<uuid::Uuid>=sqlx::query_scalar("SELECT p.id FROM app.projects p LEFT JOIN app.automation_policies policy ON policy.id=p.current_automation_policy_id AND policy.project_id=p.id WHERE p.state='ACTIVE' AND ((policy.mode<>'MANUAL' AND policy.enabled_for_new_rebalances AND policy.valid_until>clock_timestamp()) OR EXISTS(SELECT 1 FROM app.wake_events w WHERE w.project_id=p.id AND w.trigger='DEGRADATION' AND w.state='PENDING' AND w.not_before<=clock_timestamp())) AND ($1::uuid IS NULL OR p.id>$1) ORDER BY p.id LIMIT 1")
             .bind(cursor.map(Id::as_uuid)).fetch_optional(&self.pool).await?;
         id.map(db::id).transpose()
     }

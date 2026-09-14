@@ -2836,6 +2836,14 @@ app.forward_schedule 是每原 Handoff/stream 一行的可变重试预约，不�
 
 PENDING 仅表示待裁决，不能视为已启动 Cycle。后续消费仍须重新核对原观察当前性、ACTIVE/政策/冷却/每日预算/原生研究上下文，并原子绑定唯一新 Cycle；PAUSED/ARCHIVED 不启动。后来的更正、过期或撤权不重贴旧观察，必须由消费者拒绝其过时授权。当前观察生产不创建 Approval/Offer、模型会话或研究 Cycle。
 
+### A7.10 Wake 的受限原生研究启动
+
+可信 Worker 在原项目自动化轮询中消费原生 DEGRADED Observation 的 DEGRADATION Wake，无 HTTP/Mission 入口。原 Wake、Observation、发表回执、Evaluation、Forward 输入和原 Release/Candidate 必须完整关联；消费前后重验完整原消息版本、当前原政策及评估/窗口期限。过期、更正或撤权取消旧 Wake，保留原 Observation。PAUSED/ARCHIVED 保留待处理 Wake。轮询只预约一项三十秒重试，失败不饥饿其他 Wake；预约不授予研究权限。
+
+研究上下文从原 Candidate 生产 Run 的 Cycle/startup 继承，Brief 必须仍为项目当前冻结版本；两个 Profile 的 ID/版本必须与同项目同 Brief 的真实人工 CYCLE_START 原回执及启动记录一致。自动产生的后代 Cycle 可以继承同一人工上下文，不伪造 Operator 会话、grant 或命令回执，不猜选新 Brief/模型/运行时。缺失原生上下文不创建 Cycle；变更上下文需新的人工研究事实。原 AutomationPolicy 的非 MANUAL 有效授权允许该范围内的受限重新研究，不授予审批/交付权限。
+
+沿用原冻结 Brief 的 min_cycle_interval_seconds 和 max_cycles_per_day；所有人工/自动 Cycle 都计入该项目的冷却参照与 UTC 日额度，失败/取消不退款。暂未满足条件时 PENDING 延至冷却截止或下一 UTC 日；不加永久睡眠或第二队列。共用人工启动的 Profile、数据许可、原生 Runtime 和预算校验，首个 Run 仍为 DATA_VALIDATE，随后由既有 Worker 启动有界 Mission。Cycle(trigger=DEGRADATION,wake_id)、预算预约、原生任务、PGMQ、startup 与 Wake(CONSUMED,consumed_cycle_id) 同事务提交；并发/重放只能得到一个原 Cycle。对象发布之后、提交之前再次核验原 Wake 授权和期限，失败整体回滚并按原项目锁清理未引用对象。入队与受控协议测试不是多日真实反馈或生产模型验收。
+
 ## A8. 集成、身份与幂等
 
 ### A8.0 原生 Codex 连接与会话适配

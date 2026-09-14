@@ -1,13 +1,75 @@
 //! Real PostgreSQL admission/publication over explicit historical relation fixtures.
+#[path = "../../../tests/support/cycles.rs"]
+mod cycle_support;
 #[path = "../../../tests/support/forward.rs"]
 mod forward_support;
 use chrono::{Duration, Utc};
 use contracts::{delivery::*, forward::*, research::*, DbCounter, Id, SchemaV1};
 use forward_support::count;
+use forward_support::{
+    research as research_support, runtime_observation::protocol_fixture as runtime_support,
+};
 use sqlx::PgPool;
 use store::StoreError;
 #[sqlx::test(migrations = "../../migrations")]
 async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool: PgPool) {
+    exercise(pool, None).await;
+}
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_wake_consumes_original_human_context_once(pool: PgPool) {
+    exercise(pool, Some(false)).await;
+}
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_wake_honors_daily_cycle_quota(pool: PgPool) {
+    exercise(pool, Some(true)).await;
+}
+
+async fn exercise(pool: PgPool, native: Option<bool>) {
+    let human = if let Some(quota) = native {
+        Some(human_source(&pool, quota).await)
+    } else {
+        None
+    };
+    let setup = if let Some((f, store, actor)) = &human {
+        let context = &f.freeze.execution_context;
+        let started = f
+            .start(
+                store,
+                actor,
+                "original-human-cycle",
+                &cycle_support::start_request(store, actor, f).await,
+            )
+            .await
+            .unwrap()
+            .resource;
+        let (run, session, fence, deadline) = forward_support::support::mission(
+            &pool,
+            f.data.project,
+            started.cycle.id,
+            context.discovery_input_set_id,
+            f.researcher_profile.profile_id,
+        )
+        .await;
+        let report =
+            forward_support::support::report_artifact(&pool, f.data.project, run, fence.attempt_id)
+                .await;
+        let relational = forward_support::support::Fixture {
+            project: f.data.project,
+            cycle: started.cycle.id,
+            run,
+            session,
+            profile: f.researcher_profile.profile_id,
+            input_set: context.discovery_input_set_id,
+            artifact: f.data.artifact,
+            report,
+            budget: f.brief.content.budget.clone(),
+            fence,
+            deadline,
+        };
+        forward_support::setup_with_source(&pool, relational, store.clone(), actor.clone()).await
+    } else {
+        forward_support::setup(&pool).await
+    };
     let forward_support::ForwardFixture {
         f,
         store,
@@ -21,9 +83,13 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
         mut message,
         original,
         policy,
-    } = forward_support::setup(&pool).await;
+    } = setup;
     let read = |id: Id, size: DbCounter| {
-        let result = objects.lock().unwrap().get(&id).cloned();
+        let result = objects.lock().unwrap().get(&id).cloned().or_else(|| {
+            human
+                .as_ref()
+                .and_then(|(f, _, _)| f.objects.read(id, size).ok())
+        });
         async move {
             let bytes = result.ok_or(StoreError::NotFound)?;
             assert_eq!(bytes.len() as u64, size.get());
@@ -395,6 +461,136 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
                 .await
                 .unwrap();
         assert_eq!(wake_count, 1);
+        let wake_id: uuid::Uuid =
+            sqlx::query_scalar("SELECT id FROM app.wake_events WHERE observation_id=$1")
+                .bind(observed.resource.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let wake_id: Id = wake_id.to_string().try_into().unwrap();
+        if let Some(quota) = native {
+            sqlx::query("UPDATE app.projects SET state='PAUSED' WHERE id=$1")
+                .bind(f.project.as_uuid())
+                .execute(&pool)
+                .await
+                .unwrap();
+            assert!(store
+                .prepare_degradation_wake(f.project)
+                .await
+                .unwrap()
+                .is_none());
+            assert!(store
+                .consume_degradation_wake(wake_id, read, publish)
+                .await
+                .unwrap()
+                .is_none());
+            sqlx::query("UPDATE app.projects SET state='ACTIVE' WHERE id=$1")
+                .bind(f.project.as_uuid())
+                .execute(&pool)
+                .await
+                .unwrap();
+            let (a, b) = tokio::join!(
+                store.prepare_degradation_wake(f.project),
+                store.prepare_degradation_wake(f.project)
+            );
+            assert_ne!(a.unwrap().is_some(), b.unwrap().is_some());
+            assert!(store
+                .consume_degradation_wake(wake_id, read, publish)
+                .await
+                .unwrap()
+                .is_none());
+            let reason: String =
+                sqlx::query_scalar("SELECT reason FROM app.wake_events WHERE id=$1")
+                    .bind(wake_id.as_uuid())
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                reason,
+                if quota {
+                    "CYCLES_PER_DAY"
+                } else {
+                    "CYCLE_COOLDOWN"
+                }
+            );
+            if !quota {
+                let wait: f64 = sqlx::query_scalar("SELECT greatest(0,extract(epoch FROM (not_before-clock_timestamp())))::double precision FROM app.wake_events WHERE id=$1").bind(wake_id.as_uuid()).fetch_one(&pool).await.unwrap();
+                assert!(wait <= 15.0);
+                tokio::time::sleep(std::time::Duration::from_secs_f64(wait + 0.02)).await;
+                let before: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.research_cycles),(SELECT count(*) FROM app.run_admissions),(SELECT count(*) FROM pgmq.q_runs)").fetch_one(&pool).await.unwrap();
+                sqlx::query("CREATE FUNCTION app.fail_wake_consume() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='CONSUMED' THEN RAISE EXCEPTION 'controlled consumption failure'; END IF; RETURN NEW; END $$").execute(&pool).await.unwrap();
+                sqlx::query("CREATE TRIGGER fail_wake_consume BEFORE UPDATE ON app.wake_events FOR EACH ROW EXECUTE FUNCTION app.fail_wake_consume()").execute(&pool).await.unwrap();
+                assert!(store
+                    .consume_degradation_wake(wake_id, read, publish)
+                    .await
+                    .is_err());
+                let after: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.research_cycles),(SELECT count(*) FROM app.run_admissions),(SELECT count(*) FROM pgmq.q_runs)").fetch_one(&pool).await.unwrap();
+                assert_eq!(before, after);
+                sqlx::query("DROP TRIGGER fail_wake_consume ON app.wake_events")
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                let (a, b) = tokio::join!(
+                    store.consume_degradation_wake(wake_id, read, publish),
+                    store.consume_degradation_wake(wake_id, read, publish)
+                );
+                let (a, b) = (a.unwrap().unwrap(), b.unwrap().unwrap());
+                assert_eq!(a.resource, b.resource);
+                assert_ne!(a.replayed, b.replayed);
+                let actual: (String,uuid::Uuid,String,i64) = sqlx::query_as("SELECT c.trigger,c.wake_id,r.kind,(SELECT count(*) FROM app.command_receipts WHERE operation='CYCLE_START') FROM app.research_cycles c JOIN app.cycle_startups s ON s.cycle_id=c.id JOIN app.runs r ON r.id=s.initial_run_id WHERE c.id=$1").bind(a.resource.as_uuid()).fetch_one(&pool).await.unwrap();
+                assert_eq!(
+                    actual,
+                    (
+                        "DEGRADATION".into(),
+                        wake_id.as_uuid(),
+                        "DATA_VALIDATE".into(),
+                        1
+                    )
+                );
+                assert!(sqlx::query(
+                    "UPDATE app.wake_events SET state='PENDING',consumed_cycle_id=NULL WHERE id=$1"
+                )
+                .bind(wake_id.as_uuid())
+                .execute(&pool)
+                .await
+                .is_err());
+                let replay = store
+                    .consume_degradation_wake(
+                        wake_id,
+                        |_, _| async { panic!("replay read") },
+                        |_| async { panic!("replay publish") },
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(replay.resource, a.resource);
+            }
+        } else {
+            assert!(matches!(
+                store.consume_degradation_wake(wake_id, read, publish).await,
+                Err(StoreError::Invalid("wake_human_context_required"))
+            ));
+            let mut correction = measurement_message.clone();
+            correction.external_message_id = "measurement-correction".into();
+            correction.report.message_revision = 2;
+            correction.report.supersedes_message_id = Some(request.window.latest_message_ids[0]);
+            store
+                .submit_forward_message(&actor, &correction, read, publish)
+                .await
+                .unwrap();
+            assert!(store
+                .consume_degradation_wake(wake_id, read, publish)
+                .await
+                .unwrap()
+                .is_none());
+            let state: String = sqlx::query_scalar("SELECT state FROM app.wake_events WHERE id=$1")
+                .bind(wake_id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(state, "CANCELLED");
+        }
+
         assert!(
             sqlx::query("DELETE FROM app.forward_observation_publications WHERE run_id=$1")
                 .bind(job.run.id.as_uuid())
@@ -592,4 +788,44 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
             .await,
         Err(StoreError::Invalid("forward_native_input_required"))
     ));
+}
+
+// Only the human freeze/start is native here. Candidate qualification, historical
+// Claim and scientific response remain explicit controlled relationship/protocol fixtures.
+async fn human_source(
+    pool: &PgPool,
+    quota: bool,
+) -> (
+    cycle_support::Fixture,
+    store::Store,
+    store::authority::Actor,
+) {
+    let (store, actor) = research_support::operator(pool).await;
+    let mut f = cycle_support::setup(pool, &store, &actor).await;
+    let mut content = f.brief.content.clone();
+    content.budget.min_cycle_interval_seconds = 15;
+    content.budget.max_cycles_per_day = if quota { 1 } else { 3 };
+    f.brief = store
+        .update_brief(
+            &actor,
+            "wake-budget",
+            f.brief.id,
+            &contracts::brief::BriefUpdate {
+                schema_version: SchemaV1,
+                expected_revision: f.brief.revision,
+                content,
+                bindings: f.brief.bindings.clone(),
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    f.freeze.expected_revision = f.brief.revision;
+    store
+        .freeze_brief(&actor, "wake-freeze", f.brief.id, &f.freeze, |id, size| {
+            f.read(id, size)
+        })
+        .await
+        .unwrap();
+    (f, store, actor)
 }

@@ -27,6 +27,8 @@ use std::collections::BTreeSet;
 
 type Tx<'a> = Transaction<'a, Postgres>;
 
+mod wake;
+
 pub(crate) async fn execution_context(
     tx: &mut Tx<'_>,
     brief: Id,
@@ -516,7 +518,7 @@ impl Store {
         actor: &Actor,
         key: &str,
         request: &CycleStartIntent,
-        mut read: R,
+        read: R,
         publish: P,
     ) -> Result<CommandResult<CycleStartedV1>, StoreError>
     where
@@ -539,6 +541,33 @@ impl Store {
             tx.commit().await?;
             return Ok(result);
         }
+        let (mut tx, resource) =
+            Self::admit_cycle(tx, key, request, prepared.target, None, read, publish).await?;
+        // Admission only writes in this transaction after the object callback.
+        // The original human authority must still hold before any fact commits.
+        commands::recheck_authority(&mut tx, actor, &prepared).await?;
+        let result = commands::finish(&mut tx, prepared, resource, 202).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    /// Shared native admission. Callers hold their own authority through commit;
+    /// this helper neither creates an Operator receipt nor commits a transaction.
+    async fn admit_cycle<'a, R, Read, P, Published>(
+        mut tx: Tx<'a>,
+        key: &str,
+        request: &CycleStartIntent,
+        cycle: Id,
+        wake: Option<Id>,
+        mut read: R,
+        publish: P,
+    ) -> Result<(Tx<'a>, CycleStartedV1), StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+        P: FnOnce(crate::lifecycle::native::NativeObjectPublication) -> Published,
+        Published: std::future::Future<Output = Result<(), StoreError>>,
+    {
         let p = sqlx::query("SELECT revision,state FROM app.projects WHERE id=$1 FOR UPDATE")
             .bind(request.project_id.as_uuid())
             .fetch_optional(&mut *tx)
@@ -597,10 +626,11 @@ impl Store {
         .fetch_one(&mut *tx)
         .await?;
         let ordinal = previous.checked_add(1).ok_or(StoreError::Integrity)?;
-        let cycle = prepared.target;
-        sqlx::query("INSERT INTO app.research_cycles(id,project_id,brief_id,ordinal,trigger,state,budget_snapshot,started_at,next_action) VALUES($1,$2,$3,$4,'OPERATOR','RUNNING',$5,$6,'DATA_VALIDATE')")
+        sqlx::query("INSERT INTO app.research_cycles(id,project_id,brief_id,ordinal,trigger,state,budget_snapshot,started_at,next_action,wake_id) VALUES($1,$2,$3,$4,$7,'RUNNING',$5,$6,'DATA_VALIDATE',$8)")
             .bind(cycle.as_uuid()).bind(request.project_id.as_uuid()).bind(brief.id.as_uuid())
-            .bind(ordinal).bind(db::json(budget)?).bind(now).execute(&mut *tx).await?;
+            .bind(ordinal).bind(db::json(budget)?).bind(now)
+            .bind(if wake.is_some() { "DEGRADATION" } else { "OPERATOR" })
+            .bind(wake.map(Id::as_uuid)).execute(&mut *tx).await?;
         // Reserve a bounded preparation slice, not all remaining research CPU.
         let cpu = (budget.max_cpu_seconds.get() / 10).clamp(1, 300);
         let limits = JobLimitsV1 {
@@ -632,7 +662,6 @@ impl Store {
             publish,
         )
         .await?;
-        commands::recheck_authority(&mut tx, actor, &prepared).await?;
         let (mut tx, admitted) = Self::enqueue_run_in_transaction(
             tx,
             key,
@@ -668,10 +697,7 @@ impl Store {
             cycle: cycle_view(&row)?,
             run: admitted.resource,
         };
-        commands::recheck_authority(&mut tx, actor, &prepared).await?;
-        let result = commands::finish(&mut tx, prepared, resource, 202).await?;
-        tx.commit().await?;
-        Ok(result)
+        Ok((tx, resource))
     }
 
     pub async fn cycle(&self, actor: &Actor, id: Id) -> Result<CycleViewV1, StoreError> {

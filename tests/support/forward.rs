@@ -1,11 +1,11 @@
 //! Real PG/PGMQ admission over explicitly relational historical Claim/Runtime fixtures.
 //! This does not prove a production Claim, multi-day market feedback or OCI execution.
 #[path = "research.rs"]
-mod research;
+pub mod research;
 #[path = "runtime_observation.rs"]
-mod runtime_observation;
+pub mod runtime_observation;
 #[path = "../../crates/store/tests/support/mod.rs"]
-mod support;
+pub mod support;
 use chrono::{Duration, Utc};
 use contracts::{
     control::*, delivery::*, forward::*, runtime::*, science::NativeReturnV1, DbCounter, Id,
@@ -36,11 +36,20 @@ pub struct ForwardFixture {
 
 pub async fn setup(pool: &PgPool) -> ForwardFixture {
     let f = support::fixture(pool, support::budget()).await;
+    let (store, operator) = research::operator(pool).await;
+    setup_with_source(pool, f, store, operator).await
+}
+
+pub async fn setup_with_source(
+    pool: &PgPool,
+    f: support::Fixture,
+    store: store::Store,
+    operator: Actor,
+) -> ForwardFixture {
     let (mandate, candidate, evaluation) = support::portfolio(pool, &f).await;
     let release = support::delivery_release_metadata(pool, &f, mandate, candidate, evaluation)
         .await
         .unwrap();
-    let (store, operator) = research::operator(pool).await;
     let downstream = Id::new();
     sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'relational feedback fixture','https://example.invalid','not-a-secret','{1}','BOTH',true)").bind(downstream.as_uuid()).execute(pool).await.unwrap();
     let runtime = Id::new();
