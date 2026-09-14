@@ -3,6 +3,24 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Actual Worker Study terminal publication and ACK, 2026-09-14
+
+The positive HTTP Study test no longer calls the publication helper directly.
+It consumes the original PGMQ message through Worker.process_message after a
+pre-dispatch cancellation. ACK before publication fails; Worker publishes the
+independent PORTFOLIO evidence and archives the original queue message. A second
+call with that already archived message is rejected and the Evaluation count
+remains one. Authenticated HTTP reads the resulting original evidence. Empty
+RuntimeTargets ensure this path cannot contact a remote Runtime.
+
+verify-MoG45A on 1f039ffc plus the frozen test patch passed workspace check,
+formatting, strict Clippy and all 17 HTTP/CLI/shared-chain tests, source unchanged;
+isolated PostgreSQL stopped. No production logic or dependencies changed. This is
+real Worker terminal processing, not successful native Study execution through
+Worker/OCI. That success chain, Release/Package/delivery and full acceptance remain
+open. GitHub reread still showed PR63 Draft/Open on remote 37e5713e, not merged;
+no GitHub write, review request, merge or Issue closure occurred.
+
 ## Positive original-candidate Study HTTP admission, 2026-09-14
 
 portfolio_study_http reuses the original Store qualification/Candidate chain, then

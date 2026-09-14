@@ -1,5 +1,5 @@
 //! Real HTTP/PG admission from the original controlled qualification chain.
-//! No SQL-authored qualification; not actual model/market or full Worker evidence.
+//! No SQL-authored qualification. Actual Worker terminal publication/ACK, not OCI science.
 #[path = "../../../tests/support/brief.rs"]
 mod brief_support;
 #[path = "../../../tests/support/cycles.rs"]
@@ -186,14 +186,47 @@ async fn http(
         )
         .await
         .unwrap();
-    let published = validation_publication::publish(store, f, run.id)
+    let message = validation_publication::message(pool, run.id).await;
+    assert!(matches!(
+        store.acknowledge_run(&message).await,
+        Err(StoreError::Conflict)
+    ));
+    let worker = server::worker::Worker::new(
+        store.clone(),
+        integrations::secrets::SecretVault::open(
+            &web._state.path().join("secrets"),
+            &web._state.path().join("master.key"),
+        )
+        .unwrap(),
+        integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
+        // A pre-dispatch cancellation must not contact any Runtime.
+        server::runtime_transport::RuntimeTargets::new(Vec::new(), false).unwrap(),
+        1,
+    )
+    .unwrap();
+    let (_stop, shutdown) = tokio::sync::watch::channel(false);
+    Box::pin(worker.process_message(message.clone(), "study-http-worker", shutdown.clone()))
         .await
         .unwrap();
+    let published: uuid::Uuid = sqlx::query_scalar("SELECT e.id FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=$1 AND e.evaluation_kind='PORTFOLIO'")
+        .bind(run.id.as_uuid()).fetch_one(pool).await.unwrap();
+    let archived: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pgmq.a_runs WHERE msg_id=$1) AND NOT EXISTS(SELECT 1 FROM pgmq.q_runs WHERE msg_id=$1)")
+        .bind(message.message_id).fetch_one(pool).await.unwrap();
+    assert!(archived, "Worker ACK must follow independent publication");
+    // An already archived message is rejected, not treated as new work.
+    assert!(
+        Box::pin(worker.process_message(message, "study-http-worker-replay", shutdown))
+            .await
+            .is_err()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")
+        .bind(run.id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
     let response = client
-        .get(format!(
-            "{origin}/api/v2/evaluations/{}",
-            published.resource
-        ))
+        .get(format!("{origin}/api/v2/evaluations/{}", published))
         .bearer_auth(&token)
         .send()
         .await
