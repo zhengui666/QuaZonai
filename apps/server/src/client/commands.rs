@@ -67,6 +67,8 @@ pub enum Command {
     #[command(subcommand)]
     Release(Release),
     #[command(subcommand)]
+    Approval(Approval),
+    #[command(subcommand)]
     Cycle(Cycle),
     #[command(subcommand)]
     Data(Data),
@@ -127,8 +129,16 @@ pub enum Alpha {
 }
 
 #[derive(Subcommand)]
+pub enum Approval {
+    Show { id: String },
+}
+
+#[derive(Subcommand)]
 pub enum Release {
     Create,
+    Approve {
+        id: String,
+    },
     Reject {
         id: String,
     },
@@ -546,7 +556,19 @@ impl Command {
                     PATCH, item("/api/v2/projects", id)?, 200, true
                 )?,
             },
+            Self::Approval(Approval::Show { id }) => {
+                Request::get::<contracts::delivery::ApprovalViewV1>(item("/api/v2/approvals", id)?)
+            }
             Self::Release(command) => match command {
+                Release::Approve { id } => Request::write::<
+                    contracts::delivery::ReleaseApproveV1,
+                    CommandResult<contracts::delivery::ApprovalViewV1>,
+                >(
+                    POST,
+                    action("/api/v2/releases", id, "approvals")?,
+                    201,
+                    true,
+                )?,
                 Release::Reject { id } => Request::write::<
                     contracts::delivery::ReleaseRejectV1,
                     CommandResult<contracts::delivery::ReleaseDecisionViewV1>,

@@ -2708,6 +2708,12 @@ GET /api/v2/releases/{id}/decisions分页返回该Candidate跨Release的全部�
 Operator及精确项目RESEARCH_READ的CLI可读。client release reject/reconsider/decisions
 复用这些端点；未知提交结果保留原请求与幂等键，不能改键强行越过最新决定。
 
+审批证据InputSet由服务端在同一事务按原Release评估的报告/方法产物去重冻结为PORTFOLIO，只存原引用，不复制或披露私有字节。客户端不能指定/替换evidence_set_id；普通研究输入与执行侧的EVALUATOR_ONLY限制不放宽，回滚不留下半成品证据集。
+
+人工审批 POST `/api/v2/releases/{id}/approvals` 使用 ReleaseApproveV1：schema_version=1、downstream_id、environment=PAPER|LIVE、expected_downstream_revision、expected_latest_decision_id（首次null，重新考虑后精确引用最新REOPEN）、valid_until。精确RELEASE_APPROVE近期人工grant绑定路径Release和完整请求。先在原Project/Candidate锁内重验原REAL Package与当前全部Release来源，再核对冻结证据、无活动REJECT、原决定CAS以及当前下游配置/真实新鲜探测、版本/环境/市场合同。有效期不得超过原Release或当前来源许可/资格/证据期限；本次探测60秒期限不延长，后续Offer/Claim须再取新鲜探测。
+
+审批不可变地保存 downstream_revision、decision_ordinal（尚无决定为0）和 readiness_observation_id。后续Offer/Claim必须要求当前配置revision与审批绑定一致、当前决定ordinal与审批绑定一致且非REJECT，同时重查撤销/期限/全部来源和当前新鲜readiness；新探测本身不改审批，原探测ID仅作审批审计。REOPEN递增决定序号，因而旧审批不能复活，须重新审批。历史审批缺少这组三字段时保留原行且不补造，只能读历史，不能供新交付。GET `/api/v2/approvals/{id}`返回原审批元数据（Operator或精确项目RESEARCH_READ CLI），不是有效性或交付授权证明。client release approve 与 approval show 使用同一合同。
+
 审批的 `evidence_set_id` 必须属于 Release 的精确 Candidate 所在项目，且已冻结，
 用途只能为 `PORTFOLIO|FORWARD`，其中必须包含 Release 所引用评估的报告及方法版本
 产物（同一报告可只登记一次）。因此同项目但无关的证据集合、Discovery 输入、草稿或

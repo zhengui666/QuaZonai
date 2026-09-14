@@ -1,5 +1,15 @@
 # CLI 命令
 
+`client release approve RELEASE_UUID` 向 POST /api/v2/releases/{id}/approvals
+提交 ReleaseApproveV1：schema_version=1、downstream_id、environment=PAPER|LIVE、
+expected_downstream_revision（十进制字符串）、expected_latest_decision_id（首次null，
+重新考虑后为最新REOPEN）、valid_until。需要绑定原Release和完整请求的
+RELEASE_APPROVE人工grant与幂等键。服务端重验原REAL Package、当前来源许可/资格、
+下游配置及新鲜探测，并在同一事务冻结原评估报告引用；不接收evidence_set_id。
+201返回不可变Approval，不能当作已领取或执行。`client approval show APPROVAL_UUID`
+读取 GET /api/v2/approvals/{id} 原元数据，需精确项目RESEARCH_READ。历史记录不是
+当前有效性证明；Offer/Claim、自动审批及审批界面尚未接通。未知结果保持原请求/键。
+
 `client release reject RELEASE_UUID`读取ReleaseRejectV1；`client release reconsider DECISION_UUID`
 读取ReleaseReopenV1，字段/最新决定CAS见DESIGN A7.1。需要对应精确目标的
 RELEASE_REJECT/RELEASE_REOPEN人工grant。`client release decisions RELEASE_UUID`
@@ -11,7 +21,7 @@ POST /api/v2/releases，需原Candidate的RELEASE_CREATE人工grant及Idempotenc
 201仅表示不可变Package/Release已冻结，不是审批或交付。`client release show UUID`
 读取GET /api/v2/releases/{id}的原版本，CLI需精确项目RESEARCH_READ。
 未知提交保持原请求/键重试；不能覆盖权重、有效期、来源或上传包绕过PORTFOLIO/PASS。
-完整成功链路、审批和下游交付仍待验收。
+完整原生成功链路和下游交付仍待验收。
 
 原生单币种模拟中 CurrencyPair 仅支持 MARGIN，Equity 支持 CASH/MARGIN；
 执行假设和实际运行共用锁定 Nautilus 0.63.0 的该限制，不自动转换旧配置。
@@ -584,7 +594,7 @@ Production 只接受 HTTPS origin；literal-loopback HTTP 还须配置和部署�
 serve 的 `--downstream-targets` / `DOWNSTREAM_TARGETS` 使用下述 origin/addresses 格式，
 与 RUNTIME_TARGETS 独立，默认[]。原生下游固定 GET /downstream/v1/capabilities，只读
 DownstreamCapabilitiesV1 target-only合同。网络在事务外，总请求10秒；完成采纳总期限
-20秒，ArtifactStore与不可变观察/回执关联。审批、Offer/Claim尚未接通，不能据此宣称
+20秒，ArtifactStore与不可变观察/回执关联。人工审批已消费该观察，Offer/Claim尚未接通，不能据此宣称
 完成交付。回归：隔离PostgreSQL执行 `cargo test --locked -p store --test downstream`、
 `cargo test --locked -p server --test downstream_http --test downstream_transport`。
 

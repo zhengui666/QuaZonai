@@ -210,60 +210,68 @@ impl Store {
     ) -> Result<DownstreamReadinessV1, StoreError> {
         let mut tx = self.pool.begin().await?;
         crate::settings::read_authority(&mut tx, actor).await?;
-        let row = sqlx::query("SELECT revision,enabled,accepted_package_versions,environments FROM app.downstream_integrations WHERE id=$1 FOR SHARE")
-            .bind(downstream.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
-        let revision = db::revision(row.try_get("revision")?)?;
-        let observed = latest(&mut tx, downstream).await?;
-        let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
-            .fetch_one(&mut *tx)
-            .await?;
-        let mut versions = Vec::new();
-        let mut environments = Vec::new();
-        let state = if !row.try_get::<bool, _>("enabled")? {
-            DownstreamReadinessState::Disabled
-        } else if let Some(probe) = &observed {
-            if probe.integration_revision != revision
-                || probe.valid_until <= now
-                || probe.observed_at > now
-            {
-                DownstreamReadinessState::Stale
-            } else if let DownstreamProbeOutcomeV1::Available { capabilities } = &probe.outcome {
-                if capabilities.accepting_targets {
-                    let configured: Vec<String> = row.try_get("accepted_package_versions")?;
-                    for version in &capabilities.accepted_package_versions {
-                        if configured.contains(&db::code(version)?) {
-                            versions.push(*version);
-                        }
-                    }
-                    let configured: String = row.try_get("environments")?;
-                    for environment in &capabilities.environments {
-                        if configured == "BOTH" || db::code(environment)? == configured {
-                            environments.push(*environment);
-                        }
+        let result = readiness(&mut tx, downstream).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+}
+
+pub(crate) async fn readiness(
+    tx: &mut Transaction<'_, Postgres>,
+    downstream: Id,
+) -> Result<DownstreamReadinessV1, StoreError> {
+    let row = sqlx::query("SELECT revision,enabled,accepted_package_versions,environments FROM app.downstream_integrations WHERE id=$1 FOR SHARE")
+            .bind(downstream.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)?;
+    let revision = db::revision(row.try_get("revision")?)?;
+    let observed = latest(tx, downstream).await?;
+    let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut **tx)
+        .await?;
+    let mut versions = Vec::new();
+    let mut environments = Vec::new();
+    let state = if !row.try_get::<bool, _>("enabled")? {
+        DownstreamReadinessState::Disabled
+    } else if let Some(probe) = &observed {
+        if probe.integration_revision != revision
+            || probe.valid_until <= now
+            || probe.observed_at > now
+        {
+            DownstreamReadinessState::Stale
+        } else if let DownstreamProbeOutcomeV1::Available { capabilities } = &probe.outcome {
+            if capabilities.accepting_targets {
+                let configured: Vec<String> = row.try_get("accepted_package_versions")?;
+                for version in &capabilities.accepted_package_versions {
+                    if configured.contains(&db::code(version)?) {
+                        versions.push(*version);
                     }
                 }
-                if versions.is_empty() || environments.is_empty() {
-                    versions.clear();
-                    environments.clear();
-                    DownstreamReadinessState::Unavailable
-                } else {
-                    DownstreamReadinessState::Available
+                let configured: String = row.try_get("environments")?;
+                for environment in &capabilities.environments {
+                    if configured == "BOTH" || db::code(environment)? == configured {
+                        environments.push(*environment);
+                    }
                 }
-            } else {
+            }
+            if versions.is_empty() || environments.is_empty() {
+                versions.clear();
+                environments.clear();
                 DownstreamReadinessState::Unavailable
+            } else {
+                DownstreamReadinessState::Available
             }
         } else {
-            DownstreamReadinessState::NotChecked
-        };
-        tx.commit().await?;
-        Ok(DownstreamReadinessV1 {
-            schema_version: SchemaV1,
-            downstream_id: downstream,
-            integration_revision: revision,
-            state,
-            latest_observation: observed,
-            available_package_versions: versions,
-            available_environments: environments,
-        })
-    }
+            DownstreamReadinessState::Unavailable
+        }
+    } else {
+        DownstreamReadinessState::NotChecked
+    };
+    Ok(DownstreamReadinessV1 {
+        schema_version: SchemaV1,
+        downstream_id: downstream,
+        integration_revision: revision,
+        state,
+        latest_observation: observed,
+        available_package_versions: versions,
+        available_environments: environments,
+    })
 }

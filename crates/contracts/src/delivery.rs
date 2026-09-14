@@ -108,6 +108,38 @@ pub struct ReleaseCreateV1 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ReleaseApproveV1 {
+    pub schema_version: crate::SchemaV1,
+    pub downstream_id: Id,
+    pub environment: crate::forward::ForwardEnvironmentV1,
+    pub expected_downstream_revision: crate::Revision,
+    pub expected_latest_decision_id: Option<Id>,
+    pub valid_until: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalViewV1 {
+    pub id: Id,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub project_id: Id,
+    pub candidate_id: Id,
+    pub release_id: Id,
+    pub downstream_id: Id,
+    pub environment: crate::forward::ForwardEnvironmentV1,
+    pub authority_kind: String,
+    pub automation_policy_id: Option<Id>,
+    pub evidence_set_id: Id,
+    pub granted_at: chrono::DateTime<chrono::Utc>,
+    pub valid_until: chrono::DateTime<chrono::Utc>,
+    /// None on original historical rows; never sufficient for new delivery.
+    pub downstream_revision: Option<crate::Revision>,
+    pub decision_ordinal: Option<u32>,
+    pub readiness_observation_id: Option<Id>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReleaseViewV1 {
     pub id: Id,
     pub project_id: Id,

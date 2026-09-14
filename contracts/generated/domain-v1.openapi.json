@@ -1156,6 +1156,100 @@
         ],
         "type": "object"
       },
+      "ApprovalViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "authority_kind": {
+            "type": "string"
+          },
+          "automation_policy_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision_ordinal": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "downstream_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Revision",
+                "description": "None on original historical rows; never sufficient for new delivery."
+              }
+            ]
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "evidence_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "granted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "readiness_observation_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "project_id",
+          "candidate_id",
+          "release_id",
+          "downstream_id",
+          "environment",
+          "authority_kind",
+          "evidence_set_id",
+          "granted_at",
+          "valid_until"
+        ],
+        "type": "object"
+      },
       "ArtifactAccess": {
         "enum": [
           "OPERATOR",
@@ -13680,6 +13774,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "RELEASE_APPROVE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ReleaseApproveV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "RELEASE_REJECT"
                 ],
                 "type": "string"
@@ -14163,6 +14275,7 @@
           "PORTFOLIO_BUILD",
           "PORTFOLIO_SIMULATE",
           "RELEASE_CREATE",
+          "RELEASE_APPROVE",
           "RELEASE_REJECT",
           "RELEASE_REOPEN",
           "BRIEF_FREEZE",
@@ -15487,6 +15600,45 @@
           "session_offset_seconds",
           "max_input_age_seconds",
           "target_ttl_seconds"
+        ],
+        "type": "object"
+      },
+      "ReleaseApproveV1": {
+        "additionalProperties": false,
+        "properties": {
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "expected_downstream_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "expected_latest_decision_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "downstream_id",
+          "environment",
+          "expected_downstream_revision",
+          "valid_until"
         ],
         "type": "object"
       },

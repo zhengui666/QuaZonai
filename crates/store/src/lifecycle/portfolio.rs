@@ -12,6 +12,7 @@ use contracts::{
 use native::{bind_task, NativeObjectPublication, NativeTaskDefinition};
 use std::collections::BTreeSet;
 
+mod approvals;
 mod decisions;
 mod evaluation;
 mod publication;

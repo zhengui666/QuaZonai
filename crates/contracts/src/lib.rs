@@ -44,6 +44,8 @@ use utoipa::OpenApi;
     delivery::DownstreamProbeViewV1,
     delivery::DownstreamReadinessV1,
     delivery::ReleaseCreateV1,
+    delivery::ReleaseApproveV1,
+    delivery::ApprovalViewV1,
     delivery::ReleaseRejectV1,
     delivery::ReleaseReopenV1,
     delivery::ReleaseDecisionViewV1,

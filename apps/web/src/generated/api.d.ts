@@ -100,6 +100,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/approvals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_approval"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/artifacts": {
         parameters: {
             query?: never;
@@ -1364,6 +1380,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/releases/{id}/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["approve_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/releases/{id}/decisions": {
         parameters: {
             query?: never;
@@ -1588,6 +1620,27 @@ export interface components {
             revision: components["schemas"]["Revision"];
             /** Format: date-time */
             updated_at: string;
+        };
+        ApprovalViewV1: {
+            authority_kind: string;
+            automation_policy_id?: null | components["schemas"]["Id"];
+            candidate_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int32 */
+            decision_ordinal?: number | null;
+            downstream_id: components["schemas"]["Id"];
+            downstream_revision?: null | components["schemas"]["Revision"];
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            evidence_set_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            granted_at: string;
+            id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            readiness_observation_id?: null | components["schemas"]["Id"];
+            release_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            valid_until: string;
         };
         /** @enum {string} */
         ArtifactAccess: "OPERATOR" | "RESEARCH" | "EVALUATOR_ONLY" | "DELIVERY";
@@ -2259,6 +2312,31 @@ export interface components {
         CodexSettingsUpdateV1: {
             profile_id: components["schemas"]["Id"];
             request: components["schemas"]["CodexProfileUpdateV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CommandResult_ApprovalViewV1: {
+            replayed: boolean;
+            resource: {
+                authority_kind: string;
+                automation_policy_id?: null | components["schemas"]["Id"];
+                candidate_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                /** Format: int32 */
+                decision_ordinal?: number | null;
+                downstream_id: components["schemas"]["Id"];
+                downstream_revision?: null | components["schemas"]["Revision"];
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                evidence_set_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                granted_at: string;
+                id: components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                readiness_observation_id?: null | components["schemas"]["Id"];
+                release_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                valid_until: string;
+            };
             schema_version: components["schemas"]["SchemaV1"];
         };
         CommandResult_ArtifactView: {
@@ -3834,6 +3912,10 @@ export interface components {
             request: components["schemas"]["ReleaseCreateV1"];
         } | {
             /** @enum {string} */
+            operation: "RELEASE_APPROVE";
+            request: components["schemas"]["ReleaseApproveV1"];
+        } | {
+            /** @enum {string} */
             operation: "RELEASE_REJECT";
             request: components["schemas"]["ReleaseRejectV1"];
         } | {
@@ -3939,7 +4021,7 @@ export interface components {
             target_id: components["schemas"]["Id"];
         };
         /** @enum {string} */
-        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
+        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_APPROVE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
         /** @enum {string} */
         PackageOriginV1: "DEMO" | "REAL";
         /** @enum {string} */
@@ -4835,6 +4917,15 @@ export interface components {
             target_ttl_seconds: number;
             timezone: string;
         };
+        ReleaseApproveV1: {
+            downstream_id: components["schemas"]["Id"];
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            expected_downstream_revision: components["schemas"]["Revision"];
+            expected_latest_decision_id?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            /** Format: date-time */
+            valid_until: string;
+        };
         ReleaseCreateV1: {
             candidate_id: components["schemas"]["Id"];
             evaluation_id: components["schemas"]["Id"];
@@ -5729,6 +5820,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AlphaVersionView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_approval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalViewV1"];
                 };
             };
             401: {
@@ -12506,6 +12668,92 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    approve_release: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseApproveV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_ApprovalViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {

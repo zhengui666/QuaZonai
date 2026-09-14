@@ -114,7 +114,7 @@ impl Store {
     }
 }
 
-async fn package<R, Read>(
+pub(super) async fn package<R, Read>(
     tx: &mut Tx<'_>,
     project: Id,
     intent: &ReleaseCreateV1,

@@ -4,6 +4,9 @@ use super::*;
 use contracts::{experiments::ExperimentProposalV1, research::DataOrigin};
 use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
 
+#[path = "approval_checks.rs"]
+mod approvals;
+
 #[path = "portfolio_inputs.rs"]
 mod inputs;
 #[path = "portfolio_result.rs"]
@@ -2145,6 +2148,7 @@ async fn release_check(
     .unwrap()
     .resource;
     release_decision_checks(pool, store, actor, &view, &sibling).await;
+    Box::pin(approvals::check(pool, store, actor, f, &view, &sibling)).await;
     let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(pool)
         .await

@@ -508,6 +508,100 @@
         ],
         "type": "object"
       },
+      "ApprovalViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "authority_kind": {
+            "type": "string"
+          },
+          "automation_policy_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision_ordinal": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "downstream_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Revision",
+                "description": "None on original historical rows; never sufficient for new delivery."
+              }
+            ]
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "evidence_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "granted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "readiness_observation_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "project_id",
+          "candidate_id",
+          "release_id",
+          "downstream_id",
+          "environment",
+          "authority_kind",
+          "evidence_set_id",
+          "granted_at",
+          "valid_until"
+        ],
+        "type": "object"
+      },
       "ArtifactAccess": {
         "enum": [
           "OPERATOR",
@@ -6310,6 +6404,117 @@
           "schema_version",
           "profile_id",
           "request"
+        ],
+        "type": "object"
+      },
+      "CommandResult_ApprovalViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "authority_kind": {
+                "type": "string"
+              },
+              "automation_policy_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "candidate_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "decision_ordinal": {
+                "format": "int32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "downstream_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "downstream_revision": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Revision",
+                    "description": "None on original historical rows; never sufficient for new delivery."
+                  }
+                ]
+              },
+              "environment": {
+                "$ref": "#/components/schemas/ForwardEnvironmentV1"
+              },
+              "evidence_set_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "granted_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "readiness_observation_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "release_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "valid_until": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "created_at",
+              "project_id",
+              "candidate_id",
+              "release_id",
+              "downstream_id",
+              "environment",
+              "authority_kind",
+              "evidence_set_id",
+              "granted_at",
+              "valid_until"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
         ],
         "type": "object"
       },
@@ -13369,6 +13574,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "RELEASE_APPROVE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ReleaseApproveV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "RELEASE_REJECT"
                 ],
                 "type": "string"
@@ -13852,6 +14075,7 @@
           "PORTFOLIO_BUILD",
           "PORTFOLIO_SIMULATE",
           "RELEASE_CREATE",
+          "RELEASE_APPROVE",
           "RELEASE_REJECT",
           "RELEASE_REOPEN",
           "BRIEF_FREEZE",
@@ -17969,6 +18193,45 @@
         ],
         "type": "object"
       },
+      "ReleaseApproveV1": {
+        "additionalProperties": false,
+        "properties": {
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "expected_downstream_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "expected_latest_decision_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "downstream_id",
+          "environment",
+          "expected_downstream_revision",
+          "valid_until"
+        ],
+        "type": "object"
+      },
       "ReleaseCreateV1": {
         "additionalProperties": false,
         "properties": {
@@ -20640,6 +20903,111 @@
         ],
         "tags": [
           "Evidence"
+        ]
+      }
+    },
+    "/api/v2/approvals/{id}": {
+      "get": {
+        "operationId": "get_approval",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Release"
         ]
       }
     },
@@ -31189,6 +31557,144 @@
           },
           {
             "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Release"
+        ]
+      }
+    },
+    "/api/v2/releases/{id}/approvals": {
+      "post": {
+        "operationId": "approve_release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseApproveV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_ApprovalViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
           }
         ],
         "tags": [

@@ -1,5 +1,45 @@
 # Issue62 implementation evidence
 
+## Original Release human approval, 2026-09-14
+
+POST /api/v2/releases/{id}/approvals and CLI release approve now consume the exact
+RELEASE_APPROVE human intent; GET /api/v2/approvals/{id} / CLI approval show read
+immutable metadata under original project authority. Approval reconstructs the
+original REAL Package from current qualified sources, checks PAPER/LIVE licensing,
+expiry, latest Candidate decision CAS and fresh downstream configuration/capability
+observations. It atomically freezes the original evaluation report/method references
+as a PORTFOLIO InputSet; callers cannot replace that evidence or use its restricted
+reports as ordinary executable inputs. No report bytes are copied or exposed.
+
+Migration 063 records original downstream revision, decision ordinal and probe ID.
+Existing approvals retain null bindings and historical meaning; future Offer/Claim
+must reject them. Reopening increments the decision ordinal and requires new approval.
+The original probe ID is audit evidence, not a permanent readiness capability.
+
+Verification on the approval changes over a580e910:
+- `.ai-bridge/verify-i0vLvY`: workspace all-target check, fmt and strict Clippy pass;
+  142 contracts/domain tests, 21 PostgreSQL research/evidence/downstream tests,
+  28 HTTP/CLI/qualification-chain/OpenAPI tests pass. Source inventory unchanged;
+  owned PostgreSQL stopped (pg_ctl status 3).
+- The original qualified Release test covers source licensing, missing readiness,
+  evidence rollback on rejected insert, concurrent same-key replay, same-Candidate
+  rejection across sibling Releases, REOPEN/CAS, immutable old approvals, expiry
+  and downstream revision changes. Fixtures model protocol inputs explicitly;
+  no SQL-authored approval or PASS substitutes for this admission path.
+- Earlier CLI fixture used a numeric revision and correctly failed CLI_INPUT_INVALID;
+  it now sends the contract's string. The positive chain exposed reuse of an
+  evaluator-only reader for a DELIVERY Package. The reader now derives the exact
+  access class from its internal schema argument; evaluator schemas still require
+  EVALUATOR_ONLY. Both focused checks passed in verify-GtPAKk before full regression.
+- `.ai-bridge/web-verify-Paw2XF`: six native generated files reproduced twice with
+  handwritten sources unchanged. Typecheck, 505 Vitest cases, 5 PWA checks and Vite
+  build passed (approval-web-* logs); only the existing chunk-size warning remains.
+
+This verifies the implemented human admission slice. Automatic policies, Offer/Claim
+consumption and races, approval UI, real market/model/OCI acceptance, complete
+T01–T42, migration/recovery and current-head GitHub review/CI remain unfinished.
+No push, merge or Issue closure is represented by this evidence.
+
 ## Downstream observations and Operator probe/readiness, 2026-09-14
 
 POST /api/v2/integrations/downstreams/{id}/probe and GET /readiness now connect

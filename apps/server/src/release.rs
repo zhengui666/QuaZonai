@@ -1,4 +1,4 @@
-//! Freeze original target-only packages; no approval or downstream authority.
+//! Original packages and explicit human decisions; never downstream execution.
 use crate::{
     access::{idempotency_key, Authority},
     auth::json,
@@ -16,7 +16,8 @@ use axum::{
 use contracts::{
     control::{CommandResult, ListQuery, Page},
     delivery::{
-        ReleaseCreateV1, ReleaseDecisionViewV1, ReleaseRejectV1, ReleaseReopenV1, ReleaseViewV1,
+        ApprovalViewV1, ReleaseApproveV1, ReleaseCreateV1, ReleaseDecisionViewV1, ReleaseRejectV1,
+        ReleaseReopenV1, ReleaseViewV1,
     },
     Id,
 };
@@ -147,4 +148,47 @@ pub async fn decisions(
     Ok(Json(
         state.store.release_decisions(&actor, id, &query).await?,
     ))
+}
+
+#[utoipa::path(post,path="/api/v2/releases/{id}/approvals",operation_id="approve_release",tag="Release",request_body=ReleaseApproveV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<ApprovalViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn approve(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    id: Result<Path<Id>, PathRejection>,
+    body: Result<Json<ReleaseApproveV1>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<ApprovalViewV1>>), ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let request = json(body)?;
+    let key = idempotency_key(&headers)?.to_owned();
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(StoreError::Invalid("artifact_store_unavailable"))?;
+    let store = state.store.clone();
+    let result = crate::settings::command(&state, async move {
+        store
+            .approve_release(&actor, &key, id, &request, move |id, size| {
+                let objects = objects.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || objects.read(id, size))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                }
+            })
+            .await
+    })
+    .await?;
+    Ok((StatusCode::CREATED, Json(result)))
+}
+
+#[utoipa::path(get,path="/api/v2/approvals/{id}",operation_id="get_approval",tag="Release",params(("id"=Id,Path)),responses((status=200,body=ApprovalViewV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn approval(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+) -> Result<Json<ApprovalViewV1>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    Ok(Json(state.store.approval(&actor, id).await?))
 }

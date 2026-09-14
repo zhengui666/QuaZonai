@@ -391,6 +391,42 @@ pub(crate) async fn portfolio_study_input(
     })
 }
 
+/// Persist already-authorized input references. Callers enforce their exact
+/// admission boundary; this helper neither reads private bytes nor grants access.
+pub(crate) async fn insert_frozen_input(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Id,
+    request: &InputSetCreate,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO app.input_sets(id,project_id,purpose,decision_cutoff) VALUES($1,$2,$3,$4)",
+    )
+    .bind(id.as_uuid())
+    .bind(request.project_id.as_uuid())
+    .bind(request.purpose.code())
+    .bind(request.decision_cutoff)
+    .execute(&mut **tx)
+    .await?;
+    for (index, item) in request.items.iter().enumerate() {
+        let (dataset, artifact, role) = match item {
+            InputItemV1::Dataset {
+                dataset_revision_id,
+                role,
+            } => (Some(dataset_revision_id.as_uuid()), None, role.code()),
+            InputItemV1::Artifact { artifact_id, role } => {
+                (None, Some(artifact_id.as_uuid()), role.code())
+            }
+        };
+        sqlx::query("INSERT INTO app.input_set_items(input_set_id,dataset_revision_id,artifact_id,role,ordinal) VALUES($1,$2,$3,$4,$5)")
+                .bind(id.as_uuid()).bind(dataset).bind(artifact).bind(role).bind(index as i32).execute(&mut **tx).await?;
+    }
+    sqlx::query("UPDATE app.input_sets SET frozen_at=clock_timestamp() WHERE id=$1")
+        .bind(id.as_uuid())
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 impl Store {
     pub async fn input_sets(
         &self,
@@ -459,32 +495,7 @@ impl Store {
         project_for_write(&mut tx, request.project_id).await?;
         validate_inputs(&mut tx, std::slice::from_ref(request), None, None).await?;
         let id = prepared.target;
-        sqlx::query(
-            "INSERT INTO app.input_sets(id,project_id,purpose,decision_cutoff) VALUES($1,$2,$3,$4)",
-        )
-        .bind(id.as_uuid())
-        .bind(request.project_id.as_uuid())
-        .bind(request.purpose.code())
-        .bind(request.decision_cutoff)
-        .execute(&mut *tx)
-        .await?;
-        for (index, item) in request.items.iter().enumerate() {
-            let (dataset, artifact, role) = match item {
-                InputItemV1::Dataset {
-                    dataset_revision_id,
-                    role,
-                } => (Some(dataset_revision_id.as_uuid()), None, role.code()),
-                InputItemV1::Artifact { artifact_id, role } => {
-                    (None, Some(artifact_id.as_uuid()), role.code())
-                }
-            };
-            sqlx::query("INSERT INTO app.input_set_items(input_set_id,dataset_revision_id,artifact_id,role,ordinal) VALUES($1,$2,$3,$4,$5)")
-                .bind(id.as_uuid()).bind(dataset).bind(artifact).bind(role).bind(index as i32).execute(&mut *tx).await?;
-        }
-        sqlx::query("UPDATE app.input_sets SET frozen_at=clock_timestamp() WHERE id=$1")
-            .bind(id.as_uuid())
-            .execute(&mut *tx)
-            .await?;
+        insert_frozen_input(&mut tx, id, request).await?;
         let resource = input(&mut tx, id).await?;
         let result = commands::finish(&mut tx, prepared, resource, 201).await?;
         tx.commit().await?;
