@@ -7,6 +7,7 @@ import { GuardContext, NoData, Pager, QueryPanel } from './ui';
 import { ResourceSelect } from './resource-select';
 import { ReleaseApprove } from './release-approve';
 import { HandoffOffer } from './handoff-offer';
+import { ApprovalRevoke } from './approval-revoke';
 
 export function Delivery() {
   const [project, setProject] = useState<string>();
@@ -47,13 +48,14 @@ function Releases({ project }: { project: string }) {
 export function ReleaseDetail({ id, project, close }: { id: string; project: string; close: () => void }) {
   const [approving, setApproving] = useState(false);
   const [offering, setOffering] = useState<Schema['ApprovalViewV1']>();
+  const [revoking, setRevoking] = useState<Schema['ApprovalViewV1']>();
   const query = useQuery({ queryKey: ['release', project, id], queryFn: async ({ signal }) => {
     const item = dataOf(await api.GET('/api/v2/releases/{id}', { params: { path: { id } }, signal }));
     if (item.id !== id || item.project_id !== project) throw new Error('服务器返回了其他目标包版本。');
     return item;
   } });
   const item = query.data;
-  return <Drawer title="原始目标包版本" open onClose={approving || offering ? undefined : close} closable={!approving && !offering} maskClosable={!approving && !offering} width={760}>
+  return <Drawer title="原始目标包版本" open onClose={approving || offering || revoking ? undefined : close} closable={!approving && !offering && !revoking} maskClosable={!approving && !offering && !revoking} width={760}>
     <Alert showIcon type="info" title="历史有效期不是当前审批资格" description="读取不会延长期限或重判数据、Alpha 资格与下游兼容性。REAL 是包来源，不代表已批准 Live。" />
     <QueryPanel pending={query.isPending} error={query.error} stale={!!item} reload={() => { void query.refetch(); }}>
       {item && <Descriptions column={1} className="break-word" items={[
@@ -67,9 +69,10 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
       ]} />}
     </QueryPanel>
     {item && !query.isError && <Button onClick={() => setApproving(true)}>审批此目标包</Button>}
+    {revoking && <ApprovalRevoke approval={revoking} close={() => setRevoking(undefined)} />}
     {offering && item && <HandoffOffer release={item} approval={offering} close={() => setOffering(undefined)} />}
     {approving && item && <ReleaseApprove release={item} close={() => setApproving(false)} />}
-    {item && !query.isError && <Collapse items={[{ key: 'approvals', label: '原审批历史', children: <ReleaseApprovals release={item} offer={setOffering} /> }]} />}
+    {item && !query.isError && <Collapse items={[{ key: 'approvals', label: '原审批历史', children: <ReleaseApprovals release={item} offer={setOffering} revoke={setRevoking} /> }]} />}
   </Drawer>;
 }
 
@@ -121,7 +124,7 @@ function HandoffDetail({ id, project, close }: { id: string; project: string; cl
   </Drawer>;
 }
 
-function ReleaseApprovals({ release, offer }: { release: Schema['ReleaseViewV1']; offer: (approval: Schema['ApprovalViewV1']) => void }) {
+function ReleaseApprovals({ release, offer, revoke }: { release: Schema['ReleaseViewV1']; offer: (approval: Schema['ApprovalViewV1']) => void; revoke: (approval: Schema['ApprovalViewV1']) => void }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const query = useQuery({ queryKey: ['release-approvals', release.id, history.at(-1)], queryFn: async ({ signal }) => {
     const page = dataOf(await api.GET('/api/v2/releases/{id}/approvals', { params: { path: { id: release.id }, query: { cursor: history.at(-1), limit: 25 } }, signal }));
@@ -133,7 +136,7 @@ function ReleaseApprovals({ release, offer }: { release: Schema['ReleaseViewV1']
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新审批历史</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['ApprovalViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 720 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="原目标包尚无审批记录。" /> }} columns={[
-        { title: '原审批', dataIndex: 'id' }, { title: '操作', key: 'offer', render: (_, item) => <Button disabled={query.isError || query.isFetching || item.authority_kind !== 'OPERATOR'} onClick={() => offer(item)}>登记 Offer</Button> }, { title: '下游', dataIndex: 'downstream_id' }, { title: '环境', dataIndex: 'environment' },
+        { title: '原审批', dataIndex: 'id' }, { title: '操作', key: 'offer', render: (_, item) => <Space><Button disabled={query.isError || query.isFetching || item.authority_kind !== 'OPERATOR'} onClick={() => offer(item)}>登记 Offer</Button><Button danger disabled={query.isError || query.isFetching} onClick={() => revoke(item)}>撤销审批</Button></Space> }, { title: '下游', dataIndex: 'downstream_id' }, { title: '环境', dataIndex: 'environment' },
         { title: '授权来源', dataIndex: 'authority_kind' }, { title: '原期限', dataIndex: 'valid_until', render: displayTime },
       ]} expandable={{ expandedRowRender: item => <Descriptions column={1} className="break-word" items={[
         { key: 'evidence', label: '原证据集合', children: item.evidence_set_id }, { key: 'policy', label: '原自动化政策', children: item.automation_policy_id ?? '无自动化政策' },

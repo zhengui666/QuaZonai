@@ -207,3 +207,37 @@ for (const duplicate of [false, true]) test(`Offer preserves original approval a
   }
   expect((await new AxeBuilder({ page }).include('.ant-modal').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 });
+
+test('Approval revocation keeps latest history and replays immediate intent', async ({ page }) => {
+  await fixture(page); const writes: { body: unknown; key: string | undefined }[] = [];
+  const approval: Schema['ApprovalViewV1'] = { id: id(610), project_id: project.id, candidate_id: release.candidate_id, release_id: release.id, downstream_id: id(85), environment: 'PAPER', authority_kind: 'OPERATOR', automation_policy_id: null, evidence_set_id: id(611), granted_at: release.created_at, created_at: release.created_at, valid_until: release.valid_until, downstream_revision: '7', decision_ordinal: 0, readiness_observation_id: id(612) };
+  const old: Schema['ApprovalRevocationViewV1'] = { id: id(620), approval_id: approval.id, created_at: release.created_at, effective_at: '2099-01-01T00:00:00Z', reason_code: null, reason: 'Original scheduled revocation' };
+  await page.route('**/api/v2/**', route => {
+    const request = route.request(); const url = new URL(request.url());
+    if (url.pathname === `/api/v2/projects/${project.id}/releases`) return reply(route, { schema_version: 1, items: [release], next_cursor: null });
+    if (url.pathname === `/api/v2/releases/${release.id}`) return reply(route, release);
+    if (url.pathname === `/api/v2/releases/${release.id}/approvals`) return reply(route, { schema_version: 1, items: [approval], next_cursor: null });
+    if (url.pathname === `/api/v2/approvals/${approval.id}/revocations`) return reply(route, { schema_version: 1, items: [old], next_cursor: null });
+    if (url.pathname === `/api/v2/approvals/${approval.id}/revoke`) {
+      const body = request.postDataJSON() as Schema['ApprovalRevokeV1']; writes.push({ body, key: request.headers()['idempotency-key'] });
+      if (writes.length === 1) return route.abort('failed');
+      return reply(route, { schema_version: 1, replayed: true, resource: { ...old, id: id(621), effective_at: release.created_at, reason_code: body.reason_code, reason: body.reason } }, 201);
+    }
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: project.name }).click();
+  await page.getByRole('button', { name: 'Release 00000102', exact: true }).click();
+  await page.getByText('原审批历史', { exact: true }).click(); await page.getByRole('button', { name: '撤销审批', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: '撤销原审批', exact: true });
+  await expect(modal.getByText(old.reason, { exact: true })).toBeVisible();
+  await modal.getByLabel('原因代码', { exact: true }).fill('OPERATOR_REVOKED');
+  await modal.getByLabel('撤销原因', { exact: true }).fill('Stop future delivery, retain original claims');
+  await modal.getByRole('button', { name: '确认追加撤销', exact: true }).click();
+  await modal.getByRole('button', { name: '重试同一撤销', exact: true }).click();
+  await expect(modal.getByText('原撤销已追加。', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1]);
+  expect(writes[0]!.body).toEqual({ schema_version: 1, expected_latest_revocation_id: old.id, effective_at: null, reason_code: 'OPERATOR_REVOKED', reason: 'Stop future delivery, retain original claims' });
+  expect((await new AxeBuilder({ page }).include('.ant-modal').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+});

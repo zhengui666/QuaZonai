@@ -4786,3 +4786,10 @@ TypeScript、Vite构建以及delivery/portfolio-candidates共60项三视口浏�
 扩展原资格Package→审批→Offer→Claim/ACK原生测试，使用实际临时TCP服务、真实机器凭据与原审批记录。未认证读取401，下游领取身份403，同项目RESEARCH_READ CLI读取原审批及证据引用，其他项目CLI404，只有EVIDENCE_READ的CLI403；非法limit为422。实际client approval list RELEASE_UUID --limit 100成功返回该原审批，非浏览器模拟响应。
 
 verify-VxO3kE首次编译发现测试ProjectCreate字段拼写错误，已按原合同修正。最终verify-Ha79sd通过workspace/all-targets编译、格式、严格Clippy和扩展original_package_claim_cli_transfers_once_and_replays测试（82.36秒），包含既有真实Claim/ACK/重放与新增读取断言。验证期间源文件不变，隔离PG已停止；只补测试，产品权限未改。该协议/数据库链仍不等于完整部署或所有T01–T42验收，未push/review/merge/close。
+
+
+### 2026-09-15：网页追加审批撤销
+
+原审批历史新增撤销入口；读取全部原撤销分页并显示历史，绑定最大原ID作CAS，立即生效以null交由数据库时钟判定，预约须未来且不晚于已有最早撤销。原因代码/原因按合同长度检查；提交和未知重试保留原请求/键，回执核对审批/原因/显式生效时间。成功仍保留已领取及ACK事实，未提供撤单/平仓操作。
+
+TypeScript及Vite构建通过，delivery/portfolio-candidates共63项三视口浏览器定向回归通过（约1.1分钟）。新增用例验证原预约撤销可追加立即撤销、绑定原ID、丢失响应同键重试及Modal无障碍；预约日期边界和原生并发仍依赖对应服务端测试及后续整体验收，浏览器fixture不是数据库证明。自动化政策、人工拒绝/重新考虑、完整研究和其余T01–T42仍待完成，未push/review/merge/close。
