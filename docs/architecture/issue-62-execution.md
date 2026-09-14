@@ -4562,3 +4562,30 @@ Mission不能借用。保留原决定/有效期、精确大整数和向上取整
 原生科学数据与Provider仍为显式受控输入；这些测试不是完整真实账号、市场Job/OCI
 或Sealed/T42证据。本阶段未push、请求review、合并或关闭Issue；继续Sealed预约/
 实际执行/披露、独立Reviewer/资格、组合交付、迁移/恢复与全部剩余合同。
+
+## 2026-09-14：原生 ForwardEvaluate 可信准入
+
+Store 内部准入复用原 Run/PGMQ、原 Candidate 的 Runtime 与当前原生能力观测，
+在 Project 锁内验证原 REAL Claim、当前冻结政策及完整原始反馈来源。068 迁移
+冻结 FORWARD 输入及原生参数，约束固定资源上限与唯一 Run；通用研究输入权限
+不变。派发前重新核对政策和全部来源，新增/更正反馈使旧未发任务失效。重复
+来源只返回原 Run，不重读私有报告或写参数；超大正反馈期限受政策期限约束。
+
+以 7ce2b68a 及冻结补丁串行验证：
+
+- verify-QFFPiA 捕获参数 created_by 使用非法枚举；改用已有政策授权 OPERATOR
+  路径。随后修正 app.document 的版本化任务内容。verify-sHbia7 捕获旧原生任务
+  守卫未注册 ForwardEvaluate；068 仅增加精确的原生绑定分支，保留其他限制。
+- verify-jouJuR 定向通过。verify-xo9m83 的 check、fmt、严格 Clippy 与 143 项
+  合同/领域、67 项真实 PostgreSQL/PGMQ、24 项 HTTP/CLI 测试全部通过。
+- 最后调整重复来源的元数据快路径和期限溢出处理，verify-WDHUMr 再次通过
+  check、fmt、严格 Clippy 及原生准入数据库用例。该用例覆盖并发唯一入队、
+  派发前更正/撤权、事务故障完整回滚、未引用对象精确回收、通用输入拒绝、
+  i64 最大反馈期限及重放回调禁止执行。两轮验证源码不变，隔离 PG 确认停止。
+
+Claim、Release、Candidate 及 Runtime 基础关联使用明确关系型 fixture；报告
+接收和政策授权/撤销使用原生入口。历史日期仅由隔离测试连接的事务局部时钟
+提供，未关闭触发器或改变宿主时间。这些测试不证明真实多日市场反馈、完整
+原生 Claim、模型或 OCI 生产验收。当前未接 Worker 自动调度和 Evaluation/
+forward_evidence_windows 发布；不代表 Live 准入完成。本阶段未 push、请求
+review、合并或关闭 Issue。没有合同变化，不重新生成前端产物。

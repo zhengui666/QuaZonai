@@ -263,9 +263,23 @@ impl LockedRun {
 fn standalone_kind(kind: RunKind) -> bool {
     matches!(
         kind,
-        RunKind::Import | RunKind::Export | RunKind::DataValidate
+        RunKind::Import | RunKind::Export | RunKind::DataValidate | RunKind::ForwardEvaluate
     )
 }
+async fn revalidate_run_inputs(
+    tx: &mut Tx<'_>,
+    kind: RunKind,
+    input: Id,
+    project: Id,
+    runtime: Id,
+) -> Result<(), StoreError> {
+    if kind == RunKind::ForwardEvaluate {
+        crate::forward::revalidate(tx, input, project, runtime).await
+    } else {
+        crate::research::revalidate_frozen_inputs(tx, input, project, runtime).await
+    }
+}
+
 /// Establish the same project -> cycle -> Run ordering used by model spending.
 async fn lock_run(tx: &mut Tx<'_>, id: Id) -> Result<LockedRun, StoreError> {
     let refs = sqlx::query("SELECT project_id::uuid,cycle_id::uuid FROM app.runs WHERE id=$1")
@@ -668,6 +682,9 @@ impl Store {
         commands::key(key)?;
         let l = &request.limits;
         if !standalone_kind(request.kind)
+            || (request.kind == RunKind::ForwardEvaluate
+                && (request.limits != crate::forward::evaluation_limits()
+                    || request.max_parallel_runs != 2))
             || l.experiments != 0
             || l.cpu_seconds.get() == 0
             || l.wall_seconds == 0
@@ -699,8 +716,9 @@ impl Store {
         {
             return Err(DomainError::AdmissionClosed.into());
         }
-        crate::research::revalidate_frozen_inputs(
+        revalidate_run_inputs(
             &mut tx,
+            request.kind,
             request.input_set_id,
             request.project_id,
             request.runtime_id,
@@ -907,8 +925,9 @@ impl Store {
         if !locked.admission_open() || locked.run.deadline_at <= now(&mut tx).await? {
             return Err(DomainError::AdmissionClosed.into());
         }
-        crate::research::revalidate_frozen_inputs(
+        revalidate_run_inputs(
             &mut tx,
+            locked.run.kind,
             locked.run.input_set_id,
             locked.run.project_id,
             db::id(locked.admission.try_get("runtime_id")?)?,

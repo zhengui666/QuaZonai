@@ -2806,6 +2806,14 @@ NativeTaskParametersV1::EvaluateForward只接受冻结NativeForwardRequestV1：�
 
 输出qz.forward_evaluation/1是NativeForwardResultV1：schema_version、native_version、完整原window及三项statistics，不含收益/账户。独立输出绑定重验原窗口和固定方法/有限值状态；可生成FORWARD_DAILY_RETURN_MEAN、FORWARD_RETURN_VOLATILITY、FORWARD_SHARPE_RATIO指标，scope=forward、frequency=UTC_DAY、原窗口时间/样本数、精确结果Artifact和方法版本，年化分别为null/365/365。原生数值输出仍不等于已发表Evaluation或forward_evidence_windows；后续可信Run准入、冻结FORWARD InputSet、预算、终态发布及Live/Wake消费必须保留独立边界并重验原来源当前版本。
 
+### A7.6 可信 Forward 反馈准入
+
+可信Worker通过原Handoff/stream启动反馈评估，无公开任意任务或Agent入口。项目须ACTIVE，当前非MANUAL政策须同项目/原Mandate/原下游、启用、未撤销且有原POLICY_AUTHORIZE完整回执；原Handoff须为原REAL Release的真实领取。原native来源加载器持Project写锁验证全部原消息/报告/领取回执，只有A7.5完整日频窗口可冻结；窗口须在原政策max_feedback_age_seconds内。正期限超出原生日历表示范围时仍由更早的有限政策期限封顶，不得panic或溢出变成已过期/永久有效。Runtime只沿用原Candidate生产Run的原准入runtime_id，使用其当前revision及新鲜FORWARD_EVALUATE能力，不由调用者选择。
+
+app.forward_evaluation_inputs追加记录原FORWARD InputSet、原政策、Handoff、Runtime、原PARAMETERS和带schema_version/operation的原任务（含完整NativeForwardRequest）；这些对象同事务冻结，普通InputSetCreate继续拒绝EVALUATOR_ONLY报告。仅FORWARD_EVALUATE Run的内部重验识别此登记，其他任务不能借此读取原报告。准入与首次发送重验原消息全体/最新窗口没有变化、当前政策/Runtime/期限及精确成员；改变来源使未发送任务失效，已发送任务保留原身份对账。
+
+反馈处理是固定已有数据的测量，不调用模型、不产生策略/试验，也不伪造新Cycle。使用原无Cycle Run队列/事件/Runtime/终态记账路径，experiments=0、1CPU、30CPU秒、60墙钟秒、512MiB、1MiB输出，项目无Cycle并发仍限2；只允许有精确可信登记的FORWARD_EVALUATE，泛型入口不能借kind绕过登记。每个原输入集至多一个Forward Run；同原Handoff与相同完整原消息ID集合只返回原Run，不重读受限原报告或重发参数，换政策/调用编号不重置任务。新冻结/任务/PGMQ/回执任一步失败整体回滚，未引用的本次参数文件沿用项目锁下原生清理。原始报告与已完成记录不覆盖或删除。
+
 ## A8. 集成、身份与幂等
 
 ### A8.0 原生 Codex 连接与会话适配
@@ -3471,7 +3479,7 @@ Run、发送意图或事件。已经提交的准确幂等回执、SENT_UNKNOWN �
 事后撤销而删除、重发或退款。锁外预检不能替代这些事务内检查。
 
 受信任 `enqueue_standalone_run` 只接 `project_id/input_set_id/runtime_id/runtime_revision/
-kind/limits/max_parallel_runs`。仅 IMPORT、EXPORT、DATA_VALIDATE 可用；limits.experiments
+kind/limits/max_parallel_runs`。仅 IMPORT、EXPORT、DATA_VALIDATE 及A7.6精确可信登记的FORWARD_EVALUATE可用；limits.experiments
 必须 0，cpu_seconds/wall_seconds/memory_mib/output_bytes 正值且满足原生整数边界；部署侧
 可信调用者给出 1–65535 的项目管理任务并发上限，不能由 Agent 降格研究任务。EXPORT 可读取
 归档项目；IMPORT/DATA_VALIDATE 不在归档项目开始。无 Cycle 任务仍须同项目冻结输入、

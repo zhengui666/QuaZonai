@@ -236,3 +236,49 @@ impl Store {
         Ok(result)
     }
 }
+
+/// Caller holds Project first; shared authority for delivery and bounded feedback processing.
+pub(crate) async fn active_policy(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: Id,
+    project: Id,
+    mandate: Id,
+    downstream: Id,
+) -> Result<(AutomationPolicyViewV1, chrono::DateTime<chrono::Utc>), StoreError> {
+    let row=sqlx::query("SELECT policy.*,p.state,p.current_automation_policy_id FROM app.automation_policies policy JOIN app.projects p ON p.id=policy.project_id WHERE policy.id=$1 FOR UPDATE OF policy")
+        .bind(id.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)?;
+    let policy = crate::automation::view(&row)?;
+    domain::delivery::automation_policy(&policy.content)?;
+    if policy.project_id != project
+        || policy.content.mandate_id != mandate
+        || policy.content.downstream_id != downstream
+        || row.try_get::<String, _>("state")? != "ACTIVE"
+        || db::optional_id(&row, "current_automation_policy_id")? != Some(id)
+        || policy.content.mode == AutomationModeV1::Manual
+        || !policy.content.enabled_for_new_rebalances
+    {
+        return Err(StoreError::Invalid("automation_authority"));
+    }
+    // Historical SQL/import rows do not acquire human provenance by a UUID copy.
+    let native:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.command_receipts WHERE operation='POLICY_AUTHORIZE' AND resource_id=$1 AND response_nonsecret_body->'resource'=$2)")
+        .bind(policy.project_id.as_uuid()).bind(db::json(&policy)?).fetch_one(&mut **tx).await?;
+    if !native {
+        return Err(StoreError::Invalid("automation_authorization_missing"));
+    }
+    let revoked: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT min(effective_at) FROM app.policy_revocations WHERE automation_policy_id=$1",
+    )
+    .bind(id.as_uuid())
+    .fetch_one(&mut **tx)
+    .await?;
+    let until = revoked.map_or(policy.content.valid_until, |v| {
+        v.min(policy.content.valid_until)
+    });
+    let current: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut **tx)
+        .await?;
+    if current < policy.authorized_at || current >= until {
+        return Err(StoreError::Invalid("automation_expiry"));
+    }
+    Ok((policy, until))
+}

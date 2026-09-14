@@ -180,8 +180,9 @@ impl Store {
         domain::runtime_jobs::spec_shape(&spec)?;
         if unsent && locked.run.state != RunState::CancelRequested {
             let runtime = db::id(locked.admission.try_get("runtime_id")?)?;
-            crate::research::revalidate_frozen_inputs(
+            revalidate_run_inputs(
                 &mut tx,
+                locked.run.kind,
                 locked.run.input_set_id,
                 locked.run.project_id,
                 runtime,
@@ -357,8 +358,9 @@ impl Store {
                 _ => None,
             })
             .ok_or(StoreError::Forbidden)?;
-        crate::research::revalidate_frozen_inputs(
+        revalidate_run_inputs(
             &mut tx,
+            locked.run.kind,
             locked.run.input_set_id,
             locked.run.project_id,
             db::id(locked.admission.try_get("runtime_id")?)?,

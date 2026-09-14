@@ -13,41 +13,19 @@ pub(super) async fn policy_authority(
     if environment != ForwardEnvironmentV1::Paper {
         return Err(StoreError::Invalid("automation_live_evidence_required"));
     }
-    let row=sqlx::query("SELECT policy.*,p.state,p.current_automation_policy_id FROM app.automation_policies policy JOIN app.projects p ON p.id=policy.project_id WHERE policy.id=$1 FOR UPDATE OF policy")
-        .bind(id.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)?;
-    let policy = crate::automation::view(&row)?;
-    domain::delivery::automation_policy(&policy.content)?;
-    if policy.project_id != package.project_id
-        || policy.content.mandate_id != package.mandate_id
-        || policy.content.downstream_id != downstream
-        || row.try_get::<String, _>("state")? != "ACTIVE"
-        || db::optional_id(&row, "current_automation_policy_id")? != Some(id)
-        || policy.content.mode == AutomationModeV1::Manual
-        || !policy.content.enabled_for_new_rebalances
-    {
-        return Err(StoreError::Invalid("automation_authority"));
-    }
-    // Historical SQL/import rows do not acquire human provenance by a UUID copy.
-    let native:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.command_receipts WHERE operation='POLICY_AUTHORIZE' AND resource_id=$1 AND response_nonsecret_body->'resource'=$2)")
-        .bind(policy.project_id.as_uuid()).bind(db::json(&policy)?).fetch_one(&mut **tx).await?;
-    if !native {
-        return Err(StoreError::Invalid("automation_authorization_missing"));
-    }
-    let revoked: Option<DateTime<Utc>> = sqlx::query_scalar(
-        "SELECT min(effective_at) FROM app.policy_revocations WHERE automation_policy_id=$1",
+    Ok(
+        crate::automation::active_policy(
+            tx,
+            id,
+            package.project_id,
+            package.mandate_id,
+            downstream,
+        )
+        .await?
+        .1,
     )
-    .bind(id.as_uuid())
-    .fetch_one(&mut **tx)
-    .await?;
-    let until = revoked.map_or(policy.content.valid_until, |v| {
-        v.min(policy.content.valid_until)
-    });
-    let current = now(tx).await?;
-    if current < policy.authorized_at || current >= until {
-        return Err(StoreError::Invalid("automation_expiry"));
-    }
-    Ok(until)
 }
+
 async fn daily_candidates(tx: &mut Tx<'_>, project: Id, downstream: Id) -> Result<i64, StoreError> {
     Ok(sqlx::query_scalar("SELECT count(DISTINCT r.candidate_id) FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND h.downstream_id=$2 AND h.offered_at>=(date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AND h.offered_at<(date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')+interval '1 day'")
         .bind(project.as_uuid()).bind(downstream.as_uuid()).fetch_one(&mut **tx).await?)
