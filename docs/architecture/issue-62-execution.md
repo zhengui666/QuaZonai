@@ -4758,3 +4758,10 @@ web-verify-SvLLD1完整通过：真实Rust导出与客户端生成逐字节可�
 新增GET /api/v2/releases/{id}/approvals与client approval list RELEASE_UUID，复用原审批元数据映射和精确项目读取授权，按原ID倒序分页所有历史版本。不会将旧审批重新判为可用、刷新期限或读取Package/私有报告字节；为网页选择原审批提供服务端入口，网页审批/Offer操作尚待接通。
 
 verify-XKnWFS通过workspace/all-targets编译、格式、严格Clippy及两项原生定向测试（原CLI授权意图、原资格Release审批链）。扩展真实审批链核对两次审批的分页、旧决定序号保持0和不存在Release返回NotFound。该链中的原生事务不是浏览器fixture；本轮未新增完整HTTP身份矩阵或浏览器操作证据。web-verify-XUqZpb真实Rust合同与客户端生成逐字节可复现、手写源不变。未push/review/merge/close，完整#62仍待完成。
+
+
+### 2026-09-14：Release 原审批历史界面
+
+Release详情按需展开原审批历史，复用原分页接口，核对项目/Release/Candidate三重关联；显示原授权来源、环境、期限、证据集合、自动化政策、下游版本/决定序号/就绪观察。历史null保留为“历史未记录”，不转换为0或当前版本，不提供审批/发送资格。
+
+本轮仅前端展示变化，npm --prefix apps/web run typecheck及直接Vite构建通过；npm run test:e2e -- tests/delivery.spec.ts tests/portfolio-candidates.spec.ts --workers=2通过51项三视口定向回归（56.9秒）。新增用例覆盖原审批分页、历史空值、错Candidate响应拒绝与无障碍；原候选独立评估/冻结同键重试一并复跑。受控浏览器响应只证明UI，不替代原生HTTP身份矩阵或完整T01–T42。未push/review/merge/close。

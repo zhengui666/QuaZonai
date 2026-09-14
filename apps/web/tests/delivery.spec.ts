@@ -79,3 +79,45 @@ for (const wrong of [false, true]) test(`Handoff original Claim history and proj
   expect(cursors).toContain(handoff.id); expect(state.commands).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 });
+
+for (const wrong of [false, true]) test(`Release original approvals retain nullable history: wrong=${wrong}`, async ({ page }) => {
+  const state = await fixture(page);
+  const approval: Schema['ApprovalViewV1'] = {
+    id: id(302), project_id: project.id, candidate_id: release.candidate_id, release_id: release.id,
+    downstream_id: id(85), environment: 'PAPER', authority_kind: 'OPERATOR', automation_policy_id: null,
+    evidence_set_id: id(303), granted_at: release.created_at, created_at: release.created_at, valid_until: release.valid_until,
+    downstream_revision: null, decision_ordinal: null, readiness_observation_id: null,
+  };
+  const cursors: (string | null)[] = [];
+  await page.route('**/api/v2/**', route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === `/api/v2/projects/${project.id}/releases`) return reply(route, { schema_version: 1, items: [release], next_cursor: null });
+    if (url.pathname === `/api/v2/releases/${release.id}`) return reply(route, release);
+    if (url.pathname === `/api/v2/releases/${release.id}/approvals`) {
+      const cursor = url.searchParams.get('cursor'); cursors.push(cursor);
+      return reply(route, { schema_version: 1, items: [{ ...approval, candidate_id: wrong ? id(999) : release.candidate_id, id: cursor ? id(301) : approval.id }], next_cursor: cursor ? null : approval.id });
+    }
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: project.name }).click();
+  await page.getByRole('button', { name: 'Release 00000102', exact: true }).click();
+  const detail = page.getByRole('dialog', { name: '原始目标包版本', exact: true });
+  await detail.getByText('原审批历史', { exact: true }).click();
+  if (wrong) {
+    await expect(detail.getByText(approval.id, { exact: true })).toHaveCount(0);
+    await expect(detail.getByRole('button', { name: '重新载入', exact: true })).toBeVisible();
+  } else {
+    await expect(detail.getByText(approval.id, { exact: true })).toBeVisible();
+    await detail.getByRole('button', { name: '下一页', exact: true }).click();
+    await expect(detail.getByText(id(301), { exact: true })).toBeVisible();
+    await detail.getByRole('button', { name: '上一页', exact: true }).click();
+    await detail.locator('.ant-table-row-expand-icon').click();
+    await expect(detail.getByText(approval.evidence_set_id, { exact: true })).toBeVisible();
+    await expect(detail.getByText('历史未记录', { exact: true })).toHaveCount(3);
+    expect(cursors).toContain(approval.id);
+    expect((await new AxeBuilder({ page }).include('.ant-drawer').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+  }
+  expect(state.commands).toEqual([]);
+});

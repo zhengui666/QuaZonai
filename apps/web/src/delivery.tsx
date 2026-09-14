@@ -1,4 +1,4 @@
-import { Alert, Button, Descriptions, Drawer, Space, Table, Tabs, Typography } from 'antd';
+import { Alert, Button, Collapse, Descriptions, Drawer, Space, Table, Tabs, Typography } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { useContext, useState } from 'react';
 import { api, dataOf, displayTime } from './api';
@@ -62,6 +62,7 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
         { key: 'created', label: '冻结于', children: displayTime(item.created_at) },
       ]} />}
     </QueryPanel>
+    {item && !query.isError && <Collapse items={[{ key: 'approvals', label: '原审批历史', children: <ReleaseApprovals release={item} /> }]} />}
   </Drawer>;
 }
 
@@ -111,4 +112,30 @@ function HandoffDetail({ id, project, close }: { id: string; project: string; cl
       ]} />}
     </QueryPanel>
   </Drawer>;
+}
+
+function ReleaseApprovals({ release }: { release: Schema['ReleaseViewV1'] }) {
+  const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
+  const query = useQuery({ queryKey: ['release-approvals', release.id, history.at(-1)], queryFn: async ({ signal }) => {
+    const page = dataOf(await api.GET('/api/v2/releases/{id}/approvals', { params: { path: { id: release.id }, query: { cursor: history.at(-1), limit: 25 } }, signal }));
+    if (page.items.some(item => item.project_id !== release.project_id || item.release_id !== release.id || item.candidate_id !== release.candidate_id)) throw new Error('审批记录不属于原目标包。');
+    return page;
+  } });
+  return <Space orientation="vertical" className="full-width">
+    <Alert showIcon type="info" title="历史审批不代表当前可发送" description="这里保留原授权与证据引用。有效期、撤销、决定及下游配置仍须在实际交付时由服务端复核。" />
+    <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新审批历史</Button>
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+      <Table<Schema['ApprovalViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 720 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="原目标包尚无审批记录。" /> }} columns={[
+        { title: '原审批', dataIndex: 'id' }, { title: '下游', dataIndex: 'downstream_id' }, { title: '环境', dataIndex: 'environment' },
+        { title: '授权来源', dataIndex: 'authority_kind' }, { title: '原期限', dataIndex: 'valid_until', render: displayTime },
+      ]} expandable={{ expandedRowRender: item => <Descriptions column={1} className="break-word" items={[
+        { key: 'evidence', label: '原证据集合', children: item.evidence_set_id }, { key: 'policy', label: '原自动化政策', children: item.automation_policy_id ?? '无自动化政策' },
+        { key: 'revision', label: '原下游配置版本', children: item.downstream_revision ?? '历史未记录' },
+        { key: 'decision', label: '原决定序号', children: item.decision_ordinal ?? '历史未记录' },
+        { key: 'observation', label: '原就绪观察', children: item.readiness_observation_id ?? '历史未记录' },
+        { key: 'granted', label: '原授权时间', children: displayTime(item.granted_at) }, { key: 'created', label: '记录时间', children: displayTime(item.created_at) },
+      ]} /> }} />
+    </QueryPanel>
+    <Pager history={history} next={query.isError ? undefined : query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
+  </Space>;
 }
