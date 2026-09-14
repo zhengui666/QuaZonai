@@ -3458,6 +3458,19 @@ Candidate、币种、目标顺序/权重和现金；Package起点不早于原目
 原目标valid_until。这个正文合同只检查结构和绑定，不替代当前来源/资格/政策/
 独立PORTFOLIO/PASS、Package持久化、Release或审批事务。
 
+人工Release创建意图ReleaseCreateV1仅含schema_version=1、candidate_id、
+evaluation_id，以精确Candidate的RELEASE_CREATE授权和幂等键执行。服务端从原
+REAL Candidate及目标产物、Mandate、已发表的独立PORTFOLIO/PASS及执行假设组装REAL Package，
+不能请求覆盖权重、来源、市场能力或有效期。复用原Candidate数值/来源校验与
+当前许可/资格锁；valid_from取服务器当前时间，valid_until不超过原目标、评估、
+资格及许可期限。先发布原生不可覆盖文件，再同事务保存PACKAGE、Release及命令
+回执；文件发布后重新核对来源/授权和期限。旧成功回执可重放但不延长目标。
+此入口不创建Approval/Offer，也不以FORWARD/HOLD或DEMO替代独立PORTFOLIO。
+POST /api/v2/releases与client release create消费该意图，201只表示冻结Release。
+GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重新判定
+资格或延长期限；只供Operator及精确项目RESEARCH_READ的CLI读取，不向Mission
+开放。创建失败仅清理确认未被数据库引用的本次新对象；响应丢失保留原键重放。
+
 ## B8. 完整自动化验收矩阵 T01–T42
 
 全部是本次交付项；共享基础fixture不等于空断言。每项输出CI日志、输入版本、产物/截图。真实收益不是预设必须出现的结果。

@@ -286,7 +286,7 @@ pub(super) fn target_window(
     Ok((asof, until))
 }
 
-async fn eligibility<R, Read>(
+pub(super) async fn eligibility<R, Read>(
     tx: &mut Tx<'_>,
     project: Id,
     request: &PortfolioBuildRequestV1,

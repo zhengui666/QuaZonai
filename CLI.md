@@ -1,7 +1,11 @@
 # CLI 命令
 
-TargetPackageV1 正文合同及原 Mandate/Candidate/目标绑定校验已实现；这不是 Release
-创建命令，也不授予审批或交付资格。目前没有可用的 Package 发布 CLI。
+`client release create`从stdin读取`{"schema_version":1,"candidate_id":"UUID","evaluation_id":"UUID"}`，
+POST /api/v2/releases，需原Candidate的RELEASE_CREATE人工grant及Idempotency-Key。
+201仅表示不可变Package/Release已冻结，不是审批或交付。`client release show UUID`
+读取GET /api/v2/releases/{id}的原版本，CLI需精确项目RESEARCH_READ。
+未知提交保持原请求/键重试；不能覆盖权重、有效期、来源或上传包绕过PORTFOLIO/PASS。
+完整成功链路、审批和下游交付仍待验收。
 
 原生单币种模拟中 CurrencyPair 仅支持 MARGIN，Equity 支持 CASH/MARGIN；
 执行假设和实际运行共用锁定 Nautilus 0.63.0 的该限制，不自动转换旧配置。

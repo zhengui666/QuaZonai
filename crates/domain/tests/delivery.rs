@@ -5,6 +5,30 @@ use contracts::{delivery::*, portfolio::*, science::PortfolioTargetsV1, Id, Sche
 use serde_json::json;
 
 #[test]
+fn release_creation_is_an_exact_candidate_command_not_a_package_upload() {
+    let intent = ReleaseCreateV1 {
+        schema_version: SchemaV1,
+        candidate_id: Id::new(),
+        evaluation_id: Id::new(),
+    };
+    let command = contracts::control::OperatorCommand::ReleaseCreate(intent.clone());
+    assert_eq!(command.operation().code(), "RELEASE_CREATE");
+    assert!(!command.operation().creates()); // Grant targets the original Candidate.
+    domain::control::command(&command).unwrap();
+    for field in [
+        "targets",
+        "valid_until",
+        "package_artifact_id",
+        "environment",
+        "force_pass",
+    ] {
+        let mut value = serde_json::to_value(&intent).unwrap();
+        value[field] = json!(null);
+        assert!(serde_json::from_value::<ReleaseCreateV1>(value).is_err());
+    }
+}
+
+#[test]
 fn package_preserves_original_targets_and_mandate_without_order_fields() {
     let input: AllocationInputV1 = serde_json::from_str(include_str!(
         "../../../tests/contracts/allocation-input.json"

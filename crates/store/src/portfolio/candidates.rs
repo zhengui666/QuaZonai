@@ -65,53 +65,61 @@ impl Store {
 
     pub async fn candidate(&self, actor: &Actor, id: Id) -> Result<CandidateDetailV1, StoreError> {
         let mut tx = self.pool.begin().await?;
-        let row = sqlx::query(&format!("{CANDIDATE} WHERE c.id=$1"))
-            .bind(id.as_uuid())
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(StoreError::NotFound)?;
-        crate::evidence::authorize(&mut tx, actor, db::id(row.try_get("project_id")?)?).await?;
-        let header = candidate(&row)?;
-        let members = sqlx::query(
-            "SELECT * FROM app.candidate_alphas WHERE candidate_id=$1 ORDER BY alpha_version_id",
-        )
-        .bind(id.as_uuid())
-        .fetch_all(&mut *tx)
-        .await?
-        .iter()
-        .map(|r| {
-            Ok(CandidateMemberV1 {
-                alpha_version_id: db::id(r.try_get("alpha_version_id")?)?,
-                qualification_id: db::id(r.try_get("qualification_id")?)?,
-                ensemble_weight: decimal(r.try_get("ensemble_weight")?)?,
-                calibration_id: db::optional_id(r, "calibration_id")?,
-                forecast_unit: r.try_get("forecast_unit")?,
-                coverage_fraction: decimal(r.try_get("coverage_fraction")?)?,
-            })
-        })
-        .collect::<Result<Vec<_>, StoreError>>()?;
-        let targets = sqlx::query(
-            "SELECT * FROM app.candidate_targets WHERE candidate_id=$1 ORDER BY instrument_id",
-        )
-        .bind(id.as_uuid())
-        .fetch_all(&mut *tx)
-        .await?
-        .iter()
-        .map(|r| {
-            Ok(CandidateTargetV1 {
-                instrument_id: r.try_get("instrument_id")?,
-                target_weight: decimal(r.try_get("target_weight")?)?,
-                currency: r.try_get("currency")?,
-                asof: r.try_get("asof")?,
-                valid_until: r.try_get("valid_until")?,
-            })
-        })
-        .collect::<Result<Vec<_>, StoreError>>()?;
+        let snapshot = snapshot(&mut tx, id).await?;
+        crate::evidence::authorize(&mut tx, actor, snapshot.header.project_id).await?;
         tx.commit().await?;
-        Ok(CandidateDetailV1 {
-            header,
-            members,
-            targets,
-        })
+        Ok(snapshot)
     }
+}
+
+pub(crate) async fn snapshot(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: Id,
+) -> Result<CandidateDetailV1, StoreError> {
+    let row = sqlx::query(&format!("{CANDIDATE} WHERE c.id=$1"))
+        .bind(id.as_uuid())
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+    let header = candidate(&row)?;
+    let members = sqlx::query(
+        "SELECT * FROM app.candidate_alphas WHERE candidate_id=$1 ORDER BY alpha_version_id",
+    )
+    .bind(id.as_uuid())
+    .fetch_all(&mut **tx)
+    .await?
+    .iter()
+    .map(|r| {
+        Ok(CandidateMemberV1 {
+            alpha_version_id: db::id(r.try_get("alpha_version_id")?)?,
+            qualification_id: db::id(r.try_get("qualification_id")?)?,
+            ensemble_weight: decimal(r.try_get("ensemble_weight")?)?,
+            calibration_id: db::optional_id(r, "calibration_id")?,
+            forecast_unit: r.try_get("forecast_unit")?,
+            coverage_fraction: decimal(r.try_get("coverage_fraction")?)?,
+        })
+    })
+    .collect::<Result<Vec<_>, StoreError>>()?;
+    let targets = sqlx::query(
+        "SELECT * FROM app.candidate_targets WHERE candidate_id=$1 ORDER BY instrument_id",
+    )
+    .bind(id.as_uuid())
+    .fetch_all(&mut **tx)
+    .await?
+    .iter()
+    .map(|r| {
+        Ok(CandidateTargetV1 {
+            instrument_id: r.try_get("instrument_id")?,
+            target_weight: decimal(r.try_get("target_weight")?)?,
+            currency: r.try_get("currency")?,
+            asof: r.try_get("asof")?,
+            valid_until: r.try_get("valid_until")?,
+        })
+    })
+    .collect::<Result<Vec<_>, StoreError>>()?;
+    Ok(CandidateDetailV1 {
+        header,
+        members,
+        targets,
+    })
 }

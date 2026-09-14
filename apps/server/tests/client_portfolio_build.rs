@@ -25,9 +25,17 @@ async fn portfolio_study_cli_requires_its_own_exact_human_intent(pool: PgPool) {
     check_intent(pool, "study").await;
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_cli_requires_its_own_exact_human_intent(pool: PgPool) {
+    check_intent(pool, "create").await;
+}
+
 async fn check_intent(pool: PgPool, command: &str) {
+    let release = command == "create";
+    let group = if release { "release" } else { "portfolio" };
     let simulation = command != "build";
     let operation = match command {
+        "create" => "RELEASE_CREATE",
         "study" => "PORTFOLIO_STUDY",
         "simulate" => "PORTFOLIO_SIMULATE",
         _ => "PORTFOLIO_BUILD",
@@ -80,11 +88,14 @@ async fn check_intent(pool: PgPool, command: &str) {
             object.remove("input_set_id");
         }
     }
+    if release {
+        body = json!({"schema_version":1,"candidate_id":mandate.id,"evaluation_id":contracts::Id::new()});
+    }
     let (origin, _listener) = listen(&f).await;
     let denied = invoke(
         &origin,
         &file,
-        &["--idempotency-key", "build", "portfolio", command],
+        &["--idempotency-key", "build", group, command],
         body.clone(),
     )
     .await;
@@ -105,7 +116,7 @@ async fn check_intent(pool: PgPool, command: &str) {
         "build",
         "--operator-grant",
         grant["resource"]["id"].as_str().unwrap(),
-        "portfolio",
+        group,
         command,
     ];
     for _ in 0..2 {
@@ -119,7 +130,7 @@ async fn check_intent(pool: PgPool, command: &str) {
         );
     }
     let mut changed = body;
-    changed["cycle_id"] = json!(contracts::Id::new());
+    changed[if release { "evaluation_id" } else { "cycle_id" }] = json!(contracts::Id::new());
     let rejected = invoke(&origin, &file, &arguments, changed).await;
     assert_eq!(
         serde_json::from_slice::<Value>(&rejected.stderr).unwrap()["status"],

@@ -149,6 +149,33 @@ pub(super) async fn qualified_chain(
     Id,
     tempfile::TempDir,
 )> {
+    Box::pin(qualified_chain_policy(
+        pool,
+        liquidity,
+        contracts::forward::ForwardEnvironmentV1::Paper,
+        |_| {},
+    ))
+    .await
+}
+
+async fn qualified_chain_policy(
+    pool: PgPool,
+    liquidity: cycle_support::Liquidity,
+    environment: contracts::forward::ForwardEnvironmentV1,
+    customize: fn(&mut contracts::research::EvaluationPolicyCreate),
+) -> Option<(
+    Store,
+    store::authority::Actor,
+    cycle_support::Fixture,
+    contracts::portfolio::PortfolioBuildRequestV1,
+    Id,
+    tempfile::TempDir,
+)> {
+    let expected_origin = if environment == contracts::forward::ForwardEnvironmentV1::Paper {
+        "SYNTHETIC"
+    } else {
+        "REAL"
+    };
     let with_liquidity = liquidity == cycle_support::Liquidity::Snapshot;
     let directory = tempfile::tempdir().unwrap();
     let objects = std::sync::Arc::new(
@@ -171,6 +198,7 @@ pub(super) async fn qualified_chain(
             portfolio.scope = "portfolio".into();
             portfolio.method_allowlist = vec!["nautilus-analysis.ReturnsAverage".into()];
             policy.portfolio_metric_requirements = Some(vec![portfolio]);
+            customize(policy);
         },
     )
     .await;
@@ -360,7 +388,7 @@ pub(super) async fn qualified_chain(
     let counts: (i64,i64,i64) = sqlx::query_as("SELECT count(*),count(DISTINCT q.alpha_version_id),count(DISTINCT q.qualifying_evaluation_id) FROM app.qualifications q JOIN app.alpha_versions v ON v.id=q.alpha_version_id JOIN app.alphas a ON a.id=v.alpha_id AND a.active_version_id=v.id AND a.lifecycle='QUALIFIED' WHERE v.project_id=$1")
         .bind(f.data.project.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (2, 2, 2));
-    let request = inputs::request(&pool, &store, &actor, &f, cycle).await;
+    let request = inputs::request(&pool, &store, &actor, &f, cycle, environment).await;
     let origin:String=sqlx::query_scalar("SELECT a.origin FROM app.execution_assumptions e JOIN app.artifacts a ON a.id=e.fee_schedule_artifact_id WHERE e.id=$1")
         .bind(f.data.assumptions.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(
@@ -735,7 +763,13 @@ pub(super) async fn qualified_chain(
         .bind(candidate.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(
         facts,
-        ("OPTIMAL".into(), "VALID".into(), "SYNTHETIC".into(), 2, 1)
+        (
+            "OPTIMAL".into(),
+            "VALID".into(),
+            expected_origin.into(),
+            2,
+            1
+        )
     );
     let replay = store
         .publish_scientific_result(
@@ -1313,7 +1347,7 @@ pub(super) async fn qualified_chain(
         (
             "VALID".into(),
             "LAST_TARGET".into(),
-            "SYNTHETIC".into(),
+            expected_origin.into(),
             candidate.as_uuid(),
             None
         )
@@ -1684,7 +1718,7 @@ async fn study_admission(
         };
         let job = store.native_job(run.id, &lease.fence).await.unwrap();
         Box::pin(study_result::complete(
-            pool, store, f, &lease, &job, infeasible,
+            pool, store, f, &lease, &job, infeasible, false,
         ))
         .await;
         assert!(matches!(
@@ -1798,6 +1832,32 @@ async fn study_admission(
             )
         );
         let view = store.evaluation(actor, left.resource).await.unwrap();
+        let releases: i64 = sqlx::query_scalar("SELECT count(*) FROM app.releases")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            Box::pin(store.create_release(
+                actor,
+                &format!("reject-inconclusive-release-{infeasible}"),
+                &contracts::delivery::ReleaseCreateV1 {
+                    schema_version: SchemaV1,
+                    candidate_id: candidate,
+                    evaluation_id: left.resource
+                },
+                |id, size| f.read(id, size),
+                |_| async { panic!("INCONCLUSIVE cannot publish a Package") },
+            ))
+            .await,
+            Err(StoreError::Invalid("release_portfolio_evaluation"))
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.releases")
+                .fetch_one(pool)
+                .await
+                .unwrap(),
+            releases
+        );
         assert_eq!(view.subject_candidate_id, Some(candidate));
         assert_eq!(
             view.evaluation_kind,
@@ -1841,4 +1901,302 @@ async fn study_admission(
         assert!(replay.replayed);
         assert_eq!(replay.resource, left.resource);
     }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn release_freezes_original_package_and_replays_without_republishing(pool: PgPool) {
+    Box::pin(release_scenario(
+        pool,
+        contracts::forward::ForwardEnvironmentV1::Live,
+    ))
+    .await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn synthetic_candidate_cannot_be_upgraded_to_real_release(pool: PgPool) {
+    Box::pin(release_scenario(
+        pool,
+        contracts::forward::ForwardEnvironmentV1::Paper,
+    ))
+    .await;
+}
+
+async fn release_scenario(pool: PgPool, environment: contracts::forward::ForwardEnvironmentV1) {
+    // Controlled protocol evidence tests the transaction, not real-market acceptance.
+    let (store, actor, f, build, candidate, _directory) = Box::pin(qualified_chain_policy(
+        pool.clone(),
+        cycle_support::Liquidity::None,
+        environment,
+        |policy| {
+            policy.minimum_observations = 1;
+            let criterion = &mut policy.portfolio_metric_requirements.as_mut().unwrap()[0];
+            criterion.minimum_observations = DbCounter::new(1).unwrap();
+            criterion.threshold_low = Some("0".parse().unwrap());
+        },
+    ))
+    .await
+    .unwrap();
+    Box::pin(release_check(&pool, &store, &actor, &f, &build, candidate)).await;
+}
+
+async fn release_check(
+    pool: &PgPool,
+    store: &Store,
+    actor: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    build: &contracts::portfolio::PortfolioBuildRequestV1,
+    candidate: Id,
+) {
+    let request = contracts::portfolio::PortfolioStudyRequestV1 {
+        schema_version: SchemaV1,
+        candidate_id: candidate,
+        cycle_id: build.cycle_id,
+        runtime_id: build.runtime_id,
+        expected_runtime_revision: build.expected_runtime_revision,
+        limits: build.limits.clone(),
+    };
+    let run = Box::pin(store.start_portfolio_study(
+        actor,
+        "release-study",
+        &request,
+        |id, size| f.read(id, size),
+        |object| {
+            std::future::ready(
+                f.objects
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| StoreError::Integrity),
+            )
+        },
+    ))
+    .await
+    .unwrap()
+    .resource;
+    let message = validation_publication::message(pool, run.id).await;
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_native_run(&message, "release-study", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("Study lease")
+    };
+    let job = store.native_job(run.id, &lease.fence).await.unwrap();
+    Box::pin(study_result::complete(
+        pool, store, f, &lease, &job, false, true,
+    ))
+    .await;
+    let evaluation = validation_publication::publish(store, f, run.id)
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(
+        store.evaluation(actor, evaluation).await.unwrap().decision,
+        contracts::evidence::Decision::Pass
+    );
+    let intent = contracts::delivery::ReleaseCreateV1 {
+        schema_version: SchemaV1,
+        candidate_id: candidate,
+        evaluation_id: evaluation,
+    };
+    if store
+        .candidate(actor, candidate)
+        .await
+        .unwrap()
+        .header
+        .origin
+        == DataOrigin::Synthetic
+    {
+        let rejected = Box::pin(store.create_release(
+            actor,
+            "synthetic-release",
+            &intent,
+            |id, size| f.read(id, size),
+            |_| async { panic!("synthetic Candidate never publishes a REAL Package") },
+        ))
+        .await;
+        assert!(
+            matches!(rejected, Err(StoreError::Invalid("release_real_candidate"))),
+            "{rejected:?}"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.releases")
+                .fetch_one(pool)
+                .await
+                .unwrap(),
+            0
+        );
+        return;
+    }
+    let failed = Box::pin(store.create_release(
+        actor,
+        "release-failed",
+        &intent,
+        |id, size| f.read(id, size),
+        |_| async { Err(StoreError::Integrity) },
+    ))
+    .await;
+    assert!(matches!(failed, Err(StoreError::Integrity)), "{failed:?}");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.releases")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        0
+    );
+    let publish = |object: store::lifecycle::native::NativeObjectPublication| {
+        std::future::ready(
+            f.objects
+                .put(object.id, &object.bytes)
+                .map_err(|_| StoreError::Integrity),
+        )
+    };
+    let (left, right) = tokio::join!(
+        Box::pin(store.create_release(
+            actor,
+            "release-original",
+            &intent,
+            |id, size| f.read(id, size),
+            publish
+        )),
+        Box::pin(store.create_release(
+            actor,
+            "release-original",
+            &intent,
+            |id, size| f.read(id, size),
+            publish
+        ))
+    );
+    let (left, right) = (left.unwrap(), right.unwrap());
+    assert_ne!(left.replayed, right.replayed);
+    assert_eq!(left.resource.id, right.resource.id);
+    let view = store.release(actor, left.resource.id).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&view).unwrap(),
+        serde_json::to_value(&left.resource).unwrap()
+    );
+    let size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1")
+        .bind(view.package_artifact_id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let package: contracts::delivery::TargetPackageV1 = serde_json::from_slice(
+        &f.read(
+            view.package_artifact_id,
+            DbCounter::new(size as u64).unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(package.release_id, view.id);
+    assert_eq!(package.evaluation_refs, vec![evaluation]);
+    assert_eq!(package.valid_until, view.valid_until);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.releases")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let replay = Box::pin(store.create_release(
+        actor,
+        "release-original",
+        &intent,
+        |_, _| async { panic!("replay reads no file") },
+        |_| async { panic!("replay publishes no file") },
+    ))
+    .await
+    .unwrap();
+    assert!(replay.replayed);
+    let changed = contracts::delivery::ReleaseCreateV1 {
+        evaluation_id: Id::new(),
+        ..intent.clone()
+    };
+    assert!(matches!(
+        Box::pin(store.create_release(
+            actor,
+            "release-original",
+            &changed,
+            |_, _| async { panic!("changed intent") },
+            |_| async { panic!("changed intent") }
+        ))
+        .await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    assert!(!store
+        .discard_unpublished_operator_artifact(view.package_artifact_id, |_| async {
+            panic!("referenced Package cannot be discarded")
+        })
+        .await
+        .unwrap());
+    let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let deadline = now + chrono::Duration::seconds(3);
+    store
+        .revoke_data_grant(
+            actor,
+            "release-future-revocation",
+            f.data.grant,
+            &contracts::data::DataGrantRevoke {
+                schema_version: SchemaV1,
+                effective_at: Some(deadline),
+                reason_code: "CONTROLLED_WITHDRAWAL".into(),
+                reason: "Controlled Release publication expiry".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let written = std::sync::Mutex::new(None);
+    let recorded = &written;
+    let expired = Box::pin(store.create_release(
+        actor,
+        "release-expires-during-write",
+        &intent,
+        |id, size| f.read(id, size),
+        |object| async move {
+            let package: contracts::delivery::TargetPackageV1 =
+                serde_json::from_slice(&object.bytes).unwrap();
+            assert!(package.valid_until <= deadline);
+            f.objects.put(object.id, &object.bytes).unwrap();
+            *recorded.lock().unwrap() = Some(object.id);
+            tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+            Ok(())
+        },
+    ))
+    .await;
+    assert!(
+        matches!(
+            expired,
+            Err(StoreError::Invalid(_) | StoreError::Conflict | StoreError::Domain(_))
+        ),
+        "{expired:?}"
+    );
+    let orphan = written.into_inner().unwrap().unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.releases")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(store
+        .discard_unpublished_operator_artifact(orphan, |id| std::future::ready(
+            f.objects
+                .discard_unpublished(id)
+                .map_err(|_| StoreError::Integrity)
+        ))
+        .await
+        .unwrap());
+    let replay = Box::pin(store.create_release(
+        actor,
+        "release-original",
+        &intent,
+        |_, _| async { panic!("expired replay reads no source") },
+        |_| async { panic!("expired replay writes no source") },
+    ))
+    .await
+    .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource.valid_until, view.valid_until);
 }

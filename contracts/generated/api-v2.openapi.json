@@ -8128,6 +8128,87 @@
         ],
         "type": "object"
       },
+      "CommandResult_ReleaseViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "asof": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "candidate_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "environment": {
+                "$ref": "#/components/schemas/PackageOriginV1"
+              },
+              "evaluation_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "mandate_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "market_capability_version": {
+                "type": "string"
+              },
+              "package_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "package_schema_version": {
+                "$ref": "#/components/schemas/PackageSchemaVersion"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "valid_from": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "valid_until": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "project_id",
+              "candidate_id",
+              "mandate_id",
+              "evaluation_id",
+              "package_artifact_id",
+              "package_schema_version",
+              "market_capability_version",
+              "asof",
+              "valid_from",
+              "valid_until",
+              "environment",
+              "created_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_RunSnapshotV1": {
         "additionalProperties": false,
         "properties": {
@@ -12894,6 +12975,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "RELEASE_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ReleaseCreateV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "CYCLE_START"
                 ],
                 "type": "string"
@@ -13322,6 +13421,7 @@
           "ALPHA_EVALUATE",
           "PORTFOLIO_BUILD",
           "PORTFOLIO_SIMULATE",
+          "RELEASE_CREATE",
           "BRIEF_FREEZE",
           "CYCLE_START",
           "INTEGRATION_SECRET_REGISTER",
@@ -13342,6 +13442,13 @@
           "CREDENTIAL_REVOKE",
           "INPUT_SET_CREATE",
           "EVALUATION_POLICY_CREATE"
+        ],
+        "type": "string"
+      },
+      "PackageOriginV1": {
+        "enum": [
+          "DEMO",
+          "REAL"
         ],
         "type": "string"
       },
@@ -17322,6 +17429,90 @@
           "session_offset_seconds",
           "max_input_age_seconds",
           "target_ttl_seconds"
+        ],
+        "type": "object"
+      },
+      "ReleaseCreateV1": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "evaluation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "candidate_id",
+          "evaluation_id"
+        ],
+        "type": "object"
+      },
+      "ReleaseViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "asof": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/PackageOriginV1"
+          },
+          "evaluation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "mandate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "market_capability_version": {
+            "type": "string"
+          },
+          "package_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "package_schema_version": {
+            "$ref": "#/components/schemas/PackageSchemaVersion"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "candidate_id",
+          "mandate_id",
+          "evaluation_id",
+          "package_artifact_id",
+          "package_schema_version",
+          "market_capability_version",
+          "asof",
+          "valid_from",
+          "valid_until",
+          "environment",
+          "created_at"
         ],
         "type": "object"
       },
@@ -29714,6 +29905,231 @@
         ],
         "tags": [
           "Portfolio mandates"
+        ]
+      }
+    },
+    "/api/v2/releases": {
+      "post": {
+        "operationId": "create_release",
+        "parameters": [
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseCreateV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_ReleaseViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Release"
+        ]
+      }
+    },
+    "/api/v2/releases/{id}": {
+      "get": {
+        "operationId": "get_release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Release"
         ]
       }
     },

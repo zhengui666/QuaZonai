@@ -39,6 +39,8 @@ use utoipa::OpenApi;
 #[openapi(components(schemas(
     http::Problem,
     delivery::TargetPackageV1,
+    delivery::ReleaseCreateV1,
+    delivery::ReleaseViewV1,
     portfolio::PortfolioStudyRequestV1,
     cycles::BriefFreezeV1,
     cycles::FrozenBriefV1,

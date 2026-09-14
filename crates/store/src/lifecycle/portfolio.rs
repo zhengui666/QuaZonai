@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 
 mod evaluation;
 mod publication;
+mod release;
 mod simulation;
 mod study;
 mod weights;

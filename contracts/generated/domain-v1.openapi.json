@@ -13441,6 +13441,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "RELEASE_CREATE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ReleaseCreateV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "CYCLE_START"
                 ],
                 "type": "string"
@@ -13869,6 +13887,7 @@
           "ALPHA_EVALUATE",
           "PORTFOLIO_BUILD",
           "PORTFOLIO_SIMULATE",
+          "RELEASE_CREATE",
           "BRIEF_FREEZE",
           "CYCLE_START",
           "INTEGRATION_SECRET_REGISTER",
@@ -15190,6 +15209,90 @@
           "session_offset_seconds",
           "max_input_age_seconds",
           "target_ttl_seconds"
+        ],
+        "type": "object"
+      },
+      "ReleaseCreateV1": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "evaluation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "candidate_id",
+          "evaluation_id"
+        ],
+        "type": "object"
+      },
+      "ReleaseViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "asof": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/PackageOriginV1"
+          },
+          "evaluation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "mandate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "market_capability_version": {
+            "type": "string"
+          },
+          "package_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "package_schema_version": {
+            "$ref": "#/components/schemas/PackageSchemaVersion"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "candidate_id",
+          "mandate_id",
+          "evaluation_id",
+          "package_artifact_id",
+          "package_schema_version",
+          "market_capability_version",
+          "asof",
+          "valid_from",
+          "valid_until",
+          "environment",
+          "created_at"
         ],
         "type": "object"
       },

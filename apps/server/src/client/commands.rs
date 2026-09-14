@@ -65,6 +65,8 @@ pub enum Command {
     #[command(subcommand)]
     Portfolio(Portfolio),
     #[command(subcommand)]
+    Release(Release),
+    #[command(subcommand)]
     Cycle(Cycle),
     #[command(subcommand)]
     Data(Data),
@@ -122,6 +124,12 @@ pub enum Alpha {
         #[command(flatten)]
         page: List,
     },
+}
+
+#[derive(Subcommand)]
+pub enum Release {
+    Create,
+    Show { id: String },
 }
 
 #[derive(Subcommand)]
@@ -522,6 +530,16 @@ impl Command {
                 >(
                     PATCH, item("/api/v2/projects", id)?, 200, true
                 )?,
+            },
+            Self::Release(command) => match command {
+                Release::Create => Request::write::<
+                    contracts::delivery::ReleaseCreateV1,
+                    CommandResult<contracts::delivery::ReleaseViewV1>,
+                >(POST, "/api/v2/releases", 201, true)?,
+                Release::Show { id } => Request::get::<contracts::delivery::ReleaseViewV1>(item(
+                    "/api/v2/releases",
+                    id,
+                )?),
             },
             Self::Portfolio(Portfolio::Build) => {
                 Request::write::<

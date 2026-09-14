@@ -10,6 +10,7 @@ pub(super) async fn complete(
     lease: &RunLease,
     job: &NativeJob,
     infeasible: bool,
+    measured: bool,
 ) {
     let size = job
         .spec
@@ -137,7 +138,21 @@ pub(super) async fn complete(
         schema_version: SchemaV1,
         consumed_fuel: DbCounter::new(frames.len() as u64).unwrap(),
         frames,
-        simulation: simulation_request.as_ref().map(simulation_result::intraday),
+        simulation: simulation_request.as_ref().map(|request| {
+            let mut result = simulation_result::intraday(request);
+            if measured {
+                // Explicit controlled protocol sample, not a native market result.
+                result.returns = serde_json::from_value(serde_json::json!([{
+                    "timestamp_ns": (request.selection.event_start_ns.get() / 86_400_000_000_000 * 86_400_000_000_000).to_string(),
+                    "value": 0.0, "reason_code": null
+                }])).unwrap();
+                result.returns_status = contracts::evidence::MetricStatus::Ok;
+                result.returns_reason = None;
+                result.statistics[0].value = Some(0.0);
+                result.statistics[0].reason_code = None;
+            }
+            result
+        }),
         simulation_request,
     };
     domain::execution::check_portfolio_study(&request, &report).unwrap();

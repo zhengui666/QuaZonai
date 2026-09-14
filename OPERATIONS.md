@@ -1,7 +1,8 @@
 # 运行与部署
 
-目标包正文已具备严格合同和原 Mandate/Candidate/目标绑定校验；尚未接入 Release
-创建、审批及下游交付。结构校验成功不是当前资格通过，不能作为可交付证明。
+目标包正文、Release创建/读取HTTP和CLI已接通。创建要求原Candidate及独立
+PORTFOLIO/PASS，返回201只冻结版本，不批准Paper/Live或下游交付；完整成功链路仍待验收。
+响应未知时保留原请求和幂等键重试，读取不会延长目标有效期。
 
 当前单基础币种 Nautilus 0.63.0 配置中，CurrencyPair 必须明确选择 MARGIN；
 Equity 支持 CASH 或 MARGIN。系统拒绝不支持的账户/资产类组合，不自动切换账户

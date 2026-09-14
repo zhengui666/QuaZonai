@@ -122,7 +122,7 @@ impl Store {
     }
 }
 
-async fn source_until(
+pub(super) async fn source_until(
     tx: &mut Tx<'_>,
     qualifications: &[Id],
     inputs: &BTreeSet<Id>,

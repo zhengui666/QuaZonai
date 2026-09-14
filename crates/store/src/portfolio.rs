@@ -9,7 +9,7 @@ use contracts::{
 };
 use sqlx::{postgres::PgRow, Row};
 
-mod candidates;
+pub(crate) mod candidates;
 
 pub(crate) fn risk_capability(
     content: &MandateContentV1,

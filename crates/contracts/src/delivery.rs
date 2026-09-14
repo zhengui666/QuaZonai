@@ -4,6 +4,32 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseCreateV1 {
+    pub schema_version: crate::SchemaV1,
+    pub candidate_id: Id,
+    pub evaluation_id: Id,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseViewV1 {
+    pub id: Id,
+    pub project_id: Id,
+    pub candidate_id: Id,
+    pub mandate_id: Id,
+    pub evaluation_id: Id,
+    pub package_artifact_id: Id,
+    pub package_schema_version: PackageSchemaVersion,
+    pub market_capability_version: String,
+    pub asof: chrono::DateTime<chrono::Utc>,
+    pub valid_from: chrono::DateTime<chrono::Utc>,
+    pub valid_until: chrono::DateTime<chrono::Utc>,
+    pub environment: PackageOriginV1,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PackageOriginV1 {

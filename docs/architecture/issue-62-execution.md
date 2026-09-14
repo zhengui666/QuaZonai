@@ -1,5 +1,43 @@
 # Issue62 implementation evidence
 
+## Release creation, original Package and HTTP/CLI, 2026-09-14
+
+The resumed local owner retained the interrupted Release transaction and completed
+POST /api/v2/releases, GET /api/v2/releases/{id}, and client release create/show.
+The three-field intent binds the exact Candidate and PORTFOLIO Evaluation to the
+existing RELEASE_CREATE Operator grant. Store assembles original target-only
+bytes, rechecks source/authority after immutable publication, and commits Package,
+Release and the original command receipt together. Readback preserves the version
+and expiry; it does not grant approval or delivery. HTTP reuses existing command
+ownership and confirmed-unreferenced object cleanup after failed publication.
+
+A successful controlled protocol test exposed that the original PAPER weights
+produce SYNTHETIC Candidates. Release now explicitly refuses that origin even
+when independent Study passes. The successful test registers a LIVE test source
+through the existing downstream API; it never changes historical origin rows.
+Both branches still use controlled declarations, not real market or model proof.
+
+verify-Y8fljk passed workspace check, formatting, strict Clippy and 20 real PG/TCP
+checks with source unchanged: four native CLI authorization tests and 16 shared
+HTTP/Store tests. New coverage verifies concurrent same-key publication, original
+Package/readback, file-publication failure without a Release, changed-intent
+rejection, referenced-object retention, scheduled source expiry during file write,
+orphan cleanup and unchanged successful replay after source expiry. An earlier
+fixture omitted the policy-wide sample minimum, correctly yielding INCONCLUSIVE;
+it was fixed only in the explicit controlled test policy. The expiry path returns
+the existing data-use domain error, which the assertion now accepts.
+
+The final contracts/domain test run passed all 141 tests. web-verify-cUbmyo
+reproduced all six allowed generated files twice, with handwritten sources
+unchanged. Frontend typecheck, 505 Vitest tests, five PWA file tests and Vite build
+passed; the existing large-chunk warning remains. No browser UI was changed and
+this run did not repeat browser or native OCI acceptance.
+
+This completes the tested Store publication boundary and HTTP/CLI wiring, not
+native successful HTTP-to-Worker/OCI Study acceptance or the complete delivery
+product. Approval, offer/claim, feedback/automation, remaining UI and all outstanding
+acceptance work remain required. No GitHub review, push, merge or Issue closure.
+
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 

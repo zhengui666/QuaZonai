@@ -99,6 +99,7 @@ pub(super) async fn request(
     actor: &Actor,
     f: &cycle_support::Fixture,
     cycle: Id,
+    environment: ForwardEnvironmentV1,
 ) -> PortfolioBuildRequestV1 {
     let context = &f.freeze.execution_context;
     let ProbePreparation::Pending(ticket) = store
@@ -145,7 +146,10 @@ pub(super) async fn request(
                     name: "Controlled weights source".into(),
                     endpoint: "https://downstream.example".into(),
                     accepted_package_versions: vec![PackageSchemaVersion::V1],
-                    environments: DownstreamEnvironments::Paper,
+                    environments: match environment {
+                        ForwardEnvironmentV1::Paper => DownstreamEnvironments::Paper,
+                        ForwardEnvironmentV1::Live => DownstreamEnvironments::Live,
+                    },
                     enabled: true,
                     development_http: false,
                 },
@@ -206,7 +210,7 @@ pub(super) async fn request(
             &DownstreamWeightsSubmitV1 {
                 schema_version: SchemaV1,
                 project_id: f.data.project,
-                environment: ForwardEnvironmentV1::Paper,
+                environment,
                 external_message_id: "original-portfolio-weights".into(),
                 asof_ns: nanos(now),
                 available_ns: nanos(now),
@@ -339,7 +343,7 @@ pub(super) async fn request(
         current_weights_source: PortfolioBuildWeightsV1::ForwardSnapshot {
             snapshot_id: weights.id,
         },
-        environment: ForwardEnvironmentV1::Paper,
+        environment,
         members: qualifications
             .into_iter()
             .map(|id| PortfolioMemberSelectionV1 {
