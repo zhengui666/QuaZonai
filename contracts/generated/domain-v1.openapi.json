@@ -9766,6 +9766,42 @@
         ],
         "type": "object"
       },
+      "HandoffClaimV1": {
+        "additionalProperties": false,
+        "properties": {
+          "external_claim_id": {
+            "type": "string"
+          },
+          "package_schema_version": {
+            "$ref": "#/components/schemas/PackageSchemaVersion"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "external_claim_id",
+          "package_schema_version"
+        ],
+        "type": "object"
+      },
+      "HandoffClaimViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "handoff": {
+            "$ref": "#/components/schemas/HandoffViewV1"
+          },
+          "package": {
+            "$ref": "#/components/schemas/TargetPackageV1"
+          }
+        },
+        "required": [
+          "handoff",
+          "package"
+        ],
+        "type": "object"
+      },
       "HandoffOfferV1": {
         "additionalProperties": false,
         "properties": {

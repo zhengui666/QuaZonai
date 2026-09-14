@@ -932,6 +932,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/handoffs/{id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["claim_handoff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/input-sets": {
         parameters: {
             query?: never;
@@ -2742,6 +2758,14 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_HandoffClaimViewV1: {
+            replayed: boolean;
+            resource: {
+                handoff: components["schemas"]["HandoffViewV1"];
+                package: components["schemas"]["TargetPackageV1"];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_HandoffViewV1: {
             replayed: boolean;
             resource: {
@@ -3563,6 +3587,15 @@ export interface components {
             max: components["schemas"]["DecimalValue"];
             min: components["schemas"]["DecimalValue"];
         };
+        HandoffClaimV1: {
+            external_claim_id: string;
+            package_schema_version: components["schemas"]["PackageSchemaVersion"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        HandoffClaimViewV1: {
+            handoff: components["schemas"]["HandoffViewV1"];
+            package: components["schemas"]["TargetPackageV1"];
+        };
         HandoffOfferV1: {
             approval_id: components["schemas"]["Id"];
             /** Format: date-time */
@@ -4122,6 +4155,11 @@ export interface components {
         PackageOriginV1: "DEMO" | "REAL";
         /** @enum {string} */
         PackageSchemaVersion: "1";
+        PackageTargetV1: {
+            currency: string;
+            instrument_id: string;
+            target_weight: components["schemas"]["DecimalValue"];
+        };
         Page_AlphaVersionView: {
             items: {
                 alpha_id: components["schemas"]["Id"];
@@ -5394,6 +5432,37 @@ export interface components {
         };
         /** @enum {string} */
         TargetKind: "SCORE" | "EXPECTED_RETURN";
+        TargetPackageV1: {
+            /** Format: date-time */
+            asof: string;
+            base_currency: string;
+            candidate_id: components["schemas"]["Id"];
+            capital_assumption: components["schemas"]["DecimalValue"];
+            cash_weight: components["schemas"]["DecimalValue"];
+            compatible_market_capabilities: string[];
+            constraints_summary: components["schemas"]["PortfolioConstraintsV1"];
+            cost_assumption_ref: components["schemas"]["Id"];
+            current_weights_source: components["schemas"]["CandidateWeightsSourceV1"];
+            engine_versions: {
+                [key: string]: string;
+            };
+            environment_origin: components["schemas"]["PackageOriginV1"];
+            evaluation_refs: components["schemas"]["Id"][];
+            exposure_tolerance: components["schemas"]["DecimalValue"];
+            input_revision_refs: components["schemas"]["Id"][];
+            limitations: string[];
+            mandate_id: components["schemas"]["Id"];
+            package_schema_version: components["schemas"]["PackageSchemaVersion"];
+            project_id: components["schemas"]["Id"];
+            provenance_artifact_refs: components["schemas"]["Id"][];
+            qualification_refs: components["schemas"]["Id"][];
+            release_id: components["schemas"]["Id"];
+            targets: components["schemas"]["PackageTargetV1"][];
+            /** Format: date-time */
+            valid_from: string;
+            /** Format: date-time */
+            valid_until: string;
+        };
         /** @enum {string} */
         TlsPolicy: "SYSTEM_CA" | "PINNED_CA";
         /** @enum {string} */
@@ -9984,6 +10053,92 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    claim_handoff: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HandoffClaimV1"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_HandoffClaimViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

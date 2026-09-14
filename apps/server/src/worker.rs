@@ -91,6 +91,9 @@ impl Worker {
         let mut jobs = JoinSet::new();
         let mut missions = JoinSet::new();
         while !*shutdown.borrow() {
+            if self.store.expire_handoffs().await.is_err() {
+                tracing::warn!("Offer expiry deferred; claim still checks the database clock");
+            }
             while let Some(result) = jobs.try_join_next() {
                 if !matches!(result, Ok(Ok(()))) {
                     tracing::warn!("worker task deferred for native reconciliation");

@@ -1,5 +1,50 @@
 # Issue62 implementation evidence
 
+## Native downstream Claim and unclaimed expiry, 2026-09-14
+
+POST /api/v2/handoffs/{id}/claim and CLI handoff claim accept the original downstream's
+DOWNSTREAM_CLAIM credential, exact project binding and native external_claim_id.
+Idempotency-Key equals that ID; the receipt scope is the original downstream. Claim
+reuses Offer's approval/source admission, requires an unclaimed current Offer and
+matching package version, and rechecks authority/readiness/time after the native SQL
+transition. Existing triggers record the actual database claim time and immutable
+transfer; state, transfer and original receipt roll back together. The response contains
+the original TargetPackage, not arbitrary artifact access or execution controls.
+
+Same-ID replay returns the original transfer/package without new source reads or a
+new claim; current machine authority is still required. Another Offer cannot reuse the
+ID, and another ID cannot reclaim an already transferred Offer. Migration 065 adds
+native downstream/external-claim uniqueness and a partial pending-expiry index. Incompatible
+history is not rewritten. The trusted Worker loop calls a single bounded SKIP LOCKED
+SQL statement to expire up to 128 unclaimed overdue offers; claimed rows are untouched.
+Claim independently checks the database clock, including when maintenance runs late.
+
+Final verification over b0118f88: `.ai-bridge/verify-fW0lK7` passed workspace all-target
+check, fmt, strict Clippy and 231 tests: 142 contracts/domain, 47 PostgreSQL and 42
+HTTP/CLI/qualification-chain/OpenAPI/Worker checks. Source inventory unchanged; owned
+PostgreSQL stopped with pg_ctl status 3. Original native qualification fixtures extend
+through approved offers to real Store claims, testing rollback on transfer-write failure,
+concurrent same-ID replay, revoked offers, foreign/Operator identities, duplicate IDs,
+original package binding, expiry/claim competition and preservation of prior transfers.
+The additional real CLI/TCP/HTTP/PG test uses a native encrypted machine verifier and
+original ArtifactStore; it obtains the original Package, replays it once, rejects a
+second claim and reads current CLAIMED state. Twelve existing Worker loop/recovery tests
+also pass after the maintenance call was added.
+
+An early run rejected a receipt missing its required schema_version; the writer was
+fixed without weakening app.document. The first HTTP fixture selected the general
+research policy and correctly produced INCONCLUSIVE. It now reuses the already registered
+Release protocol fixture's policy and REAL-source scenario; no production threshold,
+qualification or PASS was changed or authored in SQL. These controlled protocols still
+do not prove actual market/model/OCI science or production delivery acceptance.
+
+`.ai-bridge/web-verify-QNteJP` reproduced six native generated outputs twice, handwritten
+sources unchanged. claim-web-* logs show typecheck, 505 Vitest cases, 5 PWA checks and
+Vite build passed, with only the existing chunk-size warning. UI source is unchanged.
+ACK, explicit approval revocation and its claim race, frozen policies, UI and full
+T01–T42/main migration/recovery remain unfinished. Live GitHub read still showed PR63
+OPEN/Draft at 37e5713e and Issue62 OPEN; no push, review request, merge or closure here.
+
 ## Human approval consumption into Offer, 2026-09-14
 
 POST /api/v2/handoffs / CLI handoff offer now consumes an exact HANDOFF_OFFER

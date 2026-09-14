@@ -555,7 +555,7 @@ Runtime 的 `enabled` 和配置能力列表不代表可用。Cycle / standalone 
 （精确DOWNSTREAM_PROBE人工grant）记录真实观察，`client downstream readiness <id>`只读。
 需为serve配置独立DOWNSTREAM_TARGETS（默认[]），不会继承Runtime允许列表。观察固定
 在探测开始后60秒失效；更新配置后重新探测。原回执重放不刷新时间，较早探测的迟到
-响应不能覆盖新探测失败。人工审批会重验该观察；领取尚未接通，观察成功不是交付或真实交易验收。
+响应不能覆盖新探测失败。人工审批与领取会重验该观察；完整交付链尚未验收，观察成功不是交付或真实交易验收。
 
 人工审批使用 `client release approve RELEASE_UUID`，具体请求及单次人工grant见CLI。
 服务端校验原Package与当前来源许可、期限、资格、下游版本/环境，并冻结原报告引用。
@@ -563,7 +563,7 @@ PAPER许可不能用于LIVE；审批期限不能超过原Release或当前来源�
 考虑只允许申请新审批，不恢复旧审批。`client approval show APPROVAL_UUID`仅查看
 原历史；配置版本改变后须重新审批。人工Offer使用 `client handoff offer`，绑定原审批并重验当前来源/下游；显式选择同项目/mandate/下游/环境的最新Offer作为前版，字段见CLI。
 同一Release不能换键重复发送。新Offer只撤销尚未领取的前版，已领取事实不改写。
-`client handoff show UUID`读取当前状态，原幂等回执不代替当前状态。自动审批、Claim/ACK、主动撤销/失效任务及Web界面仍待实现。
+`client handoff show UUID`读取当前状态，原幂等回执不代替当前状态。下游使用 `client handoff claim UUID` 及其DOWNSTREAM_CLAIM凭据领取；external_claim_id必须与幂等键相同，200含原Package与转移。相同编号重试只取原回执，不能换编号再次领取。Worker仅清理尚未领取且已到期的Offer；已领取事实不改写。自动审批、ACK、显式审批撤销及Web界面仍待实现。
 
 Cycle 启动须明确提供 `researcher_profile` 和 `reviewer_profile`，各包含 Codex Profile 的 `profile_id` 与当前 `expected_revision`。两个选择随本周期冻结，不属于可重复使用的 Brief；可以明确选择同一 Profile，但研究和独立审阅使用不同 Thread。缺失、过期版本或正在登录/注销的配置不能启动。随后修改 Profile 不会修改旧周期或旧回执，也不能让旧周期自动采用新模型/账号配置；应以新选择启动新周期。历史没有选择的记录只保留原事实，不补造账号。
 

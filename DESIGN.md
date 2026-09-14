@@ -2726,6 +2726,10 @@ Operator及精确项目RESEARCH_READ的CLI可读。client release reject/reconsi
 
 GET `/api/v2/handoffs/{id}`仅返回原绑定及当前状态；Operator/精确项目RESEARCH_READ CLI可读；下游只可使用DOWNSTREAM_CLAIM或DOWNSTREAM_ACK读取自身且属于其项目的Offer。`client handoff offer/show`复用同一合同。创建Offer不调用下游网络、不授予Agent权限、不代表CLAIMED；领取/撤销/失效竞争按以下原生状态机继续实现。
 
+Claim POST `/api/v2/handoffs/{id}/claim` 使用 HandoffClaimV1：schema_version=1、external_claim_id（1..200 UTF-8字节，非空且无首尾空白/控制字符）、package_schema_version。Idempotency-Key必须等于external_claim_id，原下游ID加该编号构成原生幂等范围；编号不能转用于其他Offer或不同请求。仅精确项目/下游且具有DOWNSTREAM_CLAIM的原生机器凭据可领取，Operator/CLI/Mission不能代领。首次领取在原项目/Candidate/下游/审批/Offer锁内重查Offer状态、原审批全部绑定、撤销、原REAL Package/许可/资格/期限及新鲜readiness，按数据库实际时间采纳。返回HandoffClaimViewV1（原领取元数据与原TargetPackageV1），不开放任意Artifact或执行控制权限。
+
+每个下游external_claim_id只能对应一个原生转移；相同编号/内容的已完成请求返回原回执，不因后来审批/配置/拒绝/TTL变化再次转移。当前机器身份仍须有效且属于原项目/下游；换编号重领同Offer冲突，换Offer复用编号冲突。历史已领取而缺少本入口原回执不能补造新领取。可信Worker每次原生轮询按数据库时间、行锁与SKIP LOCKED至多处理128个OFFERED且expires_at已到的Offer，仅转EXPIRED；领取在行锁后独立检查时间，不依赖清理任务及时运行。原子回滚必须包含状态、转移和回执。
+
 ### A7.2 领取历史与 Forward 报告来源（增量迁移 017）
 
 `handoff_transfers` 复用 A0 的 id/created_at；一条 Handoff 至多一次转移。

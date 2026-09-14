@@ -2,6 +2,9 @@
 //! No SQL-authored qualification. Actual Worker terminal publication/ACK, not OCI science.
 #[path = "../../../tests/support/brief.rs"]
 mod brief_support;
+#[path = "support/client.rs"]
+#[allow(dead_code)]
+mod client;
 #[path = "../../../tests/support/cycles.rs"]
 mod cycle_support;
 #[path = "../../../tests/support/experiment_tasks.rs"]
@@ -244,4 +247,262 @@ async fn http(
     );
     listener.abort_all();
     while listener.join_next().await.is_some() {}
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn original_package_claim_cli_transfers_once_and_replays(pool: PgPool) {
+    let (store, actor, f, build, candidate, directory) =
+        Box::pin(qualified_portfolio::qualified_chain_policy(
+            pool.clone(),
+            cycle_support::Liquidity::None,
+            contracts::forward::ForwardEnvironmentV1::Live,
+            qualified_portfolio::release_policy,
+        ))
+        .await
+        .unwrap();
+    let (release, _, _) = Box::pin(qualified_portfolio::original_releases(
+        &pool, &store, &actor, &f, &build, candidate,
+    ))
+    .await
+    .unwrap();
+    Box::pin(claim_http(&pool, &store, &actor, &f, &directory, &release)).await;
+}
+
+async fn claim_http(
+    pool: &PgPool,
+    store: &Store,
+    operator: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    directory: &tempfile::TempDir,
+    release: &contracts::delivery::ReleaseViewV1,
+) {
+    use contracts::{control::*, delivery::*, forward::ForwardEnvironmentV1, settings::*};
+    use integrations::authentication::{
+        capability_verifier, format_machine_token, random_capability,
+    };
+    use std::{fs, os::unix::fs::PermissionsExt};
+    let down = store
+        .create_downstream(
+            operator,
+            "claim-http-downstream",
+            &DownstreamCreate {
+                schema_version: SchemaV1,
+                credential_ref: Id::new(),
+                configuration: DownstreamConfigurationV1 {
+                    name: "Claim HTTP protocol fixture".into(),
+                    endpoint: "https://claim.example".into(),
+                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    environments: DownstreamEnvironments::Paper,
+                    enabled: true,
+                    development_http: false,
+                },
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap()
+        .resource;
+    let store::downstream::ProbePreparation::Pending(ticket) = store
+        .prepare_downstream_probe(
+            operator,
+            "claim-http-probe",
+            down.id,
+            &DownstreamProbeRequestV1 {
+                schema_version: SchemaV1,
+                expected_revision: down.revision,
+            },
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("new probe")
+    };
+    store
+        .complete_downstream_probe(
+            *ticket,
+            DownstreamProbeOutcomeV1::Available {
+                capabilities: DownstreamCapabilitiesV1 {
+                    schema_version: SchemaV1,
+                    delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
+                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    environments: vec![ForwardEnvironmentV1::Paper],
+                    market_capability_versions: vec![release.market_capability_version.clone()],
+                    accepting_targets: true,
+                    checked_at: chrono::Utc::now(),
+                },
+            },
+            |id, bytes| async move { f.objects.put(id, &bytes).map_err(|_| StoreError::Integrity) },
+        )
+        .await
+        .unwrap();
+    let approval = Box::pin(store.approve_release(
+        operator,
+        "claim-http-approval",
+        release.id,
+        &ReleaseApproveV1 {
+            schema_version: SchemaV1,
+            downstream_id: down.id,
+            environment: ForwardEnvironmentV1::Paper,
+            expected_downstream_revision: down.revision,
+            expected_latest_decision_id: None,
+            valid_until: release.valid_until,
+        },
+        |id, size| f.read(id, size),
+    ))
+    .await
+    .unwrap()
+    .resource;
+    let offer = Box::pin(store.offer_handoff(
+        operator,
+        "claim-http-offer",
+        &HandoffOfferV1 {
+            schema_version: SchemaV1,
+            release_id: release.id,
+            approval_id: approval.id,
+            supersedes_handoff_id: None,
+            expires_at: release.valid_until,
+        },
+        |id, size| f.read(id, size),
+    ))
+    .await
+    .unwrap()
+    .resource;
+    let web = support::fixture(pool.clone()).await;
+    let vault = integrations::secrets::SecretVault::open(
+        &web._state.path().join("secrets"),
+        &web._state.path().join("master.key"),
+    )
+    .unwrap();
+    let principal = store
+        .create_principal(
+            operator,
+            "claim-http-principal",
+            &PrincipalCreate {
+                schema_version: SchemaV1,
+                name: "HTTP claim consumer".into(),
+                kind: AssignablePrincipalKind::Downstream,
+                project_id: Some(release.project_id),
+                downstream_id: Some(down.id),
+                enabled: true,
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    let store::control::CredentialPreparation::New(prepared) = store
+        .prepare_credential_issuance(
+            operator,
+            "claim-http-credential",
+            principal.id,
+            &CredentialIssue {
+                schema_version: SchemaV1,
+                scope_codes: vec![MachineScope::DownstreamClaim],
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            },
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("new credential")
+    };
+    let public = Id::new();
+    let secret = random_capability();
+    let verifier = capability_verifier(&secret).unwrap();
+    let reference = vault.put("MACHINE_VERIFIER", verifier.as_bytes()).unwrap();
+    prepared.publish(public, reference).await.unwrap();
+    let token = format_machine_token(public, &secret).unwrap();
+    let credential = directory.path().join("claim-credential");
+    fs::write(&credential, &token).unwrap();
+    fs::set_permissions(&credential, fs::Permissions::from_mode(0o600)).unwrap();
+    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = socket.local_addr().unwrap();
+    let origin = format!("http://{address}");
+    let state = server::AppState::new(
+        store.clone(),
+        vault,
+        server::WebPolicy::new(&origin, address, true).unwrap(),
+    )
+    .with_artifact_store(
+        integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
+    );
+    let app = server::router(state, tower_sessions::cookie::Key::generate());
+    let mut listener = tokio::task::JoinSet::new();
+    listener.spawn(async move {
+        axum::serve(socket, app).await.unwrap();
+    });
+    let id = offer.id.to_string();
+    let body = serde_json::json!({"schema_version":1,"external_claim_id":"http-original-claim","package_schema_version":"1"});
+    for replayed in [false, true] {
+        let response = client::invoke(
+            &origin,
+            &credential,
+            &[
+                "--idempotency-key",
+                "http-original-claim",
+                "handoff",
+                "claim",
+                &id,
+            ],
+            body.clone(),
+        )
+        .await;
+        let diagnostic: serde_json::Value =
+            serde_json::from_slice(&response.stderr).unwrap_or(serde_json::Value::Null);
+        assert!(
+            response.status.success(),
+            "claim HTTP failed: code={} status={}",
+            diagnostic["code"],
+            diagnostic["status"]
+        );
+        let result: CommandResult<HandoffClaimViewV1> =
+            serde_json::from_slice(&response.stdout).unwrap();
+        assert_eq!(result.replayed, replayed);
+        assert_eq!(result.resource.handoff.state, HandoffStateV1::Claimed);
+        assert_eq!(result.resource.package.release_id, release.id);
+    }
+    let changed = serde_json::json!({"schema_version":1,"external_claim_id":"second-http-claim","package_schema_version":"1"});
+    let denied = client::invoke(
+        &origin,
+        &credential,
+        &[
+            "--idempotency-key",
+            "second-http-claim",
+            "handoff",
+            "claim",
+            &id,
+        ],
+        changed,
+    )
+    .await;
+    assert!(!denied.status.success());
+    assert!(!String::from_utf8_lossy(&denied.stderr).contains(&token));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&denied.stderr).unwrap()["status"],
+        409
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM app.handoff_transfers WHERE handoff_id=$1"
+        )
+        .bind(offer.id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap(),
+        1
+    );
+    let shown = client::invoke(
+        &origin,
+        &credential,
+        &["handoff", "show", &id],
+        serde_json::Value::Null,
+    )
+    .await;
+    assert!(shown.status.success());
+    assert_eq!(
+        serde_json::from_slice::<HandoffViewV1>(&shown.stdout)
+            .unwrap()
+            .state,
+        HandoffStateV1::Claimed
+    );
+    listener.abort_all();
 }

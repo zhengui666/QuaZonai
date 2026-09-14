@@ -47,6 +47,8 @@ use utoipa::OpenApi;
     delivery::ReleaseApproveV1,
     delivery::ApprovalViewV1,
     delivery::HandoffOfferV1,
+    delivery::HandoffClaimV1,
+    delivery::HandoffClaimViewV1,
     delivery::HandoffViewV1,
     delivery::HandoffStateV1,
     delivery::ReleaseRejectV1,

@@ -450,3 +450,27 @@ pub(crate) async fn research_alpha(
         replay: previous.map(|p| p.response),
     })
 }
+
+// Caller holds the original downstream row lock and verifies its native identity.
+pub(crate) async fn handoff_claim(
+    tx: &mut Transaction<'_, Postgres>,
+    scope: String,
+    idempotency_key: &str,
+    target: Id,
+    request: Value,
+) -> Result<Prepared, StoreError> {
+    key(idempotency_key)?;
+    let previous = prior(tx, &scope, "HANDOFF_CLAIM", idempotency_key, &request).await?;
+    if previous.as_ref().is_some_and(|p| p.target != target) {
+        return Err(StoreError::IdempotencyConflict);
+    }
+    Ok(Prepared {
+        target,
+        scope,
+        operation: "HANDOFF_CLAIM",
+        key: idempotency_key.into(),
+        request,
+        grant: None,
+        replay: previous.map(|p| p.response),
+    })
+}

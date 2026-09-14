@@ -16,8 +16,9 @@ use axum::{
 use contracts::{
     control::{CommandResult, ListQuery, Page},
     delivery::{
-        ApprovalViewV1, HandoffOfferV1, HandoffViewV1, ReleaseApproveV1, ReleaseCreateV1,
-        ReleaseDecisionViewV1, ReleaseRejectV1, ReleaseReopenV1, ReleaseViewV1,
+        ApprovalViewV1, HandoffClaimV1, HandoffClaimViewV1, HandoffOfferV1, HandoffViewV1,
+        ReleaseApproveV1, ReleaseCreateV1, ReleaseDecisionViewV1, ReleaseRejectV1, ReleaseReopenV1,
+        ReleaseViewV1,
     },
     Id,
 };
@@ -232,4 +233,37 @@ pub async fn handoff(
 ) -> Result<Json<HandoffViewV1>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     Ok(Json(state.store.handoff(&actor, id).await?))
+}
+
+#[utoipa::path(post,path="/api/v2/handoffs/{id}/claim",operation_id="claim_handoff",tag="Release",request_body=HandoffClaimV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<HandoffClaimViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn claim(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    id: Result<Path<Id>, PathRejection>,
+    body: Result<Json<HandoffClaimV1>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<HandoffClaimViewV1>>), ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let request = json(body)?;
+    let key = idempotency_key(&headers)?.to_owned();
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(StoreError::Invalid("artifact_store_unavailable"))?;
+    let store = state.store.clone();
+    let result = crate::settings::command(&state, async move {
+        store
+            .claim_handoff(&actor, &key, id, &request, move |id, size| {
+                let objects = objects.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || objects.read(id, size))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                }
+            })
+            .await
+    })
+    .await?;
+    Ok((StatusCode::OK, Json(result)))
 }

@@ -133,6 +133,7 @@ pub enum Alpha {
 #[derive(Subcommand)]
 pub enum Handoff {
     Offer,
+    Claim { id: String },
     Show { id: String },
 }
 
@@ -565,6 +566,14 @@ impl Command {
                 )?,
             },
             Self::Handoff(command) => match command {
+                Handoff::Claim { id } => {
+                    Request::write::<
+                        contracts::delivery::HandoffClaimV1,
+                        CommandResult<contracts::delivery::HandoffClaimViewV1>,
+                    >(
+                        POST, action("/api/v2/handoffs", id, "claim")?, 200, false
+                    )?
+                }
                 Handoff::Offer => Request::write::<
                     contracts::delivery::HandoffOfferV1,
                     CommandResult<contracts::delivery::HandoffViewV1>,

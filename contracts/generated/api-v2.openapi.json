@@ -8030,6 +8030,39 @@
         ],
         "type": "object"
       },
+      "CommandResult_HandoffClaimViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "handoff": {
+                "$ref": "#/components/schemas/HandoffViewV1"
+              },
+              "package": {
+                "$ref": "#/components/schemas/TargetPackageV1"
+              }
+            },
+            "required": [
+              "handoff",
+              "package"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_HandoffViewV1": {
         "additionalProperties": false,
         "properties": {
@@ -11717,6 +11750,42 @@
         ],
         "type": "object"
       },
+      "HandoffClaimV1": {
+        "additionalProperties": false,
+        "properties": {
+          "external_claim_id": {
+            "type": "string"
+          },
+          "package_schema_version": {
+            "$ref": "#/components/schemas/PackageSchemaVersion"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "external_claim_id",
+          "package_schema_version"
+        ],
+        "type": "object"
+      },
+      "HandoffClaimViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "handoff": {
+            "$ref": "#/components/schemas/HandoffViewV1"
+          },
+          "package": {
+            "$ref": "#/components/schemas/TargetPackageV1"
+          }
+        },
+        "required": [
+          "handoff",
+          "package"
+        ],
+        "type": "object"
+      },
       "HandoffOfferV1": {
         "additionalProperties": false,
         "properties": {
@@ -14380,6 +14449,26 @@
           "1"
         ],
         "type": "string"
+      },
+      "PackageTargetV1": {
+        "additionalProperties": false,
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "instrument_id": {
+            "type": "string"
+          },
+          "target_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "target_weight",
+          "currency"
+        ],
+        "type": "object"
       },
       "Page_AlphaVersionView": {
         "additionalProperties": false,
@@ -20135,6 +20224,153 @@
           "EXPECTED_RETURN"
         ],
         "type": "string"
+      },
+      "TargetPackageV1": {
+        "additionalProperties": false,
+        "properties": {
+          "asof": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "base_currency": {
+            "type": "string"
+          },
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "capital_assumption": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "compatible_market_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "constraints_summary": {
+            "$ref": "#/components/schemas/PortfolioConstraintsV1"
+          },
+          "cost_assumption_ref": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "current_weights_source": {
+            "$ref": "#/components/schemas/CandidateWeightsSourceV1"
+          },
+          "engine_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "environment_origin": {
+            "$ref": "#/components/schemas/PackageOriginV1"
+          },
+          "evaluation_refs": {
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "exposure_tolerance": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "input_revision_refs": {
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "mandate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "package_schema_version": {
+            "$ref": "#/components/schemas/PackageSchemaVersion"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "provenance_artifact_refs": {
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "qualification_refs": {
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 256,
+            "minItems": 2,
+            "type": "array"
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/PackageTargetV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "release_id",
+          "package_schema_version",
+          "environment_origin",
+          "project_id",
+          "candidate_id",
+          "mandate_id",
+          "qualification_refs",
+          "evaluation_refs",
+          "input_revision_refs",
+          "engine_versions",
+          "asof",
+          "valid_from",
+          "valid_until",
+          "base_currency",
+          "capital_assumption",
+          "current_weights_source",
+          "targets",
+          "cash_weight",
+          "constraints_summary",
+          "exposure_tolerance",
+          "cost_assumption_ref",
+          "compatible_market_capabilities",
+          "limitations",
+          "provenance_artifact_refs"
+        ],
+        "type": "object"
       },
       "TlsPolicy": {
         "enum": [
@@ -27387,6 +27623,144 @@
           },
           {
             "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Release"
+        ]
+      }
+    },
+    "/api/v2/handoffs/{id}/claim": {
+      "post": {
+        "operationId": "claim_handoff",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandoffClaimV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_HandoffClaimViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
           }
         ],
         "tags": [

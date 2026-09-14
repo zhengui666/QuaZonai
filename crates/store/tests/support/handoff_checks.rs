@@ -1,4 +1,6 @@
 //! Actual original approval/offer transactions. No SQL-authored delivery authority.
+#[path = "claim_checks.rs"]
+mod claims;
 use super::*;
 use contracts::control::*;
 
@@ -286,8 +288,28 @@ pub(super) async fn check(
         let read = store.handoff(&machine, second.id).await;
         if allowed {
             assert_eq!(read.unwrap().id, second.id);
+            Box::pin(claims::check(
+                pool, store, actor, &machine, f, &first, &second,
+            ))
+            .await;
         } else {
             assert!(matches!(read, Err(StoreError::Forbidden)));
+            let request = HandoffClaimV1 {
+                schema_version: SchemaV1,
+                external_claim_id: "claim-original".into(),
+                package_schema_version: PackageSchemaVersion::V1,
+            };
+            assert!(matches!(
+                Box::pin(store.claim_handoff(
+                    &machine,
+                    "claim-original",
+                    second.id,
+                    &request,
+                    |_, _| async { panic!("other downstream cannot read package") }
+                ))
+                .await,
+                Err(StoreError::Forbidden)
+            ));
         }
         assert!(matches!(
             Box::pin(store.offer_handoff(

@@ -299,3 +299,17 @@ pub struct HandoffViewV1 {
     pub external_claim_id: Option<String>,
     pub acknowledged_at: Option<chrono::DateTime<chrono::Utc>>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HandoffClaimV1 {
+    pub schema_version: crate::SchemaV1,
+    pub external_claim_id: String,
+    pub package_schema_version: PackageSchemaVersion,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HandoffClaimViewV1 {
+    pub handoff: HandoffViewV1,
+    pub package: TargetPackageV1,
+}

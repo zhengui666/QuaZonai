@@ -161,7 +161,7 @@ pub(super) async fn qualified_chain(
     .await
 }
 
-async fn qualified_chain_policy(
+pub(super) async fn qualified_chain_policy(
     pool: PgPool,
     liquidity: cycle_support::Liquidity,
     environment: contracts::forward::ForwardEnvironmentV1,
@@ -1924,32 +1924,39 @@ async fn synthetic_candidate_cannot_be_upgraded_to_real_release(pool: PgPool) {
     .await;
 }
 
+// Small, explicitly registered protocol fixture; never production evidence thresholds.
+pub(super) fn release_policy(policy: &mut contracts::research::EvaluationPolicyCreate) {
+    policy.minimum_observations = 1;
+    let criterion = &mut policy.portfolio_metric_requirements.as_mut().unwrap()[0];
+    criterion.minimum_observations = DbCounter::new(1).unwrap();
+    criterion.threshold_low = Some("0".parse().unwrap());
+}
+
 async fn release_scenario(pool: PgPool, environment: contracts::forward::ForwardEnvironmentV1) {
     // Controlled protocol evidence tests the transaction, not real-market acceptance.
     let (store, actor, f, build, candidate, _directory) = Box::pin(qualified_chain_policy(
         pool.clone(),
         cycle_support::Liquidity::None,
         environment,
-        |policy| {
-            policy.minimum_observations = 1;
-            let criterion = &mut policy.portfolio_metric_requirements.as_mut().unwrap()[0];
-            criterion.minimum_observations = DbCounter::new(1).unwrap();
-            criterion.threshold_low = Some("0".parse().unwrap());
-        },
+        release_policy,
     ))
     .await
     .unwrap();
     Box::pin(release_check(&pool, &store, &actor, &f, &build, candidate)).await;
 }
 
-async fn release_check(
+pub(super) async fn original_releases(
     pool: &PgPool,
     store: &Store,
     actor: &store::authority::Actor,
     f: &cycle_support::Fixture,
     build: &contracts::portfolio::PortfolioBuildRequestV1,
     candidate: Id,
-) {
+) -> Option<(
+    contracts::delivery::ReleaseViewV1,
+    contracts::delivery::ReleaseViewV1,
+    contracts::delivery::ReleaseCreateV1,
+)> {
     let request = contracts::portfolio::PortfolioStudyRequestV1 {
         schema_version: SchemaV1,
         candidate_id: candidate,
@@ -2027,7 +2034,7 @@ async fn release_check(
                 .unwrap(),
             0
         );
-        return;
+        return None;
     }
     let failed = Box::pin(store.create_release(
         actor,
@@ -2147,6 +2154,22 @@ async fn release_check(
     .await
     .unwrap()
     .resource;
+    Some((view, sibling, intent))
+}
+
+async fn release_check(
+    pool: &PgPool,
+    store: &Store,
+    actor: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    build: &contracts::portfolio::PortfolioBuildRequestV1,
+    candidate: Id,
+) {
+    let Some((view, sibling, intent)) =
+        Box::pin(original_releases(pool, store, actor, f, build, candidate)).await
+    else {
+        return;
+    };
     release_decision_checks(pool, store, actor, &view, &sibling).await;
     Box::pin(approvals::check(pool, store, actor, f, &view, &sibling)).await;
     let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
