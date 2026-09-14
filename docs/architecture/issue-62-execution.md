@@ -4805,3 +4805,10 @@ TypeScript及Vite构建通过，delivery/portfolio-candidates共63项三视口�
 Release详情新增人工决定入口，完整读取同Candidate跨Release历史，按所选下游/环境最高ordinal绑定原最新决定。停用下游仍可选择管理历史；首次拒绝绑定null，重新考虑只接受当前REJECT并使用其原Decision路径，不复制Release清零。原因验证、未知请求同键重试、关闭保护及原回执关联检查复用现有模式；成功不恢复旧审批或发Offer。
 
 TypeScript、Vite构建通过，delivery/portfolio-candidates共69项三视口浏览器定向回归通过（约1.2分钟）。新增首次拒绝与跨Release重新考虑用例使用停用下游、原ordinal/路径和丢失响应重试，并通过Modal无障碍；服务端原生决定CAS仍是最终准入，浏览器fixture不是实际数据库验证。政策/构建界面、完整研究和其余T01–T42验收仍待完成，未push/review/merge/close。
+
+
+### 2026-09-15：网页冻结自动化政策
+
+交付页新增自动化政策分页/原版本展开及完整冻结表单，绑定原项目revision，选择既有同项目Mandate/启用下游；模式、样本数、精确时长、每日额度、晋级/维持两组独立指标及期限均显式填写。复用原评估政策Requirements字段与counterRules，不新增指标引擎。允许新再平衡默认false；未知响应保留原完整body/key，保存不代表Worker执行或Paper/Live交付。政策撤销界面仍待完成。
+
+TypeScript、Vite构建通过，automation-policies/evaluation-policies/delivery共54项三视口定向浏览器回归通过（1.8分钟）。新表单用例验证超过JS安全整数的项目revision及秒数、两组独立阈值、默认未启用与丢失响应原键重试；共享评估政策字段的原用例同步通过。受控HTTP响应不是原生政策准入/自动交付证明；完整T01–T42、构建与部署仍待验收，未push/review/merge/close。

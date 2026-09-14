@@ -10,7 +10,7 @@ import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './u
 type Policy = Schema['EvaluationPolicyView'];
 type Request = Schema['EvaluationPolicyCreate'];
 type Fields = Omit<Request, 'schema_version' | 'project_id'> & { use_portfolio?: boolean; use_study?: boolean; use_manual_study?: boolean };
-type RequirementGroup = 'metric_requirements' | 'sealed_metric_requirements' | 'portfolio_metric_requirements';
+type RequirementGroup = 'metric_requirements' | 'sealed_metric_requirements' | 'portfolio_metric_requirements' | 'promotion_metric_requirements' | 'degradation_metric_requirements';
 const required = { required: true, message: '请填写此项。' };
 const textRules = [required, { max: 120, whitespace: true }];
 const ids = [required, { pattern: uuidPattern, message: '需要现有记录的 UUIDv7 编号。' }];
@@ -80,7 +80,7 @@ function Detail({ id, project, close }: { id: string; project: string; close: ()
   </Drawer>;
 }
 
-function Requirements({ name, title }: { name: RequirementGroup; title: string }) {
+export function Requirements({ name, title }: { name: RequirementGroup; title: string }) {
   return <section aria-label={title}>
     <Typography.Title level={3}>{title}</Typography.Title>
     <Typography.Paragraph>GT/GE 只填下端点，LT/LE 只填上端点，BETWEEN 填闭区间两端。至少一项必需指标；方法名称不代表已支持。</Typography.Paragraph>
