@@ -121,3 +121,46 @@ for (const wrong of [false, true]) test(`Release original approvals retain nulla
   }
   expect(state.commands).toEqual([]);
 });
+
+test('Approval reads all decisions and retries the exact original intent', async ({ page }) => {
+  await fixture(page);
+  const future = { ...release, valid_until: '2099-01-01T00:00:00Z' };
+  const down: Schema['DownstreamView'] = { id: id(85), configuration: { name: 'Approval target', endpoint: 'https://downstream.invalid', accepted_package_versions: ['1'], environments: 'BOTH', enabled: true, development_http: false }, credential_configured: true, revision: '7', created_at: release.created_at, updated_at: release.created_at };
+  const writes: { body: unknown; key: string | undefined }[] = []; const cursors: (string | null)[] = [];
+  await page.route('**/api/v2/**', route => {
+    const request = route.request(); const url = new URL(request.url());
+    if (url.pathname === `/api/v2/projects/${project.id}/releases`) return reply(route, { schema_version: 1, items: [future], next_cursor: null });
+    if (url.pathname === `/api/v2/releases/${release.id}`) return reply(route, future);
+    if (url.pathname === '/api/v2/integrations/downstreams') return reply(route, { schema_version: 1, items: [down], next_cursor: null });
+    if (url.pathname === `/api/v2/integrations/downstreams/${down.id}`) return reply(route, down);
+    if (url.pathname === `/api/v2/releases/${release.id}/decisions`) {
+      const cursor = url.searchParams.get('cursor'); cursors.push(cursor);
+      const decision: Schema['ReleaseDecisionViewV1'] = { id: id(402), project_id: project.id, release_id: release.id, candidate_id: release.candidate_id, downstream_id: down.id, environment: 'PAPER', ordinal: 2, decision: 'REOPEN', supersedes_decision_id: id(401), reason_code: 'RECONSIDER', reason: 'Original operator decision', decided_at: release.created_at, created_at: release.created_at, decided_by: 'OPERATOR' };
+      return reply(route, { schema_version: 1, items: cursor ? [decision] : [], next_cursor: cursor ? null : id(403) });
+    }
+    if (url.pathname === `/api/v2/releases/${release.id}/approvals` && request.method() === 'POST') {
+      const body = request.postDataJSON() as Schema['ReleaseApproveV1']; writes.push({ body, key: request.headers()['idempotency-key'] });
+      if (writes.length === 1) return route.abort('failed');
+      const resource: Schema['ApprovalViewV1'] = { id: id(410), project_id: project.id, release_id: release.id, candidate_id: release.candidate_id, downstream_id: body.downstream_id, environment: body.environment, authority_kind: 'OPERATOR', automation_policy_id: null, evidence_set_id: id(411), granted_at: release.created_at, created_at: release.created_at, valid_until: body.valid_until, downstream_revision: body.expected_downstream_revision, decision_ordinal: 2, readiness_observation_id: id(412) };
+      return reply(route, { schema_version: 1, resource, replayed: true }, 201);
+    }
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: project.name }).click();
+  await page.getByRole('button', { name: 'Release 00000102', exact: true }).click();
+  await page.getByRole('button', { name: '审批此目标包', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: '审批原目标包', exact: true });
+  await modal.getByRole('combobox', { name: '选择审批下游', exact: true }).click();
+  await page.getByText(`Approval target · ${down.id}`, { exact: true }).click();
+  await modal.getByRole('combobox', { name: '审批环境', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: 'Paper' }).click();
+  await modal.getByLabel('审批截止时间（本地时间）', { exact: true }).fill('2098-01-01T00:00');
+  await expect(modal.getByRole('button', { name: '确认审批', exact: true })).toBeEnabled();
+  await modal.getByRole('button', { name: '确认审批', exact: true }).click();
+  await modal.getByRole('button', { name: '重试同一审批', exact: true }).click();
+  await expect(modal.getByText('原审批已保存，尚未发送 Offer。', { exact: true })).toBeVisible();
+  expect(cursors).toContain(id(403)); expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1]);
+  expect(writes[0]!.body).toEqual({ schema_version: 1, downstream_id: down.id, environment: 'PAPER', expected_downstream_revision: '7', expected_latest_decision_id: id(402), valid_until: '2098-01-01T00:00:00.000Z' });
+});

@@ -5,6 +5,7 @@ import { api, dataOf, displayTime } from './api';
 import type { Schema } from './api';
 import { GuardContext, NoData, Pager, QueryPanel } from './ui';
 import { ResourceSelect } from './resource-select';
+import { ReleaseApprove } from './release-approve';
 
 export function Delivery() {
   const [project, setProject] = useState<string>();
@@ -43,13 +44,14 @@ function Releases({ project }: { project: string }) {
 }
 
 export function ReleaseDetail({ id, project, close }: { id: string; project: string; close: () => void }) {
+  const [approving, setApproving] = useState(false);
   const query = useQuery({ queryKey: ['release', project, id], queryFn: async ({ signal }) => {
     const item = dataOf(await api.GET('/api/v2/releases/{id}', { params: { path: { id } }, signal }));
     if (item.id !== id || item.project_id !== project) throw new Error('服务器返回了其他目标包版本。');
     return item;
   } });
   const item = query.data;
-  return <Drawer title="原始目标包版本" open onClose={close} width={760}>
+  return <Drawer title="原始目标包版本" open onClose={approving ? undefined : close} closable={!approving} maskClosable={!approving} width={760}>
     <Alert showIcon type="info" title="历史有效期不是当前审批资格" description="读取不会延长期限或重判数据、Alpha 资格与下游兼容性。REAL 是包来源，不代表已批准 Live。" />
     <QueryPanel pending={query.isPending} error={query.error} stale={!!item} reload={() => { void query.refetch(); }}>
       {item && <Descriptions column={1} className="break-word" items={[
@@ -62,6 +64,8 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
         { key: 'created', label: '冻结于', children: displayTime(item.created_at) },
       ]} />}
     </QueryPanel>
+    {item && !query.isError && <Button onClick={() => setApproving(true)}>审批此目标包</Button>}
+    {approving && item && <ReleaseApprove release={item} close={() => setApproving(false)} />}
     {item && !query.isError && <Collapse items={[{ key: 'approvals', label: '原审批历史', children: <ReleaseApprovals release={item} /> }]} />}
   </Drawer>;
 }

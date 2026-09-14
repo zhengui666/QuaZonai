@@ -4765,3 +4765,10 @@ verify-XKnWFS通过workspace/all-targets编译、格式、严格Clippy及两项�
 Release详情按需展开原审批历史，复用原分页接口，核对项目/Release/Candidate三重关联；显示原授权来源、环境、期限、证据集合、自动化政策、下游版本/决定序号/就绪观察。历史null保留为“历史未记录”，不转换为0或当前版本，不提供审批/发送资格。
 
 本轮仅前端展示变化，npm --prefix apps/web run typecheck及直接Vite构建通过；npm run test:e2e -- tests/delivery.spec.ts tests/portfolio-candidates.spec.ts --workers=2通过51项三视口定向回归（56.9秒）。新增用例覆盖原审批分页、历史空值、错Candidate响应拒绝与无障碍；原候选独立评估/冻结同键重试一并复跑。受控浏览器响应只证明UI，不替代原生HTTP身份矩阵或完整T01–T42。未push/review/merge/close。
+
+
+### 2026-09-14：网页人工审批原目标包
+
+新增Release审批表单，复用原生POST、Intent、离线与未完成操作保护；显式选择下游/Paper或Live/截止时间。读取全部原Candidate决定分页后按该下游/环境最高ordinal绑定REOPEN/null，不以第一页缺项推断首次审批。人工REJECT、停用或不支持的环境阻止提交；服务端仍重验所有资格及来源。未知响应保留原请求/键；回执核对项目/Release/Candidate/下游/环境/配置版本/人工来源，成功不发送Offer。
+
+TypeScript及Vite构建通过；delivery与portfolio-candidates共54项三视口浏览器回归通过（55.5秒）。新增实际表单操作的受控响应验证第二页原决定、BOTH下游配置、原配置版本与截止时间、丢失响应后同body/key重试；没有用浏览器fixture证明原生审批准入。类型检查发现测试将环境枚举误作数组，已同步修正BOTH判断再验证。Offer/政策界面、完整HTTP矩阵及T01–T42仍待完成，未push/review/merge/close。
