@@ -4901,3 +4901,12 @@ GET /api/v2/runs/{id}/rebalance 复用原 Run 的读取授权及项目/Mission �
 原生 Store 链验证入队时精确政策、成员及空后继，正式 Study/Release 后两运行读取一致；真实 HTTP 拒绝未认证查询，人工 Study 的 HTTP/原生 CLI 均返回空关联。verify-7fwzc5 首轮发现测试成员类型无 PartialEq；用实际 JSON 值比较修正，页面缺闭合括号同期修正。最终 verify-J0wm4K 通过 workspace/all-targets 编译、格式、严格 Clippy、10 项 CLI（84.35 秒）和 29 项 HTTP（424.76 秒），source_unchanged=true，隔离 PG 停止。
 
 web-verify-oRYRx1 从 Rust 合同生成 OpenAPI/TypeScript/Ajv，手写源未变且独立输出可复现。最终前端 typecheck 通过；首次 Vite 从仓库根目录调用找不到 index.html，改在 apps/web 执行后构建成功。浏览器 session61651 的运行来源、既有控制台和 PortfolioBuild 共 39 项通过（44.7 秒，390/768/1440），含原编号、超安全整数 Runtime 修订字符串及空关联展示。浏览器是受控响应展示验证，不是新实例 T42。完整科学/模型/市场数据、迁移恢复、双入口闭环及 CI/review/merge/Issue 关闭仍需完成；尚未 push。
+
+
+### 2026-09-15：当前源码真实 OCI 验收与完整交付缺口复核
+
+在干净 Head 4e69aad48d15b0ae8ef8f7b249d2e223d0571f2e 使用已有开发验证器重建 job/runtime 及原隔离探针；Docker29.7.2、systemd cgroup v2，经已有 sudo Docker 权限执行，未修改 socket ACL/用户组。原生镜像 ID 为 sha256:502587d861dcfeaf95b5c8c45d1ab2e6f7c6b56ac47f1782ba0a272375bc81a8。owner-oci-fRwtyY 全流程成功，15 项 native_oci 测试通过（40.27 秒），源码和 Head 未变。
+
+实际容器测试覆盖原模型编译/并发单容器、Sealed 读取、组合聚合/VARIANCE/CVaR/风险预算、单账户滚动 Study、原目标序列、网关突然重启后的原字节恢复、网关死亡期间内核截止、取消身份，以及网络/文件/Secret命名空间和内核内存/PID/文件大小限制。该证据使用明确的受控市场目录，证明这些真实原生执行/恢复边界，不证明真实市场数据资格、原生模型账号闭环或 T42。
+
+完整合同复核发现：现有 native-browser 测试仅覆盖真实初始化/TOTP/项目写入与重放/跨源拒绝/布局/退出，不包含研究到交付；DESIGN §11、A9、B1 要求的旧快照导入和 POST /migrations/import dry-run 报告尚无实现。现有 SQLx migration_command 测试证明新系统部署升级原子性，不能代替旧系统数据迁移。旧实现结构可从删除提交313b0e27的父提交读取（backend/src/db/domain_models.py、runtime_models.py、quant_runtime_models.py及原Alembic），不恢复旧代码到源码树。需要按原只读快照保留 Research/Run/Artifact 追溯、ID/关系/精度/可读率报告，旧PASS/审批/凭据不继承新资格。真实行情目录及许可/PIT来源信息待用户提供；其他迁移和验收工作继续，不将此轮视作完成或合并许可。
