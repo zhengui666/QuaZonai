@@ -2786,6 +2786,16 @@ POST `/api/v2/forward/messages` 要求 Idempotency-Key 与 external_message_id �
 
 GET `/api/v2/projects/{id}/forward`按原id倒序cursor/limit返回ForwardMessageViewV1元数据（原id/project/release/downstream/Handoff、external ID、stream/sequence/revision/supersedes、窗口/coverage/observation_count、Artifact引用与issued/received）。Operator和本项目RESEARCH_READ CLI可读，FORWARD_SUBMIT下游仅见自己的记录；不返回returns或原报告字节。CLI为`forward submit`与`forward list PROJECT_UUID`。统计连续性、重叠、纠正采纳、原生指标与Forward evidence window生产另循A7，不将消息登记视为晋级。
 
+### A7.4 原 Forward 窗口来源投影
+
+GET `/api/v2/handoffs/{id}/forward-window?stream_id=...`与`client forward window HANDOFF_UUID --stream STREAM`只读取指定原Handoff/stream的来源投影。沿用Forward元数据读取身份：Operator、本项目RESEARCH_READ CLI、精确本项目/下游FORWARD_SUBMIT。服务端持原项目共享锁读取全部消息和不可变原报告，阻止新消息/纠正在读取中插入；报告原字节、按原external_message_id定位的原生FORWARD_SUBMIT回执引用及精确领取/项目/下游/Release/环境/窗口/样本数全部匹配才允许参与。
+
+按sequence从1起核对，按每条逻辑消息完整的原revision链选择最新版；不回退被partial纠正替代的旧complete版本。仅完整报告、sequence无缺口、窗口首尾相接且样本时间不重复时，is_contiguous=true并计算complete_observations。partial、缺失收益、缺sequence、窗口间隙、重叠或重复样本均返回对应原因并将合格样本数清零，不拼接或重复累计。空stream为NO_MESSAGES。窗口范围为已选原报告的最早start/最晚end；有缺口时只是诊断范围，不能作为合格窗口。
+
+ForwardWindowViewV1只含handoff_id、stream_id、按sequence排列的latest_message_ids、可空window_start/window_end、complete_observations、is_contiguous和reason_codes；不返回收益序列。内部选择结果保留同一原始来源的收益，供后续原生ForwardEvaluate输入使用。投影不是已封口Evaluation或forward_evidence_windows记录，也不授予Live晋级、Wake或审批权限；后续消费者必须在发布/晋级时重验原消息版本未被纠正替代及当前授权/新鲜度。
+
+当前单窗口最多10000条原消息、64MiB原报告、1000000项收益；超限整体返回不可用，不截断旧消息隐藏缺口。更长历史须用原生分页/流式来源处理扩展，不能复制ID重置窗口。
+
 ## A8. 集成、身份与幂等
 
 ### A8.0 原生 Codex 连接与会话适配

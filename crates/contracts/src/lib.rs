@@ -122,6 +122,8 @@ use utoipa::OpenApi;
     forward::ForwardMessageSubmitV1,
     forward::ForwardMessageViewV1,
     forward::ForwardReportV1,
+    forward::ForwardWindowQueryV1,
+    forward::ForwardWindowViewV1,
     execution_assumptions::ExecutionAssumptionsViewV1,
     evidence::EvaluationView,
     brief::BriefCreate,

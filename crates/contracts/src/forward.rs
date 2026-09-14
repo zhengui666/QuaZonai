@@ -107,3 +107,33 @@ pub struct ForwardMessageViewV1 {
     pub issued_at: chrono::DateTime<chrono::Utc>,
     pub received_at: chrono::DateTime<chrono::Utc>,
 }
+
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ForwardWindowQueryV1 {
+    #[schema(min_length = 1, max_length = 200)]
+    pub stream_id: String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ForwardWindowReasonV1 {
+    NoMessages,
+    Partial,
+    MissingReturns,
+    SequenceGap,
+    WindowGap,
+    WindowOverlap,
+    SampleOverlap,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ForwardWindowViewV1 {
+    pub handoff_id: Id,
+    pub stream_id: String,
+    pub latest_message_ids: Vec<Id>,
+    pub window_start: Option<chrono::DateTime<chrono::Utc>>,
+    pub window_end: Option<chrono::DateTime<chrono::Utc>>,
+    pub complete_observations: DbCounter,
+    pub is_contiguous: bool,
+    pub reason_codes: Vec<ForwardWindowReasonV1>,
+}

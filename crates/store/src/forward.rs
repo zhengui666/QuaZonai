@@ -14,6 +14,7 @@ use contracts::{
 use sqlx::{Postgres, Row, Transaction};
 
 mod messages;
+mod window;
 
 async fn authority(
     tx: &mut Transaction<'_, Postgres>,

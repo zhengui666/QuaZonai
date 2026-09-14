@@ -3,6 +3,9 @@ use crate::{control::text, DomainError};
 use contracts::forward::DownstreamWeightsSubmitV1;
 use std::collections::BTreeSet;
 
+mod window;
+pub use window::{window, ForwardWindow, ForwardWindowSource};
+
 pub fn weights(request: &DownstreamWeightsSubmitV1) -> Result<(), DomainError> {
     text(&request.external_message_id, 1, 200, false)?;
     if request.asof_ns > request.available_ns
@@ -30,7 +33,9 @@ pub fn weights(request: &DownstreamWeightsSubmitV1) -> Result<(), DomainError> {
 /// Structural observations only; a complete report is not a qualification.
 pub fn message(request: &contracts::forward::ForwardMessageSubmitV1) -> Result<(), DomainError> {
     text(&request.external_message_id, 1, 200, false)?;
-    let r = &request.report;
+    report(&request.report)
+}
+fn report(r: &contracts::forward::ForwardReportContentV1) -> Result<(), DomainError> {
     for value in [&r.external_claim_id, &r.issuer_version, &r.stream_id] {
         text(value, 1, 200, false)?;
     }

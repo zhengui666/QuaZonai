@@ -10142,6 +10142,84 @@
         ],
         "type": "object"
       },
+      "ForwardWindowQueryV1": {
+        "additionalProperties": false,
+        "properties": {
+          "stream_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream_id"
+        ],
+        "type": "object"
+      },
+      "ForwardWindowReasonV1": {
+        "enum": [
+          "NO_MESSAGES",
+          "PARTIAL",
+          "MISSING_RETURNS",
+          "SEQUENCE_GAP",
+          "WINDOW_GAP",
+          "WINDOW_OVERLAP",
+          "SAMPLE_OVERLAP"
+        ],
+        "type": "string"
+      },
+      "ForwardWindowViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "complete_observations": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "handoff_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "is_contiguous": {
+            "type": "boolean"
+          },
+          "latest_message_ids": {
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "type": "array"
+          },
+          "reason_codes": {
+            "items": {
+              "$ref": "#/components/schemas/ForwardWindowReasonV1"
+            },
+            "type": "array"
+          },
+          "stream_id": {
+            "type": "string"
+          },
+          "window_end": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "window_start": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "handoff_id",
+          "stream_id",
+          "latest_message_ids",
+          "complete_observations",
+          "is_contiguous",
+          "reason_codes"
+        ],
+        "type": "object"
+      },
       "FrozenBriefV1": {
         "additionalProperties": false,
         "properties": {

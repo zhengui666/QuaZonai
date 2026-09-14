@@ -137,6 +137,11 @@ pub enum Alpha {
 #[derive(Subcommand)]
 pub enum Forward {
     Submit,
+    Window {
+        id: String,
+        #[arg(long)]
+        stream: String,
+    },
     List {
         id: String,
         #[command(flatten)]
@@ -666,6 +671,13 @@ impl Command {
                 }
             },
             Self::Forward(command) => match command {
+                Forward::Window { id, stream } => {
+                    let mut request = Request::get::<contracts::forward::ForwardWindowViewV1>(
+                        action("/api/v2/handoffs", id, "forward-window")?,
+                    );
+                    request.query.push(("stream_id".into(), stream));
+                    request
+                }
                 Forward::Submit => Request::write::<
                     contracts::forward::ForwardMessageSubmitV1,
                     CommandResult<contracts::forward::ForwardMessageViewV1>,

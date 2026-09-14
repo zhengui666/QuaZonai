@@ -1060,6 +1060,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/handoffs/{id}/forward-window": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_forward_window"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/input-sets": {
         parameters: {
             query?: never;
@@ -3905,6 +3921,20 @@ export interface components {
             window_end: string;
             /** Format: date-time */
             window_start: string;
+        };
+        /** @enum {string} */
+        ForwardWindowReasonV1: "NO_MESSAGES" | "PARTIAL" | "MISSING_RETURNS" | "SEQUENCE_GAP" | "WINDOW_GAP" | "WINDOW_OVERLAP" | "SAMPLE_OVERLAP";
+        ForwardWindowViewV1: {
+            complete_observations: components["schemas"]["DbCounter"];
+            handoff_id: components["schemas"]["Id"];
+            is_contiguous: boolean;
+            latest_message_ids: components["schemas"]["Id"][];
+            reason_codes: components["schemas"]["ForwardWindowReasonV1"][];
+            stream_id: string;
+            /** Format: date-time */
+            window_end?: string | null;
+            /** Format: date-time */
+            window_start?: string | null;
         };
         FrozenBriefV1: {
             brief: components["schemas"]["BriefView"];
@@ -11128,6 +11158,79 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_forward_window: {
+        parameters: {
+            query: {
+                stream_id: string;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForwardWindowViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

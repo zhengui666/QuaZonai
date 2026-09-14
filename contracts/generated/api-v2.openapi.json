@@ -12350,6 +12350,70 @@
         ],
         "type": "object"
       },
+      "ForwardWindowReasonV1": {
+        "enum": [
+          "NO_MESSAGES",
+          "PARTIAL",
+          "MISSING_RETURNS",
+          "SEQUENCE_GAP",
+          "WINDOW_GAP",
+          "WINDOW_OVERLAP",
+          "SAMPLE_OVERLAP"
+        ],
+        "type": "string"
+      },
+      "ForwardWindowViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "complete_observations": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "handoff_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "is_contiguous": {
+            "type": "boolean"
+          },
+          "latest_message_ids": {
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "type": "array"
+          },
+          "reason_codes": {
+            "items": {
+              "$ref": "#/components/schemas/ForwardWindowReasonV1"
+            },
+            "type": "array"
+          },
+          "stream_id": {
+            "type": "string"
+          },
+          "window_end": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "window_start": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "handoff_id",
+          "stream_id",
+          "latest_message_ids",
+          "complete_observations",
+          "is_contiguous",
+          "reason_codes"
+        ],
+        "type": "object"
+      },
       "FrozenBriefV1": {
         "additionalProperties": false,
         "properties": {
@@ -29847,6 +29911,119 @@
         ],
         "tags": [
           "Release"
+        ]
+      }
+    },
+    "/api/v2/handoffs/{id}/forward-window": {
+      "get": {
+        "operationId": "get_forward_window",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stream_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForwardWindowViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Forward"
         ]
       }
     },

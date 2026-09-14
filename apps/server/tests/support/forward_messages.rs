@@ -24,6 +24,36 @@ async fn submit(
     )
     .await
 }
+async fn projection(
+    origin: &str,
+    credential: &std::path::Path,
+    handoff: Id,
+    stream: &str,
+) -> ForwardWindowViewV1 {
+    let output = client::invoke(
+        origin,
+        credential,
+        &[
+            "forward",
+            "window",
+            &handoff.to_string(),
+            "--stream",
+            stream,
+        ],
+        serde_json::Value::Null,
+    )
+    .await;
+    let problem: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap_or_default();
+    assert!(
+        output.status.success(),
+        "window CLI failed: code={} status={}",
+        problem["code"],
+        problem["status"]
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(value.get("returns").is_none());
+    serde_json::from_value(value).unwrap()
+}
 fn accepted(output: std::process::Output) -> CommandResult<ForwardMessageViewV1> {
     let problem: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap_or_default();
     assert!(
@@ -108,6 +138,17 @@ pub(super) async fn check(
     let first = left.resource;
     assert_eq!(first.observation_count.get(), 1);
     assert_eq!(first.coverage_status, ForwardCoverageV1::Partial);
+    let partial = projection(origin, credential, handoff.id, &request.report.stream_id).await;
+    assert!(!partial.is_contiguous);
+    assert_eq!(partial.complete_observations.get(), 0);
+    assert_eq!(partial.latest_message_ids, vec![first.id]);
+    assert!(partial
+        .reason_codes
+        .contains(&ForwardWindowReasonV1::Partial));
+    let empty = projection(origin, credential, handoff.id, "missing-stream").await;
+    assert_eq!(empty.reason_codes, vec![ForwardWindowReasonV1::NoMessages]);
+    assert!(empty.window_start.is_none());
+
     let row: (String, String, String, i64) = sqlx::query_as(
         "SELECT schema_name,access_class,created_by,byte_count FROM app.artifacts WHERE id=$1",
     )
@@ -182,6 +223,10 @@ pub(super) async fn check(
         .unwrap(),
         bytes
     );
+    let complete = projection(origin, credential, handoff.id, &request.report.stream_id).await;
+    assert!(complete.is_contiguous);
+    assert_eq!(complete.complete_observations.get(), 1);
+    assert_eq!(complete.latest_message_ids, vec![corrected.id]);
     let mut reused_external = correction.clone();
     reused_external.external_message_id = request.external_message_id.clone();
     rejected(submit(origin, credential, &reused_external).await, 409);
@@ -238,6 +283,17 @@ pub(super) async fn check(
     let mut failed = request.clone();
     failed.external_message_id = "forward-rollback".into();
     failed.report.sequence = DbCounter::new(2).unwrap();
+    let end2: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    failed.report.window_start = request.report.window_end;
+    failed.report.window_end = end2;
+    failed.report.issued_at = end2;
+    failed.report.complete = true;
+    failed.report.returns[0].timestamp_ns =
+        DbCounter::new(end2.timestamp_nanos_opt().unwrap() as u64).unwrap();
+
     assert!(!submit(origin, credential, &failed).await.status.success());
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.artifacts")
@@ -254,11 +310,104 @@ pub(super) async fn check(
         2
     );
     sqlx::raw_sql("DROP TRIGGER fail_forward_fixture ON app.forward_messages; DROP FUNCTION app.fail_forward_fixture();").execute(pool).await.unwrap();
+    let second = accepted(submit(origin, credential, &failed).await).resource;
+    assert_eq!(second.sequence.get(), 2);
+    let complete = projection(origin, credential, handoff.id, &request.report.stream_id).await;
+    assert!(complete.is_contiguous);
+    assert_eq!(complete.complete_observations.get(), 2);
+    assert_eq!(complete.latest_message_ids, vec![corrected.id, second.id]);
+    let end3: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let end4: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let mut fourth = failed.clone();
+    fourth.external_message_id = "forward-fourth".into();
+    fourth.report.sequence = DbCounter::new(4).unwrap();
+    fourth.report.window_start = end3;
+    fourth.report.window_end = end4;
+    fourth.report.issued_at = end4;
+    fourth.report.returns[0].timestamp_ns =
+        DbCounter::new(end4.timestamp_nanos_opt().unwrap() as u64).unwrap();
+    let fourth_id = accepted(submit(origin, credential, &fourth).await)
+        .resource
+        .id;
+    let gap = projection(origin, credential, handoff.id, &request.report.stream_id).await;
+    assert!(!gap.is_contiguous);
+    assert_eq!(gap.complete_observations.get(), 0);
+    assert!(gap
+        .reason_codes
+        .contains(&ForwardWindowReasonV1::SequenceGap));
+    assert!(gap.reason_codes.contains(&ForwardWindowReasonV1::WindowGap));
+    let mut third = fourth.clone();
+    third.external_message_id = "forward-third-late".into();
+    third.report.sequence = DbCounter::new(3).unwrap();
+    third.report.window_start = end2;
+    third.report.window_end = end3;
+    third.report.returns[0].timestamp_ns =
+        DbCounter::new(end3.timestamp_nanos_opt().unwrap() as u64).unwrap();
+    let third_id = accepted(submit(origin, credential, &third).await)
+        .resource
+        .id;
+    let complete = projection(origin, credential, handoff.id, &request.report.stream_id).await;
+    assert!(complete.is_contiguous);
+    assert_eq!(complete.complete_observations.get(), 4);
     assert_eq!(
-        accepted(submit(origin, credential, &failed).await)
-            .resource
-            .sequence
-            .get(),
-        2
+        complete.latest_message_ids,
+        vec![corrected.id, second.id, third_id, fourth_id]
+    );
+    let mut partial = failed.clone();
+    partial.external_message_id = "forward-partial-correction".into();
+    partial.report.message_revision = 2;
+    partial.report.supersedes_message_id = Some(second.id);
+    partial.report.complete = false;
+    partial.report.returns[0].value = None;
+    partial.report.returns[0].reason_code = Some("NATIVE_RETURN_UNAVAILABLE".into());
+    let partial_id = accepted(submit(origin, credential, &partial).await)
+        .resource
+        .id;
+    let incomplete = projection(origin, credential, handoff.id, &request.report.stream_id).await;
+    assert!(!incomplete.is_contiguous);
+    assert_eq!(incomplete.complete_observations.get(), 0);
+    assert_eq!(incomplete.latest_message_ids[1], partial_id);
+    assert!(incomplete
+        .reason_codes
+        .contains(&ForwardWindowReasonV1::Partial));
+    assert!(incomplete
+        .reason_codes
+        .contains(&ForwardWindowReasonV1::MissingReturns));
+    let mut overlap = fourth.clone();
+    overlap.external_message_id = "forward-overlap".into();
+    overlap.report.sequence = DbCounter::new(5).unwrap();
+    accepted(submit(origin, credential, &overlap).await);
+    let overlapping = projection(origin, credential, handoff.id, &request.report.stream_id).await;
+    assert_eq!(overlapping.complete_observations.get(), 0);
+    assert!(overlapping
+        .reason_codes
+        .contains(&ForwardWindowReasonV1::WindowOverlap));
+    assert!(overlapping
+        .reason_codes
+        .contains(&ForwardWindowReasonV1::SampleOverlap));
+    assert!(
+        store
+            .forward_window(
+                operator,
+                handoff.id,
+                &ForwardWindowQueryV1 {
+                    stream_id: request.report.stream_id.clone()
+                },
+                |id, size| async move {
+                    let bytes = f.read(id, size).await?;
+                    let mut changed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    changed["release_id"] = serde_json::json!(Id::new());
+                    Ok(serde_json::to_vec(&changed).unwrap())
+                }
+            )
+            .await
+            .is_err(),
+        "altered report bytes cannot borrow a native source binding"
     );
 }

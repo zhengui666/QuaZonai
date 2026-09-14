@@ -7,7 +7,7 @@ use contracts::{
 use sqlx::postgres::PgRow;
 
 const MESSAGE: &str = "SELECT m.*,c.project_id,h.release_id,a.byte_count FROM app.forward_messages m JOIN app.handoff_offers h ON h.id=m.handoff_id JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id JOIN app.artifacts a ON a.id=m.report_artifact_id";
-fn view(row: &PgRow) -> Result<ForwardMessageViewV1, StoreError> {
+pub(super) fn view(row: &PgRow) -> Result<ForwardMessageViewV1, StoreError> {
     Ok(ForwardMessageViewV1 {
         id: db::id(row.try_get("id")?)?,
         project_id: db::id(row.try_get("project_id")?)?,
@@ -46,6 +46,33 @@ async fn issuer(
     machine.requires(MachineScope::ForwardSubmit)?;
     machine.downstream_id.ok_or(StoreError::Forbidden)
 }
+pub(super) async fn read_authority(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &Actor,
+    project: Id,
+) -> Result<Option<Id>, StoreError> {
+    Ok(match actor {
+        Actor::Browser { .. } => {
+            authority::browser(tx, actor, false, false).await?;
+            None
+        }
+        Actor::Machine { .. } => {
+            let machine = authority::machine(tx, actor, false).await?;
+            machine.project(project)?;
+            match machine.kind {
+                PrincipalKind::Cli => {
+                    machine.requires(MachineScope::ResearchRead)?;
+                    None
+                }
+                PrincipalKind::Downstream => {
+                    machine.requires(MachineScope::ForwardSubmit)?;
+                    Some(machine.downstream_id.ok_or(StoreError::Forbidden)?)
+                }
+                _ => return Err(StoreError::Forbidden),
+            }
+        }
+    })
+}
 impl Store {
     pub async fn forward_messages(
         &self,
@@ -55,27 +82,7 @@ impl Store {
     ) -> Result<Page<ForwardMessageViewV1>, StoreError> {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
-        let downstream = match actor {
-            Actor::Browser { .. } => {
-                authority::browser(&mut tx, actor, false, false).await?;
-                None
-            }
-            Actor::Machine { .. } => {
-                let machine = authority::machine(&mut tx, actor, false).await?;
-                machine.project(project)?;
-                match machine.kind {
-                    PrincipalKind::Cli => {
-                        machine.requires(MachineScope::ResearchRead)?;
-                        None
-                    }
-                    PrincipalKind::Downstream => {
-                        machine.requires(MachineScope::ForwardSubmit)?;
-                        Some(machine.downstream_id.ok_or(StoreError::Forbidden)?)
-                    }
-                    _ => return Err(StoreError::Forbidden),
-                }
-            }
-        };
+        let downstream = read_authority(&mut tx, actor, project).await?;
         sqlx::query("SELECT id FROM app.projects WHERE id=$1")
             .bind(project.as_uuid())
             .fetch_optional(&mut *tx)

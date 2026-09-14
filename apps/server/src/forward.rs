@@ -152,3 +152,31 @@ pub async fn message(
     .await?;
     Ok((StatusCode::CREATED, Json(result)))
 }
+
+#[utoipa::path(get,path="/api/v2/handoffs/{id}/forward-window",operation_id="get_forward_window",tag="Forward",params(("id"=Id,Path),("stream_id"=String,Query)),responses((status=200,body=ForwardWindowViewV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
+pub async fn window(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ForwardWindowQueryV1>, QueryRejection>,
+) -> Result<Json<ForwardWindowViewV1>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(StoreError::Invalid("artifact_store_unavailable"))?;
+    let result = state
+        .store
+        .forward_window(&actor, id, &query, move |id, size| {
+            let objects = objects.clone();
+            async move {
+                tokio::task::spawn_blocking(move || objects.read(id, size))
+                    .await
+                    .map_err(|_| StoreError::Integrity)?
+                    .map_err(|_| StoreError::Integrity)
+            }
+        })
+        .await?;
+    Ok(Json(result))
+}

@@ -1,5 +1,40 @@
 # Issue62 implementation evidence
 
+## Original corrected Forward window projection, 2026-09-14
+
+GET /api/v2/handoffs/{id}/forward-window and CLI forward window inspect one original
+Handoff/stream through existing Forward read authority. The Store holds the shared
+Project publication barrier, reads all bounded original reports, and checks the exact
+original external-ID FORWARD_SUBMIT receipt using the existing native unique lookup.
+Original report bytes, native Claim/project/downstream/Release/environment/window/count
+bindings must agree. Invalid or missing provenance is rejected, never silently filtered.
+
+The domain selector verifies each original revision chain and takes its latest version.
+Only complete, sequence-contiguous, adjoining nonoverlapping windows with unique sample
+times expose eligible observations. Partial/missing returns, sequence/time gaps, overlaps
+or repeated timestamps clear eligible returns/counts and expose fixed metadata reasons.
+An empty stream reports NO_MESSAGES. A later partial correction cannot fall back to its
+old complete version. The public view never serializes raw returns; internal selection
+retains original eligible returns for the still-pending native ForwardEvaluate producer.
+Capacity is bounded to 10000 original messages, 64MiB and one million points, rejecting
+excess history rather than truncating it into an apparently complete window.
+
+verify-zHkSYd over 26e2fdc0 plus this patch passed all-target check/fmt/strict Clippy and
+195 checks (143 contracts/domain, 28 PostgreSQL, 24 HTTP/CLI). The original native Claim/
+ACK/Forward chain now checks partial/empty sources, latest complete correction, a late
+sequence filling an actual gap, four exact original observations without alias duplication,
+a partial correction invalidating the previous complete window, overlap/sample-duplicate
+reasons and rejection of substituted report content. All reports/messages are published
+through native admission, not fixture SQL. After tightening receipt lookup to the exact
+original message key, final verify-ExmeYN repeated all compile gates and passed that
+complete original chain. Sources stayed unchanged and owned PostgreSQL stopped.
+web-verify-jnLXiU reproduced all six native generated outputs twice without handwritten
+changes. forward-window-web-* passed TypeScript, 505 Vitest cases, five PWA checks and
+Vite build (existing chunk warning only).
+This is source selection/diagnosis, not an immutable Forward Evaluation/window record,
+statistical qualification, Live promotion or Wake. Native metrics/persistence, those
+consumers, delivery UI and actual market/model/OCI/full #62 acceptance remain unfinished.
+
 ## Original Forward report ingestion and logical replay, 2026-09-14
 
 Store/HTTP/CLI now ingest ForwardMessageSubmitV1 after the exact native Claim/transfer,
