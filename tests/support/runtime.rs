@@ -53,6 +53,8 @@ pub fn portfolio_capabilities(now: DateTime<Utc>) -> RuntimeCapabilitiesV1 {
         ("bar-notional", "1"),
         ("simulation-models", "1"),
         ("candidate-simulation", "2"),
+        ("portfolio-study", "6"),
+        ("portfolio-history", "1"),
         ("nautilus", NAUTILUS_EXECUTION_VERSION),
         ("clarabel", CLARABEL_VERSION),
         ("ndarray", FIXED_ENSEMBLE_VERSION),
@@ -72,6 +74,12 @@ pub fn portfolio_capabilities(now: DateTime<Utc>) -> RuntimeCapabilitiesV1 {
         version: "1".into(),
     });
     value.solver_capabilities = vec!["CONVEX_QP".into()];
+    for name in ["qz.portfolio_study", "qz.portfolio_history"] {
+        value.artifact_schemas.push(RuntimeArtifactSchemaV1 {
+            name: name.into(),
+            version: "1".into(),
+        });
+    }
     value.venues = vec![RuntimeVenueV1 {
         venue: "SIM".into(),
         instrument_classes: vec!["CurrencyPair".into()],

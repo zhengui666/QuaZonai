@@ -24,6 +24,114 @@ fn nanos(value: DateTime<Utc>) -> DbCounter {
     DbCounter::new(value.timestamp_nanos_opt().unwrap().try_into().unwrap()).unwrap()
 }
 
+/// Controlled post-selection Study data, registered before the original policy.
+pub async fn study_plan(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    data: &research_support::ResearchFixture,
+    revision: Revision,
+    objects: &ArtifactStore,
+) -> contracts::research::PortfolioStudyPlanV1 {
+    use contracts::{catalogs::RuntimeCatalogMetadataV1, research::*};
+    let (id, bytes): (uuid::Uuid, i64) = sqlx::query_as("SELECT e.native_metadata_artifact_id,a.byte_count FROM app.dataset_registration_evidence e JOIN app.artifacts a ON a.id=e.native_metadata_artifact_id WHERE e.dataset_revision_id=$1")
+        .bind(data.discovery.as_uuid()).fetch_one(pool).await.unwrap();
+    let mut metadata: RuntimeCatalogMetadataV1 = serde_json::from_slice(
+        &objects
+            .read(
+                id.to_string().try_into().unwrap(),
+                DbCounter::new(bytes as u64).unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    metadata.native_snapshot_ref = format!("controlled-study/{}", Id::new());
+    metadata.storage_version = Id::new().to_string();
+    metadata.partition = DataPartition::Validation;
+    metadata.event_start = time("2020-01-01T00:00:00Z");
+    metadata.event_end = time("2020-01-02T00:10:00Z");
+    metadata.available_through = metadata.event_end;
+    let quality = &mut metadata.quality.datasets[0];
+    quality.first_event_ns = nanos(metadata.event_start);
+    quality.last_event_ns = nanos(metadata.event_end - Duration::minutes(1));
+    quality.available_through_ns = nanos(metadata.event_end - Duration::seconds(59));
+    quality.selection.event_start_ns = nanos(metadata.event_start);
+    quality.selection.event_end_ns = nanos(metadata.event_end);
+    quality.selection.decision_cutoff_ns = nanos(metadata.available_through);
+    let source_revision: i64 =
+        sqlx::query_scalar("SELECT revision FROM app.data_sources WHERE id=$1")
+            .bind(data.source.as_uuid())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let RegistrationPreparation::Execute(ticket) = store
+        .prepare_dataset_registration(
+            actor,
+            &Id::new().to_string(),
+            &DatasetRegister {
+                schema_version: SchemaV1,
+                source_id: data.source,
+                grant_id: data.grant,
+                expected_source_revision: source_revision.to_string().try_into().unwrap(),
+                expected_runtime_revision: revision,
+                native_storage_version: metadata.storage_version.clone(),
+                existing_universe_version_id: Some(data.universe),
+            },
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("new Study dataset");
+    };
+    let dataset = store
+        .complete_dataset_registration(
+            *ticket,
+            serde_json::to_vec(&metadata).unwrap(),
+            |id, size| {
+                std::future::ready(objects.read(id, size).map_err(|_| StoreError::Integrity))
+            },
+            |values| {
+                std::future::ready(values.into_iter().try_for_each(|value| {
+                    objects
+                        .put(value.id, &value.bytes)
+                        .map_err(|_| StoreError::Integrity)
+                }))
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    let input = store
+        .create_input_set(
+            actor,
+            &Id::new().to_string(),
+            &InputSetCreate {
+                schema_version: SchemaV1,
+                project_id: data.project,
+                purpose: InputPurpose::Portfolio,
+                decision_cutoff: metadata.available_through,
+                items: vec![InputItemV1::Dataset {
+                    dataset_revision_id: dataset.id,
+                    role: DataPartition::Validation,
+                }],
+            },
+        )
+        .await
+        .unwrap()
+        .resource
+        .header
+        .id;
+    PortfolioStudyPlanV1 {
+        schema_version: SchemaV1,
+        input_set_id: input,
+        evaluation_start: time("2020-01-02T00:00:00Z"),
+        manual_cutoffs: Some(vec![
+            time("2020-01-02T00:00:00Z"),
+            time("2020-01-02T00:05:00Z"),
+        ]),
+    }
+}
+
 pub async fn register(
     pool: &PgPool,
     store: &Store,

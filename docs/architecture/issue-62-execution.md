@@ -3,6 +3,56 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Original-policy portfolio Study admission, 2026-09-14
+
+Store.start_portfolio_study now accepts only Cycle, Candidate, Runtime/revision
+and bounded limits. It reads the original Mandate's policy-owned plan and full
+Build cohort; no Run request can override inputs, cutoffs, models or fees. It
+reuses Operator PORTFOLIO_SIMULATE authority, receipts, Cycle budget and PGMQ.
+Migration 060 freezes the exact Run/Candidate/policy/dataset/intent binding.
+ACK requires an independent PORTFOLIO publication for that binding, not HOLD.
+
+Admission requires the original qualified models/image and current capabilities,
+REAL/PIT/AS_KNOWN_THEN research data and the policy's exact full registered window.
+A shorter native quality selection cannot silently trim the policy window.
+Discovery, Validation and qualification-selection Sealed metadata determine the
+latest research observation availability; Sealed data is never a runtime input.
+The original Candidate supplies its cohort and Mandate, not historical targets,
+current account state or a live-target TTL. Study starts at simulated cash with
+zero asset weights. Original fee files, first-cutoff groups, registered calendar
+and rolling-liquidity policy are checked; a single historical liquidity snapshot
+cannot replace per-cutoff measurement. There is no new numerical engine or queue.
+
+Original sources are reread after parameter publication, before transactional
+admission. Final qualification/grant expiry and effective revocation checks have
+no following file callback. Failed admission leaves no Run, charge, receipt or
+artifact row; the existing unreferenced-object cleanup handles written files.
+
+Verification on 539aa69a plus the frozen patch (initial test-only ownership/async
+borrow compilation errors were corrected before the final runs):
+
+- verify-vUbAuB: workspace check, fmt and strict Clippy; 139 Store, 24 HTTP/CLI,
+  42 native-validation and four publication tests passed (209 total). Original
+  qualified chains cover no-liquidity/rolling Study admission, snapshot rejection,
+  shortened-window rejection, exact cohort/Sealed cutoff and input roles, concurrent
+  same-key single admission, changed intent rejection, write/read-failure rollback
+  and file cleanup, cancellation and the independent publication ACK gate.
+- web-verify-LIhaGq: domain-only export twice, byte-identical, handwritten source
+  unchanged. The generated Study request has exactly six required fields and
+  additionalProperties=false. No HTTP/TypeScript/UI contract changed; browser
+  tests and OCI image execution were not rerun for this Store-only capability.
+- verify-Ru1qae: check/fmt/strict Clippy and 166 domain/Runtime, 20 managed,
+  31 native-Codex, 36 policy/upgrade Store and six policy HTTP tests passed
+  (259 total, overlapping the evidence suite). Both verifier source guards passed.
+
+Relational/native declarations remain controlled fixtures, not real market/PIT,
+actual Study numerical output or scientific PASS. Independent PORTFOLIO result
+publication and formal HTTP/CLI/UI are still missing; cancelled Study currently
+remains unacknowledged rather than being adopted through the HOLD publisher.
+Release/Package/delivery, all remaining work packages and full acceptance remain
+unfinished. GitHub reread: PR #63 still Draft/Open at 37e5713e, Issue #62 Open;
+no push, review request, merge or closure occurred in this stage.
+
 ## Policy-owned immutable portfolio Study plans, 2026-09-14
 
 EvaluationPolicy now optionally freezes portfolio_study_plan with the original

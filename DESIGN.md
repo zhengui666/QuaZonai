@@ -2092,6 +2092,14 @@ PORTFOLIO_SIMULATE操作。Store从同项目已封口成功VALID Candidate重读
 没有计划不能启动正式Study或授予PORTFOLIO/PASS，已有FORWARD/HOLD仍只是保持评估。
 变更计划必须新政策并走原关联与暴露账本，不能在运行命令中改输入、起点或删选时点。
 保存计划仍是研究准备，不启动Run、不读取市场原始字节或证明原生能力与资格。
+正式Study命令只接收schema_version、cycle_id、candidate_id、runtime_id、
+expected_runtime_revision和limits；沿用PORTFOLIO_SIMULATE授权、预算和队列。
+原Candidate只确定Mandate和完整成员，不提供历史持仓；其目标TTL不限制离线研究。
+模型研究可用截止包括原Discovery/Validation及用于资格选择的Sealed观测，
+取原可用时间的最大值，不用登记墙钟代替历史时间。仅读取Sealed元数据，
+不把其数据绑定交给Study。原政策计划、费用、日历和滚动流动性必须重验；
+历史单次流动性快照不能替代逐cutoff测量。portfolio_study_tasks保存原Run、
+Candidate、政策、数据版本和完整意图；缺少独立PORTFOLIO发表回执时不得ACK。
 
 组合指标薄适配先核对原模拟请求/结果的账户、时窗与目标绑定，只读取原
 Returns统计组（不读canonical的position fallback），scope固定portfolio：

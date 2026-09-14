@@ -610,6 +610,10 @@ manual_cutoffs:null|Time[2..256]}，必须有组合阈值、同项目PORTFOLIO�
 均早于原结束。时间为非负、微秒精度RFC3339；省略/关闭计划保持null，不启动Study。
 改变计划必须新政策，运行命令不能更换窗口；Mandate调仓模式、TTL和模型可用截止
 仍须正式准入核对。列表/详情返回原完整计划，不读原始市场字节。
+Store的start_portfolio_study已实现受Operator授权的原计划准入，严格意图仅为
+schema_version/cycle_id/candidate_id/runtime_id/expected_runtime_revision/limits。
+它绑定原成员、费用和政策，复用预算/PGMQ；目前尚无正式HTTP/CLI命令及独立
+PORTFOLIO发表适配，不能调用HOLD发表器代替，终态也不能提前ACK。
 原生组合指标适配支持portfolio范围的PORTFOLIO_DAILY_RETURN_MEAN、
 PORTFOLIO_RETURN_VOLATILITY、PORTFOLIO_SHARPE_RATIO；方法分别为
 nautilus-analysis.ReturnsAverage/ReturnsVolatility/SharpeRatio，版本0.63.0、

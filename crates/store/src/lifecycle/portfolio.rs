@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 mod evaluation;
 mod publication;
 mod simulation;
+mod study;
 mod weights;
 pub(super) use evaluation::publish as publish_evaluation;
 pub(super) use publication::publish;

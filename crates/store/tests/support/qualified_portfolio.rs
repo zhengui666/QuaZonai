@@ -1294,4 +1294,315 @@ async fn qualified_chain(pool: PgPool, liquidity: cycle_support::Liquidity) {
         )
     );
     store.acknowledge_run(&message).await.unwrap();
+    Box::pin(study_admission(
+        &pool, &store, &actor, &f, &next, candidate, liquidity,
+    ))
+    .await;
+}
+
+async fn study_admission(
+    pool: &PgPool,
+    store: &Store,
+    actor: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    build: &contracts::portfolio::PortfolioBuildRequestV1,
+    candidate: Id,
+    liquidity: cycle_support::Liquidity,
+) {
+    let request = contracts::portfolio::PortfolioStudyRequestV1 {
+        schema_version: SchemaV1,
+        cycle_id: build.cycle_id,
+        candidate_id: candidate,
+        runtime_id: build.runtime_id,
+        expected_runtime_revision: build.expected_runtime_revision,
+        limits: build.limits.clone(),
+    };
+    for field in [
+        "input_set_id",
+        "evaluation_start",
+        "manual_cutoffs",
+        "targets",
+        "settings",
+    ] {
+        let mut value = serde_json::to_value(&request).unwrap();
+        value[field] = serde_json::Value::Null;
+        assert!(
+            serde_json::from_value::<contracts::portfolio::PortfolioStudyRequestV1>(value).is_err()
+        );
+    }
+    let counts = "SELECT (SELECT count(*) FROM app.runs),(SELECT count(*) FROM app.portfolio_study_tasks),(SELECT count(*) FROM app.artifacts),(SELECT count(*) FROM pgmq.q_runs)";
+    let before: (i64, i64, i64, i64) = sqlx::query_as(counts).fetch_one(pool).await.unwrap();
+    let shortened = Box::pin(store.start_portfolio_study(
+        actor,
+        "study-shortened-window",
+        &request,
+        |id, size| async move {
+            let bytes = f.read(id, size).await?;
+            let Ok(mut metadata) =
+                serde_json::from_slice::<contracts::catalogs::RuntimeCatalogMetadataV1>(&bytes)
+            else {
+                return Ok(bytes);
+            };
+            if !metadata
+                .native_snapshot_ref
+                .starts_with("controlled-study/")
+            {
+                return Ok(bytes);
+            }
+            let end = &mut metadata.quality.datasets[0].selection.event_end_ns;
+            *end = DbCounter::new(end.get() - 30_000_000_000).unwrap();
+            let bytes = serde_json::to_vec(&metadata).unwrap();
+            assert_eq!(
+                bytes.len() as u64,
+                size.get(),
+                "only the attested selection changed"
+            );
+            Ok(bytes)
+        },
+        |_| async { panic!("shortened report cannot publish Study") },
+    ))
+    .await
+    .unwrap_err();
+    assert!(
+        format!("{shortened:?}").contains("portfolio_study_source_window"),
+        "{shortened:?}"
+    );
+    assert_eq!(
+        sqlx::query_as::<_, (i64, i64, i64, i64)>(counts)
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        before
+    );
+    if liquidity == cycle_support::Liquidity::Snapshot {
+        let error = Box::pin(store.start_portfolio_study(
+            actor,
+            "snapshot-is-not-rolling-study",
+            &request,
+            |id, size| f.read(id, size),
+            |_| async {
+                panic!("snapshot cannot become rolling Study");
+            },
+        ))
+        .await
+        .unwrap_err();
+        assert!(
+            format!("{error:?}").contains("portfolio_study.liquidity_policy"),
+            "{error:?}"
+        );
+        assert_eq!(
+            sqlx::query_as::<_, (i64, i64, i64, i64)>(counts)
+                .fetch_one(pool)
+                .await
+                .unwrap(),
+            before
+        );
+        return;
+    }
+    assert!(matches!(
+        Box::pin(store.start_portfolio_study(
+            actor,
+            "study-original",
+            &request,
+            |id, size| f.read(id, size),
+            |_| async { Err(StoreError::Integrity) },
+        ))
+        .await,
+        Err(StoreError::Integrity)
+    ));
+    assert_eq!(
+        sqlx::query_as::<_, (i64, i64, i64, i64)>(counts)
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        before
+    );
+    let changed_source = std::sync::atomic::AtomicBool::new(false);
+    let changed_source = &changed_source;
+    let written = std::sync::Mutex::new(None);
+    let failure = Box::pin(store.start_portfolio_study(
+        actor,
+        "study-original",
+        &request,
+        |id, size| async move {
+            if changed_source.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(StoreError::Integrity);
+            }
+            f.read(id, size).await
+        },
+        |object| {
+            f.objects.put(object.id, &object.bytes).unwrap();
+            *written.lock().unwrap() = Some(object.id);
+            changed_source.store(true, std::sync::atomic::Ordering::SeqCst);
+            std::future::ready(Ok(()))
+        },
+    ))
+    .await;
+    assert!(matches!(failure, Err(StoreError::Integrity)));
+    assert_eq!(
+        sqlx::query_as::<_, (i64, i64, i64, i64)>(counts)
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        before
+    );
+    let written = written.into_inner().unwrap().unwrap();
+    assert!(store
+        .discard_unpublished_operator_artifact(written, |id| std::future::ready(
+            f.objects
+                .discard_unpublished(id)
+                .map_err(|_| StoreError::Integrity)
+        ))
+        .await
+        .unwrap());
+    let first = Box::pin(store.start_portfolio_study(
+        actor,
+        "study-original",
+        &request,
+        |id, size| f.read(id, size),
+        |object| {
+            std::future::ready(
+                f.objects
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| StoreError::Integrity),
+            )
+        },
+    ));
+    let second = Box::pin(store.start_portfolio_study(
+        actor,
+        "study-original",
+        &request,
+        |id, size| f.read(id, size),
+        |object| {
+            std::future::ready(
+                f.objects
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| StoreError::Integrity),
+            )
+        },
+    ));
+    let (first, second) = tokio::join!(first, second);
+    let (first, second) = (first.unwrap(), second.unwrap());
+    assert_ne!(first.replayed, second.replayed);
+    assert_eq!(first.resource.id, second.resource.id);
+    let run = first.resource;
+    let replay = Box::pin(store.start_portfolio_study(
+        actor,
+        "study-original",
+        &request,
+        |_, _| async { panic!("exact receipt reads no new sources") },
+        |_| async { panic!("exact receipt writes nothing") },
+    ))
+    .await
+    .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource.id, run.id);
+    let mut changed = request.clone();
+    changed.limits.cpu_seconds = DbCounter::new(changed.limits.cpu_seconds.get() + 1).unwrap();
+    assert!(matches!(
+        Box::pin(store.start_portfolio_study(
+            actor,
+            "study-original",
+            &changed,
+            |_, _| async { panic!("changed intent reads nothing") },
+            |_| async { panic!("changed intent writes nothing") },
+        ))
+        .await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    let (parameter,size,bindings,policy): (uuid::Uuid,i64,serde_json::Value,uuid::Uuid) = sqlx::query_as("SELECT t.parameters_artifact_id,a.byte_count,t.input_bindings,s.policy_id FROM app.portfolio_study_tasks s JOIN app.run_native_tasks t ON t.run_id=s.run_id JOIN app.artifacts a ON a.id=t.parameters_artifact_id WHERE s.run_id=$1")
+        .bind(run.id.as_uuid()).fetch_one(pool).await.unwrap();
+    assert_eq!(policy, f.brief.content.evaluation_policy_id.as_uuid());
+    let task: NativeTaskParametersV1 = serde_json::from_slice(
+        &f.read(
+            parameter.to_string().try_into().unwrap(),
+            DbCounter::new(size as u64).unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    let NativeTaskParametersV1::StudyPortfolio {
+        request: frozen, ..
+    } = task
+    else {
+        panic!("original Study task");
+    };
+    assert_eq!(frozen.members.len(), 2);
+    assert_eq!(frozen.manual_cutoffs_ns.as_ref().unwrap().len(), 2);
+    assert!(frozen.research_available_through_ns < frozen.evaluation_start_ns);
+    let sealed_available: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "SELECT event_end - interval '59 seconds' FROM app.dataset_revisions WHERE id=$1",
+    )
+    .bind(f.data.sealed.as_uuid())
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        frozen.research_available_through_ns.get(),
+        sealed_available.timestamp_nanos_opt().unwrap() as u64
+    );
+    assert!(frozen
+        .assets
+        .iter()
+        .all(|a| a.current_weight == "0".parse().unwrap() && a.available_notional.is_none()));
+    assert_eq!(
+        frozen.rolling_liquidity.is_some(),
+        matches!(liquidity, cycle_support::Liquidity::Rolling(_))
+    );
+    let inputs: Vec<RuntimeInputV1> = serde_json::from_value(bindings).unwrap();
+    assert_eq!(
+        inputs
+            .iter()
+            .filter(|i| matches!(i, RuntimeInputV1::Dataset { .. }))
+            .count(),
+        1
+    );
+    assert!(inputs.iter().all(|i| !matches!(
+        i,
+        RuntimeInputV1::Dataset {
+            role: contracts::research::DataPartition::Sealed
+                | contracts::research::DataPartition::Forward,
+            ..
+        }
+    )));
+    let message = validation_publication::message(pool, run.id).await;
+    store
+        .cancel_run(
+            actor,
+            "cancel-study",
+            run.id,
+            &contracts::lifecycle::RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: run.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            store.acknowledge_run(&message).await,
+            Err(StoreError::Conflict)
+        ),
+        "terminal Study cannot ACK without independent PORTFOLIO publication"
+    );
+    assert!(store
+        .publish_scientific_result(
+            run.id,
+            |_, _| async { panic!("HOLD publisher cannot read Study") },
+            |_| async { panic!("HOLD publisher cannot publish Study") }
+        )
+        .await
+        .unwrap()
+        .is_none());
+    let evaluations: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")
+            .bind(run.id.as_uuid())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        evaluations, 0,
+        "admission/cancellation is not scientific evidence"
+    );
 }

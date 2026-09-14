@@ -37,6 +37,7 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(components(schemas(
     http::Problem,
+    portfolio::PortfolioStudyRequestV1,
     cycles::BriefFreezeV1,
     cycles::FrozenBriefV1,
     cycles::CycleStartIntent,

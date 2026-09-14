@@ -279,6 +279,10 @@ pub async fn setup_with_policy(
         ..policy_request.metric_requirements[0].clone()
     }];
     customize(&mut policy_request);
+    if policy_request.portfolio_metric_requirements.is_some() {
+        policy_request.portfolio_study_plan =
+            Some(cycle_data::study_plan(pool, store, actor, &data, revision, &objects).await);
+    }
     let policy = store
         .create_evaluation_policy(actor, &Id::new().to_string(), &policy_request)
         .await
