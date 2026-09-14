@@ -1316,6 +1316,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/migrations/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_historical_import_reports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/migrations/reports/{id}": {
         parameters: {
             query?: never;
@@ -1324,6 +1340,38 @@ export interface paths {
             cookie?: never;
         };
         get: operations["get_historical_import_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/migrations/reports/{id}/mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_historical_import_mappings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/migrations/reports/{id}/source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_historical_import_source"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4100,6 +4148,33 @@ export interface components {
             state: components["schemas"]["HandoffStateV1"];
             supersedes_handoff_id?: null | components["schemas"]["Id"];
         };
+        HistoricalColumnExclusionV1: {
+            column: string;
+            reason: components["schemas"]["HistoricalExclusionReasonV1"];
+        };
+        /** @description Native type includes numeric and timestamp precision; defaults and row values are omitted. */
+        HistoricalColumnV1: {
+            generated: boolean;
+            identity: boolean;
+            name: string;
+            nullable: boolean;
+            postgres_type: string;
+        };
+        /** @enum {string} */
+        HistoricalDispositionV1: "READ_ONLY_HISTORY" | "LEGACY_REVALIDATION_REQUIRED";
+        /** @enum {string} */
+        HistoricalExclusionReasonV1: "CREDENTIALS" | "INTERNAL_CHAT" | "SEALED_EVIDENCE" | "UNREVIEWED_FIELDS" | "UNSUPPORTED_SCHEMA";
+        HistoricalForeignKeyCheckV1: {
+            constraint: string;
+            match_type: components["schemas"]["HistoricalForeignKeyMatchV1"];
+            orphan_rows: components["schemas"]["DbCounter"];
+            source_columns: string[];
+            source_table: string;
+            target_columns: string[];
+            target_table: string;
+        };
+        /** @enum {string} */
+        HistoricalForeignKeyMatchV1: "SIMPLE" | "FULL";
         /** @description Import of reviewed projections is not approval of excluded or legacy evidence. */
         HistoricalImportReportV1: {
             checked_relationships: components["schemas"]["DbCounter"];
@@ -4118,6 +4193,58 @@ export interface components {
             dry_run: boolean;
             export_ref: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
+        };
+        HistoricalMappingViewV1: {
+            /** Format: date-time */
+            created_at: string;
+            disposition: components["schemas"]["HistoricalDispositionV1"];
+            first_import_id: components["schemas"]["Id"];
+            id: components["schemas"]["Id"];
+            key: components["schemas"]["HistoricalOriginalKeyV1"];
+        };
+        /**
+         * @description Native old primary-key values, including bigint and composite identities.
+         *     Values use PostgreSQL canonical text, never a new-system UUID parser or float.
+         */
+        HistoricalOriginalKeyV1: {
+            source_installation_id: components["schemas"]["Id"];
+            source_table: string;
+            values: {
+                [key: string]: string;
+            };
+        };
+        /** @description Native CSV projections accompany the retained complete backup. Never an import result. */
+        HistoricalRowExportV1: {
+            inspection: components["schemas"]["HistoricalSourceInspectionV1"];
+            missing_tables: string[];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_installation_id: components["schemas"]["Id"];
+            tables: components["schemas"]["HistoricalTableExportV1"][];
+        };
+        /** @description Native database inspection only; no claim that artifacts or import mapping are complete. */
+        HistoricalSourceInspectionV1: {
+            foreign_keys: components["schemas"]["HistoricalForeignKeyCheckV1"][];
+            /** Format: date-time */
+            inspected_at: string;
+            schema_version: components["schemas"]["SchemaV1"];
+            source_schema_version: string;
+            tables: components["schemas"]["HistoricalTableCountV1"][];
+        };
+        HistoricalTableCountV1: {
+            columns: components["schemas"]["HistoricalColumnV1"][];
+            primary_key: string[];
+            rows: components["schemas"]["DbCounter"];
+            table: string;
+        };
+        HistoricalTableExportV1: {
+            byte_count?: null | components["schemas"]["DbCounter"];
+            columns: string[];
+            excluded_columns: components["schemas"]["HistoricalColumnExclusionV1"][];
+            object_ref?: null | components["schemas"]["Id"];
+            projected_rows: components["schemas"]["DbCounter"];
+            source_rows: components["schemas"]["DbCounter"];
+            table: string;
+            unsupported_schema: boolean;
         };
         /** @enum {string} */
         HorizonKind: "FIXED_BARS" | "FIXED_DURATION" | "VARIABLE_INTERVAL";
@@ -5214,6 +5341,35 @@ export interface components {
                 revision: components["schemas"]["Revision"];
                 state: components["schemas"]["HandoffStateV1"];
                 supersedes_handoff_id?: null | components["schemas"]["Id"];
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_HistoricalImportReportV1: {
+            items: {
+                checked_relationships: components["schemas"]["DbCounter"];
+                dry_run: boolean;
+                existing_rows: components["schemas"]["DbCounter"];
+                export_ref: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                manual_review_required: boolean;
+                new_rows: components["schemas"]["DbCounter"];
+                projected_rows: components["schemas"]["DbCounter"];
+                schema_version: components["schemas"]["SchemaV1"];
+                source_installation_id: components["schemas"]["Id"];
+                unverified_relationships: string[];
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_HistoricalMappingViewV1: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                disposition: components["schemas"]["HistoricalDispositionV1"];
+                first_import_id: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                key: components["schemas"]["HistoricalOriginalKeyV1"];
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -13051,6 +13207,62 @@ export interface operations {
             };
         };
     };
+    list_historical_import_reports: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_HistoricalImportReportV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     get_historical_import_report: {
         parameters: {
             query?: never;
@@ -13068,6 +13280,135 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HistoricalImportReportV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_historical_import_mappings: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_HistoricalMappingViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_historical_import_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalRowExportV1"];
                 };
             };
             401: {

@@ -7,13 +7,17 @@ use crate::{
 };
 use axum::{
     extract::{
-        rejection::{JsonRejection, PathRejection},
-        Path, State,
+        rejection::{JsonRejection, PathRejection, QueryRejection},
+        Path, Query, State,
     },
     http::{HeaderMap, StatusCode},
     Json,
 };
-use contracts::{control::CommandResult, imports::*, Id};
+use contracts::{
+    control::{CommandResult, ListQuery, Page},
+    imports::*,
+    Id,
+};
 use integrations::mission_files::{FrozenFile, MissionFiles};
 use serde::Deserialize;
 use std::{
@@ -141,5 +145,47 @@ pub async fn report(
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     Ok(Json(
         state.store.historical_import_report(&actor, id).await?,
+    ))
+}
+
+#[utoipa::path(get,path="/api/v2/migrations/reports",operation_id="list_historical_import_reports",tag="Historical migration",params(("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<HistoricalImportReportV1>),(status=401,body=Problem),(status=403,body=Problem),(status=422,body=Problem)))]
+pub async fn reports(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<HistoricalImportReportV1>>, ApiError> {
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state
+            .store
+            .historical_import_reports(&actor, &query)
+            .await?,
+    ))
+}
+#[utoipa::path(get,path="/api/v2/migrations/reports/{id}/source",operation_id="get_historical_import_source",tag="Historical migration",params(("id"=Id,Path)),responses((status=200,body=HistoricalRowExportV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn source(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+) -> Result<Json<HistoricalRowExportV1>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state.store.historical_import_source(&actor, id).await?,
+    ))
+}
+#[utoipa::path(get,path="/api/v2/migrations/reports/{id}/mappings",operation_id="list_historical_import_mappings",tag="Historical migration",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<HistoricalMappingViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn mappings(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<HistoricalMappingViewV1>>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state
+            .store
+            .historical_import_mappings(&actor, id, &query)
+            .await?,
     ))
 }

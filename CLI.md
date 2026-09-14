@@ -1051,3 +1051,13 @@ DSN、源报告或自报 PASS。CLI 使用已有 `client` 连接参数、凭据�
 `migrate report UUID` / `GET /api/v2/migrations/reports/{id}` 读取摘要；浏览器 Operator
 可读报告，CLI 仅可读同一有效凭据实际发起的导入报告。缺表、排除项或未核验关系
 仍标明人工复核；此入口尚不包含产物关联、全部密封沿袭和完整旧快照迁移验收。
+
+
+`migrate reports [--cursor UUID] [--limit 1..100]` 按报告编号倒序分页；
+`migrate source REPORT_UUID` 读取原导出的表/列/外键检查元数据；
+`migrate mappings REPORT_UUID [--cursor UUID] [--limit 1..100]` 读取该批次的完整
+原主键到新追溯编号映射。对应 GET `/api/v2/migrations/reports`、
+`/api/v2/migrations/reports/{id}/source`、`/api/v2/migrations/reports/{id}/mappings`。
+CLI 仍仅限本有效凭据的报告，猜测其他报告编号或游标不扩大权限。dry-run映射为空，
+重复导入仍指向首次导入的相同追溯编号。原主键值是字符串，不能转换成JS浮点数。
+这些查询不返回CSV正文、秘密或宿主路径，也不代表原历史字段/产物完整验收。

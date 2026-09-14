@@ -8,6 +8,7 @@ import { ErrorNotice, GuardContext, NoData, Pager, QueryPanel, useGuard, useOnli
 import { DataManagement } from './data';
 import { IntegrationManagement } from './integrations';
 import { CodexSettings } from './codex';
+import { MigrationManagement } from './migrations';
 
 type SettingsProps = { session: Schema['BrowserSession']; verify: () => void };
 const categories = [
@@ -15,6 +16,7 @@ const categories = [
   { key: 'codex', label: 'Codex 模型与连接' },
   { key: 'integrations', label: '原生集成' },
   { key: 'data', label: '数据与许可' },
+  { key: 'migrations', label: '历史迁移' },
 ];
 
 export function Settings(props: SettingsProps) {
@@ -32,7 +34,7 @@ export function Settings(props: SettingsProps) {
     {screens.md ? <Tabs activeKey={tab} onChange={changeTab} items={categories} />
       : <Select aria-label="设置类别" className="full-width" virtual={false} value={tab} onChange={changeTab}
         options={categories.map(({ key, label }) => ({ value: key, label }))} />}
-    {tab === 'security' ? <SecuritySettings {...props} /> : tab === 'codex' ? <CodexSettings /> : tab === 'integrations' ? <IntegrationManagement /> : <DataManagement />}
+    {tab === 'security' ? <SecuritySettings {...props} /> : tab === 'codex' ? <CodexSettings /> : tab === 'integrations' ? <IntegrationManagement /> : tab === 'migrations' ? <MigrationManagement /> : <DataManagement />}
   </Space>;
 }
 

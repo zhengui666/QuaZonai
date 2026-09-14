@@ -6,11 +6,11 @@ use crate::{
     historical_source, Store, StoreError,
 };
 use contracts::{
-    control::{CommandResult, OperatorOperation},
+    control::{CommandResult, ListQuery, OperatorOperation, Page},
     imports::*,
     DbCounter, Id, SchemaV1,
 };
-use sqlx::Connection;
+use sqlx::{Connection, Postgres, Row, Transaction};
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::{Read, Seek},
@@ -282,28 +282,107 @@ impl Store {
         id: Id,
     ) -> Result<HistoricalImportReportV1, StoreError> {
         let mut tx = self.pool.begin().await?;
-        match actor {
-            Actor::Browser { .. } => authority::browser(&mut tx, actor, false, false).await?,
-            Actor::Machine { .. } => {
-                let machine = authority::machine(&mut tx, actor, false).await?;
-                if machine.kind != contracts::control::PrincipalKind::Cli {
-                    return Err(StoreError::Forbidden);
-                }
-                let owns: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.command_receipts WHERE principal_scope=$1 AND operation='MIGRATION_IMPORT' AND resource_id=$2)")
-                    .bind(format!("CREDENTIAL:{}", machine.credential_id)).bind(id.as_uuid()).fetch_one(&mut *tx).await?;
-                if !owns {
-                    return Err(StoreError::NotFound);
-                }
-            }
-        }
-        let value: serde_json::Value =
-            sqlx::query_scalar("SELECT result FROM app.historical_import_reports WHERE id=$1")
-                .bind(id.as_uuid())
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(StoreError::NotFound)?;
+        let value = readable_report(&mut tx, actor, id).await?;
         let report = serde_json::from_value(value).map_err(|_| StoreError::Integrity)?;
         tx.commit().await?;
         Ok(report)
     }
+
+    pub async fn historical_import_reports(
+        &self,
+        actor: &Actor,
+        query: &ListQuery,
+    ) -> Result<Page<HistoricalImportReportV1>, StoreError> {
+        domain::control::list(query)?;
+        let mut tx = self.pool.begin().await?;
+        let scope = read_scope(&mut tx, actor).await?;
+        let rows: Vec<serde_json::Value> = sqlx::query_scalar("SELECT r.result FROM app.historical_import_reports r WHERE ($1::text IS NULL OR EXISTS(SELECT 1 FROM app.command_receipts c WHERE c.principal_scope=$1 AND c.operation='MIGRATION_IMPORT' AND c.resource_id=r.id)) AND ($2::uuid IS NULL OR r.id<$2) ORDER BY r.id DESC LIMIT $3")
+            .bind(scope).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let items = rows
+            .into_iter()
+            .map(|v| serde_json::from_value(v).map_err(|_| StoreError::Integrity))
+            .collect::<Result<Vec<HistoricalImportReportV1>, _>>()?;
+        let result = crate::control::page(items, query.limit, |r| r.id);
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn historical_import_source(
+        &self,
+        actor: &Actor,
+        id: Id,
+    ) -> Result<HistoricalRowExportV1, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        readable_report(&mut tx, actor, id).await?;
+        let value: serde_json::Value = sqlx::query_scalar(
+            "SELECT source_report FROM app.historical_import_reports WHERE id=$1",
+        )
+        .bind(id.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+        let result = serde_json::from_value(value).map_err(|_| StoreError::Integrity)?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn historical_import_mappings(
+        &self,
+        actor: &Actor,
+        id: Id,
+        query: &ListQuery,
+    ) -> Result<Page<HistoricalMappingViewV1>, StoreError> {
+        domain::control::list(query)?;
+        let mut tx = self.pool.begin().await?;
+        readable_report(&mut tx, actor, id).await?;
+        let rows = sqlx::query("SELECT r.id,r.source_installation_id,r.source_table,r.original_key,r.first_import_id,r.disposition,r.created_at FROM app.historical_import_members m JOIN app.historical_records r ON r.id=m.record_id WHERE m.report_id=$1 AND ($2::uuid IS NULL OR r.id<$2) ORDER BY r.id DESC LIMIT $3")
+            .bind(id.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let items = rows
+            .iter()
+            .map(|row| {
+                Ok(HistoricalMappingViewV1 {
+                    id: db::id(row.try_get("id")?)?,
+                    key: HistoricalOriginalKeyV1 {
+                        source_installation_id: db::id(row.try_get("source_installation_id")?)?,
+                        source_table: row.try_get("source_table")?,
+                        values: serde_json::from_value(row.try_get("original_key")?)
+                            .map_err(|_| StoreError::Integrity)?,
+                    },
+                    first_import_id: db::id(row.try_get("first_import_id")?)?,
+                    disposition: db::enum_value(row, "disposition")?,
+                    created_at: row.try_get("created_at")?,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        let result = crate::control::page(items, query.limit, |r| r.id);
+        tx.commit().await?;
+        Ok(result)
+    }
+}
+
+async fn read_scope(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &Actor,
+) -> Result<Option<String>, StoreError> {
+    match actor {
+        Actor::Browser { .. } => {
+            authority::browser(tx, actor, false, false).await?;
+            Ok(None)
+        }
+        Actor::Machine { .. } => {
+            let machine = authority::machine(tx, actor, false).await?;
+            if machine.kind != contracts::control::PrincipalKind::Cli {
+                return Err(StoreError::Forbidden);
+            }
+            Ok(Some(format!("CREDENTIAL:{}", machine.credential_id)))
+        }
+    }
+}
+async fn readable_report(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &Actor,
+    id: Id,
+) -> Result<serde_json::Value, StoreError> {
+    let scope = read_scope(tx, actor).await?;
+    sqlx::query_scalar("SELECT r.result FROM app.historical_import_reports r WHERE r.id=$1 AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM app.command_receipts c WHERE c.principal_scope=$2 AND c.operation='MIGRATION_IMPORT' AND c.resource_id=r.id))")
+        .bind(id.as_uuid()).bind(scope).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)
 }

@@ -5111,3 +5111,39 @@ source unchanged. Frontend npm --ignore-scripts run typecheck passed. No UI or
 full fresh-instance browser acceptance is claimed. Paginated identity/history
 views, artifact association, complete semantic/sealed lineage and actual old
 backup/recovery acceptance remain; no remote CI/review/merge or Issue closure.
+
+
+### 2026-09-15 import reports, identity mappings and browser workflow
+
+Added report pagination, original export inspection metadata and per-report
+identity mapping pages to Store/HTTP/CLI. All use the existing browser Operator
+or original current CLI credential receipt scope; dry-run has no mappings and
+repeat imports reference the same original records and first import report.
+Original bigint/UUID/composite keys remain canonical text. These APIs expose
+metadata and identity mappings, not CSV field contents or arbitrary paths.
+
+Settings now includes Historical Migration: deployment export reference, default
+dry-run, explicit actual import, report/source details and mapping pagination.
+Unknown results retain the exact body/idempotency key, including after a recent
+authentication challenge. Unrelated source-installation responses are rejected.
+
+web-verify-lVP27e passed reproducible native generation, unchanged handwritten
+source, typecheck, 505 Vitest tests, 5 PWA file tests, wire checks, production build
+and 39 migration/console browser checks across 1440/768/390 widths. Initial
+web-verify-XSHIdp found nonfocusable scrolling tables and a test retry blocked by
+the legitimate recent-auth modal. Added native keyboard focus to table headers
+and completed the existing verification flow in the test; no auth bypass.
+Axe serious/critical checks pass. Browser response fixtures prove presentation,
+not real old-snapshot or complete fresh-instance T42 acceptance.
+
+verify-1y4TOt passed workspace/all-target compilation, formatting, strict Clippy,
+25 integration tests, 4 native Store import tests, 8 source/artifact tests,
+1 actual browser/CLI/TCP/PostgreSQL flow and 2 OpenAPI reference checks (40 total).
+New checks cover descending report/mapping pages, stable first-import identity,
+dry-run emptiness, original metadata readback and CLI denial for another report's
+source/mappings. Source unchanged and owned PostgreSQL stopped.
+
+Live GitHub reread: PR63 OPEN Draft, remote head
+37e5713ed6252e5935787201914d42f241582a4f; Issue62 OPEN. No push/merge/closure.
+Original field-content access, artifact association, complete semantic/sealed
+lineage, real old backup/recovery and the remaining full delivery gates continue.

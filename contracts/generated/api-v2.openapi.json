@@ -12773,6 +12773,117 @@
         ],
         "type": "object"
       },
+      "HistoricalColumnExclusionV1": {
+        "additionalProperties": false,
+        "properties": {
+          "column": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/HistoricalExclusionReasonV1"
+          }
+        },
+        "required": [
+          "column",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "HistoricalColumnV1": {
+        "additionalProperties": false,
+        "description": "Native type includes numeric and timestamp precision; defaults and row values are omitted.",
+        "properties": {
+          "generated": {
+            "type": "boolean"
+          },
+          "identity": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "nullable": {
+            "type": "boolean"
+          },
+          "postgres_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "postgres_type",
+          "nullable",
+          "identity",
+          "generated"
+        ],
+        "type": "object"
+      },
+      "HistoricalDispositionV1": {
+        "enum": [
+          "READ_ONLY_HISTORY",
+          "LEGACY_REVALIDATION_REQUIRED"
+        ],
+        "type": "string"
+      },
+      "HistoricalExclusionReasonV1": {
+        "enum": [
+          "CREDENTIALS",
+          "INTERNAL_CHAT",
+          "SEALED_EVIDENCE",
+          "UNREVIEWED_FIELDS",
+          "UNSUPPORTED_SCHEMA"
+        ],
+        "type": "string"
+      },
+      "HistoricalForeignKeyCheckV1": {
+        "additionalProperties": false,
+        "properties": {
+          "constraint": {
+            "type": "string"
+          },
+          "match_type": {
+            "$ref": "#/components/schemas/HistoricalForeignKeyMatchV1"
+          },
+          "orphan_rows": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "source_columns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "source_table": {
+            "type": "string"
+          },
+          "target_columns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "target_table": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "match_type",
+          "constraint",
+          "source_table",
+          "target_table",
+          "source_columns",
+          "target_columns",
+          "orphan_rows"
+        ],
+        "type": "object"
+      },
+      "HistoricalForeignKeyMatchV1": {
+        "enum": [
+          "SIMPLE",
+          "FULL"
+        ],
+        "type": "string"
+      },
       "HistoricalImportReportV1": {
         "additionalProperties": false,
         "description": "Import of reviewed projections is not approval of excluded or legacy evidence.",
@@ -12846,6 +12957,221 @@
           "schema_version",
           "export_ref",
           "dry_run"
+        ],
+        "type": "object"
+      },
+      "HistoricalMappingViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/HistoricalDispositionV1"
+          },
+          "first_import_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "key": {
+            "$ref": "#/components/schemas/HistoricalOriginalKeyV1"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "first_import_id",
+          "disposition",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "HistoricalOriginalKeyV1": {
+        "additionalProperties": false,
+        "description": "Native old primary-key values, including bigint and composite identities.\nValues use PostgreSQL canonical text, never a new-system UUID parser or float.",
+        "properties": {
+          "source_installation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "source_table": {
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "source_installation_id",
+          "source_table",
+          "values"
+        ],
+        "type": "object"
+      },
+      "HistoricalRowExportV1": {
+        "additionalProperties": false,
+        "description": "Native CSV projections accompany the retained complete backup. Never an import result.",
+        "properties": {
+          "inspection": {
+            "$ref": "#/components/schemas/HistoricalSourceInspectionV1"
+          },
+          "missing_tables": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "source_installation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "tables": {
+            "items": {
+              "$ref": "#/components/schemas/HistoricalTableExportV1"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "source_installation_id",
+          "inspection",
+          "missing_tables",
+          "tables"
+        ],
+        "type": "object"
+      },
+      "HistoricalSourceInspectionV1": {
+        "additionalProperties": false,
+        "description": "Native database inspection only; no claim that artifacts or import mapping are complete.",
+        "properties": {
+          "foreign_keys": {
+            "items": {
+              "$ref": "#/components/schemas/HistoricalForeignKeyCheckV1"
+            },
+            "type": "array"
+          },
+          "inspected_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "source_schema_version": {
+            "type": "string"
+          },
+          "tables": {
+            "items": {
+              "$ref": "#/components/schemas/HistoricalTableCountV1"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "source_schema_version",
+          "inspected_at",
+          "tables",
+          "foreign_keys"
+        ],
+        "type": "object"
+      },
+      "HistoricalTableCountV1": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/HistoricalColumnV1"
+            },
+            "type": "array"
+          },
+          "primary_key": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "table": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "table",
+          "rows",
+          "primary_key",
+          "columns"
+        ],
+        "type": "object"
+      },
+      "HistoricalTableExportV1": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_count": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "excluded_columns": {
+            "items": {
+              "$ref": "#/components/schemas/HistoricalColumnExclusionV1"
+            },
+            "type": "array"
+          },
+          "object_ref": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "projected_rows": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "source_rows": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "table": {
+            "type": "string"
+          },
+          "unsupported_schema": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "table",
+          "source_rows",
+          "projected_rows",
+          "columns",
+          "excluded_columns",
+          "unsupported_schema"
         ],
         "type": "object"
       },
@@ -18070,6 +18396,143 @@
                 "state",
                 "offered_at",
                 "expires_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_HistoricalImportReportV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "description": "Import of reviewed projections is not approval of excluded or legacy evidence.",
+              "properties": {
+                "checked_relationships": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "dry_run": {
+                  "type": "boolean"
+                },
+                "existing_rows": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "export_ref": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "manual_review_required": {
+                  "type": "boolean"
+                },
+                "new_rows": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "projected_rows": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "schema_version": {
+                  "$ref": "#/components/schemas/SchemaV1"
+                },
+                "source_installation_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "unverified_relationships": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "schema_version",
+                "id",
+                "export_ref",
+                "source_installation_id",
+                "dry_run",
+                "projected_rows",
+                "new_rows",
+                "existing_rows",
+                "checked_relationships",
+                "unverified_relationships",
+                "manual_review_required"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_HistoricalMappingViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "disposition": {
+                  "$ref": "#/components/schemas/HistoricalDispositionV1"
+                },
+                "first_import_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "key": {
+                  "$ref": "#/components/schemas/HistoricalOriginalKeyV1"
+                }
+              },
+              "required": [
+                "id",
+                "key",
+                "first_import_id",
+                "disposition",
+                "created_at"
               ],
               "type": "object"
             },
@@ -33095,6 +33558,102 @@
         ]
       }
     },
+    "/api/v2/migrations/reports": {
+      "get": {
+        "operationId": "list_historical_import_reports",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_HistoricalImportReportV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Historical migration"
+        ]
+      }
+    },
     "/api/v2/migrations/reports/{id}": {
       "get": {
         "operationId": "get_historical_import_report",
@@ -33114,6 +33673,215 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HistoricalImportReportV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Historical migration"
+        ]
+      }
+    },
+    "/api/v2/migrations/reports/{id}/mappings": {
+      "get": {
+        "operationId": "list_historical_import_mappings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_HistoricalMappingViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Historical migration"
+        ]
+      }
+    },
+    "/api/v2/migrations/reports/{id}/source": {
+      "get": {
+        "operationId": "get_historical_import_source",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalRowExportV1"
                 }
               }
             },

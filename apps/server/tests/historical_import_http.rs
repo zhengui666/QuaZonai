@@ -279,5 +279,61 @@ async fn frozen_export_browser_and_cli_import_preserve_original_history_and_scop
         .await
         .unwrap();
     assert_eq!(jobs, 0);
+    let listing = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "reports", "--limit", "1"],
+        Value::Null,
+    )
+    .await;
+    assert!(listing.status.success());
+    let listing: Value = serde_json::from_slice(&listing.stdout).unwrap();
+    assert_eq!(listing["items"].as_array().unwrap().len(), 1);
+    assert_eq!(listing["items"][0]["id"], report_id);
+    assert!(listing["next_cursor"].is_null());
+    let mappings = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "mappings", report_id, "--limit", "1"],
+        Value::Null,
+    )
+    .await;
+    assert!(mappings.status.success());
+    let mappings: Value = serde_json::from_slice(&mappings.stdout).unwrap();
+    assert_eq!(
+        mappings["items"][0]["key"]["values"]["id"],
+        "9007199254740993"
+    );
+    assert_eq!(mappings["items"][0]["first_import_id"], report_id);
+    let source_read = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "source", report_id],
+        Value::Null,
+    )
+    .await;
+    assert!(source_read.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&source_read.stdout).unwrap(),
+        serde_json::to_value(&source).unwrap()
+    );
+    for command in ["mappings", "source"] {
+        let denied = client::invoke(
+            &origin,
+            &credential_file,
+            &[
+                "migrate",
+                command,
+                dry.body["resource"]["id"].as_str().unwrap(),
+            ],
+            Value::Null,
+        )
+        .await;
+        assert!(!denied.status.success());
+        assert_eq!(
+            serde_json::from_slice::<Value>(&denied.stderr).unwrap()["status"],
+            404
+        );
+    }
     task.abort();
 }

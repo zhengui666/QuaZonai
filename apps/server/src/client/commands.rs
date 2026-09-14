@@ -546,6 +546,15 @@ pub(super) enum Output {
 }
 #[derive(Subcommand)]
 pub enum Migrate {
+    Reports(List),
+    Source {
+        id: String,
+    },
+    Mappings {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
     /// Import a deployment-registered historical projection; requires exact Operator grant.
     Import {
         #[arg(long)]
@@ -554,7 +563,9 @@ pub enum Migrate {
         dry_run: bool,
     },
     /// Read an import report created by this CLI credential.
-    Report { id: String },
+    Report {
+        id: String,
+    },
 }
 pub(super) struct Request {
     pub method: Method,
@@ -640,6 +651,25 @@ impl Command {
         const POST: Method = Method::POST;
         let result = match self {
             Self::Migrate(command) => match command {
+                Migrate::Reports(page) => Request::get::<
+                    Page<contracts::imports::HistoricalImportReportV1>,
+                >("/api/v2/migrations/reports")
+                .page(page)?,
+                Migrate::Source { id } => {
+                    Request::get::<contracts::imports::HistoricalRowExportV1>(action(
+                        "/api/v2/migrations/reports",
+                        id,
+                        "source",
+                    )?)
+                }
+                Migrate::Mappings { id, page } => {
+                    Request::get::<Page<contracts::imports::HistoricalMappingViewV1>>(action(
+                        "/api/v2/migrations/reports",
+                        id,
+                        "mappings",
+                    )?)
+                    .page(page)?
+                }
                 Migrate::Import {
                     export_ref,
                     dry_run,

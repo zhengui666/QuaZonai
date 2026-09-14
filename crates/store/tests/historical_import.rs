@@ -215,3 +215,129 @@ async fn auth_precedes_source_access_and_modified_relation_cannot_be_imported(po
         .unwrap();
     assert_eq!(reports, 0);
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn report_and_mapping_pages_keep_original_batch_membership(pool: PgPool) {
+    use contracts::control::ListQuery;
+    source(&pool).await;
+    let (store, actor) = support::operator(&pool).await;
+    let (source, files) = exported(&pool, Id::new()).await;
+    let mut request = HistoricalImportRequestV1 {
+        schema_version: SchemaV1,
+        export_ref: Id::new(),
+        dry_run: true,
+    };
+    let dry = import(&store, &actor, "dry", &request, &source, &files)
+        .await
+        .unwrap()
+        .resource;
+    request.dry_run = false;
+    let first = import(&store, &actor, "first", &request, &source, &files)
+        .await
+        .unwrap()
+        .resource;
+    let second = import(&store, &actor, "second", &request, &source, &files)
+        .await
+        .unwrap()
+        .resource;
+    let page = ListQuery {
+        cursor: None,
+        limit: 1,
+    };
+    let reports = store
+        .historical_import_reports(&actor, &page)
+        .await
+        .unwrap();
+    assert_eq!(reports.items[0].id, second.id);
+    let older = store
+        .historical_import_reports(
+            &actor,
+            &ListQuery {
+                cursor: reports.next_cursor,
+                limit: 2,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        older.items.iter().map(|r| r.id).collect::<Vec<_>>(),
+        [first.id, dry.id]
+    );
+    assert!(older.next_cursor.is_none());
+    let a = store
+        .historical_import_mappings(&actor, second.id, &page)
+        .await
+        .unwrap();
+    let b = store
+        .historical_import_mappings(
+            &actor,
+            second.id,
+            &ListQuery {
+                cursor: a.next_cursor,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(a.items.len(), 1);
+    assert_eq!(b.items.len(), 1);
+    assert!(b.next_cursor.is_none());
+    assert_ne!(a.items[0].id, b.items[0].id);
+    for mapping in a.items.iter().chain(&b.items) {
+        assert_eq!(mapping.first_import_id, first.id);
+        assert_eq!(
+            mapping.key.source_installation_id,
+            source.source_installation_id
+        );
+    }
+    assert!(a.items.iter().chain(&b.items).any(|r| r
+        .key
+        .values
+        .get("id")
+        .is_some_and(|value| value == "9007199254740993")));
+    let original = store
+        .historical_import_mappings(
+            &actor,
+            first.id,
+            &ListQuery {
+                cursor: None,
+                limit: 100,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        original.items.iter().map(|r| r.id).collect::<Vec<_>>(),
+        [a.items[0].id, b.items[0].id]
+    );
+    assert!(store
+        .historical_import_mappings(&actor, dry.id, &page)
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(matches!(
+        store
+            .historical_import_mappings(&actor, Id::new(), &page)
+            .await,
+        Err(store::StoreError::NotFound)
+    ));
+    assert!(store
+        .historical_import_reports(
+            &actor,
+            &ListQuery {
+                cursor: None,
+                limit: 0
+            }
+        )
+        .await
+        .is_err());
+    let detail = store
+        .historical_import_source(&actor, first.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(detail).unwrap(),
+        serde_json::to_value(source).unwrap()
+    );
+}

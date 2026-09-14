@@ -253,3 +253,19 @@ pub enum HistoricalForeignKeyMatchV1 {
     Simple,
     Full,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalMappingViewV1 {
+    pub id: Id,
+    pub key: HistoricalOriginalKeyV1,
+    pub first_import_id: Id,
+    pub disposition: HistoricalDispositionV1,
+    pub created_at: DateTime<Utc>,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum HistoricalDispositionV1 {
+    ReadOnlyHistory,
+    LegacyRevalidationRequired,
+}
