@@ -8,7 +8,7 @@ use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
 mod approvals;
 
 #[path = "automatic_rebalance.rs"]
-mod automatic_rebalance;
+pub(super) mod automatic_rebalance;
 
 #[path = "portfolio_inputs.rs"]
 mod inputs;

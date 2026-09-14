@@ -4,6 +4,8 @@
 mod automatic_live;
 #[path = "support/automatic_paper.rs"]
 mod automatic_paper;
+#[path = "support/automatic_rebalance.rs"]
+mod automatic_rebalance;
 #[path = "../../../tests/support/brief.rs"]
 mod brief_support;
 #[path = "support/client.rs"]
@@ -963,4 +965,9 @@ async fn healthy_paper_live_scenario(pool: PgPool) {
         &pool, &store, &actor, &f, &release, &directory,
     ))
     .await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn frozen_policy_worker_rebalance_advances_original_study_release_and_paper(pool: PgPool) {
+    Box::pin(automatic_rebalance::scenario(pool)).await;
 }

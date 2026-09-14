@@ -21,14 +21,14 @@ async fn scenario(pool: PgPool) {
     Box::pin(check(&pool, &store, &actor, &f, &build, candidate)).await;
 }
 
-async fn check(
+pub(crate) async fn prepare(
     pool: &PgPool,
     store: &Store,
     actor: &store::authority::Actor,
     f: &cycle_support::Fixture,
     build: &contracts::portfolio::PortfolioBuildRequestV1,
     candidate: Id,
-) {
+) -> (ReleaseViewV1, AutomationPolicyViewV1, Id) {
     let intent = Box::pin(original_release_intent(
         pool, store, actor, f, build, candidate,
     ))
@@ -150,6 +150,18 @@ async fn check(
         .resource
         .header
         .id;
+    (release, policy, input)
+}
+
+async fn check(
+    pool: &PgPool,
+    store: &Store,
+    actor: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    build: &contracts::portfolio::PortfolioBuildRequestV1,
+    candidate: Id,
+) {
+    let (release, policy, input) = Box::pin(prepare(pool, store, actor, f, build, candidate)).await;
     let before: i64 = sqlx::query_scalar("SELECT count(*) FROM app.command_receipts")
         .fetch_one(pool)
         .await
@@ -279,21 +291,7 @@ async fn continue_study(
     .await
     .unwrap()
     .is_none());
-    let message = validation_publication::message(pool, build.id).await;
-    let Some(ClaimResult::Leased(lease)) = store
-        .claim_native_run(&message, "automatic-rebalance-native", 60)
-        .await
-        .unwrap()
-    else {
-        panic!("Build lease")
-    };
-    let job = store.native_job(build.id, &lease.fence).await.unwrap();
-    Box::pin(result::complete(pool, store, f, &lease, &job)).await;
-    let candidate = validation_publication::publish(store, f, build.id)
-        .await
-        .unwrap()
-        .resource;
-    store.acknowledge_run(&message).await.unwrap();
+    let candidate = Box::pin(complete_stage(pool, store, f, build.id)).await;
     let publish = |object: store::lifecycle::native::NativeObjectPublication| {
         std::future::ready(
             f.objects
@@ -366,28 +364,11 @@ async fn continue_release(
     .await
     .unwrap()
     .is_none());
-    let message = validation_publication::message(pool, study.id).await;
-    let Some(ClaimResult::Leased(lease)) = store
-        .claim_native_run(&message, "automatic-study-native", 60)
-        .await
-        .unwrap()
-    else {
-        panic!("Study lease")
-    };
-    let job = store.native_job(study.id, &lease.fence).await.unwrap();
-    Box::pin(study_result::complete(
-        pool, store, f, &lease, &job, false, true,
-    ))
-    .await;
-    let evaluation = validation_publication::publish(store, f, study.id)
-        .await
-        .unwrap()
-        .resource;
+    let evaluation = Box::pin(complete_stage(pool, store, f, study.id)).await;
     assert_eq!(
         store.evaluation(actor, evaluation).await.unwrap().decision,
         contracts::evidence::Decision::Pass
     );
-    store.acknowledge_run(&message).await.unwrap();
     assert!(matches!(
         Box::pin(store.automate_rebalance_release(
             seed.project_id,
@@ -445,4 +426,164 @@ async fn continue_release(
             .await
             .is_err()
     );
+}
+
+pub(crate) async fn complete_stage(
+    pool: &PgPool,
+    store: &Store,
+    f: &cycle_support::Fixture,
+    run: Id,
+) -> Id {
+    let message = validation_publication::message(pool, run).await;
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_native_run(&message, "automatic-stage-native", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("original stage lease")
+    };
+    let job = store.native_job(run, &lease.fence).await.unwrap();
+    match lease.run.kind {
+        contracts::runs::RunKind::PortfolioBuild => {
+            Box::pin(result::complete(pool, store, f, &lease, &job)).await
+        }
+        contracts::runs::RunKind::PortfolioSimulate => {
+            Box::pin(study_result::complete(
+                pool, store, f, &lease, &job, false, true,
+            ))
+            .await
+        }
+        _ => panic!("not an automatic rebalance stage"),
+    }
+    let resource = validation_publication::publish(store, f, run)
+        .await
+        .unwrap()
+        .resource;
+    store.acknowledge_run(&message).await.unwrap();
+    resource
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn rebalance_policy_replacement_stops_original_build_successor(pool: PgPool) {
+    Box::pin(replacement_scenario(pool, false)).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn rebalance_policy_replacement_stops_original_study_release(pool: PgPool) {
+    Box::pin(replacement_scenario(pool, true)).await;
+}
+
+async fn replacement_scenario(pool: PgPool, after_study: bool) {
+    let (store, actor, f, build, candidate, _directory) = Box::pin(qualified_chain_scheduled(
+        pool.clone(),
+        cycle_support::Liquidity::None,
+        ForwardEnvironmentV1::Live,
+        DataUse::ResearchAndPaper,
+        release_policy,
+        Some(5),
+    ))
+    .await
+    .unwrap();
+    let (seed, policy, _) = Box::pin(prepare(&pool, &store, &actor, &f, &build, candidate)).await;
+    Box::pin(replace_original_policy(
+        &pool,
+        &store,
+        &actor,
+        &f,
+        &seed,
+        &policy,
+        after_study,
+    ))
+    .await;
+}
+
+async fn replace_original_policy(
+    pool: &PgPool,
+    store: &Store,
+    actor: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    seed: &ReleaseViewV1,
+    policy: &AutomationPolicyViewV1,
+    after_study: bool,
+) {
+    let publish = |object: store::lifecycle::native::NativeObjectPublication| {
+        std::future::ready(
+            f.objects
+                .put(object.id, &object.bytes)
+                .map_err(|_| StoreError::Integrity),
+        )
+    };
+    let build = Box::pin(store.automate_rebalance_build(
+        seed.project_id,
+        |id, size| f.read(id, size),
+        publish,
+    ))
+    .await
+    .unwrap()
+    .unwrap();
+    Box::pin(complete_stage(pool, store, f, build.id)).await;
+    if after_study {
+        let study = Box::pin(store.automate_rebalance_study(
+            seed.project_id,
+            |id, size| f.read(id, size),
+            publish,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+        Box::pin(complete_stage(pool, store, f, study.id)).await;
+    }
+    let replacement = store
+        .authorize_automation(
+            actor,
+            "replacement-policy",
+            seed.project_id,
+            &AutomationAuthorizeV1 {
+                schema_version: SchemaV1,
+                expected_project_revision: store
+                    .project(actor, seed.project_id)
+                    .await
+                    .unwrap()
+                    .revision,
+                content: policy.content.clone(),
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    assert_ne!(replacement.id, policy.id);
+    assert!(Box::pin(store.automate_rebalance_build(
+        seed.project_id,
+        |_, _| async { panic!("policy replacement cannot duplicate the pending Build") },
+        |_| async { panic!("policy replacement cannot publish another Build") }
+    ))
+    .await
+    .unwrap()
+    .is_none());
+    assert!(Box::pin(store.automate_rebalance_study(
+        seed.project_id,
+        |_, _| async { panic!("original Build cannot borrow the new policy") },
+        |_| async { panic!("replaced policy cannot publish Study parameters") }
+    ))
+    .await
+    .unwrap()
+    .is_none());
+    assert!(Box::pin(store.automate_rebalance_release(
+        seed.project_id,
+        |_, _| async { panic!("original Study cannot borrow the new policy") },
+        |_| async { panic!("replaced policy cannot publish a Package") }
+    ))
+    .await
+    .unwrap()
+    .is_none());
+    let original: uuid::Uuid =
+        sqlx::query_scalar("SELECT policy_id FROM app.portfolio_rebalances WHERE run_id=$1")
+            .bind(build.id.as_uuid())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(original, policy.id.as_uuid());
+    let counts: (i64,i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.portfolio_rebalances),(SELECT count(*) FROM app.portfolio_rebalance_studies),(SELECT count(*) FROM app.portfolio_rebalance_releases),(SELECT count(*) FROM app.releases)")
+        .fetch_one(pool).await.unwrap();
+    assert_eq!(counts, (1, i64::from(after_study), 0, 1));
 }

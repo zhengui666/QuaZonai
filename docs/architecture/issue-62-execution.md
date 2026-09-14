@@ -4862,3 +4862,11 @@ compile verify-AaU3R3通过；verify-J3pPwH仅测试Cycle Option断言编译失�
 扩展原生数据库/PGMQ场景，覆盖未完成阶段不发布、并发单一Study/Release、独立历史输入、原Cycle、发布失败回滚、旧包字节不变、无新Approval/Operator回执、关联不可改写。verify-RiLVyz仅测试传入字节数类型编译失败；改读原artifacts.byte_count后verify-0WHBRB通过workspace/all-targets编译、格式、严格Clippy及两项数据库测试（23.50秒），source_unchanged=true。受控上游数值响应仍不证明真实市场/模型或完整T42。实际非MANUAL Worker正向、日历与更多政策/额度竞态、运行来源可见性及完整验收仍待补齐；尚未push/review/merge/close。
 
 共享异步事务扩展后，verify-67o4Zs/VD9dbb/qd8trH的Live回归出现栈溢出，CLI十项通过但整轮失败。仅Worker分配边界不足以解决；verify-Zk06Bp临时阶段标记定位到资格准备、尚未进入Live Worker。共享Study/Release与Worker阶段使用Box::pin，大型Live测试入口分段后，verify-XnfmbD定向通过；未增加线程栈、未删业务断言，诊断输出已移除。最终同一源码verify-5CiBo1通过workspace/all-targets编译、格式、严格Clippy及31项HTTP/CLI/Worker回归（HTTP21项248.95秒）；verify-uBwbsJ再次通过全部静态检查及2项再平衡数据库用例（25.08秒）。两轮source_unchanged=true，隔离PostgreSQL停止。GitHub最新读取仍为PR63开放草稿、远端37e5713、Issue62开放。
+
+### 2026-09-15：真实Worker再平衡与原政策替换反例
+
+复用已有原命令资格/Release/政策/Forward准备及原生结果完成辅助，新增frozen_policy_worker_rebalance_advances_original_study_release_and_paper。调用真实Worker::process_automation：未探测下游的Paper失败不阻断原Build/Study/Release；双tick及后续普通tick只产生一个原Study，正式PASS后冻结新Release；探测下游能力前无Approval/Offer/额外Operator回执，探测通过后原政策仅向新Release产生一个PAPER Offer，重复tick不重复Build/Study/Release。不声称模拟下游已Claim/ACK或执行订单。
+
+新增两项Store反例：原Build成功后和原Study正式PASS后分别通过原生授权命令更换同内容的政策版本；新版本不能被旧Run借用、不能继续Study/Release，也不重复已有Build。原policy关联及已有Release保留。测试使用真实PostgreSQL/PGMQ和原ArtifactStore；科学结果仍为受控原生协议响应，不是实际数值/市场/T42证据。
+
+verify-1AhZpm静态/原Store通过，新增Worker断言误把SKIP LOCKED正常延后视为必须失败；修正为单次tick验证下游失败、并发允许延后并以随后普通tick验证推进，未放宽交付约束。verify-0ljzur通过。最终verify-lklCit通过workspace/all-targets编译、格式、严格Clippy、4项Store测试（51.63秒）与1项Worker测试（17.28秒），source_unchanged=true且隔离PG已停止。现有CI的store/server全集自动包含这些测试；本地rebalance-focus同步执行两入口。仍待Calendar原文件正向、UTC额度/失效竞态、自动运行来源可见性和完整T01–T42验收，未push/review/merge/close。
