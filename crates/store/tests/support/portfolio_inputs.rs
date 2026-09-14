@@ -100,7 +100,10 @@ pub(super) async fn request(
     f: &cycle_support::Fixture,
     cycle: Id,
     environment: ForwardEnvironmentV1,
-    interval: Option<u32>,
+    (interval, calendar): (
+        Option<u32>,
+        Option<&(contracts::science::NativeCalendarSessionsV1, i32)>,
+    ),
 ) -> PortfolioBuildRequestV1 {
     let context = &f.freeze.execution_context;
     let ProbePreparation::Pending(ticket) = store
@@ -147,7 +150,7 @@ pub(super) async fn request(
                     name: "Controlled weights source".into(),
                     endpoint: "https://downstream.example".into(),
                     accepted_package_versions: vec![PackageSchemaVersion::V1],
-                    environments: if interval.is_some() {
+                    environments: if interval.is_some() || calendar.is_some() {
                         DownstreamEnvironments::Both
                     } else {
                         match environment {
@@ -317,15 +320,20 @@ pub(super) async fn request(
                     constraints,
                     rebalance_schedule: RebalanceScheduleV1 {
                         schema_version: SchemaV1,
-                        kind: if interval.is_some() {
+                        kind: if calendar.is_some() {
+                            RebalanceKind::CalendarSession
+                        } else if interval.is_some() {
                             RebalanceKind::FixedInterval
                         } else {
                             RebalanceKind::Manual
                         },
                         interval_seconds: interval,
-                        calendar_ref: None,
-                        timezone: "UTC".into(),
-                        session_offset_seconds: None,
+                        calendar_ref: calendar.map(|(document, _)| document.calendar_ref.clone()),
+                        timezone: calendar.map_or_else(
+                            || "UTC".into(),
+                            |(document, _)| document.timezone.clone(),
+                        ),
+                        session_offset_seconds: calendar.map(|(_, offset)| *offset),
                         max_input_age_seconds: 60,
                         target_ttl_seconds: 300,
                     },

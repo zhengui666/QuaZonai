@@ -139,7 +139,11 @@ pub async fn register(
     data: &mut research_support::ResearchFixture,
     revision: Revision,
     objects: Arc<ArtifactStore>,
-    (origin, allowed_uses): (DataOrigin, DataUse),
+    (origin, allowed_uses, calendar): (
+        DataOrigin,
+        DataUse,
+        Option<contracts::science::NativeCalendarSessionsV1>,
+    ),
 ) {
     let license = ArtifactCreate {
         schema_version: SchemaV1,
@@ -231,6 +235,7 @@ pub async fn register(
         metadata.event_end = time(end);
         metadata.available_through = time("2020-01-02T00:00:00Z");
         metadata.row_count = DbCounter::new(1000).unwrap();
+        metadata.universe.calendar_sessions = calendar.clone();
         metadata.universe.selection_asof = time("2010-01-01T00:00:00Z");
         metadata.universe.coverage_start = time("2010-01-01T00:00:00Z");
         metadata.universe.coverage_end = time("2021-01-01T00:00:00Z");

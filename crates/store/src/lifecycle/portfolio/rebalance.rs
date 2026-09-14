@@ -90,7 +90,7 @@ impl Store {
         if cutoff <= previous {
             return Ok(None);
         }
-        if !due(&mut tx, &mandate, previous, cutoff, &mut read).await? {
+        if !due(&mut tx, &mandate, previous, cutoff, &bindings[0], &mut read).await? {
             return Ok(None);
         }
         let seen: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.portfolio_rebalances WHERE project_id=$1 AND mandate_id=$2 AND downstream_id=$3 AND decision_cutoff=$4)")
@@ -115,13 +115,17 @@ impl Store {
             snapshot_id: db::id(weights)?,
         };
         domain::portfolio::build_selection(&request)?;
-        let (mut tx, run, window) = admit_build(tx, &request, read, publish, "RUNTIME").await?;
+        let (mut tx, run, window) =
+            admit_build(tx, &request, &mut read, publish, "RUNTIME").await?;
         crate::automation::active_policy(&mut tx, policy_id, project, mandate_id, downstream)
             .await?;
         if window.decision_asof != cutoff {
             return Err(StoreError::Integrity);
         }
         window.recheck(&mut tx, &request).await?;
+        if !due(&mut tx, &mandate, previous, cutoff, &bindings[0], &mut read).await? {
+            return Err(StoreError::Conflict);
+        }
         sqlx::query("INSERT INTO app.portfolio_rebalances(run_id,project_id,mandate_id,downstream_id,policy_id,source_candidate_id,input_set_id,decision_cutoff) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
             .bind(run.id.as_uuid()).bind(project.as_uuid()).bind(mandate_id.as_uuid()).bind(downstream.as_uuid()).bind(policy_id.as_uuid()).bind(source.as_uuid()).bind(request.input_set_id.as_uuid()).bind(cutoff).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -244,6 +248,7 @@ async fn due<R, Read>(
     mandate: &MandateViewV1,
     previous: DateTime<Utc>,
     cutoff: DateTime<Utc>,
+    dataset: &crate::data_validation::DatasetBinding,
     read: &mut R,
 ) -> Result<bool, StoreError>
 where
@@ -259,25 +264,14 @@ where
                 schedule.interval_seconds.ok_or(StoreError::Integrity)?,
             ))),
         RebalanceKind::CalendarSession => {
-            let id: Option<uuid::Uuid> = sqlx::query_scalar(
-                "SELECT calendar_artifact_id FROM app.universe_versions WHERE id=$1",
-            )
-            .bind(mandate.content.universe_version_id.as_uuid())
-            .fetch_one(&mut **tx)
-            .await?;
-            let id = db::id(id.ok_or(StoreError::Invalid("rebalance_calendar_missing"))?)?;
-            let bytes = crate::execution_assumptions::liquidity::document(
+            let (calendar, _) = crate::data_registration::registered_calendar(
                 tx,
-                mandate.project_id,
-                id,
-                "qz.calendar_sessions",
-                1024 * 1024,
+                mandate.content.universe_version_id,
+                &dataset.metadata.universe,
+                dataset.origin,
                 read,
             )
             .await?;
-            let calendar: NativeCalendarSessionsV1 =
-                serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
-            domain::catalogs::calendar_sessions(&calendar)?;
             let previous = u64::try_from(
                 previous
                     .timestamp_nanos_opt()

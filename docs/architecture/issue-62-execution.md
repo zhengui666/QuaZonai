@@ -4876,3 +4876,12 @@ verify-1AhZpm静态/原Store通过，新增Worker断言误把SKIP LOCKED正常�
 新增三项原生Store反例，分别在自动Build参数、自动Study参数和自动Release Package真实写入ArtifactStore之后跨过原政策预约撤销的生效时刻。预约撤销使用原生PolicyRevoke命令；发布回调以PostgreSQL clock_timestamp/pg_sleep等待，不改写时间戳或政策。断言返回automation_expiry，Run/nativeTask/Artifact/PGMQ队列/Build→Study→Release关联/Release/Operator回执计数全部不变；文件确已产生且可经Project锁下的未引用对象清理删除。过期后再次调度不能读取来源或写文件。此处验证原政策有效期与预约撤销共同使用的截止门禁，不声称测试了所有时钟/失效竞态。
 
 verify-JrbGVL新增大型测试Future在资格准备组合中栈溢出，Worker正向通过；将资格准备、前置阶段和失效断言拆开，不增线程栈、不删断言。最终verify-nh08Vx通过workspace/all-targets编译、格式、严格Clippy、7项Store再平衡用例（100.69秒）及1项真实Worker用例（16.05秒），source_unchanged=true，隔离PG已停止。受控模型/科学声明仍不代替真实数值和T42证据。Calendar原文件正向、UTC日额度与完整交付验收仍待完成；未push/review/merge/close。
+
+
+### 2026-09-15：原注册 Calendar 的自动再平衡与 Study 绑定
+
+修复两处实际路径错误：Study/再平衡曾用项目 RESEARCH 文件读取器读取全局 OPERATOR 注册日历；原生 Job 绑定也拒绝该合法日历。共享 registered_calendar 复用注册元数据读取规则，核对原 Universe 名称、版本和 Dataset 中完整会话表。原生任务仅放行该 Study 经 Candidate/Mandate/Universe/原 InputSet 关联的日历，保留原 Worker fence 和其他 Operator 文件拒绝规则。自动 Build 发布后再次核对原日历。
+
+新增真实 PostgreSQL/PGMQ/ArtifactStore 场景：原生注册 Calendar，负偏移会话时刻前不调度，墙钟经过但原数据 cutoff 未推进仍不调度；新原生 Forward 输入后允许一次 Build。错误版本和发布后同版本会话内容变化均拒绝，回滚队列/领域记录并清理实际孤立文件。新 Candidate 完成自己的 Study/PASS/Release，无新 Approval；原生 Job 可读取原日历且拒绝无关文件。科学与模型响应仍为受控协议声明，不替代真实市场/科学数值或完整 T42 验收。
+
+verify-k1QEWE 暴露测试 Runtime 缺日历能力声明；verify-6QFmE6 和 JBCeXM 分别定位全局读取及 native_input_binding 错误。修复后 verify-ysu6FY、jpkwMh 定向通过，后者包含 8 项 Store（162.08 秒）及 1 项 Worker（15.89 秒）。verify-qGoMjm 全组遇到共享资格准备 Future 栈溢出；拆分准备和断言阶段，保留全部断言、不增线程栈，verify-00PeRP Live 定向通过。最终同版本内容变更反例所在源码 verify-nGy0TI 通过 workspace/all-targets 编译、格式、严格 Clippy、10 项 CLI（80.31 秒）及 28 项 HTTP（408.32 秒），source_unchanged=true，验证器正常结束并停止隔离 PG。未 push/review/merge/close；UTC 日配额、完整原生验收及其余交付门禁仍须完成。

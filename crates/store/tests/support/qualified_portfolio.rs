@@ -205,12 +205,70 @@ pub(super) async fn qualified_chain_scheduled(
     Id,
     tempfile::TempDir,
 )> {
-    let expected_origin = if environment == contracts::forward::ForwardEnvironmentV1::Paper {
-        "SYNTHETIC"
-    } else {
-        "REAL"
-    };
-    let with_liquidity = liquidity == cycle_support::Liquidity::Snapshot;
+    Box::pin(qualified_chain_calendar(
+        pool,
+        liquidity,
+        environment,
+        allowed_uses,
+        customize,
+        interval,
+        None,
+    ))
+    .await
+}
+
+pub(super) async fn qualified_chain_calendar(
+    pool: PgPool,
+    liquidity: cycle_support::Liquidity,
+    environment: contracts::forward::ForwardEnvironmentV1,
+    allowed_uses: contracts::research::DataUse,
+    customize: fn(&mut contracts::research::EvaluationPolicyCreate),
+    interval: Option<u32>,
+    calendar: Option<(contracts::science::NativeCalendarSessionsV1, i32)>,
+) -> Option<(
+    Store,
+    store::authority::Actor,
+    cycle_support::Fixture,
+    contracts::portfolio::PortfolioBuildRequestV1,
+    Id,
+    tempfile::TempDir,
+)> {
+    let qualified = Box::pin(qualified_members(
+        pool.clone(),
+        liquidity,
+        allowed_uses,
+        customize,
+        interval,
+        calendar.as_ref(),
+    ))
+    .await;
+    Box::pin(build_qualified_chain(
+        pool,
+        qualified,
+        liquidity,
+        environment,
+        interval,
+        calendar,
+    ))
+    .await
+}
+
+type QualifiedMembers = (
+    Store,
+    store::authority::Actor,
+    cycle_support::Fixture,
+    Id,
+    tempfile::TempDir,
+);
+
+async fn qualified_members(
+    pool: PgPool,
+    liquidity: cycle_support::Liquidity,
+    allowed_uses: contracts::research::DataUse,
+    customize: fn(&mut contracts::research::EvaluationPolicyCreate),
+    interval: Option<u32>,
+    calendar: Option<&(contracts::science::NativeCalendarSessionsV1, i32)>,
+) -> QualifiedMembers {
     let directory = tempfile::tempdir().unwrap();
     let objects = std::sync::Arc::new(
         integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
@@ -236,10 +294,11 @@ pub(super) async fn qualified_chain_scheduled(
                 customize(policy);
             },
             |policy| {
-                if interval.is_some() {
+                if interval.is_some() || calendar.is_some() {
                     policy.portfolio_study_plan.as_mut().unwrap().manual_cutoffs = None;
                 }
             },
+            calendar.as_ref().map(|(document, _)| document.clone()),
         ),
     )
     .await;
@@ -429,7 +488,40 @@ pub(super) async fn qualified_chain_scheduled(
     let counts: (i64,i64,i64) = sqlx::query_as("SELECT count(*),count(DISTINCT q.alpha_version_id),count(DISTINCT q.qualifying_evaluation_id) FROM app.qualifications q JOIN app.alpha_versions v ON v.id=q.alpha_version_id JOIN app.alphas a ON a.id=v.alpha_id AND a.active_version_id=v.id AND a.lifecycle='QUALIFIED' WHERE v.project_id=$1")
         .bind(f.data.project.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (2, 2, 2));
-    let request = inputs::request(&pool, &store, &actor, &f, cycle, environment, interval).await;
+    (store, actor, f, cycle, directory)
+}
+
+async fn build_qualified_chain(
+    pool: PgPool,
+    (store, actor, f, cycle, directory): QualifiedMembers,
+    liquidity: cycle_support::Liquidity,
+    environment: contracts::forward::ForwardEnvironmentV1,
+    interval: Option<u32>,
+    calendar: Option<(contracts::science::NativeCalendarSessionsV1, i32)>,
+) -> Option<(
+    Store,
+    store::authority::Actor,
+    cycle_support::Fixture,
+    contracts::portfolio::PortfolioBuildRequestV1,
+    Id,
+    tempfile::TempDir,
+)> {
+    let expected_origin = if environment == contracts::forward::ForwardEnvironmentV1::Paper {
+        "SYNTHETIC"
+    } else {
+        "REAL"
+    };
+    let with_liquidity = liquidity == cycle_support::Liquidity::Snapshot;
+    let request = inputs::request(
+        &pool,
+        &store,
+        &actor,
+        &f,
+        cycle,
+        environment,
+        (interval, calendar.as_ref()),
+    )
+    .await;
     let origin:String=sqlx::query_scalar("SELECT a.origin FROM app.execution_assumptions e JOIN app.artifacts a ON a.id=e.fee_schedule_artifact_id WHERE e.id=$1")
         .bind(f.data.assumptions.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(

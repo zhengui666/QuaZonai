@@ -133,6 +133,53 @@ fn instrument_document(value: &NativeUniverseV1) -> Value {
     json!({"schema_version":1,"instruments":value.instrument_definitions})
 }
 
+/// Read the global registered calendar bound to an already-authorized dataset Universe.
+pub(crate) async fn registered_calendar<F, Fut>(
+    tx: &mut Tx<'_>,
+    universe: Id,
+    source: &NativeUniverseV1,
+    origin: DataOrigin,
+    reader: &mut F,
+) -> Result<
+    (
+        contracts::science::NativeCalendarSessionsV1,
+        contracts::runtime_jobs::RuntimeInputV1,
+    ),
+    StoreError,
+>
+where
+    F: FnMut(Id, DbCounter) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+{
+    let row = sqlx::query("SELECT a.id AS artifact_id,a.byte_count,u.calendar_ref,u.calendar_version FROM app.universe_versions u JOIN app.artifacts a ON a.id=u.calendar_artifact_id AND a.kind='PARAMETERS' WHERE u.id=$1")
+        .bind(universe.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::Invalid("calendar_source"))?;
+    let id = db::id(row.try_get("artifact_id")?)?;
+    let value = read_metadata(tx, id, "qz.calendar_sessions", origin, reader).await?;
+    let calendar: contracts::science::NativeCalendarSessionsV1 =
+        serde_json::from_value(value).map_err(|_| StoreError::Integrity)?;
+    domain::catalogs::calendar_sessions(&calendar)?;
+    if source.calendar_sessions.as_ref() != Some(&calendar)
+        || calendar.calendar_ref != row.try_get::<String, _>("calendar_ref")?
+        || calendar.calendar_version != row.try_get::<String, _>("calendar_version")?
+    {
+        return Err(StoreError::Integrity);
+    }
+    let byte_count: DbCounter = row
+        .try_get::<i64, _>("byte_count")?
+        .to_string()
+        .try_into()
+        .map_err(|_| StoreError::Integrity)?;
+    Ok((
+        calendar,
+        contracts::runtime_jobs::RuntimeInputV1::Artifact {
+            artifact_id: id,
+            storage_version: "1".into(),
+            byte_count,
+            role: contracts::research::ArtifactInputRole::Parameters,
+        },
+    ))
+}
+
 async fn read_metadata<F, Fut>(
     tx: &mut Tx<'_>,
     artifact: Id,

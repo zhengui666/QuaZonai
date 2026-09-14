@@ -91,10 +91,25 @@ async fn verify_bindings(
                     .fetch_one(&mut **tx).await?
             }
             RuntimeInputV1::Artifact { artifact_id, storage_version, byte_count, role } => {
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind=$3 AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version=$4 AND byte_count=$5 AND access_class IN ('RESEARCH',$6))")
+                let local: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind=$3 AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version=$4 AND byte_count=$5 AND access_class IN ('RESEARCH',$6))")
                     .bind(artifact_id.as_uuid()).bind(run.project_id.as_uuid()).bind(role.code())
                     .bind(storage_version).bind(byte_count.get() as i64).bind(db::code(&access)?)
-                    .fetch_one(&mut **tx).await?
+                    .fetch_one(&mut **tx).await?;
+                if local {
+                    true
+                } else if run.kind == RunKind::PortfolioSimulate
+                    && access == ArtifactAccess::EvaluatorOnly
+                    && *role == contracts::research::ArtifactInputRole::Parameters
+                {
+                    // Only the original Study's registered Universe calendar is
+                    // a global parameter; other Operator metadata remains unbound.
+                    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.portfolio_study_tasks t JOIN app.portfolio_candidates c ON c.id=t.candidate_id AND c.project_id=$2 JOIN app.portfolio_mandates m ON m.id=c.mandate_id AND m.project_id=c.project_id JOIN app.universe_versions u ON u.id=m.universe_version_id AND u.calendar_artifact_id=$1 JOIN app.dataset_revisions d ON d.universe_version_id=u.id JOIN app.input_set_items i ON i.dataset_revision_id=d.id AND i.input_set_id=$7 JOIN app.artifacts a ON a.id=u.calendar_artifact_id AND a.origin=d.origin WHERE t.run_id=$6 AND a.project_id IS NULL AND a.kind='PARAMETERS' AND a.schema_name='qz.calendar_sessions' AND a.schema_version='1' AND a.media_type='application/json' AND a.created_by='RUNTIME' AND a.access_class='OPERATOR' AND a.storage_backend='LOCAL' AND a.storage_object_ref=a.id::text AND a.storage_version=$3 AND a.byte_count=$4 AND i.role=$5)")
+                        .bind(artifact_id.as_uuid()).bind(run.project_id.as_uuid()).bind(storage_version)
+                        .bind(byte_count.get() as i64).bind("VALIDATION").bind(run.id.as_uuid()).bind(run.input_set_id.as_uuid())
+                        .fetch_one(&mut **tx).await?
+                } else {
+                    false
+                }
             }
         };
         if !valid {

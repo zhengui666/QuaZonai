@@ -5,6 +5,9 @@ use contracts::{delivery::*, forward::ForwardEnvironmentV1, research::*};
 #[path = "automatic_rebalance_expiry.rs"]
 mod expiry;
 
+#[path = "automatic_rebalance_calendar.rs"]
+mod calendar;
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn frozen_policy_rebalance_queues_one_original_bounded_build(pool: PgPool) {
     Box::pin(scenario(pool)).await;

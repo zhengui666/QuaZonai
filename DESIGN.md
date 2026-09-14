@@ -249,7 +249,9 @@ Forward 按 downstream/external_message_id 去重；保留 stream/sequence/revis
 环境和单任务限额来源，不回退旧Release或改用新模型/资格。当前Cycle仍须RUNNING且
 原冻结Brief政策匹配；无可用预算时不启动新研究或借用其他Cycle。MANUAL不自动运行。
 FIXED_INTERVAL需新cutoff至少晚于原Candidate一个原间隔；CALENDAR_SESSION只取原
-Universe已登记的日历时段及原偏移，不推测节假日。选择同项目/Universe最新已冻结
+Universe已登记的日历时段及原偏移，不推测节假日。
+日历按原Dataset登记的全局OPERATOR元数据读取，核对原Universe名称/版本及原Dataset内完整会话表；准入和发布参数后均重读，文件变化则整笔回滚。
+选择同项目/Universe最新已冻结
 Forward输入且cutoff已到，不覆盖它；有效调仓时点取InputSet上界与原数据selection cutoff
 的较早者，按Candidate原微秒规则收敛，不允许换InputSet编号推进旧数据时点。最新输入
 或原资格不合法时失败，不回退旧输入。

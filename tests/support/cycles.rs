@@ -83,7 +83,7 @@ pub async fn setup_with_policy(
         objects,
         (origin, allowed_uses),
         liquidity,
-        (customize, |_| {}),
+        (customize, |_| {}, None),
     )
     .await
 }
@@ -95,9 +95,10 @@ pub async fn setup_with_policy_plan(
     objects: Arc<ArtifactStore>,
     (origin, allowed_uses): (DataOrigin, DataUse),
     liquidity: Liquidity,
-    (customize, plan): (
+    (customize, plan, calendar): (
         impl FnOnce(&mut EvaluationPolicyCreate),
         impl FnOnce(&mut EvaluationPolicyCreate),
+        Option<contracts::science::NativeCalendarSessionsV1>,
     ),
 ) -> Fixture {
     let mut data = research_support::setup(pool, store, actor).await;
@@ -122,7 +123,7 @@ pub async fn setup_with_policy_plan(
         &mut data,
         revision,
         objects.clone(),
-        (origin, allowed_uses),
+        (origin, allowed_uses, calendar),
     )
     .await;
     let ProbePreparation::Pending(ticket) = store

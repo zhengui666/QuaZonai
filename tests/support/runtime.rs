@@ -54,6 +54,7 @@ pub fn portfolio_capabilities(now: DateTime<Utc>) -> RuntimeCapabilitiesV1 {
         ("simulation-models", "1"),
         ("candidate-simulation", "2"),
         ("portfolio-study", "6"),
+        ("portfolio-calendar", "2"),
         ("portfolio-history", "1"),
         ("nautilus", NAUTILUS_EXECUTION_VERSION),
         ("clarabel", CLARABEL_VERSION),

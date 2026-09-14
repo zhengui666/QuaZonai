@@ -444,37 +444,22 @@ where
         {
             return Err(DomainError::CapabilityUnavailable("portfolio_study_calendar").into());
         }
-        let id: Option<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT calendar_artifact_id FROM app.universe_versions WHERE id=$1",
-        )
-        .bind(universe)
-        .fetch_one(&mut **tx)
-        .await?;
-        let id = db::id(id.ok_or(StoreError::Invalid("portfolio_study_calendar"))?)?;
-        let bytes = crate::execution_assumptions::liquidity::document(
+        let (original, input) = crate::data_registration::registered_calendar(
             tx,
-            project,
-            id,
-            "qz.calendar_sessions",
-            1024 * 1024,
+            db::id(universe)?,
+            &dataset.metadata.universe,
+            dataset.origin,
             read,
         )
         .await?;
-        let original: NativeCalendarSessionsV1 =
-            serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
-        if db::json(&Some(&original))? != db::json(&dataset.metadata.universe.calendar_sessions)? {
+        let RuntimeInputV1::Artifact { artifact_id, .. } = &input else {
             return Err(StoreError::Integrity);
-        }
-        inputs.push(RuntimeInputV1::Artifact {
-            artifact_id: id,
-            storage_version: "1".into(),
-            byte_count: counter(bytes.len() as i64)?,
-            role: ArtifactInputRole::Parameters,
-        });
+        };
         calendar = Some(NativePortfolioCalendarV1 {
-            artifact_id: id,
+            artifact_id: *artifact_id,
             calendar: original,
         });
+        inputs.push(input);
     }
     let evaluation_start = counter(
         plan.evaluation_start

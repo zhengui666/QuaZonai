@@ -45,6 +45,22 @@ pub(super) async fn complete(
     )
     .unwrap();
     let mut frames = Vec::new();
+    if let Some(calendar) = &request.calendar {
+        let (size, version) = store
+            .native_input(lease.run.id, &lease.fence, calendar.artifact_id)
+            .await
+            .unwrap();
+        assert_eq!(version, "1");
+        let original: NativeCalendarSessionsV1 =
+            serde_json::from_slice(&f.read(calendar.artifact_id, size).await.unwrap()).unwrap();
+        assert_eq!(original, calendar.calendar);
+        assert!(matches!(
+            store
+                .native_input(lease.run.id, &lease.fence, f.data.artifact)
+                .await,
+            Err(StoreError::Forbidden)
+        ));
+    }
     let cutoffs = domain::execution::portfolio_study_cutoffs(&request).unwrap();
     for cutoff in cutoffs {
         let mut input = original.input.clone();
@@ -219,6 +235,7 @@ pub(super) async fn complete(
         engine_versions: [
             ("controlled-protocol-response".into(), "1".into()),
             ("portfolio-study".into(), "6".into()),
+            ("portfolio-calendar".into(), "2".into()),
             ("portfolio-history".into(), "1".into()),
             ("portfolio-rolling-liquidity".into(), "1".into()),
             ("nautilus".into(), "0.63.0".into()),
