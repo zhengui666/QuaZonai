@@ -82,6 +82,7 @@ impl RuntimeConfig {
                     | RunKind::AlphaEvaluate
                     | RunKind::PortfolioBuild
                     | RunKind::PortfolioSimulate
+                    | RunKind::ForwardEvaluate
             ) || !kinds.insert(serde_json::to_string(&image.job_kind)?)
                 || !domain::runtime::pinned_image(&image.image_ref)
             {

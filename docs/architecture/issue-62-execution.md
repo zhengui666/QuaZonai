@@ -1,5 +1,47 @@
 # Issue62 implementation evidence
 
+## Native ForwardEvaluate scientific operation, 2026-09-14
+
+EvaluateForward now binds a fixed FORWARD_EVALUATE JobSpec to NativeForwardRequestV1:
+the original frozen window and all original message metadata (including superseded
+versions). Only their exact REPORT objects plus PARAMETERS can be mounted; no dataset,
+model or extra artifact is accepted. The existing Runtime materializer handles this
+report-only task, and config accepts an explicitly registered fixed ForwardEvaluate image.
+The native 256-input limit leaves at most 255 source reports, rejected without truncation;
+64MiB / one-million-point total bounds and original report limits remain enforced.
+
+The actual job subprocess reads original report objects with exact declared sizes,
+reuses original revision-chain/window validation, rejects changed bindings, future source
+receipt times, unknown frequency, partial/gapped/overlapping windows, and requires the
+computed window to equal the frozen window. It directly invokes nautilus-analysis 0.63.0
+ReturnsAverage, ReturnsVolatility and SharpeRatio through PortfolioStatistic on complete
+UTC-day returns. It never synthesizes account snapshots, fitting, orders or a numerical
+engine. Calendar-day statistics explicitly use 365, not the simulation's 252 trading days.
+
+qz.forward_evaluation/1 contains only version, original window and three native statistics;
+no raw returns. Domain output shape and task binding verify methods, window and source time.
+The metric adapter supplies exact Forward scope/frequency/period/count/original result
+Artifact and native method metadata. Unavailable native values stay null with a failure
+reason. This does not yet admit a Run, freeze a protected FORWARD InputSet, publish an
+immutable Evaluation/window, or grant Live/Wake authority.
+
+verify-1L5WH3 identified the missing Runtime materializer enum branch; it was implemented.
+verify-K9RldK compiled but Clippy required a name for the metric tuple type; an alias fixed it.
+verify-eBKdjr then passed all-target check/fmt/strict Clippy, 170 contracts/domain/Runtime
+and 21 real job subprocess tests. The new test executes original plus corrected daily
+reports, counts only the latest three samples, verifies native corrected mean and 365-day
+metadata, rejects source/method substitution, missing days, unknown/partial reports
+and extra mounts. Extending it with native constant returns proved zero mean/volatility
+but unavailable Sharpe and Failed metric status (verify-e7tGle). After registering the new
+result in the domain contract, verify-lWuTc0 reran all compile gates and the full Forward
+subprocess test successfully. All verifier source inventories stayed unchanged.
+
+web-verify-SyouCv reproduced all six generated outputs twice; NativeForwardResultV1 is
+present in both domain and runtime schemas. TypeScript, 505 Vitest, 5 PWA tests and Vite
+build passed (native-forward-web-*; existing chunk warning only). Numerical inputs remain
+controlled fixtures, not actual multi-day downstream market feedback or OCI acceptance.
+No push, review request, merge or Issue closure is justified by this intermediate slice.
+
 ## Forward return frequency binding, 2026-09-14
 
 ForwardReportContentV1 now carries optional REPORTED_OBSERVATION / UTC_DAY frequency.

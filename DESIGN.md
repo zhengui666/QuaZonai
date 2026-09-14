@@ -2798,6 +2798,14 @@ ForwardWindowViewV1只含handoff_id、stream_id、按sequence排列的latest_mes
 
 当前单窗口最多10000条原消息、64MiB原报告、1000000项收益；超限整体返回不可用，不截断旧消息隐藏缺口。更长历史须用原生分页/流式来源处理扩展，不能复制ID重置窗口。
 
+### A7.5 原生 ForwardEvaluate 科学任务
+
+NativeTaskParametersV1::EvaluateForward只接受冻结NativeForwardRequestV1：原窗口投影window与该Handoff/stream的全部原消息元数据sources（含被纠正历史，1..255条），不接原收益、任意路径或账户。每条来源的原REPORT Artifact单独精确挂载，外加原PARAMETERS；255上限来自原生JobSpec的256输入上限，超限拒绝整个任务，不截断历史。全部报告累计64MiB/100万样本与窗口已有上限一致。可信发布者必须先在项目锁内核查原回执/Claim/报告并冻结这些来源；任务本身不授予原生接入、审批或自动化权限。
+
+固定job重新读取全部原报告，复用A7.4原revision链与完整窗口校验，派生窗口必须逐字段等于冻结window；只允许明确UTC_DAY、完整连续且至少1日的序列。未知/REPORTED_OBSERVATION、缺日、重叠、被替换来源、不同绑定或额外挂载拒绝，不补样本。科学实现直接使用nautilus-analysis 0.63.0 PortfolioStatistic::calculate_from_returns的ReturnsAverage、ReturnsVolatility、SharpeRatio。UTC日覆盖包含周末，后两项固定365日年化（不是原组合交易日回测的252日），报告保留原生key/版本；空值或非有限值必须保留NATIVE_STATISTIC_UNAVAILABLE，不能替换为零或通过。
+
+输出qz.forward_evaluation/1是NativeForwardResultV1：schema_version、native_version、完整原window及三项statistics，不含收益/账户。独立输出绑定重验原窗口和固定方法/有限值状态；可生成FORWARD_DAILY_RETURN_MEAN、FORWARD_RETURN_VOLATILITY、FORWARD_SHARPE_RATIO指标，scope=forward、frequency=UTC_DAY、原窗口时间/样本数、精确结果Artifact和方法版本，年化分别为null/365/365。原生数值输出仍不等于已发表Evaluation或forward_evidence_windows；后续可信Run准入、冻结FORWARD InputSet、预算、终态发布及Live/Wake消费必须保留独立边界并重验原来源当前版本。
+
 ## A8. 集成、身份与幂等
 
 ### A8.0 原生 Codex 连接与会话适配

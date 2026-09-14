@@ -210,7 +210,8 @@ use utoipa::OpenApi;
     science::NativeSimulationRequestV1,
     science::NativeSimulationResultV1,
     science::NativePortfolioStudyRequestV1,
-    science::NativePortfolioStudyResultV1
+    science::NativePortfolioStudyResultV1,
+    forward::NativeForwardResultV1
 )))]
 struct DomainContracts;
 

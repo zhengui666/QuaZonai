@@ -7,6 +7,7 @@ mod backtest;
 pub mod bounded;
 pub mod catalog;
 pub mod forecast;
+pub mod forward;
 pub mod managed;
 mod optimization;
 pub mod portfolio;

@@ -129,6 +129,31 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
         return Err(bad("requested_output_schemas"));
     }
     match parameters {
+        NativeTaskParametersV1::EvaluateForward { request, .. } => {
+            crate::forward::evaluation::request(request)?;
+            let ids = request
+                .sources
+                .iter()
+                .map(|s| s.report_artifact_id)
+                .collect::<BTreeSet<_>>();
+            if ids.contains(&spec.parameters_artifact_id)
+                || ids
+                    .iter()
+                    .any(|id| !artifact(spec, *id, ArtifactInputRole::Report))
+                || spec.inputs.iter().any(|input| match input {
+                    RuntimeInputV1::Dataset { .. } => true,
+                    RuntimeInputV1::Artifact {
+                        artifact_id, role, ..
+                    } => {
+                        !(*artifact_id == spec.parameters_artifact_id
+                            && *role == ArtifactInputRole::Parameters
+                            || ids.contains(artifact_id) && *role == ArtifactInputRole::Report)
+                    }
+                })
+            {
+                return Err(bad("forward_inputs"));
+            }
+        }
         NativeTaskParametersV1::CompileModel {
             code_artifact_id, ..
         } => {

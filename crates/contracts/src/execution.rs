@@ -82,6 +82,10 @@ pub enum NativeTaskParametersV1 {
         settings_artifact_id: Id,
         request: Box<NativeSimulationRequestV1>,
     },
+    EvaluateForward {
+        schema_version: SchemaV1,
+        request: Box<crate::forward::NativeForwardRequestV1>,
+    },
     StudyPortfolio {
         schema_version: SchemaV1,
         dataset_revision_id: Id,
@@ -98,6 +102,7 @@ impl NativeTaskParametersV1 {
             | Self::ValidateAlpha { .. }
             | Self::EvaluateSealedAlpha { .. } => RunKind::AlphaEvaluate,
             Self::BuildPortfolio { .. } => RunKind::PortfolioBuild,
+            Self::EvaluateForward { .. } => RunKind::ForwardEvaluate,
             Self::SimulatePortfolio { .. }
             | Self::SimulateCandidate { .. }
             | Self::SimulatePortfolioSequence { .. }
@@ -108,6 +113,7 @@ impl NativeTaskParametersV1 {
         let names: &[&str] = match self {
             Self::CompileModel { .. } => &["qz.wasm_model", "qz.model_compilation"],
             Self::ValidateData { .. } => &["qz.data_quality"],
+            Self::EvaluateForward { .. } => &["qz.forward_evaluation"],
             Self::EvaluateAlpha { .. } => &["qz.native_forecast"],
             Self::ValidateAlpha { .. } => &["qz.alpha_validation"],
             Self::EvaluateSealedAlpha { .. } => &["qz.alpha_sealed"],
@@ -206,4 +212,5 @@ pub enum NativeJsonOutputV1 {
     Portfolio(Box<crate::science::NativePortfolioBuildResultV1>),
     PortfolioStudy(Box<crate::science::NativePortfolioStudyResultV1>),
     Simulation(Box<crate::science::NativeSimulationResultV1>),
+    Forward(Box<crate::forward::NativeForwardResultV1>),
 }

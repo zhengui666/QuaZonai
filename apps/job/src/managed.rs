@@ -400,6 +400,22 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             code_artifact_id, ..
         } => compile(&spec, input, code_artifact_id, &mut outputs)?,
         NativeTaskParametersV1::ValidateData { .. } => {}
+        NativeTaskParametersV1::EvaluateForward { request, .. } => {
+            let result = crate::forward::evaluate(&request, |id| {
+                let bytes = read(&input.join("objects").join(id.to_string()), 2 * 1024 * 1024)?;
+                let expected = spec.inputs.iter().find_map(|i| match i {
+                    contracts::runtime_jobs::RuntimeInputV1::Artifact {
+                        artifact_id,
+                        byte_count,
+                        ..
+                    } if *artifact_id == id => Some(byte_count.get()),
+                    _ => None,
+                });
+                ensure!(expected == Some(bytes.len() as u64), "FORWARD_SOURCE_SIZE");
+                Ok(bytes)
+            })?;
+            outputs.json("qz.forward_evaluation", RuntimeOutputKind::Report, &result)?;
+        }
         NativeTaskParametersV1::EvaluateAlpha {
             dataset_revision_id,
             model_artifact_id,

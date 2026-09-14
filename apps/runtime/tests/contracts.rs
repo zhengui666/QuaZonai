@@ -33,6 +33,7 @@ fn generated_download_contract_declares_the_actual_native_media_and_payloads() {
         "NativePortfolioBuildResultV1",
         "NativePortfolioStudyResultV1",
         "NativeSimulationResultV1",
+        "NativeForwardResultV1",
     ]
     .map(|name| serde_json::json!({"$ref":format!("#/components/schemas/{name}")}));
     assert_eq!(variants.as_slice(), expected.as_slice());

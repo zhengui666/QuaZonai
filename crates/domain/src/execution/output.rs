@@ -194,6 +194,7 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         }
         "qz.native_simulation" => simulation::shape(&decode::<NativeSimulationResultV1>(bytes)?),
         "qz.portfolio_study" => study::shape(&decode(bytes)?),
+        "qz.forward_evaluation" => crate::forward::evaluation::shape(&decode(bytes)?),
         "qz.portfolio_history" => contracts::portfolio_history::read(bytes)
             .map(|_| ())
             .map_err(|_| bad("portfolio_history")),
@@ -279,6 +280,17 @@ pub fn output_bindings(
         }
     }
     match parameters {
+        NativeTaskParametersV1::EvaluateForward { request, .. } => {
+            if request.window.window_end.is_none_or(|end| end > started_at)
+                || request.sources.iter().any(|s| s.received_at > started_at)
+            {
+                return Err(bad("forward_source_time"));
+            }
+            crate::forward::evaluation::binding(
+                request,
+                &decode(body("qz.forward_evaluation")?.1)?,
+            )?;
+        }
         NativeTaskParametersV1::ValidateData { .. } => {}
         NativeTaskParametersV1::StudyPortfolio { request, .. } => {
             let result = decode(body("qz.portfolio_study")?.1)?;

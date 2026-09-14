@@ -110,7 +110,8 @@ pub async fn parameters(
             request,
             ..
         } => vec![(*dataset_revision_id, &request.selection)],
-        NativeTaskParametersV1::CompileModel { .. } => Vec::new(),
+        NativeTaskParametersV1::CompileModel { .. }
+        | NativeTaskParametersV1::EvaluateForward { .. } => Vec::new(),
         NativeTaskParametersV1::StudyPortfolio {
             dataset_revision_id,
             request,

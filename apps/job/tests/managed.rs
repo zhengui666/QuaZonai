@@ -1673,3 +1673,190 @@ fn native_compiler_rejects_a_dataset_mount_before_starting_a_compiler() {
     assert!(!execute(&f));
     assert!(fs::read_dir(&f.output).unwrap().next().is_none());
 }
+
+#[test]
+fn forward_daily_statistics_use_original_reports_and_fixed_native_methods() {
+    use contracts::{forward::*, science::NativeReturnV1};
+    let start = chrono::DateTime::from_timestamp(1_700_006_400, 0).unwrap();
+    let end = start + chrono::Duration::days(3);
+    let report = ForwardReportV1 {
+        schema_version: SchemaV1,
+        downstream_id: Id::new(),
+        release_id: Id::new(),
+        environment: ForwardEnvironmentV1::Paper,
+        content: ForwardReportContentV1 {
+            schema_version: SchemaV1,
+            project_id: Id::new(),
+            handoff_id: Id::new(),
+            external_claim_id: "synthetic-claim".into(),
+            issuer_version: "controlled-native/1".into(),
+            stream_id: "daily-feedback".into(),
+            sequence: market::count(1),
+            message_revision: 1,
+            supersedes_message_id: None,
+            window_start: start,
+            window_end: end,
+            issued_at: end,
+            complete: true,
+            returns_frequency: Some(ForwardReturnsFrequencyV1::UtcDay),
+            returns: [0.01, 0.02, -0.01]
+                .into_iter()
+                .enumerate()
+                .map(|(i, value)| NativeReturnV1 {
+                    timestamp_ns: market::count(
+                        (start + chrono::Duration::days(i as i64 + 1))
+                            .timestamp_nanos_opt()
+                            .unwrap() as u64,
+                    ),
+                    value: Some(value),
+                    reason_code: None,
+                })
+                .collect(),
+        },
+    };
+    let message = ForwardMessageViewV1 {
+        id: Id::new(),
+        project_id: report.content.project_id,
+        release_id: report.release_id,
+        downstream_id: report.downstream_id,
+        handoff_id: report.content.handoff_id,
+        external_message_id: "original-daily".into(),
+        stream_id: report.content.stream_id.clone(),
+        sequence: market::count(1),
+        message_revision: 1,
+        supersedes_message_id: None,
+        window_start: start,
+        window_end: end,
+        coverage_status: ForwardCoverageV1::Complete,
+        observation_count: market::count(3),
+        report_artifact_id: Id::new(),
+        issued_at: end,
+        received_at: end,
+    };
+    let mut correction = report.clone();
+    correction.content.message_revision = 2;
+    correction.content.supersedes_message_id = Some(message.id);
+    correction.content.returns[0].value = Some(0.03);
+    let mut corrected = message.clone();
+    corrected.id = Id::new();
+    corrected.external_message_id = "corrected-daily".into();
+    corrected.report_artifact_id = Id::new();
+    corrected.message_revision = 2;
+    corrected.supersedes_message_id = Some(message.id);
+    corrected.coverage_status = ForwardCoverageV1::Correction;
+    let sources = vec![
+        domain::forward::ForwardWindowSource {
+            message: message.clone(),
+            report: report.clone(),
+        },
+        domain::forward::ForwardWindowSource {
+            message: corrected.clone(),
+            report: correction.clone(),
+        },
+    ];
+    let window = domain::forward::window(message.handoff_id, &message.stream_id, &sources)
+        .unwrap()
+        .view;
+    let request = NativeForwardRequestV1 {
+        window,
+        sources: vec![message.clone(), corrected.clone()],
+    };
+    let parameters = NativeTaskParametersV1::EvaluateForward {
+        schema_version: SchemaV1,
+        request: Box::new(request.clone()),
+    };
+    let setup = |reports: &[ForwardReportV1]| {
+        let bytes: Vec<_> = reports
+            .iter()
+            .map(|r| serde_json::to_vec(r).unwrap())
+            .collect();
+        let f = fixture(
+            parameters.clone(),
+            request
+                .sources
+                .iter()
+                .zip(&bytes)
+                .map(|(m, b)| RuntimeInputV1::Artifact {
+                    artifact_id: m.report_artifact_id,
+                    storage_version: "1".into(),
+                    byte_count: market::count(b.len() as u64),
+                    role: ArtifactInputRole::Report,
+                })
+                .collect(),
+        );
+        for (m, b) in request.sources.iter().zip(bytes) {
+            fs::write(
+                f.input
+                    .join("objects")
+                    .join(m.report_artifact_id.to_string()),
+                b,
+            )
+            .unwrap();
+        }
+        f
+    };
+    let f = setup(&[report.clone(), correction.clone()]);
+    assert!(execute(&f));
+    let result: NativeForwardResultV1 = result(&f, "qz.forward_evaluation");
+    assert_eq!(result.window.latest_message_ids, vec![corrected.id]);
+    assert_eq!(result.window.complete_observations.get(), 3);
+    assert!((result.statistics[0].value.unwrap() - 0.04 / 3.0).abs() < 1e-12);
+    let evaluation = Id::new();
+    let artifact = Id::new();
+    let (metrics, _) =
+        domain::forward::evaluation::metrics(evaluation, artifact, &request, &result).unwrap();
+    assert_eq!(metrics[0].observation_count.get(), 3);
+    assert_eq!(metrics[1].annualization_factor, Some(365.0));
+    assert_eq!(metrics[2].source_artifact_id, artifact);
+    assert!(metrics
+        .iter()
+        .all(|m| m.frequency == "UTC_DAY" && m.scope == "forward"));
+    let mut substituted = result.clone();
+    substituted.window.latest_message_ids = vec![message.id];
+    assert!(domain::forward::evaluation::binding(&request, &substituted).is_err());
+    let mut wrong_method = result.clone();
+    wrong_method.statistics[1].native_key = "Returns Volatility (252 days)".into();
+    assert!(domain::forward::evaluation::shape(&wrong_method).is_err());
+    let mut constant = correction.clone();
+    for point in &mut constant.content.returns {
+        point.value = Some(0.0);
+    }
+    let constant_job = setup(&[report.clone(), constant]);
+    assert!(execute(&constant_job));
+    let constant_result: NativeForwardResultV1 =
+        self::result(&constant_job, "qz.forward_evaluation");
+    assert_eq!(constant_result.statistics[0].value, Some(0.0));
+    assert_eq!(constant_result.statistics[1].value, Some(0.0));
+    assert_eq!(constant_result.statistics[2].value, None);
+    assert_eq!(
+        constant_result.statistics[2].reason_code.as_deref(),
+        Some("NATIVE_STATISTIC_UNAVAILABLE")
+    );
+    let (unavailable, _) =
+        domain::forward::evaluation::metrics(evaluation, artifact, &request, &constant_result)
+            .unwrap();
+    assert_eq!(
+        unavailable[2].status,
+        contracts::evidence::MetricStatus::Failed
+    );
+    let mut changed = correction.clone();
+    changed.content.project_id = Id::new();
+    assert!(!execute(&setup(&[report.clone(), changed])));
+    let mut missing = correction.clone();
+    missing.content.returns.remove(1);
+    assert!(!execute(&setup(&[report.clone(), missing])));
+    let mut unknown = correction.clone();
+    unknown.content.returns_frequency = None;
+    assert!(!execute(&setup(&[report.clone(), unknown])));
+    let mut partial = correction;
+    partial.content.complete = false;
+    assert!(!execute(&setup(&[report, partial])));
+    let mut extra = f.spec.clone();
+    extra.inputs.push(RuntimeInputV1::Artifact {
+        artifact_id: Id::new(),
+        storage_version: "1".into(),
+        byte_count: market::count(10),
+        role: ArtifactInputRole::Report,
+    });
+    assert!(domain::execution::task(&extra, &parameters).is_err());
+}

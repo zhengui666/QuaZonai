@@ -136,7 +136,7 @@ pub enum ForwardWindowReasonV1 {
     SampleOverlap,
     FrequencyMismatch,
 }
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ForwardWindowViewV1 {
     pub handoff_id: Id,
@@ -148,4 +148,21 @@ pub struct ForwardWindowViewV1 {
     pub complete_observations: DbCounter,
     pub is_contiguous: bool,
     pub reason_codes: Vec<ForwardWindowReasonV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeForwardRequestV1 {
+    pub window: ForwardWindowViewV1,
+    #[schema(min_items = 1, max_items = 255)]
+    pub sources: Vec<ForwardMessageViewV1>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeForwardResultV1 {
+    pub schema_version: SchemaV1,
+    pub native_version: String,
+    pub window: ForwardWindowViewV1,
+    #[schema(min_items = 3, max_items = 3)]
+    pub statistics: Vec<crate::science::NativeStatisticV1>,
 }

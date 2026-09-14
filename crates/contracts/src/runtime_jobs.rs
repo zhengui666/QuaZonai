@@ -175,6 +175,11 @@ pub struct NativeOutputContract {
 
 pub const NATIVE_OUTPUT_CONTRACTS: &[NativeOutputContract] = &[
     NativeOutputContract {
+        name: "qz.forward_evaluation",
+        kind: RuntimeOutputKind::Report,
+        media_type: "application/json",
+    },
+    NativeOutputContract {
         name: "qz.wasm_model",
         kind: RuntimeOutputKind::Model,
         media_type: "application/wasm",

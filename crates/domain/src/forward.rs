@@ -3,6 +3,7 @@ use crate::{control::text, DomainError};
 use contracts::forward::DownstreamWeightsSubmitV1;
 use std::collections::BTreeSet;
 
+pub mod evaluation;
 mod window;
 pub use window::{window, ForwardWindow, ForwardWindowSource};
 
