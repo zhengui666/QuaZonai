@@ -1,6 +1,8 @@
-//! Trusted Paper-stage consumption of an original human-frozen policy.
+//! Trusted Paper/Live consumption of an original human-frozen policy.
 use super::*;
 use contracts::{delivery::*, forward::ForwardEnvironmentV1};
+
+mod promotion;
 
 pub(super) async fn policy_authority(
     tx: &mut Tx<'_>,
@@ -8,27 +10,41 @@ pub(super) async fn policy_authority(
     package: &TargetPackageV1,
     downstream: Id,
     environment: ForwardEnvironmentV1,
+    observations: Option<&[Id]>,
 ) -> Result<DateTime<Utc>, StoreError> {
-    // Live adoption needs the original Forward promotion proof, not a Paper success.
-    if environment != ForwardEnvironmentV1::Paper {
-        return Err(StoreError::Invalid("automation_live_evidence_required"));
-    }
-    Ok(
-        crate::automation::active_policy(
-            tx,
-            id,
-            package.project_id,
-            package.mandate_id,
-            downstream,
-        )
-        .await?
-        .1,
+    let (policy, until) = crate::automation::active_policy(
+        tx,
+        id,
+        package.project_id,
+        package.mandate_id,
+        downstream,
     )
+    .await?;
+    if environment == ForwardEnvironmentV1::Live {
+        let expected =
+            observations.ok_or(StoreError::Invalid("automation_live_evidence_required"))?;
+        if policy.content.mode != AutomationModeV1::AutoHandoff {
+            return Err(StoreError::Invalid("automation_live_mode"));
+        }
+        let (current, evidence_until) =
+            promotion::evidence(tx, &policy, package.candidate_id).await?;
+        if current != expected {
+            return Err(StoreError::Invalid("automation_live_evidence_changed"));
+        }
+        Ok(until.min(evidence_until))
+    } else {
+        Ok(until)
+    }
 }
 
-async fn daily_candidates(tx: &mut Tx<'_>, project: Id, downstream: Id) -> Result<i64, StoreError> {
-    Ok(sqlx::query_scalar("SELECT count(DISTINCT r.candidate_id) FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND h.downstream_id=$2 AND h.offered_at>=(date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AND h.offered_at<(date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')+interval '1 day'")
-        .bind(project.as_uuid()).bind(downstream.as_uuid()).fetch_one(&mut **tx).await?)
+async fn daily_candidates(
+    tx: &mut Tx<'_>,
+    project: Id,
+    downstream: Id,
+    candidate: Id,
+) -> Result<(i64, bool), StoreError> {
+    Ok(sqlx::query_as("SELECT count(DISTINCT r.candidate_id),coalesce(bool_or(r.candidate_id=$3),false) FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND h.downstream_id=$2 AND h.offered_at>=(date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AND h.offered_at<(date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')+interval '1 day'")
+        .bind(project.as_uuid()).bind(downstream.as_uuid()).bind(candidate.as_uuid()).fetch_one(&mut **tx).await?)
 }
 impl Store {
     /// Round-robin scheduling metadata only; this read grants no policy authority.
@@ -44,6 +60,33 @@ impl Store {
     pub async fn automate_paper<R, Read>(
         &self,
         project: Id,
+        read: R,
+    ) -> Result<Option<HandoffViewV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    {
+        self.automate_delivery(project, ForwardEnvironmentV1::Paper, read)
+            .await
+    }
+
+    pub async fn automate_live<R, Read>(
+        &self,
+        project: Id,
+        read: R,
+    ) -> Result<Option<HandoffViewV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    {
+        self.automate_delivery(project, ForwardEnvironmentV1::Live, read)
+            .await
+    }
+
+    async fn automate_delivery<R, Read>(
+        &self,
+        project: Id,
+        environment: ForwardEnvironmentV1,
         mut read: R,
     ) -> Result<Option<HandoffViewV1>, StoreError>
     where
@@ -68,6 +111,12 @@ impl Store {
                 .await?;
         let policy = crate::automation::view(&policy)?;
         let downstream = policy.content.downstream_id;
+        if environment == ForwardEnvironmentV1::Live
+            && policy.content.mode != AutomationModeV1::AutoHandoff
+        {
+            return Ok(None);
+        }
+        let environment_code = db::code(&environment)?;
         let latest=sqlx::query("SELECT r.id,r.candidate_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND c.mandate_id=$2 ORDER BY r.id DESC LIMIT 1").bind(project.as_uuid()).bind(policy.content.mandate_id.as_uuid()).fetch_optional(&mut *tx).await?;
         let Some(latest) = latest else {
             tx.commit().await?;
@@ -75,13 +124,18 @@ impl Store {
         };
         let release_id = db::id(latest.try_get("id")?)?;
         let candidate = db::id(latest.try_get("candidate_id")?)?;
-        let offered:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id WHERE r.candidate_id=$1 AND h.downstream_id=$2 AND h.environment='PAPER')").bind(candidate.as_uuid()).bind(downstream.as_uuid()).fetch_one(&mut *tx).await?;
+        let offered:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id WHERE r.candidate_id=$1 AND h.downstream_id=$2 AND h.environment=$3)").bind(candidate.as_uuid()).bind(downstream.as_uuid()).bind(&environment_code).fetch_one(&mut *tx).await?;
         if offered {
             tx.commit().await?;
             return Ok(None);
         }
+        let promotion = if environment == ForwardEnvironmentV1::Live {
+            Some(promotion::evidence(&mut tx, &policy, candidate).await?.0)
+        } else {
+            None
+        };
         let (_, _, package, source_until) =
-            approvals::source(&mut tx, release_id, ForwardEnvironmentV1::Paper, &mut read).await?;
+            approvals::source(&mut tx, release_id, environment, &mut read).await?;
         let revision: i64 = sqlx::query_scalar(
             "SELECT revision FROM app.downstream_integrations WHERE id=$1 FOR UPDATE",
         )
@@ -95,42 +149,40 @@ impl Store {
                 policy_id,
                 &package,
                 downstream,
-                ForwardEnvironmentV1::Paper,
+                environment,
+                promotion.as_deref(),
             )
             .await?,
         );
-        if daily_candidates(&mut tx, project, downstream).await?
-            >= i64::from(policy.content.max_rebalances_per_day)
-        {
+        let (daily, counted) = daily_candidates(&mut tx, project, downstream, candidate).await?;
+        if !counted && daily >= i64::from(policy.content.max_rebalances_per_day) {
             return Err(StoreError::Invalid("automation_daily_quota"));
         }
-        let latest_decision:Option<uuid::Uuid>=sqlx::query_scalar("SELECT id FROM app.release_decisions WHERE candidate_id=$1 AND downstream_id=$2 AND environment='PAPER' ORDER BY ordinal DESC LIMIT 1").bind(candidate.as_uuid()).bind(downstream.as_uuid()).fetch_optional(&mut *tx).await?;
+        let latest_decision:Option<uuid::Uuid>=sqlx::query_scalar("SELECT id FROM app.release_decisions WHERE candidate_id=$1 AND downstream_id=$2 AND environment=$3 ORDER BY ordinal DESC LIMIT 1").bind(candidate.as_uuid()).bind(downstream.as_uuid()).bind(&environment_code).fetch_optional(&mut *tx).await?;
         let ordinal = approvals::decision(
             &mut tx,
             candidate,
             downstream,
-            ForwardEnvironmentV1::Paper,
+            environment,
             latest_decision.map(db::id).transpose()?,
         )
         .await?;
-        let probe = approvals::downstream(
-            &mut tx,
-            downstream,
-            revision,
-            ForwardEnvironmentV1::Paper,
-            &package,
-        )
-        .await?;
+        let probe =
+            approvals::downstream(&mut tx, downstream, revision, environment, &package).await?;
         let granted_at = now(&mut tx).await?;
         if granted_at < package.valid_from || granted_at >= until {
             return Err(StoreError::Invalid("automation_expiry"));
         }
         let evidence = approvals::freeze_evidence(&mut tx, &package, granted_at).await?;
         let approval = Id::new();
-        sqlx::query("INSERT INTO app.approvals(id,release_id,environment,downstream_id,authority_kind,automation_policy_id,evidence_set_id,granted_at,valid_until,downstream_revision,decision_ordinal,readiness_observation_id) VALUES($1,$2,'PAPER',$3,'FROZEN_POLICY',$4,$5,$6,$7,$8,$9,$10)")
-            .bind(approval.as_uuid()).bind(release_id.as_uuid()).bind(downstream.as_uuid()).bind(policy_id.as_uuid()).bind(evidence.as_uuid()).bind(granted_at).bind(until).bind(revision.get() as i64).bind(ordinal).bind(probe.id.as_uuid()).execute(&mut *tx).await?;
-        let previous:Option<uuid::Uuid>=sqlx::query_scalar("SELECT h.id FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND c.mandate_id=$2 AND h.downstream_id=$3 AND h.environment='PAPER' ORDER BY h.delivery_sequence DESC LIMIT 1")
-            .bind(project.as_uuid()).bind(package.mandate_id.as_uuid()).bind(downstream.as_uuid()).fetch_optional(&mut *tx).await?;
+        sqlx::query("INSERT INTO app.approvals(id,release_id,environment,downstream_id,authority_kind,automation_policy_id,evidence_set_id,granted_at,valid_until,downstream_revision,decision_ordinal,readiness_observation_id) VALUES($1,$2,$11,$3,'FROZEN_POLICY',$4,$5,$6,$7,$8,$9,$10)")
+            .bind(approval.as_uuid()).bind(release_id.as_uuid()).bind(downstream.as_uuid()).bind(policy_id.as_uuid()).bind(evidence.as_uuid()).bind(granted_at).bind(until).bind(revision.get() as i64).bind(ordinal).bind(probe.id.as_uuid()).bind(&environment_code).execute(&mut *tx).await?;
+        if let Some(observations) = &promotion {
+            sqlx::query("INSERT INTO app.live_promotion_evidence(approval_id,observation_ids) VALUES($1,$2)")
+                .bind(approval.as_uuid()).bind(observations.iter().map(|id|id.as_uuid()).collect::<Vec<_>>()).execute(&mut *tx).await?;
+        }
+        let previous:Option<uuid::Uuid>=sqlx::query_scalar("SELECT h.id FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND c.mandate_id=$2 AND h.downstream_id=$3 AND h.environment=$4 ORDER BY h.delivery_sequence DESC LIMIT 1")
+            .bind(project.as_uuid()).bind(package.mandate_id.as_uuid()).bind(downstream.as_uuid()).bind(&environment_code).fetch_optional(&mut *tx).await?;
         let result = handoffs::insert_offer(
             &mut tx,
             &HandoffOfferV1 {
@@ -148,7 +200,8 @@ impl Store {
             policy_id,
             &package,
             downstream,
-            ForwardEnvironmentV1::Paper,
+            environment,
+            promotion.as_deref(),
         )
         .await?;
         if now(&mut tx).await? >= until {

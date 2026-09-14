@@ -145,7 +145,14 @@ async fn fixture_with_trigger(
         &store,
         &actor,
         objects,
-        origin,
+        (
+            origin,
+            if origin == contracts::research::DataOrigin::Real {
+                contracts::research::DataUse::ResearchAndPaper
+            } else {
+                contracts::research::DataUse::Research
+            },
+        ),
         cycle_support::Liquidity::None,
         |policy| {
             policy.selection.candidate_count = candidates;
@@ -342,8 +349,15 @@ async fn wake_preparation(
         .await
         .unwrap()
         .resource;
-    let (message, _, _, _) =
-        forward_result::complete(pool, store, measured.id, &feedback.caps, &feedback.objects).await;
+    let (message, _, _, _) = forward_result::complete(
+        pool,
+        store,
+        measured.id,
+        &feedback.caps,
+        &feedback.objects,
+        -0.1,
+    )
+    .await;
     for (id, bytes) in feedback.objects.lock().unwrap().iter() {
         data.objects.put(*id, bytes).unwrap();
     }

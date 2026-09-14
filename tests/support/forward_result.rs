@@ -21,6 +21,7 @@ pub async fn complete(
     run: Id,
     caps: &RuntimeCapabilitiesV1,
     objects: &Arc<Mutex<BTreeMap<Id, Vec<u8>>>>,
+    mean: f64,
 ) -> (RunMessage, NativeJob, NativeForwardRequestV1, DateTime<Utc>) {
     let read = |id: Id, size: DbCounter| {
         let bytes = objects.lock().unwrap().get(&id).cloned();
@@ -61,7 +62,7 @@ pub async fn complete(
             group: NativeStatisticGroup::Returns,
             native_key: key.into(),
             currency: None,
-            value: Some(if key == "Average (Return)" { -0.1 } else { 0.1 }),
+            value: Some(if key == "Average (Return)" { mean } else { 0.1 }),
             reason_code: None,
         })
         .collect(),

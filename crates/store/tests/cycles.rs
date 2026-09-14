@@ -33,7 +33,10 @@ async fn freeze_rejects_validation_fold_in_sealed_policy_without_admission(pool:
         &store,
         &actor,
         objects,
-        contracts::research::DataOrigin::Fixture,
+        (
+            contracts::research::DataOrigin::Fixture,
+            contracts::research::DataUse::Research,
+        ),
         cycle_support::Liquidity::None,
         |policy| {
             policy.sealed_metric_requirements[0].scope = "asset:0/fold:0".into();

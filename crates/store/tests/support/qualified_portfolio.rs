@@ -156,6 +156,7 @@ pub(super) async fn qualified_chain(
         pool,
         liquidity,
         contracts::forward::ForwardEnvironmentV1::Paper,
+        contracts::research::DataUse::ResearchAndPaper,
         |_| {},
     ))
     .await
@@ -165,6 +166,7 @@ pub(super) async fn qualified_chain_policy(
     pool: PgPool,
     liquidity: cycle_support::Liquidity,
     environment: contracts::forward::ForwardEnvironmentV1,
+    allowed_uses: contracts::research::DataUse,
     customize: fn(&mut contracts::research::EvaluationPolicyCreate),
 ) -> Option<(
     Store,
@@ -190,7 +192,7 @@ pub(super) async fn qualified_chain_policy(
         &store,
         &actor,
         objects,
-        DataOrigin::Real,
+        (DataOrigin::Real, allowed_uses),
         liquidity,
         |policy| {
             policy.selection.candidate_count = 2;
@@ -1938,6 +1940,7 @@ async fn release_scenario(pool: PgPool, environment: contracts::forward::Forward
         pool.clone(),
         cycle_support::Liquidity::None,
         environment,
+        contracts::research::DataUse::ResearchAndPaper,
         release_policy,
     ))
     .await

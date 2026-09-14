@@ -65,12 +65,22 @@ where
     let policy_until = match approval.try_get::<String, _>("authority_kind")?.as_str() {
         "OPERATOR" => source_until,
         "FROZEN_POLICY" => {
+            let observations: Option<Vec<uuid::Uuid>> = sqlx::query_scalar(
+                "SELECT observation_ids FROM app.live_promotion_evidence WHERE approval_id=$1",
+            )
+            .bind(approval_id.as_uuid())
+            .fetch_optional(&mut **tx)
+            .await?;
+            let observations = observations
+                .map(|ids| ids.into_iter().map(db::id).collect::<Result<Vec<_>, _>>())
+                .transpose()?;
             super::automated::policy_authority(
                 tx,
                 db::id(approval.try_get("automation_policy_id")?)?,
                 &package,
                 downstream,
                 environment,
+                observations.as_deref(),
             )
             .await?
         }

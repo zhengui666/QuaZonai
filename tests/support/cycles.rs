@@ -53,7 +53,7 @@ pub async fn setup_with_objects(
         store,
         actor,
         objects,
-        DataOrigin::Fixture,
+        (DataOrigin::Fixture, DataUse::Research),
         Liquidity::None,
         |_| {},
     )
@@ -72,7 +72,7 @@ pub async fn setup_with_policy(
     store: &Store,
     actor: &Actor,
     objects: Arc<ArtifactStore>,
-    origin: DataOrigin,
+    (origin, allowed_uses): (DataOrigin, DataUse),
     liquidity: Liquidity,
     customize: impl FnOnce(&mut EvaluationPolicyCreate),
 ) -> Fixture {
@@ -86,7 +86,7 @@ pub async fn setup_with_policy(
     data.assumptions = assumptions;
     let mut allowed = vec!["DATA_VALIDATE", "ALPHA_EVALUATE"];
     if origin == DataOrigin::Real {
-        allowed.extend(["PORTFOLIO_BUILD", "PORTFOLIO_SIMULATE"]);
+        allowed.extend(["PORTFOLIO_BUILD", "PORTFOLIO_SIMULATE", "FORWARD_EVALUATE"]);
     }
     let revision: i64 = sqlx::query_scalar("UPDATE app.runtime_integrations SET allowed_capabilities=$2 WHERE id=$1 RETURNING revision")
         .bind(data.runtime.as_uuid()).bind(allowed).fetch_one(pool).await.unwrap();
@@ -98,7 +98,7 @@ pub async fn setup_with_policy(
         &mut data,
         revision,
         objects.clone(),
-        origin,
+        (origin, allowed_uses),
     )
     .await;
     let ProbePreparation::Pending(ticket) = store

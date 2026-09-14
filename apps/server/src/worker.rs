@@ -249,6 +249,22 @@ impl Worker {
         if let Ok(Some(offer)) = &result {
             tracing::info!(handoff_id=%offer.id,"original frozen policy produced a Paper offer");
         }
+        let reading = self.objects.clone();
+        let live = self
+            .store
+            .automate_live(project, move |id, size| {
+                let objects = reading.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || objects.read(id, size))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                }
+            })
+            .await;
+        if let Ok(Some(offer)) = &live {
+            tracing::info!(handoff_id=%offer.id,"original Paper evidence produced a Live offer");
+        }
         let feedback = self.process_forward(project).await;
         let wake = self.process_wake(project).await;
         (
@@ -256,6 +272,7 @@ impl Worker {
             result
                 .map(|_| ())
                 .map_err(WorkerFailure::from)
+                .and(live.map(|_| ()).map_err(WorkerFailure::from))
                 .and(feedback)
                 .and(wake),
         )

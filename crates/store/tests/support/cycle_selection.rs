@@ -383,7 +383,10 @@ async fn ranked(pool: PgPool, direction: SelectionDirection) {
         &store,
         &actor,
         objects,
-        contracts::research::DataOrigin::Fixture,
+        (
+            contracts::research::DataOrigin::Fixture,
+            contracts::research::DataUse::Research,
+        ),
         cycle_support::Liquidity::None,
         |policy| {
             policy.selection.direction = direction;

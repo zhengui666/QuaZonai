@@ -4715,3 +4715,14 @@ verify-f9DuXU：workspace/all-targets编译、格式、严格Clippy通过；分�
 继续使用官方 App Server：按原 Profile 默认设置启动受控 local_fixture，完成两轮 Responses 请求；关闭原连接，按原生租约接管并恢复同一 Thread/Session/工作目录，核对原上下文、一次 Mission 身份与24个原生实际 token。原人工启动路径同样复跑恢复断言。该检查满足受控原生会话与 Worker 组合路径；生产账户推理、真实科学执行、多日市场反馈与后代 Candidate 再反馈仍需各自验收。
 
 verify-s99RmH 首次编译发现共享请求的Box返回类型，已修正。verify-P5uhet 正向测试通过，Clippy指出该集成仅使用共用夹具部分字段，依现有约定仅在测试模块限定dead_code。最终 verify-udfQpS：workspace/all-targets编译、格式、严格Clippy全过；分类1、Cycle14、Forward4、原Worker1、自动Wake原生恢复1、原人工原生恢复1，共22项定向测试通过。验证期间源文件不变，隔离PG停止；无模型/生成合同/产品依赖变更，未push、未review、未合并或关闭Issue。
+
+
+### 2026-09-14：原生 Paper 观察集合驱动自动 Live
+
+DESIGN A7.11明确完整原始Paper流集合、每流样本/时长/双指标、当前政策及原数据用途要求。Worker复用既有审批/Offer/Claim事务消费AUTO_HANDOFF；migration072将完整排序Observation UUID集合与自动Live Approval一并冻结。首次Claim重新核对同一完整集合及所有原来源，不替换证据、不复制Candidate清零日额度。每日额度按同一Candidate的Paper/Live合并计数。人工Live与已Claim历史重放保持原语义。
+
+新原生测试从原资格/Release链开始，通过实际数据注册接口显式授予ResearchPaperLive，旧夹具保留原用途；实际Forward Run/result/Evaluation/Observation，再原生审批/Offer/Claim。并发仅一Offer；插入Offer故障回滚Approval/证据/Offer；新报告流未测量和测量为HEALTHY后分别阻止旧Claim；冻结证据不能删除；撤销原政策后已有Claim仍按原键无文件IO重放。共用Forward夹具现在使用原生Downstream创建与probe，科学平均值显式传入，原劣化用例保持-0.1。
+
+verify-QLotT2首次完整Live定向通过。补充回滚/撤权断言后的verify-rJw65l通过workspace/all-targets编译、格式、严格Clippy及257项回归（domain/contracts144、Store87、HTTP26），源文件验证期间不变，隔离PG停止。此前测试失败分别揭示不可变对象重复写、原始授权只含Paper及旧关系夹具无效凭据引用，均在测试设置修正，没有放宽产品检查。
+
+这里的历史Paper Claim时间与科学响应是显式受控夹具，不证明真实多日市场观察或OCI/生产模型整链。Worker真实Live交付的完整部署验收、同Candidate跨环境当日额度专项、后代Candidate再反馈、UI及其余T01–T42/main恢复迁移仍需完成。GitHub当次回读PR63仍OPEN Draft且远端Head为37e5713ed6252e5935787201914d42f241582a4f，Issue62仍OPEN；本阶段未push、未请求review、未合并或关闭Issue。

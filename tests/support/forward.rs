@@ -50,36 +50,136 @@ pub async fn setup_with_source(
     let release = support::delivery_release_metadata(pool, &f, mandate, candidate, evaluation)
         .await
         .unwrap();
-    let downstream = Id::new();
-    sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'relational feedback fixture','https://example.invalid','not-a-secret','{1}','BOTH',true)").bind(downstream.as_uuid()).execute(pool).await.unwrap();
-    let runtime = Id::new();
-    sqlx::query("INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,allowed_capabilities,protocol_version,enabled) VALUES($1,'relational observation runtime','https://example.invalid','SYSTEM_CA','not-a-secret',ARRAY['FORWARD_EVALUATE'],'1',true)").bind(runtime.as_uuid()).execute(pool).await.unwrap();
-    let mut caps = runtime_observation::configured_capabilities(pool, runtime).await;
-    caps.artifact_schemas.push(RuntimeArtifactSchemaV1 {
-        name: "qz.forward_evaluation".into(),
-        version: "1".into(),
-    });
-    runtime_observation::publish(
-        pool,
-        runtime,
-        RuntimeProbeOutcomeV1::Available {
-            capabilities: Box::new(caps.clone()),
-        },
-        Duration::seconds(60),
+    setup_with_release(pool, f, store, operator, release).await
+}
+
+pub async fn setup_with_release(
+    pool: &PgPool,
+    f: support::Fixture,
+    store: store::Store,
+    operator: Actor,
+    release: Id,
+) -> ForwardFixture {
+    let (mandate, candidate, evaluation): (uuid::Uuid, uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT mandate_id,candidate_id,evaluation_id FROM app.releases WHERE id=$1",
     )
-    .await;
-    sqlx::query("INSERT INTO app.run_admissions(run_id,project_id,cycle_id,command_key,normalized_request,initial_snapshot,limits,runtime_id,runtime_revision,runtime_snapshot,initial_queue_message_id) SELECT c.run_id,c.project_id,r.cycle_id,'relational-candidate-runtime','{\"schema_version\":1}','{\"schema_version\":1}','{\"schema_version\":1}',$2,1,'{\"schema_version\":1}',100000 FROM app.portfolio_candidates c JOIN app.runs r ON r.id=c.run_id WHERE c.id=$1")
+    .bind(release.as_uuid())
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let (mandate, candidate, evaluation): (Id, Id, Id) = (
+        mandate.to_string().try_into().unwrap(),
+        candidate.to_string().try_into().unwrap(),
+        evaluation.to_string().try_into().unwrap(),
+    );
+    let objects = Arc::new(Mutex::new(BTreeMap::<Id, Vec<u8>>::new()));
+    let downstream = store
+        .create_downstream(
+            &operator,
+            &Id::new().to_string(),
+            &contracts::settings::DownstreamCreate {
+                schema_version: SchemaV1,
+                credential_ref: Id::new(),
+                configuration: contracts::settings::DownstreamConfigurationV1 {
+                    name: "controlled feedback fixture".into(),
+                    endpoint: "https://example.invalid".into(),
+                    accepted_package_versions: vec![contracts::settings::PackageSchemaVersion::V1],
+                    environments: contracts::settings::DownstreamEnvironments::Both,
+                    enabled: true,
+                    development_http: false,
+                },
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap()
+        .resource
+        .id;
+    let existing: Option<uuid::Uuid> = sqlx::query_scalar("SELECT a.runtime_id FROM app.portfolio_candidates c JOIN app.run_admissions a ON a.run_id=c.run_id WHERE c.id=$1").bind(candidate.as_uuid()).fetch_optional(pool).await.unwrap();
+    let (runtime, caps) = if let Some(runtime) = existing {
+        let runtime: Id = runtime.to_string().try_into().unwrap();
+        let readiness = store.runtime_readiness(&operator, runtime).await.unwrap();
+        let RuntimeProbeOutcomeV1::Available { capabilities } =
+            readiness.latest_observation.unwrap().outcome
+        else {
+            panic!("original native capabilities")
+        };
+        let mut caps = *capabilities;
+        caps.checked_at = Utc::now();
+        if !caps
+            .job_kinds
+            .contains(&contracts::runs::RunKind::ForwardEvaluate)
+        {
+            caps.job_kinds
+                .push(contracts::runs::RunKind::ForwardEvaluate);
+            let mut image = caps.image_refs[0].clone();
+            image.job_kind = contracts::runs::RunKind::ForwardEvaluate;
+            caps.image_refs.push(image);
+            caps.artifact_schemas.push(RuntimeArtifactSchemaV1 {
+                name: "qz.forward_evaluation".into(),
+                version: "1".into(),
+            });
+        }
+        let store::runtime::ProbePreparation::Pending(ticket) = store
+            .prepare_runtime_probe(
+                &operator,
+                &format!("forward-capability-{downstream}"),
+                runtime,
+                &RuntimeProbeRequestV1 {
+                    schema_version: SchemaV1,
+                    expected_revision: readiness.integration_revision,
+                },
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("fresh probe")
+        };
+        store
+            .complete_runtime_probe(
+                *ticket,
+                RuntimeProbeOutcomeV1::Available {
+                    capabilities: Box::new(caps.clone()),
+                },
+                |id, bytes| {
+                    objects.lock().unwrap().insert(id, bytes);
+                    async { Ok(()) }
+                },
+            )
+            .await
+            .unwrap();
+        (runtime, caps)
+    } else {
+        let runtime = Id::new();
+        sqlx::query("INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,allowed_capabilities,protocol_version,enabled) VALUES($1,'relational observation runtime','https://example.invalid','SYSTEM_CA','not-a-secret',ARRAY['FORWARD_EVALUATE'],'1',true)").bind(runtime.as_uuid()).execute(pool).await.unwrap();
+        let mut caps = runtime_observation::configured_capabilities(pool, runtime).await;
+        caps.artifact_schemas.push(RuntimeArtifactSchemaV1 {
+            name: "qz.forward_evaluation".into(),
+            version: "1".into(),
+        });
+        runtime_observation::publish(
+            pool,
+            runtime,
+            RuntimeProbeOutcomeV1::Available {
+                capabilities: Box::new(caps.clone()),
+            },
+            Duration::seconds(60),
+        )
+        .await;
+        sqlx::query("INSERT INTO app.run_admissions(run_id,project_id,cycle_id,command_key,normalized_request,initial_snapshot,limits,runtime_id,runtime_revision,runtime_snapshot,initial_queue_message_id) SELECT c.run_id,c.project_id,r.cycle_id,'relational-candidate-runtime','{\"schema_version\":1}','{\"schema_version\":1}','{\"schema_version\":1}',$2,1,'{\"schema_version\":1}',100000 FROM app.portfolio_candidates c JOIN app.runs r ON r.id=c.run_id WHERE c.id=$1")
         .bind(candidate.as_uuid()).bind(runtime.as_uuid()).execute(pool).await.unwrap();
+        (runtime, caps)
+    };
     let input = support::approval_inputs(pool, &f, evaluation).await;
     let approval = Id::new();
     sqlx::query("INSERT INTO app.approvals(id,release_id,environment,downstream_id,authority_kind,evidence_set_id,granted_at,valid_until) VALUES($1,$2,'PAPER',$3,'OPERATOR',$4,clock_timestamp(),clock_timestamp()+interval '1 hour')").bind(approval.as_uuid()).bind(release.as_uuid()).bind(downstream.as_uuid()).bind(input.as_uuid()).execute(pool).await.unwrap();
     // Only this isolated test connection sees the controlled operation clock.
     // Triggers remain installed; no history is edited and no host clock is changed.
-    sqlx::query("CREATE SCHEMA fixture_clock")
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS fixture_clock")
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("CREATE FUNCTION fixture_clock.clock_timestamp() RETURNS timestamptz LANGUAGE sql AS $$ SELECT date_trunc('day',pg_catalog.clock_timestamp())-interval '3 days' $$").execute(pool).await.unwrap();
+    sqlx::query("CREATE OR REPLACE FUNCTION fixture_clock.clock_timestamp() RETURNS timestamptz LANGUAGE sql AS $$ SELECT date_trunc('day',pg_catalog.clock_timestamp())-interval '3 days' $$").execute(pool).await.unwrap();
     let handoff = Id::new();
     let mut tx = pool.begin().await.unwrap();
     sqlx::query("SET LOCAL search_path=fixture_clock,pg_catalog,app")
@@ -99,7 +199,7 @@ pub async fn setup_with_source(
     let principal = store
         .create_principal(
             &operator,
-            "downstream-principal",
+            &format!("downstream-principal-{downstream}"),
             &PrincipalCreate {
                 schema_version: SchemaV1,
                 name: "downstream fixture".into(),
@@ -116,7 +216,7 @@ pub async fn setup_with_source(
     let store::control::CredentialPreparation::New(ticket) = store
         .prepare_credential_issuance(
             &operator,
-            "credential",
+            &format!("credential-{downstream}"),
             principal,
             &CredentialIssue {
                 schema_version: SchemaV1,
@@ -141,7 +241,7 @@ pub async fn setup_with_source(
         verifier_ref: verifier,
         operator_grant: None,
     };
-    let objects = Arc::new(Mutex::new(BTreeMap::<Id, Vec<u8>>::new()));
+
     let read = |id: Id, size: DbCounter| {
         let result = objects.lock().unwrap().get(&id).cloned();
         async move {
@@ -202,7 +302,7 @@ pub async fn setup_with_source(
     let policy = store
         .authorize_automation(
             &operator,
-            "policy",
+            &format!("policy-{downstream}"),
             f.project,
             &AutomationAuthorizeV1 {
                 schema_version: SchemaV1,

@@ -2844,6 +2844,14 @@ PENDING 仅表示待裁决，不能视为已启动 Cycle。后续消费仍须重
 
 沿用原冻结 Brief 的 min_cycle_interval_seconds 和 max_cycles_per_day；所有人工/自动 Cycle 都计入该项目的冷却参照与 UTC 日额度，失败/取消不退款。暂未满足条件时 PENDING 延至冷却截止或下一 UTC 日；不加永久睡眠或第二队列。共用人工启动的 Profile、数据许可、原生 Runtime 和预算校验，首个 Run 仍为 DATA_VALIDATE，随后由既有 Worker 启动有界 Mission。Cycle(trigger=DEGRADATION,wake_id)、预算预约、原生任务、PGMQ、startup 与 Wake(CONSUMED,consumed_cycle_id) 同事务提交；并发/重放只能得到一个原 Cycle。对象发布之后、提交之前再次核验原 Wake 授权和期限，失败整体回滚并按原项目锁清理未引用对象。入队与受控协议测试不是多日真实反馈或生产模型验收。
 
+### A7.11 自动 Live 的原始晋级证据
+
+AUTO_HANDOFF 在原 Candidate/下游已发生 Paper 后，才可用最新原 Release 申请 Live。当前政策须仍有效、启用且模式精确为 AUTO_HANDOFF；复用 Live 数据许可、全部资格/Release 新鲜度、拒绝/REOPEN 序号、下游原生 readiness、原报告冻结、Offer 前版 CAS 与 Claim 复核。Paper 与 Live 分开审批；同 Candidate 的当日 Paper/Live 只占一次每日 rebalance 配额，不因换政策、Mandate 或 Release UUID 清零。
+
+该 Candidate/下游所有已报告的原生已领取 Paper Handoff/stream 都须具有当前政策下最新的原生 HEALTHY Observation，精确关联原 Forward Run、测量、封口窗口及原完整来源。逐流重新核对当前原消息版本、政策、有效期与两组原指标；每流独立达到 required_paper_observations 和 minimum_paper_elapsed_seconds，不相加重叠/不同流的样本，不选择有利流掩盖 DEGRADED、WATCH、缺数据或尚未评估的新来源。空集合、歧义或超过255流不晋级；扩展容量需原生流式证据实现，不截断证据。
+
+app.live_promotion_evidence 为自动 Live Approval 冻结按ID排序的完整原 Observation ID 集合，单行不可修改或删除，ID逐项关联原生发表事实。与 Approval/Offer 同事务提交；审批/Offer期限不晚于全部窗口、Evaluation、来源和政策期限。Offer/首次Claim每次重验同一完整集合及所有原条件，新流、更正、新观察、过期或撤权不能替换原审批证据，需新的合法领域事实。已领取事实与重放不抹除、不重新授权。人工 Live 仍走原人工授权，不借用自动证据入口；Agent无审批、Offer或晋级入口。
+
 ## A8. 集成、身份与幂等
 
 ### A8.0 原生 Codex 连接与会话适配

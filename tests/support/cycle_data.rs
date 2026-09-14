@@ -139,7 +139,7 @@ pub async fn register(
     data: &mut research_support::ResearchFixture,
     revision: Revision,
     objects: Arc<ArtifactStore>,
-    origin: DataOrigin,
+    (origin, allowed_uses): (DataOrigin, DataUse),
 ) {
     let license = ArtifactCreate {
         schema_version: SchemaV1,
@@ -185,11 +185,7 @@ pub async fn register(
                 license_reference: "Only synthetic regression data, not an investment license"
                     .into(),
                 evidence_artifact_id: proof,
-                allowed_uses: if origin == DataOrigin::Real {
-                    DataUse::ResearchAndPaper
-                } else {
-                    DataUse::Research
-                },
+                allowed_uses,
                 valid_from: observed - Duration::hours(1),
                 valid_until: Some(observed + Duration::days(1)),
             },

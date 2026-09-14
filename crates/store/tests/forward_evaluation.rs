@@ -260,7 +260,7 @@ async fn exercise(pool: PgPool, case: Case) {
             .unwrap()
             .resource;
         let (_, job, request, finished) =
-            forward_result::complete(&pool, &store, measured.id, &caps, &objects).await;
+            forward_result::complete(&pool, &store, measured.id, &caps, &objects, -0.1).await;
         let scheduled_at = finished
             + if case == Case::Expiry {
                 Duration::seconds(20)

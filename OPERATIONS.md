@@ -563,7 +563,7 @@ PAPER许可不能用于LIVE；审批期限不能超过原Release或当前来源�
 考虑只允许申请新审批，不恢复旧审批。`client approval show APPROVAL_UUID`仅查看
 原历史；配置版本改变后须重新审批。人工Offer使用 `client handoff offer`，绑定原审批并重验当前来源/下游；显式选择同项目/mandate/下游/环境的最新Offer作为前版，字段见CLI。
 同一Release不能换键重复发送。新Offer只撤销尚未领取的前版，已领取事实不改写。
-`client handoff show UUID`读取当前状态，原幂等回执不代替当前状态。下游使用 `client handoff claim UUID` 及其DOWNSTREAM_CLAIM凭据领取；external_claim_id必须与幂等键相同，200含原Package与转移。相同编号重试只取原回执，不能换编号再次领取。Worker补记尚未领取Offer的到期和审批撤销；已领取事实不改写。下游使用 `client handoff ack UUID` 与精确DOWNSTREAM_ACK凭据记录接受或拒绝，字段见CLI；原领取编号必须匹配，重复回执不产生新交付。Operator使用 `client approval revoke UUID` 与精确人工grant追加立即或未来撤销；最早生效日期不能被后续记录推迟，`client approval revocations UUID`查看原历史。自动 Paper 已接通，Live 晋级及Web界面仍待实现。
+`client handoff show UUID`读取当前状态，原幂等回执不代替当前状态。下游使用 `client handoff claim UUID` 及其DOWNSTREAM_CLAIM凭据领取；external_claim_id必须与幂等键相同，200含原Package与转移。相同编号重试只取原回执，不能换编号再次领取。Worker补记尚未领取Offer的到期和审批撤销；已领取事实不改写。下游使用 `client handoff ack UUID` 与精确DOWNSTREAM_ACK凭据记录接受或拒绝，字段见CLI；原领取编号必须匹配，重复回执不产生新交付。Operator使用 `client approval revoke UUID` 与精确人工grant追加立即或未来撤销；最早生效日期不能被后续记录推迟，`client approval revocations UUID`查看原历史。自动 Paper/Live 原生消费已接通，Web界面仍待实现。
 
 Cycle 启动须明确提供 `researcher_profile` 和 `reviewer_profile`，各包含 Codex Profile 的 `profile_id` 与当前 `expected_revision`。两个选择随本周期冻结，不属于可重复使用的 Brief；可以明确选择同一 Profile，但研究和独立审阅使用不同 Thread。缺失、过期版本或正在登录/注销的配置不能启动。随后修改 Profile 不会修改旧周期或旧回执，也不能让旧周期自动采用新模型/账号配置；应以新选择启动新周期。历史没有选择的记录只保留原事实，不补造账号。
 
@@ -600,9 +600,11 @@ Mission/Automation/Downstream不能借此读取额外证据。Sealed及独立Rev
 
 部署迁移仅对 `app.brief_data_bindings` 追加 DELETE，以支持同事务替换DRAFT成员；其他app表仍无DELETE授权。原生触发器锁住父Brief并拒绝FROZEN成员增删改，禁止移除触发器或授予TRUNCATE/TRIGGER。已部署实例运行正式 `server migrate --application-role ...` 补齐原生DML授权，而不是以数据库owner运行API。保存草稿不会执行模型、冻结Brief或发布资格。
 
-冻结政策使用 `client automation authorize PROJECT_UUID` 及绑定完整请求的POLICY_AUTHORIZE人工授权，内容见CLI和DESIGN A7.0。保存会新建不可变版本并更新项目当前政策；`automation list/show`读取原历史。`automation revoke POLICY_UUID`通过POLICY_REVOKE授权追加立即或未来撤销，`automation revocations`查看记录。政策管理已接通，自动审批/晋级消费仍待实现；登记成功不表示发生了审批或交付。
+冻结政策使用 `client automation authorize PROJECT_UUID` 及绑定完整请求的POLICY_AUTHORIZE人工授权，内容见CLI和DESIGN A7.0。保存会新建不可变版本并更新项目当前政策；`automation list/show`读取原历史。`automation revoke POLICY_UUID`通过POLICY_REVOKE授权追加立即或未来撤销，`automation revocations`查看记录。政策管理与原生自动Paper/Live消费已接通；登记成功不表示发生了审批或交付。
 
-自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级仍待原始 Forward 证据链。
+自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级已接入同一 Worker，条件与证据边界见下段。
+
+自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变，完整市场/部署验收与界面仍未完成。
 
 Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过，这些消费链仍在实现。
 
@@ -612,7 +614,7 @@ Forward收益频率：报告可声明 `returns_frequency=UTC_DAY`（完整UTC日
 
 原生 ForwardEvaluate 科学job已支持冻结原REPORT输入、原纠正链重验及nautilus-analysis 0.63.0的UTC日均值/波动率/Sharpe（365日年化）。Runtime仅在明确登记FORWARD_EVALUATE固定镜像后宣布该能力；不接受额外目录/模型。当前已具备受冻结政策约束的Store准入与原Run/PGMQ队列，已接原Worker终态Evaluation/window发布，自动调度已接通，原生观察、待处理Wake及受限Cycle消费已接通，尚待Live晋级，不把直接job结果当作Live/Wake资格；输入/结果/上限见DESIGN A7.5。
 
-Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完整原日频报告在项目锁内冻结为受限FORWARD输入，固定30CPU秒/60墙钟秒/512MiB/1MiB输出、无Cycle并发2，同来源重放不新增Run。纠正、撤销、替换或过期会阻止未发送任务；普通InputSet接口仍不能复制受限报告。原Worker会在终态采纳后、ACK前发表测量Evaluation与封口窗口，decision为INCONCLUSIVE；更正/撤权/过期或不完整统计不产生有效样本。Worker沿用五秒项目轮询，每轮至多预约一个原反馈流，失败三十秒后公平重试，新增/纠正可提前重试；相同来源不重复入队。Worker在ACK前按原政策追加原生观察：维持要求不通过为DEGRADED，维持通过但晋级要求不通过为WATCH，两组通过为HEALTHY，缺失/过期/无效为INSUFFICIENT_DATA。只有当前有效DEGRADED追加唯一待处理Wake；观察/Wake失败保留原消息重试。Wake消费复用原人工研究上下文及冷却/日额度；Live晋级仍待接通，详见DESIGN A7.6–A7.10。
+Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完整原日频报告在项目锁内冻结为受限FORWARD输入，固定30CPU秒/60墙钟秒/512MiB/1MiB输出、无Cycle并发2，同来源重放不新增Run。纠正、撤销、替换或过期会阻止未发送任务；普通InputSet接口仍不能复制受限报告。原Worker会在终态采纳后、ACK前发表测量Evaluation与封口窗口，decision为INCONCLUSIVE；更正/撤权/过期或不完整统计不产生有效样本。Worker沿用五秒项目轮询，每轮至多预约一个原反馈流，失败三十秒后公平重试，新增/纠正可提前重试；相同来源不重复入队。Worker在ACK前按原政策追加原生观察：维持要求不通过为DEGRADED，维持通过但晋级要求不通过为WATCH，两组通过为HEALTHY，缺失/过期/无效为INSUFFICIENT_DATA。只有当前有效DEGRADED追加唯一待处理Wake；观察/Wake失败保留原消息重试。Wake消费复用原人工研究上下文及冷却/日额度；Live晋级消费完整原生HEALTHY观察集合，详见DESIGN A7.6–A7.11。
 
 
 原生退化 Wake 由现有可信 Worker 自动化轮询消费，继承原 Candidate 研究 Cycle 的

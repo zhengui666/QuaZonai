@@ -1,5 +1,7 @@
 //! Real HTTP/PG admission from the original controlled qualification chain.
 //! No SQL-authored qualification. Actual Worker terminal publication/ACK, not OCI science.
+#[path = "support/automatic_live.rs"]
+mod automatic_live;
 #[path = "support/automatic_paper.rs"]
 mod automatic_paper;
 #[path = "../../../tests/support/brief.rs"]
@@ -13,16 +15,20 @@ mod cycle_support;
 mod experiment_support;
 #[path = "support/forward_messages.rs"]
 mod forward_messages;
+#[path = "../../../tests/support/forward_result.rs"]
+mod forward_result;
+#[path = "../../../tests/support/forward.rs"]
+#[allow(dead_code)]
+mod forward_support;
 #[path = "../../../tests/support/missions.rs"]
 mod mission_support;
 #[path = "../../../tests/support/experiments.rs"]
 mod proposal_support;
 #[path = "../../../crates/store/tests/support/qualified_portfolio.rs"]
 mod qualified_portfolio;
-#[path = "../../../tests/support/research.rs"]
-mod research_support;
-#[path = "../../../tests/support/runtime.rs"]
-mod runtime_support;
+use forward_support::{
+    research as research_support, runtime_observation::protocol_fixture as runtime_support,
+};
 #[allow(dead_code)]
 mod support;
 #[path = "../../../crates/store/tests/support/validation_publication.rs"]
@@ -260,6 +266,7 @@ async fn original_package_claim_cli_transfers_once_and_replays(pool: PgPool) {
             pool.clone(),
             cycle_support::Liquidity::None,
             contracts::forward::ForwardEnvironmentV1::Live,
+            contracts::research::DataUse::ResearchAndPaper,
             qualified_portfolio::release_policy,
         ))
         .await
@@ -699,6 +706,7 @@ async fn original_frozen_policy_automates_paper_without_live_promotion(pool: PgP
             pool.clone(),
             cycle_support::Liquidity::None,
             contracts::forward::ForwardEnvironmentV1::Live,
+            contracts::research::DataUse::ResearchAndPaper,
             qualified_portfolio::release_policy,
         ))
         .await
@@ -716,4 +724,24 @@ async fn original_frozen_policy_automates_paper_without_live_promotion(pool: PgP
         &pool, &store, &actor, &f, &build, &release,
     ))
     .await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn original_healthy_paper_promotes_live_with_frozen_complete_evidence(pool: PgPool) {
+    let (store, actor, f, build, candidate, _directory) =
+        Box::pin(qualified_portfolio::qualified_chain_policy(
+            pool.clone(),
+            cycle_support::Liquidity::None,
+            contracts::forward::ForwardEnvironmentV1::Live,
+            contracts::research::DataUse::ResearchPaperLive,
+            qualified_portfolio::release_policy,
+        ))
+        .await
+        .unwrap();
+    let (_, release, _) = Box::pin(qualified_portfolio::original_releases(
+        &pool, &store, &actor, &f, &build, candidate,
+    ))
+    .await
+    .unwrap();
+    Box::pin(automatic_live::check(&pool, &store, &actor, &f, &release)).await;
 }
