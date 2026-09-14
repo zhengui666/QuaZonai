@@ -4726,3 +4726,12 @@ DESIGN A7.11明确完整原始Paper流集合、每流样本/时长/双指标、�
 verify-QLotT2首次完整Live定向通过。补充回滚/撤权断言后的verify-rJw65l通过workspace/all-targets编译、格式、严格Clippy及257项回归（domain/contracts144、Store87、HTTP26），源文件验证期间不变，隔离PG停止。此前测试失败分别揭示不可变对象重复写、原始授权只含Paper及旧关系夹具无效凭据引用，均在测试设置修正，没有放宽产品检查。
 
 这里的历史Paper Claim时间与科学响应是显式受控夹具，不证明真实多日市场观察或OCI/生产模型整链。Worker真实Live交付的完整部署验收、同Candidate跨环境当日额度专项、后代Candidate再反馈、UI及其余T01–T42/main恢复迁移仍需完成。GitHub当次回读PR63仍OPEN Draft且远端Head为37e5713ed6252e5935787201914d42f241582a4f，Issue62仍OPEN；本阶段未push、未请求review、未合并或关闭Issue。
+
+
+### 2026-09-14：实际 Worker Live 消费与跨环境当日额度
+
+在既有原资格/Forward正向测试中，Live成功分支改用实际Worker.process_automation与真实ArtifactStore。并发tick遵守SKIP LOCKED的可退让语义，随后普通tick完成唯一Live Offer，再次轮询不增加Offer；之后仍走原Downstream Claim及撤权后原键重放。首次verify-c2L7I2表明并发首轮可能都退让，不将其误报为必须即时创建；verify-e28IgD在正常后续tick下通过。
+
+额度专项使用真实当前UTC日，不改变时钟或历史记录：新下游先由原生人工审批/Offer创建Live，再冻结max_rebalances_per_day=1的AUTO_PAPER政策。原同一Candidate自动Paper成功，数据库当天两个Offer、一个distinct Candidate；重复消费不读文件且不新增Offer。没有绕过已领取Candidate不可重复Paper的规则。
+
+最终verify-HjhW7s通过workspace/all-targets编译、格式、严格Clippy与完整Live定向用例（含上述两个场景及既有原证据变更拒绝/回滚/撤权重放），验证期间源文件不变、隔离PG已停止。本次只增加测试和证据，产品实现未变。实际Worker单tick调度/IO不等同完整部署daemon、真实多日行情、OCI科学或生产模型验收；后代Candidate再反馈、交付UI和其余T01–T42/main恢复迁移仍待完成。未push、未review、未合并或关闭Issue。

@@ -8,6 +8,7 @@ pub(super) async fn check(
     operator: &store::authority::Actor,
     f: &cycle_support::Fixture,
     release: &ReleaseViewV1,
+    directory: &tempfile::TempDir,
 ) {
     let row = sqlx::query("SELECT r.id,r.cycle_id,r.input_set_id,r.active_attempt_id,r.deadline_at,e.report_artifact_id FROM app.portfolio_candidates c JOIN app.runs r ON r.id=c.run_id JOIN app.evaluations e ON e.id=$2 WHERE c.id=$1")
         .bind(release.candidate_id.as_uuid()).bind(release.evaluation_id.as_uuid()).fetch_one(pool).await.unwrap();
@@ -165,13 +166,58 @@ pub(super) async fn check(
             assert_eq!(before, after);
             sqlx::raw_sql("DROP TRIGGER fail_live_offer ON app.handoff_offers; DROP FUNCTION app.fail_live_offer();").execute(pool).await.unwrap();
         }
-        let (a, b) = tokio::join!(
-            Box::pin(store.automate_live(f.data.project, read)),
-            Box::pin(store.automate_live(f.data.project, read))
-        );
-        let (a, b) = (a.unwrap(), b.unwrap());
-        assert_ne!(a.is_some(), b.is_some());
-        let offer = a.or(b).unwrap();
+        let offer = if changed {
+            let (a, b) = tokio::join!(
+                Box::pin(store.automate_live(f.data.project, read)),
+                Box::pin(store.automate_live(f.data.project, read))
+            );
+            let (a, b) = (a.unwrap(), b.unwrap());
+            assert_ne!(a.is_some(), b.is_some());
+            a.or(b).unwrap()
+        } else {
+            let web = support::fixture(pool.clone()).await;
+            let vault = integrations::secrets::SecretVault::open(
+                &web._state.path().join("secrets"),
+                &web._state.path().join("master.key"),
+            )
+            .unwrap();
+            let worker = server::worker::Worker::new(
+                store.clone(),
+                vault,
+                integrations::artifacts::ArtifactStore::open(&directory.path().join("objects"))
+                    .unwrap(),
+                server::runtime_transport::RuntimeTargets::default(),
+                1,
+            )
+            .unwrap();
+            let (a, b) = tokio::join!(
+                worker.process_automation(None),
+                worker.process_automation(None)
+            );
+            assert_eq!(a.0, Some(f.data.project));
+            assert_eq!(b.0, Some(f.data.project));
+            a.1.unwrap();
+            b.1.unwrap();
+            // SKIP LOCKED may defer both concurrent ticks across independent lanes.
+            // The next ordinary tick must consume the still-current Live policy.
+            worker.process_automation(None).await.1.unwrap();
+            let ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+                "SELECT id FROM app.handoff_offers WHERE downstream_id=$1 AND environment='LIVE'",
+            )
+            .bind(down.id.as_uuid())
+            .fetch_all(pool)
+            .await
+            .unwrap();
+            assert_eq!(ids.len(), 1);
+            let first = store
+                .handoff(operator, ids[0].to_string().try_into().unwrap())
+                .await
+                .unwrap();
+            worker.process_automation(None).await.1.unwrap();
+            let count:i64=sqlx::query_scalar("SELECT count(*) FROM app.handoff_offers WHERE downstream_id=$1 AND environment='LIVE'").bind(down.id.as_uuid()).fetch_one(pool).await.unwrap();
+            assert_eq!(count, 1);
+            first
+        };
         assert_eq!(offer.environment, ForwardEnvironmentV1::Live);
         assert!(offer.expires_at <= policy.content.valid_until);
         assert!(offer.expires_at <= release.valid_until);
@@ -280,6 +326,7 @@ pub(super) async fn check(
                 store.handoff(operator, offer.id).await.unwrap().state,
                 HandoffStateV1::Offered
             );
+            quota(pool, store, operator, f, release, policy.content.clone()).await;
         } else {
             let claimed = store
                 .claim_handoff(&machine, &key, offer.id, &claim, read)
@@ -309,4 +356,140 @@ pub(super) async fn check(
             assert!(replay.replayed);
         }
     }
+}
+
+// Actual current-day offers, without moving the clock or inventing old observations.
+async fn quota(
+    pool: &PgPool,
+    store: &Store,
+    operator: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    release: &ReleaseViewV1,
+    mut content: AutomationPolicyContentV1,
+) {
+    let down = store
+        .create_downstream(
+            operator,
+            "same-candidate-quota-downstream",
+            &DownstreamCreate {
+                schema_version: SchemaV1,
+                credential_ref: Id::new(),
+                configuration: DownstreamConfigurationV1 {
+                    name: "Same Candidate daily quota".into(),
+                    endpoint: "https://quota.example".into(),
+                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    environments: DownstreamEnvironments::Both,
+                    enabled: true,
+                    development_http: false,
+                },
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap()
+        .resource;
+    let store::downstream::ProbePreparation::Pending(ticket) = store
+        .prepare_downstream_probe(
+            operator,
+            "same-candidate-quota-probe",
+            down.id,
+            &DownstreamProbeRequestV1 {
+                schema_version: SchemaV1,
+                expected_revision: down.revision,
+            },
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("new probe")
+    };
+    store
+        .complete_downstream_probe(
+            *ticket,
+            DownstreamProbeOutcomeV1::Available {
+                capabilities: DownstreamCapabilitiesV1 {
+                    schema_version: SchemaV1,
+                    delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
+                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    environments: vec![ForwardEnvironmentV1::Paper, ForwardEnvironmentV1::Live],
+                    market_capability_versions: vec![release.market_capability_version.clone()],
+                    accepting_targets: true,
+                    checked_at: chrono::Utc::now(),
+                },
+            },
+            |id, bytes| async move { f.objects.put(id, &bytes).map_err(|_| StoreError::Integrity) },
+        )
+        .await
+        .unwrap();
+    let approval = store
+        .approve_release(
+            operator,
+            "same-candidate-manual-live",
+            release.id,
+            &ReleaseApproveV1 {
+                schema_version: SchemaV1,
+                downstream_id: down.id,
+                environment: ForwardEnvironmentV1::Live,
+                expected_downstream_revision: down.revision,
+                expected_latest_decision_id: None,
+                valid_until: release.valid_until,
+            },
+            |id, size| f.read(id, size),
+        )
+        .await
+        .unwrap()
+        .resource;
+    let live = store
+        .offer_handoff(
+            operator,
+            "same-candidate-live-offer",
+            &HandoffOfferV1 {
+                schema_version: SchemaV1,
+                release_id: release.id,
+                approval_id: approval.id,
+                supersedes_handoff_id: None,
+                expires_at: approval.valid_until,
+            },
+            |id, size| f.read(id, size),
+        )
+        .await
+        .unwrap()
+        .resource;
+    content.downstream_id = down.id;
+    content.mode = AutomationModeV1::AutoPaper;
+    content.max_rebalances_per_day = 1;
+    store
+        .authorize_automation(
+            operator,
+            "same-candidate-quota-policy",
+            f.data.project,
+            &AutomationAuthorizeV1 {
+                schema_version: SchemaV1,
+                expected_project_revision: store
+                    .project(operator, f.data.project)
+                    .await
+                    .unwrap()
+                    .revision,
+                content,
+            },
+        )
+        .await
+        .unwrap();
+    let paper = store
+        .automate_paper(f.data.project, |id, size| f.read(id, size))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(paper.candidate_id, live.candidate_id);
+    assert_eq!(paper.environment, ForwardEnvironmentV1::Paper);
+    assert_eq!(live.environment, ForwardEnvironmentV1::Live);
+    let counts:(i64,i64)=sqlx::query_as("SELECT count(*),count(DISTINCT r.candidate_id) FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id WHERE h.downstream_id=$1 AND h.offered_at>=(date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AND h.offered_at<(date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')+interval '1 day'").bind(down.id.as_uuid()).fetch_one(pool).await.unwrap();
+    assert_eq!(counts, (2, 1));
+    assert!(store
+        .automate_paper(f.data.project, |_, _| async {
+            panic!("existing offer needs no source IO")
+        })
+        .await
+        .unwrap()
+        .is_none());
 }
