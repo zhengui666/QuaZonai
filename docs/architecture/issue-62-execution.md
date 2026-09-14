@@ -1,5 +1,31 @@
 # Issue62 implementation evidence
 
+## Native downstream capability transport, 2026-09-14
+
+DownstreamCapabilitiesV1 defines the strict target-only capability response at
+GET /downstream/v1/capabilities. The native client preserves accepting_targets=false,
+validates package/environment/market versions and timestamp bounds, and shares
+the existing restricted reqwest construction without exposing Runtime job methods
+on DownstreamTransport. No dependencies or configuration/credential permissions
+were added. The caller must resolve the DOWNSTREAM vault reference and supply a
+deployment-owned allowlist; this internal method is not an Agent tool or user API.
+
+verify-4N4qqo passed workspace check, formatting and strict Clippy with source
+unchanged. Final downstream-domain logs show 142 contracts/domain tests passed;
+downstream-final-transport shows 19 real TCP/TLS tests passed, including four new
+downstream checks and the original Runtime capability/job transport regressions.
+Coverage includes exact wire values, maintenance, invalid versions/environments,
+duplicate fields/values, timestamp boundaries, credential reflection, bounded
+chunked responses, authentication, denied destinations and redirect non-forwarding.
+All inputs remain controlled protocol fixtures, not real downstream acceptance.
+
+web-verify-2svnXc regenerated all six native outputs twice identically with
+handwritten files unchanged. Only domain-v1.openapi.json changed; HTTP API and
+frontend generated artifacts did not, so frontend/browser checks were not rerun.
+Downstream observation persistence, probe/readiness HTTP/CLI, current-revision
+transactional admission and Approval/Offer/Claim remain outstanding. No readiness,
+approval, handoff, push, review, merge or Issue closure is claimed by this stage.
+
 ## Candidate-scoped human decision history, 2026-09-14
 
 POST /api/v2/releases/{id}/rejections, POST /api/v2/release-decisions/{id}/reopen

@@ -8133,6 +8133,64 @@
         ],
         "type": "object"
       },
+      "DownstreamCapabilitiesV1": {
+        "additionalProperties": false,
+        "description": "Native observation only. This does not authorize approval or delivery.",
+        "properties": {
+          "accepted_package_versions": {
+            "items": {
+              "$ref": "#/components/schemas/PackageSchemaVersion"
+            },
+            "maxItems": 1,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "accepting_targets": {
+            "type": "boolean"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "delivery_mode": {
+            "$ref": "#/components/schemas/DownstreamDeliveryModeV1"
+          },
+          "environments": {
+            "items": {
+              "$ref": "#/components/schemas/ForwardEnvironmentV1"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "market_capability_versions": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "delivery_mode",
+          "accepted_package_versions",
+          "environments",
+          "market_capability_versions",
+          "accepting_targets",
+          "checked_at"
+        ],
+        "type": "object"
+      },
       "DownstreamConfigurationV1": {
         "additionalProperties": false,
         "properties": {
@@ -8194,6 +8252,12 @@
           "credential_ref"
         ],
         "type": "object"
+      },
+      "DownstreamDeliveryModeV1": {
+        "enum": [
+          "TARGET_ONLY"
+        ],
+        "type": "string"
       },
       "DownstreamEnvironments": {
         "enum": [

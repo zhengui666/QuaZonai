@@ -12,10 +12,12 @@ use store::lifecycle::RuntimeSnapshot;
 use url::{Host, Url};
 
 mod catalog;
+mod downstream;
 mod jobs;
 mod json;
 
 pub use catalog::ReceivedCatalogMetadata;
+pub use downstream::DownstreamTransport;
 pub use jobs::{ReceivedRuntimeResult, RuntimeRequestError};
 pub(crate) use json::verify as verify_native_json;
 
@@ -122,12 +124,13 @@ impl RuntimeTargets {
 
     fn target(
         &self,
-        snapshot: &RuntimeSnapshot,
+        endpoint: &str,
+        development_http: bool,
     ) -> Result<(Url, &[SocketAddr]), RuntimeProbeFailure> {
-        if snapshot.development_http && !self.development_http {
+        if development_http && !self.development_http {
             return Err(RuntimeProbeFailure::EndpointDenied);
         }
-        let url = origin(&snapshot.endpoint, snapshot.development_http)?;
+        let url = origin(endpoint, development_http)?;
         let addresses = self
             .entries
             .get(&url.origin().ascii_serialization())
@@ -143,6 +146,15 @@ pub struct RuntimeTransport {
     credential: String,
 }
 
+// The two native protocols share the same restricted HTTP boundary, not task authority.
+struct HttpConfiguration<'a> {
+    endpoint: &'a str,
+    development_http: bool,
+    tls_policy: &'a str,
+    ca_configured: bool,
+    purpose: contracts::settings::IntegrationSecretPurpose,
+}
+
 impl RuntimeTransport {
     pub fn new(
         targets: &RuntimeTargets,
@@ -150,17 +162,35 @@ impl RuntimeTransport {
         credential: &[u8],
         ca: Option<&[u8]>,
     ) -> Result<Self, RuntimeProbeFailure> {
-        let (origin, addresses) = targets.target(snapshot)?;
         if snapshot.protocol_version != "1" {
             return Err(RuntimeProbeFailure::ContractUnsupported);
         }
+        Self::connect(
+            targets,
+            HttpConfiguration {
+                endpoint: &snapshot.endpoint,
+                development_http: snapshot.development_http,
+                tls_policy: &snapshot.tls_policy,
+                ca_configured: snapshot.ca_certificate_ref.is_some(),
+                purpose: contracts::settings::IntegrationSecretPurpose::Runtime,
+            },
+            credential,
+            ca,
+        )
+    }
+
+    fn connect(
+        targets: &RuntimeTargets,
+        configuration: HttpConfiguration<'_>,
+        credential: &[u8],
+        ca: Option<&[u8]>,
+    ) -> Result<Self, RuntimeProbeFailure> {
+        let (origin, addresses) =
+            targets.target(configuration.endpoint, configuration.development_http)?;
         let credential =
             std::str::from_utf8(credential).map_err(|_| RuntimeProbeFailure::Authentication)?;
-        domain::settings::secret_value(
-            contracts::settings::IntegrationSecretPurpose::Runtime,
-            credential,
-        )
-        .map_err(|_| RuntimeProbeFailure::Authentication)?;
+        domain::settings::secret_value(configuration.purpose, credential)
+            .map_err(|_| RuntimeProbeFailure::Authentication)?;
         let mut bearer = header::HeaderValue::from_str(&format!("Bearer {credential}"))
             .map_err(|_| RuntimeProbeFailure::Authentication)?;
         bearer.set_sensitive(true);
@@ -179,7 +209,7 @@ impl RuntimeTransport {
             .ok_or(RuntimeProbeFailure::EndpointDenied)?;
         let mut builder = Client::builder()
             .use_rustls_tls()
-            .https_only(!snapshot.development_http)
+            .https_only(!configuration.development_http)
             .resolve_to_addrs(host, addresses)
             .redirect(Policy::none())
             .retry(reqwest::retry::never())
@@ -193,9 +223,9 @@ impl RuntimeTransport {
             .timeout(Duration::from_secs(10))
             .pool_max_idle_per_host(1)
             .connection_verbose(false);
-        match snapshot.tls_policy.as_str() {
-            "SYSTEM_CA" if snapshot.ca_certificate_ref.is_none() && ca.is_none() => {}
-            "PINNED_CA" if !snapshot.development_http && snapshot.ca_certificate_ref.is_some() => {
+        match configuration.tls_policy {
+            "SYSTEM_CA" if !configuration.ca_configured && ca.is_none() => {}
+            "PINNED_CA" if !configuration.development_http && configuration.ca_configured => {
                 let ca = ca.ok_or(RuntimeProbeFailure::TlsConfiguration)?;
                 let certificates = reqwest::Certificate::from_pem_bundle(ca)
                     .map_err(|_| RuntimeProbeFailure::TlsConfiguration)?;

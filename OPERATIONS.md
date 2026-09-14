@@ -549,6 +549,11 @@ qz.forward_report v1。先接收合法反馈后下游再拒绝时，保留转移
 
 Runtime 的 `enabled` 和配置能力列表不代表可用。Cycle / standalone Run 准入和首次派发都要求当前配置 revision 的成功原生探测仍在有效期内，并核对实际 job kind、内存、墙钟时限与输出上限；拒绝不得扣减预算、入队或生成成功回执。探测有效期最多60秒，应通过正式探测入口刷新，不得手工修改观测表。CPU秒是累计预算，不是CPU核数。
 
+下游内部原生能力读取固定为 `/downstream/v1/capabilities`，SYSTEM_CA TLS与部署限定
+地址，禁止重定向/环境代理/自动重试；总请求10秒、响应64KiB。它只接受target-only
+合同；`accepting_targets=false`原样保留，不伪装为可交付。当前尚无下游观察持久化和
+probe/readiness用户入口，不能用配置保存或这项网络测试证明审批、领取或真实交易验收。
+
 Cycle 启动须明确提供 `researcher_profile` 和 `reviewer_profile`，各包含 Codex Profile 的 `profile_id` 与当前 `expected_revision`。两个选择随本周期冻结，不属于可重复使用的 Brief；可以明确选择同一 Profile，但研究和独立审阅使用不同 Thread。缺失、过期版本或正在登录/注销的配置不能启动。随后修改 Profile 不会修改旧周期或旧回执，也不能让旧周期自动采用新模型/账号配置；应以新选择启动新周期。历史没有选择的记录只保留原事实，不补造账号。
 
 浏览器在研究项目的 Brief 行选择“冻结执行上下文”，分别选本项目 DISCOVERY、VALIDATION、SEALED 输入和已有 Runtime。草稿/暂停项目可以冻结；冻结会更新当前 Brief，但不会自动启用项目。随后使用“修改项目状态”明确启用，再从冻结版本选择“启动新 Cycle”，分别选择研究者与独立 Reviewer 配置并确认。超出 JavaScript 安全整数的修订号始终按原始字符串提交。断线或未知回执保留原请求内容和幂等键，可“重试同一请求”；关闭不代表撤销，重开前先核对 Brief 和“研究周期”记录。研究周期展示服务器状态、预算预约/使用及准备 Run，不将排队或准备成功显示为科学研究完成。

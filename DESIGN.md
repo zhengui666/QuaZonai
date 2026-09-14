@@ -231,6 +231,8 @@ CYCLE 检测和 AFTER INSERT 约束触发器，覆盖自身引用及同一语句
 
 Approval/Offer/Claim 在事务内重新验证版本、撤销、资格、REAL 数据、授权用途、政策、期限、readiness 配置版本与新鲜度；外部 probe 在事务外执行。Claim/revoke/expire 原子竞争只一结果；下游只领自身 offer。CLAIMED 后 QZ 无停止/撤单/伪撤销权限，只可 advisory 或新版本；旧过期目标不能因重试复活。
 
+下游原生探测固定 GET `/downstream/v1/capabilities`，使用登记的 DOWNSTREAM 凭据及部署允许的精确 origin/socket，SYSTEM_CA 原生 TLS；仅部署显式允许的 literal loopback 开发端点可 HTTP。禁止重定向、环境代理、自动重试；连接3秒、整个请求及读取10秒，响应最多64KiB。响应 `DownstreamCapabilitiesV1` 严格字段为 schema_version=1、delivery_mode=TARGET_ONLY、accepted_package_versions（当前唯一版本字符串1）、environments（不重复的PAPER/LIVE，1–2项）、market_capability_versions（不重复非空字符串，1–64项，每项1–200字符）、accepting_targets（布尔）、checked_at（UTC时间）。不接收账户、订单、仓位或执行权限字段。checked_at 不得晚于本机5秒或早于本机60秒，采纳观察时还须绑定本次探测开始时间及精确配置revision；自报接受目标不构成QZ审批。接受版本、环境与市场合同必须同时匹配登记配置和原Package，accepting_targets=false阻止新交付。响应不保存或展示凭据反射、任意错误正文。观察持久化、期限和事务消费另按上述readiness门禁执行；仅网络方法存在不表示已实现审批准入。
+
 Paper/Live 分开审批。MANUAL/AUTO_PAPER/AUTO_HANDOFF 是显式 Operator 授权的不可变政策，不是 Agent 可开启的布尔开关。自动晋级需要完整足量连续且新鲜 Paper、有效未撤销政策、资格/Release/数据新鲜、无活动阻塞劣化、下游兼容；任何缺失分别阻断。停用仅阻止未来授权，不撤销已执行交易。
 
 Forward 按 downstream/external_message_id 去重；保留 stream/sequence/revision/supersedes 和覆盖窗口；迟到、重传、重叠、gap、partial、correction 不重复累计独立样本。完整窗口交原生指标评估形成 HEALTHY/WATCH/DEGRADED/INSUFFICIENT_DATA Observation，再 Wake，再项目状态/冷却/预算校验启动新 Cycle；相同 Observation 不产生两个自动 Cycle。缺数据不等于健康或劣化。PAUSED/ARCHIVED 不开新 Cycle，保留待处理 Wake 和已有风险观察。

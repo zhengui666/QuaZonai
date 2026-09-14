@@ -43,12 +43,29 @@ pub async fn native_http(
     redirect: Option<String>,
     chunked: bool,
 ) -> NativeServer {
+    native_http_at(
+        "/runtime/v1/capabilities",
+        status,
+        payload,
+        redirect,
+        chunked,
+    )
+    .await
+}
+
+pub async fn native_http_at(
+    path: &str,
+    status: StatusCode,
+    payload: Vec<u8>,
+    redirect: Option<String>,
+    chunked: bool,
+) -> NativeServer {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let requests = Arc::new(AtomicUsize::new(0));
     let count = requests.clone();
     let app = Router::new().route(
-        "/runtime/v1/capabilities",
+        path,
         get(move |headers: HeaderMap| {
             let count = count.clone();
             let payload = payload.clone();

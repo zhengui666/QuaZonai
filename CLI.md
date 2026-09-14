@@ -573,6 +573,12 @@ Production 只接受 HTTPS origin；literal-loopback HTTP 还须配置和部署�
 
 ## Runtime 探测与版本化 readiness
 
+下游原生能力合同为 `GET /downstream/v1/capabilities` / `DownstreamCapabilitiesV1`，
+只描述 target-only Package 版本、PAPER/LIVE 环境、市场合同、accepting_targets 与
+checked_at。当前已实现内部受限网络方法，尚未接入下游 probe/readiness 的 HTTP/CLI
+和数据库观察，不把保存配置或单次网络返回当作 Approval/Offer/Claim 准入。
+原生 TCP 回归：`cargo test --locked -p server --test downstream_transport`。
+
 `POST /api/v2/integrations/runtimes/{id}/probe` 接收 schema_version=1、expected_revision，
 需要近期人类认证或 RUNTIME_PROBE 单次 CLI grant。响应200表示探测已记录；必须检查
 resource.outcome.status，UNAVAILABLE 不是可执行。`GET /api/v2/integrations/runtimes/{id}/readiness`

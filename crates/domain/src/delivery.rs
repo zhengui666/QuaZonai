@@ -126,3 +126,28 @@ pub fn decision_reason(code: &str, reason: &str) -> Result<(), DomainError> {
     text(code, 1, 120, false)?;
     text(reason, 1, 2000, true)
 }
+
+pub fn downstream_capabilities(
+    value: &contracts::delivery::DownstreamCapabilitiesV1,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), DomainError> {
+    if value.accepted_package_versions.len() != 1
+        || !(1..=2).contains(&value.environments.len())
+        || value.environments.len() == 2 && value.environments[0] == value.environments[1]
+        || !(1..=64).contains(&value.market_capability_versions.len())
+        || value
+            .market_capability_versions
+            .iter()
+            .collect::<BTreeSet<_>>()
+            .len()
+            != value.market_capability_versions.len()
+        || value.checked_at > now + chrono::Duration::seconds(5)
+        || value.checked_at < now - chrono::Duration::seconds(60)
+    {
+        return Err(DomainError::Invalid("downstream_capabilities"));
+    }
+    for version in &value.market_capability_versions {
+        text(version, 1, 200, false)?;
+    }
+    Ok(())
+}

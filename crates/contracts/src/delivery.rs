@@ -4,6 +4,43 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DownstreamDeliveryModeV1 {
+    TargetOnly,
+}
+
+/// Native observation only. This does not authorize approval or delivery.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DownstreamCapabilitiesV1 {
+    pub schema_version: crate::SchemaV1,
+    pub delivery_mode: DownstreamDeliveryModeV1,
+    #[schema(value_type = std::collections::BTreeSet<PackageSchemaVersion>, min_items = 1, max_items = 1)]
+    pub accepted_package_versions: Vec<PackageSchemaVersion>,
+    #[schema(value_type = std::collections::BTreeSet<crate::forward::ForwardEnvironmentV1>, min_items = 1, max_items = 2)]
+    pub environments: Vec<crate::forward::ForwardEnvironmentV1>,
+    #[schema(schema_with = market_capability_versions_schema)]
+    pub market_capability_versions: Vec<String>,
+    pub accepting_targets: bool,
+    pub checked_at: chrono::DateTime<chrono::Utc>,
+}
+
+fn market_capability_versions_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
+    ArrayBuilder::new()
+        .min_items(Some(1))
+        .max_items(Some(64))
+        .unique_items(true)
+        .items(
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .min_length(Some(1))
+                .max_length(Some(200)),
+        )
+        .into()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseCreateV1 {
