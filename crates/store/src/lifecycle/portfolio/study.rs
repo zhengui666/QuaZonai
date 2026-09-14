@@ -113,23 +113,47 @@ impl Store {
             .bind(current.policy.as_uuid()).bind(current.dataset.as_uuid()).bind(db::json(request)?)
             .execute(&mut *tx).await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
-        let qualifications: Vec<_> = current
-            .qualifications
-            .into_iter()
-            .map(Id::as_uuid)
-            .collect();
-        let inputs: Vec<_> = current.input_sets.into_iter().map(Id::as_uuid).collect();
         // All source/grant/qualification locks were acquired above. There are no
         // file callbacks after this clock check, and no live-target TTL in Study.
-        let eligible: bool = sqlx::query_scalar("SELECT (SELECT count(*)=cardinality($1::uuid[]) AND coalesce(bool_and(valid_until>statement_timestamp()),false) FROM app.qualifications WHERE id=ANY($1)) AND NOT EXISTS(SELECT 1 FROM app.qualification_revocations WHERE qualification_id=ANY($1) AND effective_at<=statement_timestamp()) AND NOT EXISTS(SELECT 1 FROM app.input_set_items i JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id JOIN app.data_use_grants g ON g.id=d.data_use_grant_id WHERE i.input_set_id=ANY($2::uuid[]) AND (g.valid_until<=statement_timestamp() OR EXISTS(SELECT 1 FROM app.data_use_revocations revoked WHERE revoked.grant_id=g.id AND revoked.effective_at<=statement_timestamp())))")
-            .bind(qualifications).bind(inputs).fetch_one(&mut *tx).await?;
-        if !eligible {
-            return Err(StoreError::Invalid("portfolio_study_source_expired"));
-        }
+        source_until(&mut tx, &current.qualifications, &current.input_sets).await?;
         let result = commands::finish(&mut tx, prepared, run.resource, 202).await?;
         tx.commit().await?;
         Ok(result)
     }
+}
+
+async fn source_until(
+    tx: &mut Tx<'_>,
+    qualifications: &[Id],
+    inputs: &BTreeSet<Id>,
+) -> Result<DateTime<Utc>, StoreError> {
+    let qualifications: Vec<_> = qualifications.iter().copied().map(Id::as_uuid).collect();
+    let inputs: Vec<_> = inputs.iter().copied().map(Id::as_uuid).collect();
+    let until: Option<DateTime<Utc>> = sqlx::query_scalar("WITH grants AS (SELECT DISTINCT g.id,g.valid_until FROM app.input_set_items i JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id JOIN app.data_use_grants g ON g.id=d.data_use_grant_id WHERE i.input_set_id=ANY($2::uuid[])), deadlines AS (SELECT valid_until AS until FROM app.qualifications WHERE id=ANY($1::uuid[]) UNION ALL SELECT effective_at FROM app.qualification_revocations WHERE qualification_id=ANY($1) UNION ALL SELECT valid_until FROM grants UNION ALL SELECT r.effective_at FROM app.data_use_revocations r JOIN grants g ON g.id=r.grant_id) SELECT min(until) FROM deadlines HAVING min(until)>statement_timestamp() AND (SELECT count(*) FROM app.qualifications WHERE id=ANY($1))=cardinality($1) AND cardinality($1)>0")
+        .bind(qualifications).bind(inputs).fetch_optional(&mut **tx).await?.flatten();
+    until.ok_or(StoreError::Invalid("portfolio_study_source_expired"))
+}
+
+pub(super) async fn evidence_until<R, Read>(
+    tx: &mut Tx<'_>,
+    run: &RunSnapshotV1,
+    intent: &PortfolioStudyRequestV1,
+    task: &NativeTaskParametersV1,
+    image: &str,
+    read: &mut R,
+) -> Result<DateTime<Utc>, StoreError>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+{
+    let current = sources(tx, run.project_id, intent, read).await?;
+    if current.input_set != run.input_set_id
+        || current.image != image
+        || db::json(&current.task)? != db::json(task)?
+    {
+        return Err(StoreError::Integrity);
+    }
+    source_until(tx, &current.qualifications, &current.input_sets).await
 }
 
 async fn sources<R, Read>(

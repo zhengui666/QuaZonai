@@ -38,7 +38,9 @@ InputPurpose与DataPartition分别核对；PORTFOLIO只含原DISCOVERY/VALIDATIO
 没有计划不能正式Study，不能在Run请求临时改窗口；保存不等于运行或PASS。
 Store.start_portfolio_study复用原Operator授权、预算和PGMQ，核对原完整成员与
 包含Sealed选择观测的研究可用截止；只向原生任务提供唯一PORTFOLIO目录。
-HTTP/CLI和PORTFOLIO发表尚未接通，不能借HOLD回执ACK或声称Study已可交付。
+可信Worker发表独立PORTFOLIO结果，复核原三报告及Arrow历史；取消/失败/不可行
+不授PASS，原发表回执才能ACK。现有Candidate评估读取保留原类型，不借HOLD。
+正式Study HTTP/CLI仍未接通，不能声称已完成组合交付。
 FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，不触发交付。
 新政策分别冻结metric_requirements与sealed_metric_requirements，不能复制分折要求
 冒充封存阈值；历史null不补写，需人工新建完整政策和研究周期。

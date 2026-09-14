@@ -2100,6 +2100,14 @@ expected_runtime_revision和limits；沿用PORTFOLIO_SIMULATE授权、预算和�
 不把其数据绑定交给Study。原政策计划、费用、日历和滚动流动性必须重验；
 历史单次流动性快照不能替代逐cutoff测量。portfolio_study_tasks保存原Run、
 Candidate、政策、数据版本和完整意图；缺少独立PORTFOLIO发表回执时不得ACK。
+可信Worker复用原Evaluation事务为Study发表evaluation_kind=PORTFOLIO、mode=STUDY。
+原spec/Attempt/manifest、完整质量、逐帧报告和Arrow历史须全部对应；指标只映射
+原Study内的实际simulation_request/simulation，不重算收益或借HOLD报告。不可行
+保留原诊断且无模拟指标/PASS；取消/失败只按原终态回执发表INCOMPLETE/INCONCLUSIVE。
+有效期不晚于原生完成时间加政策TTL、原成员资格及其数据许可/已知撤销时刻，
+不取历史窗口结束或当前Candidate目标TTL。发表前后重读原政策/模型/输入/费用/
+日历/流动性；到期或失格发表不通过证据，损坏与写入失败保留重试。原发表回执
+重放不重读过期来源或刷新期限。读模型元数据或发表不授予审批/Release权限。
 
 组合指标薄适配先核对原模拟请求/结果的账户、时窗与目标绑定，只读取原
 Returns统计组（不读canonical的position fallback），scope固定portfolio：

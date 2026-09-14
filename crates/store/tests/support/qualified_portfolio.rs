@@ -10,6 +10,8 @@ mod inputs;
 mod result;
 #[path = "candidate_simulation_result.rs"]
 mod simulation_result;
+#[path = "portfolio_study_result.rs"]
+mod study_result;
 
 async fn begin(store: &Store, lease: &RunLease) {
     store
@@ -101,17 +103,17 @@ async fn answer(store: &Store, f: &cycle_support::Fixture, lease: &RunLease, tex
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn original_reviewed_alphas_publish_candidates_and_retry_last_target(pool: PgPool) {
-    Box::pin(qualified_chain(pool, cycle_support::Liquidity::None)).await;
+    Box::pin(check_chain(pool, cycle_support::Liquidity::None)).await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn historical_liquidity_remains_bound_through_original_qualified_chain(pool: PgPool) {
-    Box::pin(qualified_chain(pool, cycle_support::Liquidity::Snapshot)).await;
+    Box::pin(check_chain(pool, cycle_support::Liquidity::Snapshot)).await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn rolling_liquidity_remains_bound_through_original_qualified_chain(pool: PgPool) {
-    Box::pin(qualified_chain(
+    Box::pin(check_chain(
         pool,
         cycle_support::Liquidity::Rolling(u32::MAX),
     ))
@@ -120,10 +122,33 @@ async fn rolling_liquidity_remains_bound_through_original_qualified_chain(pool: 
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn rolling_expiry_during_publication_rolls_back_targets_and_retries_invalid(pool: PgPool) {
-    Box::pin(qualified_chain(pool, cycle_support::Liquidity::Rolling(10))).await;
+    Box::pin(check_chain(pool, cycle_support::Liquidity::Rolling(10))).await;
 }
 
-async fn qualified_chain(pool: PgPool, liquidity: cycle_support::Liquidity) {
+async fn check_chain(pool: PgPool, liquidity: cycle_support::Liquidity) {
+    // Unwind the large debug-build qualification poll frame before Study;
+    // retain the same original DB/files, without increasing the thread stack.
+    if let Some((store, actor, f, request, candidate, _directory)) =
+        Box::pin(qualified_chain(pool.clone(), liquidity)).await
+    {
+        Box::pin(study_admission(
+            &pool, &store, &actor, &f, &request, candidate, liquidity,
+        ))
+        .await;
+    }
+}
+
+async fn qualified_chain(
+    pool: PgPool,
+    liquidity: cycle_support::Liquidity,
+) -> Option<(
+    Store,
+    store::authority::Actor,
+    cycle_support::Fixture,
+    contracts::portfolio::PortfolioBuildRequestV1,
+    Id,
+    tempfile::TempDir,
+)> {
     let with_liquidity = liquidity == cycle_support::Liquidity::Snapshot;
     let directory = tempfile::tempdir().unwrap();
     let objects = std::sync::Arc::new(
@@ -700,7 +725,7 @@ async fn qualified_chain(pool: PgPool, liquidity: cycle_support::Liquidity) {
         assert!(replay.replayed);
         assert_eq!(replay.resource, candidate);
         store.acknowledge_run(&message).await.unwrap();
-        return;
+        return None;
     }
     let candidate = validation_publication::publish(&store, &f, admitted.id)
         .await
@@ -1294,10 +1319,7 @@ async fn qualified_chain(pool: PgPool, liquidity: cycle_support::Liquidity) {
         )
     );
     store.acknowledge_run(&message).await.unwrap();
-    Box::pin(study_admission(
-        &pool, &store, &actor, &f, &next, candidate, liquidity,
-    ))
-    .await;
+    Some((store, actor, f, next, candidate, directory))
 }
 
 async fn study_admission(
@@ -1586,15 +1608,16 @@ async fn study_admission(
         ),
         "terminal Study cannot ACK without independent PORTFOLIO publication"
     );
-    assert!(store
-        .publish_scientific_result(
-            run.id,
-            |_, _| async { panic!("HOLD publisher cannot read Study") },
-            |_| async { panic!("HOLD publisher cannot publish Study") }
-        )
-        .await
-        .unwrap()
-        .is_none());
+    assert!(matches!(
+        store
+            .publish_scientific_result(
+                run.id,
+                |_, _| async { panic!("cancelled Study has no native output") },
+                |_| async { Err(StoreError::Integrity) },
+            )
+            .await,
+        Err(StoreError::Integrity)
+    ));
     let evaluations: i64 =
         sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")
             .bind(run.id.as_uuid())
@@ -1603,6 +1626,219 @@ async fn study_admission(
             .unwrap();
     assert_eq!(
         evaluations, 0,
-        "admission/cancellation is not scientific evidence"
+        "failed publication cannot seal an Evaluation"
     );
+    let cancelled = validation_publication::publish(store, f, run.id)
+        .await
+        .unwrap()
+        .resource;
+    let detail = store.evaluation(actor, cancelled).await.unwrap();
+    assert_eq!(
+        detail.evaluation_kind,
+        contracts::evidence::EvaluationKind::Portfolio
+    );
+    assert_eq!(detail.decision, contracts::evidence::Decision::Inconclusive);
+    assert!(store
+        .evaluation_metrics(actor, cancelled, &Default::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    store.acknowledge_run(&message).await.unwrap();
+    let replay = store
+        .publish_scientific_result(
+            run.id,
+            |_, _| async { panic!("receipt replay reads nothing") },
+            |_| async { panic!("receipt replay writes nothing") },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource, cancelled);
+
+    for infeasible in [false, true] {
+        let run = Box::pin(store.start_portfolio_study(
+            actor,
+            &format!("study-result-{infeasible}"),
+            &request,
+            |id, size| f.read(id, size),
+            |object| {
+                std::future::ready(
+                    f.objects
+                        .put(object.id, &object.bytes)
+                        .map_err(|_| StoreError::Integrity),
+                )
+            },
+        ))
+        .await
+        .unwrap()
+        .resource;
+        let message = validation_publication::message(pool, run.id).await;
+        let Some(ClaimResult::Leased(lease)) = store
+            .claim_native_run(&message, "study-publication", 60)
+            .await
+            .unwrap()
+        else {
+            panic!("native Study admission");
+        };
+        let job = store.native_job(run.id, &lease.fence).await.unwrap();
+        Box::pin(study_result::complete(
+            pool, store, f, &lease, &job, infeasible,
+        ))
+        .await;
+        assert!(matches!(
+            store.acknowledge_run(&message).await,
+            Err(StoreError::Conflict)
+        ));
+        let history: uuid::Uuid=sqlx::query_scalar("SELECT id FROM app.artifacts WHERE producer_run_id=$1 AND schema_name='qz.portfolio_history'").bind(run.id.as_uuid()).fetch_one(pool).await.unwrap();
+        let history: Id = history.to_string().try_into().unwrap();
+        let corrupted = store
+            .publish_scientific_result(
+                run.id,
+                |id, size| async move {
+                    let mut bytes = f.read(id, size).await?;
+                    if id == history {
+                        *bytes.last_mut().unwrap() ^= 1;
+                    }
+                    Ok(bytes)
+                },
+                |_| async { panic!("corrupt Arrow must not publish") },
+            )
+            .await;
+        assert!(
+            matches!(corrupted, Err(StoreError::Integrity)),
+            "{corrupted:?}"
+        );
+        assert!(matches!(
+            store
+                .publish_scientific_result(
+                    run.id,
+                    |id, size| f.read(id, size),
+                    |_| async { Err(StoreError::Integrity) }
+                )
+                .await,
+            Err(StoreError::Integrity)
+        ));
+        if infeasible {
+            let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            let revoked_at = now + chrono::Duration::seconds(3);
+            store
+                .revoke_data_grant(
+                    actor,
+                    "study-future-revocation",
+                    f.data.grant,
+                    &contracts::data::DataGrantRevoke {
+                        schema_version: SchemaV1,
+                        effective_at: Some(revoked_at),
+                        reason_code: "CONTROLLED_WITHDRAWAL".into(),
+                        reason: "Controlled test grant expires during publication".into(),
+                    },
+                )
+                .await
+                .unwrap();
+            let written = std::sync::Mutex::new(None);
+            let recorded = &written;
+            let failed = store
+                .publish_scientific_result(
+                    run.id,
+                    |id, size| f.read(id, size),
+                    |object| async move {
+                        let document: serde_json::Value =
+                            serde_json::from_slice(&object.bytes).unwrap();
+                        let until: chrono::DateTime<chrono::Utc> =
+                            serde_json::from_value(document["valid_until"].clone()).unwrap();
+                        assert!(
+                            until <= revoked_at,
+                            "known revocation caps the first publication window"
+                        );
+                        f.objects.put(object.id, &object.bytes).unwrap();
+                        *recorded.lock().unwrap() = Some(object.id);
+                        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                        Ok(())
+                    },
+                )
+                .await;
+            assert!(matches!(failed, Err(StoreError::Conflict)), "{failed:?}");
+            let count: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")
+                    .bind(run.id.as_uuid())
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
+            assert_eq!(count, 0, "expiry after write rolls back the Evaluation");
+            let object = written.into_inner().unwrap().unwrap();
+            assert!(store
+                .discard_unpublished_operator_artifact(object, |id| std::future::ready(
+                    f.objects
+                        .discard_unpublished(id)
+                        .map_err(|_| StoreError::Integrity)
+                ))
+                .await
+                .unwrap());
+        }
+        let left = Box::pin(validation_publication::publish(store, f, run.id));
+        let right = Box::pin(validation_publication::publish(store, f, run.id));
+        let (left, right) = tokio::join!(left, right);
+        let (left, right) = (left.unwrap(), right.unwrap());
+        assert_ne!(left.replayed, right.replayed);
+        assert_eq!(left.resource, right.resource);
+        let facts:(String,String,String,i64,bool)=sqlx::query_as("SELECT e.evaluation_kind,e.execution_status,e.decision,(SELECT count(*) FROM app.metric_values v WHERE v.evaluation_id=e.id),coalesce(e.valid_until>clock_timestamp(),false) FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.id=$1").bind(left.resource.as_uuid()).fetch_one(pool).await.unwrap();
+        assert_eq!(
+            facts,
+            (
+                "PORTFOLIO".into(),
+                "SUCCEEDED".into(),
+                "INCONCLUSIVE".into(),
+                if infeasible { 0 } else { 3 },
+                !infeasible
+            )
+        );
+        let view = store.evaluation(actor, left.resource).await.unwrap();
+        assert_eq!(view.subject_candidate_id, Some(candidate));
+        assert_eq!(
+            view.evaluation_kind,
+            contracts::evidence::EvaluationKind::Portfolio
+        );
+        let report = f
+            .read(view.report_artifact_id, {
+                let size: i64 =
+                    sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1")
+                        .bind(view.report_artifact_id.as_uuid())
+                        .fetch_one(pool)
+                        .await
+                        .unwrap();
+                DbCounter::new(size as u64).unwrap()
+            })
+            .await
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&report).unwrap();
+        assert_eq!(report["mode"], "STUDY");
+        assert_eq!(report["native_reports"].as_array().unwrap().len(), 3);
+        if infeasible {
+            assert!(report["valid_until"].is_null());
+        }
+        assert!(store
+            .candidate_evaluations(actor, candidate, &Default::default())
+            .await
+            .unwrap()
+            .items
+            .iter()
+            .any(|v| v.id == left.resource));
+        store.acknowledge_run(&message).await.unwrap();
+        let replay = store
+            .publish_scientific_result(
+                run.id,
+                |_, _| async { panic!("published Study replay reads no expired source") },
+                |_| async { panic!("published Study replay writes nothing") },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.resource, left.resource);
+    }
 }

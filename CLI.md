@@ -612,8 +612,10 @@ manual_cutoffs:null|Time[2..256]}，必须有组合阈值、同项目PORTFOLIO�
 仍须正式准入核对。列表/详情返回原完整计划，不读原始市场字节。
 Store的start_portfolio_study已实现受Operator授权的原计划准入，严格意图仅为
 schema_version/cycle_id/candidate_id/runtime_id/expected_runtime_revision/limits。
-它绑定原成员、费用和政策，复用预算/PGMQ；目前尚无正式HTTP/CLI命令及独立
-PORTFOLIO发表适配，不能调用HOLD发表器代替，终态也不能提前ACK。
+它绑定原成员、费用和政策，复用预算/PGMQ；目前尚无正式Study HTTP/CLI命令。
+可信Worker为原Study绑定发表独立PORTFOLIO评估，现有Candidate评估读取保留
+PORTFOLIO与FORWARD类型。完整三报告/Arrow及来源重验、发表回执后才允许ACK；
+取消/失败/不可行不产生PASS，不能调用HOLD结果替代Study或据此自动交付。
 原生组合指标适配支持portfolio范围的PORTFOLIO_DAILY_RETURN_MEAN、
 PORTFOLIO_RETURN_VOLATILITY、PORTFOLIO_SHARPE_RATIO；方法分别为
 nautilus-analysis.ReturnsAverage/ReturnsVolatility/SharpeRatio，版本0.63.0、

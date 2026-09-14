@@ -329,8 +329,13 @@ where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
 {
-    let row = sqlx::query("SELECT byte_count,producer_run_id,producer_attempt_id FROM app.artifacts WHERE id=$1 AND schema_name=$2 AND schema_version='1' AND media_type='application/json' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND access_class='EVALUATOR_ONLY'")
-        .bind(id.as_uuid()).bind(schema).fetch_one(&mut **tx).await?;
+    let media_type = if schema == contracts::portfolio_history::NAME {
+        contracts::portfolio_history::MEDIA_TYPE
+    } else {
+        "application/json"
+    };
+    let row = sqlx::query("SELECT byte_count,producer_run_id,producer_attempt_id FROM app.artifacts WHERE id=$1 AND schema_name=$2 AND schema_version='1' AND media_type=$3 AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND access_class='EVALUATOR_ONLY'")
+        .bind(id.as_uuid()).bind(schema).bind(media_type).fetch_one(&mut **tx).await?;
     if let Some((run, attempt)) = producer {
         if db::optional_id(&row, "producer_run_id")? != Some(run)
             || db::optional_id(&row, "producer_attempt_id")? != Some(attempt)

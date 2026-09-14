@@ -55,31 +55,7 @@ pub(super) async fn complete(
     quality.checked_at = now;
     quality.datasets[0].dataset_revision_id = dataset_revision_id;
     quality.datasets[0].selection = source_selection;
-    let start = request.selection.event_start_ns;
-    let end = DbCounter::new(request.selection.event_end_ns.get() - 1).unwrap();
-    let currency = &request.settings.base_currency;
-    let amount = format!(
-        "{} {currency}",
-        request.settings.starting_capital.as_decimal()
-    );
-    let (variant, account_type) = match request.settings.account_kind {
-        NativeAccountKind::Cash => ("Cash", "CASH"),
-        NativeAccountKind::Margin => ("Margin", "MARGIN"),
-    };
-    let summary = serde_json::json!({"venues.total":"1","orders.open":"0","orders.inflight":"0"});
-    let result:NativeSimulationResultV1=serde_json::from_value(serde_json::json!({
-        "schema_version":1,"native_version":"0.63.0","iterations":"1","events":"0","orders":"0","positions":"0","consumed_target_points":"1","summary":summary,
-        "statistics":[
-            {"group":"RETURNS","native_key":"Average (Return)","currency":null,"value":null,"reason_code":"NATIVE_STATISTIC_UNAVAILABLE"},
-            {"group":"RETURNS","native_key":"Returns Volatility (252 days)","currency":null,"value":null,"reason_code":"NATIVE_STATISTIC_UNAVAILABLE"},
-            {"group":"RETURNS","native_key":"Sharpe Ratio (252 days)","currency":null,"value":null,"reason_code":"NATIVE_STATISTIC_UNAVAILABLE"}
-        ],"returns_kind":"PORTFOLIO_DAILY","returns_status":"INSUFFICIENT_DATA","returns_reason":"PORTFOLIO_DAILY_RETURNS_UNAVAILABLE","returns":[],
-        "canonical_result":{"schema":"nautilus-backtest-result/v1","summary":summary,
-            "run":{"outcome":"completed","iterations":"1","total_events":"0","total_orders":"0","total_positions":"0","backtest_start_ns":start,"backtest_end_ns":end},
-            "accounts":[{(variant):{"base":{"id":"SIM-001","account_type":account_type,"base_currency":currency,"balances_starting":{(currency):amount}}}}],
-            "portfolio_snapshots":[{"account_id":"SIM-001","account_type":account_type,"base_currency":currency,"ts_event":start,"total_equity":[amount]}]
-        }
-    })).unwrap();
+    let result = intraday(&request);
     let outputs: Vec<_> = job
         .spec
         .requested_output_schemas
@@ -144,4 +120,32 @@ pub(super) async fn complete(
         )
         .await
         .unwrap();
+}
+
+pub(super) fn intraday(request: &NativeSimulationRequestV1) -> NativeSimulationResultV1 {
+    let start = request.selection.event_start_ns;
+    let end = DbCounter::new(request.selection.event_end_ns.get() - 1).unwrap();
+    let currency = &request.settings.base_currency;
+    let amount = format!(
+        "{} {currency}",
+        request.settings.starting_capital.as_decimal()
+    );
+    let (variant, account_type) = match request.settings.account_kind {
+        NativeAccountKind::Cash => ("Cash", "CASH"),
+        NativeAccountKind::Margin => ("Margin", "MARGIN"),
+    };
+    let summary = serde_json::json!({"venues.total":"1","orders.open":"0","orders.inflight":"0"});
+    serde_json::from_value(serde_json::json!({
+        "schema_version":1,"native_version":"0.63.0","iterations":"1","events":"0","orders":"0","positions":"0","consumed_target_points":request.target_points.len().to_string(),"summary":summary,
+        "statistics":[
+            {"group":"RETURNS","native_key":"Average (Return)","currency":null,"value":null,"reason_code":"NATIVE_STATISTIC_UNAVAILABLE"},
+            {"group":"RETURNS","native_key":"Returns Volatility (252 days)","currency":null,"value":null,"reason_code":"NATIVE_STATISTIC_UNAVAILABLE"},
+            {"group":"RETURNS","native_key":"Sharpe Ratio (252 days)","currency":null,"value":null,"reason_code":"NATIVE_STATISTIC_UNAVAILABLE"}
+        ],"returns_kind":"PORTFOLIO_DAILY","returns_status":"INSUFFICIENT_DATA","returns_reason":"PORTFOLIO_DAILY_RETURNS_UNAVAILABLE","returns":[],
+        "canonical_result":{"schema":"nautilus-backtest-result/v1","summary":summary,
+            "run":{"outcome":"completed","iterations":"1","total_events":"0","total_orders":"0","total_positions":"0","backtest_start_ns":start,"backtest_end_ns":end},
+            "accounts":[{(variant):{"base":{"id":"SIM-001","account_type":account_type,"base_currency":currency,"balances_starting":{(currency):amount}}}}],
+            "portfolio_snapshots":[{"account_id":"SIM-001","account_type":account_type,"base_currency":currency,"ts_event":start,"total_equity":[amount]}]
+        }
+    })).unwrap()
 }

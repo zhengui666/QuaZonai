@@ -1,4 +1,4 @@
-//! Original Candidate HOLD evidence, not a Release or downstream observation.
+//! Independent Study and Candidate HOLD evidence share publication, not qualification.
 use super::*;
 use contracts::{
     evidence::{Decision, EvidenceStatus},
@@ -6,6 +6,43 @@ use contracts::{
     runtime_jobs::{JobSpecV1, ResultManifestV1},
 };
 use domain::evidence::MetricGate;
+
+enum Intent {
+    Hold(CandidateSimulationRequestV1),
+    Study(PortfolioStudyRequestV1),
+}
+
+impl Intent {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Hold(_) => "FORWARD",
+            Self::Study(_) => "PORTFOLIO",
+        }
+    }
+    fn mode(&self) -> &'static str {
+        match self {
+            Self::Hold(_) => "HOLD",
+            Self::Study(_) => "STUDY",
+        }
+    }
+    async fn sources<R, Read>(
+        &self,
+        tx: &mut Tx<'_>,
+        run: &RunSnapshotV1,
+        task: &NativeTaskParametersV1,
+        image: &str,
+        read: &mut R,
+    ) -> Result<DateTime<Utc>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    {
+        match self {
+            Self::Hold(intent) => sources(tx, run, intent, task, image, read).await,
+            Self::Study(intent) => study::evidence_until(tx, run, intent, task, image, read).await,
+        }
+    }
+}
 
 pub(in crate::lifecycle) async fn publish<R, Read, P, Published>(
     mut tx: Tx<'_>,
@@ -20,25 +57,46 @@ where
     Published: std::future::Future<Output = Result<(), StoreError>>,
 {
     let run = &locked.run;
-    let Some(binding) = sqlx::query("SELECT s.*,t.origin,t.parameters_artifact_id,t.image_ref,d.row_count,d.pit_status,d.revision_policy,d.origin AS dataset_origin,c.project_id,m.required_evaluation_policy_id FROM app.candidate_simulation_tasks s JOIN app.run_native_tasks t ON t.run_id=s.run_id JOIN app.dataset_revisions d ON d.id=s.dataset_revision_id JOIN app.portfolio_candidates c ON c.id=s.candidate_id JOIN app.portfolio_mandates m ON m.id=c.mandate_id WHERE s.run_id=$1")
-        .bind(run.id.as_uuid()).fetch_optional(&mut *tx).await? else {
+    let bindings = sqlx::query("SELECT s.*,t.origin,t.parameters_artifact_id,t.image_ref,d.row_count,d.pit_status,d.revision_policy,d.origin AS dataset_origin,c.project_id,m.required_evaluation_policy_id FROM (SELECT *, 'FORWARD'::text AS evaluation_kind FROM app.candidate_simulation_tasks UNION ALL SELECT *, 'PORTFOLIO'::text AS evaluation_kind FROM app.portfolio_study_tasks) s JOIN app.run_native_tasks t ON t.run_id=s.run_id JOIN app.dataset_revisions d ON d.id=s.dataset_revision_id JOIN app.portfolio_candidates c ON c.id=s.candidate_id JOIN app.portfolio_mandates m ON m.id=c.mandate_id WHERE s.run_id=$1")
+        .bind(run.id.as_uuid()).fetch_all(&mut *tx).await?;
+    if bindings.is_empty() {
         tx.commit().await?;
         return Ok(None);
+    }
+    let [binding] = bindings.as_slice() else {
+        return Err(StoreError::Integrity);
     };
     let candidate = db::id(binding.try_get("candidate_id")?)?;
     let policy_id = db::id(binding.try_get("policy_id")?)?;
-    let request: CandidateSimulationRequestV1 =
-        serde_json::from_value(binding.try_get("request")?).map_err(|_| StoreError::Integrity)?;
-    if request.candidate_id != candidate
-        || request.input_set_id != run.input_set_id
-        || Some(request.cycle_id) != run.cycle_id
+    let request = match binding.try_get::<&str, _>("evaluation_kind")? {
+        "FORWARD" => Intent::Hold(
+            serde_json::from_value(binding.try_get("request")?)
+                .map_err(|_| StoreError::Integrity)?,
+        ),
+        "PORTFOLIO" => Intent::Study(
+            serde_json::from_value(binding.try_get("request")?)
+                .map_err(|_| StoreError::Integrity)?,
+        ),
+        _ => return Err(StoreError::Integrity),
+    };
+    let (subject, cycle) = match &request {
+        Intent::Hold(intent) => {
+            if intent.input_set_id != run.input_set_id {
+                return Err(StoreError::Integrity);
+            }
+            (intent.candidate_id, intent.cycle_id)
+        }
+        Intent::Study(intent) => (intent.candidate_id, intent.cycle_id),
+    };
+    if subject != candidate
+        || Some(cycle) != run.cycle_id
         || binding.try_get::<uuid::Uuid, _>("project_id")? != run.project_id.as_uuid()
         || binding.try_get::<uuid::Uuid, _>("required_evaluation_policy_id")? != policy_id.as_uuid()
     {
         return Err(StoreError::Integrity);
     }
-    let prior: Option<uuid::Uuid> = sqlx::query_scalar("SELECT e.id FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=$1 AND e.subject_candidate_id=$2 AND e.policy_id=$3 AND e.evaluation_kind='FORWARD'")
-        .bind(run.id.as_uuid()).bind(candidate.as_uuid()).bind(policy_id.as_uuid()).fetch_optional(&mut *tx).await?;
+    let prior: Option<uuid::Uuid> = sqlx::query_scalar("SELECT e.id FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=$1 AND e.subject_candidate_id=$2 AND e.policy_id=$3 AND e.evaluation_kind=$4")
+        .bind(run.id.as_uuid()).bind(candidate.as_uuid()).bind(policy_id.as_uuid()).bind(request.kind()).fetch_optional(&mut *tx).await?;
     if let Some(id) = prior {
         tx.commit().await?;
         return Ok(Some(CommandResult {
@@ -57,6 +115,13 @@ where
     if policy.project_id != run.project_id {
         return Err(StoreError::Integrity);
     }
+    if matches!(request, Intent::Study(_))
+        && (policy.portfolio_metric_requirements.is_none()
+            || policy.portfolio_study_plan.as_ref().map(|p| p.input_set_id)
+                != Some(run.input_set_id))
+    {
+        return Err(StoreError::Integrity);
+    }
     let evaluation = Id::new();
     let report_id = Id::new();
     let concluded_at = now(&mut tx).await?;
@@ -64,12 +129,19 @@ where
     let mut gate = MetricGate {
         evidence_status: EvidenceStatus::Incomplete,
         decision: Decision::Inconclusive,
-        reasons: vec![if run.state == RunState::Cancelled {
-            "CANDIDATE_SIMULATION_CANCELLED"
-        } else {
-            "CANDIDATE_SIMULATION_FAILED"
-        }
-        .into()],
+        reasons: vec![format!(
+            "{}_{}",
+            if matches!(request, Intent::Study(_)) {
+                "PORTFOLIO_STUDY"
+            } else {
+                "CANDIDATE_SIMULATION"
+            },
+            if run.state == RunState::Cancelled {
+                "CANCELLED"
+            } else {
+                "FAILED"
+            }
+        )],
     };
     let mut metrics = Vec::new();
     let mut reports = Vec::new();
@@ -101,18 +173,28 @@ where
         let parameters: NativeTaskParametersV1 =
             serde_json::from_slice(&parameters).map_err(|_| StoreError::Integrity)?;
         domain::execution::task(&spec, &parameters).map_err(|_| StoreError::Integrity)?;
-        let NativeTaskParametersV1::SimulateCandidate {
-            candidate_id,
-            dataset_revision_id,
-            request: native,
-            ..
-        } = &parameters
-        else {
-            return Err(StoreError::Integrity);
+        let dataset_revision_id = match (&request, &parameters) {
+            (
+                Intent::Hold(_),
+                NativeTaskParametersV1::SimulateCandidate {
+                    candidate_id,
+                    dataset_revision_id,
+                    ..
+                },
+            ) if *candidate_id == candidate => *dataset_revision_id,
+            (
+                Intent::Study(_),
+                NativeTaskParametersV1::StudyPortfolio {
+                    dataset_revision_id,
+                    ..
+                },
+            ) => *dataset_revision_id,
+            _ => return Err(StoreError::Integrity),
         };
-        if *candidate_id != candidate
-            || dataset_revision_id.as_uuid()
-                != binding.try_get::<uuid::Uuid, _>("dataset_revision_id")?
+        if dataset_revision_id.as_uuid()
+            != binding.try_get::<uuid::Uuid, _>("dataset_revision_id")?
+            || spec.run_id != run.id
+            || spec.input_set_id != run.input_set_id
         {
             return Err(StoreError::Integrity);
         }
@@ -134,20 +216,39 @@ where
             concluded_at,
         )
         .map_err(|_| StoreError::Integrity)?;
-        if manifest
-            .engine_versions
-            .get("candidate-simulation")
-            .map(String::as_str)
-            != Some("2")
-        {
+        let (engine, version) = match request {
+            Intent::Hold(_) => ("candidate-simulation", "2"),
+            Intent::Study(_) => ("portfolio-study", "6"),
+        };
+        if manifest.engine_versions.get(engine).map(String::as_str) != Some(version) {
             return Err(StoreError::Integrity);
+        }
+        if let NativeTaskParametersV1::StudyPortfolio {
+            request: native, ..
+        } = &parameters
+        {
+            for (engine, version, required) in [
+                ("portfolio-history", "1", true),
+                ("portfolio-calendar", "2", native.calendar.is_some()),
+                (
+                    "portfolio-rolling-liquidity",
+                    "1",
+                    native.rolling_liquidity.is_some(),
+                ),
+            ] {
+                if required
+                    && manifest.engine_versions.get(engine).map(String::as_str) != Some(version)
+                {
+                    return Err(StoreError::Integrity);
+                }
+            }
         }
         completed_at = manifest.finished_at;
         versions = Some(manifest.engine_versions.clone());
         let mut outputs = Vec::new();
         for output in &manifest.artifacts {
-            let ids:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT a.id FROM app.run_native_outputs o JOIN app.artifacts a ON a.id=o.artifact_id WHERE o.attempt_id=$1 AND a.producer_run_id=$2 AND a.producer_attempt_id=$1 AND a.schema_name=$3 AND a.schema_version='1' AND a.access_class='EVALUATOR_ONLY'")
-                .bind(attempt.as_uuid()).bind(run.id.as_uuid()).bind(&output.schema.name).fetch_all(&mut *tx).await?;
+            let ids:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT a.id FROM app.run_native_outputs o JOIN app.artifacts a ON a.id=o.artifact_id WHERE o.attempt_id=$1 AND a.producer_run_id=$2 AND a.producer_attempt_id=$1 AND a.schema_name=$3 AND a.schema_version='1' AND a.access_class='EVALUATOR_ONLY' AND o.remote_storage_ref=$4 AND a.media_type=$5 AND a.byte_count=$6 AND a.kind=$7 AND a.origin=$8")
+                .bind(attempt.as_uuid()).bind(run.id.as_uuid()).bind(&output.schema.name).bind(output.storage_ref.as_uuid()).bind(&output.media_type).bind(output.byte_count.get() as i64).bind(db::code(&output.kind)?).bind(binding.try_get::<&str,_>("origin")?).fetch_all(&mut *tx).await?;
             let [id] = ids.as_slice() else {
                 return Err(StoreError::Integrity);
             };
@@ -172,36 +273,71 @@ where
             &outputs,
         )
         .map_err(|_| StoreError::Integrity)?;
-        let simulation = outputs
-            .iter()
-            .find(|(o, _)| o.schema.name == "qz.native_simulation")
-            .ok_or(StoreError::Integrity)?;
         let quality = outputs
             .iter()
             .find(|(o, _)| o.schema.name == "qz.data_quality")
             .ok_or(StoreError::Integrity)?;
-        let result: NativeSimulationResultV1 =
-            serde_json::from_slice(&simulation.1).map_err(|_| StoreError::Integrity)?;
         let quality: NativeDataQualityReportV1 =
             serde_json::from_slice(&quality.1).map_err(|_| StoreError::Integrity)?;
+        let schema = match request {
+            Intent::Hold(_) => "qz.native_simulation",
+            Intent::Study(_) => "qz.portfolio_study",
+        };
+        let simulation = outputs
+            .iter()
+            .find(|(o, _)| o.schema.name == schema)
+            .ok_or(StoreError::Integrity)?;
         let source = reports
             .iter()
-            .find(|(name, _)| name == "qz.native_simulation")
+            .find(|(name, _)| name == schema)
             .ok_or(StoreError::Integrity)?
             .1;
-        let (values, capabilities) =
-            domain::execution::portfolio_simulation_metrics(evaluation, source, native, &result)
-                .map_err(|_| StoreError::Integrity)?;
-        gate = if let Some(requirements) = &policy.portfolio_metric_requirements {
-            domain::evidence::evaluate_metrics(evaluation, requirements, &values, &capabilities)?
+        let simulation = match &parameters {
+            NativeTaskParametersV1::SimulateCandidate {
+                request: native, ..
+            } => Some((
+                native.as_ref().clone(),
+                serde_json::from_slice::<NativeSimulationResultV1>(&simulation.1)
+                    .map_err(|_| StoreError::Integrity)?,
+            )),
+            NativeTaskParametersV1::StudyPortfolio { .. } => {
+                let result: NativePortfolioStudyResultV1 =
+                    serde_json::from_slice(&simulation.1).map_err(|_| StoreError::Integrity)?;
+                // output_bindings already rejects partial successful histories and
+                // mismatched Arrow rows; no simulation exists after infeasibility.
+                result.simulation_request.zip(result.simulation)
+            }
+            _ => return Err(StoreError::Integrity),
+        };
+        let observations = simulation
+            .as_ref()
+            .map_or(0, |(_, result)| result.returns.len());
+        gate = if let Some((native, result)) = &simulation {
+            let (values, capabilities) =
+                domain::execution::portfolio_simulation_metrics(evaluation, source, native, result)
+                    .map_err(|_| StoreError::Integrity)?;
+            metrics = values;
+            if let Some(requirements) = &policy.portfolio_metric_requirements {
+                domain::evidence::evaluate_metrics(
+                    evaluation,
+                    requirements,
+                    &metrics,
+                    &capabilities,
+                )?
+            } else {
+                MetricGate {
+                    evidence_status: EvidenceStatus::Incomplete,
+                    decision: Decision::Inconclusive,
+                    reasons: vec!["PORTFOLIO_CRITERIA_UNDEFINED".into()],
+                }
+            }
         } else {
             MetricGate {
                 evidence_status: EvidenceStatus::Incomplete,
                 decision: Decision::Inconclusive,
-                reasons: vec!["PORTFOLIO_CRITERIA_UNDEFINED".into()],
+                reasons: vec!["PORTFOLIO_STUDY_ALLOCATION_UNAVAILABLE".into()],
             }
         };
-        metrics = values;
         let actual = quality.datasets[0].row_count.get();
         let registered = counter(binding.try_get("row_count")?)?.get();
         source_rows = Some(quality.datasets[0].row_count);
@@ -212,10 +348,10 @@ where
         {
             incomplete.push("REGISTERED_DATA_MISSING".into());
         }
-        if result.returns.len() < policy.minimum_observations as usize {
+        if observations < policy.minimum_observations as usize {
             incomplete.push("INSUFFICIENT_DAILY_OBSERVATIONS".into());
         }
-        if policy.require_real_data
+        if (policy.require_real_data || matches!(request, Intent::Study(_)))
             && (binding.try_get::<String, _>("origin")? != "REAL"
                 || binding.try_get::<String, _>("dataset_origin")? != "REAL"
                 || binding.try_get::<String, _>("pit_status")? != "VERIFIED"
@@ -223,15 +359,15 @@ where
         {
             incomplete.push("REAL_POINT_IN_TIME_DATA_REQUIRED".into());
         }
-        match sources(
-            &mut tx,
-            run,
-            &request,
-            &parameters,
-            binding.try_get("image_ref")?,
-            &mut read,
-        )
-        .await
+        match request
+            .sources(
+                &mut tx,
+                run,
+                &parameters,
+                binding.try_get("image_ref")?,
+                &mut read,
+            )
+            .await
         {
             Ok(until) => target_until = Some(until),
             Err(StoreError::Invalid(_) | StoreError::Domain(_)) => {
@@ -271,28 +407,28 @@ where
         gate.reasons
             .push("CANDIDATE_EVIDENCE_EXPIRED_OR_INELIGIBLE".into());
     }
-    publication::document(&mut tx,run,report_id,"qz.candidate_evaluation",binding.try_get("origin")?,json!({"schema_version":1,"evaluation_id":evaluation,"candidate_id":candidate,"policy_id":policy_id,"run_id":run.id,"input_set_id":run.input_set_id,"evaluation_kind":"FORWARD","mode":"HOLD","execution_status":run.state,"evidence_status":gate.evidence_status,"decision":gate.decision,"reasons":gate.reasons,"native_manifest_artifact_id":manifest_id,"native_reports":reports,"native_versions":versions,"source_rows":source_rows,"concluded_at":concluded_at,"valid_until":valid_until}),&mut publish).await?;
+    publication::document(&mut tx,run,report_id,"qz.candidate_evaluation",binding.try_get("origin")?,json!({"schema_version":1,"evaluation_id":evaluation,"candidate_id":candidate,"policy_id":policy_id,"run_id":run.id,"input_set_id":run.input_set_id,"evaluation_kind":request.kind(),"mode":request.mode(),"execution_status":run.state,"evidence_status":gate.evidence_status,"decision":gate.decision,"reasons":gate.reasons,"native_manifest_artifact_id":manifest_id,"native_reports":reports,"native_versions":versions,"source_rows":source_rows,"concluded_at":concluded_at,"valid_until":valid_until}),&mut publish).await?;
     if let Some(until) = valid_until {
         let original = task.as_ref().ok_or(StoreError::Integrity)?;
-        sources(
-            &mut tx,
-            run,
-            &request,
-            original,
-            binding.try_get("image_ref")?,
-            &mut read,
-        )
-        .await
-        .map_err(|error| match error {
-            StoreError::Invalid(_) | StoreError::Domain(_) => StoreError::Conflict,
-            other => other,
-        })?;
+        request
+            .sources(
+                &mut tx,
+                run,
+                original,
+                binding.try_get("image_ref")?,
+                &mut read,
+            )
+            .await
+            .map_err(|error| match error {
+                StoreError::Invalid(_) | StoreError::Domain(_) => StoreError::Conflict,
+                other => other,
+            })?;
         if until <= now(&mut tx).await? {
             return Err(StoreError::Conflict);
         }
     }
-    sqlx::query("INSERT INTO app.evaluations(id,project_id,subject_candidate_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) VALUES($1,$2,$3,$4,$5,$6,'FORWARD',$7,$8,$9,$10,$10,$11,$12)")
-        .bind(evaluation.as_uuid()).bind(run.project_id.as_uuid()).bind(candidate.as_uuid()).bind(run.input_set_id.as_uuid()).bind(policy_id.as_uuid()).bind(run.id.as_uuid()).bind(db::code(&run.state)?).bind(db::code(&gate.evidence_status)?).bind(db::code(&gate.decision)?).bind(report_id.as_uuid()).bind(concluded_at).bind(valid_until).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO app.evaluations(id,project_id,subject_candidate_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) VALUES($1,$2,$3,$4,$5,$6,$13,$7,$8,$9,$10,$10,$11,$12)")
+        .bind(evaluation.as_uuid()).bind(run.project_id.as_uuid()).bind(candidate.as_uuid()).bind(run.input_set_id.as_uuid()).bind(policy_id.as_uuid()).bind(run.id.as_uuid()).bind(db::code(&run.state)?).bind(db::code(&gate.evidence_status)?).bind(db::code(&gate.decision)?).bind(report_id.as_uuid()).bind(concluded_at).bind(valid_until).bind(request.kind()).execute(&mut *tx).await?;
     for metric in metrics {
         sqlx::query("INSERT INTO app.metric_values(evaluation_id,metric_code,scope,value,status,reason_code,unit,period_start,period_end,observation_count,frequency,annualization_factor,method_id,method_version,source_artifact_id,higher_is_better) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
             .bind(evaluation.as_uuid()).bind(metric.metric_code).bind(metric.scope).bind(metric.value).bind(db::code(&metric.status)?).bind(metric.reason_code).bind(metric.unit).bind(metric.period_start).bind(metric.period_end).bind(metric.observation_count.get() as i64).bind(metric.frequency).bind(metric.annualization_factor).bind(metric.method_id).bind(metric.method_version).bind(metric.source_artifact_id.as_uuid()).bind(metric.higher_is_better).execute(&mut *tx).await?;

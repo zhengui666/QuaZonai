@@ -3,6 +3,38 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Independent portfolio Study publication, 2026-09-14
+
+The existing candidate publisher now handles original PORTFOLIO/STUDY bindings
+alongside FORWARD/HOLD. It verifies the accepted native task, terminal receipt,
+three original reports and Arrow history, then maps native simulation metrics to
+the frozen independent policy. Cancellation, infeasible allocation and missing
+daily observations cannot become PASS. Published receipts replay without reading
+expired sources; concurrent publication has one result. Source qualification and
+data-grant deadlines, including scheduled revocations, cap evidence validity and
+are rechecked after report storage. Existing Evaluation reads expose these exact
+original publications. No new queue, evaluation table or numerical engine exists.
+
+Verified on b7e81cb6 plus the frozen publisher patch, with serial editing/testing:
+
+- verify-BMx4rw: all four original qualified portfolio chains passed, including
+  Study cancellation, exact Arrow corruption rejection, write failure, concurrent
+  retry and grant expiry during publication with rollback and honest retry.
+- verify-aPuEdk: all evidence checks passed, including 139 Store and 24 HTTP/CLI
+  tests plus native validation and publication unit tests.
+- verify-s7H85U: policy regression suite passed. All three verifiers passed
+  workspace check, formatting and strict Clippy with unchanged source; isolated
+  PostgreSQL was stopped. Only this evidence note changed after verification.
+
+The debug-test stack overflow was removed by awaiting the old qualified chain
+and Study stage sequentially while retaining original files/database; no thread
+stack enlargement or production workaround was added. The Arrow corruption test
+damages the footer checked by the native reader, not an ignored prefix byte.
+Controlled native protocol results establish publication behavior, not actual
+market performance, REAL/PIT qualification or T42 acceptance. Formal Study
+HTTP/CLI/UI, remaining delivery contracts and full acceptance are still pending.
+No push, review request, merge or Issue closure occurred in this stage.
+
 ## Original-policy portfolio Study admission, 2026-09-14
 
 Store.start_portfolio_study now accepts only Cycle, Candidate, Runtime/revision

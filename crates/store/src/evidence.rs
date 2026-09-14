@@ -33,16 +33,16 @@ pub(crate) const EVALUATION: &str = "SELECT ev.*,report.origin,clock_timestamp()
 const CANDIDATE_EVALUATION: &str = "SELECT ev.*,report.origin,clock_timestamp() AS checked_at
  FROM app.evaluations ev
  JOIN app.evaluation_publications p ON p.evaluation_id=ev.id
- JOIN app.candidate_simulation_tasks s ON s.run_id=ev.run_id AND s.candidate_id=ev.subject_candidate_id AND s.policy_id=ev.policy_id
+ JOIN (SELECT run_id,candidate_id,policy_id,'FORWARD'::text AS evaluation_kind,'FORWARD'::text AS purpose FROM app.candidate_simulation_tasks UNION ALL SELECT run_id,candidate_id,policy_id,'PORTFOLIO'::text AS evaluation_kind,'PORTFOLIO'::text AS purpose FROM app.portfolio_study_tasks) s ON s.run_id=ev.run_id AND s.candidate_id=ev.subject_candidate_id AND s.policy_id=ev.policy_id AND s.evaluation_kind=ev.evaluation_kind
  JOIN app.portfolio_candidates c ON c.id=s.candidate_id AND c.project_id=ev.project_id
  JOIN app.candidate_publications cp ON cp.candidate_id=c.id
  JOIN app.runs r ON r.id=s.run_id AND r.project_id=ev.project_id AND r.input_set_id=ev.input_set_id AND r.state=ev.execution_status AND r.kind='PORTFOLIO_SIMULATE'
- JOIN app.input_sets i ON i.id=r.input_set_id AND i.project_id=ev.project_id AND i.purpose='FORWARD' AND i.frozen_at IS NOT NULL
+ JOIN app.input_sets i ON i.id=r.input_set_id AND i.project_id=ev.project_id AND i.purpose=s.purpose AND i.frozen_at IS NOT NULL
  JOIN app.run_terminal_receipts receipt ON receipt.run_id=r.id AND receipt.terminal_state=r.state AND receipt.attempt_id IS NOT DISTINCT FROM r.active_attempt_id
  JOIN app.artifacts report ON report.id=ev.report_artifact_id AND report.id=ev.method_versions_artifact_id AND report.project_id=ev.project_id
    AND report.producer_run_id=r.id AND report.producer_attempt_id IS NOT DISTINCT FROM r.active_attempt_id
    AND report.schema_name='qz.candidate_evaluation' AND report.schema_version='1' AND report.access_class='EVALUATOR_ONLY'
- WHERE ev.evaluation_kind='FORWARD'";
+ WHERE ev.evaluation_kind IN ('FORWARD','PORTFOLIO')";
 
 pub(crate) async fn authorize(
     tx: &mut Tx<'_>,
