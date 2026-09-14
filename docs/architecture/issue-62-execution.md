@@ -4842,3 +4842,14 @@ verify-fFQRUg的domain144及HTTP25项通过、Store27通过1失败；唯一失�
 新增原生Store/PGMQ链路用例rebalance_new_cutoff_requires_new_evaluation_and_preserves_original_package：使用已有真实命令产生的两个原资格，在新Forward cutoff发布新Candidate/LAST_TARGET来源，核对原cohort不变、输入与目标产物不同；旧Candidate的Evaluation以release_portfolio_evaluation拒绝新包，新Candidate需自己的PORTFOLIO Study/Evaluation；新Release/包/asof独立，旧包字节、旧Release和旧Candidate完整读取相等，未新增Mission、Approval或Offer。上游科学声明仍是受控fixture，证明事务与版本关联，不宣称真实市场科学或全自动T33/T42验收。
 
 verify-wy9PBE及verify-B47lle均通过编译/格式/Clippy，单项新测试栈溢出失败；将大型研究准备和双包断言分段Box::pin后，verify-eCG9RP通过相同workspace/all-targets编译、格式、严格Clippy及该单项原生数据库测试（7.82秒），未增加线程栈或削减业务断言。源文件在验证期间不变，隔离PostgreSQL已停止。当前仍未push/review/merge/close。
+
+
+### 2026-09-15：可信Worker的有界再平衡Build
+
+DESIGN补充冻结政策下的确定性构建来源、日程、原Cycle/Runtime/限额、实际cutoff及失败/日额度规则。人工与自动Build复用同一事务准入核心；自动入口不接Actor或人工grant，使用RUNTIME产物来源并在发布后重验原政策/资格/期限。Worker::process_automation接入该阶段及等待Project锁后的未引用文件清理。新不可变portfolio_rebalances表绑定原policy/sourceCandidate/input/Run，原生约束防跨项目/下游/时间关联，project/mandate/downstream/实际cutoff唯一；新policy UUID不清零，已有非失败后继不重复入队。日历使用原Universe日历，不推测交易日。
+
+发现InputSet cutoff只是原数据selection cutoff的上界，修正调度使用与Candidate相同的实际时点，并在核心准入后再次比较。新增真实Store/PGMQ测试从原命令的两个资格、固定间隔Mandate、独立Study/Release及人授权政策开始，覆盖旧数据换新InputSet不推进、写文件失败回滚、双Worker调用只一个Run、原成员/修订/限额、无Operator回执、不可变记录、可领取原生Run且未新增Release/Approval。研究/包准备分段Box::pin，未增线程栈；受控模型/市场响应只证明原生事务，不代替实际数值/真实授权数据或T42。
+
+compile verify-AaU3R3通过；verify-J3pPwH仅测试Cycle Option断言编译失败，修正测试类型；verify-g22syJ新场景被正确拒绝automation_downstream，改为原生命令登记PAPER/LIVE测试下游而未放宽产品Gate。verify-XhxVbv通过两项；实际cutoff修正后verify-1kZckX通过workspace/all-targets、格式、严格Clippy及2项原生数据库检查（23.10秒）。最终verify-f0NSng再次通过同样静态检查和原生组合HTTP/CLI/Worker回归31项（10+21），源不变、隔离PG均停止。
+
+固定间隔正向Store链已验证；实际Worker非MANUAL正向调用、Calendar调度原文件场景、政策失效/UTC配额更多竞态仍需补强。自动Study及自动新Release仍待接入；运行来源在Web/CLI的完整可见性也须随完整T33/T42验收补齐。没有push/review/merge/close，未将本阶段视为完整自动再平衡。

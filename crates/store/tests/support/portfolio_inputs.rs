@@ -100,6 +100,7 @@ pub(super) async fn request(
     f: &cycle_support::Fixture,
     cycle: Id,
     environment: ForwardEnvironmentV1,
+    interval: Option<u32>,
 ) -> PortfolioBuildRequestV1 {
     let context = &f.freeze.execution_context;
     let ProbePreparation::Pending(ticket) = store
@@ -146,9 +147,13 @@ pub(super) async fn request(
                     name: "Controlled weights source".into(),
                     endpoint: "https://downstream.example".into(),
                     accepted_package_versions: vec![PackageSchemaVersion::V1],
-                    environments: match environment {
-                        ForwardEnvironmentV1::Paper => DownstreamEnvironments::Paper,
-                        ForwardEnvironmentV1::Live => DownstreamEnvironments::Live,
+                    environments: if interval.is_some() {
+                        DownstreamEnvironments::Both
+                    } else {
+                        match environment {
+                            ForwardEnvironmentV1::Paper => DownstreamEnvironments::Paper,
+                            ForwardEnvironmentV1::Live => DownstreamEnvironments::Live,
+                        }
                     },
                     enabled: true,
                     development_http: false,
@@ -312,8 +317,12 @@ pub(super) async fn request(
                     constraints,
                     rebalance_schedule: RebalanceScheduleV1 {
                         schema_version: SchemaV1,
-                        kind: RebalanceKind::Manual,
-                        interval_seconds: None,
+                        kind: if interval.is_some() {
+                            RebalanceKind::FixedInterval
+                        } else {
+                            RebalanceKind::Manual
+                        },
+                        interval_seconds: interval,
                         calendar_ref: None,
                         timezone: "UTC".into(),
                         session_offset_seconds: None,

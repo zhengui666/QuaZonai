@@ -242,6 +242,28 @@ Forward 按 downstream/external_message_id 去重；保留 stream/sequence/revis
 
 确定性再平衡和研究分开：已合格 Alpha 在新 cutoff 计算新 Candidate/Release，所有新包照常校验、授权；不修改已批包，也不强迫 LLM 每次发明策略。Current weights 来源明确 FORWARD_SNAPSHOT/LAST_TARGET/NONE；LAST_TARGET 是假设，不冒称真实账户仓位。
 
+### 确定性再平衡的可信构建准入
+
+可信Worker只在当前ACTIVE项目、有效未撤销且允许新再平衡的原冻结政策下推进；
+以当前Mandate最新原Release的Candidate/原Build请求作为固定成员、Runtime修订、
+环境和单任务限额来源，不回退旧Release或改用新模型/资格。当前Cycle仍须RUNNING且
+原冻结Brief政策匹配；无可用预算时不启动新研究或借用其他Cycle。MANUAL不自动运行。
+FIXED_INTERVAL需新cutoff至少晚于原Candidate一个原间隔；CALENDAR_SESSION只取原
+Universe已登记的日历时段及原偏移，不推测节假日。选择同项目/Universe最新已冻结
+Forward输入且cutoff已到，不覆盖它；有效调仓时点取InputSet上界与原数据selection cutoff
+的较早者，按Candidate原微秒规则收敛，不允许换InputSet编号推进旧数据时点。最新输入
+或原资格不合法时失败，不回退旧输入。
+权重只使用政策原下游同环境、在cutoff已可用的最新原快照，无快照不偷偷换LAST_TARGET。
+所有模型/来源/期限/许可/预算检查复用人工Build的同一事务核心，参数创建者为RUNTIME，
+不得伪造Operator/人工命令回执。提交前再次核对原政策与来源时间窗。
+
+每个project/mandate/downstream/decision_cutoff最多一次自动Build，独立不可变记录绑定
+原policy、来源Candidate、原InputSet/快照及Run；换政策UUID或重投不能重置。原Build失败
+不自动重跑同cutoff，保留原Run供诊断。每日自动Build尝试数和已有不同Candidate交付数
+均受当前政策日额度限制，防止失败轮询耗尽预算；Project行锁串行化跨Worker准入。
+Build成功仅产生候选；后续仍需原政策独立Study/PASS、新Release及各自Paper/Live审批，
+不能因自动来源跳过这些步骤。实现证据与尚未接通的阶段记在执行记录，不以此合同代替交付。
+
 ## 9. Ant Design 产品面与浏览器合同
 
 主导航：研究 / Alpha / 组合 / 交付 / 运行 / 设置。React/TypeScript + 官方 antd，不是 Ant Design Vue，不保留 Radix/自制基础组件双体系。ConfigProvider + App 统一 locale/theme/token，官方 icons；默认 ECharts 单图表方案，表格替代、真实单位和证据下载依据。保留合适业务复合组件、React Query 和测试经验，不 fork 基础组件或另建 form/theme。

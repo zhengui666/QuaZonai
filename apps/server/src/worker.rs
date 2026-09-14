@@ -265,6 +265,7 @@ impl Worker {
         if let Ok(Some(offer)) = &live {
             tracing::info!(handoff_id=%offer.id,"original Paper evidence produced a Live offer");
         }
+        let rebalance = self.process_rebalance_build(project).await;
         let feedback = self.process_forward(project).await;
         let wake = self.process_wake(project).await;
         (
@@ -273,9 +274,61 @@ impl Worker {
                 .map(|_| ())
                 .map_err(WorkerFailure::from)
                 .and(live.map(|_| ()).map_err(WorkerFailure::from))
+                .and(rebalance)
                 .and(feedback)
                 .and(wake),
         )
+    }
+
+    async fn process_rebalance_build(&self, project: Id) -> Result<(), WorkerFailure> {
+        let reading = self.objects.clone();
+        let publishing = self.objects.clone();
+        let mut allocated = Vec::new();
+        let result = self
+            .store
+            .automate_rebalance_build(
+                project,
+                move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+                |object| {
+                    allocated.push(object.id);
+                    let objects = publishing.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+            )
+            .await;
+        for id in allocated.into_iter().filter(|_| result.is_err()) {
+            let objects = self.objects.clone();
+            if self
+                .store
+                .discard_unpublished_forward_artifact(project, id, move |id| async move {
+                    tokio::task::spawn_blocking(move || objects.discard_unpublished(id))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                })
+                .await
+                .is_err()
+            {
+                tracing::warn!(artifact_id=%id, "Rebalance parameter cleanup deferred");
+            }
+        }
+        if let Some(run) = result? {
+            tracing::info!(run_id=%run.id, "original frozen policy queued a bounded rebalance Build");
+        }
+        Ok(())
     }
 
     async fn process_forward(&self, project: Id) -> Result<(), WorkerFailure> {

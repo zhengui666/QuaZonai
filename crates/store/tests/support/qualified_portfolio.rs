@@ -7,6 +7,9 @@ use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
 #[path = "approval_checks.rs"]
 mod approvals;
 
+#[path = "automatic_rebalance.rs"]
+mod automatic_rebalance;
+
 #[path = "portfolio_inputs.rs"]
 mod inputs;
 #[path = "portfolio_result.rs"]
@@ -176,6 +179,32 @@ pub(super) async fn qualified_chain_policy(
     Id,
     tempfile::TempDir,
 )> {
+    Box::pin(qualified_chain_scheduled(
+        pool,
+        liquidity,
+        environment,
+        allowed_uses,
+        customize,
+        None,
+    ))
+    .await
+}
+
+pub(super) async fn qualified_chain_scheduled(
+    pool: PgPool,
+    liquidity: cycle_support::Liquidity,
+    environment: contracts::forward::ForwardEnvironmentV1,
+    allowed_uses: contracts::research::DataUse,
+    customize: fn(&mut contracts::research::EvaluationPolicyCreate),
+    interval: Option<u32>,
+) -> Option<(
+    Store,
+    store::authority::Actor,
+    cycle_support::Fixture,
+    contracts::portfolio::PortfolioBuildRequestV1,
+    Id,
+    tempfile::TempDir,
+)> {
     let expected_origin = if environment == contracts::forward::ForwardEnvironmentV1::Paper {
         "SYNTHETIC"
     } else {
@@ -187,24 +216,31 @@ pub(super) async fn qualified_chain_policy(
         integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap(),
     );
     let (store, actor) = research_support::operator(&pool).await;
-    let f = cycle_support::setup_with_policy(
+    let f = cycle_support::setup_with_policy_plan(
         &pool,
         &store,
         &actor,
         objects,
         (DataOrigin::Real, allowed_uses),
         liquidity,
-        |policy| {
-            policy.selection.candidate_count = 2;
-            policy.maximum_sealed_uses_per_lineage = 2;
-            policy.sealed_metric_requirements[0].threshold_low = Some("0.1".parse().unwrap());
-            let mut portfolio = policy.metric_requirements[0].clone();
-            portfolio.metric_code = "PORTFOLIO_DAILY_RETURN_MEAN".into();
-            portfolio.scope = "portfolio".into();
-            portfolio.method_allowlist = vec!["nautilus-analysis.ReturnsAverage".into()];
-            policy.portfolio_metric_requirements = Some(vec![portfolio]);
-            customize(policy);
-        },
+        (
+            |policy| {
+                policy.selection.candidate_count = 2;
+                policy.maximum_sealed_uses_per_lineage = 2;
+                policy.sealed_metric_requirements[0].threshold_low = Some("0.1".parse().unwrap());
+                let mut portfolio = policy.metric_requirements[0].clone();
+                portfolio.metric_code = "PORTFOLIO_DAILY_RETURN_MEAN".into();
+                portfolio.scope = "portfolio".into();
+                portfolio.method_allowlist = vec!["nautilus-analysis.ReturnsAverage".into()];
+                policy.portfolio_metric_requirements = Some(vec![portfolio]);
+                customize(policy);
+            },
+            |policy| {
+                if interval.is_some() {
+                    policy.portfolio_study_plan.as_mut().unwrap().manual_cutoffs = None;
+                }
+            },
+        ),
     )
     .await;
     let (store, actor, f, cycle, preparation) =
@@ -393,7 +429,7 @@ pub(super) async fn qualified_chain_policy(
     let counts: (i64,i64,i64) = sqlx::query_as("SELECT count(*),count(DISTINCT q.alpha_version_id),count(DISTINCT q.qualifying_evaluation_id) FROM app.qualifications q JOIN app.alpha_versions v ON v.id=q.alpha_version_id JOIN app.alphas a ON a.id=v.alpha_id AND a.active_version_id=v.id AND a.lifecycle='QUALIFIED' WHERE v.project_id=$1")
         .bind(f.data.project.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (2, 2, 2));
-    let request = inputs::request(&pool, &store, &actor, &f, cycle, environment).await;
+    let request = inputs::request(&pool, &store, &actor, &f, cycle, environment, interval).await;
     let origin:String=sqlx::query_scalar("SELECT a.origin FROM app.execution_assumptions e JOIN app.artifacts a ON a.id=e.fee_schedule_artifact_id WHERE e.id=$1")
         .bind(f.data.assumptions.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(

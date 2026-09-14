@@ -76,6 +76,30 @@ pub async fn setup_with_policy(
     liquidity: Liquidity,
     customize: impl FnOnce(&mut EvaluationPolicyCreate),
 ) -> Fixture {
+    setup_with_policy_plan(
+        pool,
+        store,
+        actor,
+        objects,
+        (origin, allowed_uses),
+        liquidity,
+        (customize, |_| {}),
+    )
+    .await
+}
+
+pub async fn setup_with_policy_plan(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    objects: Arc<ArtifactStore>,
+    (origin, allowed_uses): (DataOrigin, DataUse),
+    liquidity: Liquidity,
+    (customize, plan): (
+        impl FnOnce(&mut EvaluationPolicyCreate),
+        impl FnOnce(&mut EvaluationPolicyCreate),
+    ),
+) -> Fixture {
     let mut data = research_support::setup(pool, store, actor).await;
     let capabilities = runtime_support::capabilities(Utc::now());
     let image = &capabilities.image_refs[0].image_ref;
@@ -283,6 +307,7 @@ pub async fn setup_with_policy(
         policy_request.portfolio_study_plan =
             Some(cycle_data::study_plan(pool, store, actor, &data, revision, &objects).await);
     }
+    plan(&mut policy_request);
     let policy = store
         .create_evaluation_policy(actor, &Id::new().to_string(), &policy_request)
         .await
