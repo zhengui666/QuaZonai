@@ -335,5 +335,61 @@ async fn frozen_export_browser_and_cli_import_preserve_original_history_and_scop
             404
         );
     }
+    let record = mappings["items"][0]["id"].as_str().unwrap();
+    let field_list = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "fields", report_id, record],
+        Value::Null,
+    )
+    .await;
+    assert!(field_list.status.success());
+    let field_list: Value = serde_json::from_slice(&field_list.stdout).unwrap();
+    assert!(field_list["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["name"] == "id" && f["character_count"] == "16"));
+    assert!(!field_list["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["name"] == "payload"));
+    let content = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "field", report_id, record, "id"],
+        Value::Null,
+    )
+    .await;
+    assert!(content.status.success());
+    let content: Value = serde_json::from_slice(&content.stdout).unwrap();
+    assert_eq!(content["text"], "9007199254740993");
+    assert_eq!(content["offset"], "0");
+    let no_content = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "field", report_id, record, "payload"],
+        Value::Null,
+    )
+    .await;
+    assert!(!no_content.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&no_content.stderr).unwrap()["status"],
+        404
+    );
+    let dry_id = dry.body["resource"]["id"].as_str().unwrap();
+    let denied = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "field", dry_id, record, "id"],
+        Value::Null,
+    )
+    .await;
+    assert!(!denied.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&denied.stderr).unwrap()["status"],
+        404
+    );
     task.abort();
 }

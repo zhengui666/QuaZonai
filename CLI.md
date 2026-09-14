@@ -1061,3 +1061,13 @@ DSN、源报告或自报 PASS。CLI 使用已有 `client` 连接参数、凭据�
 CLI 仍仅限本有效凭据的报告，猜测其他报告编号或游标不扩大权限。dry-run映射为空，
 重复导入仍指向首次导入的相同追溯编号。原主键值是字符串，不能转换成JS浮点数。
 这些查询不返回CSV正文、秘密或宿主路径，也不代表原历史字段/产物完整验收。
+
+
+`migrate fields REPORT_UUID RECORD_UUID` 列出本报告成员已导入字段及字符数；
+`migrate field REPORT_UUID RECORD_UUID FIELD_NAME [--offset 0]` 读取一段原内容，
+按返回的 next_offset 继续。对应 GET `/api/v2/migrations/reports/{id}/records/{record}/fields`
+及 `/field?name=FIELD_NAME&offset=0`。每段最多16,384个Unicode字符；偏移/总长度是
+整数字符串，不是字节数。NULL的text/total_characters均为null；空字符串的text为
+空串、total_characters为"0"。无next_offset才是末段，不能把一段视作整个长字段。
+每次读取仍核对凭据和批次成员；被排除字段和其他批次记录返回404，越界偏移返回422。
+数据库可能为每段解压原大字段，响应分段限制应用内存，不承诺大字段的随机读取耗时。

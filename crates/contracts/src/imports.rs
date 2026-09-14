@@ -269,3 +269,43 @@ pub enum HistoricalDispositionV1 {
     ReadOnlyHistory,
     LegacyRevalidationRequired,
 }
+
+pub const HISTORICAL_FIELD_CHARS: u32 = 16_384;
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalFieldSummaryV1 {
+    pub name: String,
+    pub character_count: Option<DbCounter>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalRecordFieldsV1 {
+    pub schema_version: SchemaV1,
+    pub report_id: Id,
+    pub record_id: Id,
+    pub fields: Vec<HistoricalFieldSummaryV1>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalFieldQueryV1 {
+    #[schema(min_length = 1, max_length = 63)]
+    pub name: String,
+    #[serde(default = "zero_offset")]
+    pub offset: DbCounter,
+}
+fn zero_offset() -> DbCounter {
+    DbCounter::ZERO
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalFieldContentV1 {
+    pub schema_version: SchemaV1,
+    pub report_id: Id,
+    pub record_id: Id,
+    pub name: String,
+    pub offset: DbCounter,
+    pub total_characters: Option<DbCounter>,
+    #[schema(max_length = 16384)]
+    pub text: Option<String>,
+    pub next_offset: Option<DbCounter>,
+}

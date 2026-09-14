@@ -1364,6 +1364,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/migrations/reports/{id}/records/{record}/field": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_historical_record_field"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/migrations/reports/{id}/records/{record}/fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_historical_record_fields"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/migrations/reports/{id}/source": {
         parameters: {
             query?: never;
@@ -4164,6 +4196,20 @@ export interface components {
         HistoricalDispositionV1: "READ_ONLY_HISTORY" | "LEGACY_REVALIDATION_REQUIRED";
         /** @enum {string} */
         HistoricalExclusionReasonV1: "CREDENTIALS" | "INTERNAL_CHAT" | "SEALED_EVIDENCE" | "UNREVIEWED_FIELDS" | "UNSUPPORTED_SCHEMA";
+        HistoricalFieldContentV1: {
+            name: string;
+            next_offset?: null | components["schemas"]["DbCounter"];
+            offset: components["schemas"]["DbCounter"];
+            record_id: components["schemas"]["Id"];
+            report_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            text?: string | null;
+            total_characters?: null | components["schemas"]["DbCounter"];
+        };
+        HistoricalFieldSummaryV1: {
+            character_count?: null | components["schemas"]["DbCounter"];
+            name: string;
+        };
         HistoricalForeignKeyCheckV1: {
             constraint: string;
             match_type: components["schemas"]["HistoricalForeignKeyMatchV1"];
@@ -4212,6 +4258,12 @@ export interface components {
             values: {
                 [key: string]: string;
             };
+        };
+        HistoricalRecordFieldsV1: {
+            fields: components["schemas"]["HistoricalFieldSummaryV1"][];
+            record_id: components["schemas"]["Id"];
+            report_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
         };
         /** @description Native CSV projections accompany the retained complete backup. Never an import result. */
         HistoricalRowExportV1: {
@@ -13346,6 +13398,137 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_HistoricalMappingViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_historical_record_field: {
+        parameters: {
+            query: {
+                name: string;
+                offset?: components["schemas"]["DbCounter"];
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+                record: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalFieldContentV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_historical_record_fields: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+                record: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalRecordFieldsV1"];
                 };
             };
             401: {

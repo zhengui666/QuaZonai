@@ -5147,3 +5147,40 @@ Live GitHub reread: PR63 OPEN Draft, remote head
 37e5713ed6252e5935787201914d42f241582a4f; Issue62 OPEN. No push/merge/closure.
 Original field-content access, artifact association, complete semantic/sealed
 lineage, real old backup/recovery and the remaining full delivery gates continue.
+
+
+### 2026-09-15 bounded original historical field reads
+
+Added report/member-scoped field directories and native PostgreSQL Unicode
+substring reads, at most 16,384 characters per response. Nullable character
+counts preserve SQL NULL versus empty text, offsets remain DbCounter strings,
+and dates/numbers remain original canonical text. Every request checks the
+current report authority and exact batch membership; excluded/unknown fields
+return 404. SQL parameters carry names and offsets; no arbitrary SQL or paths.
+PostgreSQL can detoast a large value per page; this bounds application responses,
+not database work independently of source size.
+
+Native CLI migrate fields/field and the mapping-row field viewer use these
+contracts. The browser displays escaped plain text, checks response identity and
+character offsets, and supports forward/backward segment navigation.
+web-verify-RFaebK passed reproducible generation with handwritten sources
+unchanged, typecheck, 505 Vitest plus 5 PWA file tests, wire checks, production
+build and 42 migration/console browser checks across three widths. Initial
+web-verify-sTIgjS failed the new English expand-row selector in the Chinese UI;
+it was corrected to the actual accessible name.
+
+verify-crMKaB passed workspace/all-target compile, formatting and strict Clippy,
+25 integrations tests, 5 native Store import tests, 8 source/artifact tests,
+1 actual browser/CLI/TCP/PostgreSQL test and 2 OpenAPI reference checks (41).
+The new native test reconstructs 50,000 Unicode characters, including supplementary
+characters, combining marks and newlines, with exact UTF-8 byte equality; tests
+also distinguish NULL/empty, preserve UUIDv4/bigint text, reject excluded fields,
+invalid offsets, another batch and invalid authority. Initial verify-IfnCoj
+correctly returned 404 for the test's excluded lease_owner field; empty-string
+coverage was moved to the allowed kind field and explicit lease_owner rejection
+was retained. No projection policy was weakened. Source unchanged, owned PG stopped.
+
+These are controlled source and presentation fixtures, not the user's actual old
+backup or complete T42. Historical artifact association, complete semantic/sealed
+lineage, real backup/recovery and remaining delivery gates still require work.
+No push, latest-head remote review/CI, merge or Issue closure is claimed.

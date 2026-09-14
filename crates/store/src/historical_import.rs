@@ -357,6 +357,91 @@ impl Store {
         tx.commit().await?;
         Ok(result)
     }
+
+    pub async fn historical_record_fields(
+        &self,
+        actor: &Actor,
+        report: Id,
+        record: Id,
+    ) -> Result<HistoricalRecordFieldsV1, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        readable_record(&mut tx, actor, report, record).await?;
+        let rows = sqlx::query("SELECT v.key AS name,char_length(v.value)::bigint AS characters FROM app.historical_records r CROSS JOIN LATERAL jsonb_each_text(r.fields) v WHERE r.id=$1 ORDER BY v.key")
+            .bind(record.as_uuid()).fetch_all(&mut *tx).await?;
+        let fields = rows
+            .iter()
+            .map(|row| {
+                Ok(HistoricalFieldSummaryV1 {
+                    name: row.try_get("name")?,
+                    character_count: row
+                        .try_get::<Option<i64>, _>("characters")?
+                        .map(|v| count(v.try_into().map_err(|_| StoreError::Integrity)?))
+                        .transpose()?,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        tx.commit().await?;
+        Ok(HistoricalRecordFieldsV1 {
+            schema_version: SchemaV1,
+            report_id: report,
+            record_id: record,
+            fields,
+        })
+    }
+
+    pub async fn historical_record_field(
+        &self,
+        actor: &Actor,
+        report: Id,
+        record: Id,
+        query: &HistoricalFieldQueryV1,
+    ) -> Result<HistoricalFieldContentV1, StoreError> {
+        if query.name.is_empty() || query.name.len() > 63 {
+            return Err(StoreError::Invalid("historical_field_name"));
+        }
+        let mut tx = self.pool.begin().await?;
+        readable_record(&mut tx, actor, report, record).await?;
+        let length: Option<i64> = sqlx::query_scalar("SELECT char_length(fields->>$2)::bigint FROM app.historical_records WHERE id=$1 AND fields ? $2")
+            .bind(record.as_uuid()).bind(&query.name).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        let total = length
+            .map(|v| count(v.try_into().map_err(|_| StoreError::Integrity)?))
+            .transpose()?;
+        if query.offset.get() > total.unwrap_or(DbCounter::ZERO).get() {
+            return Err(StoreError::Invalid("historical_field_offset"));
+        }
+        let start = i32::try_from(query.offset.get() + 1)
+            .map_err(|_| StoreError::Invalid("historical_field_offset"))?;
+        // Native Unicode substring keeps the application response bounded. PostgreSQL
+        // may detoast a large field per page; no copy of the entire value crosses SQLx.
+        let text: Option<String> = sqlx::query_scalar(
+            "SELECT substring(fields->>$2 FROM $3 FOR $4) FROM app.historical_records WHERE id=$1",
+        )
+        .bind(record.as_uuid())
+        .bind(&query.name)
+        .bind(start)
+        .bind(HISTORICAL_FIELD_CHARS as i32)
+        .fetch_one(&mut *tx)
+        .await?;
+        let end = query.offset.get()
+            + text
+                .as_deref()
+                .map_or(0, |value| value.chars().count() as u64);
+        let next = total
+            .filter(|v| end < v.get())
+            .map(|_| count(end))
+            .transpose()?;
+        tx.commit().await?;
+        Ok(HistoricalFieldContentV1 {
+            schema_version: SchemaV1,
+            report_id: report,
+            record_id: record,
+            name: query.name.clone(),
+            offset: query.offset,
+            total_characters: total,
+            text,
+            next_offset: next,
+        })
+    }
 }
 
 async fn read_scope(
@@ -385,4 +470,22 @@ async fn readable_report(
     let scope = read_scope(tx, actor).await?;
     sqlx::query_scalar("SELECT r.result FROM app.historical_import_reports r WHERE r.id=$1 AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM app.command_receipts c WHERE c.principal_scope=$2 AND c.operation='MIGRATION_IMPORT' AND c.resource_id=r.id))")
         .bind(id.as_uuid()).bind(scope).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)
+}
+
+async fn readable_record(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &Actor,
+    report: Id,
+    record: Id,
+) -> Result<(), StoreError> {
+    readable_report(tx, actor, report).await?;
+    let member: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.historical_import_members WHERE report_id=$1 AND record_id=$2)")
+        .bind(report.as_uuid()).bind(record.as_uuid()).fetch_one(&mut **tx).await?;
+    if !member {
+        return Err(StoreError::NotFound);
+    }
+    sqlx::query("SET LOCAL statement_timeout='30s'")
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }

@@ -319,3 +319,5 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 历史投影导入：部署者按 [CLI](../../CLI.md#历史投影注册和导入) 注册冻结原包，Operator 使用 `migrate import --export-ref UUID --dry-run` 或同一 HTTP 合同。实际导入省略 dry-run，需要独立精确授权；CLI 查询只允许本凭据导入报告。Agent 不提供注册路径或源报告，不据只读历史投影宣称完整迁移通过。
 
 历史报告核对：网页“设置 → 历史迁移”，或 CLI `migrate reports/source/mappings`。核对原安装、完整原键、首次导入、缺表和排除项；不得把只读映射和行数当作完整迁移或旧资格继承证据。
+
+历史字段核对：映射行展开字段目录，或 `migrate fields/field` 按next_offset继续。每段16,384字符，保留NULL/空串/Unicode；每段重新鉴权，不读排除字段，不执行旧内容。

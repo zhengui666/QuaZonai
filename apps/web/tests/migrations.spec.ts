@@ -79,3 +79,29 @@ test('mismatched source installation cannot expose unrelated mapping detail', as
   await expect(drawer.getByText('原身份映射', { exact: true })).toHaveCount(0);
   await expect(drawer.getByText('payload：UNREVIEWED_FIELDS', { exact: true })).toHaveCount(0);
 });
+
+test('field viewer preserves Unicode pages and distinguishes SQL NULL from empty text', async ({ page }) => {
+  await setup(page);
+  const first = '汉🙂'.repeat(8192); const last = 'e\u0301\n<script>plain text</script>';
+  const total = String(Array.from(first + last).length);
+  const fields = [{ name: 'answer_text', character_count: total }, { name: 'nullable', character_count: null }, { name: 'empty', character_count: '0' }];
+  await page.route('**/api/v2/migrations/reports/*/records/*/fields', route => reply(route, { schema_version: 1, report_id: report.id, record_id: mapping.id, fields }));
+  await page.route('**/api/v2/migrations/reports/*/records/*/field?*', route => {
+    const query = new URL(route.request().url()).searchParams; const name = query.get('name'); const offset = query.get('offset') ?? '0';
+    const selected = fields.find(f => f.name === name)!;
+    return reply(route, { schema_version: 1, report_id: report.id, record_id: mapping.id, name, offset, total_characters: selected.character_count,
+      text: name === 'nullable' ? null : name === 'empty' ? '' : offset === '0' ? first : last, next_offset: name === 'answer_text' && offset === '0' ? '16384' : null });
+  });
+  await page.getByRole('button', { name: report.id, exact: true }).click();
+  const drawer = page.getByRole('dialog');
+  await drawer.getByRole('button', { name: '展开行', exact: true }).click();
+  await drawer.getByRole('button', { name: '查看字段 answer_text', exact: true }).click();
+  await expect(drawer.getByLabel('原字段内容')).toHaveText(first);
+  await drawer.getByRole('button', { name: '下一页', exact: true }).first().click();
+  await expect(drawer.getByLabel('原字段内容')).toHaveText(last);
+  await expect(drawer.locator('pre script')).toHaveCount(0);
+  await drawer.getByRole('button', { name: '查看字段 nullable', exact: true }).click();
+  await expect(drawer.getByText('SQL NULL（无值）', { exact: true })).toBeVisible();
+  await drawer.getByRole('button', { name: '查看字段 empty', exact: true }).click();
+  await expect(drawer.getByText('空字符串（0字符）', { exact: true })).toBeVisible();
+});

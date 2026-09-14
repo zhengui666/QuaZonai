@@ -112,7 +112,7 @@ function Mappings({ report }: { report: Report }) {
   } });
   return <>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['HistoricalMappingViewV1']> rowKey="id" dataSource={query.isError ? [] : query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 1000 }} locale={{ emptyText: <NoData text={report.dry_run ? '试运行没有创建历史映射。' : '本报告没有历史映射。'} /> }} columns={[
+      <Table<Schema['HistoricalMappingViewV1']> rowKey="id" expandable={{ expandedRowRender: row => <RecordFields report={report.id} record={row.id} /> }} dataSource={query.isError ? [] : query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 1000 }} locale={{ emptyText: <NoData text={report.dry_run ? '试运行没有创建历史映射。' : '本报告没有历史映射。'} /> }} columns={[
         { title: '新追溯编号', dataIndex: 'id' }, { title: '原表', key: 'table', render: (_, row) => row.key.source_table },
         { title: '完整原主键', key: 'key', render: (_, row) => <span className="break-word">{JSON.stringify(row.key.values)}</span> },
         { title: '首次导入报告', dataIndex: 'first_import_id' }, { title: '处置', key: 'disposition', render: (_, row) => row.disposition === 'LEGACY_REVALIDATION_REQUIRED' ? '旧证据须重新验证' : '只读历史' },
@@ -120,4 +120,47 @@ function Mappings({ report }: { report: Report }) {
     </QueryPanel>
     <Pager history={history} next={query.isError ? undefined : query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
   </>;
+}
+
+
+function RecordFields({ report, record }: { report: string; record: string }) {
+  const [selected, setSelected] = useState<Schema['HistoricalFieldSummaryV1']>();
+  const query = useQuery({ queryKey: ['historical-fields', report, record], queryFn: async ({ signal }) => {
+    const value = dataOf(await api.GET('/api/v2/migrations/reports/{id}/records/{record}/fields', { params: { path: { id: report, record } }, signal }));
+    if (value.report_id !== report || value.record_id !== record) throw new Error('字段目录不属于原报告记录。');
+    return value;
+  } });
+  return <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+    {!query.isError && <Space orientation="vertical" className="full-width">
+      <Typography.Text>已导入的原字段；被排除的字段不在此目录中。</Typography.Text>
+      <Table<Schema['HistoricalFieldSummaryV1']> rowKey="name" dataSource={query.data?.fields} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 400 }} columns={[
+        { title: '字段', key: 'name', render: (_, field) => <Button onClick={() => setSelected(field)}>查看字段 {field.name}</Button> },
+        { title: '字符数', key: 'length', render: (_, field) => field.character_count ?? 'SQL NULL' },
+      ]} />
+      {selected && <FieldContent key={selected.name} report={report} record={record} field={selected} />}
+    </Space>}
+  </QueryPanel>;
+}
+function FieldContent({ report, record, field }: { report: string; record: string; field: Schema['HistoricalFieldSummaryV1'] }) {
+  const [history, setHistory] = useState<(string | undefined)[]>(['0']); const offset = history.at(-1) ?? '0';
+  const query = useQuery({ queryKey: ['historical-field', report, record, field.name, offset], queryFn: async ({ signal }) => {
+    const value = dataOf(await api.GET('/api/v2/migrations/reports/{id}/records/{record}/field', { params: { path: { id: report, record }, query: { name: field.name, offset } }, signal }));
+    const end = BigInt(offset) + BigInt(Array.from(value.text ?? '').length);
+    const total = BigInt(field.character_count ?? '0');
+    if (value.report_id !== report || value.record_id !== record || value.name !== field.name || value.offset !== offset || value.total_characters !== field.character_count
+      || (value.text === null) !== (field.character_count === null) || end > total || value.next_offset !== (end < total ? end.toString() : null)) throw new Error('字段分段不属于原记录或字符位置。');
+    return value;
+  } });
+  const value = query.isError ? undefined : query.data;
+  return <Space orientation="vertical" className="full-width">
+    <Typography.Title level={4}>原字段：{field.name}</Typography.Title>
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+      {value && <>
+        <Typography.Text>字符位置（从0起）：{value.offset}；总字符数：{value.total_characters ?? 'NULL'}</Typography.Text>
+        {value.text === null ? <Typography.Text>SQL NULL（无值）</Typography.Text> : value.text === '' ? <Typography.Text>空字符串（0字符）</Typography.Text>
+          : <pre aria-label="原字段内容" tabIndex={0} className="break-word" style={{ whiteSpace: 'pre-wrap', maxHeight: 360, overflow: 'auto' }}>{value.text}</pre>}
+      </>}
+    </QueryPanel>
+    <Pager history={history} next={query.isError ? undefined : query.data?.next_offset} loading={query.isFetching} move={setHistory} />
+  </Space>;
 }

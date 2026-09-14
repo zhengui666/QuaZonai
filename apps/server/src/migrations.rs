@@ -189,3 +189,34 @@ pub async fn mappings(
             .await?,
     ))
 }
+
+#[utoipa::path(get,path="/api/v2/migrations/reports/{id}/records/{record}/fields",operation_id="list_historical_record_fields",tag="Historical migration",params(("id"=Id,Path),("record"=Id,Path)),responses((status=200,body=HistoricalRecordFieldsV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn fields(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    path: Result<Path<(Id, Id)>, PathRejection>,
+) -> Result<Json<HistoricalRecordFieldsV1>, ApiError> {
+    let Path((id, record)) = path.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state
+            .store
+            .historical_record_fields(&actor, id, record)
+            .await?,
+    ))
+}
+#[utoipa::path(get,path="/api/v2/migrations/reports/{id}/records/{record}/field",operation_id="get_historical_record_field",tag="Historical migration",params(("id"=Id,Path),("record"=Id,Path),("name"=String,Query,min_length=1,max_length=63),("offset"=Option<contracts::DbCounter>,Query)),responses((status=200,body=HistoricalFieldContentV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn field(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    path: Result<Path<(Id, Id)>, PathRejection>,
+    query: Result<Query<HistoricalFieldQueryV1>, QueryRejection>,
+) -> Result<Json<HistoricalFieldContentV1>, ApiError> {
+    let Path((id, record)) = path.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state
+            .store
+            .historical_record_field(&actor, id, record, &query)
+            .await?,
+    ))
+}

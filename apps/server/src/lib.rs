@@ -180,6 +180,14 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .with_private(cookie_key);
     Router::new()
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
+        .route(
+            "/api/v2/migrations/reports/{id}/records/{record}/fields",
+            get(migrations::fields),
+        )
+        .route(
+            "/api/v2/migrations/reports/{id}/records/{record}/field",
+            get(migrations::field),
+        )
         .route("/api/v2/migrations/import", post(migrations::import))
         .route("/api/v2/migrations/reports", get(migrations::reports))
         .route(
@@ -616,7 +624,7 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::bootstrap_status,auth::bootstrap_start,auth::bootstrap_confirm,auth::login,auth::logout,auth::session_status,auth::verify,auth::devices,auth::revoke_device,
+#[openapi(paths(migrations::fields,migrations::field,migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::bootstrap_status,auth::bootstrap_start,auth::bootstrap_confirm,auth::login,auth::logout,auth::session_status,auth::verify,auth::devices,auth::revoke_device,
 control::projects,control::project,control::create_project,control::update_project,
 control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,

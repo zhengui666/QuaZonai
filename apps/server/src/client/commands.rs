@@ -546,6 +546,17 @@ pub(super) enum Output {
 }
 #[derive(Subcommand)]
 pub enum Migrate {
+    Fields {
+        id: String,
+        record: String,
+    },
+    Field {
+        id: String,
+        record: String,
+        name: String,
+        #[arg(long, default_value = "0")]
+        offset: String,
+    },
     Reports(List),
     Source {
         id: String,
@@ -651,6 +662,36 @@ impl Command {
         const POST: Method = Method::POST;
         let result = match self {
             Self::Migrate(command) => match command {
+                Migrate::Fields { id: report, record } => {
+                    Request::get::<contracts::imports::HistoricalRecordFieldsV1>(format!(
+                        "/api/v2/migrations/reports/{}/records/{}/fields",
+                        id(report)?,
+                        id(record)?
+                    ))
+                }
+                Migrate::Field {
+                    id: report,
+                    record,
+                    name,
+                    offset,
+                } => {
+                    let offset =
+                        contracts::DbCounter::try_from(offset).map_err(|_| Failure::Input)?;
+                    if name.is_empty() || name.len() > 63 {
+                        return Err(Failure::Input);
+                    }
+                    let mut request =
+                        Request::get::<contracts::imports::HistoricalFieldContentV1>(format!(
+                            "/api/v2/migrations/reports/{}/records/{}/field",
+                            id(report)?,
+                            id(record)?
+                        ));
+                    request.query = vec![
+                        ("name".into(), name),
+                        ("offset".into(), String::from(offset)),
+                    ];
+                    request
+                }
                 Migrate::Reports(page) => Request::get::<
                     Page<contracts::imports::HistoricalImportReportV1>,
                 >("/api/v2/migrations/reports")

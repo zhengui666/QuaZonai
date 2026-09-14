@@ -341,3 +341,195 @@ async fn report_and_mapping_pages_keep_original_batch_membership(pool: PgPool) {
         serde_json::to_value(source).unwrap()
     );
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn original_fields_are_scoped_and_native_unicode_pages_reconstruct_exact_values(
+    pool: PgPool,
+) {
+    use contracts::control::ListQuery;
+    source(&pool).await;
+    sqlx::raw_sql("CREATE TABLE public.clarification_answers(id uuid PRIMARY KEY,question_id uuid NOT NULL,answer_text text NOT NULL,created_at timestamptz NOT NULL); UPDATE public.jobs SET kind=''").execute(&pool).await.unwrap();
+    let original = "汉🙂e\u{301}\n".repeat(10_000);
+    sqlx::query("INSERT INTO public.clarification_answers VALUES('22222222-2222-4222-8222-222222222222','22222222-2222-4222-8222-222222222223',$1,'2020-01-01')").bind(&original).execute(&pool).await.unwrap();
+    let (store, actor) = support::operator(&pool).await;
+    let (source, files) = exported(&pool, Id::new()).await;
+    let mut request = HistoricalImportRequestV1 {
+        schema_version: SchemaV1,
+        export_ref: Id::new(),
+        dry_run: false,
+    };
+    let report = import(&store, &actor, "actual", &request, &source, &files)
+        .await
+        .unwrap()
+        .resource;
+    request.dry_run = true;
+    let dry = import(&store, &actor, "dry", &request, &source, &files)
+        .await
+        .unwrap()
+        .resource;
+    let mappings = store
+        .historical_import_mappings(
+            &actor,
+            report.id,
+            &ListQuery {
+                cursor: None,
+                limit: 100,
+            },
+        )
+        .await
+        .unwrap();
+    let answer = mappings
+        .items
+        .iter()
+        .find(|r| r.key.source_table == "clarification_answers")
+        .unwrap();
+    let summary = store
+        .historical_record_fields(&actor, report.id, answer.id)
+        .await
+        .unwrap();
+    assert_eq!(summary.report_id, report.id);
+    assert_eq!(summary.record_id, answer.id);
+    assert_eq!(
+        summary
+            .fields
+            .iter()
+            .find(|f| f.name == "answer_text")
+            .unwrap()
+            .character_count
+            .unwrap()
+            .get(),
+        original.chars().count() as u64
+    );
+    let mut restored = String::new();
+    let mut offset = contracts::DbCounter::ZERO;
+    let mut pages = 0;
+    loop {
+        let chunk = store
+            .historical_record_field(
+                &actor,
+                report.id,
+                answer.id,
+                &HistoricalFieldQueryV1 {
+                    name: "answer_text".into(),
+                    offset,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(chunk.offset, offset);
+        assert_eq!(
+            chunk.total_characters.unwrap().get(),
+            original.chars().count() as u64
+        );
+        let text = chunk.text.unwrap();
+        assert!(text.chars().count() <= HISTORICAL_FIELD_CHARS as usize);
+        restored.push_str(&text);
+        pages += 1;
+        if let Some(next) = chunk.next_offset {
+            assert!(next > offset);
+            offset = next;
+        } else {
+            break;
+        }
+    }
+    assert!(pages > 1);
+    assert_eq!(restored.as_bytes(), original.as_bytes());
+    let job = mappings
+        .items
+        .iter()
+        .find(|r| r.key.source_table == "jobs")
+        .unwrap();
+    for (name, expected) in [
+        ("kind", Some("")),
+        ("lease_expires_at", None),
+        ("id", Some("11111111-1111-4111-8111-111111111111")),
+    ] {
+        let value = store
+            .historical_record_field(
+                &actor,
+                report.id,
+                job.id,
+                &HistoricalFieldQueryV1 {
+                    name: name.into(),
+                    offset: contracts::DbCounter::ZERO,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(value.text.as_deref(), expected);
+        assert_eq!(
+            value.total_characters.map(|n| n.get()),
+            expected.map(|s| s.chars().count() as u64)
+        );
+        assert!(value.next_offset.is_none());
+    }
+    let events = mappings
+        .items
+        .iter()
+        .find(|r| r.key.source_table == "events")
+        .unwrap();
+    let value = store
+        .historical_record_field(
+            &actor,
+            report.id,
+            events.id,
+            &HistoricalFieldQueryV1 {
+                name: "id".into(),
+                offset: contracts::DbCounter::ZERO,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(value.text.as_deref(), Some("9007199254740993"));
+    for name in ["payload", "lease_owner", "id' OR true --"] {
+        assert!(matches!(
+            store
+                .historical_record_field(
+                    &actor,
+                    report.id,
+                    job.id,
+                    &HistoricalFieldQueryV1 {
+                        name: name.into(),
+                        offset: contracts::DbCounter::ZERO
+                    }
+                )
+                .await,
+            Err(store::StoreError::NotFound)
+        ));
+    }
+    assert!(matches!(
+        store.historical_record_fields(&actor, dry.id, job.id).await,
+        Err(store::StoreError::NotFound)
+    ));
+    assert!(store
+        .historical_record_field(
+            &actor,
+            report.id,
+            job.id,
+            &HistoricalFieldQueryV1 {
+                name: "id".into(),
+                offset: contracts::DbCounter::new(i64::MAX as u64).unwrap()
+            }
+        )
+        .await
+        .is_err());
+    let denied = Actor::Browser {
+        login_id: Id::new(),
+    };
+    assert!(store
+        .historical_record_fields(&denied, report.id, job.id)
+        .await
+        .is_err());
+    assert!(store
+        .historical_record_field(
+            &denied,
+            report.id,
+            job.id,
+            &HistoricalFieldQueryV1 {
+                name: "id".into(),
+                offset: contracts::DbCounter::ZERO
+            }
+        )
+        .await
+        .is_err());
+}
