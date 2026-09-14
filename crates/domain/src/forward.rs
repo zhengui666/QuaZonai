@@ -4,6 +4,7 @@ use contracts::forward::DownstreamWeightsSubmitV1;
 use std::collections::BTreeSet;
 
 pub mod evaluation;
+pub mod observation;
 mod window;
 pub use window::{window, ForwardWindow, ForwardWindowSource};
 

@@ -2828,6 +2828,14 @@ app.forward_evaluation_inputs追加记录原FORWARD InputSet、原政策、Hando
 
 app.forward_schedule 是每原 Handoff/stream 一行的可变重试预约，不是证据或授权。按最早 last_attempt_at（未尝试优先）公平选择；选中后原子预约三十秒，再进行私有对象读取。已冻结相同完整来源的流不再调度；消息不可变且不可删除，来源计数只用于发现新增消息和提前重试，真正准入仍比较每个原来源 ID。新增/纠正绕过旧重试期限；缺数据、超限或暂时无能力的流按原预约重试，不阻塞其他流，不截断历史。崩溃留下的预约自然到期，不新建第二套队列或 Worker。参数失败回收沿用 Project 锁下未引用对象清理；原生队列读取及直接领取均只将具有原生绑定的 FORWARD_EVALUATE 分配给科学 Worker，Mission 驱动不得借用；已有原 Run 继续由 PGMQ 与 A7.7 发表，不因重试复制策略、样本或试验。自动计算不等于晋级或 Wake 完成。
 
+### A7.9 原生观察与待处理 Wake
+
+原 Worker 在 A7.7 测量发表后、ACK 前消费同一原 Run 的 Evaluation、原窗口及原 AutomationPolicy；复用原指标比较，不重新计算统计、不改 Evaluation 的 INCONCLUSIVE 决定。degradation_metric_requirements 定义必须维持的边界（通过表示满足维持要求，并非触发劣化）；promotion_metric_requirements 定义更强的晋级指标要求。判定顺序固定：测量/来源/授权已失效为 INSUFFICIENT_DATA；维持要求缺数据、方法不支持或证据无效也为 INSUFFICIENT_DATA；完整有效但维持要求不通过为 DEGRADED；维持通过后，晋级指标证据不足为 INSUFFICIENT_DATA、完整但不通过为 WATCH、两组都通过为 HEALTHY。原 MetricRequirement 的 required/方法白名单/观察数/精确十进制阈值语义不变。HEALTHY 仍不是足量 Paper 时长、资格或 Live 交付授权。
+
+追加 degradation_observations 时保存原 Project/Release/Evaluation/AutomationPolicy 和分组原因码。app.forward_observation_publications 用原 Run 唯一绑定原生 Observation，作为来源回执；既有关系型历史观察不因复制 ID 获得原生资格。Project/Run 锁下先核对当前原消息/更正、政策及有效期；只有当前有效 DEGRADED 才同事务追加唯一 PENDING/DEGRADATION Wake，not_before 为数据库当前时间。其他分类不创建 Wake。Observation、来源回执与 Wake 任一步失败全部回滚；已发表 Evaluation 不回滚或改写，原队列消息保留以供 Worker 恢复消费。重放返回原 Observation，不重新分类、重写历史或复制 Wake。
+
+PENDING 仅表示待裁决，不能视为已启动 Cycle。后续消费仍须重新核对原观察当前性、ACTIVE/政策/冷却/每日预算/原生研究上下文，并原子绑定唯一新 Cycle；PAUSED/ARCHIVED 不启动。后来的更正、过期或撤权不重贴旧观察，必须由消费者拒绝其过时授权。当前观察生产不创建 Approval/Offer、模型会话或研究 Cycle。
+
 ## A8. 集成、身份与幂等
 
 ### A8.0 原生 Codex 连接与会话适配

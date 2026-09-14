@@ -4655,3 +4655,36 @@ Runtime 仍是显式关系型 fixture，取消路径没有实际 Runtime/OCI 科
 不是多日市场或完整生产验收。Live 晋级、劣化 Observation/Wake/Cycle 消费和
 其他剩余合同继续实现。本阶段未 push、请求 review、合并或关闭 Issue。
 GitHub 实时复核：PR63 OPEN/Draft，远端仍为37e5713e；Issue62 OPEN。
+
+## 2026-09-14：原生观察与待处理劣化 Wake
+
+按 DESIGN A7.9 明确两组原冻结指标要求的消费顺序，复用 evaluate_metrics 的
+required/方法白名单/观察数/十进制阈值语义。维持边界不通过为 DEGRADED；维持
+通过而晋级指标不通过为 WATCH；两组通过为 HEALTHY；测量不再当前、缺失或
+不支持为 INSUFFICIENT_DATA。比较使用同一固定原生方法注册，不从提交的指标
+反推“支持能力”，没有增加科学计算。Evaluation 的 INCONCLUSIVE 决定不改写。
+
+Worker 在测量已提交后、ACK 前调用 Store::observe_forward。Project/Run 锁下
+重验原 native Evaluation/window/终态/原消息及政策，追加原 Observation。070
+迁移的 forward_observation_publications 按原 Run 唯一保存原生来源回执，并验证
+原 frozen Forward 输入、精确 Release/Policy/终态 Evaluation；不改旧关系型观察。
+只有当前有效 DEGRADED 同事务创建唯一 PENDING/DEGRADATION Wake。观察/回执/
+Wake 失败整体回滚，但不撤销既有 Evaluation；原消息留给 Worker 恢复。重放只
+返回原观察，未来消费必须再次检验新鲜度/纠正/撤权，不能借旧风险快照自动开工。
+
+以 02127cf8 及冻结补丁串行验证：
+
+- verify-HSU2oR 首轮 check、fmt、严格 Clippy 与原 Store/Worker 定向用例通过。
+- verify-kTnFEI 新定向检查全部通过：四种分类、缺失与未知原生版本、受控负均值
+  仍为 VALID/INCONCLUSIVE 测量而按维持政策产生 DEGRADED、Wake 插入故障使
+  Observation/来源回执回滚且 Evaluation 保留、并发唯一观察/Wake、原生回执不可
+  删除、取消/撤权后记录不足且无 Wake。实际 Worker 的 ACK 故障恢复保留唯一
+  INSUFFICIENT_DATA 观察，不创建 Wake。
+- 最终 verify-288RFP：check、fmt、严格 Clippy、144 项合同/领域、70 项 PG/
+  PGMQ、25 项 HTTP/CLI/Worker 共239项全通过，0忽略；包含原三项劣化关联约束。
+  源码保持不变，隔离 PG 确认停止。没有对外合同变化，不重新生成前端产物。
+
+统计值仍来自受控原生协议 fixture；测试证明真实 PostgreSQL/Worker 的关联、
+分类消费、故障事务与恢复，不证明实际市场/OCI统计或完整生产链。PENDING Wake
+不是已启动 Cycle；受限自动 Cycle、冷却/每日预算/原生上下文裁决、Live 晋级
+及相应界面与完整验收仍须继续。本阶段未 push、请求 review、合并或关闭 Issue。

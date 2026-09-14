@@ -105,6 +105,8 @@ async fn worker_schedules_original_feedback_once_and_publishes_cancelled_termina
         .unwrap();
     let facts:(i64,i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.evaluations WHERE run_id=$1 AND execution_status='CANCELLED' AND evidence_status='INCOMPLETE' AND decision='INCONCLUSIVE'),(SELECT count(*) FROM app.forward_evidence_windows w JOIN app.evaluations e ON e.id=w.evaluation_id WHERE e.run_id=$1 AND NOT w.is_contiguous AND w.complete_observations=0),(SELECT count(*) FROM pgmq.q_runs WHERE message->>'run_id'=$2),(SELECT count(*) FROM pgmq.a_runs WHERE message->>'run_id'=$2)").bind(id.as_uuid()).bind(id.to_string()).fetch_one(&pool).await.unwrap();
     assert_eq!(facts, (1, 1, 0, 1));
+    let observations:(i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.forward_observation_publications p JOIN app.degradation_observations o ON o.id=p.observation_id WHERE p.run_id=$1 AND o.classification='INSUFFICIENT_DATA'),(SELECT count(*) FROM app.wake_events w JOIN app.degradation_observations o ON o.id=w.observation_id JOIN app.evaluations e ON e.id=o.evaluation_id WHERE e.run_id=$1)").bind(id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(observations, (1, 0));
     let (cursor, _paper_or_feedback_result) = worker.process_automation(None).await;
     assert_eq!(cursor, Some(f.f.project));
     assert!(f

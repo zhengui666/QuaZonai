@@ -206,7 +206,7 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
                 group: NativeStatisticGroup::Returns,
                 native_key: key.into(),
                 currency: None,
-                value: Some(0.1),
+                value: Some(if key == "Average (Return)" { -0.1 } else { 0.1 }),
                 reason_code: None,
             })
             .collect(),
@@ -361,6 +361,47 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
                 .await
                 .unwrap();
         assert_eq!(until, scheduled_at);
+        // Measurement remains VALID/INCONCLUSIVE; only its frozen maintenance policy classifies degradation.
+        sqlx::query("CREATE FUNCTION app.fail_forward_wake() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'controlled Wake failure'; END $$").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TRIGGER fail_forward_wake BEFORE INSERT ON app.wake_events FOR EACH ROW EXECUTE FUNCTION app.fail_forward_wake()").execute(&pool).await.unwrap();
+        assert!(store.observe_forward(job.run.id).await.is_err());
+        let rolled_back:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.degradation_observations WHERE evaluation_id=$1),(SELECT count(*) FROM app.forward_observation_publications WHERE run_id=$2),(SELECT count(*) FROM app.evaluations WHERE id=$1)").bind(a.resource.as_uuid()).bind(job.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+        assert_eq!(rolled_back, (0, 0, 1));
+        sqlx::query("DROP TRIGGER fail_forward_wake ON app.wake_events")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (observed, repeated) = tokio::join!(
+            store.observe_forward(job.run.id),
+            store.observe_forward(job.run.id)
+        );
+        let observed = observed.unwrap().unwrap();
+        let repeated = repeated.unwrap().unwrap();
+        assert_eq!(observed.resource, repeated.resource);
+        assert_ne!(observed.replayed, repeated.replayed);
+        let wake:(String,String,String,Vec<String>)=sqlx::query_as("SELECT o.classification,w.trigger,w.state,o.reason_codes FROM app.degradation_observations o JOIN app.wake_events w ON w.observation_id=o.id WHERE o.id=$1").bind(observed.resource.as_uuid()).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            (wake.0.as_str(), wake.1.as_str(), wake.2.as_str()),
+            ("DEGRADED", "DEGRADATION", "PENDING")
+        );
+        assert!(wake
+            .3
+            .iter()
+            .any(|r| r.starts_with("MAINTENANCE:") && r.ends_with("THRESHOLD_NOT_MET")));
+        let wake_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM app.wake_events WHERE observation_id=$1")
+                .bind(observed.resource.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(wake_count, 1);
+        assert!(
+            sqlx::query("DELETE FROM app.forward_observation_publications WHERE run_id=$1")
+                .bind(job.run.id.as_uuid())
+                .execute(&pool)
+                .await
+                .is_err()
+        );
         assert!(sqlx::query("UPDATE app.forward_evidence_windows SET complete_observations=3 WHERE evaluation_id=$1").bind(a.resource.as_uuid()).execute(&pool).await.is_err());
         assert!(
             sqlx::query("DELETE FROM app.metric_values WHERE evaluation_id=$1")
@@ -522,6 +563,13 @@ async fn original_forward_inputs_queue_once_and_revalidate_before_dispatch(pool:
         cancelled_facts,
         ("CANCELLED".into(), "INCOMPLETE".into(), None, 0, false, 0)
     );
+    let cancelled_observation = store
+        .observe_forward(second.resource.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let insufficient:(String,i64)=sqlx::query_as("SELECT classification,(SELECT count(*) FROM app.wake_events WHERE observation_id=o.id) FROM app.degradation_observations o WHERE id=$1").bind(cancelled_observation.resource.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(insufficient, ("INSUFFICIENT_DATA".into(), 0));
     let generic = store::lifecycle::StandaloneRunSubmission {
         project_id: f.project,
         input_set_id: f.input_set,

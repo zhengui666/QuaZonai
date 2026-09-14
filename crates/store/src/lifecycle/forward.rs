@@ -194,3 +194,121 @@ where
         resource: evaluation,
     }))
 }
+
+impl Store {
+    /// Trusted post-publication Worker continuation. No caller-provided verdict or Wake authority.
+    pub async fn observe_forward(&self, run: Id) -> Result<Option<CommandResult<Id>>, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let locked = lock_run(&mut tx, run).await?;
+        if locked.run.kind != RunKind::ForwardEvaluate {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        let prior: Option<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT observation_id FROM app.forward_observation_publications WHERE run_id=$1",
+        )
+        .bind(run.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(id) = prior {
+            tx.commit().await?;
+            return Ok(Some(CommandResult {
+                schema_version: SchemaV1,
+                replayed: true,
+                resource: db::id(id)?,
+            }));
+        }
+        if !locked.run.state.is_terminal() {
+            return Err(StoreError::Conflict);
+        }
+        let row=sqlx::query("SELECT e.id AS evaluation_id,e.execution_status,e.evidence_status,e.valid_until,w.is_contiguous,w.complete_observations,w.freshness_deadline,f.policy_id,f.runtime_id,h.release_id FROM app.runs r JOIN app.forward_evaluation_inputs f ON f.input_set_id=r.input_set_id AND f.project_id=r.project_id JOIN app.handoff_offers h ON h.id=f.handoff_id JOIN app.releases release ON release.id=h.release_id JOIN app.evaluations e ON e.run_id=r.id AND e.input_set_id=r.input_set_id AND e.subject_candidate_id=release.candidate_id AND e.evaluation_kind='FORWARD' AND e.execution_status=r.state JOIN app.evaluation_publications published ON published.evaluation_id=e.id JOIN app.forward_evidence_windows w ON w.evaluation_id=e.id AND w.release_id=h.release_id AND w.input_set_id=e.input_set_id JOIN app.artifacts a ON a.id=e.report_artifact_id AND a.id=e.method_versions_artifact_id AND a.producer_run_id=r.id AND a.producer_attempt_id IS NOT DISTINCT FROM r.active_attempt_id AND a.schema_name='qz.forward_measurement' AND a.schema_version='1' AND a.origin='REAL' AND a.access_class='EVALUATOR_ONLY' JOIN app.run_terminal_receipts terminal ON terminal.run_id=r.id AND terminal.terminal_state=r.state AND terminal.attempt_id IS NOT DISTINCT FROM r.active_attempt_id WHERE r.id=$1")
+            .bind(run.as_uuid()).fetch_one(&mut *tx).await?;
+        let evaluation = db::id(row.try_get("evaluation_id")?)?;
+        let policy_row = sqlx::query("SELECT * FROM app.automation_policies WHERE id=$1")
+            .bind(row.try_get::<uuid::Uuid, _>("policy_id")?)
+            .fetch_one(&mut *tx)
+            .await?;
+        let policy = crate::automation::view(&policy_row)?;
+        domain::delivery::automation_policy(&policy.content)?;
+        let observed_at = now(&mut tx).await?;
+        let until: Option<DateTime<Utc>> = row.try_get("valid_until")?;
+        let mut current = row.try_get::<String, _>("execution_status")? == "SUCCEEDED"
+            && row.try_get::<String, _>("evidence_status")? == "VALID"
+            && row.try_get::<bool, _>("is_contiguous")?
+            && row.try_get::<i64, _>("complete_observations")? > 0
+            && until.is_some_and(|until| until > observed_at)
+            && row.try_get::<DateTime<Utc>, _>("freshness_deadline")? > observed_at;
+        let runtime = db::id(row.try_get("runtime_id")?)?;
+        if current {
+            match crate::forward::revalidate(
+                &mut tx,
+                locked.run.input_set_id,
+                locked.run.project_id,
+                runtime,
+            )
+            .await
+            {
+                Ok(()) => (),
+                Err(StoreError::Invalid(_) | StoreError::Domain(_) | StoreError::NotFound) => {
+                    current = false
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        let metrics = sqlx::query(
+            "SELECT * FROM app.metric_values WHERE evaluation_id=$1 ORDER BY metric_code,scope",
+        )
+        .bind(evaluation.as_uuid())
+        .fetch_all(&mut *tx)
+        .await?
+        .iter()
+        .map(crate::evidence::metric)
+        .collect::<Result<Vec<_>, _>>()?;
+        let classified = domain::forward::observation::classify(
+            evaluation,
+            current,
+            &policy.content.degradation_metric_requirements,
+            &policy.content.promotion_metric_requirements,
+            &metrics,
+        )?;
+        let observation = Id::new();
+        sqlx::query("INSERT INTO app.degradation_observations(id,project_id,release_id,evaluation_id,policy_id,classification,reason_codes,observed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+            .bind(observation.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(row.try_get::<uuid::Uuid,_>("release_id")?).bind(evaluation.as_uuid()).bind(policy.id.as_uuid()).bind(classified.classification.code()).bind(&classified.reason_codes).bind(observed_at).execute(&mut *tx).await?;
+        sqlx::query(
+            "INSERT INTO app.forward_observation_publications(run_id,observation_id) VALUES($1,$2)",
+        )
+        .bind(run.as_uuid())
+        .bind(observation.as_uuid())
+        .execute(&mut *tx)
+        .await?;
+        if classified.classification == domain::forward::observation::Classification::Degraded {
+            sqlx::query("INSERT INTO app.wake_events(project_id,observation_id,trigger,state,not_before,reason) VALUES($1,$2,'DEGRADATION','PENDING',$3,'NATIVE_FORWARD_DEGRADED')")
+                .bind(locked.run.project_id.as_uuid()).bind(observation.as_uuid()).bind(observed_at).execute(&mut *tx).await?;
+        }
+        if current {
+            crate::forward::revalidate(
+                &mut tx,
+                locked.run.input_set_id,
+                locked.run.project_id,
+                runtime,
+            )
+            .await
+            .map_err(|error| match error {
+                StoreError::Invalid(_) | StoreError::Domain(_) | StoreError::NotFound => {
+                    StoreError::Conflict
+                }
+                other => other,
+            })?;
+            let final_at = now(&mut tx).await?;
+            if until.is_none_or(|until| until <= final_at) {
+                return Err(StoreError::Conflict);
+            }
+        }
+        tx.commit().await?;
+        Ok(Some(CommandResult {
+            schema_version: SchemaV1,
+            replayed: false,
+            resource: observation,
+        }))
+    }
+}

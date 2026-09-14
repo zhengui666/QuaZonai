@@ -139,7 +139,7 @@ pub fn metrics(
 ) -> Result<(Vec<MetricValueV1>, Vec<crate::evidence::MetricCapability>), DomainError> {
     binding(requested, result)?;
     let mut records = Vec::new();
-    let mut capabilities = Vec::new();
+
     for (s, (code, _, method, unit, annualization, higher)) in
         result.statistics.iter().zip(STATISTICS)
     {
@@ -167,14 +167,23 @@ pub fn metrics(
             higher_is_better: Some(higher),
         };
         crate::evidence::validate_metric(&record)?;
-        capabilities.push(crate::evidence::MetricCapability {
-            metric_code: record.metric_code.clone(),
-            method_id: record.method_id.clone(),
-            method_version: record.method_version.clone(),
-            unit: record.unit.clone(),
-            frequency: record.frequency.clone(),
-        });
         records.push(record);
     }
-    Ok((records, capabilities))
+    Ok((records, capabilities()))
+}
+
+/// The fixed native registry, never inferred from a submitted metric row.
+pub fn capabilities() -> Vec<crate::evidence::MetricCapability> {
+    STATISTICS
+        .into_iter()
+        .map(
+            |(code, _, method, unit, _, _)| crate::evidence::MetricCapability {
+                metric_code: code.into(),
+                method_id: method.into(),
+                method_version: "0.63.0".into(),
+                unit: unit.into(),
+                frequency: "UTC_DAY".into(),
+            },
+        )
+        .collect()
 }

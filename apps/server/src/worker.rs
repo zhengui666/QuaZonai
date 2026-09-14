@@ -404,6 +404,7 @@ impl Worker {
             }
         }
         result?;
+        self.store.observe_forward(message.run_id).await?;
         if self.store.advance_initial_cycle(message.run_id).await? {
             self.store.acknowledge_run(message).await?;
         }
