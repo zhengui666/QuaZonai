@@ -12,8 +12,7 @@ mod research_support;
 #[path = "../../../tests/support/runtime.rs"]
 mod runtime_support;
 use contracts::{
-    execution::NativeTaskParametersV1, lifecycle::JobLimitsV1, runtime_jobs::RuntimeInputV1,
-    DbCounter, Id, SchemaV1,
+    execution::NativeTaskParametersV1, runtime_jobs::RuntimeInputV1, DbCounter, Id, SchemaV1,
 };
 use sqlx::{PgPool, Row};
 use store::{
@@ -23,7 +22,9 @@ use store::{
 
 #[path = "../../../tests/support/experiment_tasks.rs"]
 mod experiment_support;
-use experiment_support::{complete_compilation, setup};
+use experiment_support::{
+    complete_compilation, forecast, limits, result_turn, setup, start, trial_usage, validation,
+};
 
 #[path = "support/validation_publication.rs"]
 mod validation_publication;
@@ -36,51 +37,6 @@ mod sealed_opportunities;
 
 #[path = "support/qualified_portfolio.rs"]
 mod qualified_portfolio;
-
-fn limits() -> JobLimitsV1 {
-    JobLimitsV1 {
-        schema_version: SchemaV1,
-        experiments: 1,
-        cpu_seconds: DbCounter::new(10).unwrap(),
-        wall_seconds: 60,
-        memory_mib: 1024,
-        output_bytes: DbCounter::new(1024 * 1024).unwrap(),
-    }
-}
-
-async fn trial_usage(pool: &PgPool, lease: &RunLease) -> (i64, i64) {
-    sqlx::query_as(
-        "SELECT reserved_experiments,used_experiments FROM app.research_cycles WHERE id=$1",
-    )
-    .bind(lease.run.cycle_id.unwrap().as_uuid())
-    .fetch_one(pool)
-    .await
-    .unwrap()
-}
-
-async fn result_turn(
-    store: &Store,
-    f: &cycle_support::Fixture,
-    lease: &RunLease,
-) -> Result<bool, StoreError> {
-    let reading = f.objects.clone();
-    let writing = f.objects.clone();
-    store
-        .prepare_mission_result_turn(
-            lease.run.id,
-            &lease.fence,
-            move |id, size| {
-                let objects = reading.clone();
-                async move { objects.read(id, size).map_err(|_| StoreError::Integrity) }
-            },
-            move |object| async move {
-                writing
-                    .put(object.id, &object.bytes)
-                    .map_err(|_| StoreError::Integrity)
-            },
-        )
-        .await
-}
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn failed_compiler_feedback_is_one_budgeted_repair_and_unknown_turns_do_not_continue(
@@ -296,28 +252,6 @@ async fn failed_compiler_feedback_is_one_budgeted_repair_and_unknown_turns_do_no
         result_turn(&store, &f, &stale).await,
         Err(StoreError::Domain(domain::DomainError::StaleAttempt))
     ));
-}
-
-async fn start(
-    store: &Store,
-    f: &cycle_support::Fixture,
-    lease: &RunLease,
-    experiment: Id,
-) -> Result<contracts::control::CommandResult<contracts::runs::RunSnapshotV1>, StoreError> {
-    let objects = f.objects.clone();
-    store
-        .start_experiment_compilation(
-            lease.run.id,
-            &lease.fence,
-            experiment,
-            &limits(),
-            move |object| async move {
-                objects
-                    .put(object.id, &object.bytes)
-                    .map_err(|_| StoreError::Integrity)
-            },
-        )
-        .await
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -559,61 +493,8 @@ async fn publication_and_fence_failures_leave_no_compilation_or_resource_charge(
     );
 }
 
-async fn forecast(
-    store: &Store,
-    f: &cycle_support::Fixture,
-    lease: &RunLease,
-    experiment: Id,
-) -> Result<contracts::control::CommandResult<contracts::runs::RunSnapshotV1>, StoreError> {
-    let reading = f.objects.clone();
-    let writing = f.objects.clone();
-    let mut allocation = limits();
-    allocation.experiments = 0;
-    store
-        .start_experiment_forecast(
-            lease.run.id,
-            &lease.fence,
-            experiment,
-            &allocation,
-            move |id, size| {
-                let objects = reading.clone();
-                async move { objects.read(id, size).map_err(|_| StoreError::Integrity) }
-            },
-            move |object| async move {
-                writing
-                    .put(object.id, &object.bytes)
-                    .map_err(|_| StoreError::Integrity)
-            },
-        )
-        .await
-}
-
 // Controlled result bytes prove the real publication/producer transaction, not
 // execution of rustc or Wasmi. Their actual execution has separate native tests.
-
-async fn validation(
-    store: &Store,
-    f: &cycle_support::Fixture,
-    lease: &RunLease,
-    experiment: Id,
-) -> Result<contracts::control::CommandResult<contracts::runs::RunSnapshotV1>, StoreError> {
-    let mut allocation = limits();
-    allocation.experiments = 0;
-    store
-        .start_experiment_validation(
-            lease.run.id,
-            &lease.fence,
-            experiment,
-            &allocation,
-            |id, size| f.read(id, size),
-            |object| async move {
-                f.objects
-                    .put(object.id, &object.bytes)
-                    .map_err(|_| StoreError::Integrity)
-            },
-        )
-        .await
-}
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn formal_validation_keeps_the_original_trial_model_policy_and_complete_input(pool: PgPool) {

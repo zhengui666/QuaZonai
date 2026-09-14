@@ -3,6 +3,39 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Positive original-candidate Study HTTP admission, 2026-09-14
+
+portfolio_study_http reuses the original Store qualification/Candidate chain, then
+performs real TCP HTTP requests with a native machine verifier and exact Operator
+grant. No Candidate or qualification row is manually inserted. Two identical
+requests receive 202 and the same Run with distinct fresh/replay flags. Cancelling
+through Store and publishing its original terminal evidence yields a readable
+PORTFOLIO/INCONCLUSIVE Evaluation over authenticated HTTP. The listener is owned
+by a JoinSet and aborted on scope exit, including panic paths.
+
+Existing compilation/forecast/validation/result-turn helpers were moved unchanged
+to the existing shared experiment_tasks module. The new HTTP target also executes
+the imported qualification/publication regressions; this is deliberate fixture
+reuse, not additional production code or fake HTTP authentication.
+
+Final verification on 0d328479 plus the frozen test patch:
+
+- verify-x9edZ1: check/fmt/strict Clippy and 17 tests passed (three native CLI
+  portfolio commands and 14 positive HTTP/shared chain tests), source unchanged.
+- verify-wodFyg: original evidence suite passed, including Store and HTTP/CLI
+  regressions after the helper move; check/fmt/Clippy passed, source unchanged.
+- Initial compilation exposed implicit parent helpers; sharing the existing
+  implementations fixed this. A subsequent Clippy-only failure was corrected
+  before the final two passes. Both isolated PostgreSQL instances stopped.
+
+Correction to the older verify-5qnJJj entry: evidence mode did not select
+client_portfolio_build; it compiled that target but did not execute its new Study
+test. Actual execution of that CLI test is now evidenced by verify-x9edZ1.
+This stage does not execute the admitted Run through a real Worker/OCI chain.
+The qualification fixture still uses controlled native reports and an empty Wasm
+module; real Worker success requires actual compiled models and catalogs, not
+those declarations. No REAL/PIT/PASS/T42 claim, push, review, merge or closure.
+
 ## Actual OCI Study output to independent metric adapter, 2026-09-14
 
 The existing real Docker rolling Study test now sends the original downloaded
@@ -59,9 +92,10 @@ records and explicitly display their type; ownership checks remain unchanged.
 Verified on fa5b2903 plus this patch, editing and verification serial:
 
 - verify-5qnJJj: workspace check, fmt, strict Clippy and complete evidence suite
-  passed with source unchanged. Native CLI/TCP/PostgreSQL Study test checks its
-  exact human intent, missing Candidate rejection, changed-intent denial and no
-  Run creation. This is not a positive full native Study acceptance test.
+  passed with source unchanged. The added native CLI/TCP/PostgreSQL Study test
+  was compiled here but not selected by evidence mode; its actual execution is
+  recorded in verify-x9edZ1 above. It checks exact human intent, missing Candidate
+  rejection, changed-intent denial and no Run creation, not full native acceptance.
 - web-verify-P6DBlJ: native contract generation repeated byte-identically for
   all six allowed outputs with handwritten sources unchanged; typecheck, unit
   tests, build, settings browser checks and all 249 three-viewport browser tests

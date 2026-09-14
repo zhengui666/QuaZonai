@@ -138,7 +138,7 @@ async fn check_chain(pool: PgPool, liquidity: cycle_support::Liquidity) {
     }
 }
 
-async fn qualified_chain(
+pub(super) async fn qualified_chain(
     pool: PgPool,
     liquidity: cycle_support::Liquidity,
 ) -> Option<(
