@@ -63,10 +63,21 @@ fn report(r: &contracts::forward::ForwardReportContentV1) -> Result<(), DomainEr
         .timestamp_nanos_opt()
         .and_then(|v| u64::try_from(v).ok())
         .ok_or(DomainError::Invalid("forward_time"))?;
+    const DAY: u64 = 86_400_000_000_000;
+    let daily = r.returns_frequency == Some(contracts::forward::ForwardReturnsFrequencyV1::UtcDay);
+    if daily && (!start.is_multiple_of(DAY) || !end.is_multiple_of(DAY)) {
+        return Err(DomainError::Invalid("forward_daily_window"));
+    }
     let mut previous = start;
     for point in &r.returns {
         if point.timestamp_ns.get() <= previous || point.timestamp_ns.get() > end {
             return Err(DomainError::Invalid("forward_sample_time"));
+        }
+        if daily
+            && (!point.timestamp_ns.get().is_multiple_of(DAY)
+                || (r.complete && point.timestamp_ns.get() - previous != DAY))
+        {
+            return Err(DomainError::Invalid("forward_daily_sample"));
         }
         match (point.value, point.reason_code.as_deref()) {
             (Some(value), None) if value.is_finite() => {}
@@ -74,6 +85,9 @@ fn report(r: &contracts::forward::ForwardReportContentV1) -> Result<(), DomainEr
             _ => return Err(DomainError::Invalid("forward_sample_value")),
         }
         previous = point.timestamp_ns.get();
+    }
+    if daily && r.complete && previous != end {
+        return Err(DomainError::Invalid("forward_daily_coverage"));
     }
     Ok(())
 }
@@ -103,6 +117,7 @@ mod tests {
                 window_end: end,
                 issued_at: end,
                 complete: true,
+                returns_frequency: None,
                 returns: vec![NativeReturnV1 {
                     timestamp_ns: DbCounter::new(end.timestamp_nanos_opt().unwrap() as u64)
                         .unwrap(),
@@ -112,6 +127,38 @@ mod tests {
             },
         };
         assert!(message(&request).is_ok());
+        let mut daily = request.clone();
+        daily.report.returns_frequency = Some(ForwardReturnsFrequencyV1::UtcDay);
+        assert!(message(&daily).is_err(), "seconds are not daily returns");
+        daily.report.window_start = chrono::DateTime::from_timestamp(1_800_057_600, 0).unwrap();
+        daily.report.window_end = daily.report.window_start + chrono::Duration::days(2);
+        daily.report.issued_at = daily.report.window_end;
+        daily.report.returns = (1..=2)
+            .map(|day| NativeReturnV1 {
+                timestamp_ns: DbCounter::new(
+                    (daily.report.window_start + chrono::Duration::days(day))
+                        .timestamp_nanos_opt()
+                        .unwrap() as u64,
+                )
+                .unwrap(),
+                value: Some(0.01),
+                reason_code: None,
+            })
+            .collect();
+        assert!(message(&daily).is_ok());
+        let last = daily.report.returns.pop().unwrap();
+        assert!(
+            message(&daily).is_err(),
+            "complete cannot omit the final day"
+        );
+        daily.report.returns[0] = last;
+        assert!(message(&daily).is_err(), "complete cannot skip a day");
+        daily.report.complete = false;
+        assert!(message(&daily).is_ok(), "partial daily reports retain gaps");
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert!(encoded["report"].get("returns_frequency").is_none());
+        let decoded: ForwardMessageSubmitV1 = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded.report.returns_frequency, None);
         request
             .report
             .returns

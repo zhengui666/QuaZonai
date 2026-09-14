@@ -43,6 +43,13 @@ pub struct DownstreamWeightsViewV1 {
     pub received_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ForwardReturnsFrequencyV1 {
+    ReportedObservation,
+    UtcDay,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ForwardReportContentV1 {
@@ -60,6 +67,9 @@ pub struct ForwardReportContentV1 {
     pub window_end: chrono::DateTime<chrono::Utc>,
     pub issued_at: chrono::DateTime<chrono::Utc>,
     pub complete: bool,
+    /// Missing metadata never implies daily or independent observations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub returns_frequency: Option<ForwardReturnsFrequencyV1>,
     #[schema(max_items = 10000)]
     pub returns: Vec<crate::science::NativeReturnV1>,
 }
@@ -124,6 +134,7 @@ pub enum ForwardWindowReasonV1 {
     WindowGap,
     WindowOverlap,
     SampleOverlap,
+    FrequencyMismatch,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -131,6 +142,7 @@ pub struct ForwardWindowViewV1 {
     pub handoff_id: Id,
     pub stream_id: String,
     pub latest_message_ids: Vec<Id>,
+    pub returns_frequency: Option<ForwardReturnsFrequencyV1>,
     pub window_start: Option<chrono::DateTime<chrono::Utc>>,
     pub window_end: Option<chrono::DateTime<chrono::Utc>>,
     pub complete_observations: DbCounter,

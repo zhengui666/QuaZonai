@@ -102,6 +102,15 @@ pub fn window(
         );
     }
     let mut reasons = BTreeSet::new();
+    let frequency = sources
+        .first()
+        .and_then(|s| s.report.content.returns_frequency);
+    if sources
+        .iter()
+        .any(|s| s.report.content.returns_frequency != frequency)
+    {
+        reasons.insert(ForwardWindowReasonV1::FrequencyMismatch);
+    }
     if selected.is_empty() {
         reasons.insert(ForwardWindowReasonV1::NoMessages);
     }
@@ -147,6 +156,11 @@ pub fn window(
             handoff_id: handoff,
             stream_id: stream.into(),
             latest_message_ids: selected.iter().map(|s| s.message.id).collect(),
+            returns_frequency: if reasons.contains(&ForwardWindowReasonV1::FrequencyMismatch) {
+                None
+            } else {
+                frequency
+            },
             window_start: selected.iter().map(|s| s.message.window_start).min(),
             window_end: selected.iter().map(|s| s.message.window_end).max(),
             complete_observations: DbCounter::new(returns.len() as u64)

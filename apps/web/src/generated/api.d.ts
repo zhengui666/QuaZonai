@@ -3913,6 +3913,7 @@ export interface components {
             message_revision: number;
             project_id: components["schemas"]["Id"];
             returns: components["schemas"]["NativeReturnV1"][];
+            returns_frequency?: null | components["schemas"]["ForwardReturnsFrequencyV1"];
             schema_version: components["schemas"]["SchemaV1"];
             sequence: components["schemas"]["DbCounter"];
             stream_id: string;
@@ -3923,13 +3924,16 @@ export interface components {
             window_start: string;
         };
         /** @enum {string} */
-        ForwardWindowReasonV1: "NO_MESSAGES" | "PARTIAL" | "MISSING_RETURNS" | "SEQUENCE_GAP" | "WINDOW_GAP" | "WINDOW_OVERLAP" | "SAMPLE_OVERLAP";
+        ForwardReturnsFrequencyV1: "REPORTED_OBSERVATION" | "UTC_DAY";
+        /** @enum {string} */
+        ForwardWindowReasonV1: "NO_MESSAGES" | "PARTIAL" | "MISSING_RETURNS" | "SEQUENCE_GAP" | "WINDOW_GAP" | "WINDOW_OVERLAP" | "SAMPLE_OVERLAP" | "FREQUENCY_MISMATCH";
         ForwardWindowViewV1: {
             complete_observations: components["schemas"]["DbCounter"];
             handoff_id: components["schemas"]["Id"];
             is_contiguous: boolean;
             latest_message_ids: components["schemas"]["Id"][];
             reason_codes: components["schemas"]["ForwardWindowReasonV1"][];
+            returns_frequency?: null | components["schemas"]["ForwardReturnsFrequencyV1"];
             stream_id: string;
             /** Format: date-time */
             window_end?: string | null;

@@ -1,5 +1,30 @@
 # Issue62 implementation evidence
 
+## Forward return frequency binding, 2026-09-14
+
+ForwardReportContentV1 now carries optional REPORTED_OBSERVATION / UTC_DAY frequency.
+Absent metadata stays unknown and preserves the original absent-field encoding; it is
+not inferred from timestamps or relabeled daily. UTC_DAY reports use completed UTC days
+with right-end midnight samples, midnight window bounds, and exactly one valid sample
+per covered day when complete. Partial reports retain gaps without qualifying them.
+All original versions in a stream must retain one frequency; a changed correction yields
+FREQUENCY_MISMATCH, unknown projected frequency and zero eligible observations.
+Frequency remains issuer metadata, not proof of independence or native evaluation.
+
+verify-bU5nrO on 530b0e0c plus this patch passed all-target check, format, strict Clippy
+and 195 tests: 143 contracts/domain, 28 PostgreSQL and 24 HTTP/CLI. Tests cover short
+windows falsely labeled daily, missing/intermediate/final days, partial gaps, absent
+metadata round trip, original report replay and a native correction changing frequency
+which invalidates a previously complete four-observation stream. Sources stayed unchanged;
+the verifier stopped its isolated PostgreSQL. These controlled protocol fixtures do not
+prove actual multi-day market feedback or statistical qualification.
+
+web-verify-f5byn1 reproduced all six generated outputs twice with handwriting unchanged.
+forward-frequency-web-* passed TypeScript, 505 Vitest tests, 5 PWA tests and Vite build
+(existing chunk-size warning only). Native ForwardEvaluate admission, protected InputSet
+freezing, scientific results, immutable evaluation/window publication and Live/Wake
+consumers remain unimplemented; this patch does not complete #62/#63.
+
 ## Original corrected Forward window projection, 2026-09-14
 
 GET /api/v2/handoffs/{id}/forward-window and CLI forward window inspect one original

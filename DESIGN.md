@@ -2776,7 +2776,7 @@ schema_version=1、origin=REAL、access_class=EVALUATOR_ONLY、byte_count>0。
 
 ### A7.3 原 Forward 消息接入
 
-POST `/api/v2/forward/messages` 要求 Idempotency-Key 与 external_message_id 完全一致，接受 ForwardMessageSubmitV1（schema_version=1、external_message_id、report）。report 为 ForwardReportContentV1：schema_version=1、project_id、handoff_id、external_claim_id、issuer_version（1..200字符）、stream_id（1..200）、sequence（正DbCounter）、message_revision（1..i32最大值）、supersedes_message_id、window_start/window_end、issued_at、complete、returns（0..10000项原NativeReturnV1）。只接归一化收益观察，不接账户、订单、成交、仓位、NAV或下游控制权限。无样本或缺失值可以保留为partial；complete要求至少一个有效样本且无缺失值，声明完整不是统计晋级证明。
+POST `/api/v2/forward/messages` 要求 Idempotency-Key 与 external_message_id 完全一致，接受 ForwardMessageSubmitV1（schema_version=1、external_message_id、report）。report 为 ForwardReportContentV1：schema_version=1、project_id、handoff_id、external_claim_id、issuer_version（1..200字符）、stream_id（1..200）、sequence（正DbCounter）、message_revision（1..i32最大值）、supersedes_message_id、window_start/window_end、issued_at、complete、可空returns_frequency、returns（0..10000项原NativeReturnV1）。只接归一化收益观察，不接账户、订单、成交、仓位、NAV或下游控制权限。无样本或缺失值可以保留为partial；complete要求至少一个有效样本且无缺失值，声明完整不是统计晋级证明。
 
 精确项目/下游FORWARD_SUBMIT凭据才可提交；签发者由已验证机器身份确定，issuer_version只是可审计的原生发行版本，不授予额外资格。三个UTC时间使用数据库原生微秒精度（超出精度拒绝而不静默舍入）。report窗口必须在原领取之后，end>start且不晚于数据库采纳时钟；issued_at不早于end，最多允许未来5秒。收益时间严格递增，位于(start,end]；数值有限且缺失必须附原NATIVE_RETURN_UNAVAILABLE原因。新消息要求下游当前启用且支持原环境，只接CLAIMED/ACKNOWLEDGED且精确external_claim_id及原转移元组；暂停/归档保留反馈，不因此启动研究。
 
@@ -2786,13 +2786,15 @@ POST `/api/v2/forward/messages` 要求 Idempotency-Key 与 external_message_id �
 
 GET `/api/v2/projects/{id}/forward`按原id倒序cursor/limit返回ForwardMessageViewV1元数据（原id/project/release/downstream/Handoff、external ID、stream/sequence/revision/supersedes、窗口/coverage/observation_count、Artifact引用与issued/received）。Operator和本项目RESEARCH_READ CLI可读，FORWARD_SUBMIT下游仅见自己的记录；不返回returns或原报告字节。CLI为`forward submit`与`forward list PROJECT_UUID`。统计连续性、重叠、纠正采纳、原生指标与Forward evidence window生产另循A7，不将消息登记视为晋级。
 
+returns_frequency只支持REPORTED_OBSERVATION与UTC_DAY；缺失/null表示未知，保留原报告缺失字段的原编码，不推断日频或独立性。UTC_DAY明确表示每个时间戳为刚结束的完整UTC日的右端点；窗口两端与全部样本须在UTC午夜，complete还须每一天恰有一个有效收益且覆盖至window_end。partial允许缺日但不参与完整窗口。REPORTED_OBSERVATION/未知只记录来源观测，不可借用UTC_DAY或年化方法。频率标识只是发行者的来源声明，仍须原生评估与方法/来源验证，不自行证明统计独立性。整个原stream包括被纠正历史必须一致；频率变化返回FREQUENCY_MISMATCH并清零窗口，不用纠正重标历史。
+
 ### A7.4 原 Forward 窗口来源投影
 
 GET `/api/v2/handoffs/{id}/forward-window?stream_id=...`与`client forward window HANDOFF_UUID --stream STREAM`只读取指定原Handoff/stream的来源投影。沿用Forward元数据读取身份：Operator、本项目RESEARCH_READ CLI、精确本项目/下游FORWARD_SUBMIT。服务端持原项目共享锁读取全部消息和不可变原报告，阻止新消息/纠正在读取中插入；报告原字节、按原external_message_id定位的原生FORWARD_SUBMIT回执引用及精确领取/项目/下游/Release/环境/窗口/样本数全部匹配才允许参与。
 
 按sequence从1起核对，按每条逻辑消息完整的原revision链选择最新版；不回退被partial纠正替代的旧complete版本。仅完整报告、sequence无缺口、窗口首尾相接且样本时间不重复时，is_contiguous=true并计算complete_observations。partial、缺失收益、缺sequence、窗口间隙、重叠或重复样本均返回对应原因并将合格样本数清零，不拼接或重复累计。空stream为NO_MESSAGES。窗口范围为已选原报告的最早start/最晚end；有缺口时只是诊断范围，不能作为合格窗口。
 
-ForwardWindowViewV1只含handoff_id、stream_id、按sequence排列的latest_message_ids、可空window_start/window_end、complete_observations、is_contiguous和reason_codes；不返回收益序列。内部选择结果保留同一原始来源的收益，供后续原生ForwardEvaluate输入使用。投影不是已封口Evaluation或forward_evidence_windows记录，也不授予Live晋级、Wake或审批权限；后续消费者必须在发布/晋级时重验原消息版本未被纠正替代及当前授权/新鲜度。
+ForwardWindowViewV1只含handoff_id、stream_id、按sequence排列的latest_message_ids、可空returns_frequency、可空window_start/window_end、complete_observations、is_contiguous和reason_codes；不返回收益序列。内部选择结果保留同一原始来源的收益，供后续原生ForwardEvaluate输入使用。投影不是已封口Evaluation或forward_evidence_windows记录，也不授予Live晋级、Wake或审批权限；后续消费者必须在发布/晋级时重验原消息版本未被纠正替代及当前授权/新鲜度。
 
 当前单窗口最多10000条原消息、64MiB原报告、1000000项收益；超限整体返回不可用，不截断旧消息隐藏缺口。更长历史须用原生分页/流式来源处理扩展，不能复制ID重置窗口。
 

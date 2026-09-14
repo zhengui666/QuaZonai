@@ -100,6 +100,7 @@ pub(super) async fn check(
             window_end: now,
             issued_at: now,
             complete: false,
+            returns_frequency: None,
             returns: vec![NativeReturnV1 {
                 timestamp_ns: DbCounter::new(now.timestamp_nanos_opt().unwrap() as u64).unwrap(),
                 value: Some(0.001),
@@ -140,6 +141,7 @@ pub(super) async fn check(
     assert_eq!(first.coverage_status, ForwardCoverageV1::Partial);
     let partial = projection(origin, credential, handoff.id, &request.report.stream_id).await;
     assert!(!partial.is_contiguous);
+    assert_eq!(partial.returns_frequency, None);
     assert_eq!(partial.complete_observations.get(), 0);
     assert_eq!(partial.latest_message_ids, vec![first.id]);
     assert!(partial
@@ -359,6 +361,27 @@ pub(super) async fn check(
         complete.latest_message_ids,
         vec![corrected.id, second.id, third_id, fourth_id]
     );
+    let mut frequency = third.clone();
+    frequency.external_message_id = "forward-frequency-correction".into();
+    frequency.report.message_revision = 2;
+    frequency.report.supersedes_message_id = Some(third_id);
+    frequency.report.returns_frequency = Some(ForwardReturnsFrequencyV1::ReportedObservation);
+    let frequency_id = accepted(submit(origin, credential, &frequency).await)
+        .resource
+        .id;
+    let mixed = projection(origin, credential, handoff.id, &request.report.stream_id).await;
+    assert_eq!(mixed.complete_observations.get(), 0);
+    assert_eq!(mixed.returns_frequency, None);
+    assert_eq!(mixed.latest_message_ids[2], frequency_id);
+    assert_eq!(
+        mixed.reason_codes,
+        vec![ForwardWindowReasonV1::FrequencyMismatch]
+    );
+    assert!(!mixed.is_contiguous);
+    let mut daily = request.clone();
+    daily.external_message_id = "forward-false-daily".into();
+    daily.report.returns_frequency = Some(ForwardReturnsFrequencyV1::UtcDay);
+    rejected(submit(origin, credential, &daily).await, 422);
     let mut partial = failed.clone();
     partial.external_message_id = "forward-partial-correction".into();
     partial.report.message_revision = 2;

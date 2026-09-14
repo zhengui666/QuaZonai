@@ -12305,6 +12305,17 @@
             "maxItems": 10000,
             "type": "array"
           },
+          "returns_frequency": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ForwardReturnsFrequencyV1",
+                "description": "Missing metadata never implies daily or independent observations."
+              }
+            ]
+          },
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
           },
@@ -12350,6 +12361,13 @@
         ],
         "type": "object"
       },
+      "ForwardReturnsFrequencyV1": {
+        "enum": [
+          "REPORTED_OBSERVATION",
+          "UTC_DAY"
+        ],
+        "type": "string"
+      },
       "ForwardWindowReasonV1": {
         "enum": [
           "NO_MESSAGES",
@@ -12358,7 +12376,8 @@
           "SEQUENCE_GAP",
           "WINDOW_GAP",
           "WINDOW_OVERLAP",
-          "SAMPLE_OVERLAP"
+          "SAMPLE_OVERLAP",
+          "FREQUENCY_MISMATCH"
         ],
         "type": "string"
       },
@@ -12385,6 +12404,16 @@
               "$ref": "#/components/schemas/ForwardWindowReasonV1"
             },
             "type": "array"
+          },
+          "returns_frequency": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ForwardReturnsFrequencyV1"
+              }
+            ]
           },
           "stream_id": {
             "type": "string"
