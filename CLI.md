@@ -959,3 +959,16 @@ GET /api/v2/projects/{id}/forward-weight-snapshots，需精确项目RESEARCH_REA
 按原ID倒序分页原权重、下游/环境、报告引用和期限，不刷新来源或授予Build资格。
 
 `server client run rebalance RUN_UUID` 读取原自动再平衡关联；Build 与对应 Study 返回同一原政策、来源 Candidate、Build 请求及已登记 Study/Release。`rebalance: null` 表示没有该关联，不推断人工来源；历史政策编号不等于当前授权。
+
+
+### 旧只读快照的原生关系检查
+
+先将旧一致性备份恢复为独立只读检查副本，通过受保护环境设置 `MIGRATION_SOURCE_DATABASE_URL`，不要在命令参数、Git 或日志中写密码。输出路径由本机操作者选择，使用仓库外私有目录且目标文件必须不存在：
+
+```sh
+cargo run --locked -p server -- inspect-historical-source --output "$MIGRATION_REPORT_PATH"
+```
+
+命令要求源 `alembic_version` 精确为 `0029_portfolio_candidate_exposure`，在单一 REPEATABLE READ/READ ONLY 事务内统计 public 表并用 PostgreSQL 原生比较检查全部已声明外键，包括非 id 复合列和 MATCH SIMPLE/FULL 空值语义。各查询最多30秒；不支持版本、不可见行或读取失败不写成功报告。结果文件0600、新建且不覆盖；输出只含表/列/约束名称、行数、孤立行数和检查时间，不读取行payload或凭据内容。
+
+退出0表示报告已生成，不表示迁移通过；`foreign_keys[].orphan_rows` 必须逐项核对。该检查只覆盖源库实际声明的外键，不能证明源schema等价、语义血缘、产物可读性或旧PASS资格，也不是 `/migrations/import` dry-run 的替代。完整导出、映射、排除项和原子导入仍须另行完成。

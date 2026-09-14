@@ -55,6 +55,14 @@ enum Command {
         #[arg(long, env = "STATE_DIR", default_value = "var")]
         state_dir: PathBuf,
     },
+    /// Inspect counts and native foreign keys in a selected read-only old snapshot.
+    InspectHistoricalSource {
+        #[arg(long, env = "MIGRATION_SOURCE_DATABASE_URL", hide_env_values = true)]
+        source_database_url: String,
+        /// Create a new private report file; existing reports are never overwritten.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Migrate a new database using a separate privileged migration identity.
     Migrate {
         #[command(flatten)]
@@ -315,6 +323,25 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
         }
         Command::InitState { state_dir } => initialize_state(&state_dir)?,
+        Command::InspectHistoricalSource {
+            source_database_url,
+            output,
+        } => {
+            use std::os::unix::fs::OpenOptionsExt;
+            let source = Store::connect(&source_database_url)
+                .await
+                .map_err(|_| std::io::Error::other("historical source connection failed"))?;
+            let report = source.inspect_historical_source().await.map_err(|_| std::io::Error::other("historical source inspection failed; source must be a supported readable snapshot"))?;
+            let bytes = serde_json::to_vec_pretty(&report)?;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(output)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            println!("Historical source inspection saved; this is not an import or artifact-readability result.");
+        }
         Command::PruneUnpublishedVerifiers {
             database,
             state_dir,

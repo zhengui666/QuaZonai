@@ -306,3 +306,6 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 
 构建选择原下游权重时可用client forward weights PROJECT_UUID分页读取，需精确
 项目RESEARCH_READ；只读原快照，不能把读取当作当前资格或伪造缺失起始权重。
+
+
+旧快照准备：本机 `server inspect-historical-source --output PATH` 使用受保护的 MIGRATION_SOURCE_DATABASE_URL，只对操作者选定的独立旧副本作原生计数/FK检查；具体前提见CLI。输出新私有文件、不覆盖原报告，不把退出0或零物理孤立行当成完整导入/语义血缘/产物可读证据。Agent/MCP没有源数据库或迁移入口权限。

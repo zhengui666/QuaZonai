@@ -661,3 +661,6 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 验证原生事务和受控协议，不能把该测试称为真实多日反馈/模型/OCI验收。
 
 组合 Build/Study 的运行详情提供“自动再平衡来源”，可核对原政策、来源 Candidate、输入、Runtime 版本及后继 Study/Release。它展示历史事实，不代替当前政策或交付批准。CLI 使用 `server client run rebalance RUN_UUID` 查询相同记录。
+
+
+旧库迁移准备先保留一致性备份，并在独立副本运行 `inspect-historical-source`（配置和输出字段见 CLI）。它以只读可重复读事务给出行数和原生外键孤立计数，不启动旧 Job、不修改原库；报告成功不等于导入完成。当前入口不复制数据/凭据，也不检查产物文件或授予旧策略资格。

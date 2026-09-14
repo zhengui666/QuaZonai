@@ -98,3 +98,32 @@ pub enum HistoricalIssueCodeV1 {
     RequiredRelation,
     InvalidArtifact,
 }
+
+/// Native database inspection only; no claim that artifacts or import mapping are complete.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalSourceInspectionV1 {
+    pub schema_version: SchemaV1,
+    pub source_schema_version: String,
+    pub inspected_at: DateTime<Utc>,
+    pub tables: Vec<HistoricalTableCountV1>,
+    pub foreign_keys: Vec<HistoricalForeignKeyCheckV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalTableCountV1 {
+    pub table: String,
+    pub rows: DbCounter,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalForeignKeyCheckV1 {
+    pub constraint: String,
+    pub source_table: String,
+    pub target_table: String,
+    pub source_columns: Vec<String>,
+    pub target_columns: Vec<String>,
+    pub orphan_rows: DbCounter,
+}

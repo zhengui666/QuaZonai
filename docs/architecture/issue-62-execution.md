@@ -4922,3 +4922,10 @@ web-verify-oRYRx1 从 Rust 合同生成 OpenAPI/TypeScript/Ajv，手写源未变
 新增 contracts::imports 的严格追溯清单与 domain::imports::inspect_manifest。原身份为原表/类别/原UUID，支持旧UUIDv4；不同表复用同UUID不合并。检查实际 Alembic 修订名0029_portfolio_candidate_exposure、重复身份、受支持表/类别、必需身份关系、关系目标表/存在性、UTC微秒精度和产物对象引用配对；不读取源文件、不生成新身份或授予旧PASS权限。表/身份外键元数据取自原Git模型声明，排除认证、运行秘密配置与内部聊天表。复核时纠正了复合外键的非id关联列被误当目标身份列的问题。
 
 最终3项新domain集成用例通过（含缺父关系、目标存在但类别不对、旧UUID及同UUID不同表、重复/精度/凭据表拒绝），domain全部tests目标的严格Clippy通过。此清单只是原始保留导出的追溯元数据，不是完整备份或已完成的dry-run；复合关系上下文/项目血缘核对、逐字段非秘密导出内容、真实产物读取、持久化报告与原子导入及HTTP/CLI尚未接通。当前没有开放迁移接口，不能据这些初始校验宣布旧数据已迁移。
+
+
+### 2026-09-15：原生旧快照计数与复合外键检查命令
+
+新增本机 inspect-historical-source，通过独立来源连接的 REPEATABLE READ/READ ONLY 事务、PostgreSQL catalog/quote_ident 和原生键比较输出表行数与各外键孤立行数。包含非id列、超过JS安全整数范围的bigint及MATCH FULL部分NULL，不从convalidated标志推断数据完整。未知Alembic版本或RLS隐藏风险明确拒绝；只输出元数据/计数，新建0600报告且不覆盖已有文件，不读取payload/凭据内容或修改源库。该命令不声称schema完全匹配，也不代替完整导出/产物读取/原子导入。
+
+verify-LeHvgD 首次编译发现server没有anyhow依赖，改用标准库错误，不新增依赖。最终verify-GKUBfI通过workspace/all-targets编译、格式、严格Clippy、共享contracts/domain/runtime回归、21项managed及31项Codex基础回归，并通过2项新增真实PostgreSQL/原生CLI测试（0.93秒）。测试用可丢弃的来源形状数据证明复合修订差异与MATCH FULL各产生1个孤立记录、未知版本/RLS拒绝、源行数保留、已有报告不覆盖；它不是用户真实旧快照验收。source_unchanged=true，隔离PG停止。用户的真实行情及旧快照/产物位置已分别询问，尚未提供；仍有可推进的导出、报告和导入产品工作，未合并或关闭Issue。
