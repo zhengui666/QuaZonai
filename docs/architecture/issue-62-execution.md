@@ -4885,3 +4885,10 @@ verify-JrbGVL新增大型测试Future在资格准备组合中栈溢出，Worker�
 新增真实 PostgreSQL/PGMQ/ArtifactStore 场景：原生注册 Calendar，负偏移会话时刻前不调度，墙钟经过但原数据 cutoff 未推进仍不调度；新原生 Forward 输入后允许一次 Build。错误版本和发布后同版本会话内容变化均拒绝，回滚队列/领域记录并清理实际孤立文件。新 Candidate 完成自己的 Study/PASS/Release，无新 Approval；原生 Job 可读取原日历且拒绝无关文件。科学与模型响应仍为受控协议声明，不替代真实市场/科学数值或完整 T42 验收。
 
 verify-k1QEWE 暴露测试 Runtime 缺日历能力声明；verify-6QFmE6 和 JBCeXM 分别定位全局读取及 native_input_binding 错误。修复后 verify-ysu6FY、jpkwMh 定向通过，后者包含 8 项 Store（162.08 秒）及 1 项 Worker（15.89 秒）。verify-qGoMjm 全组遇到共享资格准备 Future 栈溢出；拆分准备和断言阶段，保留全部断言、不增线程栈，verify-00PeRP Live 定向通过。最终同版本内容变更反例所在源码 verify-nGy0TI 通过 workspace/all-targets 编译、格式、严格 Clippy、10 项 CLI（80.31 秒）及 28 项 HTTP（408.32 秒），source_unchanged=true，验证器正常结束并停止隔离 PG。未 push/review/merge/close；UTC 日配额、完整原生验收及其余交付门禁仍须完成。
+
+
+### 2026-09-15：取消与政策替换不清零自动 Build 日额度
+
+新增 rebalance_daily_quota_survives_cancellation_and_policy_replacement：原生命令创建日额度为一的政策，自动 Build 入队后通过原 RunCancel 取消；同 cutoff 不重复。再次用相同内容授权新政策并原生登记新的 Forward Dataset/InputSet，连续两次自动准入均返回 automation_daily_quota，禁止发布参数，原 Run 数不变且不可变尝试记录仍为一。未手工改写状态、政策、账本或时间戳；验证取消和政策 UUID 不能释放已计入的 Build 尝试，不声称覆盖跨 UTC 午夜、跨 Mandate 或全部配额竞态。
+
+verify-FTm1Ft 因测试引用私有 RunState 路径编译失败，改为原公开 contracts::runs 路径。最终 verify-pCG2kL 通过 workspace/all-targets 编译、格式、严格 Clippy、9 项 Store（175.86 秒）及 1 项 Worker（15.60 秒），source_unchanged=true，隔离 PG 正常停止。产品实现未改动。受控科学响应仍非真实市场/T42证据；完整验收、最新 Head CI/review/合并与 Issue 关闭仍待完成。
