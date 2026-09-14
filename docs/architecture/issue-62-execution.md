@@ -4910,3 +4910,8 @@ web-verify-oRYRx1 从 Rust 合同生成 OpenAPI/TypeScript/Ajv，手写源未变
 实际容器测试覆盖原模型编译/并发单容器、Sealed 读取、组合聚合/VARIANCE/CVaR/风险预算、单账户滚动 Study、原目标序列、网关突然重启后的原字节恢复、网关死亡期间内核截止、取消身份，以及网络/文件/Secret命名空间和内核内存/PID/文件大小限制。该证据使用明确的受控市场目录，证明这些真实原生执行/恢复边界，不证明真实市场数据资格、原生模型账号闭环或 T42。
 
 完整合同复核发现：现有 native-browser 测试仅覆盖真实初始化/TOTP/项目写入与重放/跨源拒绝/布局/退出，不包含研究到交付；DESIGN §11、A9、B1 要求的旧快照导入和 POST /migrations/import dry-run 报告尚无实现。现有 SQLx migration_command 测试证明新系统部署升级原子性，不能代替旧系统数据迁移。旧实现结构可从删除提交313b0e27的父提交读取（backend/src/db/domain_models.py、runtime_models.py、quant_runtime_models.py及原Alembic），不恢复旧代码到源码树。需要按原只读快照保留 Research/Run/Artifact 追溯、ID/关系/精度/可读率报告，旧PASS/审批/凭据不继承新资格。真实行情目录及许可/PIT来源信息待用户提供；其他迁移和验收工作继续，不将此轮视作完成或合并许可。
+
+
+### 2026-09-15：旧快照迁移字段与身份审计
+
+从 Git 删除提交313b0e27的父版本读取旧 domain_models/runtime_models/quant_runtime_models 定义，未恢复旧代码或连接用户数据库。确认 ResearchProgram/Mission/Cycle/MissionArtifact/AlphaModel 等原身份为 UUIDv4，Job 状态/租约不等同新Run；MissionArtifact 的 storage_uri 只是引用，不能据此认定实际可读。旧 downstream_systems 含 service_token_ciphertext/nonce/key_version，运行配置也含加密模型凭据；Job payload 和 Agent 内部聊天记录不能作为普通JSON全量导出。由此在 DESIGN §11 明确只读原快照、固定schema逐字段导出、原身份唯一映射、历史只读/重验、原件保留、产物真实读取及dry-run/原子导入报告边界。未将设计或字段审计视作导入实现；POST /migrations/import、可信导出注册/适配与真实旧快照验证仍需继续完成。
