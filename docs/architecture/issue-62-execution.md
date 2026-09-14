@@ -1,5 +1,23 @@
 # Issue62 implementation evidence
 
+## Original distinct-Candidate automatic daily quota, 2026-09-14
+
+The automatic Paper protocol fixture now takes the second original LAST_TARGET
+Candidate produced by the real Build admission/publication chain. A shared native
+Study helper publishes its own immutable evaluation, and the normal Release producer
+creates the second Package. No qualification, Candidate, evaluation or Release is
+inserted by fixture SQL. Reauthorizing the same downstream with daily limit 1 rejects
+that distinct Candidate with automation_daily_quota and leaves no Approval. Explicit
+reauthorization with limit 2 then produces its exact original Release Offer, proving
+the prior rejection was quota admission rather than invalid source evidence.
+
+Final verify-HkVu6Q over 65b5b6b9 plus this test patch passed all-target check/fmt/strict
+Clippy and all 236 tests, with unchanged source and owned PostgreSQL stopped. This
+closes the distinct-Candidate rejection gap recorded below. The reused Study helper
+uses Candidate-specific native command keys; no product behavior or public schema
+changed. Controlled protocol evidence remains separate from actual market/model/OCI
+acceptance. Forward/promotion/Wake, UI and full #62 delivery remain outstanding.
+
 ## Atomic automatic Paper and scoped Offer discovery, 2026-09-14
 
 Trusted Worker consumes an ACTIVE Project's current original human-authorized policy.

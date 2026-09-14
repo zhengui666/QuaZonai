@@ -697,4 +697,8 @@ async fn original_frozen_policy_automates_paper_without_live_promotion(pool: PgP
         &pool, &store, &actor, &f, &directory, &release,
     ))
     .await;
+    Box::pin(automatic_paper::quota(
+        &pool, &store, &actor, &f, &build, &release,
+    ))
+    .await;
 }

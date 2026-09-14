@@ -402,3 +402,119 @@ pub(super) async fn check(
         1
     );
 }
+
+// Distinct original build/study/publication, never a copied qualification or SQL Release.
+pub(super) async fn quota(
+    pool: &PgPool,
+    store: &Store,
+    operator: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    build: &contracts::portfolio::PortfolioBuildRequestV1,
+    first: &ReleaseViewV1,
+) {
+    let candidate: uuid::Uuid = sqlx::query_scalar("SELECT id FROM app.portfolio_candidates WHERE project_id=$1 AND mandate_id=$2 AND id<>$3 ORDER BY id DESC LIMIT 1")
+        .bind(first.project_id.as_uuid()).bind(first.mandate_id.as_uuid()).bind(first.candidate_id.as_uuid()).fetch_one(pool).await.unwrap();
+    let candidate: Id = candidate.to_string().try_into().unwrap();
+    let intent = Box::pin(qualified_portfolio::original_release_intent(
+        pool, store, operator, f, build, candidate,
+    ))
+    .await;
+    let second = Box::pin(store.create_release(
+        operator,
+        "quota-second-release",
+        &intent,
+        |id, size| f.read(id, size),
+        |object| {
+            std::future::ready(
+                f.objects
+                    .put(object.id, &object.bytes)
+                    .map_err(|_| StoreError::Integrity),
+            )
+        },
+    ))
+    .await
+    .unwrap()
+    .resource;
+    let project = store.project(operator, first.project_id).await.unwrap();
+    let policy = store
+        .automation_policy(operator, project.current_automation_policy_id.unwrap())
+        .await
+        .unwrap();
+    let down = store
+        .downstream(operator, policy.content.downstream_id)
+        .await
+        .unwrap();
+    let store::downstream::ProbePreparation::Pending(ticket) = store
+        .prepare_downstream_probe(
+            operator,
+            "quota-probe",
+            down.id,
+            &DownstreamProbeRequestV1 {
+                schema_version: SchemaV1,
+                expected_revision: down.revision,
+            },
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("new probe")
+    };
+    store
+        .complete_downstream_probe(
+            *ticket,
+            DownstreamProbeOutcomeV1::Available {
+                capabilities: DownstreamCapabilitiesV1 {
+                    schema_version: SchemaV1,
+                    delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
+                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    environments: vec![ForwardEnvironmentV1::Paper, ForwardEnvironmentV1::Live],
+                    market_capability_versions: vec![second.market_capability_version.clone()],
+                    accepting_targets: true,
+                    checked_at: chrono::Utc::now(),
+                },
+            },
+            |id, bytes| async move { f.objects.put(id, &bytes).map_err(|_| StoreError::Integrity) },
+        )
+        .await
+        .unwrap();
+    for limit in [1, 2] {
+        let mut content = policy.content.clone();
+        content.max_rebalances_per_day = limit;
+        store
+            .authorize_automation(
+                operator,
+                &format!("quota-policy-{limit}"),
+                project.id,
+                &AutomationAuthorizeV1 {
+                    schema_version: SchemaV1,
+                    expected_project_revision: store
+                        .project(operator, project.id)
+                        .await
+                        .unwrap()
+                        .revision,
+                    content,
+                },
+            )
+            .await
+            .unwrap();
+        let result = Box::pin(store.automate_paper(project.id, |id, size| f.read(id, size))).await;
+        if limit == 1 {
+            assert!(
+                matches!(result, Err(StoreError::Invalid("automation_daily_quota"))),
+                "{result:?}"
+            );
+            let count: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM app.approvals WHERE release_id=$1")
+                    .bind(second.id.as_uuid())
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
+            assert_eq!(count, 0, "quota failure leaves no partial approval");
+        } else {
+            let offer = result.unwrap().unwrap();
+            assert_eq!(offer.candidate_id, candidate);
+            assert_eq!(offer.release_id, second.id);
+            assert_eq!(offer.downstream_id, down.id);
+        }
+    }
+}

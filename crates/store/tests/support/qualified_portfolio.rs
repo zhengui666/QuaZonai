@@ -1945,18 +1945,14 @@ async fn release_scenario(pool: PgPool, environment: contracts::forward::Forward
     Box::pin(release_check(&pool, &store, &actor, &f, &build, candidate)).await;
 }
 
-pub(super) async fn original_releases(
+pub(super) async fn original_release_intent(
     pool: &PgPool,
     store: &Store,
     actor: &store::authority::Actor,
     f: &cycle_support::Fixture,
     build: &contracts::portfolio::PortfolioBuildRequestV1,
     candidate: Id,
-) -> Option<(
-    contracts::delivery::ReleaseViewV1,
-    contracts::delivery::ReleaseViewV1,
-    contracts::delivery::ReleaseCreateV1,
-)> {
+) -> contracts::delivery::ReleaseCreateV1 {
     let request = contracts::portfolio::PortfolioStudyRequestV1 {
         schema_version: SchemaV1,
         candidate_id: candidate,
@@ -1967,7 +1963,7 @@ pub(super) async fn original_releases(
     };
     let run = Box::pin(store.start_portfolio_study(
         actor,
-        "release-study",
+        &format!("release-study-{candidate}"),
         &request,
         |id, size| f.read(id, size),
         |object| {
@@ -1983,7 +1979,7 @@ pub(super) async fn original_releases(
     .resource;
     let message = validation_publication::message(pool, run.id).await;
     let Some(ClaimResult::Leased(lease)) = store
-        .claim_native_run(&message, "release-study", 60)
+        .claim_native_run(&message, &format!("release-study-{candidate}"), 60)
         .await
         .unwrap()
     else {
@@ -2002,11 +1998,29 @@ pub(super) async fn original_releases(
         store.evaluation(actor, evaluation).await.unwrap().decision,
         contracts::evidence::Decision::Pass
     );
-    let intent = contracts::delivery::ReleaseCreateV1 {
+    contracts::delivery::ReleaseCreateV1 {
         schema_version: SchemaV1,
         candidate_id: candidate,
         evaluation_id: evaluation,
-    };
+    }
+}
+
+pub(super) async fn original_releases(
+    pool: &PgPool,
+    store: &Store,
+    actor: &store::authority::Actor,
+    f: &cycle_support::Fixture,
+    build: &contracts::portfolio::PortfolioBuildRequestV1,
+    candidate: Id,
+) -> Option<(
+    contracts::delivery::ReleaseViewV1,
+    contracts::delivery::ReleaseViewV1,
+    contracts::delivery::ReleaseCreateV1,
+)> {
+    let intent = Box::pin(original_release_intent(
+        pool, store, actor, f, build, candidate,
+    ))
+    .await;
     if store
         .candidate(actor, candidate)
         .await
@@ -2098,7 +2112,7 @@ pub(super) async fn original_releases(
     )
     .unwrap();
     assert_eq!(package.release_id, view.id);
-    assert_eq!(package.evaluation_refs, vec![evaluation]);
+    assert_eq!(package.evaluation_refs, vec![intent.evaluation_id]);
     assert_eq!(package.valid_until, view.valid_until);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.releases")
