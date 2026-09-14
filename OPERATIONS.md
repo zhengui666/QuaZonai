@@ -563,7 +563,7 @@ PAPER许可不能用于LIVE；审批期限不能超过原Release或当前来源�
 考虑只允许申请新审批，不恢复旧审批。`client approval show APPROVAL_UUID`仅查看
 原历史；配置版本改变后须重新审批。人工Offer使用 `client handoff offer`，绑定原审批并重验当前来源/下游；显式选择同项目/mandate/下游/环境的最新Offer作为前版，字段见CLI。
 同一Release不能换键重复发送。新Offer只撤销尚未领取的前版，已领取事实不改写。
-`client handoff show UUID`读取当前状态，原幂等回执不代替当前状态。下游使用 `client handoff claim UUID` 及其DOWNSTREAM_CLAIM凭据领取；external_claim_id必须与幂等键相同，200含原Package与转移。相同编号重试只取原回执，不能换编号再次领取。Worker仅清理尚未领取且已到期的Offer；已领取事实不改写。自动审批、ACK、显式审批撤销及Web界面仍待实现。
+`client handoff show UUID`读取当前状态，原幂等回执不代替当前状态。下游使用 `client handoff claim UUID` 及其DOWNSTREAM_CLAIM凭据领取；external_claim_id必须与幂等键相同，200含原Package与转移。相同编号重试只取原回执，不能换编号再次领取。Worker补记尚未领取Offer的到期和审批撤销；已领取事实不改写。下游使用 `client handoff ack UUID` 与精确DOWNSTREAM_ACK凭据记录接受或拒绝，字段见CLI；原领取编号必须匹配，重复回执不产生新交付。Operator使用 `client approval revoke UUID` 与精确人工grant追加立即或未来撤销；最早生效日期不能被后续记录推迟，`client approval revocations UUID`查看原历史。自动审批及Web界面仍待实现。
 
 Cycle 启动须明确提供 `researcher_profile` 和 `reviewer_profile`，各包含 Codex Profile 的 `profile_id` 与当前 `expected_revision`。两个选择随本周期冻结，不属于可重复使用的 Brief；可以明确选择同一 Profile，但研究和独立审阅使用不同 Thread。缺失、过期版本或正在登录/注销的配置不能启动。随后修改 Profile 不会修改旧周期或旧回执，也不能让旧周期自动采用新模型/账号配置；应以新选择启动新周期。历史没有选择的记录只保留原事实，不补造账号。
 

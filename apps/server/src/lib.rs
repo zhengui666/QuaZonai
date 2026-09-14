@@ -387,10 +387,22 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route("/api/v2/approvals/{id}", get(release::approval))
         .route(
+            "/api/v2/approvals/{id}/revoke",
+            post(release::revoke_approval).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
+            "/api/v2/approvals/{id}/revocations",
+            get(release::revocations),
+        )
+        .route(
             "/api/v2/handoffs",
             post(release::offer).layer(DefaultBodyLimit::max(16 * 1024)),
         )
         .route("/api/v2/handoffs/{id}", get(release::handoff))
+        .route(
+            "/api/v2/handoffs/{id}/ack",
+            post(release::ack).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
         .route(
             "/api/v2/handoffs/{id}/claim",
             post(release::claim).layer(DefaultBodyLimit::max(4096)),
@@ -558,7 +570,7 @@ control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
-release::claim,release::offer,release::handoff,release::create,release::get,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,
+release::ack,release::revoke_approval,release::revocations,release::claim,release::offer,release::handoff,release::create,release::get,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,
 execution_assumptions::list,execution_assumptions::get,execution_assumptions::create,
 forward::weights,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,

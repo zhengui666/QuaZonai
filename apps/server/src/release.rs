@@ -16,9 +16,9 @@ use axum::{
 use contracts::{
     control::{CommandResult, ListQuery, Page},
     delivery::{
-        ApprovalViewV1, HandoffClaimV1, HandoffClaimViewV1, HandoffOfferV1, HandoffViewV1,
-        ReleaseApproveV1, ReleaseCreateV1, ReleaseDecisionViewV1, ReleaseRejectV1, ReleaseReopenV1,
-        ReleaseViewV1,
+        ApprovalRevocationViewV1, ApprovalRevokeV1, ApprovalViewV1, HandoffAckV1, HandoffClaimV1,
+        HandoffClaimViewV1, HandoffOfferV1, HandoffViewV1, ReleaseApproveV1, ReleaseCreateV1,
+        ReleaseDecisionViewV1, ReleaseRejectV1, ReleaseReopenV1, ReleaseViewV1,
     },
     Id,
 };
@@ -266,4 +266,54 @@ pub async fn claim(
     })
     .await?;
     Ok((StatusCode::OK, Json(result)))
+}
+
+#[utoipa::path(post,path="/api/v2/handoffs/{id}/ack",operation_id="acknowledge_handoff",tag="Release",request_body=HandoffAckV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<HandoffViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn ack(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    id: Result<Path<Id>, PathRejection>,
+    body: Result<Json<HandoffAckV1>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<HandoffViewV1>>), ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let request = json(body)?;
+    let result = state
+        .store
+        .acknowledge_handoff(&actor, idempotency_key(&headers)?, id, &request)
+        .await?;
+    Ok((StatusCode::OK, Json(result)))
+}
+
+#[utoipa::path(post,path="/api/v2/approvals/{id}/revoke",operation_id="revoke_approval",tag="Release",request_body=ApprovalRevokeV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<ApprovalRevocationViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
+pub async fn revoke_approval(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    id: Result<Path<Id>, PathRejection>,
+    body: Result<Json<ApprovalRevokeV1>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<ApprovalRevocationViewV1>>), ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            state
+                .store
+                .revoke_approval(&actor, idempotency_key(&headers)?, id, &json(body)?)
+                .await?,
+        ),
+    ))
+}
+#[utoipa::path(get,path="/api/v2/approvals/{id}/revocations",operation_id="list_approval_revocations",tag="Release",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<ApprovalRevocationViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn revocations(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<ApprovalRevocationViewV1>>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state.store.approval_revocations(&actor, id, &query).await?,
+    ))
 }

@@ -1156,6 +1156,79 @@
         ],
         "type": "object"
       },
+      "ApprovalRevocationViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "approval_id",
+          "created_at",
+          "effective_at",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ApprovalRevokeV1": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_latest_revocation_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "reason_code",
+          "reason"
+        ],
+        "type": "object"
+      },
       "ApprovalViewV1": {
         "additionalProperties": false,
         "properties": {
@@ -9766,6 +9839,47 @@
         ],
         "type": "object"
       },
+      "HandoffAckOutcomeV1": {
+        "enum": [
+          "ACKNOWLEDGED",
+          "REJECTED"
+        ],
+        "type": "string"
+      },
+      "HandoffAckV1": {
+        "additionalProperties": false,
+        "properties": {
+          "external_ack_id": {
+            "type": "string"
+          },
+          "external_claim_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/HandoffAckOutcomeV1"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "external_ack_id",
+          "outcome",
+          "reason_code",
+          "reason"
+        ],
+        "type": "object"
+      },
       "HandoffClaimV1": {
         "additionalProperties": false,
         "properties": {
@@ -13984,6 +14098,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "APPROVAL_REVOKE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ApprovalRevokeV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "RELEASE_REJECT"
                 ],
                 "type": "string"
@@ -14469,6 +14601,7 @@
           "RELEASE_CREATE",
           "RELEASE_APPROVE",
           "HANDOFF_OFFER",
+          "APPROVAL_REVOKE",
           "RELEASE_REJECT",
           "RELEASE_REOPEN",
           "BRIEF_FREEZE",

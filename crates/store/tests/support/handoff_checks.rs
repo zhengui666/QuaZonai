@@ -265,7 +265,7 @@ pub(super) async fn check(
                 principal.id,
                 &CredentialIssue {
                     schema_version: SchemaV1,
-                    scope_codes: vec![MachineScope::DownstreamClaim],
+                    scope_codes: vec![MachineScope::DownstreamClaim, MachineScope::DownstreamAck],
                     expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
                 },
             )
@@ -294,6 +294,21 @@ pub(super) async fn check(
             .await;
         } else {
             assert!(matches!(read, Err(StoreError::Forbidden)));
+            let ack = HandoffAckV1 {
+                schema_version: SchemaV1,
+                external_ack_id: "foreign-ack".into(),
+                external_claim_id: Some("claim-original".into()),
+                outcome: HandoffAckOutcomeV1::Acknowledged,
+                reason_code: "ACCEPTED".into(),
+                reason: "Must not acknowledge another downstream".into(),
+            };
+            assert!(matches!(
+                store
+                    .acknowledge_handoff(&machine, "foreign-ack", second.id, &ack)
+                    .await,
+                Err(StoreError::Forbidden)
+            ));
+
             let request = HandoffClaimV1 {
                 schema_version: SchemaV1,
                 external_claim_id: "claim-original".into(),

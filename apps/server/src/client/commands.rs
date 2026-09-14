@@ -133,13 +133,24 @@ pub enum Alpha {
 #[derive(Subcommand)]
 pub enum Handoff {
     Offer,
+    Ack { id: String },
     Claim { id: String },
     Show { id: String },
 }
 
 #[derive(Subcommand)]
 pub enum Approval {
-    Show { id: String },
+    Revoke {
+        id: String,
+    },
+    Revocations {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
+    Show {
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -574,6 +585,12 @@ impl Command {
                         POST, action("/api/v2/handoffs", id, "claim")?, 200, false
                     )?
                 }
+                Handoff::Ack { id } => {
+                    Request::write::<
+                        contracts::delivery::HandoffAckV1,
+                        CommandResult<contracts::delivery::HandoffViewV1>,
+                    >(POST, action("/api/v2/handoffs", id, "ack")?, 200, false)?
+                }
                 Handoff::Offer => Request::write::<
                     contracts::delivery::HandoffOfferV1,
                     CommandResult<contracts::delivery::HandoffViewV1>,
@@ -583,6 +600,20 @@ impl Command {
                     id,
                 )?),
             },
+            Self::Approval(Approval::Revoke { id }) => {
+                Request::write::<
+                    contracts::delivery::ApprovalRevokeV1,
+                    CommandResult<contracts::delivery::ApprovalRevocationViewV1>,
+                >(POST, action("/api/v2/approvals", id, "revoke")?, 201, true)?
+            }
+            Self::Approval(Approval::Revocations { id, page }) => {
+                Request::get::<Page<contracts::delivery::ApprovalRevocationViewV1>>(action(
+                    "/api/v2/approvals",
+                    id,
+                    "revocations",
+                )?)
+                .page(page)?
+            }
             Self::Approval(Approval::Show { id }) => {
                 Request::get::<contracts::delivery::ApprovalViewV1>(item("/api/v2/approvals", id)?)
             }

@@ -1,5 +1,21 @@
 # CLI 命令
 
+`client handoff ack HANDOFF_UUID`提交HandoffAckV1到POST /api/v2/handoffs/{id}/ack：
+schema_version=1、external_ack_id（同Claim编号规则）、external_claim_id、
+outcome=ACKNOWLEDGED|REJECTED、reason_code及reason。幂等键须等于external_ack_id，
+使用精确项目/下游的DOWNSTREAM_ACK凭据，不使用人工grant。已领取时须引用原claim编号；
+领取前仅能在Offer期限内以null claim编号拒绝。200记录反馈，不是新交付授权。
+同编号/请求重试返回原回执；新编号或改正文不能覆盖终态。已领取后的晚到ACK不因
+审批撤销而抹除；当前凭据仍须有效。ACK不代表QZ拥有下游订单或停止权限。
+
+`client approval revoke APPROVAL_UUID`提交ApprovalRevokeV1到POST /api/v2/approvals/{id}/revoke：
+schema_version=1、expected_latest_revocation_id（首次null）、effective_at（null立即，
+否则为未来时刻）、reason_code和reason。需APPROVAL_REVOKE人工grant绑定原审批及完整请求。
+201追加不可变撤销，不能推迟更早的生效记录；立即生效时只把原审批下尚未领取的Offer
+标为REVOKED。Worker补记定时撤销与到期，Claim自身也检查最早生效时间。已领取事实保留。
+`client approval revocations APPROVAL_UUID --limit 50`按id倒序分页读取历史，需原项目
+RESEARCH_READ；归档项目仍可由Operator撤销。409先重读最新历史，不自动覆盖CAS。
+
 `client handoff claim HANDOFF_UUID`向 POST /api/v2/handoffs/{id}/claim 提交
 HandoffClaimV1：schema_version=1、external_claim_id（1..200 UTF-8字节，无首尾空白/控制字符）、
 package_schema_version（当前字符串1）。Idempotency-Key必须等于external_claim_id；
@@ -7,7 +23,7 @@ package_schema_version（当前字符串1）。Idempotency-Key必须等于extern
 及TargetPackage；replayed=true只重放原转移，不刷新期限或再次领取。换编号重领、
 换Offer复用编号均冲突；已撤销/过期或当前审批/来源/下游不可用时拒绝新领取。
 当前凭据无效时也不能读取旧回执。Worker按数据库时间清理未领取的到期Offer，
-Claim独立检查时间；已领取记录不会因此变成停止或撤单。ACK与显式审批撤销仍待实现。
+Claim独立检查时间；已领取记录不会因此变成停止或撤单。
 
 `client handoff offer` 提交 HandoffOfferV1 到 POST /api/v2/handoffs：schema_version=1、
 release_id、approval_id、supersedes_handoff_id（首次null，否则精确最新Offer）、expires_at。
@@ -16,7 +32,7 @@ release_id、approval_id、supersedes_handoff_id（首次null，否则精确最�
 新Offer会同事务撤销仍未领取的前版；已领取前版保留事实，不代表停止或撤单。
 `client handoff show UUID` 读 GET /api/v2/handoffs/{id}当前状态。原创建回执重放仍是
 原结果，不能据其OFFERED判断当前状态。下游仅凭对应项目/下游的CLAIM或ACK scope
-读取自身Offer。当前已接通人工Offer；Claim及Worker到期处理已接通；ACK/显式撤销及界面仍待实现。
+读取自身Offer。人工Offer、Claim、ACK及显式审批撤销已接通；界面仍待实现。
 
 `client release approve RELEASE_UUID` 向 POST /api/v2/releases/{id}/approvals
 提交 ReleaseApproveV1：schema_version=1、downstream_id、environment=PAPER|LIVE、

@@ -313,3 +313,39 @@ pub struct HandoffClaimViewV1 {
     pub handoff: HandoffViewV1,
     pub package: TargetPackageV1,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum HandoffAckOutcomeV1 {
+    Acknowledged,
+    Rejected,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HandoffAckV1 {
+    pub schema_version: crate::SchemaV1,
+    pub external_ack_id: String,
+    pub external_claim_id: Option<String>,
+    pub outcome: HandoffAckOutcomeV1,
+    pub reason_code: String,
+    pub reason: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalRevokeV1 {
+    pub schema_version: crate::SchemaV1,
+    pub expected_latest_revocation_id: Option<Id>,
+    pub effective_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub reason_code: String,
+    pub reason: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalRevocationViewV1 {
+    pub id: Id,
+    pub approval_id: Id,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub effective_at: chrono::DateTime<chrono::Utc>,
+    pub reason_code: Option<String>,
+    pub reason: String,
+}

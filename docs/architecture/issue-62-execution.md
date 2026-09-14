@@ -1,5 +1,37 @@
 # Issue62 implementation evidence
 
+## Original downstream ACK and immutable approval revocation, 2026-09-14
+
+HTTP/CLI ACK uses exact DOWNSTREAM_ACK project/downstream identity and the original
+claim ID. It reuses native command receipts, accepts one terminal outcome and replays
+the original result; changed IDs/content cannot rewrite it. An unclaimed Offer can only
+be rejected before expiry. A claimed Package can receive late acknowledgement after
+approval revocation without new source reads, delivery authority or execution controls.
+
+HTTP/CLI approval revoke requires the exact APPROVAL_REVOKE human intent, appends an
+immutable reason/effective time with latest-record CAS, and never postpones an earlier
+revocation. Historical query supports native pagination. It can revoke archived projects;
+only unclaimed Offers change to REVOKED. Worker maintenance reconciles due revocations
+and expiry with one bounded SKIP LOCKED statement. Claim takes the shared project,
+Candidate, downstream and approval lock order and independently checks effective time.
+Migration 066 preserves old nullable reason codes and adds the native grant operation.
+
+`.ai-bridge/verify-f1HGov` over 58ec17c1 plus this patch passed all-target check, fmt,
+strict Clippy and 232 tests (142 contracts/domain, 47 PostgreSQL, 43 HTTP/CLI/Worker).
+It includes original qualified Package chains, concurrent claim/revocation, scheduled
+revocation despite a later appended date, preclaim rejection without transfer, concurrent
+ACK/revocation replay, exact/foreign identities, preserved transfer history, native
+CLI/TCP ACK and exact human revoke grants. Sources stayed unchanged; the owned PostgreSQL
+instance stopped. Protocol fixtures do not prove actual market/model/OCI acceptance.
+
+`.ai-bridge/web-verify-TpK0dP` reproduced all six generated outputs twice with
+handwritten sources unchanged. ack-web-* logs verify TypeScript, 505 Vitest cases,
+5 PWA checks and Vite build; only the existing chunk-size warning remains.
+
+Frozen-policy consumption, delivery UI, Forward feedback/promotion/Wake and full
+T01–T42/migration/recovery/current-head review remain incomplete; this is not a merge
+or Issue closure claim.
+
 ## Native downstream Claim and unclaimed expiry, 2026-09-14
 
 POST /api/v2/handoffs/{id}/claim and CLI handoff claim accept the original downstream's

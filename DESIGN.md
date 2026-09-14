@@ -2730,6 +2730,10 @@ Claim POST `/api/v2/handoffs/{id}/claim` 使用 HandoffClaimV1：schema_version=
 
 每个下游external_claim_id只能对应一个原生转移；相同编号/内容的已完成请求返回原回执，不因后来审批/配置/拒绝/TTL变化再次转移。当前机器身份仍须有效且属于原项目/下游；换编号重领同Offer冲突，换Offer复用编号冲突。历史已领取而缺少本入口原回执不能补造新领取。可信Worker每次原生轮询按数据库时间、行锁与SKIP LOCKED至多处理128个OFFERED且expires_at已到的Offer，仅转EXPIRED；领取在行锁后独立检查时间，不依赖清理任务及时运行。原子回滚必须包含状态、转移和回执。
 
+ACK POST `/api/v2/handoffs/{id}/ack` 使用 HandoffAckV1：schema_version=1、external_ack_id（同Claim的1..200 UTF-8字节规则，等于Idempotency-Key）、external_claim_id（已领取时精确原编号，未领取拒绝时null）、outcome=ACKNOWLEDGED|REJECTED、reason_code/reason（同人工决定长度限制）。仅原项目/下游的DOWNSTREAM_ACK机器身份可提交。CLAIMED可转ACKNOWLEDGED或REJECTED，并保留原转移；OFFERED仅在尚未到期时允许REJECTED且不能带领取编号。ACK是事实回执，不重查已转移对象的当前资格/readiness/TTL，不因审批后来撤销丢弃合法迟到回执；当前机器身份仍须有效。每个Offer只采纳一次终态ACK；同外部编号/内容重放原回执，换内容、目标或编号不能重写终态。只记录数据库实际ack时间，不接受客户端回填时间或真实订单字段。client handoff ack使用该合同。
+
+审批撤销 POST `/api/v2/approvals/{id}/revoke` 使用 ApprovalRevokeV1：schema_version=1、expected_latest_revocation_id（首次null，否则原审批最新id）、effective_at（null立即；显式时间须不早于本次数据库时间）、reason_code/reason。APPROVAL_REVOKE人工grant绑定原审批与完整请求。在原项目/Candidate/审批锁内CAS追加不可变撤销，不能删除旧撤销或把生效日推后恢复权限；所有消费者取最早生效日。立即生效时只将该审批仍OFFERED的记录转REVOKED；已领取/ACK/拒绝历史均保留。允许撤销归档或失效项目的旧审批。GET `/api/v2/approvals/{id}/revocations`按id倒序分页读取原记录，权限同审批历史；client approval revoke/revocations复用合同。可信Worker按原行锁批量处理已生效撤销或到期的未领取Offer；Claim与撤销在同一原项目/审批锁序下竞争，不能两者都得到新交付效果。
+
 ### A7.2 领取历史与 Forward 报告来源（增量迁移 017）
 
 `handoff_transfers` 复用 A0 的 id/created_at；一条 Handoff 至多一次转移。

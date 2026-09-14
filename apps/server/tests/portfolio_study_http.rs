@@ -396,7 +396,7 @@ async fn claim_http(
             principal.id,
             &CredentialIssue {
                 schema_version: SchemaV1,
-                scope_codes: vec![MachineScope::DownstreamClaim],
+                scope_codes: vec![MachineScope::DownstreamClaim, MachineScope::DownstreamAck],
                 expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             },
         )
@@ -504,5 +504,28 @@ async fn claim_http(
             .state,
         HandoffStateV1::Claimed
     );
+    let ack = serde_json::json!({"schema_version":1,"external_ack_id":"http-ack","external_claim_id":"http-original-claim","outcome":"ACKNOWLEDGED","reason_code":"ACCEPTED","reason":"Original package accepted"});
+    for replayed in [false, true] {
+        let response = client::invoke(
+            &origin,
+            &credential,
+            &["--idempotency-key", "http-ack", "handoff", "ack", &id],
+            ack.clone(),
+        )
+        .await;
+        let diagnostic: serde_json::Value =
+            serde_json::from_slice(&response.stderr).unwrap_or(serde_json::Value::Null);
+        assert!(
+            response.status.success(),
+            "ACK HTTP failed: code={} status={}",
+            diagnostic["code"],
+            diagnostic["status"]
+        );
+        let result: CommandResult<HandoffViewV1> =
+            serde_json::from_slice(&response.stdout).unwrap();
+        assert_eq!(result.replayed, replayed);
+        assert_eq!(result.resource.state, HandoffStateV1::Acknowledged);
+        assert!(result.resource.acknowledged_at.is_some());
+    }
     listener.abort_all();
 }

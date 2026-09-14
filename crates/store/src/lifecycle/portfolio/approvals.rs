@@ -305,3 +305,98 @@ impl Store {
         Ok(result)
     }
 }
+
+fn revocation_view(row: &PgRow) -> Result<ApprovalRevocationViewV1, StoreError> {
+    Ok(ApprovalRevocationViewV1 {
+        id: db::id(row.try_get("id")?)?,
+        approval_id: db::id(row.try_get("approval_id")?)?,
+        created_at: row.try_get("created_at")?,
+        effective_at: row.try_get("effective_at")?,
+        reason_code: row.try_get("reason_code")?,
+        reason: row.try_get("reason")?,
+    })
+}
+impl Store {
+    pub async fn approval_revocations(
+        &self,
+        actor: &Actor,
+        id: Id,
+        query: &contracts::control::ListQuery,
+    ) -> Result<contracts::control::Page<ApprovalRevocationViewV1>, StoreError> {
+        domain::control::list(query)?;
+        let mut tx = self.pool.begin().await?;
+        let project:uuid::Uuid=sqlx::query_scalar("SELECT c.project_id FROM app.approvals a JOIN app.releases r ON r.id=a.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE a.id=$1")
+            .bind(id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        crate::evidence::authorize(&mut tx, actor, db::id(project)?).await?;
+        let rows=sqlx::query("SELECT * FROM app.approval_revocations WHERE approval_id=$1 AND ($2::uuid IS NULL OR id<$2) ORDER BY id DESC LIMIT $3")
+            .bind(id.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let items = rows
+            .iter()
+            .map(revocation_view)
+            .collect::<Result<Vec<_>, _>>()?;
+        tx.commit().await?;
+        Ok(crate::control::page(items, query.limit, |v| v.id))
+    }
+
+    pub async fn revoke_approval(
+        &self,
+        actor: &Actor,
+        key: &str,
+        id: Id,
+        request: &ApprovalRevokeV1,
+    ) -> Result<CommandResult<ApprovalRevocationViewV1>, StoreError> {
+        domain::delivery::decision_reason(&request.reason_code, &request.reason)?;
+        let mut tx = self.pool.begin().await?;
+        let prepared = commands::operator(
+            &mut tx,
+            actor,
+            OperatorOperation::ApprovalRevoke,
+            key,
+            Some(id),
+            db::json(request)?,
+        )
+        .await?;
+        if let Some(replay) = prepared.replay()? {
+            tx.commit().await?;
+            return Ok(replay);
+        }
+        let row=sqlx::query("SELECT c.id,c.project_id FROM app.approvals a JOIN app.releases r ON r.id=a.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE a.id=$1")
+            .bind(id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        sqlx::query("SELECT id FROM app.projects WHERE id=$1 FOR UPDATE")
+            .bind(row.try_get::<uuid::Uuid, _>("project_id")?)
+            .fetch_one(&mut *tx)
+            .await?;
+        sqlx::query("SELECT id FROM app.portfolio_candidates WHERE id=$1 FOR UPDATE")
+            .bind(row.try_get::<uuid::Uuid, _>("id")?)
+            .fetch_one(&mut *tx)
+            .await?;
+        sqlx::query("SELECT id FROM app.approvals WHERE id=$1 FOR UPDATE")
+            .bind(id.as_uuid())
+            .fetch_one(&mut *tx)
+            .await?;
+        let latest: Option<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT id FROM app.approval_revocations WHERE approval_id=$1 ORDER BY id DESC LIMIT 1",
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await?;
+        if latest != request.expected_latest_revocation_id.map(Id::as_uuid) {
+            return Err(StoreError::Conflict);
+        }
+        commands::recheck_authority(&mut tx, actor, &prepared).await?;
+        let current = now(&mut tx).await?;
+        let effective = request.effective_at.unwrap_or(current);
+        if effective < current {
+            return Err(StoreError::Invalid("revocation_time"));
+        }
+        let row=sqlx::query("INSERT INTO app.approval_revocations(approval_id,effective_at,reason_code,reason) VALUES($1,$2,$3,$4) RETURNING *")
+            .bind(id.as_uuid()).bind(effective).bind(&request.reason_code).bind(&request.reason).fetch_one(&mut *tx).await?;
+        // A new future date never postpones an earlier immutable revocation.
+        sqlx::query("UPDATE app.handoff_offers h SET state='REVOKED' WHERE h.approval_id=$1 AND h.state='OFFERED' AND EXISTS(SELECT 1 FROM app.approval_revocations r WHERE r.approval_id=h.approval_id AND r.effective_at<=clock_timestamp())")
+            .bind(id.as_uuid()).execute(&mut *tx).await?;
+        commands::recheck_authority(&mut tx, actor, &prepared).await?;
+        let result = commands::finish(&mut tx, prepared, revocation_view(&row)?, 201).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+}

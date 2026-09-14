@@ -50,12 +50,20 @@ async fn handoff_offer_cli_binds_exact_original_approval(pool: PgPool) {
     check_intent(pool, "offer").await;
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn approval_revocation_cli_binds_exact_original_approval(pool: PgPool) {
+    check_intent(pool, "revoke").await;
+}
+
 async fn check_intent(pool: PgPool, command: &str) {
     let approve = command == "approve";
+    let revoke = command == "revoke";
     let offer = command == "offer";
     let decision = matches!(command, "reject" | "reconsider");
     let release = command == "create" || decision || approve;
-    let group = if offer {
+    let group = if revoke {
+        "approval"
+    } else if offer {
         "handoff"
     } else if release {
         "release"
@@ -66,6 +74,7 @@ async fn check_intent(pool: PgPool, command: &str) {
     let operation = match command {
         "create" => "RELEASE_CREATE",
         "approve" => "RELEASE_APPROVE",
+        "revoke" => "APPROVAL_REVOKE",
         "offer" => "HANDOFF_OFFER",
         "reject" => "RELEASE_REJECT",
         "reconsider" => "RELEASE_REOPEN",
@@ -138,9 +147,12 @@ async fn check_intent(pool: PgPool, command: &str) {
     if offer {
         body = json!({"schema_version":1,"release_id":contracts::Id::new(),"approval_id":mandate.id,"supersedes_handoff_id":null,"expires_at":chrono::Utc::now()+chrono::Duration::hours(1)});
     }
+    if revoke {
+        body = json!({"schema_version":1,"expected_latest_revocation_id":null,"effective_at":null,"reason_code":"WITHDRAWN","reason":"Withdraw exact approval"});
+    }
     let target = mandate.id.to_string();
     let mut denied_arguments = vec!["--idempotency-key", "build", group, command];
-    if decision || approve {
+    if decision || approve || revoke {
         denied_arguments.push(&target);
     }
     let (origin, _listener) = listen(&f).await;
@@ -172,7 +184,7 @@ async fn check_intent(pool: PgPool, command: &str) {
         group,
         command,
     ];
-    if decision || approve {
+    if decision || approve || revoke {
         arguments.push(&target);
     }
     for _ in 0..2 {
@@ -186,7 +198,9 @@ async fn check_intent(pool: PgPool, command: &str) {
         );
     }
     let mut changed = body;
-    if approve {
+    if revoke {
+        changed["reason"] = json!("Changed revocation");
+    } else if approve {
         changed["downstream_id"] = json!(contracts::Id::new());
     } else if offer {
         changed["release_id"] = json!(contracts::Id::new());

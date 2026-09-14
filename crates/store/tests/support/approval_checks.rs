@@ -327,6 +327,6 @@ pub(super) async fn check(
             .fetch_one(pool)
             .await
             .unwrap(),
-        3
+        6
     );
 }

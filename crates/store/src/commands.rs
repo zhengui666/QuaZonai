@@ -452,22 +452,23 @@ pub(crate) async fn research_alpha(
 }
 
 // Caller holds the original downstream row lock and verifies its native identity.
-pub(crate) async fn handoff_claim(
+pub(crate) async fn handoff_command(
     tx: &mut Transaction<'_, Postgres>,
     scope: String,
+    operation: &'static str,
     idempotency_key: &str,
     target: Id,
     request: Value,
 ) -> Result<Prepared, StoreError> {
     key(idempotency_key)?;
-    let previous = prior(tx, &scope, "HANDOFF_CLAIM", idempotency_key, &request).await?;
+    let previous = prior(tx, &scope, operation, idempotency_key, &request).await?;
     if previous.as_ref().is_some_and(|p| p.target != target) {
         return Err(StoreError::IdempotencyConflict);
     }
     Ok(Prepared {
         target,
         scope,
-        operation: "HANDOFF_CLAIM",
+        operation,
         key: idempotency_key.into(),
         request,
         grant: None,

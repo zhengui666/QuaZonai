@@ -257,6 +257,11 @@ impl Store {
         if machine.downstream_id != Some(original.downstream_id) {
             return Err(StoreError::Forbidden);
         }
+        // Match source admission and revocation: project, candidate, downstream, approval.
+        sqlx::query("SELECT id FROM app.projects WHERE id=$1 FOR UPDATE")
+            .bind(original.project_id.as_uuid())
+            .fetch_one(&mut *tx)
+            .await?;
         sqlx::query("SELECT id FROM app.portfolio_candidates WHERE id=$1 FOR UPDATE")
             .bind(original.candidate_id.as_uuid())
             .fetch_one(&mut *tx)
@@ -265,9 +270,10 @@ impl Store {
             .bind(original.downstream_id.as_uuid())
             .fetch_one(&mut *tx)
             .await?;
-        let prepared = commands::handoff_claim(
+        let prepared = commands::handoff_command(
             &mut tx,
             format!("DOWNSTREAM:{}", original.downstream_id),
+            "HANDOFF_CLAIM",
             key,
             id,
             serde_json::json!({"schema_version":1,"handoff_id":id,"request":request}),
@@ -347,9 +353,82 @@ impl Store {
     }
 
     /// Trusted worker maintenance only. Claim independently checks the DB clock.
-    pub async fn expire_handoffs(&self) -> Result<u64, StoreError> {
-        let changed=sqlx::query("WITH expired AS (SELECT id FROM app.handoff_offers WHERE state='OFFERED' AND expires_at<=clock_timestamp() ORDER BY expires_at,id LIMIT 128 FOR UPDATE SKIP LOCKED) UPDATE app.handoff_offers h SET state='EXPIRED' FROM expired e WHERE h.id=e.id AND h.state='OFFERED' AND h.expires_at<=clock_timestamp()")
+    pub async fn reconcile_handoffs(&self) -> Result<u64, StoreError> {
+        let changed=sqlx::query("WITH pending AS (SELECT h.id,CASE WHEN EXISTS(SELECT 1 FROM app.approval_revocations r WHERE r.approval_id=h.approval_id AND r.effective_at<=clock_timestamp()) THEN 'REVOKED' ELSE 'EXPIRED' END AS state FROM app.handoff_offers h WHERE h.state='OFFERED' AND (h.expires_at<=clock_timestamp() OR EXISTS(SELECT 1 FROM app.approval_revocations r WHERE r.approval_id=h.approval_id AND r.effective_at<=clock_timestamp())) ORDER BY h.expires_at,h.id LIMIT 128 FOR UPDATE OF h SKIP LOCKED) UPDATE app.handoff_offers h SET state=p.state FROM pending p WHERE h.id=p.id AND h.state='OFFERED'")
             .execute(&self.pool).await?;
         Ok(changed.rows_affected())
+    }
+}
+
+impl Store {
+    pub async fn acknowledge_handoff(
+        &self,
+        actor: &Actor,
+        key: &str,
+        id: Id,
+        request: &HandoffAckV1,
+    ) -> Result<CommandResult<HandoffViewV1>, StoreError> {
+        commands::key(&request.external_ack_id)?;
+        if key != request.external_ack_id {
+            return Err(StoreError::Invalid("ack_idempotency_key"));
+        }
+        if let Some(claim) = &request.external_claim_id {
+            commands::key(claim)?;
+        }
+        domain::delivery::decision_reason(&request.reason_code, &request.reason)?;
+        let mut tx = self.pool.begin().await?;
+        let machine = crate::authority::machine(&mut tx, actor, true).await?;
+        machine.requires(MachineScope::DownstreamAck)?;
+        if machine.kind != PrincipalKind::Downstream {
+            return Err(StoreError::Forbidden);
+        }
+        let original = view(&load(&mut tx, id).await?)?;
+        machine.project(original.project_id)?;
+        if machine.downstream_id != Some(original.downstream_id) {
+            return Err(StoreError::Forbidden);
+        }
+        sqlx::query("SELECT id FROM app.downstream_integrations WHERE id=$1 FOR UPDATE")
+            .bind(original.downstream_id.as_uuid())
+            .fetch_one(&mut *tx)
+            .await?;
+        let prepared = commands::handoff_command(
+            &mut tx,
+            format!("DOWNSTREAM:{}", original.downstream_id),
+            "HANDOFF_ACK",
+            key,
+            id,
+            serde_json::json!({"schema_version":1,"handoff_id":id,"request":request}),
+        )
+        .await?;
+        if let Some(replay) = prepared.replay()? {
+            tx.commit().await?;
+            return Ok(replay);
+        }
+        sqlx::query("SELECT id FROM app.handoff_offers WHERE id=$1 FOR UPDATE")
+            .bind(id.as_uuid())
+            .fetch_one(&mut *tx)
+            .await?;
+        let current = view(&load(&mut tx, id).await?)?;
+        let accepted = now(&mut tx).await?;
+        match current.state {
+            HandoffStateV1::Claimed if current.external_claim_id == request.external_claim_id => {}
+            HandoffStateV1::Offered
+                if request.outcome == HandoffAckOutcomeV1::Rejected
+                    && request.external_claim_id.is_none()
+                    && accepted >= current.offered_at
+                    && accepted < current.expires_at => {}
+            _ => return Err(StoreError::Conflict),
+        }
+        crate::authority::machine(&mut tx, actor, true).await?;
+        sqlx::query("UPDATE app.handoff_offers SET state=$2,acknowledged_at=CASE WHEN claimed_at IS NULL THEN NULL ELSE clock_timestamp() END WHERE id=$1")
+            .bind(id.as_uuid()).bind(db::code(&request.outcome)?).execute(&mut *tx).await?;
+        crate::authority::machine(&mut tx, actor, true).await?;
+        if current.claimed_at.is_none() && now(&mut tx).await? >= current.expires_at {
+            return Err(StoreError::Invalid("ack_expiry"));
+        }
+        let resource = view(&load(&mut tx, id).await?)?;
+        let result = commands::finish(&mut tx, prepared, resource, 200).await?;
+        tx.commit().await?;
+        Ok(result)
     }
 }

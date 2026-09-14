@@ -508,6 +508,79 @@
         ],
         "type": "object"
       },
+      "ApprovalRevocationViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "approval_id",
+          "created_at",
+          "effective_at",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ApprovalRevokeV1": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_latest_revocation_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "reason_code",
+          "reason"
+        ],
+        "type": "object"
+      },
       "ApprovalViewV1": {
         "additionalProperties": false,
         "properties": {
@@ -6407,6 +6480,59 @@
         ],
         "type": "object"
       },
+      "CommandResult_ApprovalRevocationViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "approval_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "effective_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "reason_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "approval_id",
+              "created_at",
+              "effective_at",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_ApprovalViewV1": {
         "additionalProperties": false,
         "properties": {
@@ -11750,6 +11876,47 @@
         ],
         "type": "object"
       },
+      "HandoffAckOutcomeV1": {
+        "enum": [
+          "ACKNOWLEDGED",
+          "REJECTED"
+        ],
+        "type": "string"
+      },
+      "HandoffAckV1": {
+        "additionalProperties": false,
+        "properties": {
+          "external_ack_id": {
+            "type": "string"
+          },
+          "external_claim_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/HandoffAckOutcomeV1"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "external_ack_id",
+          "outcome",
+          "reason_code",
+          "reason"
+        ],
+        "type": "object"
+      },
       "HandoffClaimV1": {
         "additionalProperties": false,
         "properties": {
@@ -13926,6 +14093,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "APPROVAL_REVOKE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/ApprovalRevokeV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "RELEASE_REJECT"
                 ],
                 "type": "string"
@@ -14411,6 +14596,7 @@
           "RELEASE_CREATE",
           "RELEASE_APPROVE",
           "HANDOFF_OFFER",
+          "APPROVAL_REVOKE",
           "RELEASE_REJECT",
           "RELEASE_REOPEN",
           "BRIEF_FREEZE",
@@ -14656,6 +14842,68 @@
                 "revision",
                 "created_at",
                 "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_ApprovalRevocationViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "approval_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "effective_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "reason_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "approval_id",
+                "created_at",
+                "effective_at",
+                "reason"
               ],
               "type": "object"
             },
@@ -21513,6 +21761,248 @@
         ]
       }
     },
+    "/api/v2/approvals/{id}/revocations": {
+      "get": {
+        "operationId": "list_approval_revocations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ApprovalRevocationViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Release"
+        ]
+      }
+    },
+    "/api/v2/approvals/{id}/revoke": {
+      "post": {
+        "operationId": "revoke_approval",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalRevokeV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_ApprovalRevocationViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Release"
+        ]
+      }
+    },
     "/api/v2/artifacts": {
       "get": {
         "operationId": "list",
@@ -27623,6 +28113,144 @@
           },
           {
             "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Release"
+        ]
+      }
+    },
+    "/api/v2/handoffs/{id}/ack": {
+      "post": {
+        "operationId": "acknowledge_handoff",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandoffAckV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_HandoffViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
           }
         ],
         "tags": [
