@@ -8,6 +8,7 @@ import { ResourceSelect } from './resource-select';
 import { ReleaseApprove } from './release-approve';
 import { HandoffOffer } from './handoff-offer';
 import { ApprovalRevoke } from './approval-revoke';
+import { ReleaseDecision } from './release-decision';
 
 export function Delivery() {
   const [project, setProject] = useState<string>();
@@ -47,6 +48,7 @@ function Releases({ project }: { project: string }) {
 
 export function ReleaseDetail({ id, project, close }: { id: string; project: string; close: () => void }) {
   const [approving, setApproving] = useState(false);
+  const [deciding, setDeciding] = useState(false);
   const [offering, setOffering] = useState<Schema['ApprovalViewV1']>();
   const [revoking, setRevoking] = useState<Schema['ApprovalViewV1']>();
   const query = useQuery({ queryKey: ['release', project, id], queryFn: async ({ signal }) => {
@@ -55,7 +57,7 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
     return item;
   } });
   const item = query.data;
-  return <Drawer title="原始目标包版本" open onClose={approving || offering || revoking ? undefined : close} closable={!approving && !offering && !revoking} maskClosable={!approving && !offering && !revoking} width={760}>
+  return <Drawer title="原始目标包版本" open onClose={approving || offering || revoking || deciding ? undefined : close} closable={!approving && !offering && !revoking && !deciding} maskClosable={!approving && !offering && !revoking && !deciding} width={760}>
     <Alert showIcon type="info" title="历史有效期不是当前审批资格" description="读取不会延长期限或重判数据、Alpha 资格与下游兼容性。REAL 是包来源，不代表已批准 Live。" />
     <QueryPanel pending={query.isPending} error={query.error} stale={!!item} reload={() => { void query.refetch(); }}>
       {item && <Descriptions column={1} className="break-word" items={[
@@ -69,6 +71,8 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
       ]} />}
     </QueryPanel>
     {item && !query.isError && <Button onClick={() => setApproving(true)}>审批此目标包</Button>}
+    {item && !query.isError && <Button onClick={() => setDeciding(true)}>人工拒绝与重新考虑</Button>}
+    {deciding && item && <ReleaseDecision release={item} close={() => setDeciding(false)} />}
     {revoking && <ApprovalRevoke approval={revoking} close={() => setRevoking(undefined)} />}
     {offering && item && <HandoffOffer release={item} approval={offering} close={() => setOffering(undefined)} />}
     {approving && item && <ReleaseApprove release={item} close={() => setApproving(false)} />}

@@ -253,3 +253,45 @@ test('Approval revocation keeps latest history and replays immediate intent', as
   expect(writes[0]!.body).toEqual({ schema_version: 1, expected_latest_revocation_id: old.id, effective_at: null, reason_code: 'OPERATOR_REVOKED', reason: 'Stop future delivery, retain original claims' });
   expect((await new AxeBuilder({ page }).include('.ant-modal').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
 });
+
+for (const reopen of [false, true]) test(`Manual decision binds original candidate history: reopen=${reopen}`, async ({ page }) => {
+  await fixture(page); const writes: { body: unknown; key: string | undefined; path: string }[] = [];
+  const down: Schema['DownstreamView'] = { id: id(85), configuration: { name: 'Decision target', endpoint: 'https://downstream.invalid', accepted_package_versions: ['1'], environments: 'BOTH', enabled: false, development_http: false }, credential_configured: true, revision: '7', created_at: release.created_at, updated_at: release.created_at };
+  const old: Schema['ReleaseDecisionViewV1'] = { id: id(710), project_id: project.id, candidate_id: release.candidate_id, release_id: id(99), downstream_id: down.id, environment: 'PAPER', ordinal: 3, decision: 'REJECT', supersedes_decision_id: id(709), reason_code: 'ORIGINAL', reason: 'Original rejection', created_at: release.created_at, decided_at: release.created_at, decided_by: 'OPERATOR' };
+  await page.route('**/api/v2/**', route => {
+    const request = route.request(); const url = new URL(request.url());
+    if (url.pathname === `/api/v2/projects/${project.id}/releases`) return reply(route, { schema_version: 1, items: [release], next_cursor: null });
+    if (url.pathname === `/api/v2/releases/${release.id}`) return reply(route, release);
+    if (url.pathname === '/api/v2/integrations/downstreams') return reply(route, { schema_version: 1, items: [down], next_cursor: null });
+    if (url.pathname === `/api/v2/releases/${release.id}/decisions`) return reply(route, { schema_version: 1, items: reopen ? [old] : [], next_cursor: null });
+    if (url.pathname.endsWith('/rejections') || url.pathname.endsWith('/reopen')) {
+      const body = request.postDataJSON(); writes.push({ body, key: request.headers()['idempotency-key'], path: url.pathname });
+      if (writes.length === 1) return route.abort('failed');
+      return reply(route, { schema_version: 1, replayed: true, resource: { ...old, id: id(711), release_id: reopen ? old.release_id : release.id, ordinal: reopen ? 4 : 1, decision: reopen ? 'REOPEN' : 'REJECT', supersedes_decision_id: body.expected_latest_decision_id, reason_code: body.reason_code, reason: body.reason } }, 201);
+    }
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: project.name }).click();
+  await page.getByRole('button', { name: 'Release 00000102', exact: true }).click();
+  await page.getByRole('button', { name: '人工拒绝与重新考虑', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: '人工交付决定', exact: true });
+  await modal.getByRole('combobox', { name: '决定下游', exact: true }).click();
+  await page.getByText(`Decision target · ${down.id}`, { exact: true }).click();
+  await modal.getByRole('combobox', { name: '决定环境', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: 'Paper' }).click();
+  if (reopen) {
+    await modal.getByRole('combobox', { name: '决定动作', exact: true }).click();
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: '重新考虑' }).click();
+  }
+  await modal.getByLabel('原因代码', { exact: true }).fill('OPERATOR_DECISION');
+  await modal.getByLabel('决定原因', { exact: true }).fill('Explicit original decision');
+  await modal.getByRole('button', { name: reopen ? '确认重新考虑' : '确认拒绝', exact: true }).click();
+  await modal.getByRole('button', { name: '重试同一决定', exact: true }).click();
+  await expect(modal.getByText('原决定已追加。', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1]);
+  expect(writes[0]!.path).toBe(reopen ? `/api/v2/release-decisions/${old.id}/reopen` : `/api/v2/releases/${release.id}/rejections`);
+  expect(writes[0]!.body).toEqual({ schema_version: 1, ...(reopen ? {} : { downstream_id: down.id, environment: 'PAPER' }), expected_latest_decision_id: reopen ? old.id : null, reason_code: 'OPERATOR_DECISION', reason: 'Explicit original decision' });
+  expect((await new AxeBuilder({ page }).include('.ant-modal').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+});
