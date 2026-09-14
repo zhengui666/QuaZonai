@@ -116,6 +116,7 @@ pub struct HistoricalSourceInspectionV1 {
 pub struct HistoricalTableCountV1 {
     pub table: String,
     pub rows: DbCounter,
+    pub primary_key: Vec<String>,
     pub columns: Vec<HistoricalColumnV1>,
 }
 
@@ -200,4 +201,22 @@ pub struct HistoricalTableExportV1 {
 pub struct HistoricalColumnExclusionV1 {
     pub column: String,
     pub reason: HistoricalExclusionReasonV1,
+}
+
+/// Native old primary-key values, including bigint and composite identities.
+/// Values use PostgreSQL canonical text, never a new-system UUID parser or float.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalOriginalKeyV1 {
+    pub source_installation_id: Id,
+    pub source_table: String,
+    pub values: std::collections::BTreeMap<String, String>,
+}
+
+/// Read-only historical field values. SQL NULL stays distinct from an empty string.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalProjectedRowV1 {
+    pub key: HistoricalOriginalKeyV1,
+    pub fields: std::collections::BTreeMap<String, Option<String>>,
 }

@@ -9,16 +9,39 @@ fn count(value: i64) -> Result<DbCounter, StoreError> {
         .map_err(|_| StoreError::Integrity)
 }
 
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{Connection, PgConnection, Postgres, Transaction};
 use std::collections::BTreeMap;
 
 // (native PostgreSQL type, nullable, exclusion). This file is compiled into the adapter,
 // audited from Git 313b0e27^'s final 0029 models; no caller supplies SQL or column policy.
-type ProjectionRules =
-    BTreeMap<String, BTreeMap<String, (String, bool, Option<HistoricalExclusionReasonV1>)>>;
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProjectionRule {
+    pub primary_key: Vec<String>,
+    pub columns: BTreeMap<String, (String, bool, Option<HistoricalExclusionReasonV1>)>,
+}
+impl ProjectionRule {
+    pub(crate) fn supports(&self, table: &HistoricalTableCountV1) -> bool {
+        self.primary_key == table.primary_key
+            && self.columns.len() == table.columns.len()
+            && table.columns.iter().all(|column| {
+                !column.generated
+                    && self
+                        .columns
+                        .get(&column.name)
+                        .is_some_and(|(typ, nullable, _)| {
+                            *typ == column.postgres_type && *nullable == column.nullable
+                        })
+            })
+    }
+}
+pub(crate) fn rules() -> Result<BTreeMap<String, ProjectionRule>, StoreError> {
+    serde_json::from_str(include_str!("historical_projection_0029.json"))
+        .map_err(|_| StoreError::Integrity)
+}
 
-async fn begin(pool: &PgPool) -> Result<Transaction<'_, Postgres>, StoreError> {
-    let mut tx = pool.begin().await?;
+async fn begin(connection: &mut PgConnection) -> Result<Transaction<'_, Postgres>, StoreError> {
+    let mut tx = connection.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
@@ -79,9 +102,12 @@ async fn inspect(
                     generated: column.try_get("generated")?,
                 }))
                 .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        let primary_key: Vec<String> = sqlx::query_scalar("SELECT a.attname::text FROM pg_constraint c CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY k(attnum,ord) JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum WHERE c.contype='p' AND c.conrelid=$1::bigint::oid ORDER BY k.ord")
+            .bind(row.try_get::<i64, _>("table_oid")?).fetch_all(&mut **tx).await?;
         tables.push(HistoricalTableCountV1 {
             table: row.try_get("relname")?,
             rows: count(rows)?,
+            primary_key,
             columns,
         });
     }
@@ -153,7 +179,8 @@ impl Store {
     pub async fn inspect_historical_source(
         &self,
     ) -> Result<HistoricalSourceInspectionV1, StoreError> {
-        let mut tx = begin(&self.pool).await?;
+        let mut connection = self.pool.acquire().await?;
+        let mut tx = begin(&mut connection).await?;
         let report = inspect(&mut tx).await?;
         tx.rollback().await?;
         Ok(report)
@@ -169,10 +196,11 @@ impl Store {
     where
         F: FnMut(contracts::Id, &[u8]) -> Result<(), StoreError>,
     {
-        let rules: ProjectionRules =
-            serde_json::from_str(include_str!("historical_projection_0029.json"))
-                .map_err(|_| StoreError::Integrity)?;
-        let mut tx = begin(&self.pool).await?;
+        let rules = rules()?;
+        let mut connection = self.pool.acquire().await?;
+        // An interrupted COPY stream must never return unread frames to the pool.
+        connection.close_on_drop();
+        let mut tx = begin(&mut connection).await?;
         let inspection = inspect(&mut tx).await?;
         let missing_tables = rules
             .keys()
@@ -181,16 +209,9 @@ impl Store {
             .collect();
         let mut tables = Vec::new();
         for table in &inspection.tables {
-            let expected = rules.get(&table.table);
-            let supported = expected.is_some_and(|columns| {
-                columns.len() == table.columns.len()
-                    && table.columns.iter().all(|column| {
-                        !column.generated
-                            && columns.get(&column.name).is_some_and(|(typ, nullable, _)| {
-                                *typ == column.postgres_type && *nullable == column.nullable
-                            })
-                    })
-            });
+            let rule = rules.get(&table.table);
+            let expected = rule.map(|rule| &rule.columns);
+            let supported = rule.is_some_and(|rule| rule.supports(table));
             let mut result = HistoricalTableExportV1 {
                 table: table.table.clone(),
                 source_rows: table.rows,

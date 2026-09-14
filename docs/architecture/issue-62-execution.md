@@ -5016,3 +5016,42 @@ Full-backup retention, excluded fields and sealed lineage, trusted registration,
 immutable original identity mapping, atomic import/report and real-snapshot
 acceptance remain outstanding. No qualifications, approvals or active jobs are
 created by CSV export. No PR merge or Issue closure is claimed.
+
+
+### 2026-09-15 original native keys and COPY decoding
+
+Source inspection now records the ordered primary key. The fixed 0029 projection
+inventory includes all 85 original primary-key definitions; an independent
+comparison against the prior committed JSON confirmed all 986 column projection
+and exclusion definitions remained unchanged. Missing or changed primary keys
+prevent that table's export. HistoricalOriginalKeyV1 carries original installation,
+table and native text key values, supporting bigint, UUIDv4 and composite keys.
+
+Added the internal Store visit_historical_projection adapter. It uses temporary
+PostgreSQL tables with the compiled types and PK, native COPY HEADER MATCH, exact
+byte/row counts, then a second native COPY matched byte-for-byte before visiting
+any canonical field/key values. This catches native typmod rounding instead of
+trusting a successful COPY. SQL NULL remains separate from empty text; no JSON
+floating-point conversion is used. Temporary tables are rolled back. This is
+one-projection decoding, not full relation validation or persistent import. A
+visitor must not publish a partial prefix as committed history; the outer atomic
+import/authority implementation remains outstanding.
+
+The first verifier verify-YrDaIB passed static checks but failed two new tests:
+the event fixture incorrectly made the old nullable aggregate_id non-null; and
+bad COPY input left a protocol state that could poison a reused pool connection.
+The fixture now matches the old definition. Both native COPY producers and
+consumers mark their acquired transfer connection close_on_drop, covering early
+exit and future cancellation without returning unread COPY frames to the pool.
+No extra dependency, fallback parser, or persistent compatibility layer was added.
+
+Final verifier verify-jfOYQ2 completed with failures=[] and source_unchanged=true:
+workspace/all-target check, formatting and strict Clippy passed; all 6 historical
+source tests passed (2.67s), and both artifact CLI tests passed (0.03s). New native
+tests retain bigint9007199254740993, UUIDv4/composite keys, decimal precision,
+NULL/empty text, and reject wrong headers, duplicate keys and rounding before any
+visitor call. Dropping the source PK prevents export; successful decoding leaves
+no temporary tables. The owned PostgreSQL instance stopped. Only disposable
+fixtures were used. Operator admission, trusted registration, atomic history and
+report persistence, complete relationships/sealed lineage, and real-snapshot
+acceptance are still required before declaring migration delivered.

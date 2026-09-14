@@ -1017,8 +1017,11 @@ cargo run --locked -p server -- export-historical-artifacts   --source-root "$MI
 cargo run --locked -p server -- export-historical-rows --source-installation-id "$MIGRATION_SOURCE_INSTALLATION_ID" --output "$MIGRATION_ROW_EXPORT"
 ```
 
-适配器在单一 REPEATABLE READ/READ ONLY 事务内检查0029版本、原行数、实际声明外键、字段结构并原生 COPY。固定清单来自旧实现最后的85张表/986列定义；每个受支持表必须匹配完整已知列集合、PostgreSQL类型及可空性，不能临时传入列白名单或SQL。只投影明确允许的列；JSON、未审查文本、凭据、聊天内部记录及受限科学中间值均有逐列排除原因，未知表或结构变化不导出行内容。清单及检查尚不证明所有旧约束/语义血缘等价。
+适配器在单一 REPEATABLE READ/READ ONLY 事务内检查0029版本、原行数、实际声明外键、字段结构并原生 COPY。固定清单来自旧实现最后的85张表/986列定义；每个受支持表必须匹配完整已知列集合、PostgreSQL类型、可空性及原主键字段顺序，不能临时传入列白名单或SQL。只投影明确允许的列；JSON、未审查文本、凭据、聊天内部记录及受限科学中间值均有逐列排除原因，未知表或结构变化不导出行内容。清单及检查尚不证明所有旧约束/语义血缘等价。
 
 CSV 使用 PostgreSQL 原生 UTF-8、HEADER、FORCE_QUOTE、UTC与ISO时间编码，不把小数/大整数转成JSON浮点数。输出文件为 `<object_ref>.csv`，每文件最多512MiB、整个输出最多8GiB；超限或写入失败不发布完整报告，保留该次新目录供本机恢复处理。成功文件以0400持久化，已有目录不会覆盖；不创建任何新系统业务对象、队列、政策或资格。
 
 核对 `report.json` 的 `missing_tables`、各表 `unsupported_schema`、`source_rows`/`projected_rows`、`columns`/`excluded_columns`、CSV对象引用和字节数。原行数等于投影行数只表示被选择列覆盖这些行，不能掩盖被排除的字段。报告中的原外键检查只覆盖旧库实际声明的约束。退出0不等于全量迁移、原数据/密封沿袭验收或导入成功；完整原备份、排除项处理、身份映射、可信注册及原子导入仍需完成。
+
+
+源检查的 `tables[].primary_key` 保留原主键全部字段。整数事件 ID、旧 UUIDv4 和复合键均按原安装/原表/原键追溯，不能强转成新系统 UUIDv7。导出时缺少或更改主键会将该表标为不支持。接收侧现已有原生 COPY HEADER MATCH、主键/字节/行数及原生回导逐字节校验，防止重复键、错误列头和静默精度舍入；目前这是内部临时表解码适配，不是可调用的持久导入命令或 `/migrations/import` 完成证据。

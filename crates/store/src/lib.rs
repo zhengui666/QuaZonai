@@ -25,6 +25,7 @@ pub mod evidence;
 pub mod execution_assumptions;
 pub mod experiments;
 pub mod forward;
+mod historical_rows;
 mod historical_source;
 pub mod lifecycle;
 pub mod machine_auth;

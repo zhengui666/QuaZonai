@@ -121,8 +121,25 @@ async fn projected_source(pool: &PgPool) {
     source(pool).await;
     // Independent native definitions matching the old 0029 models, not generated from
     // the new projection allowlist. Unknown fixture tables remain explicitly unsupported.
-    sqlx::raw_sql("CREATE TABLE promotion_policy_gates(policy_version_id uuid NOT NULL,metric_code varchar(100) NOT NULL,comparator varchar(20) NOT NULL,threshold numeric(20,8) NOT NULL,ordinal integer NOT NULL); INSERT INTO promotion_policy_gates VALUES('11111111-1111-4111-8111-111111111111','quote,\"line\n中文','>=',123456789012.12345678,1); CREATE TABLE archive_manifest_shards(id uuid NOT NULL,manifest_id uuid NOT NULL,shard_key varchar(40) NOT NULL,source_url text NOT NULL,coverage_start timestamptz NOT NULL,coverage_end timestamptz NOT NULL,size_bytes bigint,state varchar(40) NOT NULL,observed_at timestamptz NOT NULL); INSERT INTO archive_manifest_shards VALUES('11111111-1111-4111-8111-111111111112','11111111-1111-4111-8111-111111111111','','EXCLUDED_SOURCE_SENTINEL','2020-01-01T01:02:03.123456+08:00','2020-01-02T01:02:03.123456+08:00',9007199254740993,'READY','2020-01-03T01:02:03.123456+08:00'),('11111111-1111-4111-8111-111111111113','11111111-1111-4111-8111-111111111111','second','EXCLUDED_SOURCE_SENTINEL','2020-01-01T01:02:03.123456+08:00','2020-01-02T01:02:03.123456+08:00',NULL,'READY','2020-01-03T01:02:03.123456+08:00')")
+    sqlx::raw_sql("CREATE TABLE promotion_policy_gates(policy_version_id uuid NOT NULL,metric_code varchar(100) NOT NULL,comparator varchar(20) NOT NULL,threshold numeric(20,8) NOT NULL,ordinal integer NOT NULL,PRIMARY KEY(policy_version_id,metric_code)); INSERT INTO promotion_policy_gates VALUES('11111111-1111-4111-8111-111111111111','quote,\"line\n中文','>=',123456789012.12345678,1); CREATE TABLE archive_manifest_shards(id uuid NOT NULL,manifest_id uuid NOT NULL,shard_key varchar(40) NOT NULL,source_url text NOT NULL,coverage_start timestamptz NOT NULL,coverage_end timestamptz NOT NULL,size_bytes bigint,state varchar(40) NOT NULL,observed_at timestamptz NOT NULL,PRIMARY KEY(id)); INSERT INTO archive_manifest_shards VALUES('11111111-1111-4111-8111-111111111112','11111111-1111-4111-8111-111111111111','','EXCLUDED_SOURCE_SENTINEL','2020-01-01T01:02:03.123456+08:00','2020-01-02T01:02:03.123456+08:00',9007199254740993,'READY','2020-01-03T01:02:03.123456+08:00'),('11111111-1111-4111-8111-111111111113','11111111-1111-4111-8111-111111111111','second','EXCLUDED_SOURCE_SENTINEL','2020-01-01T01:02:03.123456+08:00','2020-01-02T01:02:03.123456+08:00',NULL,'READY','2020-01-03T01:02:03.123456+08:00')")
         .execute(pool).await.unwrap();
+}
+
+async fn projected_bytes(
+    pool: &PgPool,
+) -> (
+    contracts::imports::HistoricalRowExportV1,
+    std::collections::BTreeMap<contracts::Id, Vec<u8>>,
+) {
+    let mut files = std::collections::BTreeMap::<contracts::Id, Vec<u8>>::new();
+    let report = store::Store::from_pool(pool.clone())
+        .export_historical_rows(contracts::Id::new(), |id, chunk| {
+            files.entry(id).or_default().extend_from_slice(chunk);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    (report, files)
 }
 
 #[sqlx::test(migrations = false)]
@@ -258,4 +275,132 @@ async fn historical_copy_rejects_structural_drift_and_native_write_failure(pool:
         .await
         .unwrap();
     assert_eq!(rows, 2);
+}
+
+#[sqlx::test(migrations = false)]
+async fn native_import_decoding_retains_integer_uuid_and_composite_original_keys(pool: PgPool) {
+    projected_source(&pool).await;
+    sqlx::raw_sql("CREATE TABLE events(id bigint PRIMARY KEY,kind varchar(100) NOT NULL,aggregate_type varchar(100) NOT NULL,aggregate_id uuid,actor_kind varchar(40) NOT NULL,actor_metadata jsonb NOT NULL,payload jsonb NOT NULL,created_at timestamptz NOT NULL); INSERT INTO events VALUES(9007199254740993,'CREATED','RESEARCH','11111111-1111-4111-8111-111111111111','OPERATOR','{}','{}','2020-01-01T01:02:03.123456+08:00')").execute(&pool).await.unwrap();
+    let (report, files) = projected_bytes(&pool).await;
+    let store = store::Store::from_pool(pool.clone());
+    for name in [
+        "events",
+        "promotion_policy_gates",
+        "archive_manifest_shards",
+    ] {
+        let inspection = report
+            .inspection
+            .tables
+            .iter()
+            .find(|t| t.table == name)
+            .unwrap();
+        let projection = report.tables.iter().find(|t| t.table == name).unwrap();
+        let mut rows = Vec::new();
+        let count = store
+            .visit_historical_projection(
+                report.source_installation_id,
+                inspection,
+                projection,
+                std::io::Cursor::new(&files[&projection.object_ref.unwrap()]),
+                |row| {
+                    rows.push(row);
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(count, projection.projected_rows);
+        assert!(rows.iter().all(
+            |r| r.key.source_installation_id == report.source_installation_id
+                && r.key.source_table == name
+        ));
+        match name {
+            "events" => {
+                assert_eq!(rows[0].key.values["id"], "9007199254740993");
+                assert!(!rows[0].fields.contains_key("payload"));
+            }
+            "promotion_policy_gates" => {
+                assert_eq!(rows[0].key.values.len(), 2);
+                assert_eq!(
+                    rows[0].key.values["policy_version_id"],
+                    "11111111-1111-4111-8111-111111111111"
+                );
+                assert_eq!(rows[0].key.values["metric_code"], "quote,\"line\n中文");
+                assert_eq!(
+                    rows[0].fields["threshold"].as_deref(),
+                    Some("123456789012.12345678")
+                );
+            }
+            _ => {
+                assert!(rows.iter().any(|r| r.fields["size_bytes"].is_none()));
+                assert!(rows
+                    .iter()
+                    .any(|r| r.fields["shard_key"].as_deref() == Some("")));
+                assert!(!rows[0].fields.contains_key("source_url"));
+            }
+        }
+    }
+    let leftovers: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_class WHERE relname LIKE 'historical_%' AND relpersistence='t'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(leftovers, 0);
+}
+
+#[sqlx::test(migrations = false)]
+async fn native_import_rejects_bad_headers_duplicate_keys_and_silent_rounding(pool: PgPool) {
+    use contracts::DbCounter;
+    projected_source(&pool).await;
+    let (report, files) = projected_bytes(&pool).await;
+    let inspection = report
+        .inspection
+        .tables
+        .iter()
+        .find(|t| t.table == "promotion_policy_gates")
+        .unwrap();
+    let original = report
+        .tables
+        .iter()
+        .find(|t| t.table == inspection.table)
+        .unwrap();
+    let bytes = &files[&original.object_ref.unwrap()];
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    let first_row = text.find('\n').unwrap() + 1;
+    for invalid in [
+        text.replace("metric_code", "wrong_header"),
+        format!("{text}{}", &text[first_row..]),
+        text.replace("123456789012.12345678", "123456789012.123456789"),
+    ] {
+        let mut projection = original.clone();
+        projection.byte_count = Some(DbCounter::new(invalid.len() as u64).unwrap());
+        let mut visits = 0;
+        let result = store::Store::from_pool(pool.clone())
+            .visit_historical_projection(
+                report.source_installation_id,
+                inspection,
+                &projection,
+                std::io::Cursor::new(invalid.into_bytes()),
+                |_| {
+                    visits += 1;
+                    Ok(())
+                },
+            )
+            .await;
+        assert!(result.is_err());
+        assert_eq!(visits, 0);
+    }
+    sqlx::query("ALTER TABLE promotion_policy_gates DROP CONSTRAINT promotion_policy_gates_pkey")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (changed, _) = projected_bytes(&pool).await;
+    let gates = changed
+        .tables
+        .iter()
+        .find(|t| t.table == "promotion_policy_gates")
+        .unwrap();
+    assert!(gates.unsupported_schema);
+    assert!(gates.object_ref.is_none());
 }
