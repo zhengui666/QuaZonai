@@ -139,3 +139,33 @@ pub struct HistoricalForeignKeyCheckV1 {
     pub target_columns: Vec<String>,
     pub orphan_rows: DbCounter,
 }
+
+/// A local artifact selection report, not database-wide coverage or import completion.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalArtifactExportV1 {
+    pub schema_version: SchemaV1,
+    pub source_installation_id: Id,
+    pub exported_at: DateTime<Utc>,
+    pub artifacts: Vec<HistoricalArtifactCopyV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalArtifactCopyV1 {
+    pub identity: HistoricalIdentityV1,
+    pub outcome: HistoricalArtifactOutcomeV1,
+    pub object_ref: Option<Id>,
+    pub byte_count: Option<DbCounter>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum HistoricalArtifactOutcomeV1 {
+    Copied,
+    Missing,
+    Unsupported,
+    Unreadable,
+    SealedRetained,
+    ManualReviewRequired,
+}

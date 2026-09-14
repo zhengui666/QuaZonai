@@ -4948,3 +4948,33 @@ numeric(30,12), timestamp(3), identity/generated markers and omitted dropped
 columns. Existing composite foreign-key/null semantics and no-overwrite checks
 remain passing. Only disposable test data was used; real old-snapshot acceptance
 and full migration delivery remain outstanding.
+
+
+### 2026-09-15 actual historical artifact export
+
+Added the deployment-only `export-historical-artifacts` CLI, consuming an explicitly
+reviewed private selection bound to original installation/table/UUID identities.
+It copies approved public binary bytes through the existing native directory
+handle reader and immutable ArtifactStore, then rereads and compares exact bytes.
+The new output directory receives a final report only after processing completes;
+write/readback failure leaves no complete report. Existing outputs and original
+files are never overwritten or removed. Sealed/manual-review items are not opened.
+Reports retain original UUIDv4 identities and per-item outcomes without original
+paths, content, or executable authority. This is selected-file preservation, not
+full database coverage, a trusted database exporter, or atomic import completion.
+The supported size/table limits and unsupported/missing/manual outcomes are explicit
+in CLI.md; excluded contents remain the original backup's responsibility.
+
+The byte reader is shared with Mission read_text; the MCP still exposes only its
+existing bounded UTF-8 operation. No new dependency or model/file tool was added.
+
+Native verifier `verify-knv3Hs` completed with failures=[] and source_unchanged=true:
+workspace/all-target check, formatting and strict Clippy passed; 2 actual CLI file
+export tests passed (0.04s), all 24 integration tests passed, 92 Store tests passed,
+and 43 server tests passed, including 18 native Mission tests (567.22s).
+The broader Store/server baseline also ran because this verifier mode initially
+fell through to the existing focused baseline; this was real additional validation,
+not needed to repeat for unchanged source. The owned PostgreSQL instance stopped.
+Only disposable controlled files and databases were used. No real user's old
+snapshot or production credentials were read; no import, PR merge, or Issue closure
+is claimed by this evidence.

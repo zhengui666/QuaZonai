@@ -62,42 +62,46 @@ impl MissionFiles {
         Err(MissionFileError)
     }
 
+    pub fn read_text(&self, relative: &str) -> Result<String, MissionFileError> {
+        let bytes = self
+            .read_bytes(relative, MAX_UPLOAD_BYTES as u64)
+            .map_err(|_| MissionFileError)?;
+        String::from_utf8(bytes).map_err(|_| MissionFileError)
+    }
+
     /// Each component is opened against an already-held native directory handle.
     /// Links, special files, hidden metadata, traversal and unbounded reads fail.
+    /// The deployment-side historical exporter also uses this for binary objects.
     #[cfg(unix)]
-    pub fn read_text(&self, relative: &str) -> Result<String, MissionFileError> {
+    pub fn read_bytes(&self, relative: &str, limit: u64) -> std::io::Result<Vec<u8>> {
         use rustix::fs::{openat, Mode, OFlags};
         use std::os::unix::fs::MetadataExt;
-        let parts = components(relative)?;
-        let mut directory = self.root.try_clone().map_err(|_| MissionFileError)?;
-        // cap-std deliberately manages symlink following separately from custom
-        // open flags. Use native openat for this stricter no-symlink policy;
-        // every call receives exactly one component and a held directory fd.
+        let invalid = || std::io::Error::from(std::io::ErrorKind::InvalidInput);
+        if limit == 0 || limit > crate::artifacts::MAX_LOCAL_OBJECT_BYTES {
+            return Err(invalid());
+        }
+        let parts = components(relative).map_err(|_| invalid())?;
+        let mut directory = self.root.try_clone()?;
+        // cap-std manages symlink following separately from custom flags. Native
+        // openat receives one component and a held directory fd on every call.
         let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
         for part in &parts[..parts.len() - 1] {
-            let opened = openat(&directory, *part, flags | OFlags::DIRECTORY, Mode::empty())
-                .map_err(|_| MissionFileError)?;
+            let opened = openat(&directory, *part, flags | OFlags::DIRECTORY, Mode::empty())?;
             directory = fs::File::from(opened);
         }
-        let opened = openat(&directory, parts[parts.len() - 1], flags, Mode::empty())
-            .map_err(|_| MissionFileError)?;
+        let opened = openat(&directory, parts[parts.len() - 1], flags, Mode::empty())?;
         let mut file = fs::File::from(opened);
-        let before = file.metadata().map_err(|_| MissionFileError)?;
-        if !before.is_file()
-            || before.nlink() != 1
-            || before.len() == 0
-            || before.len() > MAX_UPLOAD_BYTES as u64
-        {
-            return Err(MissionFileError);
+        let before = file.metadata()?;
+        if !before.is_file() || before.nlink() != 1 || before.len() == 0 || before.len() > limit {
+            return Err(invalid());
         }
         let mut bytes = Vec::with_capacity(before.len() as usize);
         Read::by_ref(&mut file)
-            .take(MAX_UPLOAD_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| MissionFileError)?;
-        let after = file.metadata().map_err(|_| MissionFileError)?;
+            .take(limit + 1)
+            .read_to_end(&mut bytes)?;
+        let after = file.metadata()?;
         if bytes.len() as u64 != before.len()
-            || bytes.len() > MAX_UPLOAD_BYTES
+            || bytes.len() as u64 > limit
             || after.len() != before.len()
             || after.nlink() != 1
             || after.mtime() != before.mtime()
@@ -105,14 +109,14 @@ impl MissionFiles {
             || after.ctime() != before.ctime()
             || after.ctime_nsec() != before.ctime_nsec()
         {
-            return Err(MissionFileError);
+            return Err(invalid());
         }
-        String::from_utf8(bytes).map_err(|_| MissionFileError)
+        Ok(bytes)
     }
 
     #[cfg(not(unix))]
-    pub fn read_text(&self, _: &str) -> Result<String, MissionFileError> {
-        Err(MissionFileError)
+    pub fn read_bytes(&self, _: &str, _: u64) -> std::io::Result<Vec<u8>> {
+        Err(std::io::ErrorKind::Unsupported.into())
     }
 }
 

@@ -309,3 +309,6 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 
 
 旧快照准备：本机 `server inspect-historical-source --output PATH` 使用受保护的 MIGRATION_SOURCE_DATABASE_URL，只对操作者选定的独立旧副本作原生计数/FK检查；具体前提见CLI。输出新私有文件、不覆盖原报告，不把退出0或零物理孤立行当成完整导入/语义血缘/产物可读证据。Agent/MCP没有源数据库或迁移入口权限。
+
+
+本机旧产物导出：`cargo run --locked -p server -- export-historical-artifacts --source-root "$MIGRATION_ARTIFACT_ROOT" --selection "$MIGRATION_ARTIFACT_SELECTION" --output "$MIGRATION_ARTIFACT_EXPORT"`。仅部署者审查的私有清单和独立副本，全部绝对路径且输出新目录；公开确认项才复制，密封/未审查项不读取。见 [CLI](../../CLI.md#旧产物的实际字节导出) 的格式、限制和逐项结果；此命令不向 Agent 授予文件/导入权限，也不是全量迁移完成证据。

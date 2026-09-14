@@ -1,3 +1,4 @@
+mod historical_artifacts;
 use clap::{Args, Parser, Subcommand};
 use contracts::Id;
 use integrations::{
@@ -60,6 +61,15 @@ enum Command {
         #[arg(long, env = "MIGRATION_SOURCE_DATABASE_URL", hide_env_values = true)]
         source_database_url: String,
         /// Create a new private report file; existing reports are never overwritten.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Copy explicitly reviewed public historical files into a NEW private export directory.
+    ExportHistoricalArtifacts {
+        #[arg(long)]
+        source_root: PathBuf,
+        #[arg(long)]
+        selection: PathBuf,
         #[arg(long)]
         output: PathBuf,
     },
@@ -341,6 +351,15 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             file.write_all(&bytes)?;
             file.sync_all()?;
             println!("Historical source inspection saved; this is not an import or artifact-readability result.");
+        }
+        Command::ExportHistoricalArtifacts {
+            source_root,
+            selection,
+            output,
+        } => {
+            historical_artifacts::export(&source_root, &selection, &output)
+                .map_err(|_| std::io::Error::other("historical artifact export failed; inspect the local source and new output directory"))?;
+            println!("Historical artifact report saved. Review every outcome; selection coverage is not database coverage or import completion.");
         }
         Command::PruneUnpublishedVerifiers {
             database,

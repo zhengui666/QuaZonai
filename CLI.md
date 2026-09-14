@@ -974,3 +974,36 @@ cargo run --locked -p server -- inspect-historical-source --output "$MIGRATION_R
 `tables[].columns` 按原字段顺序列出，已删除列不进入报告；字段证据供固定版本适配逐项核对，不能仅凭版本字符串或行数认可结构。事务设置 `row_security=off`，无绕过权限时遇到行策略过滤即失败，避免外键目标计数被静默截断。
 
 退出0表示报告已生成，不表示迁移通过；`foreign_keys[].orphan_rows` 必须逐项核对。该检查只覆盖源库实际声明的外键，不能证明源schema等价、语义血缘、产物可读性或旧PASS资格，也不是 `/migrations/import` dry-run 的替代。完整导出、映射、排除项和原子导入仍须另行完成。
+
+
+### 旧产物的实际字节导出
+
+本机部署者先保留旧一致性备份，选择稳定的独立产物副本和已经审查的私有清单。清单绑定稳定的原安装 ID 与旧表/UUID；重试不能换原安装 ID。当前支持 `mission_artifacts` 和 `alpha_signal_artifacts`，其余来源仍需固定适配，不能改表名冒充支持。示例身份仅展示格式，应替换为原始记录：
+
+```json
+{
+  "schema_version": 1,
+  "source_installation_id": "01900000-0000-7000-8000-000000000001",
+  "artifacts": [
+    {
+      "identity": {
+        "kind": "ARTIFACT",
+        "source_table": "mission_artifacts",
+        "source_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "relative_path": null,
+      "disposition": "MANUAL_REVIEW_REQUIRED"
+    }
+  ]
+}
+```
+
+确认内容属于可公开保留的历史证据、无秘密或内部聊天/隐藏推理后，才将对应项目设为 `COPY_PUBLIC` 并填写根内相对文件名。密封内容设为 `SEALED_RETAINED`；这两种不复制状态均不打开原文件，也不证明文件存在或备份已完成。私有清单不应进入 Git、HTTP 或 Agent 工具。
+
+```sh
+cargo run --locked -p server -- export-historical-artifacts   --source-root "$MIGRATION_ARTIFACT_ROOT"   --selection "$MIGRATION_ARTIFACT_SELECTION"   --output "$MIGRATION_ARTIFACT_EXPORT"
+```
+
+使用绝对路径，清单至多4MiB/10000项，输出必须是不存在的新目录。命令复用原生目录句柄和不可变对象存储，拒绝越界、符号链接、硬链接、特殊文件、隐藏路径、空文件及超过64MiB的对象；不执行任何旧代码、不删除或改写原件。每个 `COPIED` 项已读取原字节、发布到 `objects/<UUID>` 并回读逐字节比较。`report.json` 只包含原身份、结果、对象引用和字节数，不包含原路径或内容。
+
+退出0表示选择清单报告已完成，应逐项核对 `COPIED`、`MISSING`、`UNSUPPORTED`、`UNREADABLE`、`SEALED_RETAINED` 和 `MANUAL_REVIEW_REQUIRED`。写入/回读失败会失败退出且不发布完整报告；该次新建的部分目录保留供本机操作者处理，重试使用另一个新目录，不能据部分对象认定成功。清单覆盖率不是数据库全部产物覆盖率；原库行数、关系、排除项及原子导入仍需分别验收。
