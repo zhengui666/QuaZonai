@@ -964,6 +964,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/forward/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["submit_forward_message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/forward/weights": {
         parameters: {
             query?: never;
@@ -1452,6 +1468,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["list_execution_assumptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{id}/forward": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_forward_messages"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2954,6 +2986,34 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_ForwardMessageViewV1: {
+            replayed: boolean;
+            resource: {
+                coverage_status: components["schemas"]["ForwardCoverageV1"];
+                downstream_id: components["schemas"]["Id"];
+                external_message_id: string;
+                handoff_id: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                /** Format: date-time */
+                issued_at: string;
+                /** Format: int32 */
+                message_revision: number;
+                observation_count: components["schemas"]["DbCounter"];
+                project_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                received_at: string;
+                release_id: components["schemas"]["Id"];
+                report_artifact_id: components["schemas"]["Id"];
+                sequence: components["schemas"]["DbCounter"];
+                stream_id: string;
+                supersedes_message_id?: null | components["schemas"]["Id"];
+                /** Format: date-time */
+                window_end: string;
+                /** Format: date-time */
+                window_start: string;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_FrozenBriefV1: {
             replayed: boolean;
             resource: {
@@ -3794,7 +3854,58 @@ export interface components {
         /** @enum {string} */
         ForecastUnit: "RETURN_PER_HORIZON" | "RESIDUAL_RETURN_PER_HORIZON" | "UNITLESS_SCORE";
         /** @enum {string} */
+        ForwardCoverageV1: "COMPLETE" | "PARTIAL" | "CORRECTION";
+        /** @enum {string} */
         ForwardEnvironmentV1: "PAPER" | "LIVE";
+        ForwardMessageSubmitV1: {
+            external_message_id: string;
+            report: components["schemas"]["ForwardReportContentV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        ForwardMessageViewV1: {
+            coverage_status: components["schemas"]["ForwardCoverageV1"];
+            downstream_id: components["schemas"]["Id"];
+            external_message_id: string;
+            handoff_id: components["schemas"]["Id"];
+            id: components["schemas"]["Id"];
+            /** Format: date-time */
+            issued_at: string;
+            /** Format: int32 */
+            message_revision: number;
+            observation_count: components["schemas"]["DbCounter"];
+            project_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            received_at: string;
+            release_id: components["schemas"]["Id"];
+            report_artifact_id: components["schemas"]["Id"];
+            sequence: components["schemas"]["DbCounter"];
+            stream_id: string;
+            supersedes_message_id?: null | components["schemas"]["Id"];
+            /** Format: date-time */
+            window_end: string;
+            /** Format: date-time */
+            window_start: string;
+        };
+        ForwardReportContentV1: {
+            complete: boolean;
+            external_claim_id: string;
+            handoff_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            issued_at: string;
+            issuer_version: string;
+            /** Format: int32 */
+            message_revision: number;
+            project_id: components["schemas"]["Id"];
+            returns: components["schemas"]["NativeReturnV1"][];
+            schema_version: components["schemas"]["SchemaV1"];
+            sequence: components["schemas"]["DbCounter"];
+            stream_id: string;
+            supersedes_message_id?: null | components["schemas"]["Id"];
+            /** Format: date-time */
+            window_end: string;
+            /** Format: date-time */
+            window_start: string;
+        };
         FrozenBriefV1: {
             brief: components["schemas"]["BriefView"];
             execution_context: components["schemas"]["BriefExecutionContextV1"];
@@ -4168,6 +4279,12 @@ export interface components {
             upstream_class: "ndarray_stats::CorrelationExt::cov";
             /** @enum {string} */
             upstream_version: "0.7.0";
+        };
+        NativeReturnV1: {
+            reason_code?: string | null;
+            timestamp_ns: components["schemas"]["DbCounter"];
+            /** Format: double */
+            value: number | null;
         };
         /** @description Original per-rebalance measurement policy, not a previously measured snapshot. */
         NativeRollingBarLiquidityPolicyV1: {
@@ -4848,6 +4965,34 @@ export interface components {
                 trial_source: components["schemas"]["ExperimentSource"];
                 /** Format: date-time */
                 updated_at: string;
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_ForwardMessageViewV1: {
+            items: {
+                coverage_status: components["schemas"]["ForwardCoverageV1"];
+                downstream_id: components["schemas"]["Id"];
+                external_message_id: string;
+                handoff_id: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                /** Format: date-time */
+                issued_at: string;
+                /** Format: int32 */
+                message_revision: number;
+                observation_count: components["schemas"]["DbCounter"];
+                project_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                received_at: string;
+                release_id: components["schemas"]["Id"];
+                report_artifact_id: components["schemas"]["Id"];
+                sequence: components["schemas"]["DbCounter"];
+                stream_id: string;
+                supersedes_message_id?: null | components["schemas"]["Id"];
+                /** Format: date-time */
+                window_end: string;
+                /** Format: date-time */
+                window_start: string;
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -10526,6 +10671,90 @@ export interface operations {
             };
         };
     };
+    submit_forward_message: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForwardMessageSubmitV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_ForwardMessageViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     submit_downstream_weights: {
         parameters: {
             query?: never;
@@ -13583,6 +13812,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_ExecutionAssumptionsViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_forward_messages: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ForwardMessageViewV1"];
                 };
             };
             401: {

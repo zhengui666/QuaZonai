@@ -239,7 +239,7 @@ async fn cleanup_waits_for_the_producer_and_preserves_committed_objects(pool: Pg
         let discarded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let observed = discarded.clone();
         let cleanup =
-            store.discard_unpublished_forward_weights(project, artifact, move |_| async move {
+            store.discard_unpublished_forward_artifact(project, artifact, move |_| async move {
                 observed.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(())
             });

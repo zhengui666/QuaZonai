@@ -1,16 +1,23 @@
 //! Target-only downstream observations. The machine identity, not the JSON, owns the source.
 use crate::{
-    access::Authority,
+    access::{idempotency_key, Authority},
     auth::json,
     error::{ApiError, Problem},
     AppState,
 };
 use axum::{
-    extract::{rejection::JsonRejection, State},
-    http::StatusCode,
+    extract::{
+        rejection::{JsonRejection, PathRejection, QueryRejection},
+        Path, Query, State,
+    },
+    http::{HeaderMap, StatusCode},
     Json,
 };
-use contracts::{control::CommandResult, forward::*};
+use contracts::{
+    control::{CommandResult, ListQuery, Page},
+    forward::*,
+    Id,
+};
 use store::StoreError;
 
 #[utoipa::path(post,path="/api/v2/forward/weights",operation_id="submit_downstream_weights",tag="Forward",request_body=DownstreamWeightsSubmitV1,responses((status=201,body=CommandResult<DownstreamWeightsViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
@@ -41,7 +48,7 @@ pub async fn weights(
             .await;
         if let Some(artifact) = allocated.filter(|_| result.is_err()) {
             if store
-                .discard_unpublished_forward_weights(
+                .discard_unpublished_forward_artifact(
                     request.project_id,
                     artifact,
                     |id| async move {
@@ -55,6 +62,89 @@ pub async fn weights(
                 .is_err()
             {
                 tracing::warn!(artifact_id=%artifact,"Forward weight cleanup deferred");
+            }
+        }
+        result
+    })
+    .await?;
+    Ok((StatusCode::CREATED, Json(result)))
+}
+
+#[utoipa::path(get,path="/api/v2/projects/{id}/forward",operation_id="list_forward_messages",tag="Forward",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<ForwardMessageViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn list(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<ForwardMessageViewV1>>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state.store.forward_messages(&actor, id, &query).await?,
+    ))
+}
+#[utoipa::path(post,path="/api/v2/forward/messages",operation_id="submit_forward_message",tag="Forward",request_body=ForwardMessageSubmitV1,params(("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<ForwardMessageViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
+pub async fn message(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    body: Result<Json<ForwardMessageSubmitV1>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<ForwardMessageViewV1>>), ApiError> {
+    let request = json(body)?;
+    if idempotency_key(&headers)? != request.external_message_id {
+        return Err(ApiError::validation());
+    }
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(StoreError::Invalid("artifact_store_unavailable"))?;
+    let store = state.store.clone();
+    let result = crate::settings::command(&state, async move {
+        let reading = objects.clone();
+        let publishing = objects.clone();
+        let mut allocated = None;
+        let result = store
+            .submit_forward_message(
+                &actor,
+                &request,
+                move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+                |object| {
+                    allocated = Some(object.id);
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            publishing.put(object.id, &object.bytes)
+                        })
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                    }
+                },
+            )
+            .await;
+        if let Some(artifact) = allocated.filter(|_| result.is_err()) {
+            if store
+                .discard_unpublished_forward_artifact(
+                    request.report.project_id,
+                    artifact,
+                    |id| async move {
+                        tokio::task::spawn_blocking(move || objects.discard_unpublished(id))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    },
+                )
+                .await
+                .is_err()
+            {
+                tracing::warn!(artifact_id=%artifact,"Forward report cleanup deferred");
             }
         }
         result

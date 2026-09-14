@@ -59,6 +59,8 @@ pub enum Command {
     /// Submit target-only weights using the authenticated downstream identity.
     ForwardWeights,
     #[command(subcommand)]
+    Forward(Forward),
+    #[command(subcommand)]
     Project(Project),
     #[command(subcommand)]
     Brief(Brief),
@@ -126,6 +128,16 @@ pub enum Alpha {
         version: String,
     },
     Evaluations {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum Forward {
+    Submit,
+    List {
         id: String,
         #[command(flatten)]
         page: List,
@@ -649,6 +661,20 @@ impl Command {
                         "/api/v2/automation-policies",
                         id,
                         "revocations",
+                    )?)
+                    .page(page)?
+                }
+            },
+            Self::Forward(command) => match command {
+                Forward::Submit => Request::write::<
+                    contracts::forward::ForwardMessageSubmitV1,
+                    CommandResult<contracts::forward::ForwardMessageViewV1>,
+                >(POST, "/api/v2/forward/messages", 201, false)?,
+                Forward::List { id, page } => {
+                    Request::get::<Page<contracts::forward::ForwardMessageViewV1>>(action(
+                        "/api/v2/projects",
+                        id,
+                        "forward",
                     )?)
                     .page(page)?
                 }

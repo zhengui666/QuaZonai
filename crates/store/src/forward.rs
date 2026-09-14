@@ -13,6 +13,8 @@ use contracts::{
 };
 use sqlx::{Postgres, Row, Transaction};
 
+mod messages;
+
 async fn authority(
     tx: &mut Transaction<'_, Postgres>,
     actor: &Actor,
@@ -44,7 +46,7 @@ async fn authority(
 impl Store {
     /// The producer holds this same project lock through commit; unknown outcomes
     /// must settle before deciding whether its allocated object is unreferenced.
-    pub async fn discard_unpublished_forward_weights<F, Fut>(
+    pub async fn discard_unpublished_forward_artifact<F, Fut>(
         &self,
         project: Id,
         artifact: Id,

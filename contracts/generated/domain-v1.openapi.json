@@ -9911,12 +9911,236 @@
         ],
         "type": "string"
       },
+      "ForwardCoverageV1": {
+        "enum": [
+          "COMPLETE",
+          "PARTIAL",
+          "CORRECTION"
+        ],
+        "type": "string"
+      },
       "ForwardEnvironmentV1": {
         "enum": [
           "PAPER",
           "LIVE"
         ],
         "type": "string"
+      },
+      "ForwardMessageSubmitV1": {
+        "additionalProperties": false,
+        "properties": {
+          "external_message_id": {
+            "type": "string"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ForwardReportContentV1"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "external_message_id",
+          "report"
+        ],
+        "type": "object"
+      },
+      "ForwardMessageViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "coverage_status": {
+            "$ref": "#/components/schemas/ForwardCoverageV1"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "external_message_id": {
+            "type": "string"
+          },
+          "handoff_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "message_revision": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "observation_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "received_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "report_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "stream_id": {
+            "type": "string"
+          },
+          "supersedes_message_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "window_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "release_id",
+          "downstream_id",
+          "handoff_id",
+          "external_message_id",
+          "stream_id",
+          "sequence",
+          "message_revision",
+          "window_start",
+          "window_end",
+          "coverage_status",
+          "observation_count",
+          "report_artifact_id",
+          "issued_at",
+          "received_at"
+        ],
+        "type": "object"
+      },
+      "ForwardReportContentV1": {
+        "additionalProperties": false,
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "external_claim_id": {
+            "type": "string"
+          },
+          "handoff_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "issuer_version": {
+            "type": "string"
+          },
+          "message_revision": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "returns": {
+            "items": {
+              "$ref": "#/components/schemas/NativeReturnV1"
+            },
+            "maxItems": 10000,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "stream_id": {
+            "type": "string"
+          },
+          "supersedes_message_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "window_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "handoff_id",
+          "external_claim_id",
+          "issuer_version",
+          "stream_id",
+          "sequence",
+          "message_revision",
+          "window_start",
+          "window_end",
+          "issued_at",
+          "complete",
+          "returns"
+        ],
+        "type": "object"
+      },
+      "ForwardReportV1": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/ForwardReportContentV1"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "downstream_id",
+          "release_id",
+          "environment",
+          "content"
+        ],
+        "type": "object"
       },
       "FrozenBriefV1": {
         "additionalProperties": false,

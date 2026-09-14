@@ -11,6 +11,8 @@ mod client;
 mod cycle_support;
 #[path = "../../../tests/support/experiment_tasks.rs"]
 mod experiment_support;
+#[path = "support/forward_messages.rs"]
+mod forward_messages;
 #[path = "../../../tests/support/missions.rs"]
 mod mission_support;
 #[path = "../../../tests/support/experiments.rs"]
@@ -524,7 +526,11 @@ async fn claim_http(
             principal.id,
             &CredentialIssue {
                 schema_version: SchemaV1,
-                scope_codes: vec![MachineScope::DownstreamClaim, MachineScope::DownstreamAck],
+                scope_codes: vec![
+                    MachineScope::DownstreamClaim,
+                    MachineScope::DownstreamAck,
+                    MachineScope::ForwardSubmit,
+                ],
                 expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             },
         )
@@ -673,6 +679,15 @@ async fn claim_http(
         assert_eq!(result.resource.state, HandoffStateV1::Acknowledged);
         assert!(result.resource.acknowledged_at.is_some());
     }
+    Box::pin(forward_messages::check(
+        pool,
+        store,
+        operator,
+        f,
+        (&origin, &credential),
+        offer.id,
+    ))
+    .await;
     listener.abort_all();
     probe_server.abort();
 }

@@ -8287,6 +8287,111 @@
         ],
         "type": "object"
       },
+      "CommandResult_ForwardMessageViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "coverage_status": {
+                "$ref": "#/components/schemas/ForwardCoverageV1"
+              },
+              "downstream_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "external_message_id": {
+                "type": "string"
+              },
+              "handoff_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "issued_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "message_revision": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "observation_count": {
+                "$ref": "#/components/schemas/DbCounter"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "received_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "release_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "report_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "sequence": {
+                "$ref": "#/components/schemas/DbCounter"
+              },
+              "stream_id": {
+                "type": "string"
+              },
+              "supersedes_message_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                ]
+              },
+              "window_end": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "window_start": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "project_id",
+              "release_id",
+              "downstream_id",
+              "handoff_id",
+              "external_message_id",
+              "stream_id",
+              "sequence",
+              "message_revision",
+              "window_start",
+              "window_end",
+              "coverage_status",
+              "observation_count",
+              "report_artifact_id",
+              "issued_at",
+              "received_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_FrozenBriefV1": {
         "additionalProperties": false,
         "properties": {
@@ -12042,12 +12147,208 @@
         ],
         "type": "string"
       },
+      "ForwardCoverageV1": {
+        "enum": [
+          "COMPLETE",
+          "PARTIAL",
+          "CORRECTION"
+        ],
+        "type": "string"
+      },
       "ForwardEnvironmentV1": {
         "enum": [
           "PAPER",
           "LIVE"
         ],
         "type": "string"
+      },
+      "ForwardMessageSubmitV1": {
+        "additionalProperties": false,
+        "properties": {
+          "external_message_id": {
+            "type": "string"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ForwardReportContentV1"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "external_message_id",
+          "report"
+        ],
+        "type": "object"
+      },
+      "ForwardMessageViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "coverage_status": {
+            "$ref": "#/components/schemas/ForwardCoverageV1"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "external_message_id": {
+            "type": "string"
+          },
+          "handoff_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "message_revision": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "observation_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "received_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "report_artifact_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "stream_id": {
+            "type": "string"
+          },
+          "supersedes_message_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "window_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "release_id",
+          "downstream_id",
+          "handoff_id",
+          "external_message_id",
+          "stream_id",
+          "sequence",
+          "message_revision",
+          "window_start",
+          "window_end",
+          "coverage_status",
+          "observation_count",
+          "report_artifact_id",
+          "issued_at",
+          "received_at"
+        ],
+        "type": "object"
+      },
+      "ForwardReportContentV1": {
+        "additionalProperties": false,
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "external_claim_id": {
+            "type": "string"
+          },
+          "handoff_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "issuer_version": {
+            "type": "string"
+          },
+          "message_revision": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "returns": {
+            "items": {
+              "$ref": "#/components/schemas/NativeReturnV1"
+            },
+            "maxItems": 10000,
+            "type": "array"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "stream_id": {
+            "type": "string"
+          },
+          "supersedes_message_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "window_end": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "handoff_id",
+          "external_claim_id",
+          "issuer_version",
+          "stream_id",
+          "sequence",
+          "message_revision",
+          "window_start",
+          "window_end",
+          "issued_at",
+          "complete",
+          "returns"
+        ],
+        "type": "object"
       },
       "FrozenBriefV1": {
         "additionalProperties": false,
@@ -13671,6 +13972,32 @@
             "type": "object"
           }
         ]
+      },
+      "NativeReturnV1": {
+        "additionalProperties": false,
+        "properties": {
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "timestamp_ns",
+          "value"
+        ],
+        "type": "object"
       },
       "NativeRollingBarLiquidityPolicyV1": {
         "additionalProperties": false,
@@ -17067,6 +17394,120 @@
                 "revision",
                 "created_at",
                 "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_ForwardMessageViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "coverage_status": {
+                  "$ref": "#/components/schemas/ForwardCoverageV1"
+                },
+                "downstream_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "external_message_id": {
+                  "type": "string"
+                },
+                "handoff_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "issued_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "message_revision": {
+                  "format": "int32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "observation_count": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "received_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "release_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "report_artifact_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "sequence": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "stream_id": {
+                  "type": "string"
+                },
+                "supersedes_message_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "window_end": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "window_start": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "release_id",
+                "downstream_id",
+                "handoff_id",
+                "external_message_id",
+                "stream_id",
+                "sequence",
+                "message_revision",
+                "window_start",
+                "window_end",
+                "coverage_status",
+                "observation_count",
+                "report_artifact_id",
+                "issued_at",
+                "received_at"
               ],
               "type": "object"
             },
@@ -28652,6 +29093,136 @@
         ]
       }
     },
+    "/api/v2/forward/messages": {
+      "post": {
+        "operationId": "submit_forward_message",
+        "parameters": [
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForwardMessageSubmitV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_ForwardMessageViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Forward"
+        ]
+      }
+    },
     "/api/v2/forward/weights": {
       "post": {
         "operationId": "submit_downstream_weights",
@@ -33606,6 +34177,120 @@
         ],
         "tags": [
           "Execution assumptions"
+        ]
+      }
+    },
+    "/api/v2/projects/{id}/forward": {
+      "get": {
+        "operationId": "list_forward_messages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ForwardMessageViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Forward"
         ]
       }
     },

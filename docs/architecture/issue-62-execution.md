@@ -1,5 +1,42 @@
 # Issue62 implementation evidence
 
+## Original Forward report ingestion and logical replay, 2026-09-14
+
+Store/HTTP/CLI now ingest ForwardMessageSubmitV1 after the exact native Claim/transfer,
+using the authenticated project/downstream FORWARD_SUBMIT identity and matching header/
+external message ID. New messages require CLAIMED/ACKNOWLEDGED and current enabled
+integration/environment. Original report bytes are bounded, typed, microsecond-window
+validated and stored as REAL EVALUATOR_ONLY qz.forward_report/1 IMPORT artifacts; Paper
+and Live remain explicitly distinguished. Only native references enter normal receipts.
+Project/Handoff/downstream locks serialize publication, ACK and original external aliases.
+The shared Forward artifact cleanup waits on the producer's project barrier.
+
+Same external ID or a different external ID for identical logical content returns the
+original message after checking original report bytes. Reused IDs with changed content
+conflict; a correction must follow the current same-stream/sequence version and retain
+its window. Old reports remain immutable. Metadata pagination is exact-project scoped;
+downstreams see only their own messages and cannot submit account/ledger/control fields.
+Neither metadata nor the ordinary Artifact content route exposes evaluator-only reports.
+This creates no Forward evaluation/window, automatic Live promotion, degradation or Wake.
+
+Over 6d386e4f plus this patch, verify-rNJ5Ar passed all-target check/fmt/strict Clippy.
+Broad verify-rzoWt0 passed those gates, 143 contracts/domain and 28 PostgreSQL tests,
+six HTTP contract/weights tests and 17 existing tests in the original portfolio suite.
+Its new Forward chain reached successful publication/replay/correction but a test wrongly
+matched the word returns inside the stream name when checking for raw-field disclosure.
+The assertion now checks JSON keys and also rejects ordinary Artifact content access.
+Final verify-CHfL5n repeated all compile gates and passed the complete native Claim/ACK/
+Forward CLI chain: concurrency, original aliases, changed-ID/content conflicts, wrong
+claim/project/header, microsecond precision, correction fork/missing parent, immutable
+report bytes, metadata pagination, rollback on injected SQL failure and original retry.
+Both retained source inventory and stopped their owned PostgreSQL. The earlier missing
+CLI idempotency key was fixed without relaxing the existing CLI requirement.
+web-verify-HtYAMn reproduced six native generated outputs twice without handwritten
+changes. forward-web-* passed TypeScript, 505 Vitest cases, five PWA checks and Vite
+build; only the existing chunk-size warning remains.
+These are controlled protocol observations, not actual market/model/OCI acceptance.
+Forward window/metrics/promotion/Wake, delivery UI and full #62 acceptance remain open.
+
 ## Original distinct-Candidate automatic daily quota, 2026-09-14
 
 The automatic Paper protocol fixture now takes the second original LAST_TARGET

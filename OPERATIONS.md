@@ -603,3 +603,5 @@ Mission/Automation/Downstream不能借此读取额外证据。Sealed及独立Rev
 冻结政策使用 `client automation authorize PROJECT_UUID` 及绑定完整请求的POLICY_AUTHORIZE人工授权，内容见CLI和DESIGN A7.0。保存会新建不可变版本并更新项目当前政策；`automation list/show`读取原历史。`automation revoke POLICY_UUID`通过POLICY_REVOKE授权追加立即或未来撤销，`automation revocations`查看记录。政策管理已接通，自动审批/晋级消费仍待实现；登记成功不表示发生了审批或交付。
 
 自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级仍待原始 Forward 证据链。
+
+Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过，这些消费链仍在实现。

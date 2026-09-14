@@ -2774,6 +2774,18 @@ schema_version=1、origin=REAL、access_class=EVALUATOR_ONLY、byte_count>0。
 受保护产品验收。禁止原地改写错误历史、把 FIXTURE 重标 REAL 或向研究/PWA 泄露原始报告。
 所有既有迁移保持原字节；不兼容历史令整个升级批次回滚。
 
+### A7.3 原 Forward 消息接入
+
+POST `/api/v2/forward/messages` 要求 Idempotency-Key 与 external_message_id 完全一致，接受 ForwardMessageSubmitV1（schema_version=1、external_message_id、report）。report 为 ForwardReportContentV1：schema_version=1、project_id、handoff_id、external_claim_id、issuer_version（1..200字符）、stream_id（1..200）、sequence（正DbCounter）、message_revision（1..i32最大值）、supersedes_message_id、window_start/window_end、issued_at、complete、returns（0..10000项原NativeReturnV1）。只接归一化收益观察，不接账户、订单、成交、仓位、NAV或下游控制权限。无样本或缺失值可以保留为partial；complete要求至少一个有效样本且无缺失值，声明完整不是统计晋级证明。
+
+精确项目/下游FORWARD_SUBMIT凭据才可提交；签发者由已验证机器身份确定，issuer_version只是可审计的原生发行版本，不授予额外资格。三个UTC时间使用数据库原生微秒精度（超出精度拒绝而不静默舍入）。report窗口必须在原领取之后，end>start且不晚于数据库采纳时钟；issued_at不早于end，最多允许未来5秒。收益时间严格递增，位于(start,end]；数值有限且缺失必须附原NATIVE_RETURN_UNAVAILABLE原因。新消息要求下游当前启用且支持原环境，只接CLAIMED/ACKNOWLEDGED且精确external_claim_id及原转移元组；暂停/归档保留反馈，不因此启动研究。
+
+服务端将原report与实际downstream/release/environment封装为不可变qz.forward_report/1，REAL/EVALUATOR_ONLY/IMPORT。Artifact原字节、元数据、forward_messages与原生回执同事务关联；数据库实际采纳时间不由请求提供。observation_count只从非缺失收益项推导。metadata的coverage_status：有supersedes为CORRECTION，否则由complete映射COMPLETE/PARTIAL；纠正后的完整性由原报告complete确定。报告引用不是评估PASS，也不将Paper观察冒充Live。
+
+原external ID重试与新external ID重传同一handoff/stream/sequence/revision都逐字核对原报告；相同只返回原消息，不增加样本，变更409。原请求回执只保存项目/Handoff/原Artifact引用，绝不复制returns到普通命令历史。首版revision=1且无supersedes；纠正只能引用同逻辑消息当前最新版、revision恰加1并保留原窗口。缺前版/分叉409等待对齐；sequence可迟到但未经连续窗口评估不形成晋级证据。已接收报告不可改写，当前Handoff后来拒绝不抹去原回执或原报告。
+
+GET `/api/v2/projects/{id}/forward`按原id倒序cursor/limit返回ForwardMessageViewV1元数据（原id/project/release/downstream/Handoff、external ID、stream/sequence/revision/supersedes、窗口/coverage/observation_count、Artifact引用与issued/received）。Operator和本项目RESEARCH_READ CLI可读，FORWARD_SUBMIT下游仅见自己的记录；不返回returns或原报告字节。CLI为`forward submit`与`forward list PROJECT_UUID`。统计连续性、重叠、纠正采纳、原生指标与Forward evidence window生产另循A7，不将消息登记视为晋级。
+
 ## A8. 集成、身份与幂等
 
 ### A8.0 原生 Codex 连接与会话适配
