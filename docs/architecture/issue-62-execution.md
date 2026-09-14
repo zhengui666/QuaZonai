@@ -4706,3 +4706,12 @@ Wake 失败整体回滚，但不撤销既有 Evaluation；原消息留给 Worker
 新增原生PG回归先由真实人工授权登记未来撤权时间，再实际写出新Cycle参数，使用数据库时间等待该时间到达。最终来源复核拒绝提交，Cycle/Run admission/PGMQ数量与调用前相同；原参数对象按Project锁确认无引用后清理。下一次消费不读写对象而取消旧Wake，保留DEGRADED原观察。没有修改宿主时钟、改写历史Evaluation或伪造成功Cycle；现有提交前复核已满足该边界，未改产品实现。
 
 verify-f9DuXU：workspace/all-targets编译、格式、严格Clippy通过；分类1 + 原Cycle14 + Forward/Wake4 + Worker1 = 20项定向测试通过，验证期间源文件不变，隔离PG停止。该受控协议/关系测试不是生产模型、多日真实反馈或OCI整链证据。实际Worker成功消费后到Mission及后代反馈链、Live晋级与完整#62验收仍未完成。
+
+
+### 2026-09-14：实际 Worker 的 Wake → Mission 与原生恢复
+
+共用 tests/support/forward_result.rs 保存既有受控 Forward 科学协议，Store 与 Worker 测试消费同一原参数/manifest/结果，未改变产品实现。新的 mission_worker 正向分支从真实人工 Brief 冻结/Cycle_START 开始，明确关系型 Candidate/历史 Claim 和科学响应夹具；实际 Worker 先发表原 Forward Evaluation/Observation/Wake，再并发轮询消费唯一 Wake。数据库确认两个 Cycle、仅一个人工 CYCLE_START 回执、此时零 CodexSession。新 DATA_VALIDATE 的受控终态由实际 Worker 处理并启动原 Mission。
+
+继续使用官方 App Server：按原 Profile 默认设置启动受控 local_fixture，完成两轮 Responses 请求；关闭原连接，按原生租约接管并恢复同一 Thread/Session/工作目录，核对原上下文、一次 Mission 身份与24个原生实际 token。原人工启动路径同样复跑恢复断言。该检查满足受控原生会话与 Worker 组合路径；生产账户推理、真实科学执行、多日市场反馈与后代 Candidate 再反馈仍需各自验收。
+
+verify-s99RmH 首次编译发现共享请求的Box返回类型，已修正。verify-P5uhet 正向测试通过，Clippy指出该集成仅使用共用夹具部分字段，依现有约定仅在测试模块限定dead_code。最终 verify-udfQpS：workspace/all-targets编译、格式、严格Clippy全过；分类1、Cycle14、Forward4、原Worker1、自动Wake原生恢复1、原人工原生恢复1，共22项定向测试通过。验证期间源文件不变，隔离PG停止；无模型/生成合同/产品依赖变更，未push、未review、未合并或关闭Issue。

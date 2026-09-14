@@ -5,14 +5,19 @@
 mod cycle_support;
 #[path = "../../../tests/support/experiment_tasks.rs"]
 mod experiment_support;
+#[path = "../../../tests/support/forward_result.rs"]
+mod forward_result;
+#[path = "../../../tests/support/forward.rs"]
+#[allow(dead_code)] // This integration uses only the original-source portion of the shared fixture.
+mod forward_support;
 #[path = "../../../tests/support/missions.rs"]
 mod mission_support;
-#[path = "../../../tests/support/research.rs"]
-mod research_support;
+use forward_support::{
+    research as research_support, runtime_observation::protocol_fixture as runtime_support,
+};
 #[path = "support/codex_responses.rs"]
 mod responses;
-#[path = "../../../tests/support/runtime.rs"]
-mod runtime_support;
+
 use contracts::{research::DataOrigin, runs::RunState, DbCounter, Id, SchemaV1};
 use integrations::secrets::SecretVault;
 use server::{
@@ -70,6 +75,16 @@ async fn fixture_with_selection(
     priced: bool,
     candidates: u16,
     origin: DataOrigin,
+) -> Fixture {
+    fixture_with_trigger(pool, priced, candidates, origin, false).await
+}
+
+async fn fixture_with_trigger(
+    pool: &PgPool,
+    priced: bool,
+    candidates: u16,
+    origin: DataOrigin,
+    wake: bool,
 ) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     for name in ["native", "workspaces", "secrets"] {
@@ -170,10 +185,34 @@ async fn fixture_with_selection(
         .resource;
     data.freeze.execution_context.runtime_revision = updated.revision;
     experiment_support::probe(&store, &actor, &data).await;
+    if wake {
+        let mut content = data.brief.content.clone();
+        content.budget.min_cycle_interval_seconds = 1;
+        data.brief = store
+            .update_brief(
+                &actor,
+                "wake-interval",
+                data.brief.id,
+                &contracts::brief::BriefUpdate {
+                    schema_version: SchemaV1,
+                    expected_revision: data.brief.revision,
+                    content,
+                    bindings: data.brief.bindings.clone(),
+                },
+            )
+            .await
+            .unwrap()
+            .resource;
+        data.freeze.expected_revision = data.brief.revision;
+    }
     let (store, actor, data, _, preparation) =
         mission_support::start(store, actor, data, priced).await;
     mission_support::complete(pool, &store, &data, preparation, false).await;
-    assert!(store.advance_initial_cycle(preparation).await.unwrap());
+    if wake {
+        wake_preparation(pool, &store, &actor, &data, preparation, root.path()).await;
+    } else {
+        assert!(store.advance_initial_cycle(preparation).await.unwrap());
+    }
     let message = store.read_mission_messages(60, 10).await.unwrap().remove(0);
     let Some(ClaimResult::Leased(lease)) = store
         .claim_mission(&message, "bootstrap-first", 120)
@@ -247,6 +286,121 @@ async fn fixture_with_selection(
         runtime_targets,
         runtime_probes,
     }
+}
+
+// Real human startup and actual Worker/native App Server; Candidate/Claim and
+// scientific responses are controlled fixtures, never market/OCI qualification.
+async fn wake_preparation(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    data: &cycle_support::Fixture,
+    original: Id,
+    root: &std::path::Path,
+) {
+    let source = store.get_run(actor, original).await.unwrap();
+    let attempt = source.active_attempt_id.unwrap();
+    let report =
+        forward_support::support::report_artifact(pool, source.project_id, original, attempt).await;
+    let relational = forward_support::support::Fixture {
+        project: source.project_id,
+        cycle: source.cycle_id.unwrap(),
+        run: original,
+        session: Id::new(),
+        profile: data.researcher_profile.profile_id,
+        input_set: source.input_set_id,
+        artifact: data.data.artifact,
+        report,
+        budget: data.brief.content.budget.clone(),
+        fence: store::turns::WorkerFence {
+            attempt_id: attempt,
+            worker_owner_id: "cycle-preparation-fixture".into(),
+            owner_epoch: contracts::Revision::INITIAL,
+        },
+        deadline: source.deadline_at,
+    };
+    let feedback =
+        forward_support::setup_with_source(pool, relational, store.clone(), actor.clone()).await;
+    let read = |id: Id, size: DbCounter| {
+        let bytes = feedback.objects.lock().unwrap().get(&id).cloned();
+        async move {
+            let bytes = bytes.ok_or(store::StoreError::NotFound)?;
+            assert_eq!(bytes.len() as u64, size.get());
+            Ok(bytes)
+        }
+    };
+    let publish = |object: store::lifecycle::native::NativeObjectPublication| {
+        feedback
+            .objects
+            .lock()
+            .unwrap()
+            .insert(object.id, object.bytes);
+        async { Ok(()) }
+    };
+    let measured = store
+        .enqueue_forward_evaluation(feedback.handoff, "daily", read, publish)
+        .await
+        .unwrap()
+        .resource;
+    let (message, _, _, _) =
+        forward_result::complete(pool, store, measured.id, &feedback.caps, &feedback.objects).await;
+    for (id, bytes) in feedback.objects.lock().unwrap().iter() {
+        data.objects.put(*id, bytes).unwrap();
+    }
+    let worker = Worker::new(
+        store.clone(),
+        SecretVault::open(&root.join("secrets"), &root.join("master.key")).unwrap(),
+        integrations::artifacts::ArtifactStore::open(&root.join("objects")).unwrap(),
+        server::runtime_transport::RuntimeTargets::new(Vec::new(), false).unwrap(),
+        1,
+    )
+    .unwrap();
+    let (_alive, shutdown) = tokio::sync::watch::channel(false);
+    worker
+        .process_message(message, "forward-terminal-worker", shutdown.clone())
+        .await
+        .unwrap();
+    let pending: (String,String)=sqlx::query_as("SELECT o.classification,w.state FROM app.forward_observation_publications p JOIN app.degradation_observations o ON o.id=p.observation_id JOIN app.wake_events w ON w.observation_id=o.id WHERE p.run_id=$1").bind(measured.id.as_uuid()).fetch_one(pool).await.unwrap();
+    assert_eq!(pending, ("DEGRADED".into(), "PENDING".into()));
+    tokio::time::sleep(std::time::Duration::from_millis(1020)).await;
+    let (a, b) = tokio::join!(
+        worker.process_automation(None),
+        worker.process_automation(None)
+    );
+    assert_eq!(a.0, Some(data.data.project));
+    assert_eq!(b.0, Some(data.data.project));
+    let cycle: uuid::Uuid = sqlx::query_scalar(
+        "SELECT consumed_cycle_id FROM app.wake_events WHERE project_id=$1 AND state='CONSUMED'",
+    )
+    .bind(data.data.project.as_uuid())
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let new_run: uuid::Uuid =
+        sqlx::query_scalar("SELECT initial_run_id FROM app.cycle_startups WHERE cycle_id=$1")
+            .bind(cycle)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let new_run: Id = new_run.to_string().try_into().unwrap();
+    assert_ne!(new_run, original);
+    let facts:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.research_cycles),(SELECT count(*) FROM app.command_receipts WHERE operation='CYCLE_START'),(SELECT count(*) FROM app.codex_sessions)").fetch_one(pool).await.unwrap();
+    assert_eq!(facts, (2, 1, 0));
+    mission_support::complete(pool, store, data, new_run, false).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1020)).await;
+    let message = store
+        .read_native_run_messages(60, 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.run_id == new_run)
+        .unwrap();
+    worker
+        .process_message(message, "wake-preparation-worker", shutdown)
+        .await
+        .unwrap();
+    let mission: (uuid::Uuid,String)=sqlx::query_as("SELECT r.cycle_id,r.kind FROM app.run_missions m JOIN app.runs r ON r.id=m.run_id WHERE r.cycle_id=$1").bind(cycle).fetch_one(pool).await.unwrap();
+    assert_eq!(mission, (cycle, "AGENT_RESEARCH".into()));
 }
 
 async fn takeover(f: &Fixture, pool: &PgPool, owner: &str) -> RunLease {
@@ -1938,7 +2092,20 @@ async fn native_interrupt_follows_committed_deadline_and_does_not_invent_usage(p
 async fn bootstrap_mints_one_credential_binds_before_turn_and_resumes_the_original_native_thread(
     pool: PgPool,
 ) {
-    let f = fixture(&pool).await;
+    bootstrap_and_resume(pool, false).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn worker_wake_starts_original_native_mission_and_resumes_it(pool: PgPool) {
+    bootstrap_and_resume(pool, true).await;
+}
+
+async fn bootstrap_and_resume(pool: PgPool, wake: bool) {
+    let f = if wake {
+        fixture_with_trigger(&pool, false, 2, DataOrigin::Fixture, true).await
+    } else {
+        fixture(&pool).await
+    };
     let mut connection = f
         .launcher
         .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
