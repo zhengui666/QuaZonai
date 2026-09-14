@@ -64,7 +64,9 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         OperatorCommand::PortfolioBuild(r) => crate::portfolio::build_selection(r),
         OperatorCommand::PortfolioSimulate(r) => crate::data::bounded_native_limits(&r.limits),
         OperatorCommand::PortfolioStudy(r) => crate::data::bounded_native_limits(&r.limits),
-        OperatorCommand::ReleaseCreate(_) | OperatorCommand::ReleaseApprove(_) => Ok(()),
+        OperatorCommand::ReleaseCreate(_)
+        | OperatorCommand::ReleaseApprove(_)
+        | OperatorCommand::HandoffOffer(_) => Ok(()),
         OperatorCommand::ReleaseReject(r) => {
             crate::delivery::decision_reason(&r.reason_code, &r.reason)
         }

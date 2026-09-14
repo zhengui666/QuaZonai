@@ -69,6 +69,8 @@ pub enum Command {
     #[command(subcommand)]
     Approval(Approval),
     #[command(subcommand)]
+    Handoff(Handoff),
+    #[command(subcommand)]
     Cycle(Cycle),
     #[command(subcommand)]
     Data(Data),
@@ -126,6 +128,12 @@ pub enum Alpha {
         #[command(flatten)]
         page: List,
     },
+}
+
+#[derive(Subcommand)]
+pub enum Handoff {
+    Offer,
+    Show { id: String },
 }
 
 #[derive(Subcommand)]
@@ -555,6 +563,16 @@ impl Command {
                 >(
                     PATCH, item("/api/v2/projects", id)?, 200, true
                 )?,
+            },
+            Self::Handoff(command) => match command {
+                Handoff::Offer => Request::write::<
+                    contracts::delivery::HandoffOfferV1,
+                    CommandResult<contracts::delivery::HandoffViewV1>,
+                >(POST, "/api/v2/handoffs", 201, true)?,
+                Handoff::Show { id } => Request::get::<contracts::delivery::HandoffViewV1>(item(
+                    "/api/v2/handoffs",
+                    id,
+                )?),
             },
             Self::Approval(Approval::Show { id }) => {
                 Request::get::<contracts::delivery::ApprovalViewV1>(item("/api/v2/approvals", id)?)

@@ -45,15 +45,28 @@ async fn release_approval_cli_binds_original_release_and_exact_intent(pool: PgPo
     check_intent(pool, "approve").await;
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn handoff_offer_cli_binds_exact_original_approval(pool: PgPool) {
+    check_intent(pool, "offer").await;
+}
+
 async fn check_intent(pool: PgPool, command: &str) {
     let approve = command == "approve";
+    let offer = command == "offer";
     let decision = matches!(command, "reject" | "reconsider");
     let release = command == "create" || decision || approve;
-    let group = if release { "release" } else { "portfolio" };
+    let group = if offer {
+        "handoff"
+    } else if release {
+        "release"
+    } else {
+        "portfolio"
+    };
     let simulation = command != "build";
     let operation = match command {
         "create" => "RELEASE_CREATE",
         "approve" => "RELEASE_APPROVE",
+        "offer" => "HANDOFF_OFFER",
         "reject" => "RELEASE_REJECT",
         "reconsider" => "RELEASE_REOPEN",
         "study" => "PORTFOLIO_STUDY",
@@ -122,6 +135,9 @@ async fn check_intent(pool: PgPool, command: &str) {
     if approve {
         body = json!({"schema_version":1,"downstream_id":contracts::Id::new(),"environment":"PAPER","expected_downstream_revision":"1","expected_latest_decision_id":null,"valid_until":chrono::Utc::now()+chrono::Duration::hours(1)});
     }
+    if offer {
+        body = json!({"schema_version":1,"release_id":contracts::Id::new(),"approval_id":mandate.id,"supersedes_handoff_id":null,"expires_at":chrono::Utc::now()+chrono::Duration::hours(1)});
+    }
     let target = mandate.id.to_string();
     let mut denied_arguments = vec!["--idempotency-key", "build", group, command];
     if decision || approve {
@@ -172,6 +188,8 @@ async fn check_intent(pool: PgPool, command: &str) {
     let mut changed = body;
     if approve {
         changed["downstream_id"] = json!(contracts::Id::new());
+    } else if offer {
+        changed["release_id"] = json!(contracts::Id::new());
     } else if decision {
         changed["reason_code"] = json!("CHANGED_DECISION");
     } else {

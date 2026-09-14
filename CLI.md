@@ -1,5 +1,14 @@
 # CLI 命令
 
+`client handoff offer` 提交 HandoffOfferV1 到 POST /api/v2/handoffs：schema_version=1、
+release_id、approval_id、supersedes_handoff_id（首次null，否则精确最新Offer）、expires_at。
+需绑定approval_id和完整请求的HANDOFF_OFFER人工grant。服务端从审批取下游/环境，
+重验原来源、拒绝历史、撤销、期限及最新readiness；不允许覆盖或重复发送原Release。
+新Offer会同事务撤销仍未领取的前版；已领取前版保留事实，不代表停止或撤单。
+`client handoff show UUID` 读 GET /api/v2/handoffs/{id}当前状态。原创建回执重放仍是
+原结果，不能据其OFFERED判断当前状态。下游仅凭对应项目/下游的CLAIM或ACK scope
+读取自身Offer。当前已接通人工Offer；Claim/ACK/主动撤销/失效任务及界面仍待实现。
+
 `client release approve RELEASE_UUID` 向 POST /api/v2/releases/{id}/approvals
 提交 ReleaseApproveV1：schema_version=1、downstream_id、environment=PAPER|LIVE、
 expected_downstream_revision（十进制字符串）、expected_latest_decision_id（首次null，
@@ -8,7 +17,7 @@ RELEASE_APPROVE人工grant与幂等键。服务端重验原REAL Package、当前
 下游配置及新鲜探测，并在同一事务冻结原评估报告引用；不接收evidence_set_id。
 201返回不可变Approval，不能当作已领取或执行。`client approval show APPROVAL_UUID`
 读取 GET /api/v2/approvals/{id} 原元数据，需精确项目RESEARCH_READ。历史记录不是
-当前有效性证明；Offer/Claim、自动审批及审批界面尚未接通。未知结果保持原请求/键。
+当前有效性证明；人工Offer已接通；Claim、自动审批及审批界面尚未接通。未知结果保持原请求/键。
 
 `client release reject RELEASE_UUID`读取ReleaseRejectV1；`client release reconsider DECISION_UUID`
 读取ReleaseReopenV1，字段/最新决定CAS见DESIGN A7.1。需要对应精确目标的
@@ -594,7 +603,7 @@ Production 只接受 HTTPS origin；literal-loopback HTTP 还须配置和部署�
 serve 的 `--downstream-targets` / `DOWNSTREAM_TARGETS` 使用下述 origin/addresses 格式，
 与 RUNTIME_TARGETS 独立，默认[]。原生下游固定 GET /downstream/v1/capabilities，只读
 DownstreamCapabilitiesV1 target-only合同。网络在事务外，总请求10秒；完成采纳总期限
-20秒，ArtifactStore与不可变观察/回执关联。人工审批已消费该观察，Offer/Claim尚未接通，不能据此宣称
+20秒，ArtifactStore与不可变观察/回执关联。人工审批/Offer已消费该观察，Claim尚未接通，不能据此宣称
 完成交付。回归：隔离PostgreSQL执行 `cargo test --locked -p store --test downstream`、
 `cargo test --locked -p server --test downstream_http --test downstream_transport`。
 

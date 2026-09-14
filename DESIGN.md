@@ -2720,6 +2720,12 @@ Operator及精确项目RESEARCH_READ的CLI可读。client release reject/reconsi
 他项目证据都不能成为交付授权。Paper/Live、自动政策及资格/新鲜度门禁继续独立重查；
 仅满足关系约束不是授予审批的权限。新数据库约束不篡改过去已冻结的错误审批。
 
+人工 Offer POST `/api/v2/handoffs` 使用 HandoffOfferV1：schema_version=1、release_id、approval_id、supersedes_handoff_id（该项目/mandate/下游/环境首次null，否则精确引用最新Offer）、expires_at。HandoffOffer人工grant绑定approval_id与完整请求。服务端从原审批取下游/环境，不接受覆盖；在项目/Candidate/下游/审批锁内重验原审批绑定、原Package全部当前来源、证据、撤销和新鲜readiness，expires_at不超过任何来源与审批期限。当前人工入口只消费OPERATOR审批；FROZEN_POLICY由后续政策入口按完整政策合同实现，不以人工入口绕过。
+
+每个原Release/下游/环境只产生一个Offer，即使换幂等键或审批UUID也不能再次发送该版本；同Candidate已领取的目标不能换Release再领。不同Candidate的再平衡必须引用同项目/mandate/下游/环境最新Offer作为supersession。前版若仍OFFERED，同事务转REVOKED；已领取版本只保留显式后继关联，不改执行事实。delivery_sequence由原下游锁内递增，客户端不能提供。新表约束遇到历史重复应使迁移失败并保留原数据，不清理或改写历史。Offer的supersedes_handoff_id属于不可变绑定。
+
+GET `/api/v2/handoffs/{id}`仅返回原绑定及当前状态；Operator/精确项目RESEARCH_READ CLI可读；下游只可使用DOWNSTREAM_CLAIM或DOWNSTREAM_ACK读取自身且属于其项目的Offer。`client handoff offer/show`复用同一合同。创建Offer不调用下游网络、不授予Agent权限、不代表CLAIMED；领取/撤销/失效竞争按以下原生状态机继续实现。
+
 ### A7.2 领取历史与 Forward 报告来源（增量迁移 017）
 
 `handoff_transfers` 复用 A0 的 id/created_at；一条 Handoff 至多一次转移。

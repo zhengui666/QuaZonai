@@ -258,3 +258,44 @@ pub struct ReleaseDecisionViewV1 {
     pub decided_at: chrono::DateTime<chrono::Utc>,
     pub decided_by: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HandoffOfferV1 {
+    pub schema_version: crate::SchemaV1,
+    pub release_id: Id,
+    pub approval_id: Id,
+    pub supersedes_handoff_id: Option<Id>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum HandoffStateV1 {
+    Offered,
+    Claimed,
+    Acknowledged,
+    Rejected,
+    Revoked,
+    Expired,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HandoffViewV1 {
+    pub id: Id,
+    pub project_id: Id,
+    pub candidate_id: Id,
+    pub mandate_id: Id,
+    pub release_id: Id,
+    pub approval_id: Id,
+    pub downstream_id: Id,
+    pub environment: crate::forward::ForwardEnvironmentV1,
+    pub delivery_sequence: crate::DbCounter,
+    pub revision: crate::Revision,
+    pub state: HandoffStateV1,
+    pub supersedes_handoff_id: Option<Id>,
+    pub offered_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub claimed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub external_claim_id: Option<String>,
+    pub acknowledged_at: Option<chrono::DateTime<chrono::Utc>>,
+}

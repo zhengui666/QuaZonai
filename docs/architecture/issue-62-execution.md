@@ -1,5 +1,46 @@
 # Issue62 implementation evidence
 
+## Human approval consumption into Offer, 2026-09-14
+
+POST /api/v2/handoffs / CLI handoff offer now consumes an exact HANDOFF_OFFER
+human grant bound to the original approval and complete request. GET /handoffs/{id}
+under /api/v2 and CLI handoff show read current state. Source revalidation is shared
+with approval creation: original REAL Package, all qualified sources, licensing and
+time windows are reconstructed before checking the approval's immutable downstream
+revision, decision ordinal, evidence and revocations against fresh native readiness.
+The current human route rejects FROZEN_POLICY authority pending its policy consumer.
+
+Native downstream/project/Candidate/approval locks protect admission and sequence.
+Each Release/downstream/environment can be offered only once, including a different
+key or approval. Supersession must name the latest matching project/mandate/downstream/
+environment offer. An unclaimed predecessor is revoked in the same transaction;
+claimed predecessors retain their transfer facts. Migration 064 adds the immutable
+predecessor FK and original-version uniqueness, failing on incompatible duplicate
+history rather than altering it. Original creation replay does not change current
+state or renew delivery. This implementation does not create any transfer record.
+
+Verification over 40dc9645: `.ai-bridge/verify-g4ULV5` passed workspace all-target check,
+fmt and strict Clippy; 142 contracts/domain, 47 PostgreSQL constraints/evidence/
+research/downstream and 29 HTTP/CLI/qualified-chain/OpenAPI tests. Source inventory
+unchanged; owned PostgreSQL stopped and pg_ctl status was 3. The original qualified
+Release fixture extends through approval to Offer without SQL-authored PASS, approval
+or successful offer. It checks old decision bindings, expiry, release mismatch,
+concurrent replay, duplicate versions under new keys/approvals, explicit supersession,
+rollback of predecessor revocation, immutable bindings, no transfer fabrication,
+new failed readiness blocking an old successful approval, new successful same-revision
+probe acceptance, exact downstream read authority and denial of downstream offer power.
+The CLI checks exact grant/request binding through real HTTP and native child process.
+Earlier compile failed on an unnecessary .into() ambiguity in the CLI route; fixed.
+
+`.ai-bridge/web-verify-VeuZfc` reproduced six native outputs twice with handwriting
+unchanged. handoff-web-* logs record passing typecheck, 505 Vitest, 5 PWA tests and
+Vite build; the existing chunk-size warning remains. Source UI is unchanged.
+
+Claim/ACK, explicit revoke/expire races and original Package transfer, frozen-policy
+consumption, UI, actual native-market/model/OCI acceptance and the full T01–T42/main
+migration/recovery/current-head GitHub gates remain incomplete. Protocol fixtures and
+an OFFERED state do not prove downstream transfer or execution. No push/merge/closure.
+
 ## Original Release human approval, 2026-09-14
 
 POST /api/v2/releases/{id}/approvals and CLI release approve now consume the exact

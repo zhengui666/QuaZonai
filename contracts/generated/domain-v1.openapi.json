@@ -9766,6 +9766,144 @@
         ],
         "type": "object"
       },
+      "HandoffOfferV1": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "supersedes_handoff_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "release_id",
+          "approval_id",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "HandoffStateV1": {
+        "enum": [
+          "OFFERED",
+          "CLAIMED",
+          "ACKNOWLEDGED",
+          "REJECTED",
+          "REVOKED",
+          "EXPIRED"
+        ],
+        "type": "string"
+      },
+      "HandoffViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledged_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "approval_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "claimed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivery_sequence": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/ForwardEnvironmentV1"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "external_claim_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "mandate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "offered_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HandoffStateV1"
+          },
+          "supersedes_handoff_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "candidate_id",
+          "mandate_id",
+          "release_id",
+          "approval_id",
+          "downstream_id",
+          "environment",
+          "delivery_sequence",
+          "revision",
+          "state",
+          "offered_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
       "HorizonKind": {
         "enum": [
           "FIXED_BARS",
@@ -13792,6 +13930,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "HANDOFF_OFFER"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/HandoffOfferV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "RELEASE_REJECT"
                 ],
                 "type": "string"
@@ -14276,6 +14432,7 @@
           "PORTFOLIO_SIMULATE",
           "RELEASE_CREATE",
           "RELEASE_APPROVE",
+          "HANDOFF_OFFER",
           "RELEASE_REJECT",
           "RELEASE_REOPEN",
           "BRIEF_FREEZE",

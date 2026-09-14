@@ -8,7 +8,7 @@ Read ../../DESIGN.md and ../../AGENTS.md before changes. Actual commands are in 
 固定target-only合同和真实TCP边界、不可变观察及downstream probe/readiness HTTP/CLI
 已接通；原生PG验证 `cargo test --locked -p store --test downstream`，完整人工grant/
 HTTP/TCP/文件链 `cargo test --locked -p server --test downstream_http`。独立部署
-DOWNSTREAM_TARGETS默认拒绝，精确配置版本/60秒有效期不可由重放刷新。人工审批已消费该观察，Offer/Claim尚未
+DOWNSTREAM_TARGETS默认拒绝，精确配置版本/60秒有效期不可由重放刷新。人工审批/Offer已消费该观察，Claim尚未
 接通，不把协议fixture当生产下游或交付验收。
 
 组合指标薄适配只消费原Nautilus Returns组；日均收益不年化，波动率/Sharpe保留
@@ -67,7 +67,7 @@ Sealed机会绑定原Attempt并按根血缘累计，失败和取消不退款；�
 
 release approve / approval show见CLI；人工grant绑定精确Release和完整审批请求。
 服务端同事务冻结原评估报告引用，不允许指定evidence_set_id或复制私有报告为执行输入。
-审批绑定下游配置与Candidate决定序号；历史查询不是当前交付授权，Offer/Claim尚未接通。
+审批绑定下游配置与Candidate决定序号；历史查询不是当前交付授权。handoff offer/show见CLI：精确审批人工grant、当前来源/撤销/readiness重验和最新前版CAS；原Release不能换键再发送。Claim/ACK及主动撤销/失效任务尚未接通。
 最窄原生PG回归：`cargo test --locked -p server --features native-codex --test portfolio_study_http release_freezes`；
 CLI授权回归：`cargo test --locked -p server --features native-codex --test client_portfolio_build release_approval`。
 

@@ -1,4 +1,6 @@
 //! Extend the original qualified Release chain, without SQL-authored PASS/approval.
+#[path = "handoff_checks.rs"]
+mod handoffs;
 use super::*;
 use contracts::research::{InputPurpose, InputSetCreate};
 use contracts::{delivery::*, forward::ForwardEnvironmentV1, settings::*};
@@ -277,6 +279,10 @@ pub(super) async fn check(
     .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.resource.decision_ordinal, Some(0));
+    Box::pin(handoffs::check(
+        pool, store, actor, f, release, sibling, &approval, &second, &renewed,
+    ))
+    .await;
     let mut expired = renewed.clone();
     expired.valid_until = chrono::Utc::now() - chrono::Duration::seconds(1);
     assert!(Box::pin(store.approve_release(
@@ -321,6 +327,6 @@ pub(super) async fn check(
             .fetch_one(pool)
             .await
             .unwrap(),
-        0
+        2
     );
 }

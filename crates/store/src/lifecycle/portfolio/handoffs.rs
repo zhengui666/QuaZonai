@@ -1,0 +1,210 @@
+//! Original approval consumption; an offer is not a transfer or execution.
+use super::*;
+use contracts::{
+    control::{MachineScope, PrincipalKind},
+    delivery::*,
+};
+use sqlx::postgres::PgRow;
+
+fn view(row: &PgRow) -> Result<HandoffViewV1, StoreError> {
+    Ok(HandoffViewV1 {
+        id: db::id(row.try_get("id")?)?,
+        project_id: db::id(row.try_get("project_id")?)?,
+        candidate_id: db::id(row.try_get("candidate_id")?)?,
+        mandate_id: db::id(row.try_get("mandate_id")?)?,
+        release_id: db::id(row.try_get("release_id")?)?,
+        approval_id: db::id(row.try_get("approval_id")?)?,
+        downstream_id: db::id(row.try_get("downstream_id")?)?,
+        environment: db::enum_value(row, "environment")?,
+        delivery_sequence: counter(row.try_get("delivery_sequence")?)?,
+        revision: db::revision(row.try_get("revision")?)?,
+        state: db::enum_value(row, "state")?,
+        supersedes_handoff_id: db::optional_id(row, "supersedes_handoff_id")?,
+        offered_at: row.try_get("offered_at")?,
+        expires_at: row.try_get("expires_at")?,
+        claimed_at: row.try_get("claimed_at")?,
+        external_claim_id: row.try_get("external_claim_id")?,
+        acknowledged_at: row.try_get("acknowledged_at")?,
+    })
+}
+async fn load(tx: &mut Tx<'_>, id: Id) -> Result<PgRow, StoreError> {
+    sqlx::query("SELECT h.*,c.project_id,c.id AS candidate_id,c.mandate_id FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE h.id=$1")
+        .bind(id.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)
+}
+
+impl Store {
+    pub async fn handoff(&self, actor: &Actor, id: Id) -> Result<HandoffViewV1, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let result = view(&load(&mut tx, id).await?)?;
+        match actor {
+            Actor::Browser { .. } => {
+                crate::authority::browser(&mut tx, actor, false, false).await?
+            }
+            Actor::Machine { .. } => {
+                let machine = crate::authority::machine(&mut tx, actor, false).await?;
+                machine.project(result.project_id)?;
+                match machine.kind {
+                    PrincipalKind::Cli => machine.requires(MachineScope::ResearchRead)?,
+                    PrincipalKind::Downstream
+                        if machine.downstream_id == Some(result.downstream_id)
+                            && (machine.scopes.contains(&MachineScope::DownstreamClaim)
+                                || machine.scopes.contains(&MachineScope::DownstreamAck)) => {}
+                    _ => return Err(StoreError::Forbidden),
+                }
+            }
+        }
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn offer_handoff<R, Read>(
+        &self,
+        actor: &Actor,
+        key: &str,
+        request: &HandoffOfferV1,
+        mut read: R,
+    ) -> Result<CommandResult<HandoffViewV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    {
+        let mut tx = self.pool.begin().await?;
+        let prepared = commands::operator(
+            &mut tx,
+            actor,
+            OperatorOperation::HandoffOffer,
+            key,
+            Some(request.approval_id),
+            db::json(request)?,
+        )
+        .await?;
+        if let Some(replay) = prepared.replay()? {
+            tx.commit().await?;
+            return Ok(replay);
+        }
+        // Resolve immutable binding before taking the shared project/source lock order.
+        let approval = sqlx::query("SELECT * FROM app.approvals WHERE id=$1 AND release_id=$2")
+            .bind(request.approval_id.as_uuid())
+            .bind(request.release_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+        let environment = db::enum_value(&approval, "environment")?;
+        let downstream = db::id(approval.try_get("downstream_id")?)?;
+        let (project, candidate, package, source_until) =
+            approvals::source(&mut tx, request.release_id, environment, &mut read).await?;
+        // Native downstream row serializes its sequence, including offers from other projects.
+        sqlx::query("SELECT id FROM app.downstream_integrations WHERE id=$1 FOR UPDATE")
+            .bind(downstream.as_uuid())
+            .fetch_one(&mut *tx)
+            .await?;
+        sqlx::query("SELECT id FROM app.approvals WHERE id=$1 FOR UPDATE")
+            .bind(request.approval_id.as_uuid())
+            .fetch_one(&mut *tx)
+            .await?;
+        if approval.try_get::<String, _>("authority_kind")? != "OPERATOR" {
+            return Err(StoreError::Invalid("offer_policy_authority"));
+        }
+        let revision = approval
+            .try_get::<Option<i64>, _>("downstream_revision")?
+            .ok_or(StoreError::Invalid("approval_admission_missing"))?;
+        let ordinal = approval
+            .try_get::<Option<i32>, _>("decision_ordinal")?
+            .ok_or(StoreError::Invalid("approval_admission_missing"))?;
+        if db::optional_id(&approval, "readiness_observation_id")?.is_none() {
+            return Err(StoreError::Invalid("approval_admission_missing"));
+        }
+        let decision=sqlx::query("SELECT ordinal,decision FROM app.release_decisions WHERE candidate_id=$1 AND downstream_id=$2 AND environment=$3 ORDER BY ordinal DESC LIMIT 1")
+            .bind(candidate.as_uuid()).bind(downstream.as_uuid()).bind(db::code(&environment)?).fetch_optional(&mut *tx).await?;
+        if decision
+            .as_ref()
+            .map(|r| r.try_get::<i32, _>("ordinal"))
+            .transpose()?
+            .unwrap_or(0)
+            != ordinal
+            || decision.as_ref().is_some_and(|r| {
+                !matches!(r.try_get::<String, _>("decision").as_deref(), Ok("REOPEN"))
+            })
+        {
+            return Err(StoreError::Invalid("approval_decision_changed"));
+        }
+        let evidence: bool = sqlx::query_scalar("SELECT app.approval_evidence_valid($1,$2)")
+            .bind(request.release_id.as_uuid())
+            .bind(approval.try_get::<uuid::Uuid, _>("evidence_set_id")?)
+            .fetch_one(&mut *tx)
+            .await?;
+        if !evidence {
+            return Err(StoreError::Integrity);
+        }
+        let revoked: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT min(effective_at) FROM app.approval_revocations WHERE approval_id=$1",
+        )
+        .bind(request.approval_id.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut until = source_until.min(approval.try_get("valid_until")?);
+        if let Some(revoked) = revoked {
+            until = until.min(revoked);
+        }
+        let duplicate:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id WHERE h.downstream_id=$1 AND h.environment=$2 AND (h.release_id=$3 OR (r.candidate_id=$4 AND h.claimed_at IS NOT NULL)))")
+            .bind(downstream.as_uuid()).bind(db::code(&environment)?).bind(request.release_id.as_uuid()).bind(candidate.as_uuid()).fetch_one(&mut *tx).await?;
+        if duplicate {
+            return Err(StoreError::Conflict);
+        }
+        let latest=sqlx::query("SELECT h.id,h.state FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND c.mandate_id=$2 AND h.downstream_id=$3 AND h.environment=$4 ORDER BY h.delivery_sequence DESC LIMIT 1 FOR UPDATE OF h")
+            .bind(project.as_uuid()).bind(package.mandate_id.as_uuid()).bind(downstream.as_uuid()).bind(db::code(&environment)?).fetch_optional(&mut *tx).await?;
+        let latest_id = latest
+            .as_ref()
+            .map(|r| db::id(r.try_get("id")?))
+            .transpose()?;
+        if latest_id != request.supersedes_handoff_id {
+            return Err(StoreError::Conflict);
+        }
+        let sequence:i64=sqlx::query_scalar("SELECT coalesce(max(delivery_sequence),0)+1 FROM app.handoff_offers WHERE downstream_id=$1 AND environment=$2")
+            .bind(downstream.as_uuid()).bind(db::code(&environment)?).fetch_one(&mut *tx).await?;
+        approvals::downstream(
+            &mut tx,
+            downstream,
+            db::revision(revision)?,
+            environment,
+            &package,
+        )
+        .await?;
+        commands::recheck_authority(&mut tx, actor, &prepared).await?;
+        let offered_at = now(&mut tx).await?;
+        if offered_at < package.valid_from
+            || offered_at < approval.try_get::<DateTime<Utc>, _>("granted_at")?
+            || request.expires_at <= offered_at
+            || request.expires_at > until
+        {
+            return Err(StoreError::Invalid("offer_expiry"));
+        }
+        if let Some(previous) = latest {
+            if previous.try_get::<String, _>("state")? == "OFFERED" {
+                sqlx::query("UPDATE app.handoff_offers SET state='REVOKED' WHERE id=$1")
+                    .bind(previous.try_get::<uuid::Uuid, _>("id")?)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        let id = Id::new();
+        sqlx::query("INSERT INTO app.handoff_offers(id,release_id,approval_id,downstream_id,environment,delivery_sequence,state,offered_at,expires_at,supersedes_handoff_id) VALUES($1,$2,$3,$4,$5,$6,'OFFERED',$7,$8,$9)")
+            .bind(id.as_uuid()).bind(request.release_id.as_uuid()).bind(request.approval_id.as_uuid()).bind(downstream.as_uuid()).bind(db::code(&environment)?).bind(sequence).bind(offered_at).bind(request.expires_at).bind(request.supersedes_handoff_id.map(|v|v.as_uuid())).execute(&mut *tx).await?;
+        approvals::downstream(
+            &mut tx,
+            downstream,
+            db::revision(revision)?,
+            environment,
+            &package,
+        )
+        .await?;
+        commands::recheck_authority(&mut tx, actor, &prepared).await?;
+        if now(&mut tx).await? >= request.expires_at {
+            return Err(StoreError::Invalid("offer_expiry"));
+        }
+        let resource = view(&load(&mut tx, id).await?)?;
+        let result = commands::finish(&mut tx, prepared, resource, 201).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+}

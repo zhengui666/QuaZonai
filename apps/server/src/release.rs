@@ -16,8 +16,8 @@ use axum::{
 use contracts::{
     control::{CommandResult, ListQuery, Page},
     delivery::{
-        ApprovalViewV1, ReleaseApproveV1, ReleaseCreateV1, ReleaseDecisionViewV1, ReleaseRejectV1,
-        ReleaseReopenV1, ReleaseViewV1,
+        ApprovalViewV1, HandoffOfferV1, HandoffViewV1, ReleaseApproveV1, ReleaseCreateV1,
+        ReleaseDecisionViewV1, ReleaseRejectV1, ReleaseReopenV1, ReleaseViewV1,
     },
     Id,
 };
@@ -191,4 +191,45 @@ pub async fn approval(
 ) -> Result<Json<ApprovalViewV1>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     Ok(Json(state.store.approval(&actor, id).await?))
+}
+
+#[utoipa::path(post,path="/api/v2/handoffs",operation_id="offer_handoff",tag="Release",request_body=HandoffOfferV1,params(("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<HandoffViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn offer(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    body: Result<Json<HandoffOfferV1>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<HandoffViewV1>>), ApiError> {
+    let request = json(body)?;
+    let key = idempotency_key(&headers)?.to_owned();
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(StoreError::Invalid("artifact_store_unavailable"))?;
+    let store = state.store.clone();
+    let result = crate::settings::command(&state, async move {
+        store
+            .offer_handoff(&actor, &key, &request, move |id, size| {
+                let objects = objects.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || objects.read(id, size))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                }
+            })
+            .await
+    })
+    .await?;
+    Ok((StatusCode::CREATED, Json(result)))
+}
+
+#[utoipa::path(get,path="/api/v2/handoffs/{id}",operation_id="get_handoff",tag="Release",params(("id"=Id,Path)),responses((status=200,body=HandoffViewV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn handoff(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+) -> Result<Json<HandoffViewV1>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    Ok(Json(state.store.handoff(&actor, id).await?))
 }
