@@ -4772,3 +4772,10 @@ Release详情按需展开原审批历史，复用原分页接口，核对项目/
 新增Release审批表单，复用原生POST、Intent、离线与未完成操作保护；显式选择下游/Paper或Live/截止时间。读取全部原Candidate决定分页后按该下游/环境最高ordinal绑定REOPEN/null，不以第一页缺项推断首次审批。人工REJECT、停用或不支持的环境阻止提交；服务端仍重验所有资格及来源。未知响应保留原请求/键；回执核对项目/Release/Candidate/下游/环境/配置版本/人工来源，成功不发送Offer。
 
 TypeScript及Vite构建通过；delivery与portfolio-candidates共54项三视口浏览器回归通过（55.5秒）。新增实际表单操作的受控响应验证第二页原决定、BOTH下游配置、原配置版本与截止时间、丢失响应后同body/key重试；没有用浏览器fixture证明原生审批准入。类型检查发现测试将环境枚举误作数组，已同步修正BOTH判断再验证。Offer/政策界面、完整HTTP矩阵及T01–T42仍待完成，未push/review/merge/close。
+
+
+### 2026-09-14：网页人工 Offer
+
+原审批历史可打开Offer确认，重新读取精确审批并遍历项目交付全部分页，按BigInt原delivery_sequence选择相同Mandate/下游/环境前版。重复Release或同Candidate已领取拒绝新提交，非OPERATOR及缺失原绑定的历史审批不能用于人工Offer。截止时间不能超过原Release/审批；POST只提交原Release/Approval/前版/期限。响应未知保持原body/key，回执核对原绑定和截止时间，成功不假称Claim或成交。
+
+TypeScript、Vite构建以及delivery/portfolio-candidates共60项三视口浏览器定向回归通过（约1分钟）。新用例覆盖第二页前版、超过JS安全整数范围的相邻序号、重复候选阻止、丢失响应同键重试及Modal无障碍。受控UI响应不替代原生审批准入/Offer竞争；自动化政策界面、审批撤销/拒绝管理、原生整链和其余T01–T42仍待完成。未push/review/merge/close。

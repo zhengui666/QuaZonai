@@ -164,3 +164,46 @@ test('Approval reads all decisions and retries the exact original intent', async
   expect(cursors).toContain(id(403)); expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1]);
   expect(writes[0]!.body).toEqual({ schema_version: 1, downstream_id: down.id, environment: 'PAPER', expected_downstream_revision: '7', expected_latest_decision_id: id(402), valid_until: '2098-01-01T00:00:00.000Z' });
 });
+
+for (const duplicate of [false, true]) test(`Offer preserves original approval and exact predecessor: duplicate=${duplicate}`, async ({ page }) => {
+  await fixture(page); const writes: { body: unknown; key: string | undefined }[] = [];
+  const future = { ...release, valid_until: '2099-01-01T00:00:00Z' };
+  const approval: Schema['ApprovalViewV1'] = { id: id(510), project_id: project.id, candidate_id: release.candidate_id, release_id: release.id, downstream_id: id(85), environment: 'PAPER', authority_kind: 'OPERATOR', automation_policy_id: null, evidence_set_id: id(511), granted_at: release.created_at, created_at: release.created_at, valid_until: future.valid_until, downstream_revision: '7', decision_ordinal: 0, readiness_observation_id: id(512) };
+  const previous: Schema['HandoffViewV1'] = { id: id(501), project_id: project.id, candidate_id: duplicate ? release.candidate_id : id(90), mandate_id: release.mandate_id, release_id: duplicate ? release.id : id(91), approval_id: id(92), downstream_id: approval.downstream_id, environment: 'PAPER', delivery_sequence: '9007199254740994', revision: '1', state: 'CLAIMED', supersedes_handoff_id: null, offered_at: release.created_at, expires_at: release.valid_until, claimed_at: release.created_at, external_claim_id: 'previous-claim', acknowledged_at: null };
+  await page.route('**/api/v2/**', route => {
+    const request = route.request(); const url = new URL(request.url());
+    if (url.pathname === `/api/v2/projects/${project.id}/releases`) return reply(route, { schema_version: 1, items: [future], next_cursor: null });
+    if (url.pathname === `/api/v2/releases/${release.id}`) return reply(route, future);
+    if (url.pathname === `/api/v2/releases/${release.id}/approvals`) return reply(route, { schema_version: 1, items: [approval], next_cursor: null });
+    if (url.pathname === `/api/v2/approvals/${approval.id}`) return reply(route, approval);
+    if (url.pathname === `/api/v2/projects/${project.id}/handoffs`) {
+      const cursor = url.searchParams.get('cursor');
+      return reply(route, { schema_version: 1, items: cursor ? [previous] : [{ ...previous, id: id(502), delivery_sequence: '9007199254740993', candidate_id: id(90), release_id: id(91) }], next_cursor: cursor ? null : id(502) });
+    }
+    if (url.pathname === '/api/v2/handoffs' && request.method() === 'POST') {
+      const body = request.postDataJSON() as Schema['HandoffOfferV1']; writes.push({ body, key: request.headers()['idempotency-key'] });
+      if (writes.length === 1) return route.abort('failed');
+      return reply(route, { schema_version: 1, replayed: true, resource: { ...previous, id: id(520), candidate_id: release.candidate_id, release_id: body.release_id, approval_id: body.approval_id, state: 'OFFERED', supersedes_handoff_id: body.supersedes_handoff_id, expires_at: body.expires_at, claimed_at: null, external_claim_id: null } }, 201);
+    }
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: project.name }).click();
+  await page.getByRole('button', { name: 'Release 00000102', exact: true }).click();
+  await page.getByText('原审批历史', { exact: true }).click();
+  await page.getByRole('button', { name: '登记 Offer', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: '登记原目标 Offer', exact: true });
+  await modal.getByLabel('Offer 截止时间（本地时间）', { exact: true }).fill('2098-01-01T00:00');
+  if (duplicate) {
+    await expect(modal.getByText('原版本已登记 Offer 或原候选已领取，不能重复交付。', { exact: true })).toBeVisible();
+    await expect(modal.getByRole('button', { name: '确认登记 Offer', exact: true })).toBeDisabled(); expect(writes).toEqual([]);
+  } else {
+    await modal.getByRole('button', { name: '确认登记 Offer', exact: true }).click();
+    await modal.getByRole('button', { name: '重试同一 Offer', exact: true }).click();
+    await expect(modal.getByText('原 Offer 已登记。', { exact: true })).toBeVisible();
+    expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1]);
+    expect(writes[0]!.body).toEqual({ schema_version: 1, release_id: release.id, approval_id: approval.id, supersedes_handoff_id: previous.id, expires_at: '2098-01-01T00:00:00.000Z' });
+  }
+  expect((await new AxeBuilder({ page }).include('.ant-modal').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+});
