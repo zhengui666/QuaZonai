@@ -201,13 +201,13 @@ where
     if !forward.is_empty() {
         crate::research::validate_inputs(
             tx,
-            &InputSetCreate {
+            &[InputSetCreate {
                 schema_version: SchemaV1,
                 project_id: brief.project_id,
                 purpose: InputPurpose::Forward,
                 decision_cutoff: cutoff.ok_or(StoreError::Integrity)?,
                 items: forward,
-            },
+            }],
             None,
             Some(context.runtime_id),
         )

@@ -277,6 +277,16 @@ pub struct SelectionRuleV1 {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct PortfolioStudyPlanV1 {
+    pub schema_version: SchemaV1,
+    pub input_set_id: Id,
+    pub evaluation_start: DateTime<Utc>,
+    #[schema(min_items = 2, max_items = 256)]
+    pub manual_cutoffs: Option<Vec<DateTime<Utc>>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluationPolicyCreate {
     pub schema_version: SchemaV1,
     pub project_id: Id,
@@ -293,6 +303,7 @@ pub struct EvaluationPolicyCreate {
     /// Independent portfolio criteria; None cannot authorize portfolio PASS.
     #[schema(min_items = 1, max_items = 64)]
     pub portfolio_metric_requirements: Option<Vec<MetricRequirementV1>>,
+    pub portfolio_study_plan: Option<PortfolioStudyPlanV1>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub minimum_observations: u32,
     #[schema(schema_with = crate::scalars::fraction_schema)]
@@ -322,6 +333,8 @@ pub struct EvaluationPolicyView {
     pub sealed_metric_requirements: Option<Vec<MetricRequirementV1>>,
     #[schema(required = true, min_items = 1, max_items = 64)]
     pub portfolio_metric_requirements: Option<Vec<MetricRequirementV1>>,
+    #[schema(required = true)]
+    pub portfolio_study_plan: Option<PortfolioStudyPlanV1>,
     #[schema(minimum = 1, maximum = 2147483647)]
     pub minimum_observations: u32,
     #[schema(schema_with = crate::scalars::fraction_schema)]

@@ -2079,6 +2079,20 @@ PORTFOLIO_SIMULATE操作。Store从同项目已封口成功VALID Candidate重读
 原方法allowlist校验。历史已冻结政策不回填或复制条件；要改变条件必须新建政策。
 保存条件本身不证明原生方法支持、样本足够或评估通过；原生指标适配与发布须另行核验。
 
+正式组合研究的计划在同一EvaluationPolicy以可空portfolio_study_plan冻结：
+{schema_version:1,input_set_id:Id,evaluation_start:Time,manual_cutoffs:Time[]|null}。
+存在计划时必须同时定义portfolio_metric_requirements。input_set_id必须是同项目
+已冻结PORTFOLIO输入，恰含一个原DISCOVERY/VALIDATION数据版本；保存时重验当前许可。
+评估结束固定取该原数据版本的event_end，不接受另一个可挑选的结束参数；起点严格
+位于原event_start与event_end之间。Time为非负、微秒精度且可表达为原生纳秒。
+手动时点如存在须2..256项、首项等于起点、严格递增且均早于原结束；不排序或补点。
+计划不持有Mandate副本；正式准入再核对原Mandate调仓模式、TTL、日历、原模型研究
+可用截止与整段数据来源。非手动模式不得使用手动时点，手动模式必须有完整原序列。
+政策及原InputSet身份与计划不可原地修改，旧/纯Alpha政策保持null，不自动补计划；
+没有计划不能启动正式Study或授予PORTFOLIO/PASS，已有FORWARD/HOLD仍只是保持评估。
+变更计划必须新政策并走原关联与暴露账本，不能在运行命令中改输入、起点或删选时点。
+保存计划仍是研究准备，不启动Run、不读取市场原始字节或证明原生能力与资格。
+
 组合指标薄适配先核对原模拟请求/结果的账户、时窗与目标绑定，只读取原
 Returns统计组（不读canonical的position fallback），scope固定portfolio：
 PORTFOLIO_DAILY_RETURN_MEAN对应Average (Return)/nautilus-analysis.ReturnsAverage，

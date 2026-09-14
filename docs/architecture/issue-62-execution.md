@@ -3,6 +3,52 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Policy-owned immutable portfolio Study plans, 2026-09-14
+
+EvaluationPolicy now optionally freezes portfolio_study_plan with the original
+PORTFOLIO InputSet, evaluation start and optional complete manual cutoff list.
+The policy must also define independent portfolio criteria. The plan selects
+exactly one original research dataset; evaluation end remains its original end,
+not a caller-selected second window. Start is strictly inside that range; manual
+cutoffs are 2..256 strictly ordered times beginning at start and ending before
+the source end. Times must be nonnegative, native-nanosecond-representable and
+PostgreSQL-microsecond exact. Native schedule/TTL/model-availability/capability
+checks still belong to formal admission, not policy registration.
+
+Migration 059 stores the optional JSON and a native generated input ID with an
+exact project/InputSet foreign key; existing immutable policy triggers apply.
+Old and pure-Alpha policy rows stay null without inventing a plan. Policy creation
+reuses its original receipt, lineage and family transaction. Comparison, extra
+Sealed and Study sources are collected into the existing sorted source/Runtime/
+grant lock pass; current time and committed revocations are checked after all
+lock waits. The shared validator takes a slice rather than independently locking
+and checking the new plan before the old comparison sources.
+
+The real PostgreSQL test covers policy-owned input identity, wrong project/purpose,
+ambiguous datasets, start/end/manual boundary errors, concurrent exact-key replay,
+immutable plan rejection, changed-intent conflict, and no new consumption after
+license revocation. Exact old receipt/readback survives revocation and no Run,
+Evaluation or qualification is created. HTTP tests create and read the plan through
+the original authenticated endpoints and preserve microsecond cutoff values.
+The first policy run's HTTP test retained an obsolete single-input pagination
+expectation; it now verifies both original inputs in descending order.
+
+On 722912f4 plus frozen patches, final verify-acHR86 passed workspace check/fmt/
+strict Clippy and 259 policy/domain/native/HTTP tests, including upgrade preservation.
+web-verify-coxbqs reproduced all six generated outputs twice with handwritten source
+unchanged, passed typecheck/build, 505 unit tests, 36 settings browser tests and all
+243 browser tests in 5.2 minutes. The existing Ant Design form exposes the plan only
+under independent portfolio criteria, retains exact time text, clears disabled
+manual lists to null and retries the unchanged intent after a lost response.
+Final verify-aplpbW passed another 209 research/publication/native/HTTP/CLI checks
+and workspace check/fmt/strict Clippy. Test-family totals overlap. No native Job
+operation changed, so OCI was not rerun for this policy-registration stage.
+
+Ponytail reuse adds no dependency, new queue or generic workflow. Formal Study Run
+admission, original-model availability binding and independent PORTFOLIO Evaluation
+publication are still required, as are release/delivery/recovery and complete T42.
+No push, review, merge or Issue closure occurred.
+
 ## Store InputPurpose versus original dataset partition, 2026-09-14
 
 The shared dataset reader previously decoded InputSet.purpose as DataPartition,

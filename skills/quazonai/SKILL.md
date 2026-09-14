@@ -34,6 +34,8 @@ Evaluation，封口后才ACK；不授Release或下游权限。成功进程不等
 读取 InputSet/Policy 元数据不允许读取 Sealed 原始数据或原生存储位置。
 InputPurpose与DataPartition分别核对；PORTFOLIO只含原DISCOVERY/VALIDATION成员，
 不能替代旧任务要求的用途或绕过RESEARCH_AND_PAPER许可。
+独立Study计划随EvaluationPolicy.portfolio_study_plan冻结原输入/起点/手动时点；
+没有计划不能正式Study，不能在Run请求临时改窗口；保存不等于运行或PASS。
 FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，不触发交付。
 新政策分别冻结metric_requirements与sealed_metric_requirements，不能复制分折要求
 冒充封存阈值；历史null不补写，需人工新建完整政策和研究周期。

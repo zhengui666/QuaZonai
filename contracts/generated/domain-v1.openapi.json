@@ -8605,6 +8605,16 @@
               "null"
             ]
           },
+          "portfolio_study_plan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PortfolioStudyPlanV1"
+              }
+            ]
+          },
           "project_id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -8723,6 +8733,16 @@
               "null"
             ]
           },
+          "portfolio_study_plan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PortfolioStudyPlanV1"
+              }
+            ]
+          },
           "project_id": {
             "$ref": "#/components/schemas/Id"
           },
@@ -8782,6 +8802,7 @@
           "split_policy",
           "metric_requirements",
           "portfolio_metric_requirements",
+          "portfolio_study_plan",
           "minimum_observations",
           "maximum_missing_fraction",
           "require_real_data",
@@ -14332,6 +14353,39 @@
           "end_ns",
           "available_ns",
           "asset_returns"
+        ],
+        "type": "object"
+      },
+      "PortfolioStudyPlanV1": {
+        "additionalProperties": false,
+        "properties": {
+          "evaluation_start": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "input_set_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "manual_cutoffs": {
+            "items": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "maxItems": 256,
+            "minItems": 2,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "input_set_id",
+          "evaluation_start"
         ],
         "type": "object"
       },

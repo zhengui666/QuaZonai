@@ -53,6 +53,47 @@ fn portfolio_requirements_are_independent_optional_and_never_vacuously_pass() {
     request["portfolio_metric_requirements"] = json!([requirement]);
     invalid(request, "REQUIRED_ALLOWED_METRIC");
 }
+
+#[test]
+fn portfolio_plan_requires_criteria_and_preserves_precise_ordered_cutoffs() {
+    let mut request = base();
+    let plan = json!({"schema_version":1,"input_set_id":contracts::Id::new(),
+        "evaluation_start":"2019-01-01T00:00:00.000001Z",
+        "manual_cutoffs":["2019-01-01T00:00:00.000001Z","2019-01-02T00:00:00.000001Z"]});
+    request["portfolio_study_plan"] = plan.clone();
+    assert!(evaluation_policy(&serde_json::from_value(request.clone()).unwrap()).is_err());
+    request["portfolio_metric_requirements"] = request["metric_requirements"].clone();
+    assert!(evaluation_policy(&serde_json::from_value(request.clone()).unwrap()).is_ok());
+    for replacement in [
+        json!([]),
+        json!(["2019-01-01T00:00:00.000001Z"]),
+        json!(["2019-01-02T00:00:00.000001Z", "2019-01-01T00:00:00.000001Z"]),
+        json!(["2019-01-01T00:00:00.000001Z", "2019-01-01T00:00:00.000001Z"]),
+        json!([
+            "2019-01-01T00:00:00.000001Z",
+            "2019-01-02T00:00:00.000000001Z"
+        ]),
+        json!(vec!["2019-01-01T00:00:00.000001Z"; 257]),
+    ] {
+        let mut changed = request.clone();
+        changed["portfolio_study_plan"]["manual_cutoffs"] = replacement;
+        assert!(evaluation_policy(&serde_json::from_value(changed).unwrap()).is_err());
+    }
+    for start in [
+        "1969-12-31T23:59:59Z",
+        "2019-01-01T00:00:00.000000001Z",
+        "2400-01-01T00:00:00Z",
+    ] {
+        let mut changed = request.clone();
+        changed["portfolio_study_plan"]["evaluation_start"] = json!(start);
+        changed["portfolio_study_plan"]["manual_cutoffs"] = Value::Null;
+        assert!(evaluation_policy(&serde_json::from_value(changed).unwrap()).is_err());
+    }
+    request["portfolio_study_plan"]["manual_cutoffs"] = Value::Null;
+    assert!(evaluation_policy(&serde_json::from_value(request.clone()).unwrap()).is_ok());
+    request["portfolio_study_plan"]["evaluation_end"] = json!("2020-01-01T00:00:00Z");
+    assert!(serde_json::from_value::<EvaluationPolicyCreate>(request).is_err());
+}
 fn invalid(r: Value, expected: &str) {
     let r: EvaluationPolicyCreate = serde_json::from_value(r).unwrap();
     let Err(DomainError::Fields(fields)) = evaluation_policy(&r) else {

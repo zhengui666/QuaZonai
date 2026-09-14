@@ -20,6 +20,184 @@ async fn count(pool: &PgPool, table: &str) -> i64 {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn portfolio_plan_is_policy_owned_bounded_and_replayed_without_new_consumption(pool: PgPool) {
+    let (store, actor) = operator(&pool).await;
+    let f = setup_with_use(&pool, &store, &actor, DataUse::ResearchAndPaper).await;
+    let comparison = store
+        .create_input_set(&actor, "comparison", &f.input(InputPurpose::Validation))
+        .await
+        .unwrap()
+        .resource
+        .header
+        .id;
+    let study_input = store
+        .create_input_set(&actor, "study-input", &f.input(InputPurpose::Portfolio))
+        .await
+        .unwrap()
+        .resource
+        .header
+        .id;
+    let mut request = f.policy(comparison);
+    request.portfolio_metric_requirements = Some(request.metric_requirements.clone());
+    let start = "2019-01-01T00:00:00.000001Z".parse().unwrap();
+    request.portfolio_study_plan = Some(PortfolioStudyPlanV1 {
+        schema_version: contracts::SchemaV1,
+        input_set_id: study_input,
+        evaluation_start: start,
+        manual_cutoffs: Some(vec![start, "2019-01-02T00:00:00.000001Z".parse().unwrap()]),
+    });
+    for boundary in ["2010-01-01T00:00:00Z", "2020-01-01T00:00:00Z"] {
+        let mut changed = request.clone();
+        let plan = changed.portfolio_study_plan.as_mut().unwrap();
+        plan.evaluation_start = boundary.parse().unwrap();
+        plan.manual_cutoffs = None;
+        code(
+            store
+                .create_evaluation_policy(&actor, "bad-window", &changed)
+                .await
+                .unwrap_err(),
+            "STUDY_WINDOW_OUTSIDE_SOURCE",
+        );
+    }
+    let mut changed = request.clone();
+    changed
+        .portfolio_study_plan
+        .as_mut()
+        .unwrap()
+        .manual_cutoffs
+        .as_mut()
+        .unwrap()[1] = "2020-01-01T00:00:00Z".parse().unwrap();
+    code(
+        store
+            .create_evaluation_policy(&actor, "bad-last-cutoff", &changed)
+            .await
+            .unwrap_err(),
+        "STUDY_WINDOW_OUTSIDE_SOURCE",
+    );
+    changed = request.clone();
+    changed.portfolio_study_plan.as_mut().unwrap().input_set_id = comparison;
+    code(
+        store
+            .create_evaluation_policy(&actor, "wrong-study-purpose", &changed)
+            .await
+            .unwrap_err(),
+        "PORTFOLIO_INPUT_REQUIRED",
+    );
+    let other = setup_with_use(&pool, &store, &actor, DataUse::ResearchAndPaper).await;
+    let foreign = store
+        .create_input_set(
+            &actor,
+            "foreign-study",
+            &other.input(InputPurpose::Portfolio),
+        )
+        .await
+        .unwrap()
+        .resource
+        .header
+        .id;
+    changed.portfolio_study_plan.as_mut().unwrap().input_set_id = foreign;
+    code(
+        store
+            .create_evaluation_policy(&actor, "wrong-study-project", &changed)
+            .await
+            .unwrap_err(),
+        "PORTFOLIO_INPUT_REQUIRED",
+    );
+    let mut multi = f.input(InputPurpose::Portfolio);
+    multi.items.push(InputItemV1::Dataset {
+        dataset_revision_id: f.discovery,
+        role: DataPartition::Discovery,
+    });
+    let multi = store
+        .create_input_set(&actor, "many-study-datasets", &multi)
+        .await
+        .unwrap()
+        .resource
+        .header
+        .id;
+    changed.portfolio_study_plan.as_mut().unwrap().input_set_id = multi;
+    code(
+        store
+            .create_evaluation_policy(&actor, "ambiguous-study", &changed)
+            .await
+            .unwrap_err(),
+        "ONE_STUDY_DATASET_REQUIRED",
+    );
+    assert_eq!(count(&pool, "evaluation_policies").await, 0);
+    let (a, b) = tokio::join!(
+        store.create_evaluation_policy(&actor, "study-policy", &request),
+        store.create_evaluation_policy(&actor, "study-policy", &request)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.resource.id, b.resource.id);
+    assert_ne!(a.replayed, b.replayed);
+    assert_eq!(
+        serde_json::to_value(&a.resource.portfolio_study_plan).unwrap(),
+        serde_json::to_value(&request.portfolio_study_plan).unwrap()
+    );
+    let original: uuid::Uuid = sqlx::query_scalar(
+        "SELECT portfolio_study_input_set_id FROM app.evaluation_policies WHERE id=$1",
+    )
+    .bind(a.resource.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(original, study_input.as_uuid());
+    let error =
+        sqlx::query("UPDATE app.evaluation_policies SET portfolio_study_plan=NULL WHERE id=$1")
+            .bind(a.resource.id.as_uuid())
+            .execute(&pool)
+            .await
+            .unwrap_err();
+    assert_eq!(
+        error.as_database_error().unwrap().code().as_deref(),
+        Some("23000")
+    );
+    changed = request.clone();
+    changed
+        .portfolio_study_plan
+        .as_mut()
+        .unwrap()
+        .manual_cutoffs = None;
+    assert!(matches!(
+        store
+            .create_evaluation_policy(&actor, "study-policy", &changed)
+            .await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    sqlx::query("INSERT INTO app.data_use_revocations(grant_id,effective_at,reason_code,reason) VALUES($1,clock_timestamp(),'TEST','fixture revocation')").bind(f.grant.as_uuid()).execute(&pool).await.unwrap();
+    assert!(
+        store
+            .create_evaluation_policy(&actor, "study-policy", &request)
+            .await
+            .unwrap()
+            .replayed
+    );
+    code(
+        store
+            .create_evaluation_policy(&actor, "new-after-revocation", &request)
+            .await
+            .unwrap_err(),
+        "DATA_USE_NOT_AUTHORIZED",
+    );
+    assert_eq!(
+        serde_json::to_value(
+            store
+                .evaluation_policy(&actor, a.resource.id)
+                .await
+                .unwrap()
+                .portfolio_study_plan
+        )
+        .unwrap(),
+        serde_json::to_value(&request.portfolio_study_plan).unwrap()
+    );
+    assert_eq!(count(&pool, "evaluation_policies").await, 1);
+    assert_eq!(count(&pool, "runs").await, 0);
+    assert_eq!(count(&pool, "evaluations").await, 0);
+    assert_eq!(count(&pool, "qualifications").await, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn publication_is_atomic_ordered_idempotent_and_cannot_gain_late_members(pool: PgPool) {
     let (store, actor) = operator(&pool).await;
     let f = setup(&pool, &store, &actor).await;

@@ -22,6 +22,32 @@ fn bounded_text(
 ) -> Result<(), DomainError> {
     text(value, 1, max, multiline).map_err(|_| invalid(field, "TEXT_RANGE"))
 }
+pub fn portfolio_study_plan(plan: &PortfolioStudyPlanV1) -> Result<(), DomainError> {
+    let valid_time = |time: &chrono::DateTime<chrono::Utc>| {
+        time.timestamp_nanos_opt().is_some_and(|ns| ns >= 0)
+            && time.timestamp_subsec_nanos().is_multiple_of(1000)
+    };
+    if !valid_time(&plan.evaluation_start) {
+        return Err(invalid(
+            "portfolio_study_plan.evaluation_start",
+            "DATABASE_TIME_PRECISION",
+        ));
+    }
+    if let Some(cutoffs) = &plan.manual_cutoffs {
+        if !(2..=256).contains(&cutoffs.len())
+            || cutoffs.first() != Some(&plan.evaluation_start)
+            || cutoffs.iter().any(|time| !valid_time(time))
+            || cutoffs.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(invalid(
+                "portfolio_study_plan.manual_cutoffs",
+                "PORTFOLIO_STUDY_CUTOFFS",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn input_partition_allowed(purpose: InputPurpose, role: DataPartition) -> bool {
     match purpose {
         InputPurpose::Discovery => role == DataPartition::Discovery,
@@ -192,6 +218,15 @@ pub fn evaluation_policy(request: &EvaluationPolicyCreate) -> Result<(), DomainE
     )?;
     if let Some(requirements) = &request.portfolio_metric_requirements {
         metric_requirements(requirements, "portfolio_metric_requirements")?;
+    }
+    if let Some(plan) = &request.portfolio_study_plan {
+        if request.portfolio_metric_requirements.is_none() {
+            return Err(invalid(
+                "portfolio_study_plan",
+                "PORTFOLIO_CRITERIA_REQUIRED",
+            ));
+        }
+        portfolio_study_plan(plan)?;
     }
     let requirements = match s.evaluation_kind {
         SelectionEvaluationKind::WalkForward => &request.metric_requirements,

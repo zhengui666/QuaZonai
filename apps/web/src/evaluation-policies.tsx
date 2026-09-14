@@ -9,7 +9,7 @@ import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './u
 
 type Policy = Schema['EvaluationPolicyView'];
 type Request = Schema['EvaluationPolicyCreate'];
-type Fields = Omit<Request, 'schema_version' | 'project_id'> & { use_portfolio?: boolean };
+type Fields = Omit<Request, 'schema_version' | 'project_id'> & { use_portfolio?: boolean; use_study?: boolean; use_manual_study?: boolean };
 type RequirementGroup = 'metric_requirements' | 'sealed_metric_requirements' | 'portfolio_metric_requirements';
 const required = { required: true, message: '请填写此项。' };
 const textRules = [required, { max: 120, whitespace: true }];
@@ -20,13 +20,17 @@ const optionalDecimal = [{ validator: async (_: unknown, value: unknown) => { if
 const blank = (value: string | null | undefined) => value == null || value === '' ? null : value;
 
 function request(project: string, values: Fields): Request {
-  const { use_portfolio, ...value } = values;
+  const { use_portfolio, use_study, use_manual_study, ...value } = values;
   const metrics = (items: Schema['MetricRequirementV1'][]) => items.map(item => ({ ...item, schema_version: 1 as const, required: item.required === true, threshold_low: blank(item.threshold_low), threshold_high: blank(item.threshold_high) }));
   const split = value.split_policy;
   return { ...value, schema_version: 1, project_id: project,
     required_capabilities: value.required_capabilities ?? [],
     metric_requirements: metrics(value.metric_requirements), sealed_metric_requirements: metrics(value.sealed_metric_requirements),
     portfolio_metric_requirements: use_portfolio ? metrics(value.portfolio_metric_requirements ?? []) : null,
+    portfolio_study_plan: use_portfolio && use_study && value.portfolio_study_plan ? {
+      ...value.portfolio_study_plan, schema_version: 1,
+      manual_cutoffs: use_manual_study ? value.portfolio_study_plan.manual_cutoffs ?? [] : null,
+    } : null,
     split_policy: { ...split, schema_version: 1, interval_validation_required: true,
       step_size: split.kind === 'WALK_FORWARD' ? blank(split.step_size) : null,
       group_count: split.kind === 'CPCV_FIXED_HORIZON' ? split.group_count ?? null : null,
@@ -52,6 +56,7 @@ export function EvaluationPolicies({ project }: { project: string }) {
         { title: '版本', key: 'version', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>政策 v{item.version}</Button> },
         { title: '研究问题', dataIndex: 'question' }, { title: '选择评估', key: 'kind', render: (_, item) => item.selection_rule.evaluation_kind },
         { title: '组合要求', key: 'portfolio', render: (_, item) => item.portfolio_metric_requirements === null ? '未定义，不能授予组合 PASS' : `${item.portfolio_metric_requirements.length} 项独立要求` },
+        { title: '组合研究计划', key: 'study', render: (_, item) => item.portfolio_study_plan === null ? '未定义' : '已冻结原输入与起点' },
         { title: '创建于', dataIndex: 'created_at', render: displayTime },
       ]} />
     </QueryPanel>
@@ -98,6 +103,7 @@ function Requirements({ name, title }: { name: RequirementGroup; title: string }
 function Editor({ project, close }: { project: string; close: () => void }) {
   const [form] = Form.useForm<Fields>(); const [dirty, setDirty] = useState(false); const intent = useRef(new Intent());
   const kind = Form.useWatch(['split_policy', 'kind'], form); const portfolio = Form.useWatch('use_portfolio', form);
+  const study = Form.useWatch('use_study', form); const manual = Form.useWatch('use_manual_study', form);
   const client = useQueryClient(); const online = useOnline(); const { modal, message } = App.useApp();
   const mutation = useMutation({ mutationFn: async (values: Fields) => {
     const body = request(project, values);
@@ -135,8 +141,25 @@ function Editor({ project, close }: { project: string; close: () => void }) {
       <Typography.Paragraph>始终要求实际区间校验，不在网页读取 Sealed 数据。</Typography.Paragraph>
       <Requirements name="metric_requirements" title="Validation" />
       <Requirements name="sealed_metric_requirements" title="Sealed" />
-      <Form.Item name="use_portfolio" valuePropName="checked"><Checkbox>定义独立组合要求</Checkbox></Form.Item>
+      <Form.Item name="use_portfolio" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending}>定义独立组合要求</Checkbox></Form.Item>
       {portfolio ? <Requirements name="portfolio_metric_requirements" title="组合" /> : <Alert showIcon type="info" title="组合要求为 null，不能授予组合 PASS" />}
+      {portfolio && <>
+        <Form.Item name="use_study" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending}>冻结组合研究计划</Checkbox></Form.Item>
+        {study && <section aria-label="组合研究计划">
+          <Typography.Paragraph>引用已冻结的 PORTFOLIO 输入；结束固定为原数据结束，不在运行后挑选窗口。时间使用带时区的 RFC3339，最多六位小数；保留原文本精度，由服务器校验。</Typography.Paragraph>
+          <Form.Item name={['portfolio_study_plan', 'input_set_id']} label="组合研究输入编号" rules={ids}><Input /></Form.Item>
+          <Form.Item name={['portfolio_study_plan', 'evaluation_start']} label="组合研究起点" rules={[required]}><Input placeholder="2026-09-14T00:00:00.000001Z" /></Form.Item>
+          <Form.Item name="use_manual_study" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending}>冻结手动调仓时点</Checkbox></Form.Item>
+          {manual && <Form.List name={['portfolio_study_plan', 'manual_cutoffs']} initialValue={['', '']}>{(fields, { add, remove }) => <>
+            {fields.map((field, index) => <Space key={field.key} align="baseline">
+              <Form.Item name={field.name} label={`研究时点 ${index + 1}`} rules={[required]}><Input /></Form.Item>
+              <Button disabled={fields.length <= 2} onClick={() => remove(field.name)}>删除研究时点 {index + 1}</Button>
+            </Space>)}
+            <Button disabled={fields.length >= 256} onClick={() => add('')}>添加研究时点</Button>
+          </>}</Form.List>}
+          <Typography.Paragraph>手动时点必须从原起点开始且严格递增；非手动计划不携带该列表。保存不启动研究或授予 PASS。</Typography.Paragraph>
+        </section>}
+      </>}
       <Typography.Title level={2}>共同证据限制</Typography.Title>
       {([['minimum_observations', '总体最少样本数'], ['maximum_sealed_uses_per_lineage', '每血缘最多 Sealed 使用次数']] as const).map(([key, label]) => <Form.Item key={key} name={key} label={label} rules={[required, { type: 'integer', min: 1, max: 2147483647 }]}><InputNumber min={1} max={2147483647} precision={0} /></Form.Item>)}
       <Form.Item name="maximum_missing_fraction" label="最大缺失比例（0 至 1）" rules={[required, ...optionalDecimal]}><Input inputMode="decimal" /></Form.Item>

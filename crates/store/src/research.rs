@@ -16,7 +16,7 @@ use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 use std::collections::BTreeSet;
 
 const INPUT: &str = "id,project_id,purpose,decision_cutoff,frozen_at,revision,created_at";
-const POLICY: &str = "p.id,p.project_id,p.version,p.created_at,p.selection_rule,p.split_policy,p.metric_requirements,p.sealed_metric_requirements,p.portfolio_metric_requirements,p.minimum_observations,p.maximum_missing_fraction,p.require_real_data,p.required_capabilities,p.maximum_sealed_uses_per_lineage,p.validity_seconds,f.question,f.project_id AS family_project_id,f.root_lineage_id AS family_root_id,f.selection_policy_id AS family_policy_id";
+const POLICY: &str = "p.id,p.project_id,p.version,p.created_at,p.selection_rule,p.split_policy,p.metric_requirements,p.sealed_metric_requirements,p.portfolio_metric_requirements,p.portfolio_study_plan,p.minimum_observations,p.maximum_missing_fraction,p.require_real_data,p.required_capabilities,p.maximum_sealed_uses_per_lineage,p.validity_seconds,f.question,f.project_id AS family_project_id,f.root_lineage_id AS family_root_id,f.selection_policy_id AS family_policy_id";
 const FAMILY: &str =
     "JOIN app.experiment_families f ON f.id=p.family_id AND f.project_id=p.project_id AND f.selection_policy_id=p.id AND f.root_lineage_id=p.root_lineage_id";
 
@@ -67,6 +67,11 @@ fn policy(r: &PgRow) -> Result<EvaluationPolicyView, StoreError> {
             .map_err(|_| StoreError::Integrity)?,
         portfolio_metric_requirements: r
             .try_get::<Option<serde_json::Value>, _>("portfolio_metric_requirements")?
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| StoreError::Integrity)?,
+        portfolio_study_plan: r
+            .try_get::<Option<serde_json::Value>, _>("portfolio_study_plan")?
             .map(serde_json::from_value)
             .transpose()
             .map_err(|_| StoreError::Integrity)?,
@@ -167,45 +172,49 @@ pub(crate) async fn project_for_write(
 // runtime and grant authority after obtaining all locks, including after waits.
 pub(crate) async fn validate_inputs(
     tx: &mut Transaction<'_, Postgres>,
-    request: &InputSetCreate,
+    requests: &[InputSetCreate],
     extra_sealed: Option<Id>,
     execution_runtime: Option<Id>,
 ) -> Result<(), StoreError> {
-    domain::research::input_set(request)?;
     let mut datasets = Vec::new();
-    for (index, item) in request.items.iter().enumerate() {
-        match item {
-            InputItemV1::Dataset {
-                dataset_revision_id,
-                role,
-            } => datasets.push((
-                *dataset_revision_id,
-                *role,
-                format!("items.{index}.dataset_revision_id"),
-                Some(request.decision_cutoff),
-                request.purpose,
-            )),
-            InputItemV1::Artifact { artifact_id, role } => {
-                let r = sqlx::query(
-                    "SELECT project_id,kind,access_class FROM app.artifacts WHERE id=$1",
-                )
-                .bind(artifact_id.as_uuid())
-                .fetch_optional(&mut **tx)
-                .await?
-                .ok_or_else(|| {
-                    invalid(
-                        format!("items.{index}.artifact_id"),
-                        "REFERENCE_UNAVAILABLE",
+    for request in requests {
+        domain::research::input_set(request)?;
+        for (index, item) in request.items.iter().enumerate() {
+            match item {
+                InputItemV1::Dataset {
+                    dataset_revision_id,
+                    role,
+                } => datasets.push((
+                    *dataset_revision_id,
+                    *role,
+                    format!("items.{index}.dataset_revision_id"),
+                    Some(request.decision_cutoff),
+                    request.purpose,
+                )),
+                InputItemV1::Artifact { artifact_id, role } => {
+                    let r = sqlx::query(
+                        "SELECT project_id,kind,access_class FROM app.artifacts WHERE id=$1",
                     )
-                })?;
-                if db::optional_id(&r, "project_id")? != Some(request.project_id)
-                    || r.try_get::<String, _>("kind")? != role.code()
-                    || (r.try_get::<String, _>("access_class")? == "EVALUATOR_ONLY"
-                        && request.purpose != InputPurpose::Sealed)
-                {
-                    return Err(
-                        invalid(format!("items.{index}.artifact_id"), "ARTIFACT_BINDING").into(),
-                    );
+                    .bind(artifact_id.as_uuid())
+                    .fetch_optional(&mut **tx)
+                    .await?
+                    .ok_or_else(|| {
+                        invalid(
+                            format!("items.{index}.artifact_id"),
+                            "REFERENCE_UNAVAILABLE",
+                        )
+                    })?;
+                    if db::optional_id(&r, "project_id")? != Some(request.project_id)
+                        || r.try_get::<String, _>("kind")? != role.code()
+                        || (r.try_get::<String, _>("access_class")? == "EVALUATOR_ONLY"
+                            && request.purpose != InputPurpose::Sealed)
+                    {
+                        return Err(invalid(
+                            format!("items.{index}.artifact_id"),
+                            "ARTIFACT_BINDING",
+                        )
+                        .into());
+                    }
                 }
             }
         }
@@ -264,7 +273,7 @@ pub(crate) async fn validate_inputs(
     let now: Timestamp = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut **tx)
         .await?;
-    if request.decision_cutoff > now {
+    if requests.iter().any(|request| request.decision_cutoff > now) {
         return Err(invalid("decision_cutoff", "FUTURE_CUTOFF").into());
     }
     let revoked:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT DISTINCT grant_id FROM app.data_use_revocations WHERE grant_id=ANY($1) AND effective_at<=$2")
@@ -324,7 +333,62 @@ pub(crate) async fn revalidate_frozen_inputs(
         decision_cutoff: view.header.decision_cutoff,
         items: view.items.into_iter().map(|item| item.item).collect(),
     };
-    validate_inputs(tx, &request, None, Some(runtime)).await
+    validate_inputs(tx, std::slice::from_ref(&request), None, Some(runtime)).await
+}
+
+pub(crate) async fn portfolio_study_input(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Id,
+    plan: &PortfolioStudyPlanV1,
+) -> Result<InputSetCreate, StoreError> {
+    domain::research::portfolio_study_plan(plan)?;
+    let original = input(tx, plan.input_set_id).await?;
+    if original.header.project_id != project || original.header.purpose != InputPurpose::Portfolio {
+        return Err(invalid(
+            "portfolio_study_plan.input_set_id",
+            "PORTFOLIO_INPUT_REQUIRED",
+        )
+        .into());
+    }
+    let items: Vec<_> = original.items.into_iter().map(|item| item.item).collect();
+    let datasets: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            InputItemV1::Dataset {
+                dataset_revision_id,
+                ..
+            } => Some(*dataset_revision_id),
+            _ => None,
+        })
+        .collect();
+    let [dataset] = datasets.as_slice() else {
+        return Err(invalid(
+            "portfolio_study_plan.input_set_id",
+            "ONE_STUDY_DATASET_REQUIRED",
+        )
+        .into());
+    };
+    let (start, end): (Timestamp, Timestamp) =
+        sqlx::query_as("SELECT event_start,event_end FROM app.dataset_revisions WHERE id=$1")
+            .bind(dataset.as_uuid())
+            .fetch_one(&mut **tx)
+            .await?;
+    if plan.evaluation_start <= start
+        || plan.evaluation_start >= end
+        || plan
+            .manual_cutoffs
+            .as_ref()
+            .is_some_and(|cutoffs| cutoffs.iter().any(|time| *time >= end))
+    {
+        return Err(invalid("portfolio_study_plan", "STUDY_WINDOW_OUTSIDE_SOURCE").into());
+    }
+    Ok(InputSetCreate {
+        schema_version: SchemaV1,
+        project_id: project,
+        purpose: InputPurpose::Portfolio,
+        decision_cutoff: original.header.decision_cutoff,
+        items,
+    })
 }
 
 impl Store {
@@ -393,7 +457,7 @@ impl Store {
             return Ok(result);
         }
         project_for_write(&mut tx, request.project_id).await?;
-        validate_inputs(&mut tx, request, None, None).await?;
+        validate_inputs(&mut tx, std::slice::from_ref(request), None, None).await?;
         let id = prepared.target;
         sqlx::query(
             "INSERT INTO app.input_sets(id,project_id,purpose,decision_cutoff) VALUES($1,$2,$3,$4)",
@@ -514,15 +578,19 @@ impl Store {
             )
             .into());
         }
+        let mut inputs = vec![InputSetCreate {
+            schema_version: SchemaV1,
+            project_id: request.project_id,
+            purpose,
+            decision_cutoff: comparison.header.decision_cutoff,
+            items,
+        }];
+        if let Some(plan) = &request.portfolio_study_plan {
+            inputs.push(portfolio_study_input(&mut tx, request.project_id, plan).await?);
+        }
         validate_inputs(
             &mut tx,
-            &InputSetCreate {
-                schema_version: SchemaV1,
-                project_id: request.project_id,
-                purpose,
-                decision_cutoff: comparison.header.decision_cutoff,
-                items,
-            },
+            &inputs,
             Some(request.split_policy.sealed_revision_id),
             None,
         )
@@ -571,10 +639,10 @@ impl Store {
             tie_break: SelectionTieBreak::ExperimentIdAsc,
             missing_required_metric: MissingSelectionMetric::Inconclusive,
         };
-        sqlx::query("INSERT INTO app.evaluation_policies(id,project_id,version,selection_rule,split_policy,metric_requirements,minimum_observations,maximum_missing_fraction,require_real_data,required_capabilities,maximum_sealed_uses_per_lineage,validity_seconds,sealed_metric_requirements,portfolio_metric_requirements) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
+        sqlx::query("INSERT INTO app.evaluation_policies(id,project_id,version,selection_rule,split_policy,metric_requirements,minimum_observations,maximum_missing_fraction,require_real_data,required_capabilities,maximum_sealed_uses_per_lineage,validity_seconds,sealed_metric_requirements,portfolio_metric_requirements,portfolio_study_plan) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)")
             .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(version).bind(db::json(&selection)?).bind(db::json(&request.split_policy)?).bind(db::json(&request.metric_requirements)?)
             .bind(request.minimum_observations as i32).bind(request.maximum_missing_fraction.as_decimal()).bind(request.require_real_data).bind(&request.required_capabilities)
-            .bind(request.maximum_sealed_uses_per_lineage as i32).bind(request.validity_seconds.get() as i64).bind(db::json(&request.sealed_metric_requirements)?).bind(request.portfolio_metric_requirements.as_ref().map(db::json).transpose()?).execute(&mut *tx).await?;
+            .bind(request.maximum_sealed_uses_per_lineage as i32).bind(request.validity_seconds.get() as i64).bind(db::json(&request.sealed_metric_requirements)?).bind(request.portfolio_metric_requirements.as_ref().map(db::json).transpose()?).bind(request.portfolio_study_plan.as_ref().map(db::json).transpose()?).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO app.experiment_families(id,project_id,root_lineage_id,question,selection_policy_id) VALUES($1,$2,$3,$4,$5)")
             .bind(family.as_uuid()).bind(request.project_id.as_uuid()).bind(root.as_uuid()).bind(&request.question).bind(id.as_uuid()).execute(&mut *tx).await?;
         let row = sqlx::query(&format!(

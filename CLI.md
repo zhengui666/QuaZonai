@@ -604,6 +604,12 @@ RESEARCH_AND_PAPER许可。共用读取器仅按调用方明确允许的用途�
 授予组合PASS；非空为1..64项且至少一项required，沿用精确阈值/code/scope/方法
 allowlist校验。不得从Alpha或Sealed组自动复制；历史政策保持null，不原地补写。
 保存条件不表示原生方法支持或Evaluation发布已接通。
+可同时提交portfolio_study_plan={schema_version:1,input_set_id,evaluation_start,
+manual_cutoffs:null|Time[2..256]}，必须有组合阈值、同项目PORTFOLIO输入及唯一原数据版本。
+起点严格位于原数据范围内，结束固定取原event_end；手动时点从起点严格递增，
+均早于原结束。时间为非负、微秒精度RFC3339；省略/关闭计划保持null，不启动Study。
+改变计划必须新政策，运行命令不能更换窗口；Mandate调仓模式、TTL和模型可用截止
+仍须正式准入核对。列表/详情返回原完整计划，不读原始市场字节。
 原生组合指标适配支持portfolio范围的PORTFOLIO_DAILY_RETURN_MEAN、
 PORTFOLIO_RETURN_VOLATILITY、PORTFOLIO_SHARPE_RATIO；方法分别为
 nautilus-analysis.ReturnsAverage/ReturnsVolatility/SharpeRatio，版本0.63.0、

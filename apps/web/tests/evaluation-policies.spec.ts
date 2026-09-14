@@ -20,14 +20,15 @@ async function open(page: Page) {
 }
 function saved(body: Schema['EvaluationPolicyCreate']): Schema['EvaluationPolicyView'] {
   const { schema_version: _schema, selection, comparison_input_set_id, execution_assumptions_id, ...value } = body;
-  return { ...value, portfolio_metric_requirements: body.portfolio_metric_requirements ?? null, id: id(71), version: 1, created_at: '2026-09-14T00:00:00Z', selection_rule: {
+  return { ...value, portfolio_study_plan: body.portfolio_study_plan ?? null, portfolio_metric_requirements: body.portfolio_metric_requirements ?? null, id: id(71), version: 1, created_at: '2026-09-14T00:00:00Z', selection_rule: {
     ...selection, schema_version: 1, comparison_input_set_id, execution_assumptions_id,
     comparable_scope: 'FAMILY_LINEAGE', root_lineage_id: project.root_lineage_id, family_id: id(72),
     tie_break: 'EXPERIMENT_ID_ASC', missing_required_metric: 'INCONCLUSIVE',
   } };
 }
 
-for (const portfolio of [false, true]) test(`immutable policy preserves independent requirements and retries exact intent: portfolio=${portfolio}`, async ({ page }) => {
+for (const mode of ['none', 'thresholds', 'manual', 'scheduled'] as const) test(`immutable policy preserves independent requirements and retries exact intent: ${mode}`, async ({ page }) => {
+  const portfolio = mode !== 'none'; const study = mode === 'manual' || mode === 'scheduled';
   await fixture(page);
   let original: Schema['EvaluationPolicyCreate'] | undefined; let key: string | undefined; let calls = 0;
   let stored: Schema['EvaluationPolicyView'] | undefined;
@@ -66,6 +67,15 @@ for (const portfolio of [false, true]) test(`immutable policy preserves independ
   await choose(page, '是否要求真实数据', '要求 REAL');
   await tag(page, '必需能力名称（可留空）', 'original-capability');
   if (portfolio) await editor.getByRole('checkbox', { name: '定义独立组合要求', exact: true }).check();
+  if (study) {
+    await editor.getByRole('checkbox', { name: '冻结组合研究计划', exact: true }).check();
+    await editor.getByLabel('组合研究输入编号', { exact: true }).fill(id(76));
+    await editor.getByLabel('组合研究起点', { exact: true }).fill('2026-09-14T00:00:00.000001Z');
+    await editor.getByRole('checkbox', { name: '冻结手动调仓时点', exact: true }).check();
+    await editor.getByLabel('研究时点 1', { exact: true }).fill('2026-09-14T00:00:00.000001Z');
+    await editor.getByLabel('研究时点 2', { exact: true }).fill('2026-09-14T01:00:00.000001Z');
+    if (mode === 'scheduled') await editor.getByRole('checkbox', { name: '冻结手动调仓时点', exact: true }).uncheck();
+  }
   for (const title of portfolio ? ['Validation', 'Sealed', '组合'] : ['Validation', 'Sealed']) {
     await editor.getByLabel(`${title} 1 指标代码`, { exact: true }).fill(title === 'Validation' ? 'original-ic' : `${title}-independent`);
     await editor.getByLabel(`${title} 1 Scope`, { exact: true }).fill(title === 'Validation' ? 'asset:0/fold:0' : title === 'Sealed' ? 'asset:0' : 'portfolio');
@@ -84,6 +94,8 @@ for (const portfolio of [false, true]) test(`immutable policy preserves independ
   expect(original?.sealed_metric_requirements[0]).toMatchObject({ threshold_low: null, threshold_high: '0.987654321098765432', method_allowlist: ['Sealed-method'] });
   expect(original?.portfolio_metric_requirements).toEqual(portfolio ? [{ schema_version: 1, metric_code: '组合-independent', scope: 'portfolio', comparator: 'BETWEEN', threshold_low: '0.123456789012345678', threshold_high: '0.987654321098765432', required: true, minimum_observations: '9007199254740993', method_allowlist: ['组合-method'] }] : null);
   expect(original?.require_real_data).toBe(true); expect(original).not.toHaveProperty('use_portfolio');
+  expect(original?.portfolio_study_plan).toEqual(study ? { schema_version: 1, input_set_id: id(76), evaluation_start: '2026-09-14T00:00:00.000001Z', manual_cutoffs: mode === 'manual' ? ['2026-09-14T00:00:00.000001Z', '2026-09-14T01:00:00.000001Z'] : null } : null);
+  expect(original).not.toHaveProperty('use_study'); expect(original).not.toHaveProperty('use_manual_study');
   await editor.getByRole('button', { name: '保存不可变评估政策', exact: true }).click();
   await expect(editor).not.toBeVisible(); expect(calls).toBe(2);
   await page.getByRole('button', { name: '政策 v1', exact: true }).click();

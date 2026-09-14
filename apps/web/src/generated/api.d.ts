@@ -2406,6 +2406,7 @@ export interface components {
                 /** Format: int32 */
                 minimum_observations: number;
                 portfolio_metric_requirements: components["schemas"]["MetricRequirementV1"][] | null;
+                portfolio_study_plan: null | components["schemas"]["PortfolioStudyPlanV1"];
                 project_id: components["schemas"]["Id"];
                 question: string;
                 require_real_data: boolean;
@@ -3022,6 +3023,7 @@ export interface components {
             minimum_observations: number;
             /** @description Independent portfolio criteria; None cannot authorize portfolio PASS. */
             portfolio_metric_requirements?: components["schemas"]["MetricRequirementV1"][] | null;
+            portfolio_study_plan?: null | components["schemas"]["PortfolioStudyPlanV1"];
             project_id: components["schemas"]["Id"];
             question: string;
             require_real_data: boolean;
@@ -3043,6 +3045,7 @@ export interface components {
             /** Format: int32 */
             minimum_observations: number;
             portfolio_metric_requirements: components["schemas"]["MetricRequirementV1"][] | null;
+            portfolio_study_plan: null | components["schemas"]["PortfolioStudyPlanV1"];
             project_id: components["schemas"]["Id"];
             question: string;
             require_real_data: boolean;
@@ -4003,6 +4006,7 @@ export interface components {
                 /** Format: int32 */
                 minimum_observations: number;
                 portfolio_metric_requirements: components["schemas"]["MetricRequirementV1"][] | null;
+                portfolio_study_plan: null | components["schemas"]["PortfolioStudyPlanV1"];
                 project_id: components["schemas"]["Id"];
                 question: string;
                 require_real_data: boolean;
@@ -4371,6 +4375,13 @@ export interface components {
         PortfolioMemberSelectionV1: {
             ensemble_weight: components["schemas"]["DecimalValue"];
             qualification_id: components["schemas"]["Id"];
+        };
+        PortfolioStudyPlanV1: {
+            /** Format: date-time */
+            evaluation_start: string;
+            input_set_id: components["schemas"]["Id"];
+            manual_cutoffs?: string[] | null;
+            schema_version: components["schemas"]["SchemaV1"];
         };
         PortfolioWeightsSourceV1: {
             downstream_id: components["schemas"]["Id"];

@@ -259,6 +259,8 @@ async fn native_upgrade_preserves_valid_existing_policy_facts_and_adds_deferred_
     for field in [
         "sealed_metric_requirements",
         "portfolio_metric_requirements",
+        "portfolio_study_plan",
+        "portfolio_study_input_set_id",
     ] {
         assert_eq!(
             after.as_object_mut().unwrap().remove(field),

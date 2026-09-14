@@ -15,6 +15,7 @@ use support::*;
 
 async fn authenticated(
     pool: PgPool,
+    allowed: DataUse,
 ) -> (
     Fixture,
     String,
@@ -31,12 +32,13 @@ async fn authenticated(
     .fetch_one(&pool)
     .await
     .unwrap();
-    let data = research_support::setup(
+    let data = research_support::setup_with_use(
         &pool,
         &f.store,
         &Actor::Browser {
             login_id: login.try_into().unwrap(),
         },
+        allowed,
     )
     .await;
     (f, r.cookie.unwrap(), native, data)
@@ -96,7 +98,7 @@ async fn credential(f: &Fixture, cookie: &str, project: Id, kind: &str) -> Strin
 async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_metadata(
     pool: PgPool,
 ) {
-    let (f, cookie, _, data) = authenticated(pool).await;
+    let (f, cookie, _, data) = authenticated(pool, DataUse::ResearchAndPaper).await;
     let payload = serde_json::to_value(data.input(InputPurpose::Validation)).unwrap();
     let first = browser(
         &f,
@@ -142,6 +144,25 @@ async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_me
     portfolio_requirement["scope"] = json!("portfolio");
     portfolio_requirement["method_allowlist"] = json!(["nautilus-analysis.ReturnsAverage"]);
     request["portfolio_metric_requirements"] = json!([portfolio_requirement]);
+    let study_input = browser(
+        &f,
+        &cookie,
+        "study-input",
+        "POST",
+        "/api/v2/input-sets",
+        serde_json::to_value(data.input(InputPurpose::Portfolio)).unwrap(),
+    )
+    .await;
+    assert_eq!(
+        study_input.status,
+        StatusCode::CREATED,
+        "{}",
+        study_input.body
+    );
+    request["portfolio_study_plan"] = json!({"schema_version":1,
+        "input_set_id":study_input.body["resource"]["header"]["id"],
+        "evaluation_start":"2019-01-01T00:00:00.000001Z",
+        "manual_cutoffs":["2019-01-01T00:00:00.000001Z","2019-01-02T00:00:00.000001Z"]});
     let policy = browser(
         &f,
         &cookie,
@@ -152,6 +173,10 @@ async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_me
     )
     .await;
     assert_eq!(policy.status, StatusCode::CREATED, "{}", policy.body);
+    assert_eq!(
+        policy.body["resource"]["portfolio_study_plan"],
+        request["portfolio_study_plan"]
+    );
     assert_eq!(
         policy.body["resource"]["portfolio_metric_requirements"],
         request["portfolio_metric_requirements"]
@@ -169,8 +194,8 @@ async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_me
     assert_eq!(replay.body["replayed"], true);
     for (path, expected) in [
         (
-            format!("/api/v2/input-sets?project_id={}&limit=1", data.project),
-            json!(input.header.id),
+            format!("/api/v2/input-sets?project_id={}&limit=2", data.project),
+            study_input.body["resource"]["header"]["id"].clone(),
         ),
         (
             format!(
@@ -183,6 +208,10 @@ async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_me
         let r = browser(&f, &cookie, "unused", "GET", &path, Value::Null).await;
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
         assert_eq!(r.body["items"][0]["id"], expected);
+        if path.starts_with("/api/v2/input-sets?") {
+            assert_eq!(r.body["items"].as_array().unwrap().len(), 2);
+            assert_eq!(r.body["items"][1]["id"], json!(input.header.id));
+        }
         assert!(r.body["next_cursor"].is_null());
         for absent in [
             "storage_object_ref",
@@ -211,7 +240,7 @@ async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_me
 async fn real_bearer_can_read_only_its_metadata_and_not_publish_or_change_sealed_access(
     pool: PgPool,
 ) {
-    let (f, cookie, _, data) = authenticated(pool.clone()).await;
+    let (f, cookie, _, data) = authenticated(pool.clone(), DataUse::Research).await;
     let p = browser(
         &f,
         &cookie,
@@ -276,7 +305,7 @@ async fn real_bearer_can_read_only_its_metadata_and_not_publish_or_change_sealed
 }
 #[sqlx::test(migrations = "../../migrations")]
 async fn research_field_errors_are_safe_bounded_and_native_auth_is_not_optional(pool: PgPool) {
-    let (f, cookie, _, data) = authenticated(pool.clone()).await;
+    let (f, cookie, _, data) = authenticated(pool.clone(), DataUse::Research).await;
     let mut request = serde_json::to_value(data.input(InputPurpose::Validation)).unwrap();
     request["items"][1]["role"] = json!("SIGNALS");
     let r = browser(
@@ -336,7 +365,7 @@ async fn research_field_errors_are_safe_bounded_and_native_auth_is_not_optional(
 }
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_cli_totp_grant_can_publish_only_the_exact_research_request(pool: PgPool) {
-    let (f, cookie, native, data) = authenticated(pool.clone()).await;
+    let (f, cookie, native, data) = authenticated(pool.clone(), DataUse::Research).await;
     let bearer = credential(&f, &cookie, data.project, "CLI").await;
     let input = browser(
         &f,
@@ -442,7 +471,7 @@ async fn native_cli_totp_grant_can_publish_only_the_exact_research_request(pool:
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn research_request_size_and_missing_project_fail_without_creating_records(pool: PgPool) {
-    let (f, cookie, _, data) = authenticated(pool.clone()).await;
+    let (f, cookie, _, data) = authenticated(pool.clone(), DataUse::Research).await;
     let mut input = serde_json::to_value(data.input(InputPurpose::Validation)).unwrap();
     input["items"] = serde_json::Value::Array(vec![input["items"][0].clone(); 700]);
     assert!(serde_json::to_vec(&input).unwrap().len() > 64 * 1024);
@@ -478,7 +507,7 @@ async fn research_request_size_and_missing_project_fail_without_creating_records
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn review_errors_return_the_actual_license_and_threshold_fields(pool: PgPool) {
-    let (f, cookie, _, data) = authenticated(pool.clone()).await;
+    let (f, cookie, _, data) = authenticated(pool.clone(), DataUse::Research).await;
     let denied = browser(
         &f,
         &cookie,
