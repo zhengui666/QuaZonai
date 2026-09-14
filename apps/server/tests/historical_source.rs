@@ -10,6 +10,8 @@ async fn source(pool: &PgPool) {
 #[sqlx::test(migrations = false)]
 async fn historical_source_native_sql_checks_composite_values_and_null_semantics(pool: PgPool) {
     source(&pool).await;
+    sqlx::raw_sql("CREATE TABLE precision_sample(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, amount numeric(30,12), recorded_at timestamp(3) with time zone, derived numeric GENERATED ALWAYS AS (amount * 2) STORED, removed text DEFAULT 'default-marker-never-export'); ALTER TABLE precision_sample DROP COLUMN removed")
+        .execute(&pool).await.unwrap();
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("inspection.json");
     let result = tokio::process::Command::new(env!("CARGO_BIN_EXE_server"))
@@ -42,6 +44,27 @@ async fn historical_source_native_sql_checks_composite_values_and_null_semantics
             .get(),
         3
     );
+    let parent = report.tables.iter().find(|t| t.table == "parents").unwrap();
+    assert_eq!(parent.columns[1].name, "revision");
+    assert_eq!(parent.columns[1].postgres_type, "bigint");
+    assert!(parent.columns[1].nullable);
+    let precision = report
+        .tables
+        .iter()
+        .find(|t| t.table == "precision_sample")
+        .unwrap();
+    assert_eq!(precision.columns.len(), 4);
+    assert!(precision.columns[0].identity);
+    assert!(!precision.columns[0].nullable);
+    assert_eq!(precision.columns[1].postgres_type, "numeric(30,12)");
+    assert_eq!(
+        precision.columns[2].postgres_type,
+        "timestamp(3) with time zone"
+    );
+    assert!(precision.columns[3].generated);
+    assert!(!String::from_utf8(std::fs::read(&output).unwrap())
+        .unwrap()
+        .contains("default-marker-never-export"));
     let unchanged: i64 = sqlx::query_scalar("SELECT count(*) FROM public.children")
         .fetch_one(&pool)
         .await

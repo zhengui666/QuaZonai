@@ -969,6 +969,8 @@ GET /api/v2/projects/{id}/forward-weight-snapshots，需精确项目RESEARCH_REA
 cargo run --locked -p server -- inspect-historical-source --output "$MIGRATION_REPORT_PATH"
 ```
 
-命令要求源 `alembic_version` 精确为 `0029_portfolio_candidate_exposure`，在单一 REPEATABLE READ/READ ONLY 事务内统计 public 表并用 PostgreSQL 原生比较检查全部已声明外键，包括非 id 复合列和 MATCH SIMPLE/FULL 空值语义。各查询最多30秒；不支持版本、不可见行或读取失败不写成功报告。结果文件0600、新建且不覆盖；输出只含表/列/约束名称、行数、孤立行数和检查时间，不读取行payload或凭据内容。
+命令要求源 `alembic_version` 精确为 `0029_portfolio_candidate_exposure`，在单一 REPEATABLE READ/READ ONLY 事务内统计 public 表并用 PostgreSQL 原生比较检查全部已声明外键，包括非 id 复合列和 MATCH SIMPLE/FULL 空值语义。各查询最多30秒；不支持版本、不可见行或读取失败不写成功报告。结果文件0600、新建且不覆盖；输出只含表/列/约束名称、原生字段类型（含数值/时间精度）、可空性、identity/generated标记、行数、孤立行数和检查时间，不读取默认值表达式、行payload或凭据内容。
+
+`tables[].columns` 按原字段顺序列出，已删除列不进入报告；字段证据供固定版本适配逐项核对，不能仅凭版本字符串或行数认可结构。事务设置 `row_security=off`，无绕过权限时遇到行策略过滤即失败，避免外键目标计数被静默截断。
 
 退出0表示报告已生成，不表示迁移通过；`foreign_keys[].orphan_rows` 必须逐项核对。该检查只覆盖源库实际声明的外键，不能证明源schema等价、语义血缘、产物可读性或旧PASS资格，也不是 `/migrations/import` dry-run 的替代。完整导出、映射、排除项和原子导入仍须另行完成。

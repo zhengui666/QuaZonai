@@ -115,6 +115,18 @@ pub struct HistoricalSourceInspectionV1 {
 pub struct HistoricalTableCountV1 {
     pub table: String,
     pub rows: DbCounter,
+    pub columns: Vec<HistoricalColumnV1>,
+}
+
+/// Native type includes numeric and timestamp precision; defaults and row values are omitted.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalColumnV1 {
+    pub name: String,
+    pub postgres_type: String,
+    pub nullable: bool,
+    pub identity: bool,
+    pub generated: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

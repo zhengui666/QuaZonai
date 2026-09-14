@@ -4929,3 +4929,22 @@ web-verify-oRYRx1 从 Rust 合同生成 OpenAPI/TypeScript/Ajv，手写源未变
 新增本机 inspect-historical-source，通过独立来源连接的 REPEATABLE READ/READ ONLY 事务、PostgreSQL catalog/quote_ident 和原生键比较输出表行数与各外键孤立行数。包含非id列、超过JS安全整数范围的bigint及MATCH FULL部分NULL，不从convalidated标志推断数据完整。未知Alembic版本或RLS隐藏风险明确拒绝；只输出元数据/计数，新建0600报告且不覆盖已有文件，不读取payload/凭据内容或修改源库。该命令不声称schema完全匹配，也不代替完整导出/产物读取/原子导入。
 
 verify-LeHvgD 首次编译发现server没有anyhow依赖，改用标准库错误，不新增依赖。最终verify-GKUBfI通过workspace/all-targets编译、格式、严格Clippy、共享contracts/domain/runtime回归、21项managed及31项Codex基础回归，并通过2项新增真实PostgreSQL/原生CLI测试（0.93秒）。测试用可丢弃的来源形状数据证明复合修订差异与MATCH FULL各产生1个孤立记录、未知版本/RLS拒绝、源行数保留、已有报告不覆盖；它不是用户真实旧快照验收。source_unchanged=true，隔离PG停止。用户的真实行情及旧快照/产物位置已分别询问，尚未提供；仍有可推进的导出、报告和导入产品工作，未合并或关闭Issue。
+
+
+### 2026-09-15 historical source field evidence
+
+The local inspection report now includes ordered native PostgreSQL column types
+(including numeric and timestamp precision), nullability and identity/generated
+markers, omitting dropped columns, default expressions and row values. The
+read-only transaction sets row_security=off so policy filtering cannot silently
+produce partial counts, including for foreign-key targets outside public.
+This supplies source evidence; it does not assert expected-schema equivalence
+or implement the trusted exporter or atomic importer.
+
+Native verifier `verify-cFUlYN` completed with no failures and unchanged source:
+workspace/all-target check, formatting, strict Clippy, and both historical-source
+PostgreSQL tests passed (0.91s). The actual CLI report test also checks bigint,
+numeric(30,12), timestamp(3), identity/generated markers and omitted dropped
+columns. Existing composite foreign-key/null semantics and no-overwrite checks
+remain passing. Only disposable test data was used; real old-snapshot acceptance
+and full migration delivery remain outstanding.
