@@ -34,7 +34,7 @@ impl Store {
         // Only queue rows are locked here. No project/Run locks are acquired in
         // this order, so normal result adoption can retain project -> Run -> queue.
         let candidates: Vec<Value> = sqlx::query_scalar(
-            "SELECT q.message FROM pgmq.q_runs q JOIN app.runs r ON q.message=jsonb_build_object('schema_version',1,'run_id',r.id) WHERE q.vt<=clock_timestamp() AND (($2 AND r.kind='AGENT_RESEARCH' AND EXISTS(SELECT 1 FROM app.run_missions m WHERE m.run_id=r.id)) OR (NOT $2 AND r.kind IN ('DATA_VALIDATE','ALPHA_EVALUATE','PORTFOLIO_BUILD','PORTFOLIO_SIMULATE') AND EXISTS(SELECT 1 FROM app.run_native_tasks t WHERE t.run_id=r.id))) ORDER BY q.msg_id LIMIT $1 FOR UPDATE OF q SKIP LOCKED",
+            "SELECT q.message FROM pgmq.q_runs q JOIN app.runs r ON q.message=jsonb_build_object('schema_version',1,'run_id',r.id) WHERE q.vt<=clock_timestamp() AND (($2 AND r.kind='AGENT_RESEARCH' AND EXISTS(SELECT 1 FROM app.run_missions m WHERE m.run_id=r.id)) OR (NOT $2 AND r.kind IN ('DATA_VALIDATE','ALPHA_EVALUATE','PORTFOLIO_BUILD','PORTFOLIO_SIMULATE','FORWARD_EVALUATE') AND EXISTS(SELECT 1 FROM app.run_native_tasks t WHERE t.run_id=r.id))) ORDER BY q.msg_id LIMIT $1 FOR UPDATE OF q SKIP LOCKED",
         )
         .bind(limit)
         .bind(mission)
@@ -101,7 +101,7 @@ impl Store {
         mission: bool,
     ) -> Result<Option<ClaimResult>, StoreError> {
         let eligible: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM app.runs r WHERE r.id=$1 AND (($2 AND r.kind='AGENT_RESEARCH' AND EXISTS(SELECT 1 FROM app.run_missions m WHERE m.run_id=r.id)) OR (NOT $2 AND r.kind IN ('DATA_VALIDATE','ALPHA_EVALUATE','PORTFOLIO_BUILD','PORTFOLIO_SIMULATE') AND EXISTS(SELECT 1 FROM app.run_native_tasks t WHERE t.run_id=r.id))))",
+            "SELECT EXISTS(SELECT 1 FROM app.runs r WHERE r.id=$1 AND (($2 AND r.kind='AGENT_RESEARCH' AND EXISTS(SELECT 1 FROM app.run_missions m WHERE m.run_id=r.id)) OR (NOT $2 AND r.kind IN ('DATA_VALIDATE','ALPHA_EVALUATE','PORTFOLIO_BUILD','PORTFOLIO_SIMULATE','FORWARD_EVALUATE') AND EXISTS(SELECT 1 FROM app.run_native_tasks t WHERE t.run_id=r.id))))",
         )
         .bind(message.run_id.as_uuid())
         .bind(mission)

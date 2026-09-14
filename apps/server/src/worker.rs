@@ -133,10 +133,12 @@ impl Worker {
                     Ok((cursor, result)) => {
                         automation_cursor = cursor;
                         if result.is_err() {
-                            tracing::warn!("automatic Paper deferred; original admission conditions remain required");
+                            tracing::warn!("automatic delivery or feedback deferred; original admission conditions remain required");
                         }
                     }
-                    Err(_) => tracing::warn!("automatic Paper task ended before a known result"),
+                    Err(_) => tracing::warn!(
+                        "automatic delivery or feedback task ended before a known result"
+                    ),
                 }
             }
             if automation.is_empty() && tokio::time::Instant::now() >= next_automation {
@@ -221,7 +223,8 @@ impl Worker {
         Ok(())
     }
 
-    async fn process_automation(
+    /// One trusted scheduling tick, shared by the poll loop and native integration tests.
+    pub async fn process_automation(
         &self,
         cursor: Option<Id>,
     ) -> (Option<Id>, Result<(), WorkerFailure>) {
@@ -246,7 +249,67 @@ impl Worker {
         if let Ok(Some(offer)) = &result {
             tracing::info!(handoff_id=%offer.id,"original frozen policy produced a Paper offer");
         }
-        (Some(project), result.map(|_| ()).map_err(Into::into))
+        let feedback = self.process_forward(project).await;
+        (
+            Some(project),
+            result
+                .map(|_| ())
+                .map_err(WorkerFailure::from)
+                .and(feedback),
+        )
+    }
+
+    async fn process_forward(&self, project: Id) -> Result<(), WorkerFailure> {
+        let Some((handoff, stream)) = self.store.prepare_forward_evaluation(project).await? else {
+            return Ok(());
+        };
+        let reading = self.objects.clone();
+        let publishing = self.objects.clone();
+        let mut allocated = Vec::new();
+        let result = self
+            .store
+            .enqueue_forward_evaluation(
+                handoff,
+                &stream,
+                move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+                |object| {
+                    allocated.push(object.id);
+                    let objects = publishing.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+            )
+            .await;
+        for id in allocated.into_iter().filter(|_| result.is_err()) {
+            let objects = self.objects.clone();
+            if self
+                .store
+                .discard_unpublished_forward_artifact(project, id, move |id| async move {
+                    tokio::task::spawn_blocking(move || objects.discard_unpublished(id))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                })
+                .await
+                .is_err()
+            {
+                tracing::warn!(artifact_id=%id,"Forward parameter cleanup deferred");
+            }
+        }
+        result?;
+        Ok(())
     }
 
     /// The same method is exercised by native PostgreSQL/TCP fault tests. It is

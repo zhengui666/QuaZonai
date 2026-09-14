@@ -4621,3 +4621,37 @@ Forward 扩展用例经原生准入、首次发送、接受回执、受控 Manif
 真实多日市场、完整原生 Claim 或 OCI 科学运行；前阶段原生数值测试不能拼成
 完整生产验收。本次无对外合同变化，不重新生成前端。尚待自动调度、Live/Wake
 消费与全部剩余合同；未 push、请求 review、合并或关闭 Issue。
+
+## 2026-09-14：原 Worker 自动反馈调度与恢复
+
+按 DESIGN A7.8 复用五秒项目轮询：Paper 尝试之后独立处理至多一个原反馈流，
+仍由 A7.6 原生准入决定是否入队。069 迁移只增加每 Handoff/stream 的可变重试
+预约，未尝试/最早尝试优先，失败三十秒后重试，新消息/纠正可提前；相同已冻结
+来源不重新调度。来源计数仅为不可变消息的重试提示，不代替每个原 ID 的准入
+核对，也不创建证据、试验或第二个任务队列。参数失败仍由原对象清理回收。
+
+为复用现有明确关系型历史输入，将原 Store 测试初始化移至 tests/support/forward.rs；
+新增真实 Worker/ArtifactStore/PGMQ 集成用例，未复制产品业务。原生队列读取和
+直接领取均注册带原生绑定的 FORWARD_EVALUATE，Mission 驱动拒绝领取。
+
+以 e370aab3 及冻结补丁串行验证：
+
+- verify-Rv5aen 首轮编译/格式/Clippy/原 Store 用例通过。加入实际 Worker 用例后，
+  verify-nHX1Nj 捕获测试多余导入、未处理返回值和未初始化临时 Vault；
+  verify-fT2YXD 捕获临时 Vault 目录遗漏，按原生密钥/0700目录初始化修正。
+- verify-Ppm07l 的实际 Worker 用例发现原生队列 kind 列表未注册 Forward，
+  已同时修复读取和领取入口。verify-sn4EOi 已完成首次发布/归档，但测试错误地
+  再领取已归档消息；改为原 ACK 归档事务故障后重试仍在队列的原消息，未放宽
+  队列身份约束。
+- verify-M1prpi 定向全部通过：Store 预约竞争、缺数据流不阻塞下一流、纠正
+  提前重试、撤权停止选择，以及实际 Worker 并发唯一入队、原参数文件、驱动
+  分类、取消测量发布、ACK 失败后评估保留/队列保留、恢复后唯一归档。
+- 最终 verify-LI6TC7 的 check、fmt、严格 Clippy、143 项合同/领域、67 项
+  PG/PGMQ、25 项 HTTP/CLI/Worker 全通过，0 忽略，源码不变，隔离 PG 停止。
+  其中原交付链 18 项通过，耗时 199.35 秒。没有对外合同变化，无需重生前端。
+
+Worker 测试使用真实对象存储与原生队列/终态发布；基础历史 Claim/Candidate/
+Runtime 仍是显式关系型 fixture，取消路径没有实际 Runtime/OCI 科学执行，
+不是多日市场或完整生产验收。Live 晋级、劣化 Observation/Wake/Cycle 消费和
+其他剩余合同继续实现。本阶段未 push、请求 review、合并或关闭 Issue。
+GitHub 实时复核：PR63 OPEN/Draft，远端仍为37e5713e；Issue62 OPEN。

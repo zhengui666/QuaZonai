@@ -2822,6 +2822,12 @@ app.forward_evaluation_inputs追加记录原FORWARD InputSet、原政策、Hando
 
 成功结果必须与冻结请求及原输出逐项一致。更正、新消息、撤权、替换政策或期限到达不删除已运行结果，而将其发表为 INCOMPLETE、无有效期；原指标仍可审计。失败/取消发表无指标的 INCOMPLETE，不假称远端成功。报告不包含收益原字节。每个原 Run 唯一发表；重放不再读写对象。先写 Evaluation 及全部 metric_values，再写 forward_evidence_windows 封口，原窗口范围保留，只有当前有效完整统计才记连续有效样本；其他为零样本、不连续。窗口 freshness_deadline 保留原冻结期限，Evaluation.valid_until 仅在当前有效时设置，且不得晚于已登记的未来撤权生效时间。对象写入、评估、指标和窗口同事务失败整体回滚，沿用原 Worker 未引用对象清理。此发布不创建新策略、Approval、Offer、Wake 或 Cycle。
 
+### A7.8 原 Worker 自动反馈调度
+
+沿用五秒自动化项目轮询，同一轮先尝试原 Paper 自动化，再独立尝试至多一个原 Handoff/stream 的反馈准入；Paper 没有可交付候选或失败不挡住已有反馈。只选择 ACTIVE 当前启用非 MANUAL 政策的原 Mandate/下游、已记录 REAL 领取及原消息；此查询只是调度提示，不能代替 A7.6 完整准入。
+
+app.forward_schedule 是每原 Handoff/stream 一行的可变重试预约，不是证据或授权。按最早 last_attempt_at（未尝试优先）公平选择；选中后原子预约三十秒，再进行私有对象读取。已冻结相同完整来源的流不再调度；消息不可变且不可删除，来源计数只用于发现新增消息和提前重试，真正准入仍比较每个原来源 ID。新增/纠正绕过旧重试期限；缺数据、超限或暂时无能力的流按原预约重试，不阻塞其他流，不截断历史。崩溃留下的预约自然到期，不新建第二套队列或 Worker。参数失败回收沿用 Project 锁下未引用对象清理；原生队列读取及直接领取均只将具有原生绑定的 FORWARD_EVALUATE 分配给科学 Worker，Mission 驱动不得借用；已有原 Run 继续由 PGMQ 与 A7.7 发表，不因重试复制策略、样本或试验。自动计算不等于晋级或 Wake 完成。
+
 ## A8. 集成、身份与幂等
 
 ### A8.0 原生 Codex 连接与会话适配
