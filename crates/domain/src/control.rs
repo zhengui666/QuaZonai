@@ -78,7 +78,7 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         OperatorCommand::ReleaseReopen(r) => {
             crate::delivery::decision_reason(&r.reason_code, &r.reason)
         }
-        OperatorCommand::CycleStart(_) => Ok(()),
+        OperatorCommand::CycleStart(_) | OperatorCommand::MigrationImport(_) => Ok(()),
         OperatorCommand::IntegrationSecretRegister(r) => crate::settings::secret_intent(r),
         OperatorCommand::RuntimeProbe(_) | OperatorCommand::DownstreamProbe(_) => Ok(()),
         OperatorCommand::RuntimeCreate(r) => crate::settings::runtime_create(r),

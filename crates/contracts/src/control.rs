@@ -211,6 +211,7 @@ pub struct CredentialCreated {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OperatorOperation {
+    MigrationImport,
     CodexProfileCreate,
     CodexProfileUpdate,
     CodexProbe,
@@ -259,6 +260,7 @@ pub enum OperatorOperation {
 impl OperatorOperation {
     pub fn code(self) -> &'static str {
         match self {
+            Self::MigrationImport => "MIGRATION_IMPORT",
             Self::CodexProfileCreate => "CODEX_PROFILE_CREATE",
             Self::CodexProfileUpdate => "CODEX_PROFILE_UPDATE",
             Self::CodexProbe => "CODEX_PROBE",
@@ -308,7 +310,8 @@ impl OperatorOperation {
     pub fn creates(self) -> bool {
         matches!(
             self,
-            Self::IntegrationSecretRegister
+            Self::MigrationImport
+                | Self::IntegrationSecretRegister
                 | Self::CodexProfileCreate
                 | Self::CodexLoginStart
                 | Self::CodexLogout
@@ -336,6 +339,7 @@ impl OperatorOperation {
     deny_unknown_fields
 )]
 pub enum OperatorCommand {
+    MigrationImport(crate::imports::HistoricalImportRequestV1),
     CodexProfileCreate(crate::codex::CodexProfileCreateV1),
     CodexProfileUpdate(crate::codex::CodexProfileUpdateV1),
     CodexProbe(crate::codex::CodexProbeRequestV1),
@@ -385,6 +389,7 @@ pub enum OperatorCommand {
 impl OperatorCommand {
     pub fn operation(&self) -> OperatorOperation {
         match self {
+            Self::MigrationImport(_) => OperatorOperation::MigrationImport,
             Self::CodexProfileCreate(_) => OperatorOperation::CodexProfileCreate,
             Self::CodexProfileUpdate(_) => OperatorOperation::CodexProfileUpdate,
             Self::CodexProbe(_) => OperatorOperation::CodexProbe,
@@ -434,6 +439,7 @@ impl OperatorCommand {
     }
     pub fn normalized_request(&self) -> Result<serde_json::Value, serde_json::Error> {
         match self {
+            Self::MigrationImport(v) => serde_json::to_value(v),
             Self::CodexProfileCreate(v) => serde_json::to_value(v),
             Self::CodexProfileUpdate(v) => serde_json::to_value(v),
             Self::CodexProbe(v) => serde_json::to_value(v),

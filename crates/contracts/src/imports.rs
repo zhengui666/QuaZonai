@@ -134,6 +134,7 @@ pub struct HistoricalColumnV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HistoricalForeignKeyCheckV1 {
+    pub match_type: HistoricalForeignKeyMatchV1,
     pub constraint: String,
     pub source_table: String,
     pub target_table: String,
@@ -196,7 +197,7 @@ pub struct HistoricalTableExportV1 {
     pub unsupported_schema: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HistoricalColumnExclusionV1 {
     pub column: String,
@@ -219,4 +220,36 @@ pub struct HistoricalOriginalKeyV1 {
 pub struct HistoricalProjectedRowV1 {
     pub key: HistoricalOriginalKeyV1,
     pub fields: std::collections::BTreeMap<String, Option<String>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalImportRequestV1 {
+    pub schema_version: SchemaV1,
+    pub export_ref: Id,
+    pub dry_run: bool,
+}
+
+/// Import of reviewed projections is not approval of excluded or legacy evidence.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalImportReportV1 {
+    pub schema_version: SchemaV1,
+    pub id: Id,
+    pub export_ref: Id,
+    pub source_installation_id: Id,
+    pub dry_run: bool,
+    pub projected_rows: DbCounter,
+    pub new_rows: DbCounter,
+    pub existing_rows: DbCounter,
+    pub checked_relationships: DbCounter,
+    pub unverified_relationships: Vec<String>,
+    pub manual_review_required: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum HistoricalForeignKeyMatchV1 {
+    Simple,
+    Full,
 }

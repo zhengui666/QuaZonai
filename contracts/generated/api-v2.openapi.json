@@ -12700,6 +12700,26 @@
         ],
         "type": "object"
       },
+      "HistoricalImportRequestV1": {
+        "additionalProperties": false,
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          },
+          "export_ref": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "export_ref",
+          "dry_run"
+        ],
+        "type": "object"
+      },
       "HorizonKind": {
         "enum": [
           "FIXED_BARS",
@@ -14368,6 +14388,24 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "MIGRATION_IMPORT"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/HistoricalImportRequestV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "CODEX_PROFILE_CREATE"
                 ],
                 "type": "string"
@@ -15249,6 +15287,7 @@
       },
       "OperatorOperation": {
         "enum": [
+          "MIGRATION_IMPORT",
           "CODEX_PROFILE_CREATE",
           "CODEX_PROFILE_UPDATE",
           "CODEX_PROBE",

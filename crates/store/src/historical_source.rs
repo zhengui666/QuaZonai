@@ -140,14 +140,18 @@ async fn inspect(
             "({}) AND NOT EXISTS(SELECT 1 FROM {target} t WHERE {equal})",
             nonnull.join(" AND ")
         );
-        let predicate = match row.try_get::<String, _>("match_type")?.as_str() {
-            "s" => missing,
-            "f" => format!(
+        let match_type = match row.try_get::<String, _>("match_type")?.as_str() {
+            "s" => HistoricalForeignKeyMatchV1::Simple,
+            "f" => HistoricalForeignKeyMatchV1::Full,
+            _ => return Err(StoreError::Invalid("historical_source_match_type")),
+        };
+        let predicate = match match_type {
+            HistoricalForeignKeyMatchV1::Simple => missing,
+            HistoricalForeignKeyMatchV1::Full => format!(
                 "({missing}) OR (({}) AND ({}))",
                 null.join(" OR "),
                 nonnull.join(" OR ")
             ),
-            _ => return Err(StoreError::Invalid("historical_source_match_type")),
         };
         let orphan_rows: i64 = sqlx::query_scalar(&format!(
             "SELECT count(*) FROM {source} s WHERE {predicate}"
@@ -155,6 +159,7 @@ async fn inspect(
         .fetch_one(&mut **tx)
         .await?;
         foreign_keys.push(HistoricalForeignKeyCheckV1 {
+            match_type,
             constraint: row.try_get("conname")?,
             source_table: source,
             target_table: target,

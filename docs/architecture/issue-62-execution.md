@@ -5055,3 +5055,31 @@ no temporary tables. The owned PostgreSQL instance stopped. Only disposable
 fixtures were used. Operator admission, trusted registration, atomic history and
 report persistence, complete relationships/sealed lineage, and real-snapshot
 acceptance are still required before declaring migration delivered.
+
+
+### 2026-09-15 transactional historical projection persistence
+
+Migration 076 adds immutable historical records keyed by original installation,
+table and complete original key, plus import reports and membership mappings.
+The Store importer stages native CSV in its original Operator transaction, checks
+projected native foreign keys (including MATCH FULL), rejects changed existing
+content, and commits records, report, mappings and idempotency receipt together.
+Dry-run persists only report/receipt. Authorization and replay precede source
+callbacks; authority is rechecked before commit. No active jobs, approvals or
+qualifications are created. Excluded or unavailable relationships remain explicit
+manual-review items; declared source constraints do not prove complete lineage.
+
+verify-I8Wnty passed workspace/all-target compilation, formatting, strict Clippy,
+3 new native PostgreSQL import tests, 6 native source/decoder tests and 2 artifact
+export tests. Tests cover dry-run, exact replay without source access, original
+UUIDv4/bigint identity, repeat-import deduplication, conflict after an earlier
+table insert rolling back membership/report/receipt, authorization before I/O,
+and altered projected relationships. Source remained unchanged and the owned
+PostgreSQL instance was stopped. web-verify-moEkvO generated native contracts
+with unchanged handwritten sources and reproducible output; it was generate-only,
+not a browser acceptance run.
+
+Trusted deployment registry, HTTP/CLI import and report/history views, artifact
+association, full semantic/sealed lineage, real old backup and recovery acceptance
+remain unfinished. No push, current-head remote CI/review, merge or Issue closure
+is claimed by these local checks.

@@ -4050,6 +4050,11 @@ export interface components {
             state: components["schemas"]["HandoffStateV1"];
             supersedes_handoff_id?: null | components["schemas"]["Id"];
         };
+        HistoricalImportRequestV1: {
+            dry_run: boolean;
+            export_ref: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         /** @enum {string} */
         HorizonKind: "FIXED_BARS" | "FIXED_DURATION" | "VARIABLE_INTERVAL";
         /** Format: uuid */
@@ -4392,6 +4397,10 @@ export interface components {
         };
         OperatorCommand: {
             /** @enum {string} */
+            operation: "MIGRATION_IMPORT";
+            request: components["schemas"]["HistoricalImportRequestV1"];
+        } | {
+            /** @enum {string} */
             operation: "CODEX_PROFILE_CREATE";
             request: components["schemas"]["CodexProfileCreateV1"];
         } | {
@@ -4589,7 +4598,7 @@ export interface components {
             target_id: components["schemas"]["Id"];
         };
         /** @enum {string} */
-        OperatorOperation: "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_APPROVE" | "HANDOFF_OFFER" | "APPROVAL_REVOKE" | "POLICY_AUTHORIZE" | "POLICY_REVOKE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
+        OperatorOperation: "MIGRATION_IMPORT" | "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_APPROVE" | "HANDOFF_OFFER" | "APPROVAL_REVOKE" | "POLICY_AUTHORIZE" | "POLICY_REVOKE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
         /** @enum {string} */
         PackageOriginV1: "DEMO" | "REAL";
         /** @enum {string} */

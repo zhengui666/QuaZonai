@@ -1024,4 +1024,4 @@ CSV 使用 PostgreSQL 原生 UTF-8、HEADER、FORCE_QUOTE、UTC与ISO时间编�
 核对 `report.json` 的 `missing_tables`、各表 `unsupported_schema`、`source_rows`/`projected_rows`、`columns`/`excluded_columns`、CSV对象引用和字节数。原行数等于投影行数只表示被选择列覆盖这些行，不能掩盖被排除的字段。报告中的原外键检查只覆盖旧库实际声明的约束。退出0不等于全量迁移、原数据/密封沿袭验收或导入成功；完整原备份、排除项处理、身份映射、可信注册及原子导入仍需完成。
 
 
-源检查的 `tables[].primary_key` 保留原主键全部字段。整数事件 ID、旧 UUIDv4 和复合键均按原安装/原表/原键追溯，不能强转成新系统 UUIDv7。导出时缺少或更改主键会将该表标为不支持。接收侧现已有原生 COPY HEADER MATCH、主键/字节/行数及原生回导逐字节校验，防止重复键、错误列头和静默精度舍入；目前这是内部临时表解码适配，不是可调用的持久导入命令或 `/migrations/import` 完成证据。
+源检查的 `tables[].primary_key` 保留原主键全部字段。整数事件 ID、旧 UUIDv4 和复合键均按原安装/原表/原键追溯，不能强转成新系统 UUIDv7。导出时缺少或更改主键会将该表标为不支持。接收侧现已有原生 COPY HEADER MATCH、主键/字节/行数及原生回导逐字节校验，防止重复键、错误列头和静默精度舍入。内部 Store 已支持事务化保存只读历史投影、原身份关联和报告；dry-run 只保存报告及回执，内容冲突整笔回滚，旧资格不继承。可信导出注册、HTTP/CLI 导入入口和完整迁移验收尚未接通，不能据内部测试调用生产导入。
