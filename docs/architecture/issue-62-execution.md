@@ -4779,3 +4779,10 @@ TypeScript及Vite构建通过；delivery与portfolio-candidates共54项三视口
 原审批历史可打开Offer确认，重新读取精确审批并遍历项目交付全部分页，按BigInt原delivery_sequence选择相同Mandate/下游/环境前版。重复Release或同Candidate已领取拒绝新提交，非OPERATOR及缺失原绑定的历史审批不能用于人工Offer。截止时间不能超过原Release/审批；POST只提交原Release/Approval/前版/期限。响应未知保持原body/key，回执核对原绑定和截止时间，成功不假称Claim或成交。
 
 TypeScript、Vite构建以及delivery/portfolio-candidates共60项三视口浏览器定向回归通过（约1分钟）。新用例覆盖第二页前版、超过JS安全整数范围的相邻序号、重复候选阻止、丢失响应同键重试及Modal无障碍。受控UI响应不替代原生审批准入/Offer竞争；自动化政策界面、审批撤销/拒绝管理、原生整链和其余T01–T42仍待完成。未push/review/merge/close。
+
+
+### 2026-09-15：审批列表原生 HTTP 与 CLI 范围验证
+
+扩展原资格Package→审批→Offer→Claim/ACK原生测试，使用实际临时TCP服务、真实机器凭据与原审批记录。未认证读取401，下游领取身份403，同项目RESEARCH_READ CLI读取原审批及证据引用，其他项目CLI404，只有EVIDENCE_READ的CLI403；非法limit为422。实际client approval list RELEASE_UUID --limit 100成功返回该原审批，非浏览器模拟响应。
+
+verify-VxO3kE首次编译发现测试ProjectCreate字段拼写错误，已按原合同修正。最终verify-Ha79sd通过workspace/all-targets编译、格式、严格Clippy和扩展original_package_claim_cli_transfers_once_and_replays测试（82.36秒），包含既有真实Claim/ACK/重放与新增读取断言。验证期间源文件不变，隔离PG已停止；只补测试，产品权限未改。该协议/数据库链仍不等于完整部署或所有T01–T42验收，未push/review/merge/close。

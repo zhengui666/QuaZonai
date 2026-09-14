@@ -624,6 +624,80 @@ async fn claim_http(
     let reference = vault.put("MACHINE_VERIFIER", verifier.as_bytes()).unwrap();
     prepared.publish(public, reference).await.unwrap();
     let token = format_machine_token(public, &secret).unwrap();
+    let foreign = store
+        .create_project(
+            operator,
+            "approval-list-foreign",
+            &ProjectCreate {
+                schema_version: SchemaV1,
+                name: "Other approval reader".into(),
+                description: "Native project boundary".into(),
+                fork_from_project_id: None,
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    let mut readers = Vec::new();
+    for (name, project, scope, status) in [
+        (
+            "own",
+            release.project_id,
+            MachineScope::ResearchRead,
+            reqwest::StatusCode::OK,
+        ),
+        (
+            "foreign",
+            foreign.id,
+            MachineScope::ResearchRead,
+            reqwest::StatusCode::NOT_FOUND,
+        ),
+        (
+            "scope",
+            release.project_id,
+            MachineScope::EvidenceRead,
+            reqwest::StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let principal = store
+            .create_principal(
+                operator,
+                &format!("approval-list-{name}"),
+                &PrincipalCreate {
+                    schema_version: SchemaV1,
+                    name: format!("Approval reader {name}"),
+                    kind: AssignablePrincipalKind::Cli,
+                    project_id: Some(project),
+                    downstream_id: None,
+                    enabled: true,
+                },
+            )
+            .await
+            .unwrap()
+            .resource;
+        let store::control::CredentialPreparation::New(prepared) = store
+            .prepare_credential_issuance(
+                operator,
+                &format!("approval-list-key-{name}"),
+                principal.id,
+                &CredentialIssue {
+                    schema_version: SchemaV1,
+                    scope_codes: vec![scope],
+                    expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                },
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("new read credential")
+        };
+        let public = Id::new();
+        let secret = random_capability();
+        let verifier = capability_verifier(&secret).unwrap();
+        let reference = vault.put("MACHINE_VERIFIER", verifier.as_bytes()).unwrap();
+        prepared.publish(public, reference).await.unwrap();
+        readers.push((name, format_machine_token(public, &secret).unwrap(), status));
+    }
     let credential = directory.path().join("claim-credential");
     fs::write(&credential, &token).unwrap();
     fs::set_permissions(&credential, fs::Permissions::from_mode(0o600)).unwrap();
@@ -643,6 +717,72 @@ async fn claim_http(
     listener.spawn(async move {
         axum::serve(socket, app).await.unwrap();
     });
+    let http = reqwest::Client::new();
+    let approvals_url = format!("{origin}/api/v2/releases/{}/approvals", release.id);
+    assert_eq!(
+        http.get(&approvals_url).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        http.get(&approvals_url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+    for (name, reader, expected) in readers {
+        let response = http
+            .get(&approvals_url)
+            .bearer_auth(&reader)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "approval reader {name}");
+        if expected != reqwest::StatusCode::OK {
+            continue;
+        }
+        let page: Page<ApprovalViewV1> = response.json().await.unwrap();
+        assert!(
+            page.items
+                .iter()
+                .any(|item| item.id == approval.id
+                    && item.evidence_set_id == approval.evidence_set_id)
+        );
+        assert!(page
+            .items
+            .iter()
+            .all(|item| item.release_id == release.id && item.project_id == release.project_id));
+        assert_eq!(
+            http.get(format!("{approvals_url}?limit=0"))
+                .bearer_auth(&reader)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY
+        );
+        let path = directory.path().join("approval-read-credential");
+        fs::write(&path, &reader).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let output = client::invoke(
+            &origin,
+            &path,
+            &[
+                "approval",
+                "list",
+                &release.id.to_string(),
+                "--limit",
+                "100",
+            ],
+            serde_json::Value::Null,
+        )
+        .await;
+        assert!(output.status.success(), "native approval list failed");
+        let page: Page<ApprovalViewV1> = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(page.items.iter().any(|item| item.id == approval.id));
+    }
     let id = offer.id.to_string();
     let body = serde_json::json!({"schema_version":1,"external_claim_id":"http-original-claim","package_schema_version":"1"});
     for replayed in [false, true] {
