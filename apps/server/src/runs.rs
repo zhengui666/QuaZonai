@@ -50,6 +50,14 @@ pub async fn get(
 ) -> Result<Json<RunSnapshotV1>, ApiError> {
     Ok(Json(state.store.get_run(&actor, id(path)?).await?))
 }
+#[utoipa::path(get,path="/api/v2/runs/{id}/rebalance",operation_id="get_run_rebalance",tag="Runs",params(("id"=Id,Path)),responses((status=200,body=contracts::runs::RunRebalanceViewV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem)))]
+pub async fn rebalance(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    path: Result<Path<Id>, PathRejection>,
+) -> Result<Json<contracts::runs::RunRebalanceViewV1>, ApiError> {
+    Ok(Json(state.store.run_rebalance(&actor, id(path)?).await?))
+}
 #[utoipa::path(post,path="/api/v2/runs/{id}/cancel",tag="Runs",params(("id"=Id,Path),("Idempotency-Key"=String,Header)),request_body=RunCancelV1,responses((status=202,body=CommandResult<RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
 pub async fn cancel(
     State(state): State<AppState>,

@@ -314,6 +314,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/data/validate", post(data::validate))
         .route("/api/v2/runs", get(runs::list))
         .route("/api/v2/runs/{id}", get(runs::get))
+        .route("/api/v2/runs/{id}/rebalance", get(runs::rebalance))
         .route("/api/v2/runs/{id}/cancel", post(runs::cancel))
         .route("/api/v2/runs/{id}/events", get(runs::events))
         .route("/api/v2/auth/machine", get(control::machine_session))
@@ -599,7 +600,7 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
 control::projects,control::project,control::create_project,control::update_project,
 control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,
-control::machine_session,control::issue_grant,runs::list,runs::get,runs::cancel,runs::events,
+control::machine_session,control::issue_grant,runs::list,runs::get,runs::rebalance,runs::cancel,runs::events,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,

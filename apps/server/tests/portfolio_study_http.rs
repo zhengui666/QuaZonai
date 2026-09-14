@@ -261,6 +261,34 @@ async fn http(
         );
     }
     let run = store.get_run(actor, run.unwrap()).await.unwrap();
+    let provenance_url = format!("{origin}/api/v2/runs/{}/rebalance", run.id);
+    assert_eq!(
+        client.get(&provenance_url).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let provenance = client
+        .get(&provenance_url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(provenance.status(), reqwest::StatusCode::OK);
+    let provenance: contracts::runs::RunRebalanceViewV1 = provenance.json().await.unwrap();
+    assert!(
+        provenance.rebalance.is_none(),
+        "manual Study has no automatic provenance"
+    );
+    let read = client::invoke(
+        &origin,
+        &release_credential,
+        &["run", "rebalance", &run.id.to_string()],
+        serde_json::Value::Null,
+    )
+    .await;
+    assert!(read.status.success());
+    let read: contracts::runs::RunRebalanceViewV1 = serde_json::from_slice(&read.stdout).unwrap();
+    assert!(read.rebalance.is_none());
+
     store
         .cancel_run(
             actor,

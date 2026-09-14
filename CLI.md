@@ -120,7 +120,7 @@ server client --origin https://research.example --credential-file /private/cli.t
 | `alpha list --project-id <id>/versions <id>/show <id> <version>/evaluations <version-id>` | 原Alpha/不可变版本及已发表Validation；登记状态不替代资格 |
 | `evidence show <id>/metrics <id>` | 三层评估状态、来源/期限及分页MetricValueV1；不下载受限报告、不披露Sealed |
 | `artifact list --project-id <id>/show <id>/submit/export <id>` | ArtifactCreate；export先核对元数据、media和字节数，再向stdout写原始字节 |
-| `run list/show <id>/cancel <id>/watch <id>` | RunCancelV1；list可选 `--project-id/--state`，watch只观察 |
+| `run list/show <id>/rebalance <id>/cancel <id>/watch <id>` | RunCancelV1；list可选 `--project-id/--state`，watch只观察 |
 | `operator-grant` | OperatorGrantRequest含完整command、target_id与新TOTP；201为单次人工授权 |
 | `credential-register` | IntegrationSecretCreate；仅返回用途/原生引用，不显示或存储请求明文 |
 
@@ -957,3 +957,5 @@ GET /api/v2/releases/{id}/approvals，按原ID倒序分页该Release全部历史
 `client forward weights PROJECT_UUID --limit 20 [--cursor SNAPSHOT_UUID]`读取
 GET /api/v2/projects/{id}/forward-weight-snapshots，需精确项目RESEARCH_READ。
 按原ID倒序分页原权重、下游/环境、报告引用和期限，不刷新来源或授予Build资格。
+
+`server client run rebalance RUN_UUID` 读取原自动再平衡关联；Build 与对应 Study 返回同一原政策、来源 Candidate、Build 请求及已登记 Study/Release。`rebalance: null` 表示没有该关联，不推断人工来源；历史政策编号不等于当前授权。

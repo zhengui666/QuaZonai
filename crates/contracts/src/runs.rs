@@ -67,3 +67,25 @@ pub struct RunSnapshotV1 {
     pub finished_at: Option<DateTime<Utc>>,
     pub revision: Revision,
 }
+
+/// Historical automatic rebalance facts, never current policy authority.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunRebalanceViewV1 {
+    pub schema_version: SchemaV1,
+    pub rebalance: Option<RunRebalanceV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunRebalanceV1 {
+    pub build_run_id: Id,
+    pub policy_id: Id,
+    pub downstream_id: Id,
+    pub source_candidate_id: Id,
+    pub decision_cutoff: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub request: crate::portfolio::PortfolioBuildRequestV1,
+    pub study_run_id: Option<Id>,
+    pub release_id: Option<Id>,
+}

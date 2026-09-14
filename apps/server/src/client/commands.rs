@@ -501,6 +501,10 @@ pub enum Artifact {
 }
 #[derive(Subcommand)]
 pub enum Run {
+    /// Read original automatic rebalance provenance.
+    Rebalance {
+        id: String,
+    },
     List {
         #[arg(long)]
         project_id: Option<String>,
@@ -1314,6 +1318,9 @@ impl Command {
             },
             Self::Run(command) => match command {
                 Run::Show { id } => Request::get::<RunSnapshotV1>(item("/api/v2/runs", id)?),
+                Run::Rebalance { id } => Request::get::<contracts::runs::RunRebalanceViewV1>(
+                    action("/api/v2/runs", id, "rebalance")?,
+                ),
                 Run::Cancel { id } => Request::write::<RunCancelV1, CommandResult<RunSnapshotV1>>(
                     POST,
                     action("/api/v2/runs", id, "cancel")?,

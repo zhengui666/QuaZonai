@@ -659,3 +659,5 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 同事务绑定唯一新 Cycle，不发放 Operator 身份或交付权限。无 Agent/HTTP 手动强制
 消费入口；可用 `cargo test --locked -p store --test forward_evaluation --test cycles`
 验证原生事务和受控协议，不能把该测试称为真实多日反馈/模型/OCI验收。
+
+组合 Build/Study 的运行详情提供“自动再平衡来源”，可核对原政策、来源 Candidate、输入、Runtime 版本及后继 Study/Release。它展示历史事实，不代替当前政策或交付批准。CLI 使用 `server client run rebalance RUN_UUID` 查询相同记录。

@@ -1748,6 +1748,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/runs/{id}/rebalance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_run_rebalance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/settings/codex": {
         parameters: {
             query?: never;
@@ -5753,6 +5769,24 @@ export interface components {
         };
         /** @enum {string} */
         RunKind: "AGENT_RESEARCH" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "FORWARD_EVALUATE" | "EXPORT" | "IMPORT";
+        RunRebalanceV1: {
+            build_run_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decision_cutoff: string;
+            downstream_id: components["schemas"]["Id"];
+            policy_id: components["schemas"]["Id"];
+            release_id?: null | components["schemas"]["Id"];
+            request: components["schemas"]["PortfolioBuildRequestV1"];
+            source_candidate_id: components["schemas"]["Id"];
+            study_run_id?: null | components["schemas"]["Id"];
+        };
+        /** @description Historical automatic rebalance facts, never current policy authority. */
+        RunRebalanceViewV1: {
+            rebalance?: null | components["schemas"]["RunRebalanceV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         RunSnapshotV1: {
             active_attempt_id?: null | components["schemas"]["Id"];
             /** Format: date-time */
@@ -15247,6 +15281,61 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_run_rebalance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRebalanceViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

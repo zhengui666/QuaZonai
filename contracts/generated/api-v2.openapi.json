@@ -20585,6 +20585,87 @@
         ],
         "type": "string"
       },
+      "RunRebalanceV1": {
+        "additionalProperties": false,
+        "properties": {
+          "build_run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision_cutoff": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "release_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/PortfolioBuildRequestV1"
+          },
+          "source_candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "study_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "build_run_id",
+          "policy_id",
+          "downstream_id",
+          "source_candidate_id",
+          "decision_cutoff",
+          "created_at",
+          "request"
+        ],
+        "type": "object"
+      },
+      "RunRebalanceViewV1": {
+        "additionalProperties": false,
+        "description": "Historical automatic rebalance facts, never current policy authority.",
+        "properties": {
+          "rebalance": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunRebalanceV1"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version"
+        ],
+        "type": "object"
+      },
       "RunSnapshotV1": {
         "additionalProperties": false,
         "properties": {
@@ -36619,6 +36700,91 @@
             "description": ""
           },
           "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Runs"
+        ]
+      }
+    },
+    "/api/v2/runs/{id}/rebalance": {
+      "get": {
+        "operationId": "get_run_rebalance",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRebalanceViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
             "content": {
               "application/problem+json": {
                 "schema": {

@@ -264,7 +264,8 @@ Forward输入且cutoff已到，不覆盖它；有效调仓时点取InputSet上�
 不自动重跑同cutoff，保留原Run供诊断。每日自动Build尝试数和已有不同Candidate交付数
 均受当前政策日额度限制，防止失败轮询耗尽预算；Project行锁串行化跨Worker准入。
 Build成功仅产生候选；后续仍需原政策独立Study/PASS、新Release及各自Paper/Live审批，
-不能因自动来源跳过这些步骤。实现证据与尚未接通的阶段记在执行记录，不以此合同代替交付。
+不能因自动来源跳过这些步骤。
+运行详情的只读再平衡查询复用原Run读取范围，返回原不可变Build账本及已登记Study/Release关联、原Build请求。人工或无关联运行返回明确空关联，不推断来源；政策更换或撤销不改写历史。Web与CLI展示这些事实，不将关联存在解释为当前授权。实现证据与尚未接通的阶段记在执行记录，不以此合同代替交付。
 
 自动Build成功并正式发布VALID候选后，可信Worker只为该原Build创建一次独立Study。
 Study绑定原自动记录的原政策及当前有效授权、原Candidate、Cycle、Runtime修订和

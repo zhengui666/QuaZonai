@@ -169,6 +169,8 @@ Mission没有这些配置操作权，版本存在不表示Alpha资格、组合�
 
 ### Run 事件与失效授权
 
+`client run rebalance RUN_UUID` 读取原自动 Build/Study 的政策、来源 Candidate、原请求及已登记 Study/Release；沿用 RUN_READ 项目/任务范围。空关联不能推断人工来源，历史关联不授当前政策或交付资格。
+
 Run取消需要近期Operator认证，或精确授权的CLI/AUTOMATION机器权限；研究Mission
 不得取消别人的任务。SSE保存最后的run UUID/十进制seq；兼容未知事件只保留公开
 envelope并推进cursor，不猜测业务状态。不兼容主版本应升级，不能跳过来伪造连续流。

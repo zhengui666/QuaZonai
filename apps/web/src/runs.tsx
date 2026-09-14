@@ -74,6 +74,7 @@ export function RunDetail({ id, close }: { id: string; close: () => void }) {
         ]} />
         <Alert type="info" showIcon title="取消是请求，不是即时终止。只有服务器返回 CANCELLED 才表示已取消。" />
         <Button danger disabled={!online || query.isError || cancel.isPending} onClick={() => { cancel.reset(); setTarget(query.data); }}>请求取消运行</Button>
+        {(query.data.kind === 'PORTFOLIO_BUILD' || query.data.kind === 'PORTFOLIO_SIMULATE') && <RunRebalance id={id} />}
         <RunEvents key={id} snapshot={query.data} />
       </>}
     </QueryPanel>
@@ -152,5 +153,30 @@ function RunEvents({ snapshot }: { snapshot: Run }) {
     <Typography.Paragraph type="secondary">{stopped ? '运行已终止' : online ? connection : '离线'}。仅显示本页订阅后的最近 100 项事件；完整状态以运行快照为准。</Typography.Paragraph>
     <ErrorNotice error={error} />
     {events.length === 0 ? <NoData text="本次订阅尚无新事件，不代表历史没有事件。" /> : <Timeline items={events.map(event => ({ key: event.seq, content: <><Typography.Text>{event.event_type} · #{event.seq}</Typography.Text><br /><Typography.Text type="secondary">{displayTime(event.occurred_at)}</Typography.Text></> }))} />}
+  </Card>;
+}
+
+function RunRebalance({ id }: { id: string }) {
+  const query = useQuery({ queryKey: ['run-rebalance', id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/runs/{id}/rebalance', { params: { path: { id } }, signal })), refetchInterval: 5000 });
+  const origin = query.data?.rebalance;
+  return <Card title="自动再平衡来源">
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+      {origin ? <>
+        <Typography.Paragraph type="secondary">以下为原始关联，不代表政策当前有效或已获交付批准。</Typography.Paragraph>
+        <Descriptions column={1} items={[
+          { key: 'policy', label: '原政策', children: origin.policy_id },
+          { key: 'source', label: '来源 Candidate', children: origin.source_candidate_id },
+          { key: 'mandate', label: 'Mandate', children: origin.request.mandate_id },
+          { key: 'downstream', label: '下游', children: origin.downstream_id },
+          { key: 'cutoff', label: '决策截止', children: displayTime(origin.decision_cutoff) },
+          { key: 'input', label: '原 Build 输入', children: origin.request.input_set_id },
+          { key: 'build', label: 'Build 运行', children: origin.build_run_id },
+          { key: 'study', label: 'Study 运行', children: origin.study_run_id ?? '尚未登记' },
+          { key: 'release', label: '新 Release', children: origin.release_id ?? '尚未登记' },
+          { key: 'runtime', label: '原 Runtime / 版本', children: `${origin.request.runtime_id} / ${origin.request.expected_runtime_revision}` },
+        ]} />
+        <details><summary>原 Build 请求（成员、权重来源与限额）</summary><pre className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(origin.request, null, 2)}</pre></details>
+      </> : query.data && <NoData text="此运行没有自动再平衡关联；不据此推断人工或其他来源。" />}
+    </QueryPanel>
   </Card>;
 }

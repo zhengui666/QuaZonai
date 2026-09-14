@@ -191,6 +191,8 @@ use utoipa::OpenApi;
     runs::RunState,
     runs::RunKind,
     runs::RunSnapshotV1,
+    runs::RunRebalanceViewV1,
+    runs::RunRebalanceV1,
     lifecycle::JobLimitsV1,
     lifecycle::RunCancelV1,
     lifecycle::RunListQuery,

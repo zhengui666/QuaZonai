@@ -1286,6 +1286,39 @@ impl Store {
         tx.commit().await?;
         Ok(run)
     }
+    pub async fn run_rebalance(
+        &self,
+        actor: &Actor,
+        id: Id,
+    ) -> Result<contracts::runs::RunRebalanceViewV1, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let scope = read_scope(&mut tx, actor).await?;
+        let run = snapshot(&run_row(&mut tx, id, false).await?)?;
+        within_scope(&run, scope)?;
+        let row = sqlx::query("SELECT b.run_id,b.policy_id,b.downstream_id,b.source_candidate_id,b.decision_cutoff,b.created_at,t.request,s.study_run_id,r.release_id FROM app.portfolio_rebalances b JOIN app.portfolio_build_tasks t ON t.run_id=b.run_id LEFT JOIN app.portfolio_rebalance_studies s ON s.build_run_id=b.run_id LEFT JOIN app.portfolio_rebalance_releases r ON r.build_run_id=b.run_id WHERE b.project_id=$1 AND (b.run_id=$2 OR s.study_run_id=$2)")
+            .bind(run.project_id.as_uuid()).bind(id.as_uuid()).fetch_optional(&mut *tx).await?;
+        let rebalance = row
+            .map(|row| -> Result<_, StoreError> {
+                Ok(contracts::runs::RunRebalanceV1 {
+                    build_run_id: db::id(row.try_get("run_id")?)?,
+                    policy_id: db::id(row.try_get("policy_id")?)?,
+                    downstream_id: db::id(row.try_get("downstream_id")?)?,
+                    source_candidate_id: db::id(row.try_get("source_candidate_id")?)?,
+                    decision_cutoff: row.try_get("decision_cutoff")?,
+                    created_at: row.try_get("created_at")?,
+                    request: serde_json::from_value(row.try_get("request")?)
+                        .map_err(|_| StoreError::Integrity)?,
+                    study_run_id: db::optional_id(&row, "study_run_id")?,
+                    release_id: db::optional_id(&row, "release_id")?,
+                })
+            })
+            .transpose()?;
+        tx.commit().await?;
+        Ok(contracts::runs::RunRebalanceViewV1 {
+            schema_version: SchemaV1,
+            rebalance,
+        })
+    }
     pub async fn list_runs(
         &self,
         actor: &Actor,

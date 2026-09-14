@@ -220,6 +220,22 @@ async fn check(
     assert_eq!(runs.len(), 1);
     let run = &runs[0];
     assert_eq!(run.kind, contracts::runs::RunKind::PortfolioBuild);
+    let origin = store
+        .run_rebalance(actor, run.id)
+        .await
+        .unwrap()
+        .rebalance
+        .unwrap();
+    assert_eq!(origin.build_run_id, run.id);
+    assert_eq!(origin.policy_id, policy.id);
+    assert_eq!(origin.source_candidate_id, candidate);
+    assert_eq!(origin.request.input_set_id, input);
+    assert_eq!(
+        serde_json::to_value(&origin.request.members).unwrap(),
+        serde_json::to_value(&build.members).unwrap()
+    );
+    assert!(origin.study_run_id.is_none() && origin.release_id.is_none());
+    assert!(store.run_rebalance(actor, Id::new()).await.is_err());
     assert_eq!(run.input_set_id, input);
     assert_eq!(run.cycle_id, Some(build.cycle_id));
     let (original, creator, bound_policy, seed): (serde_json::Value, String, uuid::Uuid, uuid::Uuid) = sqlx::query_as("SELECT t.request,a.created_by,b.policy_id,b.source_candidate_id FROM app.portfolio_build_tasks t JOIN app.run_native_tasks n ON n.run_id=t.run_id JOIN app.artifacts a ON a.id=n.parameters_artifact_id JOIN app.portfolio_rebalances b ON b.run_id=t.run_id WHERE t.run_id=$1")
@@ -413,6 +429,24 @@ async fn continue_release(
     assert_eq!(releases.len(), 1);
     let release = &releases[0];
     assert_eq!(release.evaluation_id, evaluation);
+    let origin = store
+        .run_rebalance(actor, study.id)
+        .await
+        .unwrap()
+        .rebalance
+        .unwrap();
+    assert_eq!(origin.study_run_id, Some(study.id));
+    assert_eq!(origin.release_id, Some(release.id));
+    let from_build = store
+        .run_rebalance(actor, origin.build_run_id)
+        .await
+        .unwrap()
+        .rebalance
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(origin).unwrap(),
+        serde_json::to_value(from_build).unwrap()
+    );
     assert_ne!(release.candidate_id, seed.candidate_id);
     assert_ne!(release.id, seed.id);
     assert_ne!(release.package_artifact_id, seed.package_artifact_id);

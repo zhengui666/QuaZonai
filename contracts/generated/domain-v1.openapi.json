@@ -17205,6 +17205,87 @@
         ],
         "type": "string"
       },
+      "RunRebalanceV1": {
+        "additionalProperties": false,
+        "properties": {
+          "build_run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decision_cutoff": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "release_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/PortfolioBuildRequestV1"
+          },
+          "source_candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "study_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          }
+        },
+        "required": [
+          "build_run_id",
+          "policy_id",
+          "downstream_id",
+          "source_candidate_id",
+          "decision_cutoff",
+          "created_at",
+          "request"
+        ],
+        "type": "object"
+      },
+      "RunRebalanceViewV1": {
+        "additionalProperties": false,
+        "description": "Historical automatic rebalance facts, never current policy authority.",
+        "properties": {
+          "rebalance": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunRebalanceV1"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version"
+        ],
+        "type": "object"
+      },
       "RunSnapshotV1": {
         "additionalProperties": false,
         "properties": {

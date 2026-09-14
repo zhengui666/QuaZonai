@@ -4892,3 +4892,12 @@ verify-k1QEWE 暴露测试 Runtime 缺日历能力声明；verify-6QFmE6 和 JBC
 新增 rebalance_daily_quota_survives_cancellation_and_policy_replacement：原生命令创建日额度为一的政策，自动 Build 入队后通过原 RunCancel 取消；同 cutoff 不重复。再次用相同内容授权新政策并原生登记新的 Forward Dataset/InputSet，连续两次自动准入均返回 automation_daily_quota，禁止发布参数，原 Run 数不变且不可变尝试记录仍为一。未手工改写状态、政策、账本或时间戳；验证取消和政策 UUID 不能释放已计入的 Build 尝试，不声称覆盖跨 UTC 午夜、跨 Mandate 或全部配额竞态。
 
 verify-FTm1Ft 因测试引用私有 RunState 路径编译失败，改为原公开 contracts::runs 路径。最终 verify-pCG2kL 通过 workspace/all-targets 编译、格式、严格 Clippy、9 项 Store（175.86 秒）及 1 项 Worker（15.60 秒），source_unchanged=true，隔离 PG 正常停止。产品实现未改动。受控科学响应仍非真实市场/T42证据；完整验收、最新 Head CI/review/合并与 Issue 关闭仍待完成。
+
+
+### 2026-09-15：自动再平衡的原来源查询、CLI 与运行详情
+
+GET /api/v2/runs/{id}/rebalance 复用原 Run 的读取授权及项目/Mission 范围，读取不可变 Build/Study/Release 账本和原 Build 请求。Build 与其 Study 返回同一来源；人工运行返回 rebalance:null，不推断作者。Web 组合运行详情和 client run rebalance 同步显示原政策、来源 Candidate、下游、原截止/InputSet/Runtime版本/成员/权重来源/限额及已登记后继。历史关系不等于当前政策有效或交付授权。没有新增调度、审批或文件读取入口。
+
+原生 Store 链验证入队时精确政策、成员及空后继，正式 Study/Release 后两运行读取一致；真实 HTTP 拒绝未认证查询，人工 Study 的 HTTP/原生 CLI 均返回空关联。verify-7fwzc5 首轮发现测试成员类型无 PartialEq；用实际 JSON 值比较修正，页面缺闭合括号同期修正。最终 verify-J0wm4K 通过 workspace/all-targets 编译、格式、严格 Clippy、10 项 CLI（84.35 秒）和 29 项 HTTP（424.76 秒），source_unchanged=true，隔离 PG 停止。
+
+web-verify-oRYRx1 从 Rust 合同生成 OpenAPI/TypeScript/Ajv，手写源未变且独立输出可复现。最终前端 typecheck 通过；首次 Vite 从仓库根目录调用找不到 index.html，改在 apps/web 执行后构建成功。浏览器 session61651 的运行来源、既有控制台和 PortfolioBuild 共 39 项通过（44.7 秒，390/768/1440），含原编号、超安全整数 Runtime 修订字符串及空关联展示。浏览器是受控响应展示验证，不是新实例 T42。完整科学/模型/市场数据、迁移恢复、双入口闭环及 CI/review/merge/Issue 关闭仍需完成；尚未 push。
