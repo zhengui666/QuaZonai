@@ -4870,3 +4870,9 @@ compile verify-AaU3R3通过；verify-J3pPwH仅测试Cycle Option断言编译失�
 新增两项Store反例：原Build成功后和原Study正式PASS后分别通过原生授权命令更换同内容的政策版本；新版本不能被旧Run借用、不能继续Study/Release，也不重复已有Build。原policy关联及已有Release保留。测试使用真实PostgreSQL/PGMQ和原ArtifactStore；科学结果仍为受控原生协议响应，不是实际数值/市场/T42证据。
 
 verify-1AhZpm静态/原Store通过，新增Worker断言误把SKIP LOCKED正常延后视为必须失败；修正为单次tick验证下游失败、并发允许延后并以随后普通tick验证推进，未放宽交付约束。verify-0ljzur通过。最终verify-lklCit通过workspace/all-targets编译、格式、严格Clippy、4项Store测试（51.63秒）与1项Worker测试（17.28秒），source_unchanged=true且隔离PG已停止。现有CI的store/server全集自动包含这些测试；本地rebalance-focus同步执行两入口。仍待Calendar原文件正向、UTC额度/失效竞态、自动运行来源可见性和完整T01–T42验收，未push/review/merge/close。
+
+### 2026-09-15：再平衡发布期间原政策失效
+
+新增三项原生Store反例，分别在自动Build参数、自动Study参数和自动Release Package真实写入ArtifactStore之后跨过原政策预约撤销的生效时刻。预约撤销使用原生PolicyRevoke命令；发布回调以PostgreSQL clock_timestamp/pg_sleep等待，不改写时间戳或政策。断言返回automation_expiry，Run/nativeTask/Artifact/PGMQ队列/Build→Study→Release关联/Release/Operator回执计数全部不变；文件确已产生且可经Project锁下的未引用对象清理删除。过期后再次调度不能读取来源或写文件。此处验证原政策有效期与预约撤销共同使用的截止门禁，不声称测试了所有时钟/失效竞态。
+
+verify-JrbGVL新增大型测试Future在资格准备组合中栈溢出，Worker正向通过；将资格准备、前置阶段和失效断言拆开，不增线程栈、不删断言。最终verify-nh08Vx通过workspace/all-targets编译、格式、严格Clippy、7项Store再平衡用例（100.69秒）及1项真实Worker用例（16.05秒），source_unchanged=true，隔离PG已停止。受控模型/科学声明仍不代替真实数值和T42证据。Calendar原文件正向、UTC日额度与完整交付验收仍待完成；未push/review/merge/close。
