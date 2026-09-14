@@ -13,6 +13,7 @@ pub mod codex;
 pub mod control;
 pub mod cycles;
 pub mod data;
+pub mod delivery;
 pub mod evidence;
 pub mod execution;
 pub mod execution_assumptions;
@@ -37,6 +38,7 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(components(schemas(
     http::Problem,
+    delivery::TargetPackageV1,
     portfolio::PortfolioStudyRequestV1,
     cycles::BriefFreezeV1,
     cycles::FrozenBriefV1,

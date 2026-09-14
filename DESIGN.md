@@ -3448,6 +3448,16 @@ limitations, provenance_artifact_refs
 
 全部对应不可变记录；无brokercredential、真实订单、quantity指令、账户写入口、实时止损/撤单/平仓。再平衡新包，不下游偷跑未经批准新研究代码。下游独立风险/账户/执行治理。下载只针对精确artifact/storage_version，不跳到相邻私有目录；claim失败不扩大权限重试。
 
+正文TargetPackageV1使用package_schema_version="1"、environment_origin=DEMO|REAL，
+不接受未知字段。qualification_refs至少2项，其余evaluation_refs/input_revision_refs/
+provenance_artifact_refs均非空、去重且保持原顺序；engine_versions与兼容市场能力引用
+均非空。targets使用明确target_weight字段，不能混入quantity/订单指令。
+constraints_summary保留原PortfolioConstraintsV1，exposure_tolerance保留原Mandate
+十进制容差；cost_assumption_ref指向原执行假设。与原PortfolioTargetsV1逐项核对
+Candidate、币种、目标顺序/权重和现金；Package起点不早于原目标asof，终点不晚于
+原目标valid_until。这个正文合同只检查结构和绑定，不替代当前来源/资格/政策/
+独立PORTFOLIO/PASS、Package持久化、Release或审批事务。
+
 ## B8. 完整自动化验收矩阵 T01–T42
 
 全部是本次交付项；共享基础fixture不等于空断言。每项输出CI日志、输入版本、产物/截图。真实收益不是预设必须出现的结果。

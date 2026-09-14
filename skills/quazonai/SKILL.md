@@ -58,6 +58,9 @@ Sealed机会绑定原Attempt并按根血缘累计，失败和取消不退款；�
 
 ### 研究产物
 
+TargetPackageV1 仅实现正文及原 Mandate/Candidate/目标绑定校验，不接受订单字段；
+没有 Package 发布命令，不得以结构通过替代 Release、当前资格或审批事务。
+
 POST /api/v2/artifacts 仅在凭据明确具有项目 ARTIFACT_SUBMIT 时使用，提交
 schema_version=1、project_id、kind=CODE/PARAMETERS/REPORT、content原文及
 Idempotency-Key；文本最多2 MiB UTF-8，JSON文档必须含整数schema_version=1。

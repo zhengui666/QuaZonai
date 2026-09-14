@@ -5950,6 +5950,14 @@
         ],
         "type": "object"
       },
+      "CandidateWeightsSourceV1": {
+        "enum": [
+          "FORWARD_SNAPSHOT",
+          "LAST_TARGET",
+          "NONE"
+        ],
+        "type": "string"
+      },
       "CatalogVersionQuery": {
         "additionalProperties": false,
         "properties": {
@@ -13884,11 +13892,38 @@
         ],
         "type": "string"
       },
+      "PackageOriginV1": {
+        "enum": [
+          "DEMO",
+          "REAL"
+        ],
+        "type": "string"
+      },
       "PackageSchemaVersion": {
         "enum": [
           "1"
         ],
         "type": "string"
+      },
+      "PackageTargetV1": {
+        "additionalProperties": false,
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "instrument_id": {
+            "type": "string"
+          },
+          "target_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "target_weight",
+          "currency"
+        ],
+        "type": "object"
       },
       "PitStatus": {
         "enum": [
@@ -17881,6 +17916,153 @@
           "EXPECTED_RETURN"
         ],
         "type": "string"
+      },
+      "TargetPackageV1": {
+        "additionalProperties": false,
+        "properties": {
+          "asof": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "base_currency": {
+            "type": "string"
+          },
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "capital_assumption": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "cash_weight": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "compatible_market_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "constraints_summary": {
+            "$ref": "#/components/schemas/PortfolioConstraintsV1"
+          },
+          "cost_assumption_ref": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "current_weights_source": {
+            "$ref": "#/components/schemas/CandidateWeightsSourceV1"
+          },
+          "engine_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "environment_origin": {
+            "$ref": "#/components/schemas/PackageOriginV1"
+          },
+          "evaluation_refs": {
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "exposure_tolerance": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "input_revision_refs": {
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "mandate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "package_schema_version": {
+            "$ref": "#/components/schemas/PackageSchemaVersion"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "provenance_artifact_refs": {
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "qualification_refs": {
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 256,
+            "minItems": 2,
+            "type": "array"
+          },
+          "release_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/PackageTargetV1"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "release_id",
+          "package_schema_version",
+          "environment_origin",
+          "project_id",
+          "candidate_id",
+          "mandate_id",
+          "qualification_refs",
+          "evaluation_refs",
+          "input_revision_refs",
+          "engine_versions",
+          "asof",
+          "valid_from",
+          "valid_until",
+          "base_currency",
+          "capital_assumption",
+          "current_weights_source",
+          "targets",
+          "cash_weight",
+          "constraints_summary",
+          "exposure_tolerance",
+          "cost_assumption_ref",
+          "compatible_market_capabilities",
+          "limitations",
+          "provenance_artifact_refs"
+        ],
+        "type": "object"
       },
       "TlsPolicy": {
         "enum": [

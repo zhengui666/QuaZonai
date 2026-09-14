@@ -320,7 +320,7 @@ pub struct MandateViewV1 {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CandidateWeightsSourceV1 {
     ForwardSnapshot,

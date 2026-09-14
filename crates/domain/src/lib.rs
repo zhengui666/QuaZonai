@@ -12,6 +12,7 @@ pub mod catalogs;
 pub mod codex;
 pub mod control;
 pub mod data;
+pub mod delivery;
 pub mod evidence;
 pub mod execution;
 pub mod experiments;

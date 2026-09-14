@@ -1,5 +1,8 @@
 # CLI 命令
 
+TargetPackageV1 正文合同及原 Mandate/Candidate/目标绑定校验已实现；这不是 Release
+创建命令，也不授予审批或交付资格。目前没有可用的 Package 发布 CLI。
+
 原生单币种模拟中 CurrencyPair 仅支持 MARGIN，Equity 支持 CASH/MARGIN；
 执行假设和实际运行共用锁定 Nautilus 0.63.0 的该限制，不自动转换旧配置。
 

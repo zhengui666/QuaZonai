@@ -3,6 +3,30 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Target-only Package body and immutable binding, 2026-09-14
+
+TargetPackageV1 now defines the strict version-one delivery body without order or
+quantity fields. Its domain validator reuses the original Mandate validation and
+exact Decimal types, binds project/Candidate/Mandate, capital, constraints,
+tolerance, execution assumptions, current-weight source and qualifications, and
+preserves the original target artifact's order, values and validity window.
+Database Candidate targets are matched by instrument identity because the read
+API orders those rows independently. Reference collections are bounded and unique.
+This is structure and original-record binding, not current eligibility, production
+provenance, independent PORTFOLIO/PASS, Package publication or Release approval.
+
+On 35c321e8 plus the frozen patch, all contracts/domain tests passed (native
+session 30522, exit 0), including 14 mutated package cases, forbidden target
+fields and reordered/mutated database snapshots. Final verify-gm9EM6 passed
+workspace check, format and strict Clippy with source unchanged. Earlier
+verify-R4736y also passed before the snapshot-order correction; it is not the
+final source evidence. web-verify-ZKFcFq regenerated only the domain OpenAPI twice
+with identical bytes and unchanged handwritten sources. No browser, database,
+OCI or full acceptance execution is claimed for this package-only change.
+No dependencies, GitHub review requests, push, merge or Issue closure were added.
+Release creation/publication, approval/delivery and the complete acceptance chain
+remain required work, not a follow-up scope reduction.
+
 ## Actual Worker Study terminal publication and ACK, 2026-09-14
 
 The positive HTTP Study test no longer calls the publication helper directly.
