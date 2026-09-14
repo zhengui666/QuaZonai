@@ -243,7 +243,7 @@ pub fn evaluation_policy(request: &EvaluationPolicyCreate) -> Result<(), DomainE
     Ok(())
 }
 
-fn metric_requirements(
+pub(crate) fn metric_requirements(
     requirements: &[MetricRequirementV1],
     prefix: &str,
 ) -> Result<(), DomainError> {

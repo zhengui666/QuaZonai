@@ -599,3 +599,5 @@ Mission/Automation/Downstream不能借此读取额外证据。Sealed及独立Rev
 ## Brief 草稿成员权限
 
 部署迁移仅对 `app.brief_data_bindings` 追加 DELETE，以支持同事务替换DRAFT成员；其他app表仍无DELETE授权。原生触发器锁住父Brief并拒绝FROZEN成员增删改，禁止移除触发器或授予TRUNCATE/TRIGGER。已部署实例运行正式 `server migrate --application-role ...` 补齐原生DML授权，而不是以数据库owner运行API。保存草稿不会执行模型、冻结Brief或发布资格。
+
+冻结政策使用 `client automation authorize PROJECT_UUID` 及绑定完整请求的POLICY_AUTHORIZE人工授权，内容见CLI和DESIGN A7.0。保存会新建不可变版本并更新项目当前政策；`automation list/show`读取原历史。`automation revoke POLICY_UUID`通过POLICY_REVOKE授权追加立即或未来撤销，`automation revocations`查看记录。政策管理已接通，自动审批/晋级消费仍待实现；登记成功不表示发生了审批或交付。

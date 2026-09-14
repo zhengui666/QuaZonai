@@ -1484,6 +1484,127 @@
         ],
         "type": "string"
       },
+      "AutomationAuthorizeV1": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/AutomationPolicyContentV1"
+          },
+          "expected_project_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_project_revision",
+          "content"
+        ],
+        "type": "object"
+      },
+      "AutomationModeV1": {
+        "enum": [
+          "MANUAL",
+          "AUTO_PAPER",
+          "AUTO_HANDOFF"
+        ],
+        "type": "string"
+      },
+      "AutomationPolicyContentV1": {
+        "additionalProperties": false,
+        "properties": {
+          "degradation_metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "type": "array"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "enabled_for_new_rebalances": {
+            "type": "boolean"
+          },
+          "mandate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "max_feedback_age_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "max_rebalances_per_day": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minimum_paper_elapsed_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/AutomationModeV1"
+          },
+          "promotion_metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "type": "array"
+          },
+          "required_paper_observations": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "mandate_id",
+          "downstream_id",
+          "required_paper_observations",
+          "minimum_paper_elapsed_seconds",
+          "max_feedback_age_seconds",
+          "promotion_metric_requirements",
+          "degradation_metric_requirements",
+          "valid_until",
+          "enabled_for_new_rebalances",
+          "max_rebalances_per_day"
+        ],
+        "type": "object"
+      },
+      "AutomationPolicyViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "authorized_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/components/schemas/AutomationPolicyContentV1"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "created_at",
+          "authorized_at",
+          "content"
+        ],
+        "type": "object"
+      },
       "BarLiquidityAssumptionV1": {
         "additionalProperties": false,
         "properties": {
@@ -14116,6 +14237,42 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "POLICY_AUTHORIZE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/AutomationAuthorizeV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "POLICY_REVOKE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/PolicyRevokeV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "RELEASE_REJECT"
                 ],
                 "type": "string"
@@ -14602,6 +14759,8 @@
           "RELEASE_APPROVE",
           "HANDOFF_OFFER",
           "APPROVAL_REVOKE",
+          "POLICY_AUTHORIZE",
+          "POLICY_REVOKE",
           "RELEASE_REJECT",
           "RELEASE_REOPEN",
           "BRIEF_FREEZE",
@@ -14668,6 +14827,69 @@
           "INVALID"
         ],
         "type": "string"
+      },
+      "PolicyRevocationViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "automation_policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "automation_policy_id",
+          "created_at",
+          "effective_at",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "PolicyRevokeV1": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_latest_revocation_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "reason"
+        ],
+        "type": "object"
       },
       "PortfolioBuildRequestV1": {
         "additionalProperties": false,

@@ -2674,6 +2674,12 @@ Release/下游的授权；不同元组409/约束失败。撤销/期限/人工拒
 
 Degradation 的 `(project_id,release_id,evaluation_id,policy_id)` 必须整体绑定：项目与 AutomationPolicy、Release 对应 Candidate、Evaluation 相同；政策的 mandate 与 Release 相同；Evaluation 的 subject 必须是该 Release 的精确 Candidate、kind=FORWARD，且输入是同项目已冻结的 FORWARD InputSet。必须存在精确 `(release_id,evaluation_id,input_set_id)` 的 Forward evidence window，不允许另一个项目、Alpha、Discovery、Candidate 或输入快照借出证据。新增观测不满足关联返回23503；升级发现旧关联违规则明确失败，不能删历史或重贴标签。关联有效不代表当前授权/新鲜度有效，Wake 领域事务仍检查期限、撤销、退化阈值和配额。
 
+### A7.0 冻结政策管理入口
+
+POST `/api/v2/projects/{id}/automation-policies` 接受 AutomationAuthorizeV1：schema_version=1、expected_project_revision、content。content 为 AutomationPolicyContentV1，含A7政策全部业务字段（mode、mandate_id、downstream_id、required_paper_observations、minimum_paper_elapsed_seconds、max_feedback_age_seconds、promotion_metric_requirements、degradation_metric_requirements、valid_until、enabled_for_new_rebalances、max_rebalances_per_day），不接project_id、authorized_at、id或可写历史。POLICY_AUTHORIZE近期人工grant绑定路径Project及完整请求；锁Project并核对revision、非ARCHIVED、精确同项目Mandate及启用下游；AUTO_PAPER须支持PAPER，AUTO_HANDOFF须支持PAPER和LIVE。两组指标复用正式MetricRequirementV1的非空、唯一、方法白名单、阈值及至少一个required检查；计数正且不溢出原数据库类型。201冻结原政策，并以同事务更新Project当前政策和revision；新版本不修改旧行或假称已运行自动授权。登记无需伪造readiness，真正审批/Offer/Claim必须重验当前原生观测和所有交付条件。
+
+GET同一路径按id倒序分页原政策，GET `/api/v2/automation-policies/{id}`读原版本；Operator或精确项目RESEARCH_READ CLI可读。POST `/api/v2/automation-policies/{id}/revoke`使用PolicyRevokeV1（schema_version、expected_latest_revocation_id、effective_at可null立即生效、reason），需POLICY_REVOKE人工grant绑定精确政策/完整请求，按Project/Policy锁追加原生撤销和最新id CAS；显式日期不得早于数据库当前时间，后续记录不能推迟最早生效时间。GET `/api/v2/automation-policies/{id}/revocations`按id倒序分页历史。归档项目允许撤销；原政策/审批/已领取事实不改写。可信消费端在每次未来审批/Offer/Claim检查最早生效记录，不能把政策登记或历史读取当作有效授权。CLI对应automation authorize PROJECT、list PROJECT、show POLICY、revoke POLICY、revocations POLICY。
+
 ### A7.1 逻辑消息与人工拒绝
 
 除了external_message_id，必须 `unique(forward_messages.handoff_id,stream_id,sequence,message_revision)`。换external ID重传不新增逻辑记录：字段及不可变report版本相同返回已有记录，冲突409。Correction必须同handoff/stream/sequence且revision递增、supersedes指向前版；缺前版/分叉待对齐不进观察窗口。只计已采纳最新版；重叠窗口不能简单加样本数。

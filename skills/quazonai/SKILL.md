@@ -273,3 +273,5 @@ CLI需目标Mandate的精确PORTFOLIO_BUILD人工grant。不得手填预测、�
 Codex账号操作仅供人工设置页或精确Operator grant的CLI使用，不是Mission MCP工具。
 登录、注销、取消与只读状态命令见CLI；模型不能索取设备码、Token、auth.json或账号密码。
 202只表示接受人工操作，UNKNOWN和等待截止不能宣称取消成功；操作结束后须重新探测。
+
+冻结政策管理见CLI automation authorize/list/show/revoke/revocations及DESIGN A7.0。授权绑定原项目revision与完整指标/范围/期限，撤销绑定原政策与最新撤销CAS。版本不可改写，最早撤销不能推迟；自动消费尚未实现，不得把登记视为自动审批、Paper验收或Live交付。

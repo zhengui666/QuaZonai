@@ -69,6 +69,8 @@ pub enum Command {
     #[command(subcommand)]
     Approval(Approval),
     #[command(subcommand)]
+    Automation(Automation),
+    #[command(subcommand)]
     Handoff(Handoff),
     #[command(subcommand)]
     Cycle(Cycle),
@@ -138,6 +140,28 @@ pub enum Handoff {
     Show { id: String },
 }
 
+#[derive(Subcommand)]
+pub enum Automation {
+    Authorize {
+        id: String,
+    },
+    Revoke {
+        id: String,
+    },
+    Show {
+        id: String,
+    },
+    List {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
+    Revocations {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
+}
 #[derive(Subcommand)]
 pub enum Approval {
     Revoke {
@@ -575,6 +599,48 @@ impl Command {
                 >(
                     PATCH, item("/api/v2/projects", id)?, 200, true
                 )?,
+            },
+            Self::Automation(command) => match command {
+                Automation::Authorize { id } => Request::write::<
+                    contracts::delivery::AutomationAuthorizeV1,
+                    CommandResult<contracts::delivery::AutomationPolicyViewV1>,
+                >(
+                    POST,
+                    action("/api/v2/projects", id, "automation-policies")?,
+                    201,
+                    true,
+                )?,
+                Automation::Revoke { id } => Request::write::<
+                    contracts::delivery::PolicyRevokeV1,
+                    CommandResult<contracts::delivery::PolicyRevocationViewV1>,
+                >(
+                    POST,
+                    action("/api/v2/automation-policies", id, "revoke")?,
+                    201,
+                    true,
+                )?,
+                Automation::Show { id } => {
+                    Request::get::<contracts::delivery::AutomationPolicyViewV1>(item(
+                        "/api/v2/automation-policies",
+                        id,
+                    )?)
+                }
+                Automation::List { id, page } => {
+                    Request::get::<Page<contracts::delivery::AutomationPolicyViewV1>>(action(
+                        "/api/v2/projects",
+                        id,
+                        "automation-policies",
+                    )?)
+                    .page(page)?
+                }
+                Automation::Revocations { id, page } => {
+                    Request::get::<Page<contracts::delivery::PolicyRevocationViewV1>>(action(
+                        "/api/v2/automation-policies",
+                        id,
+                        "revocations",
+                    )?)
+                    .page(page)?
+                }
             },
             Self::Handoff(command) => match command {
                 Handoff::Claim { id } => {

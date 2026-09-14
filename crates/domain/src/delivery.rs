@@ -151,3 +151,26 @@ pub fn downstream_capabilities(
     }
     Ok(())
 }
+
+/// Freeze the same strict numerical criteria used by formal evaluations.
+pub fn automation_policy(
+    request: &contracts::delivery::AutomationPolicyContentV1,
+) -> Result<(), DomainError> {
+    if request.required_paper_observations == 0
+        || request.required_paper_observations > i32::MAX as u32
+        || request.max_rebalances_per_day == 0
+        || request.max_rebalances_per_day > i32::MAX as u32
+        || request.minimum_paper_elapsed_seconds.get() == 0
+        || request.max_feedback_age_seconds.get() == 0
+    {
+        return Err(DomainError::Invalid("automation_policy_bounds"));
+    }
+    crate::research::metric_requirements(
+        &request.promotion_metric_requirements,
+        "promotion_metric_requirements",
+    )?;
+    crate::research::metric_requirements(
+        &request.degradation_metric_requirements,
+        "degradation_metric_requirements",
+    )
+}

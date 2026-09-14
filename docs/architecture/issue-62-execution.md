@@ -1,5 +1,35 @@
 # Issue62 implementation evidence
 
+## Operator-frozen automation policy management, 2026-09-14
+
+Native Store/HTTP/CLI management now reuses the original immutable automation_policies
+and append-only policy_revocations. POLICY_AUTHORIZE binds the original Project and
+complete request, checks Project revision, same-project Mandate and enabled downstream
+environments, freezes strict formal metric criteria and switches current policy in one
+transaction. It does not create approvals or delivery evidence. POLICY_REVOKE binds the
+original policy and complete reason/time/CAS, remains available after archival, and
+preserves original versions; consumers must check the earliest effective revocation.
+List/show/revocations use exact-project research authority and original native pagination.
+
+Over 14ea7325 plus this patch, verify-XBcozg passed workspace check/fmt/strict Clippy,
+142 contracts/domain, 47 PostgreSQL and 43 existing HTTP/CLI/Worker checks. The new CLI
+check exposed a fixture comparing nanosecond input with PostgreSQL microsecond time;
+the fixture now obtains its deadline from the database clock and waits for the next real
+TOTP window for its second human authorization. No authentication rule was weakened.
+verify-16hdCv repeated check/fmt/strict Clippy and passed the corrected native CLI test:
+exact human intent, original concurrent-safe receipts, current Project CAS/pointer,
+unchanged old versions, pagination, revocation replay, stale revocation CAS, database
+immutability, archival revocation and absence of automatically created approvals.
+Both runs retained source inventory and stopped their owned PostgreSQL instances.
+
+`.ai-bridge/web-verify-lGH6Sp` reproduced six generated outputs twice, handwritten
+sources unchanged. automation-web-* verifies TypeScript, 505 Vitest cases, five PWA
+checks and Vite build; the existing chunk warning remains.
+
+This verifies policy management only. FROZEN_POLICY automatic admission, original
+Forward evidence/promotion/degradation/Wake, delivery UI, actual science/model/OCI and
+complete T01–T42/main migration/recovery/current-head review remain outstanding.
+
 ## Original downstream ACK and immutable approval revocation, 2026-09-14
 
 HTTP/CLI ACK uses exact DOWNSTREAM_ACK project/downstream identity and the original

@@ -1,5 +1,19 @@
 # CLI 命令
 
+`client automation authorize PROJECT_UUID`提交AutomationAuthorizeV1到
+POST /api/v2/projects/{id}/automation-policies：schema_version=1、expected_project_revision、
+content（完整AutomationPolicyContentV1，字段见DESIGN A7.0）。POLICY_AUTHORIZE人工grant
+绑定原项目及完整请求；201冻结新版本并更新项目当前政策。旧版本不改写，409先重读
+项目revision。两组指标均使用正式MetricRequirementV1，不能用空列表默认通过。
+`client automation list PROJECT_UUID`和`show POLICY_UUID`读取原政策，需精确项目
+RESEARCH_READ。原登记和历史读取不证明当前有效性，也不代表已有自动审批或交付。
+`client automation revoke POLICY_UUID`提交PolicyRevokeV1到
+POST /api/v2/automation-policies/{id}/revoke：schema_version、expected_latest_revocation_id
+（首次null）、effective_at（null立即，或未来时刻）、reason；需精确POLICY_REVOKE人工grant。
+201只追加撤销，后续记录不能推迟最早生效时间，不停止已领取执行。归档项目仍可撤销。
+`client automation revocations POLICY_UUID --limit 50`分页原撤销；未知结果保留原键/正文。
+政策管理已接通，自动消费、晋级及对应界面尚未接通。
+
 `client handoff ack HANDOFF_UUID`提交HandoffAckV1到POST /api/v2/handoffs/{id}/ack：
 schema_version=1、external_ack_id（同Claim编号规则）、external_claim_id、
 outcome=ACKNOWLEDGED|REJECTED、reason_code及reason。幂等键须等于external_ack_id，

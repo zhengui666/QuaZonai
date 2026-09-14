@@ -349,3 +349,60 @@ pub struct ApprovalRevocationViewV1 {
     pub reason_code: Option<String>,
     pub reason: String,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AutomationModeV1 {
+    Manual,
+    AutoPaper,
+    AutoHandoff,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationPolicyContentV1 {
+    pub mode: AutomationModeV1,
+    pub mandate_id: Id,
+    pub downstream_id: Id,
+    pub required_paper_observations: u32,
+    pub minimum_paper_elapsed_seconds: crate::DbCounter,
+    pub max_feedback_age_seconds: crate::DbCounter,
+    pub promotion_metric_requirements: Vec<crate::evidence::MetricRequirementV1>,
+    pub degradation_metric_requirements: Vec<crate::evidence::MetricRequirementV1>,
+    pub valid_until: chrono::DateTime<chrono::Utc>,
+    pub enabled_for_new_rebalances: bool,
+    pub max_rebalances_per_day: u32,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationAuthorizeV1 {
+    pub schema_version: crate::SchemaV1,
+    pub expected_project_revision: crate::Revision,
+    pub content: AutomationPolicyContentV1,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationPolicyViewV1 {
+    pub id: Id,
+    pub project_id: Id,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub authorized_at: chrono::DateTime<chrono::Utc>,
+    pub content: AutomationPolicyContentV1,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyRevokeV1 {
+    pub schema_version: crate::SchemaV1,
+    pub expected_latest_revocation_id: Option<Id>,
+    pub effective_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub reason: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyRevocationViewV1 {
+    pub id: Id,
+    pub automation_policy_id: Id,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub effective_at: chrono::DateTime<chrono::Utc>,
+    pub reason: String,
+}

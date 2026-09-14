@@ -836,6 +836,127 @@
         ],
         "type": "string"
       },
+      "AutomationAuthorizeV1": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/AutomationPolicyContentV1"
+          },
+          "expected_project_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "expected_project_revision",
+          "content"
+        ],
+        "type": "object"
+      },
+      "AutomationModeV1": {
+        "enum": [
+          "MANUAL",
+          "AUTO_PAPER",
+          "AUTO_HANDOFF"
+        ],
+        "type": "string"
+      },
+      "AutomationPolicyContentV1": {
+        "additionalProperties": false,
+        "properties": {
+          "degradation_metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "type": "array"
+          },
+          "downstream_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "enabled_for_new_rebalances": {
+            "type": "boolean"
+          },
+          "mandate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "max_feedback_age_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "max_rebalances_per_day": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minimum_paper_elapsed_seconds": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/AutomationModeV1"
+          },
+          "promotion_metric_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricRequirementV1"
+            },
+            "type": "array"
+          },
+          "required_paper_observations": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "mandate_id",
+          "downstream_id",
+          "required_paper_observations",
+          "minimum_paper_elapsed_seconds",
+          "max_feedback_age_seconds",
+          "promotion_metric_requirements",
+          "degradation_metric_requirements",
+          "valid_until",
+          "enabled_for_new_rebalances",
+          "max_rebalances_per_day"
+        ],
+        "type": "object"
+      },
+      "AutomationPolicyViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "authorized_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/components/schemas/AutomationPolicyContentV1"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "created_at",
+          "authorized_at",
+          "content"
+        ],
+        "type": "object"
+      },
       "BarLiquidityAssumptionV1": {
         "additionalProperties": false,
         "properties": {
@@ -6734,6 +6855,53 @@
         ],
         "type": "object"
       },
+      "CommandResult_AutomationPolicyViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "authorized_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "content": {
+                "$ref": "#/components/schemas/AutomationPolicyContentV1"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Id"
+              }
+            },
+            "required": [
+              "id",
+              "project_id",
+              "created_at",
+              "authorized_at",
+              "content"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
       "CommandResult_BriefView": {
         "additionalProperties": false,
         "properties": {
@@ -8468,6 +8636,53 @@
               "auth_epoch",
               "authenticated_at",
               "expires_at"
+            ],
+            "type": "object"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "replayed",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "CommandResult_PolicyRevocationViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "replayed": {
+            "type": "boolean"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "automation_policy_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "effective_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "automation_policy_id",
+              "created_at",
+              "effective_at",
+              "reason"
             ],
             "type": "object"
           },
@@ -14111,6 +14326,42 @@
             "properties": {
               "operation": {
                 "enum": [
+                  "POLICY_AUTHORIZE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/AutomationAuthorizeV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "POLICY_REVOKE"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/components/schemas/PolicyRevokeV1"
+              }
+            },
+            "required": [
+              "request",
+              "operation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "operation": {
+                "enum": [
                   "RELEASE_REJECT"
                 ],
                 "type": "string"
@@ -14597,6 +14848,8 @@
           "RELEASE_APPROVE",
           "HANDOFF_OFFER",
           "APPROVAL_REVOKE",
+          "POLICY_AUTHORIZE",
+          "POLICY_REVOKE",
           "RELEASE_REJECT",
           "RELEASE_REOPEN",
           "BRIEF_FREEZE",
@@ -15003,6 +15256,62 @@
                 "origin",
                 "created_by",
                 "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_AutomationPolicyViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "authorized_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "content": {
+                  "$ref": "#/components/schemas/AutomationPolicyContentV1"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "created_at",
+                "authorized_at",
+                "content"
               ],
               "type": "object"
             },
@@ -17021,6 +17330,62 @@
         ],
         "type": "object"
       },
+      "Page_PolicyRevocationViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "automation_policy_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "effective_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "automation_policy_id",
+                "created_at",
+                "effective_at",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_PrincipalView": {
         "additionalProperties": false,
         "properties": {
@@ -17721,6 +18086,69 @@
           "INVALID"
         ],
         "type": "string"
+      },
+      "PolicyRevocationViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "automation_policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "automation_policy_id",
+          "created_at",
+          "effective_at",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "PolicyRevokeV1": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_latest_revocation_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "reason"
+        ],
+        "type": "object"
       },
       "PortfolioBuildRequestV1": {
         "additionalProperties": false,
@@ -22885,6 +23313,343 @@
         ],
         "tags": [
           "Authentication"
+        ]
+      }
+    },
+    "/api/v2/automation-policies/{id}": {
+      "get": {
+        "operationId": "automation_policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationPolicyViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Automation"
+        ]
+      }
+    },
+    "/api/v2/automation-policies/{id}/revocations": {
+      "get": {
+        "operationId": "automation_revocations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PolicyRevocationViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Automation"
+        ]
+      }
+    },
+    "/api/v2/automation-policies/{id}/revoke": {
+      "post": {
+        "operationId": "revoke_automation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyRevokeV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_PolicyRevocationViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Automation"
         ]
       }
     },
@@ -31869,6 +32634,246 @@
         ],
         "tags": [
           "Projects"
+        ]
+      }
+    },
+    "/api/v2/projects/{id}/automation-policies": {
+      "get": {
+        "operationId": "automation_policies",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AutomationPolicyViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Automation"
+        ]
+      },
+      "post": {
+        "operationId": "authorize_automation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "description": "One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[!-~]([ -~]*[!-~])?(?![\\s\\S])",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutomationAuthorizeV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult_AutomationPolicyViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": [],
+            "OperatorCommandGrant": []
+          }
+        ],
+        "tags": [
+          "Automation"
         ]
       }
     },

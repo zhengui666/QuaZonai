@@ -10,6 +10,7 @@ extern crate self as store;
 pub mod artifacts;
 pub mod auth;
 pub mod authority;
+mod automation;
 pub mod brief;
 pub mod codex_profiles;
 mod commands;
