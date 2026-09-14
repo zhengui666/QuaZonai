@@ -4915,3 +4915,10 @@ web-verify-oRYRx1 从 Rust 合同生成 OpenAPI/TypeScript/Ajv，手写源未变
 ### 2026-09-15：旧快照迁移字段与身份审计
 
 从 Git 删除提交313b0e27的父版本读取旧 domain_models/runtime_models/quant_runtime_models 定义，未恢复旧代码或连接用户数据库。确认 ResearchProgram/Mission/Cycle/MissionArtifact/AlphaModel 等原身份为 UUIDv4，Job 状态/租约不等同新Run；MissionArtifact 的 storage_uri 只是引用，不能据此认定实际可读。旧 downstream_systems 含 service_token_ciphertext/nonce/key_version，运行配置也含加密模型凭据；Job payload 和 Agent 内部聊天记录不能作为普通JSON全量导出。由此在 DESIGN §11 明确只读原快照、固定schema逐字段导出、原身份唯一映射、历史只读/重验、原件保留、产物真实读取及dry-run/原子导入报告边界。未将设计或字段审计视作导入实现；POST /migrations/import、可信导出注册/适配与真实旧快照验证仍需继续完成。
+
+
+### 2026-09-15：历史迁移追溯清单的首层校验
+
+新增 contracts::imports 的严格追溯清单与 domain::imports::inspect_manifest。原身份为原表/类别/原UUID，支持旧UUIDv4；不同表复用同UUID不合并。检查实际 Alembic 修订名0029_portfolio_candidate_exposure、重复身份、受支持表/类别、必需身份关系、关系目标表/存在性、UTC微秒精度和产物对象引用配对；不读取源文件、不生成新身份或授予旧PASS权限。表/身份外键元数据取自原Git模型声明，排除认证、运行秘密配置与内部聊天表。复核时纠正了复合外键的非id关联列被误当目标身份列的问题。
+
+最终3项新domain集成用例通过（含缺父关系、目标存在但类别不对、旧UUID及同UUID不同表、重复/精度/凭据表拒绝），domain全部tests目标的严格Clippy通过。此清单只是原始保留导出的追溯元数据，不是完整备份或已完成的dry-run；复合关系上下文/项目血缘核对、逐字段非秘密导出内容、真实产物读取、持久化报告与原子导入及HTTP/CLI尚未接通。当前没有开放迁移接口，不能据这些初始校验宣布旧数据已迁移。
