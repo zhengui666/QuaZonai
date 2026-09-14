@@ -2684,6 +2684,14 @@ POST `/api/v2/projects/{id}/automation-policies` 接受 AutomationAuthorizeV1：
 
 GET同一路径按id倒序分页原政策，GET `/api/v2/automation-policies/{id}`读原版本；Operator或精确项目RESEARCH_READ CLI可读。POST `/api/v2/automation-policies/{id}/revoke`使用PolicyRevokeV1（schema_version、expected_latest_revocation_id、effective_at可null立即生效、reason），需POLICY_REVOKE人工grant绑定精确政策/完整请求，按Project/Policy锁追加原生撤销和最新id CAS；显式日期不得早于数据库当前时间，后续记录不能推迟最早生效时间。GET `/api/v2/automation-policies/{id}/revocations`按id倒序分页历史。归档项目允许撤销；原政策/审批/已领取事实不改写。可信消费端在每次未来审批/Offer/Claim检查最早生效记录，不能把政策登记或历史读取当作有效授权。CLI对应automation authorize PROJECT、list PROJECT、show POLICY、revoke POLICY、revocations POLICY。
 
+### A7.0b 自动 Paper 授权消费
+
+自动消费要求原政策具有匹配完整冻结内容的原生 POLICY_AUTHORIZE 回执；历史导入或直接写表不能形成新增自动审批权限。下游以本项目 DOWNSTREAM_CLAIM 或 DOWNSTREAM_ACK 身份通过 GET /api/v2/projects/{id}/handoffs（cursor/limit，原 ID 倒序）发现仅绑定自己的 Offer；Operator 和本项目 RESEARCH_READ CLI 可读项目历史。列表不授予领取资格，Claim 仍重验当前准入。
+
+可信Worker按Project轮询当前政策，AUTO_PAPER和AUTO_HANDOFF都先走Paper。只选择当前Mandate最新原Release，不因最新版本被拒绝/失效而回退旧版本；原Candidate向同下游的Paper已出现Offer时不再换Release/Policy UUID重复提交。Project必须ACTIVE，当前政策精确绑定项目/Mandate/下游、启用新rebalance、处于授权时间内且未撤销；这些条件每次审批/Offer/Claim重验。政策替换、停用、归档或最早撤销生效后，旧冻结政策不得继续提供未来领取权限，已领取事实保留。
+
+自动Paper在一个Project/Candidate/下游/政策事务中复用原Release的全部来源/许可/资格/证据和当前readiness检查、原Candidate拒绝/REOPEN序号、原报告冻结与Offer最新前版CAS。冻结FROZEN_POLICY审批及Offer同事务创建；任何失败回滚两者，不冒用Operator身份、人工grant或Agent回执。审批/Offer期限不超过原来源、政策及最早撤销时间。每日配额以数据库UTC日、原Project/下游下已产生Offer的不同Candidate计数，跨政策版本和Mandate不清零，Paper/Live同Candidate不重复计次；原历史不可被复制UUID重置。此配额只限制新自动rebalance，不撤销已领取事实。多Worker采用项目行锁和原交付唯一性防重，轮询游标只影响调度公平性，不授予领域资格。AUTO_HANDOFF的Live阶段仍须A7规定的完整连续、新鲜、足量Paper和原Forward指标证据，Paper阶段成功不能代替晋级证据。
+
 ### A7.1 逻辑消息与人工拒绝
 
 除了external_message_id，必须 `unique(forward_messages.handoff_id,stream_id,sequence,message_revision)`。换external ID重传不新增逻辑记录：字段及不可变report版本相同返回已有记录，冲突409。Correction必须同handoff/stream/sequence且revision递增、supersedes指向前版；缺前版/分叉待对齐不进观察窗口。只计已采纳最新版；重叠窗口不能简单加样本数。

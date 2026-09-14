@@ -98,6 +98,9 @@ impl Worker {
         let mut jobs = JoinSet::new();
         let mut missions = JoinSet::new();
         let mut probes = JoinSet::new();
+        let mut automation: JoinSet<(Option<Id>, Result<(), WorkerFailure>)> = JoinSet::new();
+        let mut automation_cursor = None;
+        let mut next_automation = tokio::time::Instant::now();
         while !*shutdown.borrow() {
             if self.store.reconcile_handoffs().await.is_err() {
                 tracing::warn!("Offer expiry deferred; claim still checks the database clock");
@@ -124,6 +127,23 @@ impl Worker {
                     self.objects.clone(),
                     self.downstream_targets.clone(),
                 ));
+            }
+            while let Some(result) = automation.try_join_next() {
+                match result {
+                    Ok((cursor, result)) => {
+                        automation_cursor = cursor;
+                        if result.is_err() {
+                            tracing::warn!("automatic Paper deferred; original admission conditions remain required");
+                        }
+                    }
+                    Err(_) => tracing::warn!("automatic Paper task ended before a known result"),
+                }
+            }
+            if automation.is_empty() && tokio::time::Instant::now() >= next_automation {
+                next_automation = tokio::time::Instant::now() + Duration::from_secs(5);
+                let worker = self.clone();
+                let cursor = automation_cursor;
+                automation.spawn(async move { worker.process_automation(cursor).await });
             }
             if jobs.len() < self.parallelism {
                 let remaining = (self.parallelism - jobs.len()).min(32) as i32;
@@ -176,6 +196,11 @@ impl Worker {
                 }
             }
         }
+        while let Some(result) = automation.join_next().await {
+            if !matches!(result, Ok((_, Ok(())))) {
+                tracing::warn!("automatic Paper shutdown left no inferred delivery");
+            }
+        }
         while let Some(result) = probes.join_next().await {
             if !matches!(result, Ok(Ok(()))) {
                 tracing::warn!("downstream refresh left for bounded retry");
@@ -194,6 +219,34 @@ impl Worker {
             }
         }
         Ok(())
+    }
+
+    async fn process_automation(
+        &self,
+        cursor: Option<Id>,
+    ) -> (Option<Id>, Result<(), WorkerFailure>) {
+        let project = match self.store.automation_project_after(cursor).await {
+            Ok(Some(project)) => project,
+            Ok(None) => return (None, Ok(())),
+            Err(error) => return (cursor, Err(error.into())),
+        };
+        let reading = self.objects.clone();
+        let result = self
+            .store
+            .automate_paper(project, move |id, size| {
+                let objects = reading.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || objects.read(id, size))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                }
+            })
+            .await;
+        if let Ok(Some(offer)) = &result {
+            tracing::info!(handoff_id=%offer.id,"original frozen policy produced a Paper offer");
+        }
+        (Some(project), result.map(|_| ()).map_err(Into::into))
     }
 
     /// The same method is exercised by native PostgreSQL/TCP fault tests. It is

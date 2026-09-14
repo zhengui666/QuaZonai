@@ -3,7 +3,7 @@ use crate::{authority::Actor, commands, control::page, db, Store, StoreError};
 use contracts::{control::*, delivery::*, Id};
 use sqlx::{postgres::PgRow, Row};
 
-fn view(row: &PgRow) -> Result<AutomationPolicyViewV1, StoreError> {
+pub(crate) fn view(row: &PgRow) -> Result<AutomationPolicyViewV1, StoreError> {
     Ok(AutomationPolicyViewV1 {
         id: db::id(row.try_get("id")?)?,
         project_id: db::id(row.try_get("project_id")?)?,

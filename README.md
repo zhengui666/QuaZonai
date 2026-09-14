@@ -14,8 +14,8 @@
 | Portfolio Mandate | 真实 API/CLI 与 Ant Design 配置创建、列表及不可变详情；原 Operator 事务/项目版本锁及 Runtime 模型、镜像、政策和执行引用检查；不是完整 Candidate/Release 交付 |
 | Candidate 快照 | Store／API／CLI／Ant Design 查询已封口的原始头、成员和目标；保留执行、求解、证据状态与精确 Decimal，取消/失效候选不补目标。历史快照不授予当前资格，完整正向构建、独立验证与 Release 仍待验收 |
 | Candidate 保持模拟 | Store／HTTP／CLI 从原 Candidate、费用及 Forward 来源申请原生 Run，冻结可用时间并保留原有效期；独立人工授权与原预算入队。不是策略 walk-forward 或已发表 Evaluation，完整科学与交付链仍待验收 |
-| Release 人工审批 | 原 Package/来源重验、PAPER/LIVE许可、下游新鲜观察、决定CAS与原报告引用同事务冻结；HTTP/CLI原授权及历史读取。人工Offer已接通原审批重验、重复版本防护和前后版本关联；下游Claim/ACK、显式审批撤销与Worker到期/撤销补记、原生能力观察自动刷新已接通；自动审批和界面尚未接通，协议fixture不是生产验收 |
-| 冻结自动化政策 | 原生HTTP/CLI与精确人工grant冻结版本、项目revision CAS、历史分页及追加撤销；旧版本与已领取事实不改写。自动审批/晋级消费和界面尚未接通，登记不是交付 |
+| Release 人工审批 | 原 Package/来源重验、PAPER/LIVE许可、下游新鲜观察、决定CAS与原报告引用同事务冻结；HTTP/CLI原授权及历史读取。人工Offer已接通原审批重验、重复版本防护和前后版本关联；下游Claim/ACK、显式审批撤销与Worker到期/撤销补记、原生能力观察自动刷新已接通；自动 Paper 已接通，Live 晋级和界面尚未接通，协议fixture不是生产验收 |
+| 冻结自动化政策 | 原生HTTP/CLI与精确人工grant冻结版本、项目revision CAS、历史分页及追加撤销；旧版本与已领取事实不改写。自动 Paper 消费已接通，Live 晋级和界面尚未接通，登记不是交付 |
 | 领域基础 | 精确UUIDv7/bigint/Decimal、预算、租约/终态、Codex覆盖及required指标判定；不是完整数据库权限证明 |
 | 认证 API | Axum + PostgreSQL 原生会话、一次性本机初始化、六位 TOTP 登录、防重放、持久注销/设备撤销；普通服务使用非 owner 数据库角色 |
 | Project 与机器身份 | 真正的项目分页/创建/更新、乐观并发、不可变命令回执、机器 token 一次性签发与撤销；机器只读授权项目，人工 CLI 管理操作另需原生 TOTP 单次授权 |
@@ -141,3 +141,5 @@ Run 查询、取消和持久 SSE HTTP；完整路径和权限见 [CLI](CLI.md)�
 现有控制面还支持研究Brief草稿的真实创建、读取、版本化和完整替换，包含当前机器权限、近期人工认证、原始响应幂等和数据库CAS。接口与授权形状见[CLI.md](CLI.md)。冻结后的内容和数据绑定不可改写；本条不表示完整Brief冻结、原生研究、组合交付或Web产品已验收。
 
 后续增量已接通正式Brief冻结、显式Profile选择、Cycle原生数据准备、Mission事务准入和唯一Thread回执存储。Mission与科学计算复用现有队列而分别选择任务；原生Codex驱动、原Thread评估反馈和冻结选择已有受控测试，科学Job/OCI一体链路、真实账号与完整产品验收仍须继续，详见[执行证据](docs/architecture/issue-62-execution.md)。
+
+自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级仍待原始 Forward 证据链。

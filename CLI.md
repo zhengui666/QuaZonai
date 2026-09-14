@@ -12,7 +12,7 @@ POST /api/v2/automation-policies/{id}/revoke：schema_version、expected_latest_
 （首次null）、effective_at（null立即，或未来时刻）、reason；需精确POLICY_REVOKE人工grant。
 201只追加撤销，后续记录不能推迟最早生效时间，不停止已领取执行。归档项目仍可撤销。
 `client automation revocations POLICY_UUID --limit 50`分页原撤销；未知结果保留原键/正文。
-政策管理已接通，自动消费、晋级及对应界面尚未接通。
+政策管理及自动 Paper 消费已接通，Live 晋级及对应界面尚未接通。
 
 `client handoff ack HANDOFF_UUID`提交HandoffAckV1到POST /api/v2/handoffs/{id}/ack：
 schema_version=1、external_ack_id（同Claim编号规则）、external_claim_id、
@@ -56,7 +56,7 @@ RELEASE_APPROVE人工grant与幂等键。服务端重验原REAL Package、当前
 下游配置及新鲜探测，并在同一事务冻结原评估报告引用；不接收evidence_set_id。
 201返回不可变Approval，不能当作已领取或执行。`client approval show APPROVAL_UUID`
 读取 GET /api/v2/approvals/{id} 原元数据，需精确项目RESEARCH_READ。历史记录不是
-当前有效性证明；人工Offer/Claim已接通；自动审批及审批界面尚未接通。未知结果保持原请求/键。
+当前有效性证明；人工Offer/Claim已接通；自动 Paper 已接通，Live 晋级及审批界面尚未接通。未知结果保持原请求/键。
 
 `client release reject RELEASE_UUID`读取ReleaseRejectV1；`client release reconsider DECISION_UUID`
 读取ReleaseReopenV1，字段/最新决定CAS见DESIGN A7.1。需要对应精确目标的
@@ -924,3 +924,5 @@ IMPORT/EXPORT/DATA_VALIDATE 可由受信任内部服务以无 Cycle 路径准入
 迁移命令在专用连接取消请求级 statement_timeout，保持五秒锁等待限制；迁移完成
 或失败后关闭该连接。业务连接的请求超时不改变。升级前停止写入并备份；不要在
 生产库用零散 SQL 文件代替完整迁移入口。
+
+自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级仍待原始 Forward 证据链。

@@ -68,7 +68,7 @@ pub(super) async fn downstream(
     Ok(probe)
 }
 
-async fn decision(
+pub(super) async fn decision(
     tx: &mut Tx<'_>,
     candidate: Id,
     downstream: Id,
@@ -246,28 +246,7 @@ impl Store {
         {
             return Err(StoreError::Invalid("approval_expiry"));
         }
-        let evidence_set_id = Id::new();
-        let reports:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT DISTINCT artifact FROM app.evaluations e CROSS JOIN LATERAL unnest(ARRAY[e.report_artifact_id,e.method_versions_artifact_id]) artifact WHERE e.id=$1 AND e.subject_candidate_id=$2 AND e.project_id=$3")
-            .bind(original.evaluation_refs[0].as_uuid()).bind(candidate.as_uuid()).bind(project.as_uuid()).fetch_all(&mut *tx).await?;
-        if !(1..=2).contains(&reports.len()) {
-            return Err(StoreError::Integrity);
-        }
-        let evidence = contracts::research::InputSetCreate {
-            schema_version: SchemaV1,
-            project_id: project,
-            purpose: contracts::research::InputPurpose::Portfolio,
-            decision_cutoff: granted_at,
-            items: reports
-                .into_iter()
-                .map(|id| {
-                    Ok(contracts::research::InputItemV1::Artifact {
-                        artifact_id: db::id(id)?,
-                        role: contracts::research::ArtifactInputRole::Report,
-                    })
-                })
-                .collect::<Result<_, StoreError>>()?,
-        };
-        crate::research::insert_frozen_input(&mut tx, evidence_set_id, &evidence).await?;
+        let evidence_set_id = freeze_evidence(&mut tx, &original, granted_at).await?;
         let probe = downstream(
             &mut tx,
             request.downstream_id,
@@ -399,4 +378,34 @@ impl Store {
         tx.commit().await?;
         Ok(result)
     }
+}
+
+pub(super) async fn freeze_evidence(
+    tx: &mut Tx<'_>,
+    original: &TargetPackageV1,
+    granted_at: DateTime<Utc>,
+) -> Result<Id, StoreError> {
+    let evidence_set_id = Id::new();
+    let reports:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT DISTINCT artifact FROM app.evaluations e CROSS JOIN LATERAL unnest(ARRAY[e.report_artifact_id,e.method_versions_artifact_id]) artifact WHERE e.id=$1 AND e.subject_candidate_id=$2 AND e.project_id=$3")
+            .bind(original.evaluation_refs[0].as_uuid()).bind(original.candidate_id.as_uuid()).bind(original.project_id.as_uuid()).fetch_all(&mut **tx).await?;
+    if !(1..=2).contains(&reports.len()) {
+        return Err(StoreError::Integrity);
+    }
+    let evidence = contracts::research::InputSetCreate {
+        schema_version: SchemaV1,
+        project_id: original.project_id,
+        purpose: contracts::research::InputPurpose::Portfolio,
+        decision_cutoff: granted_at,
+        items: reports
+            .into_iter()
+            .map(|id| {
+                Ok(contracts::research::InputItemV1::Artifact {
+                    artifact_id: db::id(id)?,
+                    role: contracts::research::ArtifactInputRole::Report,
+                })
+            })
+            .collect::<Result<_, StoreError>>()?,
+    };
+    crate::research::insert_frozen_input(tx, evidence_set_id, &evidence).await?;
+    Ok(evidence_set_id)
 }

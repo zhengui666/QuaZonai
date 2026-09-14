@@ -1,5 +1,7 @@
 //! Real HTTP/PG admission from the original controlled qualification chain.
 //! No SQL-authored qualification. Actual Worker terminal publication/ACK, not OCI science.
+#[path = "support/automatic_paper.rs"]
+mod automatic_paper;
 #[path = "../../../tests/support/brief.rs"]
 mod brief_support;
 #[path = "support/client.rs"]
@@ -616,6 +618,24 @@ async fn claim_http(
         .unwrap(),
         1
     );
+    let listed = client::invoke(
+        &origin,
+        &credential,
+        &[
+            "handoff",
+            "list",
+            &offer.project_id.to_string(),
+            "--limit",
+            "1",
+        ],
+        serde_json::Value::Null,
+    )
+    .await;
+    assert!(listed.status.success());
+    let page: contracts::control::Page<HandoffViewV1> =
+        serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].id, offer.id);
     let shown = client::invoke(
         &origin,
         &credential,
@@ -655,4 +675,26 @@ async fn claim_http(
     }
     listener.abort_all();
     probe_server.abort();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn original_frozen_policy_automates_paper_without_live_promotion(pool: PgPool) {
+    let (store, actor, f, build, candidate, directory) =
+        Box::pin(qualified_portfolio::qualified_chain_policy(
+            pool.clone(),
+            cycle_support::Liquidity::None,
+            contracts::forward::ForwardEnvironmentV1::Live,
+            qualified_portfolio::release_policy,
+        ))
+        .await
+        .unwrap();
+    let (_, release, _) = Box::pin(qualified_portfolio::original_releases(
+        &pool, &store, &actor, &f, &build, candidate,
+    ))
+    .await
+    .unwrap();
+    Box::pin(automatic_paper::check(
+        &pool, &store, &actor, &f, &directory, &release,
+    ))
+    .await;
 }

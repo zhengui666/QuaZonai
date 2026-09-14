@@ -17092,6 +17092,124 @@
         ],
         "type": "object"
       },
+      "Page_HandoffViewV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approval_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "candidate_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "claimed_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "delivery_sequence": {
+                  "$ref": "#/components/schemas/DbCounter"
+                },
+                "downstream_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "environment": {
+                  "$ref": "#/components/schemas/ForwardEnvironmentV1"
+                },
+                "expires_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "external_claim_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "mandate_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "offered_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "release_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "revision": {
+                  "$ref": "#/components/schemas/Revision"
+                },
+                "state": {
+                  "$ref": "#/components/schemas/HandoffStateV1"
+                },
+                "supersedes_handoff_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "candidate_id",
+                "mandate_id",
+                "release_id",
+                "approval_id",
+                "downstream_id",
+                "environment",
+                "delivery_sequence",
+                "revision",
+                "state",
+                "offered_at",
+                "expires_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
       "Page_InputSetSummary": {
         "additionalProperties": false,
         "properties": {
@@ -33488,6 +33606,130 @@
         ],
         "tags": [
           "Execution assumptions"
+        ]
+      }
+    },
+    "/api/v2/projects/{id}/handoffs": {
+      "get": {
+        "operationId": "list_handoffs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_HandoffViewV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Release"
         ]
       }
     },

@@ -1,5 +1,35 @@
 # Issue62 implementation evidence
 
+## Atomic automatic Paper and scoped Offer discovery, 2026-09-14
+
+Trusted Worker consumes an ACTIVE Project's current original human-authorized policy.
+AUTO_PAPER and AUTO_HANDOFF both start with Paper; absent original Forward promotion
+proof, Live consumption is refused. Shared human admission supplies source/license,
+qualification, original report references, decision ordinal and fresh downstream checks.
+Original FROZEN_POLICY Approval and Offer commit atomically. Replacing/revoking/disabling
+the policy prevents future claims while preserving prior transfers and exact replay.
+A native POLICY_AUTHORIZE receipt must match the complete frozen policy. UTC-day quota
+counts distinct original Candidates across all project/downstream offers; replacing the
+policy does not reset it. Candidate Paper offers are not duplicated by another Release.
+
+GET /api/v2/projects/{id}/handoffs and CLI handoff list use original ID pagination.
+Downstream Claim/Ack identities see only their own project/downstream history; Operator
+and exact-project ResearchRead CLI may inspect project history. Reading grants no claim.
+
+Over c09767d1 plus this patch, verify-nlq3z8 and final verify-HlPzxG passed all-target
+check/fmt/strict Clippy and 236 checks (142 contracts/domain, 49 PostgreSQL, 45 HTTP/CLI/
+Worker). Native tests cover rollback of Approval/Offer/evidence on insertion failure,
+two actual Workers producing one Offer, direct concurrency, revoke-before-claim,
+original transferred replay after revocation, replacement-policy duplicate prevention,
+scoped list isolation and real CLI list/Claim/ACK. Sources stayed unchanged and owned
+PostgreSQL stopped. A second distinct Candidate quota-rejection scenario remains to be
+added; the current tests do not claim that case. These are controlled protocol fixtures,
+not actual market/model/OCI acceptance. web-verify-4VsEA3 reproduced six generated
+outputs twice without changing handwritten source; auto-paper-web-* passed TypeScript,
+505 Vitest cases, five PWA checks and Vite build (existing chunk warning only).
+Forward/promotion/degradation/Wake, delivery UI
+and full product acceptance remain unfinished; no push/review/merge/Issue closure.
+
 ## Trusted Worker downstream observation refresh, 2026-09-14
 
 Worker reuses the original downstream transport, secret resolution, strict capability

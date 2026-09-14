@@ -134,10 +134,21 @@ pub enum Alpha {
 
 #[derive(Subcommand)]
 pub enum Handoff {
+    List {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
     Offer,
-    Ack { id: String },
-    Claim { id: String },
-    Show { id: String },
+    Ack {
+        id: String,
+    },
+    Claim {
+        id: String,
+    },
+    Show {
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -643,6 +654,14 @@ impl Command {
                 }
             },
             Self::Handoff(command) => match command {
+                Handoff::List { id, page } => {
+                    Request::get::<Page<contracts::delivery::HandoffViewV1>>(action(
+                        "/api/v2/projects",
+                        id,
+                        "handoffs",
+                    )?)
+                    .page(page)?
+                }
                 Handoff::Claim { id } => {
                     Request::write::<
                         contracts::delivery::HandoffClaimV1,

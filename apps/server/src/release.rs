@@ -225,6 +225,18 @@ pub async fn offer(
     Ok((StatusCode::CREATED, Json(result)))
 }
 
+#[utoipa::path(get,path="/api/v2/projects/{id}/handoffs",operation_id="list_handoffs",tag="Release",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<HandoffViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn handoffs(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<HandoffViewV1>>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(state.store.handoffs(&actor, id, &query).await?))
+}
+
 #[utoipa::path(get,path="/api/v2/handoffs/{id}",operation_id="get_handoff",tag="Release",params(("id"=Id,Path)),responses((status=200,body=HandoffViewV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn handoff(
     State(state): State<AppState>,

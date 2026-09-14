@@ -274,6 +274,8 @@ Codex账号操作仅供人工设置页或精确Operator grant的CLI使用，不�
 登录、注销、取消与只读状态命令见CLI；模型不能索取设备码、Token、auth.json或账号密码。
 202只表示接受人工操作，UNKNOWN和等待截止不能宣称取消成功；操作结束后须重新探测。
 
-冻结政策管理见CLI automation authorize/list/show/revoke/revocations及DESIGN A7.0。授权绑定原项目revision与完整指标/范围/期限，撤销绑定原政策与最新撤销CAS。版本不可改写，最早撤销不能推迟；自动消费尚未实现，不得把登记视为自动审批、Paper验收或Live交付。
+冻结政策管理见CLI automation authorize/list/show/revoke/revocations及DESIGN A7.0。授权绑定原项目revision与完整指标/范围/期限，撤销绑定原政策与最新撤销CAS。版本不可改写，最早撤销不能推迟；Worker已消费当前有效政策产生原始Paper审批和Offer；登记不保证准入，协议fixture不等于Paper验收或Live交付。
 
 Worker下游刷新使用独立DOWNSTREAM_TARGETS与原DOWNSTREAM vault引用，原生短租约限制同下游并发。只刷新未领取Offer或当前有效自动政策所需观察，固定60秒观察期不延长；失败/过期不授予准入。探测发布与清理共用下游行锁，未知提交保留已引用对象。自动观察刷新不是冻结政策审批消费。
+
+自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级仍待原始 Forward 证据链。
