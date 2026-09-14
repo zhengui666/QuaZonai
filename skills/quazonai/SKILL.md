@@ -42,6 +42,7 @@ Store.start_portfolio_study复用原Operator授权、预算和PGMQ，核对原�
 不授PASS，原发表回执才能ACK。现有Candidate评估读取保留原类型，不借HOLD。
 正式入口为client portfolio study及POST /api/v2/portfolio-studies，仅六字段意图，
 CLI grant使用PORTFOLIO_STUDY命令，沿用PORTFOLIO_SIMULATE权限；不表示完成组合交付。
+候选详情可显式请求同一Study，原政策只读；未知结果保持原意图和幂等键重试。
 FIXTURE、PIT_UNVERIFIED、未核验方法和政策登记成功均不是 PASS，不触发交付。
 新政策分别冻结metric_requirements与sealed_metric_requirements，不能复制分折要求
 冒充封存阈值；历史null不补写，需人工新建完整政策和研究周期。

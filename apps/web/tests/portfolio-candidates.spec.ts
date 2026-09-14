@@ -2,7 +2,7 @@
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import type { Schema } from '../src/api';
-import { fixture, id, navigate, project, reply } from './fixtures';
+import { brief, fixture, id, navigate, project, reply, run } from './fixtures';
 
 const header: Schema['CandidateViewV1'] = {
   id: id(81), project_id: project.id, mandate_id: id(80), input_set_id: id(82), run_id: id(83),
@@ -25,6 +25,78 @@ const metric: Schema['MetricValueV1'] = {
   period_start: header.decision_asof, period_end: header.created_at, observation_count: '2',
   method_id: 'nautilus-analysis.SharpeRatio', method_version: '0.63.0', source_artifact_id: id(96), higher_is_better: true,
 };
+
+for (const hasPlan of [false, true]) test(`Study requires a frozen plan and retries exact bounded intent: plan=${hasPlan}`, async ({ page, context }) => {
+  await fixture(page);
+  const stamp = header.created_at;
+  const frozen = brief();
+  const requirement: Schema['MetricRequirementV1'] = { schema_version: 1, metric_code: 'PORTFOLIO_SHARPE_RATIO', scope: 'portfolio', comparator: 'GE', threshold_low: '0', threshold_high: null, minimum_observations: '2', required: true, method_allowlist: ['nautilus-analysis.SharpeRatio'] };
+  const policy: Schema['EvaluationPolicyView'] = { id: id(70), project_id: project.id, version: 1, created_at: stamp, question: 'Controlled Study UI',
+    metric_requirements: [requirement], portfolio_metric_requirements: [requirement], minimum_observations: 2, maximum_missing_fraction: '0', maximum_sealed_uses_per_lineage: 1, require_real_data: true, required_capabilities: [], validity_seconds: '60',
+    portfolio_study_plan: hasPlan ? { schema_version: 1, input_set_id: id(71), evaluation_start: stamp, manual_cutoffs: [stamp, '2026-09-13T00:02:00Z'] } : null,
+    selection_rule: { schema_version: 1, family_id: id(72), root_lineage_id: project.root_lineage_id, comparable_scope: 'FAMILY_LINEAGE', comparison_input_set_id: id(73), execution_assumptions_id: id(74), evaluation_kind: 'WALK_FORWARD', metric_code: 'IC', metric_scope: 'asset:0', method_id: 'controlled', method_version: '1', unit: 'SCORE', frequency: 'DAY', direction: 'MAXIMIZE', candidate_count: 2, missing_required_metric: 'INCONCLUSIVE', tie_break: 'EXPERIMENT_ID_ASC' },
+    split_policy: { schema_version: 1, kind: 'WALK_FORWARD', train_size: '2', test_size: '1', step_size: '1', purge_observations: '0', embargo_observations: '0', sealed_revision_id: id(75), interval_validation_required: true } };
+  const mandate: Schema['MandateViewV1'] = { id: header.mandate_id, project_id: project.id, version: 1, created_at: stamp,
+    content: { base_currency: 'USD', capital_assumption: '1000', universe_version_id: id(76), required_evaluation_policy_id: policy.id, execution_assumptions_id: id(74), objective: 'MIN_RISK', risk_measure: 'VARIANCE', exposure_tolerance: '0.000001',
+      constraints: { schema_version: 1, long_only: true, min_cash_weight: '0', max_cash_weight: '1', min_asset_weight: '0', max_asset_weight: '1', max_gross_exposure: '1', min_net_exposure: '0', max_net_exposure: '1', max_turnover_per_rebalance: '2', group_bounds: [], asset_overrides: [], transaction_costs_ref: id(77) },
+      rebalance_schedule: { schema_version: 1, kind: 'MANUAL', interval_seconds: null, calendar_ref: null, session_offset_seconds: null, timezone: 'UTC', max_input_age_seconds: 60, target_ttl_seconds: 300 },
+      covariance_estimator: { schema_version: 1, adapter_kind: 'SAMPLE_COVARIANCE', upstream_class: 'ndarray_stats::CorrelationExt::cov', upstream_version: '0.7.0', parameters: { ddof: 1 } },
+      alpha_ensemble: { schema_version: 1, adapter_kind: 'FIXED_WEIGHTED_FORECAST', upstream_class: 'ndarray::ArrayBase::dot', upstream_version: '0.17.1', parameters: {} },
+      optimizer: { schema_version: 1, adapter_kind: 'CLARABEL_QP', upstream_class: 'clarabel::solver::DefaultSolver', upstream_version: '0.11.1', parameters: { schema_version: 1, risk_aversion: '1', max_iterations: 200, solver_tolerance: '0.0000000001', accept_inaccurate: false, cvar_confidence: null, risk_budgeting: null } } } };
+  const cycle: Schema['CycleViewV1'] = { schema_version: 1, id: id(40), project_id: project.id, brief_id: frozen.id, ordinal: 1, revision: '1', trigger: 'OPERATOR', state: 'RUNNING', outcome: null, budget: frozen.content.budget, reserved_experiments: 0, used_experiments: 1, reserved_cpu_seconds: '0', initial_run_id: run.id, researcher_profile: { profile_id: id(30), expected_revision: '1' }, reviewer_profile: { profile_id: id(31), expected_revision: '1' }, next_action: 'WAITING_FOR_DATA_VALIDATION', started_at: stamp, ended_at: null, created_at: stamp, available_actions: ['VIEW_BRIEF', 'VIEW_RUNS', 'VIEW_EXPERIMENTS'] };
+  const runtime: Schema['RuntimeView'] = { id: id(20), revision: '9007199254740993', protocol_version: 1, credential_configured: true, ca_configured: false, created_at: stamp, updated_at: stamp, configuration: { name: 'Controlled Study Runtime', endpoint: 'https://runtime.example', development_http: false, tls_policy: 'SYSTEM_CA', enabled: true, allowed_capabilities: ['PORTFOLIO_SIMULATE'] } };
+  const writes: { body: unknown; key: string | null }[] = [];
+  await page.route('**/api/v2/**', async route => {
+    const request = route.request(); const path = new URL(request.url()).pathname;
+    if (path.endsWith('/portfolio-mandates')) return reply(route, { schema_version: 1, items: [], next_cursor: null });
+    if (path.endsWith('/portfolio-candidates')) return reply(route, { schema_version: 1, items: [header], next_cursor: null });
+    if (path === `/api/v2/portfolio-candidates/${header.id}`) return reply(route, { header, members: [], targets: [] });
+    if (path === `/api/v2/portfolio-candidates/${header.id}/evaluations`) return reply(route, { schema_version: 1, items: [], next_cursor: null });
+    if (path === `/api/v2/portfolio-mandates/${mandate.id}`) return reply(route, mandate);
+    if (path === `/api/v2/evaluation-policies/${policy.id}`) return reply(route, policy);
+    if (path === `/api/v2/projects/${project.id}/cycles`) return reply(route, { schema_version: 1, items: [cycle], next_cursor: null });
+    if (path === `/api/v2/cycles/${cycle.id}`) return reply(route, cycle);
+    if (path === '/api/v2/integrations/runtimes') return reply(route, { schema_version: 1, items: [runtime], next_cursor: null });
+    if (path === `/api/v2/integrations/runtimes/${runtime.id}`) return reply(route, runtime);
+    if (path === '/api/v2/portfolio-studies') {
+      writes.push({ body: request.postDataJSON() as unknown, key: await request.headerValue('Idempotency-Key') });
+      if (writes.length === 1) return route.abort('failed');
+      return reply(route, { schema_version: 1, replayed: true, resource: { ...run, cycle_id: cycle.id, kind: 'PORTFOLIO_SIMULATE', input_set_id: id(71) } }, 202);
+    }
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '组合');
+  await page.getByRole('combobox', { name: '选择组合所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: project.name }).click();
+  await page.getByRole('tab', { name: '候选快照', exact: true }).click();
+  await page.getByRole('button', { name: header.id, exact: true }).click();
+  await page.getByRole('button', { name: '请求组合 Study', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '确认请求组合 Study', exact: true });
+  const submit = dialog.getByRole('button', { name: '确认请求 Study', exact: true });
+  await expect(submit).toBeDisabled();
+  for (const [label, value] of [['选择 Study Cycle', cycle.id], ['选择 Study Runtime', runtime.id]]) {
+    await dialog.getByRole('combobox', { name: label, exact: true }).click();
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: value }).click();
+  }
+  if (!hasPlan) {
+    await expect(dialog.getByText('原政策没有 Study 计划，不能启动研究。', { exact: true })).toBeVisible();
+    await expect(submit).toBeDisabled(); expect(writes).toEqual([]); return;
+  }
+  await expect(submit).toBeEnabled();
+  await context.setOffline(true);
+  await expect(submit).toBeDisabled();
+  await context.setOffline(false);
+  await dialog.getByLabel('CPU 秒数上限', { exact: true }).fill('9007199254740993');
+  await submit.click();
+  await expect(dialog.getByText('请求结果尚未确认。', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('CPU 秒数上限', { exact: true })).toBeDisabled();
+  runtime.revision = '9007199254740994';
+  await dialog.getByRole('button', { name: '重试同一请求', exact: true }).click();
+  await expect(dialog.getByText('Study Run 已登记。', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0]); expect(writes[0]?.key).toBeTruthy();
+  expect(writes[0]?.body).toEqual({ schema_version: 1, candidate_id: header.id, cycle_id: cycle.id, runtime_id: runtime.id, expected_runtime_revision: '9007199254740993', limits: { schema_version: 1, experiments: 0, cpu_seconds: '9007199254740993', wall_seconds: 60, memory_mib: 1024, output_bytes: '1048576' } });
+  expect((await new AxeBuilder({ page }).include('.ant-modal').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+});
 
 for (const kind of ['FORWARD', 'PORTFOLIO'] as const) for (const wrongSubject of [false, true]) test(`candidate evaluations preserve original metrics and reject other subjects: kind=${kind}, wrong=${wrongSubject}`, async ({ page }) => {
   const original = { ...evaluation, evaluation_kind: kind };

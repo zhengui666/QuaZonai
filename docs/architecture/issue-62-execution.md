@@ -3,6 +3,32 @@
 DESIGN.md is the normative contract. This file records implementation and
 version-bound evidence, not a second design or a claim that Issue #62 is complete.
 
+## Explicit Study submission UI, 2026-09-14
+
+Candidate detail now offers an explicit Study request, retaining the original
+Candidate and reading its Mandate and frozen policy plan. The user selects a
+running project Cycle, registered enabled Runtime and bounded resource limits;
+the form reads the Runtime revision and submits only the existing six-field DTO.
+It exposes no source/window/member/fee overrides. Store remains the authoritative
+admission check, including original Runtime, source, policy, capability and budget.
+
+The existing Intent, ResourceSelect, guard, counters, error display and RunDetail
+are reused. Missing plans, stale/failed source reads and offline state disable new
+submission. Unknown results freeze the original request and idempotency key,
+including Runtime revision; a 202 receipt is labeled registration, not PASS or
+delivery permission. Closing an unknown request warns that it does not cancel it.
+
+web-verify-vEEgI2 on 6f432f2b plus the frozen UI patch passed: all six allowed
+native generations repeated identically with handwritten sources unchanged,
+typecheck, unit tests, build, settings browser suite and all-site browser suite.
+New three-viewport tests cover missing plans/no writes, offline disabling, exact
+large counters, lost response and identical retry despite Runtime revision change,
+and accessibility. First standalone typecheck caught a test-only comparator typo
+(GTE instead of contractual GE); the fixture was corrected before final validation.
+These controlled browser records are not real market/native execution acceptance.
+No Rust/native engine changes, new dependencies, push, review, merge or closure.
+Positive HTTP-to-native Study acceptance and remaining delivery contracts continue.
+
 ## Formal Study HTTP/CLI and original evaluation views, 2026-09-14
 
 POST /api/v2/portfolio-studies and client portfolio study submit the existing

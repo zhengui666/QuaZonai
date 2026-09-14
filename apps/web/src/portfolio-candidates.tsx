@@ -3,8 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, dataOf, displayTime } from './api';
 import type { Schema } from './api';
-import { NoData, Pager, QueryPanel } from './ui';
+import { NoData, Pager, QueryPanel, useOnline } from './ui';
 import { EvaluationDetail } from './alphas';
+import { PortfolioStudy } from './portfolio-study';
 
 type Candidate = Schema['CandidateViewV1'];
 const snapshotNotice = '这是原发布时的不可变记录。历史 VALID 和目标权重不表示当前资格或 Release 授权；不得当成真实账户仓位。';
@@ -35,16 +36,19 @@ export function Candidates({ project }: { project: string }) {
 }
 
 function Detail({ id, project, close }: { id: string; project: string; close: () => void }) {
+  const [study, setStudy] = useState(false);
+  const online = useOnline();
   const query = useQuery({ queryKey: ['portfolio-candidate', project, id], queryFn: async ({ signal }) => {
     const detail = dataOf(await api.GET('/api/v2/portfolio-candidates/{id}', { params: { path: { id } }, signal }));
     if (detail.header.id !== id || detail.header.project_id !== project) throw new Error('服务器返回了其他候选记录。');
     return detail;
   } });
   const header = query.data?.header;
-  return <Drawer title="不可变候选快照" open onClose={close} width={900}>
+  return <Drawer title="不可变候选快照" open onClose={() => { if (!study) close(); }} closable={!study} maskClosable={!study} width={900}>
     <Alert showIcon type="info" title="历史状态不授予当前资格" description={snapshotNotice} />
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       {header && query.data && <>
+        <Button disabled={!online || query.isError || query.isFetching || header.execution_status !== 'SUCCEEDED' || header.evidence_status !== 'VALID'} onClick={() => setStudy(true)}>请求组合 Study</Button>
         <Descriptions column={1} items={Object.entries(header).map(([key, value]) => ({ key, label: key, children: <Typography.Text className="break-word">{value ?? '未生成'}</Typography.Text> }))} />
         <Typography.Title level={2}>原始 Alpha 成员</Typography.Title>
         <Table rowKey="alpha_version_id" dataSource={query.data.members} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 800 }} columns={[
@@ -60,6 +64,7 @@ function Detail({ id, project, close }: { id: string; project: string; close: ()
         {!query.isError && <CandidateEvaluations id={id} project={project} />}
       </>}
     </QueryPanel>
+    {study && header && <PortfolioStudy candidate={header} close={() => setStudy(false)} />}
   </Drawer>;
 }
 

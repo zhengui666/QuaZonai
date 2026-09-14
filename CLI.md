@@ -615,6 +615,7 @@ schema_version/cycle_id/candidate_id/runtime_id/expected_runtime_revision/limits
 正式入口为POST /api/v2/portfolio-studies及client portfolio study，从stdin读取
 该严格意图，需Idempotency-Key；CLI使用同一PORTFOLIO_STUDY命令签发Operator grant。
 它绑定原成员、费用和政策，复用PORTFOLIO_SIMULATE权限、预算/PGMQ，返回202 Run。
+网页候选详情的“请求组合 Study”提交同一六字段意图；只读原计划，不覆盖输入或成员。
 可信Worker为原Study绑定发表独立PORTFOLIO评估，现有Candidate评估读取保留
 PORTFOLIO与FORWARD类型。完整三报告/Arrow及来源重验、发表回执后才允许ACK；
 取消/失败/不可行不产生PASS，不能调用HOLD结果替代Study或据此自动交付。
