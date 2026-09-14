@@ -40,3 +40,42 @@ for (const wrong of [false, true]) test(`Release project pagination and exact hi
   expect(state.commands).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 });
+
+for (const wrong of [false, true]) test(`Handoff original Claim history and project binding: wrong=${wrong}`, async ({ page }) => {
+  const state = await fixture(page); const cursors: (string | null)[] = [];
+  const handoff: Schema['HandoffViewV1'] = {
+    id: id(202), project_id: project.id, candidate_id: id(80), mandate_id: id(81), release_id: release.id,
+    approval_id: id(84), downstream_id: id(85), environment: 'PAPER', delivery_sequence: '9007199254740993', revision: '1',
+    state: 'CLAIMED', supersedes_handoff_id: id(201), offered_at: release.created_at, expires_at: release.valid_until,
+    claimed_at: '2026-09-13T00:02:00Z', external_claim_id: 'original-downstream-claim', acknowledged_at: null,
+  };
+  await page.route('**/api/v2/**', route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === `/api/v2/projects/${project.id}/releases`) return reply(route, { schema_version: 1, items: [], next_cursor: null });
+    if (url.pathname === `/api/v2/projects/${project.id}/handoffs`) {
+      const cursor = url.searchParams.get('cursor'); cursors.push(cursor);
+      return reply(route, { schema_version: 1, items: [{ ...handoff, id: cursor ? id(201) : handoff.id }], next_cursor: cursor ? null : handoff.id });
+    }
+    if (url.pathname === `/api/v2/handoffs/${handoff.id}`) return reply(route, { ...handoff, project_id: wrong ? id(999) : project.id });
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目' }).click();
+  await page.getByText(`${project.name} · ${project.id}`, { exact: true }).click();
+  await page.getByRole('tab', { name: '交付记录', exact: true }).click();
+  await expect(page.getByText('9007199254740993', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
+  await page.getByRole('button', { name: '上一页', exact: true }).click();
+  await page.getByRole('button', { name: `Handoff ${handoff.id.slice(-8)}`, exact: true }).click();
+  const detail = page.getByRole('dialog', { name: '原交付记录' });
+  if (wrong) {
+    await expect(detail.getByText(handoff.external_claim_id!, { exact: true })).toHaveCount(0);
+    await expect(detail.getByRole('button', { name: '重新载入', exact: true })).toBeVisible();
+  } else {
+    await expect(detail.getByText(handoff.external_claim_id!, { exact: true })).toBeVisible();
+    await expect(detail.getByText('尚未确认', { exact: true })).toBeVisible();
+    expect((await new AxeBuilder({ page }).include('.ant-drawer').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+  }
+  expect(cursors).toContain(handoff.id); expect(state.commands).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+});

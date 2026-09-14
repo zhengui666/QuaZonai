@@ -4744,3 +4744,10 @@ verify-QLotT2首次完整Live定向通过。补充回滚/撤权断言后的verif
 verify-k8Clgr：workspace/all-targets编译、格式、严格Clippy与29项原生测试（client_portfolio_build10、portfolio_study_http19）全部通过，源文件不变，隔离PG停止。原资格链创建的两个Release验证原ID分页；实际HTTP和CLI验证空列表、非法limit及真实其他项目隔离。此前verify-v9mGlo指出映射多余借用及测试将既有404误写为403，已修正，未放宽权限。
 
 web-verify-DyagBY：真实Rust合同导出及客户端生成逐字节可复现，手写源不变；TypeScript、505项单元及5项静态文件检查、wire精度检查、Vite构建、Codex浏览器子集和267项全浏览器测试通过。1440/768/390视口覆盖分页、跨项目错误响应、独立评估限制、未知请求重试、离线与无障碍。浏览器使用显式受控响应，只证明界面行为；真实数据库资格由上述原生链验证，不能替代完整T01–T42部署验收。本阶段未push、未review、未合并或关闭Issue。
+
+
+### 2026-09-14：原交付历史网页查询
+
+交付页新增“交付记录”标签，复用既有项目Handoff分页和单条HTTP接口。表格及详情显示原环境、状态、原审批/Release/前版关联、精确字符串交付序号、期限与原Claim/ACK事实；未确认不补成功，跨项目响应拒绝呈现。没有增加写请求、改变原下游权限或把ACK当作成交。审批/Offer/政策操作表单仍待完成。
+
+web-verify-SvLLD1完整通过：真实Rust导出与客户端生成逐字节可复现，手写源不变；TypeScript、505项单元及5项静态文件检查、wire精度、构建、Codex浏览器子集和273项全浏览器测试通过。新增受控历史用例覆盖三视口分页、超过JS安全整数的原序号、原Claim/空ACK、错项目响应和无障碍；这些是界面证据，未替代原生交付或T01–T42部署验收。首次类型检查修正测试Revision必须为字符串，未改产品合同。GitHub回读仍为Draft/Open PR63、远端37e5713ed6252e5935787201914d42f241582a4f，Issue62开放；未push/review/merge/close。
