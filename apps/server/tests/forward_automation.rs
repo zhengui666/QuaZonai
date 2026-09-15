@@ -8,6 +8,32 @@ use sqlx::PgPool;
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn worker_schedules_original_feedback_once_and_publishes_cancelled_terminal(pool: PgPool) {
+    use std::{fs, io::Write, process::Command};
+    const CHILD: &str = "QZ_FORWARD_FULL_FILESYSTEM_TEST";
+    let Some(root) = std::env::var_os(CHILD) else {
+        pool.close().await;
+        let root = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::var_os("QZ_TEST_UNSHARE").unwrap_or_else(|| "unshare".into()))
+            .args(["--user", "--map-root-user", "--mount", "--", "sh", "-eu", "-c",
+                "mount -t tmpfs -o size=16m,mode=0700 tmpfs \"$1\"; export TMPDIR=\"$1\"; exec \"$2\" --exact worker_schedules_original_feedback_once_and_publishes_cancelled_terminal --nocapture",
+                "forward-full-filesystem"])
+            .arg(root.path()).arg(std::env::current_exe().unwrap()).env(CHILD, root.path())
+            .output().expect("native user and mount namespaces must be available");
+        assert!(
+            output.status.success(),
+            "isolated Forward ENOSPC test failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("STORAGE_FULL"));
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        return;
+    };
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::ERROR)
+        .without_time()
+        .with_ansi(false)
+        .init();
     let f = forward_support::setup(&pool).await;
     let directory = tempfile::tempdir().unwrap();
     let objects =
@@ -36,6 +62,81 @@ async fn worker_schedules_original_feedback_once_and_publishes_cancelled_termina
         1,
     )
     .unwrap();
+    let tables = [
+        "app.runs",
+        "app.artifacts",
+        "app.input_sets",
+        "app.forward_evaluation_inputs",
+        "pgmq.q_runs",
+        "app.evaluations",
+        "app.handoff_offers",
+    ];
+    let mut before = Vec::new();
+    for table in tables {
+        before.push(
+            sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+        );
+    }
+    let filler_path = std::path::PathBuf::from(root).join("filler");
+    let mut filler = fs::File::create(&filler_path).unwrap();
+    let mut full = false;
+    for _ in 0..512 {
+        match filler.write_all(&[0; 64 * 1024]) {
+            Ok(()) => (),
+            Err(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
+                full = true;
+                break;
+            }
+        }
+    }
+    assert!(full, "private 16 MiB tmpfs must exhaust before 32 MiB");
+    let (cursor, rejected) = worker.process_automation(None).await;
+    assert_eq!(cursor, Some(f.f.project));
+    assert!(rejected.is_err());
+    for (table, before) in tables.into_iter().zip(before) {
+        let after: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after, before, "failed native publication changed {table}");
+    }
+    let retained =
+        integrations::artifacts::ArtifactStore::open(&directory.path().join("objects")).unwrap();
+    {
+        let original = f.objects.lock().unwrap();
+        assert_eq!(
+            fs::read_dir(directory.path().join("objects"))
+                .unwrap()
+                .count(),
+            original.len()
+        );
+        for (id, bytes) in original.iter() {
+            assert_eq!(
+                retained
+                    .read(*id, forward_support::count(bytes.len() as u64))
+                    .unwrap(),
+                *bytes
+            );
+        }
+    }
+
+    drop(filler);
+    fs::remove_file(filler_path).unwrap();
+    // The failed attempt retains the ordinary retry interval, not an admitted Run.
+    assert!(f
+        .store
+        .prepare_forward_evaluation(f.f.project)
+        .await
+        .unwrap()
+        .is_none());
+    let wait_ms: i64 = sqlx::query_scalar("SELECT ceil(extract(epoch FROM greatest(next_attempt_at-clock_timestamp(),interval '0'))*1000)::bigint FROM app.forward_schedule WHERE handoff_id=$1")
+        .bind(f.handoff.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert!((0..=30_000).contains(&wait_ms));
+    tokio::time::sleep(std::time::Duration::from_millis(wait_ms as u64 + 50)).await;
     // Paper eligibility may fail on the explicit relational candidate; feedback must still run.
     let (a, b) = tokio::join!(
         worker.process_automation(None),
