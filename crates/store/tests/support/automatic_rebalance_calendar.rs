@@ -105,6 +105,9 @@ async fn check(
     .await
     .unwrap()
     .is_none());
+    // The real calendar wait can exhaust the original 60-second readiness window.
+    // Model a normal new probe, never extend an old observation or bypass expiry.
+    inputs::probe(store, actor, f, "calendar-runtime-after-offset").await;
     let dataset = inputs::forward(pool, store, actor, f).await;
     let cutoff: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(pool)

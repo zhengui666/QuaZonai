@@ -93,23 +93,12 @@ pub(super) async fn forward(
     dataset.id
 }
 
-pub(super) async fn request(
-    pool: &PgPool,
-    store: &Store,
-    actor: &Actor,
-    f: &cycle_support::Fixture,
-    cycle: Id,
-    environment: ForwardEnvironmentV1,
-    (interval, calendar): (
-        Option<u32>,
-        Option<&(contracts::science::NativeCalendarSessionsV1, i32)>,
-    ),
-) -> PortfolioBuildRequestV1 {
+pub(super) async fn probe(store: &Store, actor: &Actor, f: &cycle_support::Fixture, key: &str) {
     let context = &f.freeze.execution_context;
     let ProbePreparation::Pending(ticket) = store
         .prepare_runtime_probe(
             actor,
-            "portfolio-probe",
+            key,
             f.data.runtime,
             &RuntimeProbeRequestV1 {
                 schema_version: SchemaV1,
@@ -133,7 +122,22 @@ pub(super) async fn request(
         )
         .await
         .unwrap();
+}
 
+pub(super) async fn request(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    f: &cycle_support::Fixture,
+    cycle: Id,
+    environment: ForwardEnvironmentV1,
+    (interval, calendar): (
+        Option<u32>,
+        Option<&(contracts::science::NativeCalendarSessionsV1, i32)>,
+    ),
+) -> PortfolioBuildRequestV1 {
+    probe(store, actor, f, "portfolio-probe").await;
+    let context = &f.freeze.execution_context;
     let now: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(pool)
         .await

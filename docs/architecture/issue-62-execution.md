@@ -5383,3 +5383,35 @@ evidence, not a claim of rerunning that whole suite for this change. This is sti
 an in-process real Axum/PG/native-archive fixture: full server-process startup,
 historical-artifact coverage, remote reconciliation, disk-full/dependency offline,
 RPO/RTO and full T42 remain unproven. No remote CI/review/merge was performed.
+
+### 2026-09-15 full regression and calendar readiness timing
+
+Full verify-pk68Cg reached its 1150-second combined Store/Server command deadline
+(exit124), so it is not a passing full-suite result. Before timeout it recorded one
+calendar rebalance publication Conflict; Mission Worker completed all18 tests in
+565.94s. Later Store tests were truncated. The separate Store run verify-VjwRW5
+completed all403 tests across43 targets with zero failures/ignored tests. Its source
+predates the probe-helper change below; retain that distinction.
+
+The original failed disposable database was retained by SQLx. A read-only forensic
+reopen on a fresh local port verified its exact data directory and selected the
+failed calendar test through _sqlx_test.databases. It was stopped afterwards. Build
+and Study were SUCCEEDED with future lease/deadline and qualifications. Study ended
+09:55:27.705275 +08:00, while the most recent Runtime observation expired at
+09:55:27.860837, leaving about155ms for repeated publication-source checks. The test
+had waited for the calendar offset without renewing its original60-second probe.
+The publication path correctly checks readiness again after writing its report.
+This evidence supports a readiness-window race, not permission to weaken expiry.
+
+The test now uses its existing controlled prepare/complete Runtime probe after the
+calendar wait. The shared original probe code is extracted once; no observation is
+edited, TTL extended, clock mocked or production gate changed. Automatic-stage
+failure messages now identify Build versus Study. Original single-case B2NGLc and
+four-thread Xw6CG4 had passed before the fix, so rerun success alone was not treated
+as diagnosis. After the fix, verify-sytlZl passed all29 four-thread Server portfolio
+study tests; verify-d1bVZy passed all15 selected Store qualified-portfolio tests
+(27 other target tests filtered). Both passed all-target compile/fmt/strict Clippy,
+kept source inventories unchanged and stopped their owned PostgreSQL.
+
+These tests use controlled declarations and do not prove real-account T08/T42,
+full recovery, final remote CI/review or delivery completion. PR remains Draft.

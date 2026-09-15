@@ -500,7 +500,12 @@ pub(crate) async fn complete_stage(
     }
     let resource = validation_publication::publish(store, f, run)
         .await
-        .unwrap()
+        .unwrap_or_else(|error| {
+            panic!(
+                "automatic {:?} publication failed: {error:?}",
+                lease.run.kind
+            )
+        })
         .resource;
     store.acknowledge_run(&message).await.unwrap();
     resource
