@@ -710,13 +710,12 @@ MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，
 
 恢复回归测试位于 `apps/server/tests/recovery_access.rs`。在一次性SQLx数据库环境中运行
 `cargo test --locked -p server --features native-codex --test recovery_access`；本机PATH需有匹配
-服务器版本的原生pg_dump/pg_restore。CI通过QZ_TEST_PG_CONTAINER指定已有的一次性PGMQ容器，
-使用容器内工具；连接凭据只通过环境传递。测试创建独立目标库，复制合成TOTP密文和密钥，
-执行完整custom archive及单事务恢复，再核对同密钥旧会话、访问切换和原始请求回执。
-此测试不读取用户备份，也不证明artifacts一致性、生产运行身份、远端任务对账或RPO/RTO。
+服务器版本的原生pg_dump/pg_restore以及GNU tar。CI通过QZ_TEST_PG_CONTAINER指定已有的一次性PGMQ容器，
+使用容器内数据库工具；连接凭据只通过环境传递。测试在没有并发写入时，以原生tar归档一次性实例的完整状态目录（合成TOTP密文/密钥、附件及临时创建的历史文件/profile样例），随后生成custom数据库归档并向独立目标库单事务恢复。原目录和恢复目录均与tar归档比较，再核对同密钥旧会话、访问切换和原始请求回执。
+此测试不读取用户备份或账号profile，也不证明完整历史关系、原生账号/Thread恢复、远端任务对账或生产RPO/RTO。
 
 上述恢复回归现还覆盖一个通过HTTP上传的合成附件：只恢复数据库时下载返回503；
-恢复对应原文件后，原元数据和下载字节完全一致。恢复库通过迁移入口重新授予应用角色
+从同一tar归档恢复附件目录后，原元数据和下载字节完全一致。恢复库通过迁移入口重新授予应用角色
 权限，随后以独立非所有者登录执行登录、查询和下载；该角色不能运行恢复切换或TRUNCATE。
 测试还以同一恢复目录、原生会话密钥及独立应用角色启动真实 `server serve` 进程，通过 TCP 核对旧会话拒绝、新会话查询和附件字节，再停止并回收该进程。这证明此受控样例的服务启动、访问与文件恢复，不代表全部历史产物覆盖或完整恢复验收。
 
@@ -732,6 +731,6 @@ Runtime HTTP 上传在真实 SQLITE_FULL/ENOSPC 下返回 503 / `RUNTIME_STORAGE
 
 自动 Forward 的 `cargo test --locked -p server --features native-codex --test forward_automation` 在私有 tmpfs 磁盘满后检查运行、产物元数据、输入、队列、评估和 Handoff 数量不变，并逐字节核对原产物。失败保留正常的 30 秒调度间隔，测试等待真实时钟后再验证并发仅创建一次 Forward 运行，以及取消、丢失 ACK 后原结果重放。它使用受控历史关系，不证明生产 Claim、真实市场反馈或全部自动任务的磁盘故障验收。
 
-恢复回归还在 pg_dump 完成后向原实例写入第二个项目，确认它保留在原库且不进入恢复副本。运行 `cargo test --locked -p server --features native-codex --test recovery_access -- --nocapture` 可获得备份开始/结束、备份后写入、恢复完成的数据库时钟及 `fixture_restore_elapsed_ms`。耗时仅覆盖隔离库恢复、访问切换、单个产物核对及测试服务进程启动，不包含生产停机、全量文件/profile、远端对账或生产服务重新上线，不能用来宣布生产 RPO/RTO 达标。
+恢复回归还在 pg_dump 完成后向原实例写入第二个项目，确认它保留在原库且不进入恢复副本。运行 `cargo test --locked -p server --features native-codex --test recovery_access -- --nocapture` 可获得备份开始/结束、备份后写入、恢复完成的数据库时钟及 `fixture_restore_elapsed_ms`。耗时仅覆盖隔离库恢复、归档附件恢复与目录比较、访问切换、单个HTTP产物核对及测试服务进程启动，不包含生产停机、真实全量文件/profile、远端对账或生产服务重新上线，不能用来宣布生产 RPO/RTO 达标。
 
 交付页的“观察与唤醒”显示原观察分类、原因、Release/Evaluation/政策引用及 Wake 的状态、原因、最早尝试时间和原周期引用；可分别分页、刷新。历史分类不是当前资格，CONSUMED 不表示周期仍在运行，查看不触发工作。

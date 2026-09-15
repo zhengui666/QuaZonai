@@ -276,45 +276,49 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     assert_eq!(artifact.status, StatusCode::CREATED);
     let artifact_id = artifact.body["resource"]["id"].as_str().unwrap();
     let before = f.store.authentication_snapshot().await.unwrap();
-    // No workers or requests run while copying this synthetic instance's vault and DB.
-    let state = tempfile::tempdir().unwrap();
-    std::fs::copy(
-        f._state.path().join("artifacts").join(artifact_id),
-        state.path().join("archived-object"),
-    )
-    .unwrap();
-    std::fs::create_dir(state.path().join("secrets")).unwrap();
-    std::fs::set_permissions(
-        state.path().join("secrets"),
-        std::fs::metadata(f._state.path().join("secrets"))
-            .unwrap()
-            .permissions(),
-    )
-    .unwrap();
-    std::fs::copy(
-        f._state.path().join("master.key"),
-        state.path().join("master.key"),
-    )
-    .unwrap();
-    std::fs::copy(
-        f._state.path().join("session-key.ref"),
-        state.path().join("session-key.ref"),
-    )
-    .unwrap();
-    for entry in std::fs::read_dir(f._state.path().join("secrets")).unwrap() {
-        let entry = entry.unwrap();
-        assert!(entry.file_type().unwrap().is_file());
-        std::fs::copy(
-            entry.path(),
-            state.path().join("secrets").join(entry.file_name()),
-        )
-        .unwrap();
+    // No workers or requests run during this synthetic filesystem/DB checkpoint.
+    let historical =
+        integrations::artifacts::ArtifactStore::open(&f._state.path().join("historical-artifacts"))
+            .unwrap();
+    let historical_id = Id::new();
+    let historical_bytes = b"SYNTHETIC retained historical bytes\n";
+    historical.put(historical_id, historical_bytes).unwrap();
+    // An opaque profile fixture, not a copied user's account or native session.
+    let profile = f._state.path().join("codex-profile");
+    std::fs::create_dir(&profile).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
+    std::fs::write(
+        profile.join("config.toml"),
+        "# SYNTHETIC restore fixture; no account\n",
+    )
+    .unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let archive_directory = tempfile::tempdir().unwrap();
+    let archive = archive_directory.path().join("state.tar");
     let backup_started_at: chrono::DateTime<chrono::Utc> =
         sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(&pool)
             .await
             .unwrap();
+    let saved = tokio::process::Command::new("tar")
+        .env_clear()
+        .args(["--create", "--file"])
+        .arg(&archive)
+        .arg("--directory")
+        .arg(f._state.path())
+        .arg(".")
+        .kill_on_drop(true)
+        .output()
+        .await
+        .expect("native tar must be installed");
+    assert!(
+        saved.status.success() && saved.stderr.is_empty(),
+        "synthetic state archive failed; diagnostics remain private"
+    );
     let dump = postgres_tool(&pool, "pg_dump")
         .args(["--format=custom", "--no-owner", "--no-privileges"])
         .output()
@@ -343,6 +347,23 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         serde_json::from_value(later.body["resource"]["created_at"].clone()).unwrap();
     assert!(later_created_at >= backup_finished_at);
     let restore_started = std::time::Instant::now();
+    // Deliberately omit objects initially so the existing missing-object assertion
+    // still proves that a database restore alone cannot make downloads succeed.
+    let unpacked = tokio::process::Command::new("tar")
+        .env_clear()
+        .args(["--extract", "--file"])
+        .arg(&archive)
+        .arg("--directory")
+        .arg(state.path())
+        .arg("--exclude=./artifacts")
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        unpacked.status.success() && unpacked.stderr.is_empty(),
+        "synthetic state restore failed; diagnostics remain private"
+    );
     let database = format!("restore_test_{}", Id::new().to_string().replace('-', ""));
     sqlx::query(&format!("CREATE DATABASE {database} TEMPLATE template0"))
         .execute(&pool)
@@ -511,11 +532,52 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         .status,
         StatusCode::SERVICE_UNAVAILABLE
     );
-    std::fs::copy(
-        restored._state.path().join("archived-object"),
-        restored._state.path().join("artifacts").join(artifact_id),
+    let objects = tokio::process::Command::new("tar")
+        .env_clear()
+        .args(["--extract", "--file"])
+        .arg(&archive)
+        .arg("--directory")
+        .arg(restored._state.path())
+        .arg("./artifacts")
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        objects.status.success() && objects.stderr.is_empty(),
+        "synthetic object restore failed; diagnostics remain private"
+    );
+    // GNU tar compares original bytes, names, modes and timestamps. Compare both
+    // trees: restoring the copy must not mutate the original checkpoint files.
+    for directory in [restored._state.path(), f._state.path()] {
+        let compared = tokio::process::Command::new("tar")
+            .env_clear()
+            .args(["--compare", "--file"])
+            .arg(&archive)
+            .arg("--directory")
+            .arg(directory)
+            .kill_on_drop(true)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            compared.status.success() && compared.stdout.is_empty() && compared.stderr.is_empty(),
+            "synthetic state differs from archive; diagnostics remain private"
+        );
+    }
+    let restored_historical = integrations::artifacts::ArtifactStore::open(
+        &restored._state.path().join("historical-artifacts"),
     )
     .unwrap();
+    assert_eq!(
+        restored_historical
+            .read(
+                historical_id,
+                contracts::DbCounter::new(historical_bytes.len() as u64).unwrap()
+            )
+            .unwrap(),
+        historical_bytes
+    );
     let metadata = support::call(
         &restored,
         "GET",
@@ -673,7 +735,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
             .unwrap();
     println!(
         "{}",
-        json!({"scope":"isolated archive, access cutover, server process and one artifact; not production RPO/RTO",
+        json!({"scope":"isolated database and state archive, synthetic historical/profile files, access cutover and server process; not production RPO/RTO",
         "backup_started_at":backup_started_at,"backup_finished_at":backup_finished_at,
         "source_write_after_backup_at":later_created_at,"restore_finished_at":restore_finished_at,
         "fixture_restore_elapsed_ms":restore_started.elapsed().as_millis(),
