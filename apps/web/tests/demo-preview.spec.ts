@@ -4,8 +4,15 @@ import { navigate, settingsCategory } from './fixtures';
 test.use({ baseURL: 'http://127.0.0.1:4179' });
 
 test('synthetic preview renders native-contract records without a backend or writable delivery', async ({ page }) => {
+  test.setTimeout(60_000);
   const failures: string[] = [];
+  const eventRequests: string[] = [];
   page.on('pageerror', error => failures.push(error.message));
+  page.on('response', response => {
+    const path = new URL(response.url()).pathname;
+    if (path.startsWith('/api/') && response.request().method() === 'GET' && !response.ok()) failures.push(`${response.status()} ${path}`);
+  });
+  page.on('request', request => { if (new URL(request.url()).pathname.endsWith('/events')) eventRequests.push(request.url()); });
   await page.goto('/');
   await expect(page.getByRole('note', { name: '合成预览说明' })).toContainText('尚非完整 Demo');
   await expect(page.getByRole('button', { name: 'SYNTHETIC · 双 Alpha 研究示例', exact: true })).toBeVisible()
@@ -46,10 +53,24 @@ test('synthetic preview renders native-contract records without a backend or wri
   await expect(policy.getByLabel('原完整评估政策', { exact: true })).toContainText('SYNTHETIC · 真实数据与独立证据仍是资格前提');
   await page.keyboard.press('Escape');
   await expect(policy).toBeHidden();
-  for (const title of ['交付', '运行', '设置']) {
-    await navigate(page, title);
-    await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
-  }
+  await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: 'SYNTHETIC · 双 Alpha' }).click();
+  await expect(page.getByText('尚无冻结目标包。可从组合候选的独立评估请求冻结，不会自动批准或交付。', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: '交付记录', exact: true }).click();
+  await expect(page.getByText('尚无交付记录。冻结目标包不会自动创建 Offer。', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: '自动化政策', exact: true }).click();
+  await expect(page.getByRole('button', { name: '冻结自动化政策', exact: true })).toBeVisible();
+  await navigate(page, '运行');
+  await page.getByRole('button', { name: 'PORTFOLIO_BUILD · 00000202', exact: true }).click();
+  const run = page.getByRole('dialog', { name: '运行详情', exact: true });
+  await expect(run.getByText('此运行没有自动再平衡关联；不据此推断人工或其他来源。', { exact: true })).toBeVisible();
+  await expect(run.getByRole('button', { name: '请求取消运行', exact: true })).toBeDisabled();
+  await expect(run.getByText(/运行已终止。/)).toBeVisible();
+  expect(eventRequests).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(run).toBeHidden();
+  await navigate(page, '设置');
   await settingsCategory(page, '数据与许可');
   await expect(page.getByText('SYNTHETIC · 演示目录', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '查看许可与版本登记', exact: true }).click();
@@ -70,6 +91,20 @@ test('synthetic preview renders native-contract records without a backend or wri
   await page.getByRole('tab', { name: 'Universe 版本', exact: true }).click();
   await expect(page.getByText('SYNTHETIC · 演示投资域', { exact: true })).toBeVisible();
   await expect(page.getByText('历史记录未核验', { exact: true })).toBeVisible();
+  await settingsCategory(page, '原生集成');
+  await page.getByRole('button', { name: '配置与原生探测', exact: true }).click();
+  await expect(page.getByText('当前共同支持的任务：没有可准入的任务', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '执行原生探测', exact: true })).toBeDisabled();
+  await page.getByRole('tab', { name: '目标交付下游', exact: true }).click();
+  await expect(page.getByText('尚未登记下游服务。没有有效下游、兼容探测、独立资格和相应审批，不会交付目标。', { exact: true })).toBeVisible();
+  await settingsCategory(page, '历史迁移');
+  await expect(page.getByText('尚无历史导入报告。', { exact: true })).toBeVisible();
+  await settingsCategory(page, 'Codex 模型与连接');
+  await page.getByRole('button', { name: '登记 Codex 配置', exact: true }).click();
+  const codex = page.getByRole('dialog', { name: '登记 Codex 配置', exact: true });
+  await expect(codex.getByText('部署尚未登记 Codex 账号目录。', { exact: true })).toBeVisible();
+  await codex.getByRole('button', { name: '返回', exact: true }).click();
+  await expect(codex).toBeHidden();
   const denied = await page.request.post('/api/v2/handoffs/arbitrary/claim', { data: {} });
   expect(denied.status()).toBe(403);
   expect((await denied.json()).detail).toContain('不执行');

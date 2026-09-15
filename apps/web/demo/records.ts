@@ -120,6 +120,7 @@ const candidate: Schema['CandidateViewV1'] = {
 };
 record('/api/v2/runs', '/api/v2/runs', page([run, rejectedRun]));
 record(`/api/v2/runs/${rejectedRun.id}`, '/api/v2/runs/{id}', rejectedRun);
+record(`/api/v2/runs/${rejectedRun.id}/rebalance`, '/api/v2/runs/{id}/rebalance', { schema_version: 1, rebalance: null } satisfies Schema['RunRebalanceViewV1']);
 record(`/api/v2/projects/${project.id}/portfolio-mandates`, '/api/v2/projects/{id}/portfolio-mandates', page([mandate]));
 record(`/api/v2/portfolio-mandates/${mandate.id}`, '/api/v2/portfolio-mandates/{id}', mandate);
 record(`/api/v2/projects/${project.id}/portfolio-candidates`, '/api/v2/projects/{id}/portfolio-candidates', page([candidate]));
@@ -157,6 +158,9 @@ const datasets: Schema['DatasetView'][] = brief.bindings.map((binding, n) => ({
 }));
 record('/api/v2/integrations/runtimes', '/api/v2/integrations/runtimes', page([runtime]));
 record(`/api/v2/integrations/runtimes/${runtime.id}`, '/api/v2/integrations/runtimes/{id}', runtime);
+record(`/api/v2/integrations/runtimes/${runtime.id}/readiness`, '/api/v2/integrations/runtimes/{id}/readiness', {
+  schema_version: 1, runtime_id: runtime.id, integration_revision: runtime.revision, state: 'DISABLED', available_job_kinds: [], latest_observation: null,
+} satisfies Schema['RuntimeReadinessV1']);
 record('/api/v2/data/sources', '/api/v2/data/sources', page([source]));
 record(`/api/v2/data/sources/${source.id}`, '/api/v2/data/sources/{id}', source);
 record(`/api/v2/data/sources/${source.id}/grants`, '/api/v2/data/sources/{id}/grants', page([grant]));
@@ -170,9 +174,10 @@ for (const dataset of datasets) record(`/api/v2/data/revisions/${dataset.id}`, '
 for (const suffix of ['cycles', 'releases', 'handoffs', 'automation-policies']) {
   record(`/api/v2/projects/${project.id}/${suffix}`, `/api/v2/projects/{id}/${suffix}`, page([]));
 }
-for (const path of ['/api/v2/auth/devices', '/api/v2/settings/codex', '/api/v2/integrations/downstreams']) {
+for (const path of ['/api/v2/auth/devices', '/api/v2/settings/codex', '/api/v2/integrations/downstreams', '/api/v2/migrations/reports']) {
   record(path, path, page([]));
 }
+record('/api/v2/codex/homes', '/api/v2/codex/homes', []);
 
 export function demoResponse(method: string, pathname: string, partition: string | null = null) {
   const item = method === 'GET' ? records.get(pathname) : undefined;

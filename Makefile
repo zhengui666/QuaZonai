@@ -1,4 +1,4 @@
-.PHONY: check check-unit check-store check-http require-test-database native
+.PHONY: check check-unit check-store check-http require-test-database native demo-preview
 
 # Full check fails closed when a disposable test database was not provided.
 check: require-test-database
@@ -24,3 +24,8 @@ require-test-database:
 native:
 	@test -n "$(OUTPUT)" || { printf '%s\n' 'OUTPUT must name a new directory.' >&2; exit 1; }
 	cargo run --locked -p job -- verify-native --output "$(OUTPUT)"
+
+# Isolated synthetic preview; no database or account configuration is consumed.
+demo-preview:
+	npm --prefix apps/web ci --ignore-scripts --no-audit --no-fund
+	npm --prefix apps/web run demo:preview
