@@ -62,7 +62,7 @@ export default defineConfig({
     // Native Rollup splitting keeps stable third-party code separate from the
     // changing Rust-contract validators. Both chunks remain in the PWA precache.
     rollupOptions: { output: {
-      manualChunks(id) { return id.includes('/node_modules/') ? 'vendor' : undefined; },
+      manualChunks(id) { return id.includes('/node_modules/') ? 'vendor' : id.includes('/generated/responses.cjs') ? 'contracts' : undefined; },
     } },
   },
   test: { include: ['src/**/*.test.ts'], environment: 'node', restoreMocks: true },
