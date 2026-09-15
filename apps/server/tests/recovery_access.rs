@@ -223,6 +223,19 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     // Keep the SAME key: rejection must follow the restored epoch, not a changed cookie key.
     let cookie_key = Key::generate();
     let mut f = support::fixture_with_key(pool.clone(), None, None, cookie_key.clone()).await;
+    // Persist the same synthetic session key in the native deployment format.
+    let reference = SecretVault::open(
+        &f._state.path().join("secrets"),
+        &f._state.path().join("master.key"),
+    )
+    .unwrap()
+    .put("SESSION_KEY", cookie_key.master())
+    .unwrap();
+    std::fs::write(
+        f._state.path().join("session-key.ref"),
+        reference.to_string(),
+    )
+    .unwrap();
     f.app = server::router(
         server::AppState::new(
             f.store.clone(),
@@ -281,6 +294,11 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     std::fs::copy(
         f._state.path().join("master.key"),
         state.path().join("master.key"),
+    )
+    .unwrap();
+    std::fs::copy(
+        f._state.path().join("session-key.ref"),
+        state.path().join("session-key.ref"),
     )
     .unwrap();
     for entry in std::fs::read_dir(f._state.path().join("secrets")).unwrap() {
@@ -570,6 +588,84 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     .await;
     assert_eq!(retained.status, StatusCode::OK);
     assert_eq!(retained.body, later.body["resource"]);
+    // Exercise the deployed executable's state loading and role checks over TCP.
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = socket.local_addr().unwrap();
+    drop(socket);
+    let mut service = tokio::process::Command::new(env!("CARGO_BIN_EXE_server"))
+        .args([
+            "serve",
+            "--public-url",
+            "https://research.example",
+            "--bind",
+            &address.to_string(),
+        ])
+        .arg("--state-dir")
+        .arg(restored._state.path())
+        .env_clear()
+        .env(
+            "DATABASE_URL",
+            application_pool.connect_options().to_url_lossy().as_str(),
+        )
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(2))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            assert!(
+                service.try_wait().unwrap().is_none(),
+                "restored server exited before readiness"
+            );
+            if let Ok(response) = http
+                .get(format!("http://{address}/health/live"))
+                .header(header::HOST, "research.example")
+                .send()
+                .await
+            {
+                assert_eq!(response.status(), StatusCode::NO_CONTENT);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("restored server must start within the test deadline");
+    let stale = http
+        .get(format!("http://{address}/api/v2/auth/session"))
+        .header(header::HOST, "research.example")
+        .header(header::COOKIE, &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+    let current = http
+        .get(format!("http://{address}/api/v2/projects"))
+        .header(header::HOST, "research.example")
+        .header(header::COOKIE, login.cookie.as_deref().unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(current.status(), StatusCode::OK);
+    assert_eq!(current.json::<Value>().await.unwrap(), projects.body);
+    let object = http
+        .get(format!("http://{address}{artifact_path}"))
+        .header(header::HOST, "research.example")
+        .header(header::COOKIE, login.cookie.as_deref().unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(object.status(), StatusCode::OK);
+    assert_eq!(object.bytes().await.unwrap().as_ref(), content.as_bytes());
+    service.kill().await.unwrap();
+    assert!(service.try_wait().unwrap().is_some());
     let restore_finished_at: chrono::DateTime<chrono::Utc> =
         sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(&restored_pool)
@@ -577,7 +673,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
             .unwrap();
     println!(
         "{}",
-        json!({"scope":"isolated archive, access cutover and one artifact; not production RPO/RTO",
+        json!({"scope":"isolated archive, access cutover, server process and one artifact; not production RPO/RTO",
         "backup_started_at":backup_started_at,"backup_finished_at":backup_finished_at,
         "source_write_after_backup_at":later_created_at,"restore_finished_at":restore_finished_at,
         "fixture_restore_elapsed_ms":restore_started.elapsed().as_millis(),

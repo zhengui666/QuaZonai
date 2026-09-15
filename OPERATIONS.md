@@ -717,7 +717,7 @@ MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，
 上述恢复回归现还覆盖一个通过HTTP上传的合成附件：只恢复数据库时下载返回503；
 恢复对应原文件后，原元数据和下载字节完全一致。恢复库通过迁移入口重新授予应用角色
 权限，随后以独立非所有者登录执行登录、查询和下载；该角色不能运行恢复切换或TRUNCATE。
-这证明此受控样例的访问与文件恢复，不代表全部历史产物覆盖或完整服务进程重启验收。
+测试还以同一恢复目录、原生会话密钥及独立应用角色启动真实 `server serve` 进程，通过 TCP 核对旧会话拒绝、新会话查询和附件字节，再停止并回收该进程。这证明此受控样例的服务启动、访问与文件恢复，不代表全部历史产物覆盖或完整恢复验收。
 
 磁盘故障的原生回归：Linux 上运行 `cargo test --locked -p integrations --test artifact_publication`。需要 util-linux 的 `unshare`/`mount` 及允许创建用户、挂载命名空间；不可用会失败，不跳过。测试只在子进程私有的 64 KiB tmpfs 内制造 ENOSPC，核对已有产物、失败暂存清理及后续重试，退出后宿主挂载点仍为空。CI 为复制到临时目录的原生 unshare 设置作业专用 AppArmor userns 许可并在结束时移除，不修改全局 userns 策略。这项证据不代替任务准入事务、自动任务、告警或完整 T40 恢复演练。
 
@@ -731,4 +731,4 @@ Runtime HTTP 上传在真实 SQLITE_FULL/ENOSPC 下返回 503 / `RUNTIME_STORAGE
 
 自动 Forward 的 `cargo test --locked -p server --features native-codex --test forward_automation` 在私有 tmpfs 磁盘满后检查运行、产物元数据、输入、队列、评估和 Handoff 数量不变，并逐字节核对原产物。失败保留正常的 30 秒调度间隔，测试等待真实时钟后再验证并发仅创建一次 Forward 运行，以及取消、丢失 ACK 后原结果重放。它使用受控历史关系，不证明生产 Claim、真实市场反馈或全部自动任务的磁盘故障验收。
 
-恢复回归还在 pg_dump 完成后向原实例写入第二个项目，确认它保留在原库且不进入恢复副本。运行 `cargo test --locked -p server --features native-codex --test recovery_access -- --nocapture` 可获得备份开始/结束、备份后写入、恢复完成的数据库时钟及 `fixture_restore_elapsed_ms`。耗时仅覆盖隔离库恢复、访问切换与单个产物核对，不包含生产停机、全量文件/profile、远端对账或服务重新上线，不能用来宣布生产 RPO/RTO 达标。
+恢复回归还在 pg_dump 完成后向原实例写入第二个项目，确认它保留在原库且不进入恢复副本。运行 `cargo test --locked -p server --features native-codex --test recovery_access -- --nocapture` 可获得备份开始/结束、备份后写入、恢复完成的数据库时钟及 `fixture_restore_elapsed_ms`。耗时仅覆盖隔离库恢复、访问切换、单个产物核对及测试服务进程启动，不包含生产停机、全量文件/profile、远端对账或生产服务重新上线，不能用来宣布生产 RPO/RTO 达标。
