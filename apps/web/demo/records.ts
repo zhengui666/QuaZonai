@@ -1,6 +1,7 @@
 // Fixed SYNTHETIC presentation records. No database, account, jobs or delivery.
 import type { Schema } from '../src/api';
 import briefInput from '../../../tests/contracts/research-brief.json';
+import policyInput from '../../../tests/contracts/research-policy.json';
 
 export const id = (n: number) => `01990000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 const at = '2026-09-15T00:00:00Z';
@@ -55,7 +56,7 @@ for (const [n, alpha] of alphas.entries()) {
   };
   const evaluation: Schema['EvaluationView'] = {
     id: id(80 + n), project_id: project.id, subject_alpha_version_id: version.id, subject_candidate_id: null,
-    input_set_id: id(21), policy_id: id(90), run_id: run.id, evaluation_kind: 'WALK_FORWARD',
+    input_set_id: id(21), policy_id: brief.content.evaluation_policy_id, run_id: run.id, evaluation_kind: 'WALK_FORWARD',
     execution_status: 'SUCCEEDED', evidence_status: 'INCOMPLETE', decision: 'INCONCLUSIVE',
     report_artifact_id: id(100 + n), method_versions_artifact_id: id(100 + n), origin: 'FIXTURE',
     concluded_at: at, valid_until: null, checked_at: at, unexpired_at_read: false,
@@ -68,8 +69,65 @@ for (const [n, alpha] of alphas.entries()) {
   record(`/api/v2/alpha-versions/${version.id}/qualifications`, '/api/v2/alpha-versions/{id}/qualifications', page([]));
 }
 
+const { schema_version: _schema, selection, comparison_input_set_id, execution_assumptions_id: _assumptions, ...policyFields } = policyInput as Schema['EvaluationPolicyCreate'];
+const policy: Schema['EvaluationPolicyView'] = {
+  ...policyFields, id: brief.content.evaluation_policy_id, project_id: project.id, version: 1, created_at: at,
+  question: 'SYNTHETIC · 真实数据与独立证据仍是资格前提', portfolio_metric_requirements: null, portfolio_study_plan: null,
+  selection_rule: { ...selection, schema_version: 1, comparison_input_set_id, execution_assumptions_id: brief.content.execution_assumptions_id,
+    comparable_scope: 'FAMILY_LINEAGE', root_lineage_id: project.root_lineage_id, family_id: id(205), tie_break: 'EXPERIMENT_ID_ASC', missing_required_metric: 'INCONCLUSIVE' },
+};
+const assumptions: Schema['ExecutionAssumptionsViewV1'] = {
+  id: brief.content.execution_assumptions_id, project_id: project.id, input_set_id: id(21), dataset_revision_id: brief.bindings[0]!.dataset_revision_id,
+  runtime_id: id(220), capability_snapshot_artifact_id: id(221), fee_schedule_artifact_id: id(201), engine_image_ref: 'synthetic.invalid/example:fixture',
+  venue_capability_ref: 'SYNTHETIC', calendar_version: 'fixture-v1', settlement_rule_ref: 'fixture-only', cost_assumption_status: 'CONSERVATIVE_ASSUMPTION',
+  bar_liquidity: null, bar_liquidity_valid_until: null, rolling_liquidity: null, rolling_liquidity_artifact_id: null, created_at: at,
+  settings: { schema_version: 1, base_currency: 'USD', starting_capital: '1000', account_kind: 'CASH', leverage: '1', snapshot_interval_ms: 1000, exposure_tolerance: '0.000001',
+    fee_rates: [{ instrument_id: 'SYNTHETIC.EXAMPLE', maker: '0.001', taker: '0.002' }],
+    fee_model: { schema_version: 1, adapter_kind: 'NAUTILUS_MAKER_TAKER', upstream_class: 'nautilus_execution::models::fee::MakerTakerFeeModel', upstream_version: '0.63.0', parameters: {} },
+    fill_model: { schema_version: 1, adapter_kind: 'NAUTILUS_DEFAULT_FILL', upstream_class: 'nautilus_execution::models::fill::DefaultFillModel', upstream_version: '0.63.0', parameters: { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '1' } },
+    latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.63.0', parameters: { base_latency_ns: '1000000', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' } },
+  },
+};
+record('/api/v2/evaluation-policies', '/api/v2/evaluation-policies', page([policy]));
+record(`/api/v2/evaluation-policies/${policy.id}`, '/api/v2/evaluation-policies/{id}', policy);
+record(`/api/v2/projects/${project.id}/execution-assumptions`, '/api/v2/projects/{id}/execution-assumptions', page([assumptions]));
+record(`/api/v2/execution-assumptions/${assumptions.id}`, '/api/v2/execution-assumptions/{id}', assumptions);
+
+const mandate: Schema['MandateViewV1'] = {
+  id: id(200), project_id: project.id, version: 1, created_at: at,
+  content: {
+    objective: 'MIN_RISK', risk_measure: 'VARIANCE', base_currency: 'USD', capital_assumption: '1000',
+    universe_version_id: brief.content.universe_version_id, required_evaluation_policy_id: brief.content.evaluation_policy_id,
+    execution_assumptions_id: brief.content.execution_assumptions_id, exposure_tolerance: '0.000001',
+    covariance_estimator: { schema_version: 1, adapter_kind: 'SAMPLE_COVARIANCE', upstream_class: 'ndarray_stats::CorrelationExt::cov', upstream_version: '0.7.0', parameters: { ddof: 1 } },
+    alpha_ensemble: { schema_version: 1, adapter_kind: 'FIXED_WEIGHTED_FORECAST', upstream_class: 'ndarray::ArrayBase::dot', upstream_version: '0.17.1', parameters: {} },
+    optimizer: { schema_version: 1, adapter_kind: 'CLARABEL_QP', upstream_class: 'clarabel::solver::DefaultSolver', upstream_version: '0.11.1',
+      parameters: { schema_version: 1, risk_aversion: '1', max_iterations: 200, solver_tolerance: '0.0000000001', accept_inaccurate: false, cvar_confidence: null, risk_budgeting: null } },
+    constraints: { schema_version: 1, long_only: true, min_cash_weight: '0', max_cash_weight: '1', min_asset_weight: '0', max_asset_weight: '1',
+      max_gross_exposure: '1', min_net_exposure: '0', max_net_exposure: '1', max_turnover_per_rebalance: '2', group_bounds: [], asset_overrides: [],
+      transaction_costs_ref: id(201), max_ex_ante_risk: null, max_participation: null, liquidity_ref: null },
+    rebalance_schedule: { schema_version: 1, kind: 'MANUAL', interval_seconds: null, calendar_ref: null, timezone: 'UTC',
+      session_offset_seconds: null, max_input_age_seconds: 60, target_ttl_seconds: 300 },
+  },
+};
+const rejectedRun: Schema['RunSnapshotV1'] = { ...run, id: id(202), kind: 'PORTFOLIO_BUILD', state: 'FAILED', terminal_reason_code: 'SYNTHETIC_NO_QUALIFIED_ALPHA' };
+const candidate: Schema['CandidateViewV1'] = {
+  id: id(203), project_id: project.id, mandate_id: mandate.id, input_set_id: id(21), run_id: rejectedRun.id,
+  decision_asof: at, created_at: at, execution_status: 'FAILED', solver_status: 'FAILED', evidence_status: 'INCOMPLETE',
+  origin: 'FIXTURE', reason_code: 'SYNTHETIC_NO_QUALIFIED_ALPHA', forecast_artifact_id: null, covariance_artifact_id: null,
+  diagnostics_artifact_id: id(204), target_artifact_id: null, allocation_evaluation_id: null, cash_weight: null,
+  current_weights_source: 'NONE', current_weights_artifact_id: null,
+};
+record('/api/v2/runs', '/api/v2/runs', page([run, rejectedRun]));
+record(`/api/v2/runs/${rejectedRun.id}`, '/api/v2/runs/{id}', rejectedRun);
+record(`/api/v2/projects/${project.id}/portfolio-mandates`, '/api/v2/projects/{id}/portfolio-mandates', page([mandate]));
+record(`/api/v2/portfolio-mandates/${mandate.id}`, '/api/v2/portfolio-mandates/{id}', mandate);
+record(`/api/v2/projects/${project.id}/portfolio-candidates`, '/api/v2/projects/{id}/portfolio-candidates', page([candidate]));
+record(`/api/v2/portfolio-candidates/${candidate.id}`, '/api/v2/portfolio-candidates/{id}', { header: candidate, members: [], targets: [] } satisfies Schema['CandidateDetailV1']);
+record(`/api/v2/portfolio-candidates/${candidate.id}/evaluations`, '/api/v2/portfolio-candidates/{id}/evaluations', page([]));
+
 // No fake qualification, approval, Claim or account is issued by this preview.
-for (const suffix of ['cycles', 'portfolio-mandates', 'portfolio-candidates', 'releases', 'handoffs', 'automation-policies']) {
+for (const suffix of ['cycles', 'releases', 'handoffs', 'automation-policies']) {
   record(`/api/v2/projects/${project.id}/${suffix}`, `/api/v2/projects/{id}/${suffix}`, page([]));
 }
 for (const path of ['/api/v2/auth/devices', '/api/v2/settings/codex', '/api/v2/integrations/runtimes',

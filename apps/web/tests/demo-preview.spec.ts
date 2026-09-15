@@ -18,7 +18,35 @@ test('synthetic preview renders native-contract records without a backend or wri
   await page.getByRole('button', { name: '版本 1', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Alpha 版本 1', exact: true })).toBeVisible();
   await expect(page.getByText('FIXTURE', { exact: true }).first()).toBeVisible();
-  for (const title of ['组合', '交付', '运行', '设置']) {
+  await navigate(page, '组合');
+  await page.getByRole('combobox', { name: '选择组合所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: 'SYNTHETIC · 双 Alpha' }).click();
+  await page.getByRole('button', { name: '配置 v1', exact: true }).click();
+  const mandate = page.getByRole('dialog', { name: '不可变组合配置', exact: true });
+  await expect(mandate.getByText(/clarabel::solver::DefaultSolver/)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(mandate).toBeHidden();
+  await page.getByRole('tab', { name: '候选快照', exact: true }).click();
+  await page.getByRole('button', { name: '01990000-0000-7000-8000-000000000203', exact: true }).click();
+  const candidate = page.getByRole('dialog', { name: '不可变候选快照', exact: true });
+  await expect(candidate.getByText('SYNTHETIC_NO_QUALIFIED_ALPHA', { exact: true })).toBeVisible();
+  await expect(candidate.getByText('无目标，不补造权重或现金。', { exact: true })).toBeVisible();
+  await expect(candidate.getByRole('button', { name: '请求组合 Study', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(candidate).toBeHidden();
+  await page.getByRole('tab', { name: '执行假设', exact: true }).click();
+  await page.getByRole('button', { name: /^查看假设 / }).click();
+  const assumptions = page.getByRole('dialog', { name: '不可变执行假设', exact: true });
+  await expect(assumptions.getByText('CONSERVATIVE_ASSUMPTION · 保守假设，不是数据支持成本证明', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(assumptions).toBeHidden();
+  await page.getByRole('tab', { name: '评估政策', exact: true }).click();
+  await page.getByRole('button', { name: '政策 v1', exact: true }).click();
+  const policy = page.getByRole('dialog', { name: '不可变评估政策', exact: true });
+  await expect(policy.getByLabel('原完整评估政策', { exact: true })).toContainText('SYNTHETIC · 真实数据与独立证据仍是资格前提');
+  await page.keyboard.press('Escape');
+  await expect(policy).toBeHidden();
+  for (const title of ['交付', '运行', '设置']) {
     await navigate(page, title);
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
   }
