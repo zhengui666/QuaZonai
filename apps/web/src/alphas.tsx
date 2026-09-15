@@ -12,6 +12,11 @@ type Alpha = Schema['AlphaView'];
 type Version = Schema['AlphaVersionView'];
 type Evaluation = Schema['EvaluationView'];
 type Metric = Schema['MetricValueV1'];
+function isAlphaEvaluation(value: Evaluation, project: string, version?: string): value is Evaluation & { subject_alpha_version_id: string } {
+  return value.project_id === project && typeof value.subject_alpha_version_id === 'string'
+    && value.subject_candidate_id === null && value.evaluation_kind === 'WALK_FORWARD'
+    && (version === undefined || value.subject_alpha_version_id === version);
+}
 
 export function Alphas() {
   const [project, setProject] = useState<string>();
@@ -32,9 +37,13 @@ function AlphaList({ project }: { project: string }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const [selected, setSelected] = useState<Alpha>();
   const cursor = history.at(-1);
-  const query = useQuery({ queryKey: ['alphas', project, cursor], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alphas', {
+  const query = useQuery({ queryKey: ['alphas', project, cursor], queryFn: async ({ signal }) => {
+    const page = dataOf(await api.GET('/api/v2/alphas', {
     params: { query: { project_id: project, cursor, limit: 25 } }, signal,
-  })) });
+    }));
+    if (page.items.some(item => item.project_id !== project)) throw new Error('Alpha 记录不属于当前项目。');
+    return page;
+  } });
   if (selected) return <Space orientation="vertical" size="middle" className="full-width">
     <Button onClick={() => setSelected(undefined)}>返回 Alpha 列表</Button>
     <Versions key={selected.id} alpha={selected} />
@@ -44,7 +53,7 @@ function AlphaList({ project }: { project: string }) {
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Alpha> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }}
         locale={{ emptyText: <NoData text="本项目还没有 Alpha 登记；这不是无有效 Alpha 的科学结论。" /> }} columns={[
-          { title: 'Alpha', key: 'name', render: (_, item) => <Button type="link" onClick={() => setSelected(item)}>{item.name}</Button> },
+          { title: 'Alpha', key: 'name', render: (_, item) => <Button type="link" disabled={query.isError || query.isFetching} onClick={() => setSelected(item)}>{item.name}</Button> },
           { title: '登记状态（非当前资格）', key: 'state', render: (_, item) => <StateTag value={item.lifecycle} /> },
           { title: '活动版本', key: 'version', render: (_, item) => item.active_version ?? '未指定' },
           { title: '更新于', key: 'time', render: (_, item) => displayTime(item.updated_at) },
@@ -56,14 +65,18 @@ function AlphaList({ project }: { project: string }) {
 
 function Versions({ alpha }: { alpha: Alpha }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
-  const [selected, setSelected] = useState<string>();
+  const [selected, setSelected] = useState<Version>();
   const cursor = history.at(-1);
-  const query = useQuery({ queryKey: ['alpha-versions', alpha.id, cursor], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alphas/{id}/versions', {
+  const query = useQuery({ queryKey: ['alpha-versions', alpha.id, cursor], queryFn: async ({ signal }) => {
+    const page = dataOf(await api.GET('/api/v2/alphas/{id}/versions', {
     params: { path: { id: alpha.id }, query: { cursor, limit: 25 } }, signal,
-  })) });
+    }));
+    if (page.items.some(item => item.alpha_id !== alpha.id || item.project_id !== alpha.project_id)) throw new Error('版本记录不属于当前 Alpha 或项目。');
+    return page;
+  } });
   if (selected) return <Space orientation="vertical" size="middle" className="full-width">
     <Button onClick={() => setSelected(undefined)}>返回版本列表</Button>
-    <VersionDetail key={`${alpha.id}/${selected}`} alpha={alpha.id} number={selected} />
+    <VersionDetail key={selected.id} alpha={alpha.id} project={alpha.project_id} number={selected.version} expectedId={selected.id} />
   </Space>;
   return <Space orientation="vertical" size="middle" className="full-width">
     <Typography.Title level={2}>{alpha.name} · 不可变版本</Typography.Title>
@@ -72,7 +85,7 @@ function Versions({ alpha }: { alpha: Alpha }) {
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Version> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 850 }}
         locale={{ emptyText: <NoData text="尚无已登记版本。" /> }} columns={[
-          { title: '版本', key: 'version', render: (_, item) => <Button type="link" onClick={() => setSelected(item.version)}>版本 {item.version}</Button> },
+          { title: '版本', key: 'version', render: (_, item) => <Button type="link" disabled={query.isError || query.isFetching} onClick={() => setSelected(item)}>版本 {item.version}</Button> },
           { title: '数据来源', key: 'origin', render: (_, item) => item.origin ?? '来源未核验' },
           { title: '信号 / 单位', key: 'unit', render: (_, item) => `${item.signal_kind} / ${item.forecast_unit}` },
           { title: 'Horizon', key: 'horizon', render: (_, item) => `${item.horizon_kind} · ${item.horizon_value ?? '变量区间'}` },
@@ -84,14 +97,18 @@ function Versions({ alpha }: { alpha: Alpha }) {
   </Space>;
 }
 
-function VersionDetail({ alpha, number }: { alpha: string; number: string }) {
+function VersionDetail({ alpha, project, number, expectedId }: { alpha: string; project: string; number: string; expectedId: string }) {
   const [calibration, setCalibration] = useState(false);
   const [qualifications, setQualifications] = useState(false);
   const [evaluate, setEvaluate] = useState(false);
-  const query = useQuery({ queryKey: ['alpha-version', alpha, number], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alphas/{id}/versions/{version}', {
+  const query = useQuery({ queryKey: ['alpha-version', alpha, number, project, expectedId], queryFn: async ({ signal }) => {
+    const item = dataOf(await api.GET('/api/v2/alphas/{id}/versions/{version}', {
     params: { path: { id: alpha, version: number } }, signal,
-  })) });
-  const version = query.data;
+    }));
+    if (item.id !== expectedId || item.alpha_id !== alpha || item.project_id !== project || item.version !== number) throw new Error('返回的 Alpha 版本与原选择不一致。');
+    return item;
+  } });
+  const version = query.isError ? undefined : query.data;
   return <QueryPanel pending={query.isPending} error={query.error} stale={!!version} reload={() => { void query.refetch(); }}>
     {version && <Space orientation="vertical" size="middle" className="full-width break-word">
       <Typography.Title level={2}>Alpha 版本 {version.version}</Typography.Title>
@@ -111,8 +128,8 @@ function VersionDetail({ alpha, number }: { alpha: string; number: string }) {
       {version.calibration_id && <Button onClick={() => setCalibration(true)}>查看冻结校准来源</Button>}
       <Button onClick={() => setQualifications(true)}>查看原资格历史</Button>
       <Button disabled={!version.model_artifact_id || (version.signal_kind === 'SCORE' && !version.calibration_id)} onClick={() => setEvaluate(true)}>请求封存评估</Button>
-      <Evaluations key={version.id} version={version.id} />
-      {calibration && <CalibrationDetail version={version.id} close={() => setCalibration(false)} />}
+      <Evaluations key={version.id} version={version.id} project={version.project_id} />
+      {calibration && version.calibration_id && <CalibrationDetail version={version.id} project={version.project_id} expectedId={version.calibration_id} close={() => setCalibration(false)} />}
       {qualifications && <Qualifications key={version.id} version={version.id} close={() => setQualifications(false)} />}
       {evaluate && <AlphaEvaluate version={version} close={() => setEvaluate(false)} />}
     </Space>}
@@ -205,9 +222,13 @@ function Qualifications({ version, close }: { version: string; close: () => void
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const cursor = history.at(-1);
   const query = useQuery({ queryKey: ['alpha-qualifications', version, cursor], staleTime: 0,
-    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alpha-versions/{id}/qualifications', {
+    queryFn: async ({ signal }) => {
+      const page = dataOf(await api.GET('/api/v2/alpha-versions/{id}/qualifications', {
       params: { path: { id: version }, query: { cursor, limit: 25 } }, signal,
-    })) });
+      }));
+      if (page.items.some(item => item.alpha_version_id !== version)) throw new Error('资格历史不属于原 Alpha 版本。');
+      return page;
+    } });
   return <Drawer title="原资格历史" open width={900} onClose={close}>
     <Space orientation="vertical" size="middle" className="full-width">
       <Alert type="info" showIcon title="授予时间窗开放不等于当前可用于组合。"
@@ -228,13 +249,17 @@ function Qualifications({ version, close }: { version: string; close: () => void
   </Drawer>;
 }
 
-function CalibrationDetail({ version, close }: { version: string; close: () => void }) {
+function CalibrationDetail({ version, project, expectedId, close }: { version: string; project: string; expectedId: string; close: () => void }) {
   const [source, setSource] = useState(false);
-  const query = useQuery({ queryKey: ['alpha-calibration', version], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alpha-versions/{id}/calibration', {
+  const query = useQuery({ queryKey: ['alpha-calibration', version, project, expectedId], queryFn: async ({ signal }) => {
+    const value = dataOf(await api.GET('/api/v2/alpha-versions/{id}/calibration', {
     params: { path: { id: version } }, signal,
-  })) });
-  const value = query.data;
-  if (source && value) return <EvaluationDetail id={value.validation.id} close={() => setSource(false)} />;
+    }));
+    if (value.id !== expectedId || value.alpha_version_id !== version || !isAlphaEvaluation(value.validation, project)) throw new Error('校准来源不属于原版本或项目。');
+    return value;
+  } });
+  const value = query.isError ? undefined : query.data;
+  if (source && value) return <EvaluationDetail id={value.validation.id} alpha={{ id: value.validation.subject_alpha_version_id!, project }} close={() => setSource(false)} />;
   return <Drawer title="冻结校准来源" open width={800} onClose={close}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!value} reload={() => { void query.refetch(); }}>
       {value && <Space orientation="vertical" size="middle" className="full-width break-word">
@@ -259,20 +284,24 @@ function CalibrationDetail({ version, close }: { version: string; close: () => v
   </Drawer>;
 }
 
-function Evaluations({ version }: { version: string }) {
+function Evaluations({ version, project }: { version: string; project: string }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const [selected, setSelected] = useState<string>();
   const cursor = history.at(-1);
-  const query = useQuery({ queryKey: ['alpha-evaluations', version, cursor], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/alpha-versions/{id}/evaluations', {
+  const query = useQuery({ queryKey: ['alpha-evaluations', version, project, cursor], queryFn: async ({ signal }) => {
+    const page = dataOf(await api.GET('/api/v2/alpha-versions/{id}/evaluations', {
     params: { path: { id: version }, query: { cursor, limit: 25 } }, signal,
-  })) });
+    }));
+    if (page.items.some(item => !isAlphaEvaluation(item, project, version))) throw new Error('评估不属于原 Alpha 版本。');
+    return page;
+  } });
   return <Space orientation="vertical" size="middle" className="full-width">
     <Typography.Title level={3}>已发表的正式 Validation</Typography.Title>
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新评估</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Evaluation> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 850 }}
         locale={{ emptyText: <NoData text="还没有可披露的正式 Validation 评估；不包含 Sealed，也不代表验证通过。" /> }} columns={[
-          { title: '评估', key: 'id', render: (_, item) => <Button type="link" onClick={() => setSelected(item.id)}>评估 {item.id.slice(-8)}</Button> },
+          { title: '评估', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError || query.isFetching} onClick={() => setSelected(item.id)}>评估 {item.id.slice(-8)}</Button> },
           { title: '执行状态', key: 'execution', render: (_, item) => <StateTag value={item.execution_status} /> },
           { title: '证据状态', key: 'evidence', render: (_, item) => <StateTag value={item.evidence_status} /> },
           { title: '科学决策（非资格）', key: 'decision', render: (_, item) => <StateTag value={item.decision} /> },
@@ -281,16 +310,17 @@ function Evaluations({ version }: { version: string }) {
         ]} />
       <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
     </QueryPanel>
-    {selected && <EvaluationDetail key={selected} id={selected} close={() => setSelected(undefined)} />}
+    {selected && <EvaluationDetail key={selected} id={selected} alpha={{ id: version, project }} close={() => setSelected(undefined)} />}
   </Space>;
 }
 
-export function EvaluationDetail({ id, close, candidate }: { id: string; close: () => void; candidate?: { id: string; project: string } }) {
+export function EvaluationDetail({ id, close, candidate, alpha }: { id: string; close: () => void } & ({ candidate: { id: string; project: string }; alpha?: never } | { alpha: { id: string; project: string }; candidate?: never })) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const cursor = history.at(-1);
-  const query = useQuery({ queryKey: ['evaluation', id, candidate], queryFn: async ({ signal }) => {
+  const query = useQuery({ queryKey: ['evaluation', id, candidate, alpha], queryFn: async ({ signal }) => {
     const value = dataOf(await api.GET('/api/v2/evaluations/{id}', { params: { path: { id } }, signal }));
     if (value.id !== id || (candidate && (value.project_id !== candidate.project || value.subject_candidate_id !== candidate.id || value.subject_alpha_version_id !== null || !['FORWARD', 'PORTFOLIO'].includes(value.evaluation_kind)))) throw new Error('服务器返回了其他评估记录。');
+    if (alpha && !isAlphaEvaluation(value, alpha.project, alpha.id)) throw new Error('服务器返回了其他 Alpha 的评估。');
     return value;
   } });
   const metrics = useQuery({ queryKey: ['evaluation-metrics', id, cursor], enabled: !!query.data && !query.isError,

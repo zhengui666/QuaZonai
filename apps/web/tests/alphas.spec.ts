@@ -36,6 +36,56 @@ async function chooseProject(page: Page, name = project.name) {
   await expect(field).toHaveAttribute('aria-expanded', 'false');
 }
 
+for (const [stage, field] of [
+  ['alphas', 'project_id'], ['versions', 'project_id'], ['versions', 'alpha_id'],
+  ['detail', 'project_id'], ['detail', 'alpha_id'], ['detail', 'version'], ['detail', 'id'],
+] as const) test(`Alpha ownership rejects mismatched ${stage}/${field} before evidence or evaluation actions`, async ({ page }) => {
+  const { state, base } = await setup(page);
+  await page.route('**/api/v2/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (stage === 'alphas' && path === '/api/v2/alphas') return reply(route, { schema_version: 1, items: [{ ...alpha, project_id: id(999) }], next_cursor: null });
+    const wrong = { ...version, [field]: field === 'version' ? '1' : id(999) };
+    if (stage === 'versions' && path === `/api/v2/alphas/${alpha.id}/versions`) return reply(route, { schema_version: 1, items: [wrong], next_cursor: null });
+    if (stage === 'detail' && path === `/api/v2/alphas/${alpha.id}/versions/${version.version}`) return reply(route, wrong);
+    return route.fallback();
+  });
+  await chooseProject(page);
+  if (stage !== 'alphas') await page.getByRole('button', { name: alpha.name, exact: true }).click();
+  if (stage === 'detail') await page.getByRole('button', { name: `版本 ${version.version}`, exact: true }).click();
+  await expect(page.getByRole('button', { name: '重新载入', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `Alpha 版本 ${version.version}`, exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '请求封存评估', exact: true })).toHaveCount(0);
+  if (stage === 'alphas') await expect(page.getByRole('button', { name: alpha.name, exact: true })).toHaveCount(0);
+  if (stage === 'versions') await expect(page.getByRole('button', { name: `版本 ${version.version}`, exact: true })).toHaveCount(0);
+  expect(state.paths.filter(path => path.startsWith('/api/v2/alpha-versions/'))).toEqual([]);
+  expect(base.commands).toEqual([]);
+});
+
+for (const stage of ['evaluations', 'evaluation', 'calibration', 'qualifications'] as const) test(`Alpha rejects other evidence at ${stage} without following its references`, async ({ page }) => {
+  const { state, base } = await setup(page);
+  state.calibrated = stage === 'calibration';
+  await page.route('**/api/v2/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (stage === 'evaluations' && path === `/api/v2/alpha-versions/${version.id}/evaluations`) return reply(route, { schema_version: 1, items: [{ ...evaluation, subject_alpha_version_id: id(999) }], next_cursor: null });
+    if (stage === 'evaluation' && path === `/api/v2/evaluations/${evaluation.id}`) return reply(route, { ...evaluation, evaluation_kind: 'PORTFOLIO' });
+    if (stage === 'calibration' && path === `/api/v2/alpha-versions/${version.id}/calibration`) return reply(route, { ...calibration, alpha_version_id: id(999) });
+    if (stage === 'qualifications' && path === `/api/v2/alpha-versions/${version.id}/qualifications`) return reply(route, { schema_version: 1, next_cursor: null, items: [{ id: id(61), alpha_version_id: id(999), policy_id: id(62), qualifying_evaluation_id: id(63), granted_at: stamp, valid_until: stamp, created_at: stamp, checked_at: stamp, grant_window_open: false, revocation: null }] });
+    return route.fallback();
+  });
+  await chooseProject(page);
+  await page.getByRole('button', { name: alpha.name, exact: true }).click();
+  await page.getByRole('button', { name: `版本 ${version.version}`, exact: true }).click();
+  if (stage === 'evaluation') await page.getByRole('button', { name: `评估 ${evaluation.id.slice(-8)}`, exact: true }).click();
+  if (stage === 'calibration') await page.getByRole('button', { name: '查看冻结校准来源', exact: true }).click();
+  if (stage === 'qualifications') await page.getByRole('button', { name: '查看原资格历史', exact: true }).click();
+  await expect(page.getByRole('button', { name: '重新载入', exact: true })).toBeVisible();
+  if (stage === 'evaluations') await expect(page.getByRole('button', { name: `评估 ${evaluation.id.slice(-8)}`, exact: true })).toHaveCount(0);
+  if (stage === 'calibration') await expect(page.getByRole('button', { name: '查看源版本原评估', exact: true })).toHaveCount(0);
+  if (stage === 'qualifications') await expect(page.getByRole('cell', { name: id(61), exact: true })).toHaveCount(0);
+  expect(state.paths.filter(path => path.includes('/metrics'))).toEqual([]);
+  expect(base.commands).toEqual([]);
+});
+
 test('qualification history is version-scoped and preserves revocation, observation time and failed refresh', async ({ page }) => {
   await setup(page);
   let fail = false;
