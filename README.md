@@ -38,6 +38,19 @@
 
 ## 开发验证
 
+### 尚未完成的交付验收
+
+当前没有可声明为“一条命令完整演示”的无凭据 Demo。`apps/web/tests/pwa-server.mjs` 仅用于 Service Worker 生命周期测试，不能作为完整业务演示或部署入口。
+
+以下证据仍须按 [DESIGN 验收合同](DESIGN.md) 补齐，不能以局部测试通过替代：
+
+- T02：明确标记 synthetic/fixture、不能生产领取的完整 UI Demo。
+- T07/T08：受保护真实账号登录流程，以及模型调用真实 Job/Evaluation 后在同一 Thread 消费证据的闭环。
+- T39/T40：实际旧快照及其产物的完整迁移、恢复和故障演练。
+- T41/T42：全部文档命令与示例实际执行，以及新实例通过 Web、CLI 分别完成研究到 Paper/Forward 的完整流程。
+
+CI 和浏览器截图证明的范围以各测试内容为准。审批、合并和 Issue 关闭仍须满足最新提交的全部交付条件。
+
 需要Linux x86_64、原生Rust 1.98.1工具链和C工具链；Nautilus发布族2.0.0rc4仍为RC，不隐瞒预发行风险。此路径不安装Python。
 
 ```sh

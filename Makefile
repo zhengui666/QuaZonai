@@ -3,8 +3,8 @@
 # Full check fails closed when a disposable test database was not provided.
 check: require-test-database
 	cargo fmt --all -- --check
-	cargo clippy --locked --workspace --all-targets -- -D warnings
-	cargo test --locked --workspace
+	cargo clippy --locked --workspace --all-targets --features server/native-codex -- -D warnings
+	cargo test --locked --workspace --features server/native-codex
 
 # Explicitly narrower entrypoint; it is not full Store/product acceptance.
 check-unit:
@@ -16,7 +16,7 @@ check-store: require-test-database
 	cargo test --locked -p store
 
 check-http: require-test-database
-	cargo test --locked -p server
+	cargo test --locked -p server --features native-codex
 
 require-test-database:
 	@test -n "$$DATABASE_URL" || { printf '%s\n' 'DATABASE_URL is required: use only a disposable PostgreSQL18 + PGMQ1.10.0 test instance.' >&2; exit 1; }
