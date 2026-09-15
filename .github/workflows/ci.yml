@@ -219,7 +219,14 @@ jobs:
             userns,
           }
           EOF
+          cp /usr/bin/unshare /tmp/store-evidence/unshare
+          cat >> /tmp/store-evidence/quazonai-ci-codex.apparmor <<'EOF'
+          profile quazonai-ci-cycle-filesystem /tmp/store-evidence/unshare flags=(unconfined) {
+            userns,
+          }
+          EOF
           sudo apparmor_parser -r /tmp/store-evidence/quazonai-ci-codex.apparmor
+          export QZ_TEST_UNSHARE=/tmp/store-evidence/unshare
           # Isolated native homes and synthetic Responses only, never real credentials.
           # Includes native account/HTTP and App Server -> stdio MCP -> HTTP -> PG.
           rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p store -p server --features server/native-codex -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log

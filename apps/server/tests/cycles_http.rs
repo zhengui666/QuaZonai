@@ -368,3 +368,133 @@ fn startup_routes_are_in_the_actual_native_http_contract() {
         assert_eq!(operation["operationId"], identity, "{path}");
     }
 }
+
+#[cfg(target_os = "linux")]
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_full_filesystem_rolls_back_cycle_admission_and_allows_same_intent_retry(
+    pool: PgPool,
+) {
+    use std::{fs, io::Write, process::Command};
+    const CHILD: &str = "QZ_CYCLE_FULL_FILESYSTEM_TEST";
+    let Some(root) = std::env::var_os(CHILD) else {
+        // SQLx derives the child database from the same test name. Release this
+        // unused parent connection before the isolated child recreates it.
+        pool.close().await;
+        let root = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::var_os("QZ_TEST_UNSHARE").unwrap_or_else(|| "unshare".into()))
+            .args(["--user", "--map-root-user", "--mount", "--", "sh", "-eu", "-c",
+                "mount -t tmpfs -o size=16m,mode=0700 tmpfs \"$1\"; export TMPDIR=\"$1\"; exec \"$2\" --exact native_full_filesystem_rolls_back_cycle_admission_and_allows_same_intent_retry --nocapture",
+                "cycle-full-filesystem"])
+            .arg(root.path()).arg(std::env::current_exe().unwrap()).env(CHILD, root.path())
+            .output().expect("native user and mount namespaces must be available");
+        assert!(
+            output.status.success(),
+            "isolated Cycle ENOSPC test failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        return;
+    };
+    let (f, cookie, data) = setup(&pool).await;
+    let frozen = browser(
+        &f,
+        &cookie,
+        "POST",
+        &format!("/api/v2/briefs/{}/freeze", data.brief.id),
+        "freeze-full-filesystem",
+        serde_json::to_value(&data.freeze).unwrap(),
+    )
+    .await;
+    assert_eq!(frozen.status, StatusCode::OK);
+    let project = activate(&f, &cookie, data.data.project).await;
+    let path = format!("/api/v2/projects/{}/cycles", data.data.project);
+    let body = json!({"schema_version":1,"brief_id":data.brief.id,"expected_revision":project["revision"],
+        "researcher_profile":data.researcher_profile,"reviewer_profile":data.reviewer_profile});
+    let objects = f._state.path().join("artifacts");
+    let mut before = fs::read_dir(&objects)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            (
+                path.file_name().unwrap().to_owned(),
+                fs::read(path).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    before.sort();
+    let filler_path = std::path::PathBuf::from(root).join("filler");
+    let mut filler = fs::File::create(&filler_path).unwrap();
+    let mut full = false;
+    // Bounded independently of the mount: never fill an arbitrary host filesystem.
+    for _ in 0..512 {
+        match filler.write_all(&[0; 64 * 1024]) {
+            Ok(()) => (),
+            Err(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
+                full = true;
+                break;
+            }
+        }
+    }
+    assert!(full, "private 16 MiB tmpfs must exhaust before 32 MiB");
+    let rejected = browser(
+        &f,
+        &cookie,
+        "POST",
+        &path,
+        "full-filesystem-start",
+        body.clone(),
+    )
+    .await;
+    assert!(rejected.status.is_server_error(), "{}", rejected.body);
+    assert_eq!(rejected.headers[header::CACHE_CONTROL], "no-store");
+    // Independent database reads prove the failed request left no admitted work.
+    for table in ["app.research_cycles", "app.runs", "pgmq.q_runs"] {
+        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+    let mut after = fs::read_dir(&objects)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            (
+                path.file_name().unwrap().to_owned(),
+                fs::read(path).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    after.sort();
+    assert_eq!(
+        after, before,
+        "old bytes retained and failed staging removed"
+    );
+    drop(filler);
+    fs::remove_file(filler_path).unwrap();
+    let retry = browser(
+        &f,
+        &cookie,
+        "POST",
+        &path,
+        "full-filesystem-start",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(retry.status, StatusCode::ACCEPTED, "{}", retry.body);
+    assert_eq!(
+        retry.body["replayed"], false,
+        "failure did not persist a receipt"
+    );
+    let replay = browser(&f, &cookie, "POST", &path, "full-filesystem-start", body).await;
+    assert_eq!(replay.status, StatusCode::ACCEPTED);
+    assert_eq!(replay.body["replayed"], true);
+    assert_eq!(replay.body["resource"], retry.body["resource"]);
+    let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM pgmq.q_runs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(queued, 1);
+}
