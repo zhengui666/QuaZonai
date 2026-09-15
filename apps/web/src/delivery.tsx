@@ -16,7 +16,7 @@ export function Delivery() {
   const { blocked } = useContext(GuardContext);
   return <Space orientation="vertical" size="large" className="full-width">
     <Typography.Title level={1}>交付</Typography.Title>
-    <Alert showIcon type="info" title="目标包与交付授权分开" description="Release 保存不可变目标包，不表示 Paper/Live 审批、下游领取或真实交易。审批与交付操作的网页入口仍在接通。" />
+    <Alert showIcon type="info" title="目标包与交付授权分开" description="Release 保存不可变目标包。请从目标包详情查看审批、人工决定及原审批历史；登记 Offer 仍需独立审批，审批不代表下游领取或真实交易。" />
     <ResourceSelect label="选择交付所属项目" value={project} onChange={setProject} disabled={blocked} queryKey={['delivery-projects']} load={async (cursor, signal) => {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
