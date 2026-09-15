@@ -47,7 +47,7 @@ function ForwardDetail({ item, close }: { item: Schema['ForwardMessageViewV1']; 
     ]} />
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新连续窗口</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!window} reload={() => { void query.refetch(); }}>
-      {window && !query.isError && <Descriptions column={1} className="break-word" items={[
+      {window && <Descriptions column={1} className="break-word" items={[
         { key: 'continuous', label: '当前连续性', children: window.is_contiguous ? '连续（不代表资格或晋级）' : '不连续或证据不足' },
         { key: 'count', label: '完整观测数', children: window.complete_observations },
         { key: 'reasons', label: '窗口原因', children: window.reason_codes.length ? window.reason_codes.join(' · ') : '无窗口缺口原因（不代表健康）' },

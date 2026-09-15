@@ -42,6 +42,11 @@ test('Forward preserves correction evidence and rejects another stream window', 
   await expect(detail.getByText('SEQUENCE_GAP · PARTIAL', { exact: true })).toBeVisible();
   await expect(detail.getByText('不连续或证据不足', { exact: true })).toBeVisible();
   await expect(detail.getByText('未提供', { exact: true })).toBeVisible();
+  wrongStream = true;
+  await detail.getByRole('button', { name: '刷新连续窗口', exact: true }).click();
+  await expect(detail.getByText('以下是上次成功读取的数据，当前无法确认其最新状态。', { exact: true })).toBeVisible();
+  await expect(detail.getByText('SEQUENCE_GAP · PARTIAL', { exact: true })).toBeVisible();
+  await expect(detail.getByText('请求未完成，请重试并检查服务状态。', { exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(detail).toBeHidden();
 });
