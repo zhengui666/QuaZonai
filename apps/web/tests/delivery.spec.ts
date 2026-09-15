@@ -1,6 +1,7 @@
 // Controlled presentation fixtures; native Release authority is tested in Rust/PG.
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { readFile } from 'node:fs/promises';
 import type { Schema } from '../src/api';
 import { fixture, id, navigate, project, reply } from './fixtures';
 
@@ -12,6 +13,8 @@ const release: Schema['ReleaseViewV1'] = {
 test('DEMO package remains readable but cannot open approval or Offer even with inconsistent approval history', async ({ page }) => {
   const state = await fixture(page);
   const demo: Schema['ReleaseViewV1'] = { ...release, environment: 'DEMO' };
+  const originalBytes = Buffer.from('SYNTHETIC attachment transport fixture\n中文\n');
+  let wrongArtifactProject = true; let contentReads = 0;
   // A stale or inconsistent history response must not enable delivery of a DEMO source.
   const approval: Schema['ApprovalViewV1'] = {
     id: id(302), project_id: project.id, candidate_id: demo.candidate_id, release_id: demo.id,
@@ -21,6 +24,8 @@ test('DEMO package remains readable but cannot open approval or Offer even with 
   };
   await page.route('**/api/v2/**', route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === `/api/v2/artifacts/${demo.package_artifact_id}`) return reply(route, { id: demo.package_artifact_id, project_id: wrongArtifactProject ? id(999) : project.id, producer_run_id: null, producer_attempt_id: null, kind: 'PACKAGE', media_type: 'application/json', schema_name: 'qz.target_package', schema_version: '1', byte_count: String(originalBytes.length), access_class: 'DELIVERY', origin: 'FIXTURE', created_by: 'RUNTIME', created_at: demo.created_at });
+    if (path === `/api/v2/artifacts/${demo.package_artifact_id}/content`) { contentReads++; return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: originalBytes }); }
     if (path === `/api/v2/projects/${project.id}/releases`) return reply(route, { schema_version: 1, items: [demo], next_cursor: null });
     if (path === `/api/v2/releases/${demo.id}`) return reply(route, demo);
     if (path === `/api/v2/releases/${demo.id}/approvals`) return reply(route, { schema_version: 1, items: [approval], next_cursor: null });
@@ -33,6 +38,18 @@ test('DEMO package remains readable but cannot open approval or Offer even with 
   const detail = page.getByRole('dialog', { name: '原始目标包版本', exact: true });
   await expect(detail.getByText('DEMO 目标包不能用于 Paper 或 Live 审批及交付。', { exact: true })).toBeVisible();
   await expect(detail.getByText(demo.package_artifact_id, { exact: true })).toBeVisible();
+  await detail.getByRole('button', { name: '下载原始目标包', exact: true }).click();
+  await expect(detail.getByText('请求未完成，请重试并检查服务状态。', { exact: true })).toBeVisible();
+  expect(contentReads).toBe(0);
+  wrongArtifactProject = false;
+  const downloaded = page.waitForEvent('download');
+  await detail.getByRole('button', { name: '下载原始目标包', exact: true }).click();
+  const attachment = await downloaded;
+  expect(attachment.suggestedFilename()).toBe(`${demo.package_artifact_id}.bin`);
+  expect(await readFile((await attachment.path())!)).toEqual(originalBytes);
+  await page.context().setOffline(true);
+  await expect(detail.getByRole('button', { name: '下载原始目标包', exact: true })).toBeDisabled();
+  await page.context().setOffline(false);
   await expect(detail.getByRole('button', { name: '审批此目标包', exact: true })).toBeDisabled();
   await detail.getByText('原审批历史', { exact: true }).click();
   await expect(detail.getByRole('button', { name: '登记 Offer', exact: true })).toBeDisabled();
@@ -60,6 +77,7 @@ for (const wrong of [false, true]) test(`Release project pagination and exact hi
   const detail = page.getByRole('dialog', { name: '原始目标包版本', exact: true });
   if (wrong) {
     await expect(detail.getByText(release.package_artifact_id, { exact: true })).toHaveCount(0);
+    await expect(detail.getByRole('button', { name: '下载原始目标包', exact: true })).toHaveCount(0);
     await expect(detail.getByRole('button', { name: '重新载入', exact: true })).toBeVisible();
   } else {
     await expect(detail.getByText(release.package_artifact_id, { exact: true })).toBeVisible();

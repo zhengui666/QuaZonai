@@ -1,9 +1,9 @@
 import { Alert, Button, Collapse, Descriptions, Drawer, Space, Table, Tabs, Typography } from 'antd';
-import { useQuery } from '@tanstack/react-query';
-import { useContext, useState } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { api, dataOf, displayTime } from './api';
 import type { Schema } from './api';
-import { GuardContext, NoData, Pager, QueryPanel } from './ui';
+import { ErrorNotice, GuardContext, NoData, Pager, QueryPanel, useOnline } from './ui';
 import { ResourceSelect } from './resource-select';
 import { ReleaseApprove } from './release-approve';
 import { HandoffOffer } from './handoff-offer';
@@ -48,6 +48,9 @@ function Releases({ project }: { project: string }) {
 }
 
 export function ReleaseDetail({ id, project, close }: { id: string; project: string; close: () => void }) {
+  const online = useOnline();
+  const transfer = useRef<{ controller: AbortController; url?: string } | undefined>(undefined);
+  useEffect(() => () => { transfer.current?.controller.abort(); if (transfer.current?.url) URL.revokeObjectURL(transfer.current.url); }, []);
   const [approving, setApproving] = useState(false);
   const [deciding, setDeciding] = useState(false);
   const [offering, setOffering] = useState<Schema['ApprovalViewV1']>();
@@ -59,6 +62,22 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
   } });
   const item = query.data;
   const deliverableOrigin = item?.environment === 'REAL';
+  const download = useMutation({ mutationFn: async () => {
+    if (!online || !item || query.isError || query.isFetching) return;
+    transfer.current?.controller.abort(); if (transfer.current?.url) URL.revokeObjectURL(transfer.current.url);
+    const current = { controller: new AbortController(), url: undefined as string | undefined }; transfer.current = current;
+    const params = { path: { id: item.package_artifact_id } }; const signal = current.controller.signal;
+    const metadata = dataOf(await api.GET('/api/v2/artifacts/{id}', { params, signal }));
+    if (metadata.id !== item.package_artifact_id || metadata.project_id !== item.project_id || metadata.kind !== 'PACKAGE'
+      || metadata.media_type !== 'application/json' || metadata.schema_name !== 'qz.target_package' || metadata.schema_version !== item.package_schema_version
+      || (item.environment === 'REAL' && (metadata.origin !== 'REAL' || metadata.access_class !== 'DELIVERY'))
+      || BigInt(metadata.byte_count) <= 0n || BigInt(metadata.byte_count) > 67108864n) throw new Error('产物元数据与原目标包不一致。');
+    const blob = dataOf(await api.GET('/api/v2/artifacts/{id}/content', { params, signal, parseAs: 'blob' }));
+    if (signal.aborted) return;
+    if (!(blob instanceof Blob) || BigInt(blob.size) !== BigInt(metadata.byte_count)) throw new Error('下载字节数与原目标包不一致。');
+    current.url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a'); anchor.href = current.url; anchor.download = `${metadata.id}.bin`; anchor.click();
+  } });
   return <Drawer title="原始目标包版本" open onClose={approving || offering || revoking || deciding ? undefined : close} closable={!approving && !offering && !revoking && !deciding} maskClosable={!approving && !offering && !revoking && !deciding} width={760}>
     <Alert showIcon type="info" title="历史有效期不是当前审批资格" description="读取不会延长期限或重判数据、Alpha 资格与下游兼容性。REAL 是包来源，不代表已批准 Live。" />
     <QueryPanel pending={query.isPending} error={query.error} stale={!!item} reload={() => { void query.refetch(); }}>
@@ -72,6 +91,8 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
         { key: 'created', label: '冻结于', children: displayTime(item.created_at) },
       ]} />}
     </QueryPanel>
+    {item && !query.isError && <Button disabled={!online || query.isFetching || download.isPending} onClick={() => download.mutate()}>下载原始目标包</Button>}
+    <ErrorNotice error={download.error} />
     {item?.environment === 'DEMO' && <Alert showIcon type="warning" title="DEMO 目标包不能用于 Paper 或 Live 审批及交付。" />}
     {item && !query.isError && <Button disabled={!deliverableOrigin} onClick={() => setApproving(true)}>审批此目标包</Button>}
     {item && !query.isError && <Button onClick={() => setDeciding(true)}>人工拒绝与重新考虑</Button>}
