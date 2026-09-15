@@ -384,3 +384,80 @@ fn native_runtime_openapi_keeps_binary_upload_and_stable_job_contracts() {
         assert!(schemas.get(name).is_some(), "missing native wire schema");
     }
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn native_full_filesystem_upload_reports_capacity_failure_and_retries_original_object() {
+    use std::{fs, io::Write, process::Command};
+    const CHILD: &str = "QZ_RUNTIME_HTTP_FULL_FILESYSTEM_TEST";
+    let Some(root) = std::env::var_os(CHILD) else {
+        let root = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::var_os("QZ_TEST_UNSHARE").unwrap_or_else(|| "unshare".into()))
+            .args(["--user", "--map-root-user", "--mount", "--", "sh", "-eu", "-c",
+                "mount -t tmpfs -o size=16m,mode=0700 tmpfs \"$1\"; export TMPDIR=\"$1\"; exec \"$2\" --exact native_full_filesystem_upload_reports_capacity_failure_and_retries_original_object --nocapture",
+                "runtime-http-full-filesystem"])
+            .arg(root.path()).arg(std::env::current_exe().unwrap()).env(CHILD, root.path())
+            .output().expect("native user and mount namespaces must be available");
+        assert!(
+            output.status.success(),
+            "isolated HTTP ENOSPC test failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("RUNTIME_STORAGE_FULL"));
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(CREDENTIAL));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains(CREDENTIAL));
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        return;
+    };
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::ERROR)
+        .without_time()
+        .with_ansi(false)
+        .init();
+    let f = fixture().await;
+    let id = Id::new();
+    let path = format!("/runtime/v1/objects/{id}");
+    let bearer = format!("Bearer {CREDENTIAL}");
+    let headers = [
+        ("authorization", bearer.as_str()),
+        ("content-type", "application/octet-stream"),
+        ("x-qz-storage-version", "original-1"),
+    ];
+    let filler_path = std::path::PathBuf::from(root).join("filler");
+    let mut filler = fs::File::create(&filler_path).unwrap();
+    let mut full = false;
+    for _ in 0..512 {
+        match filler.write_all(&[0; 64 * 1024]) {
+            Ok(()) => (),
+            Err(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
+                full = true;
+                break;
+            }
+        }
+    }
+    assert!(full, "private 16 MiB tmpfs must exhaust before 32 MiB");
+    let bytes = vec![7; 128 * 1024];
+    let (status, rejected) = request(&f, Method::PUT, &path, &headers, bytes.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(rejected["code"], "RUNTIME_STORAGE_FULL");
+    assert_eq!(rejected["retryable"], true);
+    assert_eq!(rejected["field"], Value::Null);
+    drop(filler);
+    fs::remove_file(filler_path).unwrap();
+    assert!(matches!(
+        f.service.journal().input_object(id).await,
+        Err(runtime::Failure::Missing)
+    ));
+    let (status, created) = request(&f, Method::PUT, &path, &headers, bytes.clone()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, replayed) = request(&f, Method::PUT, &path, &headers, bytes.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replayed, created);
+    assert_eq!(
+        f.service.journal().input_object(id).await.unwrap(),
+        ("original-1".to_owned(), bytes)
+    );
+    f.service.journal().close().await;
+}

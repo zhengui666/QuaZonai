@@ -53,6 +53,24 @@ impl IntoResponse for Failure {
                 None,
             ),
             Self::Busy => (StatusCode::SERVICE_UNAVAILABLE, "RUNTIME_BUSY", true, None),
+            Self::Database(ref error)
+                if error
+                    .as_database_error()
+                    .is_some_and(|error| error.code().as_deref() == Some("13")) =>
+            {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "RUNTIME_STORAGE_FULL",
+                    true,
+                    None,
+                )
+            }
+            Self::Io(ref error) if error.kind() == std::io::ErrorKind::StorageFull => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "RUNTIME_STORAGE_FULL",
+                true,
+                None,
+            ),
             Self::Database(_) | Self::Io(_) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "RUNTIME_STORAGE_UNAVAILABLE",
@@ -84,6 +102,9 @@ impl IntoResponse for Failure {
                 None,
             ),
         };
+        if status.is_server_error() {
+            tracing::error!(code, "native Runtime request failed");
+        }
         let mut response = (
             status,
             Json(RuntimeProblem {
@@ -316,7 +337,7 @@ async fn result(
 
 #[utoipa::path(put, path = "/runtime/v1/objects/{artifact_id}", params(("artifact_id" = Id, Path), ("X-QZ-Storage-Version" = String, Header)),
     request_body(content=inline(RuntimeBytes), content_type="application/octet-stream"),
-    responses((status=200, body=RuntimeObjectReceiptV1), (status=201, body=RuntimeObjectReceiptV1), (status=409, body=RuntimeProblem), (status=413, body=RuntimeProblem)))]
+    responses((status=200, body=RuntimeObjectReceiptV1), (status=201, body=RuntimeObjectReceiptV1), (status=409, body=RuntimeProblem), (status=413, body=RuntimeProblem), (status=503, body=RuntimeProblem)))]
 async fn object(
     State(state): State<Arc<HttpState>>,
     id: std::result::Result<Path<Id>, PathRejection>,

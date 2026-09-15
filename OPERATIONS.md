@@ -726,3 +726,5 @@ Cycle 准入的磁盘满回归位于 `apps/server/tests/cycles_http.rs`：在一
 控制面产物写入遇到原生 ENOSPC 时返回 HTTP 503 / `STORAGE_FULL`，运行日志记录同名错误码。请恢复存储可用空间后使用原请求编号重试，不删除仍被引用的产物。现有回执保持原样；此提示不声称磁盘已恢复或远端任务已停止。
 
 Runtime 的 `cargo test --locked -p runtime --test journal` 另以私有 16 MiB tmpfs 验证真实 `SQLITE_FULL`（原生错误码 13）：新任务和输入写入失败，原任务仍可重放；释放空间并重新打开 SQLite 后，原实例/对象/任务保留，失败的新记录不存在，原新请求可重试且只创建一次。SQLx 连接回池前处理完队列，仍有事务状态的连接会关闭，避免磁盘满自动回滚后污染后续请求。该测试不运行 OCI 科学任务，也不代替完整服务恢复与 RPO/RTO 演练。
+
+Runtime HTTP 上传在真实 SQLITE_FULL/ENOSPC 下返回 503 / `RUNTIME_STORAGE_FULL`、可重试标记与安全错误码日志；其他存储不可用仍使用 `RUNTIME_STORAGE_UNAVAILABLE`。`cargo test --locked -p runtime --test http` 包含私有 tmpfs 的真实认证上传失败、无残留对象、空间恢复后同一编号重试与原回执重放；响应和日志不含测试凭据。该测试使用不可用 Docker 地址，不宣称已运行科学任务。
