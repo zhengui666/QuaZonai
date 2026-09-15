@@ -688,8 +688,7 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "description": "At most 2 MiB of UTF-8, including JSON whitespace; the original bytes are preserved.",
-            "maxLength": 2097152,
+            "description": "The server enforces at most 2097152 UTF-8 bytes, including JSON whitespace,\nand preserves the original bytes. JSON Schema string length counts characters,\nso clients must check encoded UTF-8 byte length separately before submission.",
             "minLength": 1,
             "type": "string"
           },

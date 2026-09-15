@@ -2111,7 +2111,11 @@ export interface components {
         /** @enum {string} */
         ArtifactAccess: "OPERATOR" | "RESEARCH" | "EVALUATOR_ONLY" | "DELIVERY";
         ArtifactCreate: {
-            /** @description At most 2 MiB of UTF-8, including JSON whitespace; the original bytes are preserved. */
+            /**
+             * @description The server enforces at most 2097152 UTF-8 bytes, including JSON whitespace,
+             *     and preserves the original bytes. JSON Schema string length counts characters,
+             *     so clients must check encoded UTF-8 byte length separately before submission.
+             */
             content: string;
             kind: components["schemas"]["ResearchArtifactKind"];
             project_id: components["schemas"]["Id"];

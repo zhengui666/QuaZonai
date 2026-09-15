@@ -43,8 +43,10 @@ pub struct ArtifactCreate {
     pub schema_version: SchemaV1,
     pub project_id: Id,
     pub kind: ResearchArtifactKind,
-    /// At most 2 MiB of UTF-8, including JSON whitespace; the original bytes are preserved.
-    #[schema(min_length = 1, max_length = 2097152)]
+    /// The server enforces at most 2097152 UTF-8 bytes, including JSON whitespace,
+    /// and preserves the original bytes. JSON Schema string length counts characters,
+    /// so clients must check encoded UTF-8 byte length separately before submission.
+    #[schema(min_length = 1)]
     pub content: String,
 }
 
