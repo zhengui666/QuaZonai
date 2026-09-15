@@ -35,6 +35,18 @@ test('native service-worker activation preserves another tab draft and never cac
   await other.goto('/');
   const otherInitial = await other.evaluate(() => performance.timeOrigin);
   await expect(other.getByRole('dialog', { name: '检测到新的前端版本' })).toBeVisible();
+  // Drop one activation message: the waiting worker cannot acknowledge it.
+  await other.evaluate(() => {
+    const original = ServiceWorker.prototype.postMessage;
+    ServiceWorker.prototype.postMessage = function () {
+      ServiceWorker.prototype.postMessage = original;
+    };
+  });
+  await other.getByRole('button', { name: '确认更新', exact: true }).click();
+  await expect(other.getByText('版本检查或更新暂不可用，请稍后重试')).toBeVisible({ timeout: 15_000 });
+  expect(await other.evaluate(() => performance.timeOrigin)).toBe(otherInitial);
+  await other.getByRole('button', { name: '稍后', exact: true }).click();
+  await other.getByRole('button', { name: '有新版本', exact: true }).click();
   await other.getByRole('button', { name: '确认更新', exact: true }).click();
   await other.waitForFunction(before => performance.timeOrigin !== before, otherInitial);
   await page.bringToFront();

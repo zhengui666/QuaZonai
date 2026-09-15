@@ -15,6 +15,14 @@ export function PwaUpdate() {
   const consent = useRef(false); const reloaded = useRef(false);
   const protectedWork = useRef(false); protectedWork.current = blocked || mutating > 0;
   useEffect(() => {
+    if (!installing) return;
+    const timer = window.setTimeout(() => {
+      consent.current = false;
+      setInstalling(false); setFailure(true);
+    }, 10_000);
+    return () => window.clearTimeout(timer);
+  }, [installing]);
+  useEffect(() => {
     if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
     let disposed = false;
     let registration: ServiceWorkerRegistration | undefined;
@@ -66,12 +74,13 @@ export function PwaUpdate() {
     if (unavailable) return;
     if (ready) { reloaded.current = true; window.location.reload(); return; }
     if (!waiting) return;
-    consent.current = true; setInstalling(true);
-    waiting.postMessage({ type: 'SKIP_WAITING' });
+    consent.current = true; setFailure(false); setInstalling(true);
+    try { waiting.postMessage({ type: 'SKIP_WAITING' }); }
+    catch { consent.current = false; setInstalling(false); setFailure(true); }
   }
   return <>
     {(waiting || ready) && <Button onClick={() => setDismissed(false)}>有新版本</Button>}
-    {failure && <Typography.Text type="secondary">版本检查暂不可用</Typography.Text>}
+    {failure && <Typography.Text type="secondary">版本检查或更新暂不可用，请稍后重试</Typography.Text>}
     <Modal open={!!(waiting || ready) && !dismissed} title="检测到新的前端版本" okText="确认更新" cancelText="稍后" onCancel={() => { if (!installing) setDismissed(true); }} onOk={update}
       okButtonProps={{ 'aria-label': '确认更新', 'aria-busy': installing, disabled: unavailable }} confirmLoading={installing} closable={!installing} maskClosable={!installing}>
       <Space orientation="vertical" className="full-width">
