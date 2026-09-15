@@ -9,6 +9,36 @@ const release: Schema['ReleaseViewV1'] = {
   package_artifact_id: id(83), package_schema_version: '1', market_capability_version: 'controlled-market/1',
   environment: 'REAL', asof: '2026-09-13T00:00:00Z', valid_from: '2026-09-13T00:01:00Z', valid_until: '2026-09-13T01:00:00Z', created_at: '2026-09-13T00:01:00Z',
 };
+test('DEMO package remains readable but cannot open approval or Offer even with inconsistent approval history', async ({ page }) => {
+  const state = await fixture(page);
+  const demo: Schema['ReleaseViewV1'] = { ...release, environment: 'DEMO' };
+  // A stale or inconsistent history response must not enable delivery of a DEMO source.
+  const approval: Schema['ApprovalViewV1'] = {
+    id: id(302), project_id: project.id, candidate_id: demo.candidate_id, release_id: demo.id,
+    downstream_id: id(85), environment: 'PAPER', authority_kind: 'OPERATOR', automation_policy_id: null,
+    evidence_set_id: id(303), granted_at: demo.created_at, created_at: demo.created_at, valid_until: demo.valid_until,
+    downstream_revision: '1', decision_ordinal: 1, readiness_observation_id: id(304),
+  };
+  await page.route('**/api/v2/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === `/api/v2/projects/${project.id}/releases`) return reply(route, { schema_version: 1, items: [demo], next_cursor: null });
+    if (path === `/api/v2/releases/${demo.id}`) return reply(route, demo);
+    if (path === `/api/v2/releases/${demo.id}/approvals`) return reply(route, { schema_version: 1, items: [approval], next_cursor: null });
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: project.name }).click();
+  await page.getByRole('button', { name: 'Release 00000102', exact: true }).click();
+  const detail = page.getByRole('dialog', { name: '原始目标包版本', exact: true });
+  await expect(detail.getByText('DEMO 目标包不能用于 Paper 或 Live 审批及交付。', { exact: true })).toBeVisible();
+  await expect(detail.getByText(demo.package_artifact_id, { exact: true })).toBeVisible();
+  await expect(detail.getByRole('button', { name: '审批此目标包', exact: true })).toBeDisabled();
+  await detail.getByText('原审批历史', { exact: true }).click();
+  await expect(detail.getByRole('button', { name: '登记 Offer', exact: true })).toBeDisabled();
+  await expect(detail.getByRole('button', { name: '撤销审批', exact: true })).toBeEnabled();
+  expect(state.commands).toEqual([]);
+});
 for (const wrong of [false, true]) test(`Release project pagination and exact historical detail: wrong=${wrong}`, async ({ page }) => {
   const state = await fixture(page); const cursors: (string | null)[] = [];
   await page.route('**/api/v2/**', route => {

@@ -86,7 +86,9 @@ describe('native standalone response generation', () => {
           .toBe(native(value));
       }
     }
-  });
+  // Independently compiling every route in the full document exceeds the default
+  // 5 seconds on shared CI runners; retain every route and corpus assertion.
+  }, 30_000);
 
   it('reuses a single native function for repeated pure component references', () => {
     let reused = 0;
