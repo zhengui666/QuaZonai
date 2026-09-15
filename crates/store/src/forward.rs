@@ -16,6 +16,7 @@ use sqlx::{Postgres, Row, Transaction};
 mod admission;
 pub(crate) use admission::{limits as evaluation_limits, revalidate};
 mod messages;
+mod observations;
 mod schedule;
 mod window;
 

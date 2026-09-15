@@ -138,6 +138,16 @@ pub enum Alpha {
 
 #[derive(Subcommand)]
 pub enum Forward {
+    Observations {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
+    Wakes {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
     Weights {
         project_id: String,
         #[command(flatten)]
@@ -859,6 +869,22 @@ impl Command {
                 }
             },
             Self::Forward(command) => match command {
+                Forward::Observations { id, page } => {
+                    Request::get::<Page<contracts::forward::ForwardObservationViewV1>>(action(
+                        "/api/v2/projects",
+                        id,
+                        "forward-observations",
+                    )?)
+                    .page(page)?
+                }
+                Forward::Wakes { id, page } => {
+                    Request::get::<Page<contracts::forward::WakeViewV1>>(action(
+                        "/api/v2/projects",
+                        id,
+                        "wakes",
+                    )?)
+                    .page(page)?
+                }
                 Forward::Weights { project_id, page } => {
                     Request::get::<Page<contracts::forward::DownstreamWeightsViewV1>>(action(
                         "/api/v2/projects",

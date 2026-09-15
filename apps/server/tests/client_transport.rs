@@ -678,3 +678,56 @@ async fn native_cli_sse_bad_cursor_or_event_identity_does_not_invent_a_resume_or
     assert!(output.stdout.is_empty());
     assert_eq!(f.seen.lock().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn native_cli_reads_observation_and_wake_history_without_mutation() {
+    let project = Id::new();
+    let cursor = Id::new();
+    let at = "2026-09-15T00:00:00.000001Z";
+    for (command, suffix, item) in [
+        (
+            "observations",
+            "forward-observations",
+            json!({"id":Id::new(),"project_id":project,"release_id":Id::new(),"evaluation_id":Id::new(),"policy_id":Id::new(),"classification":"INSUFFICIENT_DATA","reason_codes":["WINDOW_GAP"],"observed_at":at,"created_at":at}),
+        ),
+        (
+            "wakes",
+            "wakes",
+            json!({"id":Id::new(),"project_id":project,"observation_id":null,"trigger":"OPERATOR","state":"CANCELLED","not_before":at,"consumed_cycle_id":null,"reason":"CONTROLLED_HISTORY","revision":"9007199254740993","created_at":at,"updated_at":at}),
+        ),
+    ] {
+        let response = json!({"schema_version":1,"items":[item],"next_cursor":cursor});
+        let f = Fixture::new(|_| vec![Reply::json(response.clone())]).await;
+        let result = f
+            .execute(
+                &args(&[
+                    "forward",
+                    command,
+                    &project.to_string(),
+                    "--limit",
+                    "1",
+                    "--cursor",
+                    &cursor.to_string(),
+                ]),
+                b"",
+            )
+            .await;
+        assert!(result.status.success());
+        assert!(result.stderr.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<Value>(&result.stdout).unwrap(),
+            response
+        );
+        let seen = f.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        let url = reqwest::Url::parse(&format!("{}{}", f.origin, seen[0].uri)).unwrap();
+        assert_eq!(url.path(), format!("/api/v2/projects/{project}/{suffix}"));
+        assert!(url.query_pairs().any(|(k, v)| k == "limit" && v == "1"));
+        assert!(url
+            .query_pairs()
+            .any(|(k, v)| k == "cursor" && v == cursor.to_string()));
+        assert_eq!(seen[0].method, "GET");
+        assert!(seen[0].body.is_empty());
+        assert!(seen[0].key.is_none());
+    }
+}

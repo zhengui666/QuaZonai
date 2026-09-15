@@ -2899,6 +2899,12 @@ app.forward_schedule 是每原 Handoff/stream 一行的可变重试预约，不�
 
 PENDING 仅表示待裁决，不能视为已启动 Cycle。后续消费仍须重新核对原观察当前性、ACTIVE/政策/冷却/每日预算/原生研究上下文，并原子绑定唯一新 Cycle；PAUSED/ARCHIVED 不启动。后来的更正、过期或撤权不重贴旧观察，必须由消费者拒绝其过时授权。当前观察生产不创建 Approval/Offer、模型会话或研究 Cycle。
 
+### A7.9.1 观察与唤醒的只读证据
+
+Web 与 CLI 必须能够沿原 Forward Observation → Wake → Cycle 查看事实。项目级读取复用 Operator / CLI RESEARCH_READ 的现有授权，Mission、Reviewer 和 Downstream 不因此获得读取权限；无权跨项目访问沿用现有隐藏语义。观察响应保留 id、project_id、release_id、evaluation_id、policy_id、classification、reason_codes、observed_at、created_at。唤醒响应保留 id、project_id、observation_id、trigger、state、not_before、consumed_cycle_id、reason、revision、created_at、updated_at；可空引用不补造。两个列表沿用 ListQuery / Page，按原 id 倒序分页。
+
+读取不重新分类、不调用调度、不更新时间或预算、不消费 Wake，也不把历史 HEALTHY 或 CONSUMED 当作当前资格或正在运行。过期、撤权和更正后仍保留可授权查看的原记录；唤醒是否可执行只由原 Worker 当前门禁判定。Web 明示历史分类与待处理/已消费/已取消状态，保留服务端原因及证据引用；刷新失败显示标记过期的上一结果。以下 Worker 写入边界不变。
+
 ### A7.10 Wake 的受限原生研究启动
 
 可信 Worker 在原项目自动化轮询中消费原生 DEGRADED Observation 的 DEGRADATION Wake，无 HTTP/Mission 入口。原 Wake、Observation、发表回执、Evaluation、Forward 输入和原 Release/Candidate 必须完整关联；消费前后重验完整原消息版本、当前原政策及评估/窗口期限。过期、更正或撤权取消旧 Wake，保留原 Observation。PAUSED/ARCHIVED 保留待处理 Wake。轮询只预约一项三十秒重试，失败不饥饿其他 Wake；预约不授予研究权限。
@@ -3169,6 +3175,8 @@ HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本
 | POST /handoffs/{id}/ack | external receipt/状态，不代表知道全部成交 | Downstream |
 | POST /forward/messages | message/stream/sequence/revision/窗口/report ref，去重 | Downstream |
 | GET /projects/{id}/forward | 完整/缺失/迟到窗口与晋级/劣化原因 | Operator；qz forward show |
+| GET /projects/{id}/forward-observations | 原劣化分类、原因、Release/Evaluation/Policy 引用及观察时间；id 倒序 cursor/limit 分页 | Operator / 精确项目 RESEARCH_READ CLI；client forward observations PROJECT_UUID |
+| GET /projects/{id}/wakes | 原唤醒状态、原因、not_before、Observation 与 consumed_cycle_id；id 倒序 cursor/limit 分页 | Operator / 精确项目 RESEARCH_READ CLI；client forward wakes PROJECT_UUID |
 | POST /projects/{id}/automation-policies | 显式授权、冻结阈值/期限/范围 | Operator；qz automation authorize |
 | POST /automation-policies/{id}/revoke | 阻止未来授权，不停止已执行交易 | Operator；qz automation revoke |
 | GET /runs、/runs/{id} | 分页/状态/attempt/原因/下一动作 | Operator；qz run list/show |

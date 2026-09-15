@@ -1684,6 +1684,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/projects/{id}/forward-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_forward_observations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/projects/{id}/forward-weight-snapshots": {
         parameters: {
             query?: never;
@@ -1756,6 +1772,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["list_releases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{id}/wakes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_wake_events"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4116,6 +4148,8 @@ export interface components {
         /** @enum {string} */
         ForecastUnit: "RETURN_PER_HORIZON" | "RESIDUAL_RETURN_PER_HORIZON" | "UNITLESS_SCORE";
         /** @enum {string} */
+        ForwardClassificationV1: "HEALTHY" | "WATCH" | "DEGRADED" | "INSUFFICIENT_DATA";
+        /** @enum {string} */
         ForwardCoverageV1: "COMPLETE" | "PARTIAL" | "CORRECTION";
         /** @enum {string} */
         ForwardEnvironmentV1: "PAPER" | "LIVE";
@@ -4147,6 +4181,19 @@ export interface components {
             window_end: string;
             /** Format: date-time */
             window_start: string;
+        };
+        ForwardObservationViewV1: {
+            classification: components["schemas"]["ForwardClassificationV1"];
+            /** Format: date-time */
+            created_at: string;
+            evaluation_id: components["schemas"]["Id"];
+            id: components["schemas"]["Id"];
+            /** Format: date-time */
+            observed_at: string;
+            policy_id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            reason_codes: string[];
+            release_id: components["schemas"]["Id"];
         };
         ForwardReportContentV1: {
             complete: boolean;
@@ -5468,6 +5515,23 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        Page_ForwardObservationViewV1: {
+            items: {
+                classification: components["schemas"]["ForwardClassificationV1"];
+                /** Format: date-time */
+                created_at: string;
+                evaluation_id: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                /** Format: date-time */
+                observed_at: string;
+                policy_id: components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                reason_codes: string[];
+                release_id: components["schemas"]["Id"];
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         Page_HandoffViewV1: {
             items: {
                 /** Format: date-time */
@@ -5783,6 +5847,26 @@ export interface components {
                 registration_state: components["schemas"]["UniverseRegistrationState"];
                 /** Format: date-time */
                 selection_asof: string;
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_WakeViewV1: {
+            items: {
+                consumed_cycle_id?: null | components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                id: components["schemas"]["Id"];
+                /** Format: date-time */
+                not_before: string;
+                observation_id?: null | components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                reason: string;
+                revision: components["schemas"]["Revision"];
+                state: components["schemas"]["WakeStateV1"];
+                trigger: components["schemas"]["WakeTriggerV1"];
+                /** Format: date-time */
+                updated_at: string;
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -6528,6 +6612,26 @@ export interface components {
         VerifyRequest: {
             code: string;
             schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        WakeStateV1: "PENDING" | "SUPPRESSED" | "CONSUMED" | "CANCELLED";
+        /** @enum {string} */
+        WakeTriggerV1: "DEGRADATION" | "DATA_AVAILABLE" | "OPERATOR" | "SCHEDULE";
+        WakeViewV1: {
+            consumed_cycle_id?: null | components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            id: components["schemas"]["Id"];
+            /** Format: date-time */
+            not_before: string;
+            observation_id?: null | components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            reason: string;
+            revision: components["schemas"]["Revision"];
+            state: components["schemas"]["WakeStateV1"];
+            trigger: components["schemas"]["WakeTriggerV1"];
+            /** Format: date-time */
+            updated_at: string;
         };
     };
     responses: never;
@@ -15280,6 +15384,80 @@ export interface operations {
             };
         };
     };
+    list_forward_observations: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ForwardObservationViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_downstream_weight_snapshots: {
         parameters: {
             query?: {
@@ -15610,6 +15788,80 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_wake_events: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_WakeViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {

@@ -166,3 +166,60 @@ pub struct NativeForwardResultV1 {
     #[schema(min_items = 3, max_items = 3)]
     pub statistics: Vec<crate::science::NativeStatisticV1>,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ForwardClassificationV1 {
+    Healthy,
+    Watch,
+    Degraded,
+    InsufficientData,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WakeStateV1 {
+    Pending,
+    Suppressed,
+    Consumed,
+    Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WakeTriggerV1 {
+    Degradation,
+    DataAvailable,
+    Operator,
+    Schedule,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ForwardObservationViewV1 {
+    pub id: Id,
+    pub project_id: Id,
+    pub release_id: Id,
+    pub evaluation_id: Id,
+    pub policy_id: Id,
+    pub classification: ForwardClassificationV1,
+    pub reason_codes: Vec<String>,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WakeViewV1 {
+    pub id: Id,
+    pub project_id: Id,
+    pub observation_id: Option<Id>,
+    pub trigger: WakeTriggerV1,
+    pub state: WakeStateV1,
+    pub not_before: chrono::DateTime<chrono::Utc>,
+    pub consumed_cycle_id: Option<Id>,
+    pub reason: String,
+    pub revision: crate::Revision,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}

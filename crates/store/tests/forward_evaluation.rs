@@ -383,6 +383,81 @@ async fn exercise(pool: PgPool, case: Case) {
                 .await
                 .unwrap();
         let wake_id: Id = wake_id.to_string().try_into().unwrap();
+        // Reading history must not consume, reschedule or reclassify it.
+        let before: serde_json::Value =
+            sqlx::query_scalar("SELECT to_jsonb(w) FROM app.wake_events w WHERE id=$1")
+                .bind(wake_id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let page = contracts::control::ListQuery {
+            cursor: None,
+            limit: 1,
+        };
+        let observations = store
+            .forward_observations(&operator, f.project, &page)
+            .await
+            .unwrap();
+        assert_eq!(observations.items.len(), 1);
+        assert_eq!(observations.items[0].id, observed.resource);
+        assert_eq!(
+            observations.items[0].classification,
+            contracts::forward::ForwardClassificationV1::Degraded
+        );
+        assert_eq!(observations.items[0].reason_codes, wake.3);
+        let wakes = store
+            .wake_events(&operator, f.project, &page)
+            .await
+            .unwrap();
+        assert_eq!(wakes.items.len(), 1);
+        assert_eq!(wakes.items[0].id, wake_id);
+        assert_eq!(wakes.items[0].observation_id, Some(observed.resource));
+        assert_eq!(
+            wakes.items[0].state,
+            contracts::forward::WakeStateV1::Pending
+        );
+        assert!(wakes.items[0].consumed_cycle_id.is_none());
+        assert!(store
+            .forward_observations(
+                &operator,
+                f.project,
+                &contracts::control::ListQuery {
+                    cursor: Some(observed.resource),
+                    limit: 1
+                }
+            )
+            .await
+            .unwrap()
+            .items
+            .is_empty());
+        assert!(store
+            .wake_events(
+                &operator,
+                f.project,
+                &contracts::control::ListQuery {
+                    cursor: Some(wake_id),
+                    limit: 1
+                }
+            )
+            .await
+            .unwrap()
+            .items
+            .is_empty());
+        assert!(matches!(
+            store.forward_observations(&actor, f.project, &page).await,
+            Err(StoreError::Forbidden)
+        ));
+        assert!(matches!(
+            store.wake_events(&actor, f.project, &page).await,
+            Err(StoreError::Forbidden)
+        ));
+        let after: serde_json::Value =
+            sqlx::query_scalar("SELECT to_jsonb(w) FROM app.wake_events w WHERE id=$1")
+                .bind(wake_id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(before, after);
         if let Some(quota) = native {
             sqlx::query("UPDATE app.projects SET state='PAUSED' WHERE id=$1")
                 .bind(f.project.as_uuid())

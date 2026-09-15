@@ -9,6 +9,7 @@ import { ReleaseApprove } from './release-approve';
 import { HandoffOffer } from './handoff-offer';
 import { ApprovalRevoke } from './approval-revoke';
 import { ReleaseDecision } from './release-decision';
+import { ForwardHistory } from './forward-history';
 import { Forward } from './forward';
 import { AutomationPolicies } from './automation-policies';
 
@@ -22,7 +23,7 @@ export function Delivery() {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
     }} />
-    {project ? <Tabs key={project} items={[{ key: 'releases', label: '目标包', children: <Releases project={project} /> }, { key: 'handoffs', label: '交付记录', children: <Handoffs project={project} /> }, { key: 'forward', label: 'Forward 证据', children: <Forward project={project} /> }, { key: 'policies', label: '自动化政策', children: <AutomationPolicies project={project} /> }]} /> : <NoData text="请选择项目查看已冻结的目标包。" />}
+    {project ? <Tabs key={project} items={[{ key: 'releases', label: '目标包', children: <Releases project={project} /> }, { key: 'handoffs', label: '交付记录', children: <Handoffs project={project} /> }, { key: 'forward', label: 'Forward 证据', children: <Forward project={project} /> }, { key: 'history', label: '观察与唤醒', children: <ForwardHistory project={project} /> }, { key: 'policies', label: '自动化政策', children: <AutomationPolicies project={project} /> }]} /> : <NoData text="请选择项目查看已冻结的目标包。" />}
   </Space>;
 }
 

@@ -50,3 +50,39 @@ test('Forward preserves correction evidence and rejects another stream window', 
   await page.keyboard.press('Escape');
   await expect(detail).toBeHidden();
 });
+
+test('observation and Wake history expose original reasons without starting work', async ({ page }) => {
+  await fixture(page);
+  const at = '2026-09-15T00:00:00Z';
+  const observation: Schema['ForwardObservationViewV1'] = {
+    id: id(610), project_id: project.id, release_id: id(602), evaluation_id: id(611), policy_id: id(612),
+    classification: 'INSUFFICIENT_DATA', reason_codes: ['WINDOW_GAP'], observed_at: at, created_at: at,
+  };
+  const wake: Schema['WakeViewV1'] = {
+    id: id(620), project_id: project.id, observation_id: observation.id, trigger: 'DEGRADATION', state: 'CANCELLED',
+    consumed_cycle_id: null, reason: 'ORIGINAL_FORWARD_AUTHORITY_NO_LONGER_CURRENT', revision: '9007199254740993',
+    not_before: at, created_at: at, updated_at: at,
+  };
+  const writes: string[] = [];
+  await page.route('**/api/v2/**', route => {
+    if (route.request().method() !== 'GET') writes.push(route.request().method());
+    const path = new URL(route.request().url()).pathname;
+    if (path === `/api/v2/projects/${project.id}/forward-observations`) return reply(route, { schema_version: 1, items: [observation], next_cursor: null });
+    if (path === `/api/v2/projects/${project.id}/wakes`) return reply(route, { schema_version: 1, items: [wake], next_cursor: null });
+    return route.fallback();
+  });
+  await page.goto('/'); await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: project.name }).click();
+  await page.getByRole('tab', { name: '观察与唤醒', exact: true }).click();
+  await expect(page.getByRole('cell', { name: 'INSUFFICIENT_DATA', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'WINDOW_GAP', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Wake 记录', exact: true }).click();
+  await expect(page.getByRole('cell', { name: 'CANCELLED', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: wake.reason, exact: true })).toBeVisible();
+  await page.locator('.ant-table-row-expand-icon:visible').click();
+  await expect(page.getByRole('tabpanel', { name: 'Wake 记录', exact: true }).getByText(observation.id, { exact: true })).toBeVisible();
+  await expect(page.getByText('尚未创建周期', { exact: true })).toBeVisible();
+  await expect(page.getByText(wake.revision, { exact: true })).toBeVisible();
+  expect(writes).toEqual([]);
+});

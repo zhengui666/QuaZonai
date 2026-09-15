@@ -734,3 +734,5 @@ Runtime HTTP 上传在真实 SQLITE_FULL/ENOSPC 下返回 503 / `RUNTIME_STORAGE
 自动 Forward 的 `cargo test --locked -p server --features native-codex --test forward_automation` 在私有 tmpfs 磁盘满后检查运行、产物元数据、输入、队列、评估和 Handoff 数量不变，并逐字节核对原产物。失败保留正常的 30 秒调度间隔，测试等待真实时钟后再验证并发仅创建一次 Forward 运行，以及取消、丢失 ACK 后原结果重放。它使用受控历史关系，不证明生产 Claim、真实市场反馈或全部自动任务的磁盘故障验收。
 
 恢复回归还在 pg_dump 完成后向原实例写入第二个项目，确认它保留在原库且不进入恢复副本。运行 `cargo test --locked -p server --features native-codex --test recovery_access -- --nocapture` 可获得备份开始/结束、备份后写入、恢复完成的数据库时钟及 `fixture_restore_elapsed_ms`。耗时仅覆盖隔离库恢复、访问切换、单个产物核对及测试服务进程启动，不包含生产停机、全量文件/profile、远端对账或生产服务重新上线，不能用来宣布生产 RPO/RTO 达标。
+
+交付页的“观察与唤醒”显示原观察分类、原因、Release/Evaluation/政策引用及 Wake 的状态、原因、最早尝试时间和原周期引用；可分别分页、刷新。历史分类不是当前资格，CONSUMED 不表示周期仍在运行，查看不触发工作。
