@@ -24,7 +24,7 @@ export default defineConfig({
     transformIndexHtml() {
       return [{ tag: 'aside', attrs: { role: 'note', 'aria-label': '合成预览说明',
         style: 'padding:12px;background:#fff3cd;color:#3b2e00;font:16px/1.5 sans-serif' },
-      children: 'SYNTHETIC / FIXTURE · 合成界面预览，尚非完整 Demo。项目名称和说明可临时编辑（同一预览实例共享，重启清空）；其他写入禁用。PASS、资格及权重都是未经计算的假设记录；没有真实账号或交付，请勿输入凭据。', injectTo: 'body-prepend' }];
+      children: 'SYNTHETIC / FIXTURE · 合成界面预览，尚非完整 Demo。可临时新建草稿项目并编辑名称和说明（同一预览实例共享，重启清空）；其他写入禁用。PASS、资格及权重都是未经计算的假设记录；没有真实账号或交付，请勿输入凭据。', injectTo: 'body-prepend' }];
     },
     configureServer(server) {
       const edit = projectEditor();
@@ -34,7 +34,7 @@ export default defineConfig({
         const pathname = url.pathname;
         if (!pathname.startsWith('/api/')) return next();
         let body: unknown;
-        if (request.method === 'PATCH') {
+        if (request.method === 'PATCH' || (request.method === 'POST' && pathname === '/api/v2/projects')) {
           const origin = request.headers.origin;
           if (origin && origin !== `http://${request.headers.host}`) { response.writeHead(403); response.end(); return; }
           try {
@@ -48,8 +48,8 @@ export default defineConfig({
         }
         const keys = request.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === 'idempotency-key');
         const key = keys.length === 1 ? request.headers['idempotency-key'] : undefined;
-        const result = edit(request.method ?? 'GET', pathname, body, typeof key === 'string' ? key : undefined) ?? demoResponse(request.method ?? 'GET', pathname, url.searchParams.get('partition'));
-        response.writeHead(result.status, { 'Content-Type': 'binary' in result ? 'application/octet-stream' : result.status === 200 ? 'application/json' : 'application/problem+json',
+        const result = edit(request.method ?? 'GET', pathname, body, typeof key === 'string' ? key : undefined, url.searchParams) ?? demoResponse(request.method ?? 'GET', pathname, url.searchParams.get('partition'));
+        response.writeHead(result.status, { 'Content-Type': 'binary' in result ? 'application/octet-stream' : result.status >= 200 && result.status < 300 ? 'application/json' : 'application/problem+json',
           'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
         response.end('binary' in result ? result.value : JSON.stringify(result.value));
       });

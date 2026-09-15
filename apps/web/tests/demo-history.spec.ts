@@ -59,3 +59,31 @@ test('synthetic two-Alpha history keeps expired qualification and original portf
   expect(failures).toEqual([]);
   expect(writes).toEqual([]);
 });
+
+test('new synthetic draft can be created, edited and opened without inheriting research', async ({ page }, testInfo) => {
+  const name = `SYNTHETIC · 临时项目 ${testInfo.project.name}`;
+  await page.goto('/');
+  await page.getByRole('button', { name: '新建研究', exact: true }).click();
+  const create = page.getByRole('dialog', { name: '新建研究项目', exact: true });
+  await create.getByLabel('研究名称', { exact: true }).fill(name);
+  await create.getByLabel('研究说明', { exact: true }).fill('只在此预览内存中保存');
+  await create.getByRole('button', { name: '保存项目', exact: true }).click();
+  await expect(create).toBeHidden();
+  const row = page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
+  await expect(row.getByText('草稿', { exact: true })).toBeVisible();
+  await row.getByRole('button', { name: '编辑', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: '编辑研究项目', exact: true });
+  await edit.getByLabel('研究说明', { exact: true }).fill('修改后的临时说明');
+  await edit.getByRole('button', { name: '保存项目', exact: true }).click();
+  await expect(edit).toBeHidden();
+  await page.getByRole('button', { name, exact: true }).click();
+  await expect(page.getByText('修改后的临时说明', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: '研究周期', exact: true }).click();
+  await expect(page.getByText('尚无研究周期。请先冻结 Brief，再明确选择两个角色的配置启动。', { exact: true })).toBeVisible();
+  await navigate(page, '交付');
+  await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: name }).click();
+  await expect(page.getByRole('button', { name: 'Release 00000510', exact: true })).toBeHidden();
+  await page.getByRole('tab', { name: '交付记录', exact: true }).click();
+  await expect(page.getByText('尚无交付记录。冻结目标包不会自动创建 Offer。', { exact: true })).toBeVisible();
+});
