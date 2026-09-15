@@ -724,3 +724,5 @@ MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，
 Cycle 准入的磁盘满回归位于 `apps/server/tests/cycles_http.rs`：在一次性 PostgreSQL/PGMQ 环境运行 `cargo test --locked -p server --features native-codex --test cycles_http`。子进程私有 16 MiB tmpfs 写满后，真实认证 HTTP 启动失败；独立数据库读取确认没有 Cycle/Run/队列残留，旧产物逐字节保留。释放填充文件后，同一请求首次成功且随后重放原回执，只保留一次入队。此项仍不证明所有自动任务、明确存储告警或完整恢复验收。
 
 控制面产物写入遇到原生 ENOSPC 时返回 HTTP 503 / `STORAGE_FULL`，运行日志记录同名错误码。请恢复存储可用空间后使用原请求编号重试，不删除仍被引用的产物。现有回执保持原样；此提示不声称磁盘已恢复或远端任务已停止。
+
+Runtime 的 `cargo test --locked -p runtime --test journal` 另以私有 16 MiB tmpfs 验证真实 `SQLITE_FULL`（原生错误码 13）：新任务和输入写入失败，原任务仍可重放；释放空间并重新打开 SQLite 后，原实例/对象/任务保留，失败的新记录不存在，原新请求可重试且只创建一次。SQLx 连接回池前处理完队列，仍有事务状态的连接会关闭，避免磁盘满自动回滚后污染后续请求。该测试不运行 OCI 科学任务，也不代替完整服务恢复与 RPO/RTO 演练。

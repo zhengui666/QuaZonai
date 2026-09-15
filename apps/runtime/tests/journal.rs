@@ -395,3 +395,114 @@ async fn configured_pending_limit_rejects_new_jobs_without_leaving_half_admissio
     assert!(bounded.submit(&spec, &capability).await.unwrap().1);
     bounded.close().await;
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn native_full_filesystem_rolls_back_new_work_and_preserves_original_journal() {
+    use std::{fs, io::Write, process::Command};
+    const CHILD: &str = "QZ_RUNTIME_FULL_FILESYSTEM_TEST";
+    let Some(root) = std::env::var_os(CHILD) else {
+        let root = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::var_os("QZ_TEST_UNSHARE").unwrap_or_else(|| "unshare".into()))
+            .args(["--user", "--map-root-user", "--mount", "--", "sh", "-eu", "-c",
+                "mount -t tmpfs -o size=16m,mode=0700 tmpfs \"$1\"; export TMPDIR=\"$1\"; exec \"$2\" --exact native_full_filesystem_rolls_back_new_work_and_preserves_original_journal --nocapture",
+                "runtime-full-filesystem"])
+            .arg(root.path()).arg(std::env::current_exe().unwrap()).env(CHILD, root.path())
+            .output().expect("native user and mount namespaces must be available");
+        assert!(
+            output.status.success(),
+            "isolated SQLite ENOSPC test failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        return;
+    };
+    let (directory, journal, spec, capabilities) = fixture().await;
+    let instance = journal.instance_id;
+    let (original, replay) = journal.submit(&spec, &capabilities).await.unwrap();
+    assert!(!replay);
+    let parameter = journal
+        .input_object(spec.parameters_artifact_id)
+        .await
+        .unwrap();
+    let mut next = spec.clone();
+    next.run_id = Id::new();
+    next.external_job_id = domain::runtime_jobs::external_id(next.run_id, 1).unwrap();
+    let filler_path = std::path::PathBuf::from(root).join("filler");
+    let mut filler = fs::File::create(&filler_path).unwrap();
+    let mut full = false;
+    for _ in 0..512 {
+        match filler.write_all(&[0; 64 * 1024]) {
+            Ok(()) => (),
+            Err(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
+                full = true;
+                break;
+            }
+        }
+    }
+    assert!(full, "private 16 MiB tmpfs must exhaust before 32 MiB");
+    let rejected = journal.submit(&next, &capabilities).await.unwrap_err();
+    assert!(
+        matches!(&rejected, Failure::Database(sqlx::Error::Database(error))
+        if error.code().as_deref() == Some("13")),
+        "{rejected:?}"
+    );
+    let object = Id::new();
+    let rejected = journal
+        .put_object(object, "1", &[7; 128 * 1024])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&rejected, Failure::Database(sqlx::Error::Database(error))
+        if error.code().as_deref() == Some("13")),
+        "{rejected:?}"
+    );
+    let (retained, replay) = journal.submit(&spec, &capabilities).await.unwrap();
+    assert!(replay);
+    assert_eq!(retained, original);
+    drop(filler);
+    fs::remove_file(filler_path).unwrap();
+    journal.close().await;
+    let reopened = Journal::open(
+        &directory.path().join("journal.sqlite"),
+        64 * 1024 * 1024,
+        4,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reopened.instance_id, instance);
+    assert_eq!(
+        reopened
+            .input_object(spec.parameters_artifact_id)
+            .await
+            .unwrap(),
+        parameter
+    );
+    assert!(matches!(
+        reopened.get(&next.external_job_id).await,
+        Err(Failure::Missing)
+    ));
+    assert!(matches!(
+        reopened.input_object(object).await,
+        Err(Failure::Missing)
+    ));
+    assert_eq!(reopened.pending(4).await.unwrap().len(), 1);
+    assert_eq!(
+        reopened
+            .get(&spec.external_job_id)
+            .await
+            .unwrap()
+            .status()
+            .unwrap(),
+        original
+    );
+    let (accepted, replay) = reopened.submit(&next, &capabilities).await.unwrap();
+    assert!(!replay);
+    let (again, replay) = reopened.submit(&next, &capabilities).await.unwrap();
+    assert!(replay);
+    assert_eq!(again, accepted);
+    assert_eq!(reopened.pending(4).await.unwrap().len(), 2);
+    reopened.close().await;
+}

@@ -6,7 +6,7 @@ use domain::runtime_jobs as boundary;
 use serde::Serialize;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    ConnectOptions, Row, Sqlite, SqlitePool, Transaction,
+    ConnectOptions, Connection, Row, Sqlite, SqlitePool, Transaction,
 };
 use std::{path::Path, time::Duration};
 
@@ -135,6 +135,14 @@ impl Journal {
             .disable_statement_logging();
         let pool = SqlitePoolOptions::new()
             .max_connections(4)
+            .after_release(|connection, _| {
+                Box::pin(async move {
+                    // Drain queued rollback first. SQLite can auto-rollback on SQLITE_FULL
+                    // while SQLx retains transaction depth; never reuse that connection.
+                    connection.ping().await?;
+                    Ok(!connection.is_in_transaction())
+                })
+            })
             .connect_with(options)
             .await?;
         sqlx::migrate!("./migrations")
