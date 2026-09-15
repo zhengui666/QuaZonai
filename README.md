@@ -28,7 +28,7 @@
 | Project 与机器身份 | 真正的项目分页/创建/更新、乐观并发、不可变命令回执、机器 token 一次性签发与撤销；机器只读授权项目，人工 CLI 管理操作另需原生 TOTP 单次授权 |
 | 研究准备 | 同事务冻结输入集合、不可变评估政策与实验族登记；Validation/Sealed及可选组合指标独立冻结，未定义要求保留null。浏览器“组合/评估政策”可查看原版本、填写新政策并原键重试；登记意图不代表实际Sealed执行、PIT或PASS |
 | 集成配置与探测 | 只写加密凭据、Runtime／Downstream 管理；Runtime 经部署允许列表和真实 TLS 探测，观察绑定配置版本与有效期。保存配置不等于连接成功 |
-| 原生 Runtime | 已编写 SQLite 持久任务身份、固定 Docker 原生执行、不可变输入/输出、独立墙钟限制、取消屏障及恢复服务；普通 SQLite/HTTP/数值回归和独立必跑 OCI 验收明确分离。部署与实际验证入口见 [原生 Runtime](runtimes/native/README.md)，完整 Worker/研究资格链仍未完成 |
+| 原生 Runtime | 已编写 SQLite 持久任务身份、固定 Docker 原生执行、不可变输入/输出、独立墙钟限制、取消屏障及恢复服务；普通 SQLite/HTTP/数值回归和独立必跑 OCI 验收明确分离。部署与实际验证入口见 [原生 Runtime](runtimes/native/README.md)，Worker已接通研究、独立Reviewer及封存资格裁决，真实账号与市场数据的完整链路仍待验收 |
 | Brief 与 Cycle 启动 | 正式冻结执行上下文和三个分区输入；启动时重验许可、当前 Runtime 能力与预算，在同一事务创建 Cycle、首个数据验证 Run、事件和 PGMQ 消息。不代表 Worker 已执行该任务 |
 | PostgreSQL Store | 新库SQLx迁移、逐轮不可变预约/发送/结算、同Mission幂等与预算投影、关系唯一/复合外键；研究/评估权限全链路与 Worker 仍待完整验收 |
 | Codex | 原生账号流程、模型配置、stdio MCP工具发现/调用及同Thread重启恢复适配；受控模型响应下验证文件边界和累计用量。真实账号与科学Job/Evaluation完整闭环仍待验收，Mission要求不带个人提示文件的专用profile |
@@ -39,8 +39,8 @@
 | 冻结 SCORE 校准 | 原正式 Validation 同事务冻结最后原生折并创建同 Alpha 的附加校准新版本；原版本、试验、原评估不变，新版本不继承资格。API／CLI／Ant Design 只读原校准来源，不下载系数、不重新拟合或恢复已停用 Alpha |
 | 独立 Reviewer | 研究成功ACK事务准入冻结配置的独立Run/Thread；原代码、参数和Validation上下文按目标审阅，原生公开回答绑定原Turn，预算不重置。真实App Server与文件工具、PGMQ原子回滚和重放已验证；上游回答受控，不是真实模型推理验收。审阅PASS不授资格 |
 | 原生封存计算 | 本机入口及受管EVALUATE_SEALED_ALPHA复用目录、Wasm、冻结校准和原生指标；真实OCI执行已验证。Operator可经API／CLI／Ant Design使用原模型请求评估；独立Reviewer的原PASS目标也由可信Worker使用同一准备器自动入队，不借人工授权、不重复收费原编译试验。首次能力返回前按原Attempt预约根血缘机会，取消不退款；Worker在ACK前发表原SEALED评估及全部指标。资格裁决与验收边界见下行 |
-| 原证据资格裁决 | 原独立Reviewer关联的封存ACK已接入精确版本/政策资格，重验原数据与许可并限制期限；FIXTURE科学PASS拒绝发证与PostgreSQL语句检查已通过。真实数据正向授予、资格查询/披露及交付使用仍未验收 |
-| 交付与完整研究 | Sealed／Reviewer／Alpha资格完整链、组合/审批/反馈/晋级/唤醒、旧数据导入及完整恢复仍在实施；未接通的页面明确标示，不填充假结果 |
+| 原证据资格裁决 | 原独立Reviewer关联的封存ACK已接入精确版本/政策资格，重验原数据与许可并限制期限；FIXTURE科学PASS拒绝发证与PostgreSQL语句检查已通过。受控REAL/PIT声明已有正向授予与交付关联测试，API／CLI／Ant Design可查询原资格；真实授权市场数据与完整交付仍未验收 |
+| 交付与完整研究 | 上述链路已有原生实现与分项回归，不能合并推断T42通过；完整Demo、真实账号/数据、用户旧备份迁移和恢复演练的缺项见下文 |
 
 ## 开发验证
 
@@ -166,7 +166,7 @@ Run 查询、取消和持久 SSE HTTP；完整路径和权限见 [CLI](CLI.md)�
 
 自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级已接入同一 Worker，条件与证据边界见下段。
 
-自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变，完整市场/部署验收与界面仍未完成。
+自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”可查看自动化政策、审批/交付记录及Forward观察历史。完整市场与部署验收仍未完成。
 
 Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过，这些消费链仍在实现。
 

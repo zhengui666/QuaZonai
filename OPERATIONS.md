@@ -91,7 +91,7 @@ Operator可通过`client portfolio assumptions create/list/show`管理新的不�
 自动续期或改写旧政策；历史成交量估值不是未来可成交保证。Store在Build准入和
 Candidate发布时重读原来源并核对原期限，job核对原质量报告与逐资产量；需要
 portfolio-liquidity/1镜像。来源损坏保留重试，到期不授新目标。
-DATA_BACKED及完整独立组合验证/交付尚未完成，不能手填绑定冒充可交付证据。
+当前不支持将这些保守 BAR 假设标成 DATA_BACKED，不能手填绑定冒充可交付证据。独立组合 Study、评估发布和 Release 已有原生入口，使用方式见下文；真实数据全链验收仍未完成。
 Build还要求portfolio-cost-source/1镜像：原费用文档随任务挂载，与冻结执行设置
 完整匹配，发布再次核对原保存配置；修改副本不能绕过原费用来源。
 本次Forward目录的原资产费率也必须匹配；费率变更须新建执行假设，不沿用旧费用求解。
@@ -107,8 +107,7 @@ Build还要求portfolio-cost-source/1镜像：原费用文档随任务挂载，�
 target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得研究资格。
 
 `client portfolio build`使用原Mandate、运行中Cycle、原资格和下游快照引用，需
-精确人工授权，参数见CLI。202仅表示Run入队；尚未完成成功准入到Candidate的
-完整验收。保守BAR非零滑点需portfolio-slippage/1，按原概率与最后BAR/tick换算
+精确人工授权，参数见CLI。202仅表示Run入队；Worker采纳原生结果并完成发布核对后才可读取Candidate。已有原生事务与受控科学结果测试，真实授权市场数据的完整验收仍未完成。保守BAR非零滑点需portfolio-slippage/1，按原概率与最后BAR/tick换算
 规划期望成本（公式及向上舍入见DESIGN A5.2）；不是未来成本上界或DATA_BACKED。
 实际模拟继续使用原模型和原费率，不二次扣规划成本，不放宽其他来源/流动性约束。
 原生candidate-simulation/2可在原目标有效区间内保持该目标模拟，读取原目标与费用
@@ -124,7 +123,7 @@ portfolio-study/6另提供原模型驱动的离线滚动原生计算，不依赖
 日历模式另需原完整会话文件，匹配目录日历名称/版本，截止取原收盘时间加显式偏移；
 不会自动推断交易所休市或下载日历。原 Runtime 元数据可随 Dataset 登记完整会话，
 Universe 返回 calendar_artifact_id；未登记时不补默认日历。Study 必须逐值匹配该原表，
-登记不证明交易所准确性或 REAL/PIT 资格，正式组合评估准入与发布仍未完成。
+登记不证明交易所准确性或 REAL/PIT 资格。正式组合评估通过下文的原计划 Study 入口准入与发布，不能直接把本机计算产物登记成正式评估。
 该本机计算入口不可当作Operator操作或生产资格。
 它不是恢复真实持仓，也不是已交付的Evaluation
 或Release入口；可信Worker的保持研究评估与正式策略滚动评估/交付分开，后者仍待验收。
@@ -268,7 +267,7 @@ horizon。启用Mission的Worker在最新Turn结算后，每次消费按ordinal�
 反馈；预测成功则继续正式Validation，待评估发表后才准备一次结果Turn。先提交
 原预算预约，下次消费恢复同一Thread；不为中间观察抽样新增模型请求。
 失败反馈只陈述公开原因，当前没有详细编译器诊断；修复应保留原实验父血缘。
-重复消息不重复回送结果，未结算用量不继续调用模型；独立Reviewer阶段见下文，资格仍待接通。
+重复消息不重复回送结果，未结算用量不继续调用模型；独立Reviewer及封存资格裁决见下文。原生队列测试不替代真实账号模型与科学任务的完整验收。
 
 034迁移统一首阶段记账：新编译必须为1、新预测为0，且后者须引用原已计数编译。
 各阶段仍累计CPU、输出、墙钟预算。已有账目不修改或退款；没有原始首阶段账目的
@@ -304,7 +303,7 @@ Runtime受管`VALIDATE_ALPHA`沿用同一计算入口，仅消费登记的VALIDA
 登记行缺失超限、样本不足或过期不能PASS。详细合同见DESIGN A4.8。Mission自动
 发起此阶段，受控反馈只投影已封口评估和冻结选择指标的来源/口径/样本/有效期，
 不读取EVALUATOR_ONLY报告内容。原Thread未回答、验证未终结或评估未发表时不能
-收束Mission；后续资格/Reviewer和完整产品链路仍未完成，不能把排队显示成研究完成。
+收束Mission；后续独立Reviewer与封存资格裁决按下文继续。排队、单个Mission成功和完整研究链验收是不同事实，不能互相替代。
 
 正式Validation发布还冻结每资产最后原生折的可用SCORE校准（DESIGN A4.4）。
 校准MODEL/记录与原Evaluation同事务提交，失败保留原队列；训练截止保留原始
@@ -360,17 +359,17 @@ Validation发布消息独立保留。零模型预约可直接确认取消，不�
 命令回执防重复；MODEL/CODE、镜像、血缘及signal单位来自原任务和冻结Brief。
 没有原生校准就保留null，不授资格或变更实验PENDING。033迁移允许已引用的
 PENDING实验在新评估及指标的同事务内发表一次裁决；输入仍冻结，旧评估不能
-事后补裁决，已有裁决不能改写。资格及完整Alpha操作面仍待接通。
+事后补裁决，已有裁决不能改写。资格由前述独立Reviewer关联的封存ACK裁决；浏览器“Alpha”可查看原版本、正式Validation与资格历史，并明确请求封存评估。读取历史不授予当前资格。
 
 原生Turn失败或中断时，即使先前已显示部分token用量，也不能据此确认整轮用量；工具续轮的后续请求可能已经发出却没有用量回执。驱动保留真实失败/中断终态和未结算预约，不补零、不按早先部分数字退款或自动重发。原生COMPLETED且同轮用量完整可见时才进入当前驱动的自动结算路径。
 
 锁定Codex的Turn列表可能把断流失败重建为Completed，不能据此认定成功。QZ只以真实终态通知或已经保存的同一通知确认结果；丢失通知且没有记录时保留UNKNOWN/预约，列表“已完成”不触发自动结算、退款或重发。
 
-研究Mission首轮请求使用冻结Brief与同Cycle剩余token额度，不自动选择另一Profile或扩大预算。完整原生用量结算后可使用剩余额度；结果未知时仍占用原预约，重试不会换请求或再插一轮。设置了费用上限但原生计费不可用时停止首轮准备，不假造价格。常驻Worker可显式启用Mission消费（完整参数见CLI）；它以独立容量领取、续约、准备首轮并驱动原生账本。仅首轮准备/模型回复不等于完整研究完成；全部执行与反馈对账后才按上述条件收束会话。资格与Cycle科学结论仍在开发。
+研究Mission首轮请求使用冻结Brief与同Cycle剩余token额度，不自动选择另一Profile或扩大预算。完整原生用量结算后可使用剩余额度；结果未知时仍占用原预约，重试不会换请求或再插一轮。设置了费用上限但原生计费不可用时停止首轮准备，不假造价格。常驻Worker可显式启用Mission消费（完整参数见CLI）；它以独立容量领取、续约、准备首轮并驱动原生账本。仅首轮准备/模型回复不等于完整研究完成；全部执行与反馈对账后才按上述条件收束会话。后续Reviewer、封存评估与Cycle收束分别核对原关联和原科学结果，不能从研究Mission成功推断可交付；真实账号完整研究仍待验收。
 
 运行中的Turn用量达到本轮预约后，Worker先记录`mission.token_limit`和取消意图，再请求原生中断；事件里的用量只是首次达到阈值的观察，不是最终账单。缺最终回执时保留预约并阻止同Cycle的新模型支出。用量通知及中断是异步的，仍可能超额，不能视作逐token硬限额或严格美元限额。Codex的实验rollout budget跟踪/提醒不替代这条停止路径。
 
-Mission使用不同于科学任务的队列选择，但共用现有PGMQ、Run/Attempt和租约。原生Thread回执一旦绑定不能替换，原生创建应答未知时不盲目新建；首轮预约不等于模型已经RUNNING。首轮、上述科学反馈和会话收束已接常驻Worker，但完整资格/Reviewer/交付仍未完成，不应手工改库补成功状态。
+Mission使用不同于科学任务的队列选择，但共用现有PGMQ、Run/Attempt和租约。原生Thread回执一旦绑定不能替换，原生创建应答未知时不盲目新建；首轮预约不等于模型已经RUNNING。首轮、上述科学反馈、独立Reviewer、封存评估和会话收束已接常驻Worker。代码接通及受控测试不等于真实账号、市场数据和交付全链已验收；不应手工改库补成功状态。
 
 Mission总Turn和修复Turn计数沿用原生App Server Turn，不是Provider HTTP请求计数。同一Turn的内部工具续请求仍占原预约、累计全部已观察token；QZ回送科学结果或要求修复的新Turn才单独预约。该计数不承诺限制内部HTTP请求数量，未知用量和超额仍按上述规则保留和停止。
 
@@ -520,7 +519,7 @@ portfolio-cvar/1 与 LINEAR_PROGRAM 镜像；不以方差或默认置信水平�
 这要求重建并登记 portfolio-variance-bound/1、SECOND_ORDER_CONE 镜像能力，
 不沿用不支持该约束的旧探测。发布复核误差最多为上限乘敞口容差。
 
-研究/组合/交付 UI、Worker/MCP/Codex 真闭环、受信任 runtime 与 job 隔离、多 Alpha/共享资金、Paper/Live/Forward/Wake，以及完整恢复/迁移仍未完成。普通 PR CI 不携带生产秘密，真实受保护验收只运行经过审查的固定 Head。QZ 不持有 Broker 凭据或真实执行控制权。
+研究、组合、交付及Forward历史已提供Web/CLI操作面；Worker研究续轮、独立Reviewer、资格、组合发布及自动Paper/Live/Wake已有原生实现和分项测试。完整无凭据Demo、真实账号模型闭环、真实授权数据的Web/CLI新实例链路、用户旧备份迁移及完整恢复演练仍待验收，具体缺项见README“尚未完成的交付验收”。普通 PR CI 不携带生产秘密，真实受保护验收只运行经过审查的固定 Head。QZ 不持有 Broker 凭据或真实执行控制权。
 
 ### 完整迁移命令的提交边界
 
@@ -642,7 +641,7 @@ Mission/Automation/Downstream不能借此读取额外证据。Sealed及独立Rev
 
 自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级已接入同一 Worker，条件与证据边界见下段。
 
-自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变，完整市场/部署验收与界面仍未完成。
+自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”提供自动化政策、原审批/交付记录及Forward观察历史。完整市场与部署验收仍未完成。
 
 Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过，这些消费链仍在实现。
 
