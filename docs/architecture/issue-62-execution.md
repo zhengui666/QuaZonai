@@ -5415,3 +5415,28 @@ kept source inventories unchanged and stopped their owned PostgreSQL.
 
 These tests use controlled declarations and do not prove real-account T08/T42,
 full recovery, final remote CI/review or delivery completion. PR remains Draft.
+
+### 2026-09-15 complete browser regression and native application smoke
+
+On6a702c7510c2693445263e8650cd1be9491b43d5, web-verify-40vDkT passed native
+contract/type/validator generation and independent reproducibility, typecheck,
+unit/PWA/wire checks, production build, Codex settings browser checks and the full
+336-test browser suite across the configured viewports (6.7minutes, no retries).
+Handwritten inventory remained unchanged and no generated diff remained.
+These page tests use explicit contract fixtures, not production-chain evidence.
+
+verify-gdydVU then built the actual native-codex Server and ran the existing
+npm run test:e2e:native harness against an explicitly supplied fresh disposable
+PostgreSQL18/PGMQ1.10 instance. The harness created a separate login and database,
+migrated, initialized state, bootstrapped, waited for the real API and executed
+browser enrollment/TOTP, project mutation/lost-ACK retry, CSRF rejection, mobile
+layout and logout invalidation. All stages returned0, including removal of the
+owned database and role. Its public summary reports PASSED and
+private_artifacts_retained=false; outer source inventory unchanged and PG stopped.
+No production credentials/database or authenticated model account were used.
+
+This closes the current frontend regression pass and real application smoke only.
+It does not close T02 full credential-free demo, T07/T08 protected account and live
+model/science loop, T39 user backup, T40 full recovery/fault exercises, or T42 full
+fresh-instance research-to-delivery through both Web and CLI. Remote current-head
+CI/review, merge, main reread and Issue closure are still pending.
