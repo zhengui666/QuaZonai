@@ -76,6 +76,36 @@ const policy: Schema['EvaluationPolicyView'] = {
   selection_rule: { ...selection, schema_version: 1, comparison_input_set_id, execution_assumptions_id: brief.content.execution_assumptions_id,
     comparable_scope: 'FAMILY_LINEAGE', root_lineage_id: project.root_lineage_id, family_id: id(205), tie_break: 'EXPERIMENT_ID_ASC', missing_required_metric: 'INCONCLUSIVE' },
 };
+const cycle: Schema['CycleViewV1'] = {
+  schema_version: 1, id: id(300), project_id: project.id, brief_id: brief.id, ordinal: 1,
+  trigger: 'OPERATOR', state: 'COMPLETED', outcome: 'NO_SUPPORTED_CANDIDATE',
+  next_action: 'SYNTHETIC · 补齐真实证据后才可重新研究；本预览没有执行模型任务。',
+  budget: brief.content.budget, used_experiments: 2, reserved_experiments: 0, reserved_cpu_seconds: '0',
+  initial_run_id: null, researcher_profile: null, reviewer_profile: null,
+  available_actions: ['VIEW_BRIEF', 'VIEW_SELECTION'], revision: '1', created_at: at, started_at: at, ended_at: at,
+};
+const researchRun: Schema['RunSnapshotV1'] = {
+  ...run, id: id(301), cycle_id: cycle.id, kind: 'AGENT_RESEARCH', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY',
+};
+record(`/api/v2/runs/${researchRun.id}`, '/api/v2/runs/{id}', researchRun);
+for (const item of [run, researchRun]) record(`/api/v2/runs/${item.id}/rebalance`, '/api/v2/runs/{id}/rebalance', {
+  schema_version: 1, rebalance: null,
+} satisfies Schema['RunRebalanceViewV1']);
+const selectionSnapshot: Schema['CycleSelectionV1'] = {
+  schema_version: 1, cycle_id: cycle.id, project_id: project.id, research_run_id: researchRun.id,
+  policy_id: policy.id, rule: policy.selection_rule, status: 'COMPLETE', trial_count: '2',
+  eligible_count: '0', selected_count: '0', unfinished_count: '0', created_at: at,
+};
+const trials: Schema['CycleSelectionTrialV1'][] = alphas.map((alpha, n) => ({
+  schema_version: 1, cycle_id: cycle.id, source_cycle_id: cycle.id, experiment_id: id(50 + n),
+  alpha_version_id: alpha.active_version_id, review_alpha_version_id: null, evaluation_id: id(80 + n),
+  execution_run_id: run.id, execution_state: 'SUCCEEDED', compile_run_id: null, discovery_run_id: null,
+  validation_run_id: null, rank: null, selected: false, selection_metric: null, reason: 'INVALID_EVIDENCE', unfinished: false,
+}));
+record(`/api/v2/projects/${project.id}/cycles`, '/api/v2/projects/{id}/cycles', page([cycle]));
+record(`/api/v2/cycles/${cycle.id}/selection`, '/api/v2/cycles/{id}/selection', selectionSnapshot);
+record(`/api/v2/cycles/${cycle.id}/selection/trials`, '/api/v2/cycles/{id}/selection/trials', page(trials));
+
 const assumptions: Schema['ExecutionAssumptionsViewV1'] = {
   id: brief.content.execution_assumptions_id, project_id: project.id, input_set_id: id(21), dataset_revision_id: brief.bindings[0]!.dataset_revision_id,
   runtime_id: id(220), capability_snapshot_artifact_id: id(221), fee_schedule_artifact_id: id(201), engine_image_ref: 'synthetic.invalid/example:fixture',
@@ -118,7 +148,7 @@ const candidate: Schema['CandidateViewV1'] = {
   diagnostics_artifact_id: id(204), target_artifact_id: null, allocation_evaluation_id: null, cash_weight: null,
   current_weights_source: 'NONE', current_weights_artifact_id: null,
 };
-record('/api/v2/runs', '/api/v2/runs', page([run, rejectedRun]));
+record('/api/v2/runs', '/api/v2/runs', page([run, researchRun, rejectedRun]));
 record(`/api/v2/runs/${rejectedRun.id}`, '/api/v2/runs/{id}', rejectedRun);
 record(`/api/v2/runs/${rejectedRun.id}/rebalance`, '/api/v2/runs/{id}/rebalance', { schema_version: 1, rebalance: null } satisfies Schema['RunRebalanceViewV1']);
 record(`/api/v2/projects/${project.id}/portfolio-mandates`, '/api/v2/projects/{id}/portfolio-mandates', page([mandate]));
@@ -171,7 +201,7 @@ record('/api/v2/data/revisions', '/api/v2/data/revisions', page(datasets));
 for (const dataset of datasets) record(`/api/v2/data/revisions/${dataset.id}`, '/api/v2/data/revisions/{id}', dataset);
 
 // No fake qualification, approval, Claim or account is issued by this preview.
-for (const suffix of ['cycles', 'releases', 'handoffs', 'automation-policies']) {
+for (const suffix of ['releases', 'handoffs', 'automation-policies']) {
   record(`/api/v2/projects/${project.id}/${suffix}`, `/api/v2/projects/{id}/${suffix}`, page([]));
 }
 for (const path of ['/api/v2/auth/devices', '/api/v2/settings/codex', '/api/v2/integrations/downstreams', '/api/v2/migrations/reports']) {

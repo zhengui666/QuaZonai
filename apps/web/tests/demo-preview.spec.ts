@@ -17,6 +17,21 @@ test('synthetic preview renders native-contract records without a backend or wri
   await expect(page.getByRole('note', { name: '合成预览说明' })).toContainText('尚非完整 Demo');
   await expect(page.getByRole('button', { name: 'SYNTHETIC · 双 Alpha 研究示例', exact: true })).toBeVisible()
     .catch(error => { throw new Error(`${error.message}\nBrowser errors: ${failures.join('; ')}`); });
+  await page.getByRole('button', { name: 'SYNTHETIC · 双 Alpha 研究示例', exact: true }).click();
+  await page.getByRole('button', { name: '查看冻结版本', exact: true }).click();
+  const brief = page.getByRole('dialog', { name: 'Brief · 版本 1', exact: true });
+  await expect(brief.getByText('冻结版本不可修改。', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(brief).toBeHidden();
+  await page.getByRole('tab', { name: '研究周期', exact: true }).click();
+  await expect(page.getByRole('cell', { name: /^NO_SUPPORTED_CANDIDATE / })).toBeVisible();
+  await page.getByRole('button', { name: '查看试验选择', exact: true }).click();
+  const selection = page.getByRole('dialog', { name: '冻结试验选择', exact: true });
+  await expect(selection.getByText('选择完成不是科学 PASS、Sealed 或可交付资格。', { exact: true })).toBeVisible();
+  await expect(selection.getByText('2 / 0 / 0 / 0', { exact: true })).toBeVisible();
+  await expect(selection.getByText('INVALID_EVIDENCE', { exact: true })).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await expect(selection).toBeHidden();
   await navigate(page, 'Alpha');
   await page.getByRole('combobox', { name: '选择 Alpha 所属项目', exact: true }).click();
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: 'SYNTHETIC · 双 Alpha' }).click();
