@@ -27,6 +27,7 @@ struct Responses {
     identity: Value,
     run: Value,
     brief: Value,
+    cycle: Value,
     status: StatusCode,
     oversized: bool,
     redirect: bool,
@@ -85,6 +86,8 @@ async fn reply(State(state): State<Arc<TestState>>, request: Request<Body>) -> R
         (StatusCode::OK, values.run.to_string())
     } else if request.uri().path().starts_with("/api/v2/briefs/") {
         (StatusCode::OK, values.brief.to_string())
+    } else if request.uri().path().starts_with("/api/v2/cycles/") {
+        (StatusCode::OK, values.cycle.to_string())
     } else {
         (
             StatusCode::NOT_FOUND,
@@ -113,6 +116,12 @@ async fn api() -> Api {
         credential: format_machine_token(Id::new(), &random_capability()).unwrap(),
         delay_ms: AtomicU64::new(0),
         responses: Mutex::new(Responses {
+            cycle: json!({"schema_version":1,"id":binding.cycle_id,"project_id":binding.project_id,
+                "brief_id":binding.brief_id,"ordinal":1,"revision":"1","trigger":"OPERATOR",
+                "state":"RUNNING","outcome":null,"budget":brief_request.content.budget,
+                "reserved_experiments":0,"used_experiments":0,"reserved_cpu_seconds":"0",
+                "initial_run_id":binding.run_id,"researcher_profile":null,"reviewer_profile":null,
+                "next_action":null,"started_at":now,"ended_at":null,"created_at":now,"available_actions":[]}),
             identity: json!({"schema_version":1,"credential_id":Id::new(),"kind":"MISSION",
                 "project_id":binding.project_id,"downstream_id":null,"run_id":binding.run_id,
                 "scope_codes":["RUN_READ","RESEARCH_READ"],"expires_at":expires}),

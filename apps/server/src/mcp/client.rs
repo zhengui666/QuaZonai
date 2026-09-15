@@ -5,6 +5,7 @@ use contracts::{
     artifacts::{ArtifactAccess, ArtifactCreate, ArtifactProducer, ArtifactView},
     brief::{BriefState, BriefView},
     control::{CommandResult, MachineScope, MachineSessionView, PrincipalKind},
+    cycles::CycleViewV1,
     experiments::{
         ExperimentOutcome, ExperimentProposalV1, ExperimentResultVisibility, ExperimentSource,
         ExperimentView,
@@ -88,6 +89,7 @@ impl ControlClient {
         let path = match route {
             Route::Identity => "/api/v2/auth/machine".to_owned(),
             Route::Run(id) => format!("/api/v2/runs/{id}"),
+            Route::Cycle(id) => format!("/api/v2/cycles/{id}"),
             Route::Brief(id) => format!("/api/v2/briefs/{id}"),
             Route::Artifacts => "/api/v2/artifacts".to_owned(),
             Route::Experiments => "/api/v2/experiments".to_owned(),
@@ -219,6 +221,13 @@ impl ControlClient {
     }
 
     pub(super) async fn brief(&self) -> Result<BriefView, Failure> {
+        let cycle: CycleViewV1 = self.get(Route::Cycle(self.binding.cycle_id)).await?;
+        if cycle.id != self.binding.cycle_id
+            || cycle.project_id != self.binding.project_id
+            || cycle.brief_id != self.binding.brief_id
+        {
+            return Err(Failure::Authority);
+        }
         let brief: BriefView = self.get(Route::Brief(self.binding.brief_id)).await?;
         if brief.id != self.binding.brief_id
             || brief.project_id != self.binding.project_id
@@ -302,6 +311,7 @@ impl ControlClient {
 enum Route {
     Identity,
     Run(Id),
+    Cycle(Id),
     Brief(Id),
     Artifacts,
     Experiments,

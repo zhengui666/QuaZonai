@@ -15,6 +15,17 @@ async fn frozen_brief_is_exactly_bound_and_draft_or_missing_freeze_is_rejected()
     let result = serde_json::to_value(client.call_tool(call()).await.unwrap()).unwrap();
     assert_ne!(result["isError"], true);
     assert_eq!(body(&result), original);
+    let cycle = api.state.responses.lock().unwrap().cycle.clone();
+    for field in ["id", "project_id", "brief_id"] {
+        {
+            let mut values = api.state.responses.lock().unwrap();
+            values.cycle = cycle.clone();
+            values.cycle[field] = json!(Id::new());
+        }
+        let result = serde_json::to_value(client.call_tool(call()).await.unwrap()).unwrap();
+        assert_eq!(body(&result)["code"], "MCP_AUTHORITY_REJECTED");
+    }
+    api.state.responses.lock().unwrap().cycle = cycle;
     for (field, bad) in [
         ("id", json!(Id::new())),
         ("project_id", json!(Id::new())),
