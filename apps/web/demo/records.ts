@@ -126,17 +126,59 @@ record(`/api/v2/projects/${project.id}/portfolio-candidates`, '/api/v2/projects/
 record(`/api/v2/portfolio-candidates/${candidate.id}`, '/api/v2/portfolio-candidates/{id}', { header: candidate, members: [], targets: [] } satisfies Schema['CandidateDetailV1']);
 record(`/api/v2/portfolio-candidates/${candidate.id}/evaluations`, '/api/v2/portfolio-candidates/{id}/evaluations', page([]));
 
+const runtime: Schema['RuntimeView'] = {
+  id: id(220), revision: '1', protocol_version: 1, credential_configured: false, ca_configured: false,
+  last_capability_snapshot_artifact_id: null, created_at: at, updated_at: at,
+  configuration: { name: 'SYNTHETIC · 未连接 Runtime', endpoint: 'https://synthetic.invalid', tls_policy: 'SYSTEM_CA',
+    enabled: false, development_http: false, allowed_capabilities: ['DATA_VALIDATE'] },
+};
+const source: Schema['DataSourceView'] = {
+  id: id(230), name: 'SYNTHETIC · 演示目录', runtime_id: runtime.id, native_catalog_ref: 'synthetic/catalog',
+  provider_kind: 'NAUTILUS_CATALOG', enabled: false, revision: '1', created_at: at, updated_at: at,
+};
+const grant: Schema['DataGrantView'] = {
+  id: id(231), source_id: source.id, version: '1', license_reference: 'SYNTHETIC · 已过期的演示许可',
+  evidence_artifact_id: id(232), allowed_uses: 'RESEARCH', valid_from: '2026-01-01T00:00:00Z', valid_until: at,
+  created_at: '2026-01-01T00:00:00Z', license_state: 'EXPIRED', checked_at: at,
+};
+const universe: Schema['UniverseView'] = {
+  id: brief.content.universe_version_id, name: 'SYNTHETIC · 演示投资域', registration_state: 'LEGACY_UNVERIFIED',
+  membership_artifact_id: id(233), instrument_definitions_artifact_id: id(234), calendar_ref: 'fixture-calendar',
+  calendar_version: 'fixture-v1', selection_asof: at, has_historical_membership: false,
+  coverage_start: '2026-01-01T00:00:00Z', coverage_end: at, created_at: at,
+};
+const datasets: Schema['DatasetView'][] = brief.bindings.map((binding, n) => ({
+  id: binding.dataset_revision_id, source_id: source.id, data_use_grant_id: grant.id, native_snapshot_ref: `synthetic/snapshot-${n}`,
+  storage_version: '1', universe_version_id: universe.id, schema_version: '1', data_kind: 'BAR', partition: binding.role,
+  event_start: '2026-01-01T00:00:00Z', event_end: at, available_through: at, row_count: '0', timezone: 'UTC',
+  quality_artifact_id: id(250 + n), pit_status: 'UNVERIFIED', revision_policy: 'UNKNOWN', origin: 'FIXTURE', created_at: at,
+  native_metadata_artifact_id: id(240 + n), registration_observed_at: at,
+  source_enabled: false, runtime_enabled: false, license_state: 'EXPIRED', checked_at: at,
+}));
+record('/api/v2/integrations/runtimes', '/api/v2/integrations/runtimes', page([runtime]));
+record(`/api/v2/integrations/runtimes/${runtime.id}`, '/api/v2/integrations/runtimes/{id}', runtime);
+record('/api/v2/data/sources', '/api/v2/data/sources', page([source]));
+record(`/api/v2/data/sources/${source.id}`, '/api/v2/data/sources/{id}', source);
+record(`/api/v2/data/sources/${source.id}/grants`, '/api/v2/data/sources/{id}/grants', page([grant]));
+record(`/api/v2/data/grants/${grant.id}/revocations`, '/api/v2/data/grants/{id}/revocations', page([]));
+record('/api/v2/data/universes', '/api/v2/data/universes', page([universe]));
+record(`/api/v2/data/universes/${universe.id}`, '/api/v2/data/universes/{id}', universe);
+record('/api/v2/data/revisions', '/api/v2/data/revisions', page(datasets));
+for (const dataset of datasets) record(`/api/v2/data/revisions/${dataset.id}`, '/api/v2/data/revisions/{id}', dataset);
+
 // No fake qualification, approval, Claim or account is issued by this preview.
 for (const suffix of ['cycles', 'releases', 'handoffs', 'automation-policies']) {
   record(`/api/v2/projects/${project.id}/${suffix}`, `/api/v2/projects/{id}/${suffix}`, page([]));
 }
-for (const path of ['/api/v2/auth/devices', '/api/v2/settings/codex', '/api/v2/integrations/runtimes',
-  '/api/v2/integrations/downstreams', '/api/v2/data/sources', '/api/v2/data/revisions', '/api/v2/data/universes']) {
+for (const path of ['/api/v2/auth/devices', '/api/v2/settings/codex', '/api/v2/integrations/downstreams']) {
   record(path, path, page([]));
 }
 
-export function demoResponse(method: string, pathname: string) {
+export function demoResponse(method: string, pathname: string, partition: string | null = null) {
   const item = method === 'GET' ? records.get(pathname) : undefined;
+  if (item && pathname === '/api/v2/data/revisions' && partition) {
+    return { status: 200, value: page(datasets.filter(dataset => dataset.partition === partition)) };
+  }
   if (item) return { status: 200, value: item.value };
   const status = method === 'GET' ? 404 : 403;
   return { status, value: {

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { navigate } from './fixtures';
+import { navigate, settingsCategory } from './fixtures';
 
 test.use({ baseURL: 'http://127.0.0.1:4179' });
 
@@ -50,6 +50,26 @@ test('synthetic preview renders native-contract records without a backend or wri
     await navigate(page, title);
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
   }
+  await settingsCategory(page, '数据与许可');
+  await expect(page.getByText('SYNTHETIC · 演示目录', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '查看许可与版本登记', exact: true }).click();
+  await expect(page.getByText('SYNTHETIC · 未连接 Runtime', { exact: true })).toBeVisible();
+  await expect(page.getByText('SYNTHETIC · 已过期的演示许可', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '登记原生数据版本', exact: true })).toBeDisabled();
+  await page.getByRole('tab', { name: '已登记数据版本', exact: true }).click();
+  await expect(page.getByRole('button', { name: '查看版本证据', exact: true })).toHaveCount(2);
+  await page.getByRole('combobox', { name: '筛选数据分区', exact: true }).click();
+  await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('SEALED', { exact: true }).click();
+  await expect(page.getByRole('button', { name: '查看版本证据', exact: true })).toHaveCount(1);
+  await page.getByRole('button', { name: '查看版本证据', exact: true }).click();
+  const dataset = page.getByRole('dialog', { name: '原生数据版本与证据', exact: true });
+  await expect(dataset.getByText('测试数据 · PIT UNVERIFIED', { exact: true })).toBeVisible();
+  await expect(dataset.getByText('SEALED', { exact: true })).toBeVisible();
+  await dataset.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(dataset).toBeHidden();
+  await page.getByRole('tab', { name: 'Universe 版本', exact: true }).click();
+  await expect(page.getByText('SYNTHETIC · 演示投资域', { exact: true })).toBeVisible();
+  await expect(page.getByText('历史记录未核验', { exact: true })).toBeVisible();
   const denied = await page.request.post('/api/v2/handoffs/arbitrary/claim', { data: {} });
   expect(denied.status()).toBe(403);
   expect((await denied.json()).detail).toContain('不执行');

@@ -14,6 +14,9 @@ test('synthetic preview preserves native response contracts and denies every wri
   }
   expect(demoResponse('POST', '/api/v2/handoffs/arbitrary/claim').status).toBe(403);
   expect(demoResponse('GET', '/api/v2/unknown').status).toBe(404);
+  expect(demoResponse('GET', '/api/v2/data/revisions', 'SEALED')).toMatchObject({ status: 200, value: {
+    items: [{ partition: 'SEALED', origin: 'FIXTURE', row_count: '0', license_state: 'EXPIRED', source_enabled: false, runtime_enabled: false }],
+  } });
   expect(demoResponse('GET', '/api/v2/portfolio-candidates/01990000-0000-7000-8000-000000000203')).toMatchObject({
     status: 200, value: { header: { origin: 'FIXTURE', execution_status: 'FAILED', target_artifact_id: null, cash_weight: null }, members: [], targets: [] },
   });

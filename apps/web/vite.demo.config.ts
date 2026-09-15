@@ -28,9 +28,10 @@ export default defineConfig({
     configureServer(server) {
       // This server has no upstream proxy or database connection.
       server.middlewares.use((request, response, next) => {
-        const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+        const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+        const pathname = url.pathname;
         if (!pathname.startsWith('/api/')) return next();
-        const result = demoResponse(request.method ?? 'GET', pathname);
+        const result = demoResponse(request.method ?? 'GET', pathname, url.searchParams.get('partition'));
         response.writeHead(result.status, { 'Content-Type': result.status === 200 ? 'application/json' : 'application/problem+json',
           'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
         response.end(JSON.stringify(result.value));
