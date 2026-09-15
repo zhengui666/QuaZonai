@@ -8,6 +8,7 @@ const ajv = new Ajv2020({ strict: false, inlineRefs: false });
 addFormats(ajv); ajv.addSchema(document, 'native');
 const validUpdate = ajv.compile<Schema['ProjectUpdate']>({ $ref: 'native#/components/schemas/ProjectUpdate' });
 const validCreate = ajv.compile<Schema['ProjectCreate']>({ $ref: 'native#/components/schemas/ProjectCreate' });
+const validState = ajv.compile({ $ref: 'native#/components/schemas/RunState' });
 const validCursor = ajv.compile({ $ref: 'native#/components/schemas/Id' });
 const validLimit = ajv.compile(document.paths['/api/v2/projects'].get.parameters.find(parameter => parameter.name === 'limit')!.schema);
 const empty = { status: 200, value: { schema_version: 1, items: [], next_cursor: null } };
@@ -23,22 +24,26 @@ export function projectEditor() {
     const parts = path.split('/');
     const project = parts[3] === 'projects' ? projects.get(parts[4] ?? '') : undefined;
     if (method === 'GET') {
+      const selected = query.get('project_id');
+      const nestedPage = project && project.id !== original.id && parts.length === 6 && ['briefs', 'cycles', 'execution-assumptions', 'portfolio-mandates', 'portfolio-candidates', 'releases', 'handoffs', 'automation-policies', 'forward', 'forward-observations', 'forward-weight-snapshots', 'wakes'].includes(parts[5]!);
+      const globalPage = selected && selected !== original.id && projects.has(selected) && ['/api/v2/alphas', '/api/v2/evaluation-policies', '/api/v2/runs'].includes(path);
+      const limit = Number(query.get('limit') ?? '50'); const cursor = query.get('cursor');
+      if (path === '/api/v2/projects' || nestedPage || globalPage) {
+        const allowed = ['limit', 'cursor', ...(globalPage ? ['project_id', ...(path === '/api/v2/runs' ? ['state'] : [])] : [])];
+        if (!/^\d+$/.test(query.get('limit') ?? '50') || !validLimit(limit) || (cursor !== null && !validCursor(cursor)) || (query.has('state') && !validState(query.get('state'))) || [...query.keys()].some(name => !allowed.includes(name) || query.getAll(name).length !== 1)) return invalid;
+      }
       if (path === '/api/v2/projects') {
-        const limit = Number(query.get('limit') ?? '50'); const cursor = query.get('cursor');
-        if (!/^\d+$/.test(query.get('limit') ?? '50') || !validLimit(limit) || (cursor !== null && !validCursor(cursor)) || [...query.keys()].some(name => !['limit', 'cursor'].includes(name) || query.getAll(name).length !== 1)) return invalid;
         const items = [...projects.values()].filter(item => !cursor || item.id < cursor).sort((a, b) => b.id.localeCompare(a.id));
         return { status: 200, value: { schema_version: 1, items: items.slice(0, limit), next_cursor: items.length > limit ? items[limit - 1]!.id : null } };
       }
       if (project && parts.length === 5) return { status: 200, value: project };
-      if (project && project.id !== original.id && parts.length === 6 && ['briefs', 'cycles', 'execution-assumptions', 'portfolio-mandates', 'portfolio-candidates', 'releases', 'handoffs', 'automation-policies', 'forward', 'forward-observations', 'wakes'].includes(parts[5]!)) return empty;
-      const selected = query.get('project_id');
-      if (selected && selected !== original.id && projects.has(selected) && ['/api/v2/alphas', '/api/v2/evaluation-policies', '/api/v2/runs'].includes(path)) return empty;
+      if (nestedPage || globalPage) return empty;
       return undefined;
     }
     const creating = method === 'POST' && path === '/api/v2/projects';
     if (!creating && !(method === 'PATCH' && project && parts.length === 5)) return undefined;
     const request = creating ? validCreate(body) ? body : undefined : validUpdate(body) ? body : undefined;
-    if (!request || !request.name.trim() || !key || key.length > 200 || key.trim() !== key || !/^[\x20-\x7e]+$/.test(key)) return invalid;
+    if (!request || !request.name.trim() || /[\u0000-\u001f\u007f-\u009f]/u.test(request.name) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(request.description) || !key || key.length > 200 || key.trim() !== key || !/^[\x20-\x7e]+$/.test(key)) return invalid;
     const encoded = 'expected_revision' in request
       ? JSON.stringify([path, request.schema_version, request.expected_revision, request.name, request.description, request.state])
       : JSON.stringify([path, request.schema_version, request.name, request.description, request.fork_from_project_id ?? null]);

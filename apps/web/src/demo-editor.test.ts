@@ -63,3 +63,29 @@ test('temporary projects preserve creation receipts, pagination and empty resear
   expect(edit('PATCH', `${path}/${project}`, { ...update, expected_revision: '2', state: 'ACTIVE' }, 'activate')?.status).toBe(403);
   expect(projectEditor()('GET', `${path}/${project}`)).toBeUndefined();
 });
+
+
+test('all temporary project pages validate pagination and text follows native control rules', () => {
+  const edit = projectEditor(); const path = '/api/v2/projects';
+  const body = { schema_version: 1, name: 'Temporary', description: 'Line 1\nLine 2\tColumn\rReturn' };
+  for (const name of ['A\nB', 'A\tB', 'A\rB', 'A\u007fB', 'A\u0085B']) expect(edit('POST', path, { ...body, name }, 'invalid-name')?.status).toBe(422);
+  for (const description of ['A\u0000B', 'A\u000bB', 'A\u007fB', 'A\u009fB']) expect(edit('POST', path, { ...body, description }, 'invalid-text')?.status).toBe(422);
+  const created = edit('POST', path, body, 'valid-text')!;
+  expect(created.status).toBe(201);
+  const project = (created.value as { resource: { id: string } }).resource.id;
+  const update = { ...body, expected_revision: '1', state: 'DRAFT' };
+  expect(edit('PATCH', `${path}/${project}`, { ...update, name: 'A\nB' }, 'invalid-update')?.status).toBe(422);
+  expect(edit('PATCH', `${path}/${project}`, { ...update, description: 'A\u0000B' }, 'invalid-update')?.status).toBe(422);
+  for (const suffix of ['briefs', 'cycles', 'execution-assumptions', 'portfolio-mandates', 'portfolio-candidates', 'releases', 'handoffs', 'automation-policies', 'forward', 'forward-observations', 'forward-weight-snapshots', 'wakes']) {
+    const route = `${path}/${project}/${suffix}`;
+    const page = edit('GET', route)!;
+    expect(page).toMatchObject({ status: 200, value: { items: [], next_cursor: null } });
+    expect(validateResponse(`/api/v2/projects/{id}/${suffix}`, 'get', 200, page.value, 'application/json')).toBe(true);
+    for (const query of ['limit=0', 'limit=101', 'cursor=bad', 'cursor=', 'limit=1&limit=2', 'unknown=1']) expect(edit('GET', route, undefined, undefined, new URLSearchParams(query))?.status).toBe(422);
+  }
+  for (const route of ['/api/v2/alphas', '/api/v2/evaluation-policies', '/api/v2/runs']) {
+    for (const query of ['limit=0', 'cursor=bad', 'limit=1&limit=2', 'unknown=1']) expect(edit('GET', route, undefined, undefined, new URLSearchParams(`project_id=${project}&${query}`))?.status).toBe(422);
+  }
+  expect(edit('GET', '/api/v2/runs', undefined, undefined, new URLSearchParams({ project_id: project, state: 'SUCCEEDED' }))?.status).toBe(200);
+  expect(edit('GET', '/api/v2/runs', undefined, undefined, new URLSearchParams({ project_id: project, state: 'invalid' }))?.status).toBe(422);
+});
