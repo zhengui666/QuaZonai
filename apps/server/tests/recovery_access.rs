@@ -292,6 +292,11 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         )
         .unwrap();
     }
+    let backup_started_at: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     let dump = postgres_tool(&pool, "pg_dump")
         .args(["--format=custom", "--no-owner", "--no-privileges"])
         .output()
@@ -306,6 +311,20 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         "pg_dump emitted a warning requiring investigation"
     );
     assert!(dump.stdout.starts_with(b"PGDMP"));
+    let backup_finished_at: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    // A subsequent source write is deliberately outside the archived point in time.
+    let later = client::browser(&f, &cookie, "after-backup-project", "/api/v2/projects",
+        json!({"schema_version":1,"name":"After backup","description":"Must remain only in the source instance","fork_from_project_id":null})).await;
+    assert_eq!(later.status, StatusCode::CREATED);
+    let later_id = later.body["resource"]["id"].as_str().unwrap();
+    let later_created_at: chrono::DateTime<chrono::Utc> =
+        serde_json::from_value(later.body["resource"]["created_at"].clone()).unwrap();
+    assert!(later_created_at >= backup_finished_at);
+    let restore_started = std::time::Instant::now();
     let database = format!("restore_test_{}", Id::new().to_string().replace('-', ""));
     sqlx::query(&format!("CREATE DATABASE {database} TEMPLATE template0"))
         .execute(&pool)
@@ -531,6 +550,38 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     assert_eq!(
         projects.body["items"][0]["id"],
         original.body["resource"]["id"]
+    );
+    let absent = support::call(
+        &restored,
+        "GET",
+        &format!("/api/v2/projects/{later_id}"),
+        Value::Null,
+        login.cookie.as_deref(),
+    )
+    .await;
+    assert_eq!(absent.status, StatusCode::NOT_FOUND);
+    let retained = support::call(
+        &f,
+        "GET",
+        &format!("/api/v2/projects/{later_id}"),
+        Value::Null,
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(retained.status, StatusCode::OK);
+    assert_eq!(retained.body, later.body["resource"]);
+    let restore_finished_at: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&restored_pool)
+            .await
+            .unwrap();
+    println!(
+        "{}",
+        json!({"scope":"isolated archive, access cutover and one artifact; not production RPO/RTO",
+        "backup_started_at":backup_started_at,"backup_finished_at":backup_finished_at,
+        "source_write_after_backup_at":later_created_at,"restore_finished_at":restore_finished_at,
+        "fixture_restore_elapsed_ms":restore_started.elapsed().as_millis(),
+        "restored_project_count":1,"source_only_project_count":1})
     );
     // Recovery of the copy cannot change the live source's authority.
     assert_eq!(
