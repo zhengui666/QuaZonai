@@ -5328,3 +5328,32 @@ control-plane revocation does; original credentials remain immutable.
 This is a restore prerequisite, not pg_dump/pg_restore, artifact consistency,
 in-flight remote reconciliation, disk-full or measured RPO/RTO proof. Those and
 full T42/real-account/data acceptance remain unfinished. PR is still unpushed.
+
+### 2026-09-15 native database archive/restore regression
+
+The recovery test now uses real PostgreSQL custom pg_dump and transactional
+pg_restore into a separately named empty disposable database. Source business
+records come from bootstrap and project HTTP commands, with no SQL business seeds.
+The synthetic vault is copied while no writers run. The same cookie key provides
+an explicit positive control: restored old sessions work before recover-access
+and fail afterwards. Retained TOTP permits a fresh login; replay returns the same
+original resource, timestamps and identifiers with the documented replayed=true
+marker, and the project list still has exactly one row. Source authority is
+unchanged. Original SQLx migration checks also pass against the restored database.
+The temporary target is dropped on success; the enclosing disposable cluster is
+stopped after every verifier outcome. No production database or secrets are used.
+
+verify-cOAS3t passed compile, formatting, strict Clippy and all 67 selected native
+checks, with unchanged source inventory and owned PG stopped. Tiu4NY/8vt9oM failed
+at the test client's connection adapter: SQLx URI options are not native libpq
+options, and PGDATABASE defaults do not expand that URI. Standard libpq environment
+fields now carry the connection without password arguments. 9KGWAs then completed
+archive/restore and login but exposed the test's incorrect replay marker expectation;
+only that expectation was corrected. Existing immutable response content is equal.
+CI selects tools inside its existing pinned store-database container; this Docker
+branch still requires the actual remote CI run. Local native PostgreSQL was tested.
+
+This is quiescent synthetic database/vault recovery evidence only. Referenced active
+and historical artifacts, application nonowner startup after restore, external
+profiles, pending remote reconciliation, disk-full/dependency-offline behavior,
+measured RPO/RTO and full T42 remain outstanding. PR remains unpushed/unmerged.

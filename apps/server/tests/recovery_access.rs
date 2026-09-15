@@ -160,3 +160,263 @@ async fn ordinary_database_identity_cannot_invalidate_restored_access(pool: PgPo
         .await
         .unwrap();
 }
+
+// Native clients use only the disposable SQLx connection, never the host's default DB.
+fn postgres_tool(pool: &PgPool, tool: &str) -> tokio::process::Command {
+    let mut options = pool.connect_options().as_ref().clone();
+    let mut command = if let Ok(container) = std::env::var("QZ_TEST_PG_CONTAINER") {
+        options = options.host("127.0.0.1").port(5432);
+        let mut command = tokio::process::Command::new("docker");
+        command.args([
+            "exec",
+            "-i",
+            "--env",
+            "PGDATABASE",
+            "--env",
+            "PGHOST",
+            "--env",
+            "PGPORT",
+            "--env",
+            "PGUSER",
+            "--env",
+            "PGPASSWORD",
+            &container,
+            tool,
+        ]);
+        command
+    } else {
+        tokio::process::Command::new(tool)
+    };
+    // Libpq's environment default is a database name, not an expanded SQLx URI.
+    let url = options.to_url_lossy();
+    let encoded = format!(
+        "password={}",
+        url.password().unwrap_or_default().replace('+', "%2B")
+    );
+    let password = url::form_urlencoded::parse(encoded.as_bytes())
+        .next()
+        .unwrap()
+        .1
+        .into_owned();
+    command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("PGHOST", options.get_host())
+        .env("PGPORT", options.get_port().to_string())
+        .env("PGUSER", options.get_username())
+        .env("PGPASSWORD", password)
+        .env(
+            "PGDATABASE",
+            options.get_database().expect("disposable test database"),
+        )
+        .kill_on_drop(true);
+    command
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool) {
+    use integrations::secrets::SecretVault;
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+    use tower_sessions::cookie::Key;
+
+    // Keep the SAME key: rejection must follow the restored epoch, not a changed cookie key.
+    let cookie_key = Key::generate();
+    let f = support::fixture_with_key(pool.clone(), None, None, cookie_key.clone()).await;
+    let (enrollment, initial, totp) = support::start(&f).await;
+    let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    assert_eq!(login.status, StatusCode::OK);
+    let cookie = login.cookie.unwrap();
+    let body = json!({"schema_version":1,"name":"Archived project","description":"Original receipt survives restore","fork_from_project_id":null});
+    let original = client::browser(
+        &f,
+        &cookie,
+        "archived-project",
+        "/api/v2/projects",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(original.status, StatusCode::CREATED);
+    let before = f.store.authentication_snapshot().await.unwrap();
+    // No workers or requests run while copying this synthetic instance's vault and DB.
+    let state = tempfile::tempdir().unwrap();
+    std::fs::create_dir(state.path().join("secrets")).unwrap();
+    std::fs::set_permissions(
+        state.path().join("secrets"),
+        std::fs::metadata(f._state.path().join("secrets"))
+            .unwrap()
+            .permissions(),
+    )
+    .unwrap();
+    std::fs::copy(
+        f._state.path().join("master.key"),
+        state.path().join("master.key"),
+    )
+    .unwrap();
+    for entry in std::fs::read_dir(f._state.path().join("secrets")).unwrap() {
+        let entry = entry.unwrap();
+        assert!(entry.file_type().unwrap().is_file());
+        std::fs::copy(
+            entry.path(),
+            state.path().join("secrets").join(entry.file_name()),
+        )
+        .unwrap();
+    }
+    let dump = postgres_tool(&pool, "pg_dump")
+        .args(["--format=custom", "--no-owner", "--no-privileges"])
+        .output()
+        .await
+        .expect("native pg_dump must be installed");
+    assert!(
+        dump.status.success(),
+        "native pg_dump failed (archive and diagnostics remain private)"
+    );
+    assert!(
+        dump.stderr.is_empty(),
+        "pg_dump emitted a warning requiring investigation"
+    );
+    assert!(dump.stdout.starts_with(b"PGDMP"));
+    let database = format!("restore_test_{}", Id::new().to_string().replace('-', ""));
+    sqlx::query(&format!("CREATE DATABASE {database} TEMPLATE template0"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let restored_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect_with(pool.connect_options().as_ref().clone().database(&database))
+        .await
+        .unwrap();
+    let mut child = postgres_tool(&restored_pool, "pg_restore")
+        .args([
+            "--dbname",
+            "",
+            "--single-transaction",
+            "--exit-on-error",
+            "--no-owner",
+            "--no-privileges",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("native pg_restore must be installed");
+    let mut input = child.stdin.take().unwrap();
+    let (written, restored) = tokio::join!(
+        async {
+            input.write_all(&dump.stdout).await?;
+            input.shutdown().await
+        },
+        child.wait_with_output()
+    );
+    assert!(written.is_ok());
+    let restored = restored.unwrap();
+    assert!(
+        restored.status.success(),
+        "native pg_restore failed (diagnostics remain private)"
+    );
+    assert!(
+        restored.stderr.is_empty(),
+        "pg_restore emitted a warning requiring investigation"
+    );
+    let store = store::Store::from_pool(restored_pool.clone());
+    store.migrate().await.unwrap();
+    assert_eq!(
+        store.authentication_snapshot().await.unwrap().epoch,
+        before.epoch
+    );
+    let policy = server::WebPolicy::new(
+        "https://research.example",
+        "127.0.0.1:8080".parse().unwrap(),
+        false,
+    )
+    .unwrap();
+    let restored = support::Fixture {
+        app: server::router(
+            server::AppState::new(
+                store.clone(),
+                SecretVault::open(
+                    &state.path().join("secrets"),
+                    &state.path().join("master.key"),
+                )
+                .unwrap(),
+                policy,
+            ),
+            cookie_key,
+        ),
+        store,
+        _state: state,
+    };
+    // Positive control proves the old session was really restored and decryptable.
+    assert_eq!(
+        support::call(
+            &restored,
+            "GET",
+            "/api/v2/auth/session",
+            Value::Null,
+            Some(&cookie)
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    assert!(recover(&restored_pool, Id::new()).await.status.success());
+    assert_eq!(
+        support::call(
+            &restored,
+            "GET",
+            "/api/v2/auth/session",
+            Value::Null,
+            Some(&cookie)
+        )
+        .await
+        .status,
+        StatusCode::UNAUTHORIZED
+    );
+    let now = restored
+        .store
+        .authentication_snapshot()
+        .await
+        .unwrap()
+        .database_now
+        .timestamp() as u64;
+    let login = support::call(&restored,"POST","/api/v2/auth/login",json!({"schema_version":1,"code":totp.generate((now/30+1)*30),"trust_device":false,"device_label":null}),None).await;
+    assert_eq!(login.status, StatusCode::OK);
+    let replay = client::browser(
+        &restored,
+        login.cookie.as_deref().unwrap(),
+        "archived-project",
+        "/api/v2/projects",
+        body,
+    )
+    .await;
+    assert_eq!(replay.status, original.status);
+    assert_eq!(original.body["replayed"], false);
+    assert_eq!(replay.body["replayed"], true);
+    let mut expected = original.body.clone();
+    expected["replayed"] = json!(true);
+    assert_eq!(replay.body, expected);
+    let projects = support::call(
+        &restored,
+        "GET",
+        "/api/v2/projects",
+        Value::Null,
+        login.cookie.as_deref(),
+    )
+    .await;
+    assert_eq!(projects.body["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        projects.body["items"][0]["id"],
+        original.body["resource"]["id"]
+    );
+    // Recovery of the copy cannot change the live source's authority.
+    assert_eq!(
+        f.store.authentication_snapshot().await.unwrap().epoch,
+        before.epoch
+    );
+    drop(restored);
+    restored_pool.close().await;
+    sqlx::query(&format!("DROP DATABASE {database}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+}

@@ -38,6 +38,14 @@ pub async fn fixture_with_deployment(
     targets: Option<server::runtime_transport::RuntimeTargets>,
     exports: Option<server::migrations::HistoricalExports>,
 ) -> Fixture {
+    fixture_with_key(pool, targets, exports, Key::generate()).await
+}
+pub async fn fixture_with_key(
+    pool: PgPool,
+    targets: Option<server::runtime_transport::RuntimeTargets>,
+    exports: Option<server::migrations::HistoricalExports>,
+    cookie_key: Key,
+) -> Fixture {
     PostgresStore::new(pool.clone()).migrate().await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let secrets = root.path().join("secrets");
@@ -72,7 +80,7 @@ pub async fn fixture_with_deployment(
                 .unwrap(),
             );
     }
-    let app = server::router(state, Key::generate());
+    let app = server::router(state, cookie_key);
     Fixture {
         app,
         store,

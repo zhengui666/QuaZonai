@@ -706,3 +706,10 @@ MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，
 备份与归档恢复参数以 [PostgreSQL 18 pg_dump](https://www.postgresql.org/docs/18/app-pgdump.html)
 和 [pg_restore](https://www.postgresql.org/docs/18/app-pgrestore.html) 为准；访问切换测试不能证明
 数据库、artifacts/historical-artifacts和远端任务已一致恢复。RPO/RTO仍待实际演练记录。
+
+恢复回归测试位于 `apps/server/tests/recovery_access.rs`。在一次性SQLx数据库环境中运行
+`cargo test --locked -p server --features native-codex --test recovery_access`；本机PATH需有匹配
+服务器版本的原生pg_dump/pg_restore。CI通过QZ_TEST_PG_CONTAINER指定已有的一次性PGMQ容器，
+使用容器内工具；连接凭据只通过环境传递。测试创建独立目标库，复制合成TOTP密文和密钥，
+执行完整custom archive及单事务恢复，再核对同密钥旧会话、访问切换和原始请求回执。
+此测试不读取用户备份，也不证明artifacts一致性、生产运行身份、远端任务对账或RPO/RTO。

@@ -182,6 +182,8 @@ jobs:
           prlimit --version > /tmp/store-evidence/prlimit-version.txt
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
       - name: Run every Store test against real independently migrated databases
+        env:
+          QZ_TEST_PG_CONTAINER: store-database
         run: |
           set -euo pipefail
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
