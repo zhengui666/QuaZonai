@@ -71,6 +71,18 @@ async fn downstream_cli_publishes_original_weights_and_replays_without_replacing
         .unwrap();
     let body = json!({"schema_version":1,"project_id":project,"environment":"PAPER","external_message_id":"paper-original","asof_ns":(now-1000000).to_string(),"available_ns":now.to_string(),"valid_until_ns":(now+60000000000_i64).to_string(),"base_currency":"USD","cash_weight":"0.25","weights":[{"instrument_id":"A.SIM","currency":"USD","weight":"0.75"}]});
     let (origin, _listener) = listen(&f).await;
+    for command in ["observations", "wakes"] {
+        let denied = invoke(
+            &origin,
+            &file,
+            &["forward", command, project.as_str().unwrap()],
+            Value::Null,
+        )
+        .await;
+        assert!(!denied.status.success());
+        assert!(denied.stdout.is_empty());
+        assert!(!String::from_utf8_lossy(&denied.stderr).contains(token));
+    }
     let mut original = Value::Null;
     for replay in [false, true] {
         let output = invoke(

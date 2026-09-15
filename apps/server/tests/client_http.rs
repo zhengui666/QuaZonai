@@ -93,6 +93,34 @@ async fn candidate_cli_reads_original_snapshots_with_project_scope(pool: PgPool)
     let (_, foreign_candidate, _) = candidate_fixture::portfolio(&pool, &foreign).await;
     let foreign_candidate = foreign_candidate.to_string();
     let foreign_project = foreign.project.to_string();
+    for command in ["observations", "wakes"] {
+        let result = invoke(
+            &origin,
+            &file,
+            &[
+                "forward",
+                command,
+                &data.project.to_string(),
+                "--limit",
+                "1",
+            ],
+            Value::Null,
+        )
+        .await;
+        assert!(result.status.success());
+        let page: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(page["items"], json!([]));
+        assert!(page["next_cursor"].is_null());
+        let denied = invoke(
+            &origin,
+            &file,
+            &["forward", command, &foreign_project],
+            Value::Null,
+        )
+        .await;
+        assert!(!denied.status.success());
+        assert!(denied.stdout.is_empty());
+    }
     for args in [
         ["portfolio", "candidate", "show", &foreign_candidate],
         ["portfolio", "candidate", "list", &foreign_project],
