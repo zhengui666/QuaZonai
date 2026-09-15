@@ -124,3 +124,28 @@ test('logout removes private project content and never claims to cancel runs', a
   await expect(page.getByRole('button', { name: project.name, exact: true })).toHaveCount(0);
   expect(state.commands.filter(item => item.path.endsWith('/cancel'))).toHaveLength(0);
 });
+
+for (const keepTrust of [true, false]) {
+  test(`device trust requires a name and normalizes an unchecked label (${keepTrust})`, async ({ page }) => {
+    const state = await fixture(page, { authenticated: false }); await page.goto('/');
+    await page.getByLabel('动态验证码').fill('123456');
+    await page.getByRole('checkbox', { name: '信任这台私人设备（最长 30 天）' }).check();
+    await page.getByRole('button', { name: '登录', exact: true }).click();
+    await expect(page.getByText('请输入这台私人设备的名称。')).toBeVisible();
+    expect(state.commands.filter(item => item.path === '/api/v2/auth/login')).toHaveLength(0);
+    await page.getByLabel('设备名称').fill('私人笔记本');
+    if (!keepTrust) await page.getByRole('checkbox', { name: '信任这台私人设备（最长 30 天）' }).uncheck();
+    await page.getByRole('button', { name: '登录', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
+    expect(state.commands.find(item => item.path === '/api/v2/auth/login')?.body).toMatchObject({ trust_device: keepTrust, device_label: keepTrust ? '私人笔记本' : null });
+  });
+}
+for (const terminalState of ['SUCCEEDED', 'FAILED', 'CANCELLED'] as const) {
+  test(`terminal run cannot request cancellation (${terminalState})`, async ({ page }) => {
+    const state = await fixture(page); state.run.state = terminalState;
+    await page.goto('/'); await navigate(page, '运行');
+    await page.getByRole('button', { name: 'IMPORT · 00000003', exact: true }).click();
+    await expect(page.getByRole('button', { name: '请求取消运行', exact: true })).toBeDisabled();
+    expect(state.commands.filter(item => item.path.endsWith('/cancel'))).toHaveLength(0);
+  });
+}

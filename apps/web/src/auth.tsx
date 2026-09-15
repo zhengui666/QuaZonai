@@ -14,9 +14,10 @@ export function CodeField() {
   </Form.Item>;
 }
 function TrustFields() {
+  const trusted = Form.useWatch('trust_device');
   return <>
     <Form.Item name="trust_device" valuePropName="checked"><Checkbox>信任这台私人设备（最长 30 天）</Checkbox></Form.Item>
-    <Form.Item name="device_label" label="设备名称" rules={[{ max: 120 }]}><Input maxLength={120} autoComplete="off" placeholder="例如：我的笔记本" /></Form.Item>
+    <Form.Item name="device_label" label="设备名称" dependencies={['trust_device']} rules={trusted ? [{ required: true, whitespace: true, message: '请输入这台私人设备的名称。' }, { max: 120 }] : []}><Input disabled={!trusted} maxLength={120} autoComplete="off" placeholder="例如：我的笔记本" /></Form.Item>
   </>;
 }
 function waitFor(error: unknown, now: number) {
@@ -49,7 +50,7 @@ export function LoginPanel({ bootstrap, done }: { bootstrap: Schema['BootstrapSt
     setBusy(true); setError(undefined);
     // An untouched checkbox may be absent after the enrollment form switches.
     // Absence means false, never implicit device trust or an omitted wire field.
-    const fields = { schema_version: 1 as const, code: values.code, trust_device: values.trust_device === true, device_label: values.device_label || null };
+    const fields = { schema_version: 1 as const, code: values.code, trust_device: values.trust_device === true, device_label: values.trust_device === true ? values.device_label : null };
     try {
       if (enrollment) {
         dataOf(await api.POST('/api/v2/bootstrap/confirm', { body: { ...fields, enrollment_id: enrollment.enrollment_id } }));

@@ -73,7 +73,7 @@ export function RunDetail({ id, close }: { id: string; close: () => void }) {
           { content: `结束：${displayTime(query.data.finished_at)}` },
         ]} />
         <Alert type="info" showIcon title="取消是请求，不是即时终止。只有服务器返回 CANCELLED 才表示已取消。" />
-        <Button danger disabled={!online || query.isError || cancel.isPending} onClick={() => { cancel.reset(); setTarget(query.data); }}>请求取消运行</Button>
+        <Button danger disabled={!online || query.isError || cancel.isPending || terminal(query.data.state)} onClick={() => { cancel.reset(); setTarget(query.data); }}>请求取消运行</Button>
         {(query.data.kind === 'PORTFOLIO_BUILD' || query.data.kind === 'PORTFOLIO_SIMULATE') && <RunRebalance id={id} />}
         <RunEvents key={id} snapshot={query.data} />
       </>}
