@@ -200,8 +200,97 @@ record(`/api/v2/data/universes/${universe.id}`, '/api/v2/data/universes/{id}', u
 record('/api/v2/data/revisions', '/api/v2/data/revisions', page(datasets));
 for (const dataset of datasets) record(`/api/v2/data/revisions/${dataset.id}`, '/api/v2/data/revisions/{id}', dataset);
 
-// No fake qualification, approval, Claim or account is issued by this preview.
-for (const suffix of ['releases', 'handoffs', 'automation-policies']) {
+// Hypothetical, expired DEMO history: these presentation records never enter a
+// database or qualify a real Alpha. The production approval paths remain absent.
+const expired = '2026-09-15T00:05:00Z';
+const observed = '2026-09-16T00:00:00Z';
+const demoAlphaRuns: Schema['RunSnapshotV1'][] = [];
+const demoAlphas: Schema['AlphaView'][] = alphas.map((alpha, n) => ({ ...alpha,
+  id: id(400 + n), name: `SYNTHETIC · 历史展示 ${n + 1}`, active_version_id: id(410 + n),
+}));
+for (const [n, alpha] of demoAlphas.entries()) {
+  const evaluationRun: Schema['RunSnapshotV1'] = { ...run, id: id(450 + n), kind: 'ALPHA_EVALUATE', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY' };
+  demoAlphaRuns.push(evaluationRun);
+  record(`/api/v2/runs/${evaluationRun.id}`, '/api/v2/runs/{id}', evaluationRun);
+  record(`/api/v2/runs/${evaluationRun.id}/rebalance`, '/api/v2/runs/{id}/rebalance', { schema_version: 1, rebalance: null } satisfies Schema['RunRebalanceViewV1']);
+  const original = records.get(`/api/v2/alphas/${alphas[n]!.id}/versions/1`)!.value as Schema['AlphaVersionView'];
+  const version: Schema['AlphaVersionView'] = { ...original, id: alpha.active_version_id!, alpha_id: alpha.id,
+    experiment_id: id(440 + n), code_artifact_id: id(460 + n), model_artifact_id: id(470 + n),
+    signal_kind: 'EXPECTED_RETURN', forecast_unit: 'RETURN_PER_HORIZON',
+  };
+  const evaluation: Schema['EvaluationView'] = {
+    id: id(420 + n), project_id: project.id, subject_alpha_version_id: version.id, subject_candidate_id: null,
+    input_set_id: id(21), policy_id: policy.id, run_id: evaluationRun.id, evaluation_kind: 'WALK_FORWARD',
+    execution_status: 'SUCCEEDED', evidence_status: 'VALID', decision: 'PASS', origin: 'FIXTURE',
+    report_artifact_id: id(480 + n), method_versions_artifact_id: id(480 + n), concluded_at: at,
+    valid_until: expired, checked_at: observed, unexpired_at_read: false,
+  };
+  const qualification: Schema['QualificationView'] = { id: id(430 + n), alpha_version_id: version.id,
+    policy_id: policy.id, qualifying_evaluation_id: id(490 + n), granted_at: at, valid_until: expired,
+    created_at: at, checked_at: observed, grant_window_open: false, revocation: null,
+  };
+  record(`/api/v2/alphas/${alpha.id}/versions`, '/api/v2/alphas/{id}/versions', page([version]));
+  record(`/api/v2/alphas/${alpha.id}/versions/1`, '/api/v2/alphas/{id}/versions/{version}', version);
+  record(`/api/v2/alpha-versions/${version.id}/evaluations`, '/api/v2/alpha-versions/{id}/evaluations', page([evaluation]));
+  record(`/api/v2/evaluations/${evaluation.id}`, '/api/v2/evaluations/{id}', evaluation);
+  record(`/api/v2/evaluations/${evaluation.id}/metrics`, '/api/v2/evaluations/{id}/metrics', page([]));
+  record(`/api/v2/alpha-versions/${version.id}/qualifications`, '/api/v2/alpha-versions/{id}/qualifications', page([qualification]));
+}
+record('/api/v2/alphas', '/api/v2/alphas', page([...alphas, ...demoAlphas]));
+const demoCandidate: Schema['CandidateViewV1'] = { ...candidate, id: id(500), run_id: id(501),
+  execution_status: 'SUCCEEDED', solver_status: 'OPTIMAL', evidence_status: 'VALID', reason_code: 'SYNTHETIC_PRESENTATION_ONLY',
+  forecast_artifact_id: id(502), covariance_artifact_id: id(503), diagnostics_artifact_id: id(504),
+  target_artifact_id: id(505), allocation_evaluation_id: null, cash_weight: '0.2',
+};
+const demoEvaluation: Schema['EvaluationView'] = {
+  id: id(506), project_id: project.id, subject_alpha_version_id: null, subject_candidate_id: demoCandidate.id,
+  input_set_id: id(21), policy_id: policy.id, run_id: id(512), evaluation_kind: 'PORTFOLIO', execution_status: 'SUCCEEDED',
+  evidence_status: 'VALID', decision: 'PASS', report_artifact_id: id(507), method_versions_artifact_id: id(507),
+  origin: 'FIXTURE', concluded_at: at, valid_until: expired, checked_at: observed, unexpired_at_read: false,
+};
+export const demoPackage: Schema['TargetPackageV1'] = {
+  release_id: id(510), package_schema_version: '1', environment_origin: 'DEMO', project_id: project.id,
+  candidate_id: demoCandidate.id, mandate_id: mandate.id, qualification_refs: [id(430), id(431)], evaluation_refs: [demoEvaluation.id],
+  input_revision_refs: datasets.map(item => item.id), engine_versions: { presentation: 'SYNTHETIC_NOT_EXECUTED' },
+  asof: at, valid_from: at, valid_until: expired, base_currency: 'USD', capital_assumption: '1000', current_weights_source: 'NONE',
+  targets: [{ instrument_id: 'SYNTHETIC.EXAMPLE', target_weight: '0.8', currency: 'USD' }], cash_weight: '0.2',
+  constraints_summary: mandate.content.constraints, exposure_tolerance: mandate.content.exposure_tolerance,
+  cost_assumption_ref: assumptions.id, compatible_market_capabilities: ['SYNTHETIC_ONLY'],
+  limitations: ['SYNTHETIC / FIXTURE：假设历史仅用于界面演示；没有执行优化、评估或授予真实资格。', '已过期 DEMO；不能审批、登记 Offer 或领取。'],
+  provenance_artifact_refs: [id(507)],
+};
+const demoRelease: Schema['ReleaseViewV1'] = { id: demoPackage.release_id, project_id: project.id, candidate_id: demoCandidate.id,
+  mandate_id: mandate.id, evaluation_id: demoEvaluation.id, package_artifact_id: id(511), package_schema_version: '1',
+  market_capability_version: 'SYNTHETIC_ONLY', environment: 'DEMO', asof: at, valid_from: at, valid_until: expired, created_at: at,
+};
+export const packageBytes = JSON.stringify(demoPackage, null, 2) + '\n';
+const demoRun: Schema['RunSnapshotV1'] = { ...run, id: id(501), kind: 'PORTFOLIO_BUILD', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY' };
+const simulationRun: Schema['RunSnapshotV1'] = { ...demoRun, id: id(512), kind: 'PORTFOLIO_SIMULATE' };
+record(`/api/v2/runs/${simulationRun.id}`, '/api/v2/runs/{id}', simulationRun);
+record(`/api/v2/runs/${simulationRun.id}/rebalance`, '/api/v2/runs/{id}/rebalance', { schema_version: 1, rebalance: null } satisfies Schema['RunRebalanceViewV1']);
+record('/api/v2/runs', '/api/v2/runs', page([run, researchRun, rejectedRun, ...demoAlphaRuns, demoRun, simulationRun]));
+record(`/api/v2/runs/${demoRun.id}`, '/api/v2/runs/{id}', demoRun);
+record(`/api/v2/runs/${demoRun.id}/rebalance`, '/api/v2/runs/{id}/rebalance', { schema_version: 1, rebalance: null } satisfies Schema['RunRebalanceViewV1']);
+record(`/api/v2/artifacts/${demoRelease.package_artifact_id}`, '/api/v2/artifacts/{id}', {
+  id: demoRelease.package_artifact_id, project_id: project.id, producer_run_id: null, producer_attempt_id: null,
+  kind: 'PACKAGE', media_type: 'application/json', schema_name: 'qz.target_package', schema_version: '1', byte_count: String(Buffer.byteLength(packageBytes)),
+  access_class: 'DELIVERY', origin: 'FIXTURE', created_by: 'IMPORT', created_at: at,
+} satisfies Schema['ArtifactView']);
+record(`/api/v2/portfolio-candidates/${demoCandidate.id}`, '/api/v2/portfolio-candidates/{id}', { header: demoCandidate,
+  members: demoAlphas.map((alpha, n) => ({ alpha_version_id: alpha.active_version_id!, qualification_id: id(430 + n), ensemble_weight: '0.5', calibration_id: null, forecast_unit: 'RETURN_PER_HORIZON', coverage_fraction: '1' })),
+  targets: demoPackage.targets.map(item => ({ ...item, asof: at, valid_until: expired })),
+} satisfies Schema['CandidateDetailV1']);
+record(`/api/v2/projects/${project.id}/portfolio-candidates`, '/api/v2/projects/{id}/portfolio-candidates', page([candidate, demoCandidate]));
+record(`/api/v2/portfolio-candidates/${demoCandidate.id}/evaluations`, '/api/v2/portfolio-candidates/{id}/evaluations', page([demoEvaluation]));
+record(`/api/v2/evaluations/${demoEvaluation.id}`, '/api/v2/evaluations/{id}', demoEvaluation);
+record(`/api/v2/evaluations/${demoEvaluation.id}/metrics`, '/api/v2/evaluations/{id}/metrics', page([]));
+record(`/api/v2/projects/${project.id}/releases`, '/api/v2/projects/{id}/releases', page([demoRelease]));
+record(`/api/v2/releases/${demoRelease.id}`, '/api/v2/releases/{id}', demoRelease);
+record(`/api/v2/releases/${demoRelease.id}/approvals`, '/api/v2/releases/{id}/approvals', page([]));
+record(`/api/v2/releases/${demoRelease.id}/decisions`, '/api/v2/releases/{id}/decisions', page([]));
+
+// No approval, Claim or account is issued by this preview.
+for (const suffix of ['handoffs', 'automation-policies']) {
   record(`/api/v2/projects/${project.id}/${suffix}`, `/api/v2/projects/{id}/${suffix}`, page([]));
 }
 for (const path of ['/api/v2/auth/devices', '/api/v2/settings/codex', '/api/v2/integrations/downstreams', '/api/v2/migrations/reports']) {
@@ -210,6 +299,7 @@ for (const path of ['/api/v2/auth/devices', '/api/v2/settings/codex', '/api/v2/i
 record('/api/v2/codex/homes', '/api/v2/codex/homes', []);
 
 export function demoResponse(method: string, pathname: string, partition: string | null = null) {
+  if (method === 'GET' && pathname === `/api/v2/artifacts/${id(511)}/content`) return { status: 200, value: packageBytes, binary: true };
   const item = method === 'GET' ? records.get(pathname) : undefined;
   if (item && pathname === '/api/v2/data/revisions' && partition) {
     return { status: 200, value: page(datasets.filter(dataset => dataset.partition === partition)) };

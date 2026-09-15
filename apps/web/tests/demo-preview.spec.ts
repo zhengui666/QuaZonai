@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 import { navigate, settingsCategory } from './fixtures';
 
 test.use({ baseURL: 'http://127.0.0.1:4179' });
@@ -71,7 +72,21 @@ test('synthetic preview renders native-contract records without a backend or wri
   await navigate(page, '交付');
   await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: 'SYNTHETIC · 双 Alpha' }).click();
-  await expect(page.getByText('尚无冻结目标包。可从组合候选的独立评估请求冻结，不会自动批准或交付。', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Release 00000510', exact: true }).click();
+  const release = page.getByRole('dialog', { name: '原始目标包版本', exact: true });
+  await expect(release.getByText('DEMO 目标包不能用于 Paper 或 Live 审批及交付。', { exact: true })).toBeVisible();
+  await expect(release.getByRole('button', { name: '审批此目标包', exact: true })).toBeDisabled();
+  const download = page.waitForEvent('download');
+  await release.getByRole('button', { name: '下载原始目标包', exact: true }).click();
+  const file = await download;
+  const body = JSON.parse(await readFile((await file.path())!, 'utf8'));
+  expect(body.environment_origin).toBe('DEMO');
+  expect(body.release_id).toBe('01990000-0000-7000-8000-000000000510');
+  expect(body.limitations.join(' ')).toContain('没有执行优化、评估或授予真实资格');
+  await release.getByText('原审批历史', { exact: true }).click();
+  await expect(release.getByText('原目标包尚无审批记录。', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(release).toBeHidden();
   await page.getByRole('tab', { name: '交付记录', exact: true }).click();
   await expect(page.getByText('尚无交付记录。冻结目标包不会自动创建 Offer。', { exact: true })).toBeVisible();
   await page.getByRole('tab', { name: '自动化政策', exact: true }).click();

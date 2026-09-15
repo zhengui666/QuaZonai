@@ -23,7 +23,7 @@ export default defineConfig({
     transformIndexHtml() {
       return [{ tag: 'aside', attrs: { role: 'note', 'aria-label': '合成预览说明',
         style: 'padding:12px;background:#fff3cd;color:#3b2e00;font:16px/1.5 sans-serif' },
-      children: 'SYNTHETIC / FIXTURE · 只读界面预览，尚非完整 Demo。没有真实研究、账号或交付；请勿输入凭据。', injectTo: 'body-prepend' }];
+      children: 'SYNTHETIC / FIXTURE · 只读界面预览，尚非完整 Demo。PASS、资格及权重都是未经计算的假设记录；没有真实账号或交付，请勿输入凭据。', injectTo: 'body-prepend' }];
     },
     configureServer(server) {
       // This server has no upstream proxy or database connection.
@@ -32,9 +32,9 @@ export default defineConfig({
         const pathname = url.pathname;
         if (!pathname.startsWith('/api/')) return next();
         const result = demoResponse(request.method ?? 'GET', pathname, url.searchParams.get('partition'));
-        response.writeHead(result.status, { 'Content-Type': result.status === 200 ? 'application/json' : 'application/problem+json',
+        response.writeHead(result.status, { 'Content-Type': 'binary' in result ? 'application/octet-stream' : result.status === 200 ? 'application/json' : 'application/problem+json',
           'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
-        response.end(JSON.stringify(result.value));
+        response.end('binary' in result ? result.value : JSON.stringify(result.value));
       });
     },
   }],

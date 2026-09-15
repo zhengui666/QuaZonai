@@ -1,6 +1,9 @@
 import { expect, test } from 'vitest';
-import { demoResponse, records } from '../demo/records';
+import { demoPackage, demoResponse, id, packageBytes, records } from '../demo/records';
 import { validateProblem, validateResponse } from './generated/responses.cjs';
+import Ajv2020 from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
+import document from '../../../contracts/generated/api-v2.openapi.json';
 
 test('synthetic preview preserves native response contracts and denies every write', () => {
   for (const [path, { contract, value }] of records) {
@@ -20,4 +23,18 @@ test('synthetic preview preserves native response contracts and denies every wri
   expect(demoResponse('GET', '/api/v2/portfolio-candidates/01990000-0000-7000-8000-000000000203')).toMatchObject({
     status: 200, value: { header: { origin: 'FIXTURE', execution_status: 'FAILED', target_artifact_id: null, cash_weight: null }, members: [], targets: [] },
   });
+});
+
+test('expired DEMO package uses the native package contract and original attachment bytes', () => {
+  const ajv = new Ajv2020({ strict: false, inlineRefs: false });
+  addFormats(ajv); ajv.addSchema(document, 'native');
+  expect(ajv.validate({ $ref: 'native#/components/schemas/TargetPackageV1' }, demoPackage)).toBe(true);
+  const metadata = records.get(`/api/v2/artifacts/${id(511)}`)!.value as { byte_count: string; kind: string; origin: string };
+  expect(metadata).toMatchObject({ kind: 'PACKAGE', origin: 'FIXTURE', byte_count: String(Buffer.byteLength(packageBytes)) });
+  expect(demoResponse('GET', `/api/v2/artifacts/${id(511)}/content`)).toEqual({ status: 200, value: packageBytes, binary: true });
+  expect(JSON.parse(packageBytes)).toEqual(demoPackage);
+  expect(demoPackage.environment_origin).toBe('DEMO');
+  for (const path of [`/api/v2/releases/${id(510)}/approvals`, '/api/v2/handoffs', `/api/v2/handoffs/${id(510)}/claim`]) {
+    expect(demoResponse('POST', path).status).toBe(403);
+  }
 });
