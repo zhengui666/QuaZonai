@@ -711,7 +711,7 @@ MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，
 恢复回归测试位于 `apps/server/tests/recovery_access.rs`。在一次性SQLx数据库环境中运行
 `cargo test --locked -p server --features native-codex --test recovery_access`；本机PATH需有匹配
 服务器版本的原生pg_dump/pg_restore以及GNU tar。CI通过QZ_TEST_PG_CONTAINER指定已有的一次性PGMQ容器，
-使用容器内数据库工具；连接凭据只通过环境传递。测试在没有并发写入时，以原生tar归档一次性实例的完整状态目录（合成TOTP密文/密钥、附件及临时创建的历史文件/profile样例），随后生成custom数据库归档并向独立目标库单事务恢复。原目录和恢复目录均与tar归档比较，再核对同密钥旧会话、访问切换和原始请求回执。
+使用容器内数据库工具；连接凭据只通过环境传递。测试在没有并发写入时，以原生tar归档一次性实例的状态目录（合成TOTP与会话密钥的密文、附件及临时创建的历史文件/profile样例），明确排除master.key；主密钥保存在独立的私有恢复目录。随后生成custom数据库归档，向独立目标库单事务恢复，并从独立恢复输入恢复主密钥。原目录和恢复目录均与tar归档比较，再核对同密钥旧会话、访问切换和原始请求回执。
 此测试不读取用户备份或账号profile，也不证明完整历史关系、原生账号/Thread恢复、远端任务对账或生产RPO/RTO。
 
 上述恢复回归现还覆盖一个通过HTTP上传的合成附件：只恢复数据库时下载返回503；

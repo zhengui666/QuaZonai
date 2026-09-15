@@ -299,6 +299,11 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     let state = tempfile::tempdir().unwrap();
     let archive_directory = tempfile::tempdir().unwrap();
     let archive = archive_directory.path().join("state.tar");
+    // The owner-held master key is a separate recovery input, not part of either
+    // the database dump or the encrypted state archive.
+    let key_directory = tempfile::tempdir().unwrap();
+    let saved_key = key_directory.path().join("master.key");
+    std::fs::copy(f._state.path().join("master.key"), &saved_key).unwrap();
     let backup_started_at: chrono::DateTime<chrono::Utc> =
         sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(&pool)
@@ -310,6 +315,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         .arg(&archive)
         .arg("--directory")
         .arg(f._state.path())
+        .arg("--exclude=./master.key")
         .arg(".")
         .kill_on_drop(true)
         .output()
@@ -319,6 +325,18 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         saved.status.success() && saved.stderr.is_empty(),
         "synthetic state archive failed; diagnostics remain private"
     );
+    let inventory = tokio::process::Command::new("tar")
+        .env_clear()
+        .args(["--list", "--file"])
+        .arg(&archive)
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(inventory.status.success() && inventory.stderr.is_empty());
+    let names = std::str::from_utf8(&inventory.stdout).unwrap();
+    assert!(!names.lines().any(|name| name == "./master.key"));
+    assert!(names.lines().any(|name| name == "./session-key.ref"));
     let dump = postgres_tool(&pool, "pg_dump")
         .args(["--format=custom", "--no-owner", "--no-privileges"])
         .output()
@@ -364,6 +382,8 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         unpacked.status.success() && unpacked.stderr.is_empty(),
         "synthetic state restore failed; diagnostics remain private"
     );
+    assert!(!state.path().join("master.key").exists());
+    std::fs::copy(&saved_key, state.path().join("master.key")).unwrap();
     let database = format!("restore_test_{}", Id::new().to_string().replace('-', ""));
     sqlx::query(&format!("CREATE DATABASE {database} TEMPLATE template0"))
         .execute(&pool)
