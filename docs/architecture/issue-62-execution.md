@@ -5440,3 +5440,15 @@ It does not close T02 full credential-free demo, T07/T08 protected account and l
 model/science loop, T39 user backup, T40 full recovery/fault exercises, or T42 full
 fresh-instance research-to-delivery through both Web and CLI. Remote current-head
 CI/review, merge, main reread and Issue closure are still pending.
+
+### 2026-09-16 native Equity simulation coverage
+
+The existing synthetic Parquet fixture now also creates actual Nautilus0.63.0
+Equity instruments. `cargo test --locked -p job --test simulation` exercises
+two original targets in one native CASH and MARGIN account, real positions/orders,
+no unfinished orders, original instrument fees reducing the shared USD balance,
+and rejection of a mismatched EUR settlement account. All12 simulation tests
+passed locally, including the existing CurrencyPair cases. No scientific engine,
+production capability or dependency was added. This covers the advertised Equity
+spot path only; it does not prove expiry/settlement, unsupported prediction markets,
+real-data admission or the full T21/T42 acceptance contract.

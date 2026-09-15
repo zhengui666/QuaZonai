@@ -445,3 +445,41 @@ fn all_cash_is_a_real_native_result_not_fabricated_asset_exposure() {
         Money::from_str(result.summary.get("account.SIM.balance.USD.total").unwrap()).unwrap();
     assert_eq!(balance.as_decimal(), rust_decimal::Decimal::from(1_000_000));
 }
+
+#[test]
+fn native_equities_rebalance_in_cash_and_margin_accounts_with_original_fees() {
+    use contracts::science::NativeAccountKind;
+    for (kind, label) in [
+        (NativeAccountKind::Cash, "CASH"),
+        (NativeAccountKind::Margin, "MARGIN"),
+    ] {
+        let mut balances = Vec::new();
+        for fee in ["0", "0.01"] {
+            let (directory, mut request) = market::equity_market(fee, 20);
+            request.settings.account_kind = kind;
+            let result = simulate(directory.path(), &request).unwrap();
+            assert_eq!(result.native_version, "0.63.0");
+            assert_eq!(result.consumed_target_points.get(), 2);
+            assert_eq!(result.summary["venues.total"], "1");
+            assert_eq!(result.summary["account.SIM.type"], label);
+            assert_eq!(result.summary["orders.open"], "0");
+            assert_eq!(result.summary["orders.inflight"], "0");
+            assert!(result.orders.get() >= 4);
+            assert!(result.positions.get() >= 2);
+            balances.push(
+                Money::from_str(&result.summary["account.SIM.balance.USD.total"])
+                    .unwrap()
+                    .as_decimal(),
+            );
+            request.settings.base_currency = "EUR".into();
+            assert_eq!(
+                simulate(directory.path(), &request).unwrap_err().trim(),
+                "QZ_NATIVE_JOB_FAILED"
+            );
+        }
+        assert!(
+            balances[1] < balances[0],
+            "native Equity fees must reduce the shared balance"
+        );
+    }
+}

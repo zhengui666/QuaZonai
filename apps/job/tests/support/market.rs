@@ -7,7 +7,7 @@ use contracts::{portfolio::AllocationTargetV1, science::*, DbCounter, SchemaV1};
 use nautilus_model::{
     data::{Bar, BarType},
     identifiers::{InstrumentId, Symbol},
-    instruments::{CurrencyPair, InstrumentAny},
+    instruments::{CurrencyPair, Equity, InstrumentAny},
     types::{Currency, Price, Quantity},
 };
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
@@ -23,7 +23,14 @@ pub fn instant(n: u64) -> DbCounter {
 }
 
 pub fn market(fee: &str, rows_per_asset: u32) -> (tempfile::TempDir, NativeSimulationRequestV1) {
-    market_direction(fee, rows_per_asset, 1.0, "10000000")
+    market_direction(fee, rows_per_asset, 1.0, "10000000", false)
+}
+
+pub fn equity_market(
+    fee: &str,
+    rows_per_asset: u32,
+) -> (tempfile::TempDir, NativeSimulationRequestV1) {
+    market_direction(fee, rows_per_asset, 1.0, "10000000", true)
 }
 
 fn market_direction(
@@ -31,6 +38,7 @@ fn market_direction(
     rows_per_asset: u32,
     direction: f64,
     volume: &str,
+    equities: bool,
 ) -> (tempfile::TempDir, NativeSimulationRequestV1) {
     let directory = tempfile::tempdir().unwrap();
     let catalog = ParquetDataCatalog::from_uri(
@@ -45,28 +53,53 @@ fn market_direction(
     let mut types = Vec::new();
     let mut rates = Vec::new();
     let mut targets = Vec::new();
-    for (name, base, multiplier) in [("EUR/USD.SIM", "EUR", 1.0), ("GBP/USD.SIM", "GBP", 2.0)] {
+    let names = if equities {
+        ["AAA.SIM", "BBB.SIM"]
+    } else {
+        ["EUR/USD.SIM", "GBP/USD.SIM"]
+    };
+    for (name, base, multiplier) in [(names[0], "EUR", 1.0), (names[1], "GBP", 2.0)] {
         let id = InstrumentId::from_str(name).unwrap();
-        let instrument = CurrencyPair::builder()
-            .instrument_id(id)
-            .raw_symbol(Symbol::new_checked(name.split('.').next().unwrap()).unwrap())
-            .base_currency(Currency::from_str(base).unwrap())
-            .quote_currency(usd)
-            .price_precision(5)
-            .size_precision(0)
-            .price_increment(Price::from("0.00001"))
-            .size_increment(Quantity::from("1"))
-            .maker_fee(Decimal::ZERO)
-            .taker_fee(Decimal::from_str(fee).unwrap())
-            .margin_init(Decimal::ONE)
-            .margin_maint(Decimal::ONE)
-            .ts_event(0_u64.into())
-            .ts_init(0_u64.into())
-            .build()
-            .unwrap();
-        catalog
-            .write_instruments(vec![InstrumentAny::CurrencyPair(instrument)])
-            .unwrap();
+        let instrument = if equities {
+            InstrumentAny::Equity(
+                Equity::builder()
+                    .instrument_id(id)
+                    .raw_symbol(Symbol::new_checked(name.split('.').next().unwrap()).unwrap())
+                    .currency(usd)
+                    .price_precision(5)
+                    .price_increment(Price::from("0.00001"))
+                    .lot_size(Quantity::from("1"))
+                    .maker_fee(Decimal::ZERO)
+                    .taker_fee(Decimal::from_str(fee).unwrap())
+                    .margin_init(Decimal::ONE)
+                    .margin_maint(Decimal::ONE)
+                    .ts_event(0_u64.into())
+                    .ts_init(0_u64.into())
+                    .build()
+                    .unwrap(),
+            )
+        } else {
+            InstrumentAny::CurrencyPair(
+                CurrencyPair::builder()
+                    .instrument_id(id)
+                    .raw_symbol(Symbol::new_checked(name.split('.').next().unwrap()).unwrap())
+                    .base_currency(Currency::from_str(base).unwrap())
+                    .quote_currency(usd)
+                    .price_precision(5)
+                    .size_precision(0)
+                    .price_increment(Price::from("0.00001"))
+                    .size_increment(Quantity::from("1"))
+                    .maker_fee(Decimal::ZERO)
+                    .taker_fee(Decimal::from_str(fee).unwrap())
+                    .margin_init(Decimal::ONE)
+                    .margin_maint(Decimal::ONE)
+                    .ts_event(0_u64.into())
+                    .ts_init(0_u64.into())
+                    .build()
+                    .unwrap(),
+            )
+        };
+        catalog.write_instruments(vec![instrument]).unwrap();
         let kind = BarType::from_str(&format!("{name}-1-MINUTE-LAST-EXTERNAL")).unwrap();
         types.push(kind.to_string());
         let bars = (1..=rows_per_asset)
@@ -191,7 +224,7 @@ pub fn portfolio() -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>
 }
 
 pub fn portfolio_with_losses() -> (tempfile::TempDir, NativePortfolioBuildRequestV1, Vec<u8>) {
-    portfolio_from_market(market_direction("0", 20, -1.0, "10000000"))
+    portfolio_from_market(market_direction("0", 20, -1.0, "10000000", false))
 }
 
 pub fn study() -> (tempfile::TempDir, NativePortfolioStudyRequestV1, Vec<u8>) {
@@ -216,7 +249,7 @@ pub fn study_liquidity(
 
 fn study_with_volume(volume: &str) -> (tempfile::TempDir, NativePortfolioStudyRequestV1, Vec<u8>) {
     let (catalog, original, model) =
-        portfolio_from_market(market_direction("0", 2900, 1.0, volume));
+        portfolio_from_market(market_direction("0", 2900, 1.0, volume, false));
     let mut request = NativePortfolioStudyRequestV1 {
         schema_version: SchemaV1,
         source_selection: original.selection,
