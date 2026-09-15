@@ -5273,3 +5273,31 @@ inventory unchanged and owned PostgreSQL stopped. No API, generated contract or
 browser implementation changed in this step. This is foreign-key coverage, not
 complete polymorphic identity, semantic sealed-exposure lineage or real old-data
 recovery. Those remain part of the unfinished delivery; no remote closure claimed.
+
+### 2026-09-15 conservative historical polymorphic identity and disclosure checks
+
+Audited final 0029 EvidenceExposure, Disclosure, DegradationObservation and
+ResearchWakeEvent models, plus research_lifecycle._locked_subject_program,
+provide the explicit old subject maps. The importer now checks the six exposure
+subject kinds and the ALPHA/PORTFOLIO degradation/wake kinds against their native
+projected target IDs. Unknown kinds or orphan references to an available target
+projection reject the whole import. Unavailable target projections remain
+POLYMORPHIC entries in unverified_relationships. Old jobs/events/preflight type
+names are open-ended and stay POLYMORPHIC_UNRESOLVED rather than being guessed.
+
+Native staging also enforces old exposure levels 1–3 and Disclosure's original
+audience/level/classification/reason conditions, preventing an invalid zero-level
+row from being mistaken for retained exposure. Historical rows retain the same
+old subject IDs and levels; these checks never create active qualifications,
+exposures or renewed independent Sealed opportunities.
+
+verify-qhWWsq passed workspace/all-target compile, formatting, strict Clippy and
+64 native checks. The new native PostgreSQL test rejects unknown subjects,
+orphan subjects, zero exposure level and a CODEX/level-3 mismatch, checks rollback,
+and proves repeated imports retain one original level-3 exposure with its original
+subject UUID. Initial verify-gQSjtu failed compile on Vec<String> membership calls
+with &str; corrected to iterator comparison before the passing verifier.
+Source inventory unchanged, owned PostgreSQL stopped. No API contract or UI
+implementation changed. This does not establish full transitive old lineage,
+open-ended legacy reference resolution or real backup/recovery; full delivery and
+remote gates remain open.

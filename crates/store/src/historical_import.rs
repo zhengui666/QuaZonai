@@ -17,6 +17,7 @@ use std::{
 };
 
 mod artifacts;
+mod semantics;
 pub use artifacts::{HistoricalArtifactPublication, HistoricalImportSource};
 
 fn invalid() -> StoreError {
@@ -261,6 +262,7 @@ impl Store {
             }
             checked += 1;
         }
+        checked += semantics::check(&mut tx, &staged, &mut unverified).await?;
         manual |= !unverified.is_empty();
         let mut projected = 0u64;
         let mut inserted = 0u64;

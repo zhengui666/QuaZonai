@@ -844,3 +844,54 @@ async fn expected_relations_detect_undeclared_single_and_composite_orphans(pool:
         .unwrap();
     assert!(valid.resource.unverified_relationships.iter().any(|r|r=="MISSING_DECLARED:portfolio_candidate_families(portfolio_program_id,mandate_version_id)->portfolio_programs(id,mandate_version_id):SIMPLE"));
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn polymorphic_exposure_identity_and_disclosure_levels_are_preserved(pool: PgPool) {
+    source(&pool).await;
+    let (store, actor) = support::operator(&pool).await;
+    sqlx::raw_sql("CREATE TABLE public.alpha_models(id uuid PRIMARY KEY,alpha_key varchar(160) NOT NULL,name varchar(240) NOT NULL,description text NOT NULL,family varchar(120) NOT NULL,owner_program_id uuid NOT NULL,state varchar(40) NOT NULL,current_qualified_version_id uuid,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL); INSERT INTO public.alpha_models VALUES('11111111-1111-4111-8111-111111111140','old-alpha','Old Alpha','Historical model','TEST','11111111-1111-4111-8111-111111111141','DRAFT',NULL,'2020-01-01','2020-01-01'); CREATE TABLE public.evidence_exposures(id uuid PRIMARY KEY,episode_id uuid NOT NULL,subject_type varchar(40) NOT NULL,subject_id uuid NOT NULL,level integer NOT NULL,created_at timestamptz NOT NULL); INSERT INTO public.evidence_exposures VALUES('11111111-1111-4111-8111-111111111142','11111111-1111-4111-8111-111111111143','ALPHA_MODEL','11111111-1111-4111-8111-111111111140',3,'2020-01-01'); CREATE TABLE public.disclosures(id uuid PRIMARY KEY,episode_id uuid NOT NULL,audience varchar(20) NOT NULL,level integer NOT NULL,classification_code varchar(100) NOT NULL,reason_code varchar(100),created_at timestamptz NOT NULL); INSERT INTO public.disclosures VALUES('11111111-1111-4111-8111-111111111144','11111111-1111-4111-8111-111111111143','POSTMORTEM',3,'QUALIFIED',NULL,'2020-01-01')").execute(&pool).await.unwrap();
+    let installation = Id::new();
+    let request = HistoricalImportRequestV1 {
+        schema_version: SchemaV1,
+        export_ref: Id::new(),
+        dry_run: false,
+    };
+    for (change,restore,expected) in [
+        ("UPDATE public.evidence_exposures SET subject_type='UNKNOWN'","UPDATE public.evidence_exposures SET subject_type='ALPHA_MODEL'","historical_subject_type"),
+        ("UPDATE public.evidence_exposures SET subject_id='11111111-1111-4111-8111-111111111149'","UPDATE public.evidence_exposures SET subject_id='11111111-1111-4111-8111-111111111140'","historical_subject_reference"),
+        ("UPDATE public.evidence_exposures SET level=0","UPDATE public.evidence_exposures SET level=3","historical_disclosure_semantics"),
+        ("UPDATE public.disclosures SET audience='CODEX'","UPDATE public.disclosures SET audience='POSTMORTEM'","historical_disclosure_semantics"),
+    ] {
+        sqlx::query(change).execute(&pool).await.unwrap();
+        let(report,files)=exported(&pool,installation).await;
+        let result=import(&store,&actor,&Id::new().to_string(),&request,&report,&files).await;
+        assert!(matches!(result,Err(store::StoreError::Invalid(code)) if code==expected));
+        assert_eq!(records(&pool).await,0);
+        sqlx::query(restore).execute(&pool).await.unwrap();
+    }
+    let (report, files) = exported(&pool, installation).await;
+    let first = import(&store, &actor, "valid-exposure", &request, &report, &files)
+        .await
+        .unwrap();
+    assert!(first.resource.manual_review_required);
+    assert!(first
+        .resource
+        .unverified_relationships
+        .contains(&"POLYMORPHIC_UNRESOLVED:jobs".to_owned()));
+    let again = import(&store, &actor, "repeat-exposure", &request, &report, &files)
+        .await
+        .unwrap();
+    assert_eq!(again.resource.new_rows.get(), 0);
+    let rows: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT fields FROM app.historical_records WHERE source_table='evidence_exposures'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["level"], "3");
+    assert_eq!(
+        rows[0]["subject_id"],
+        "11111111-1111-4111-8111-111111111140"
+    );
+}
