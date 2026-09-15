@@ -93,13 +93,30 @@ async fn check(
     ))
     .await;
     Box::pin(tick(worker, seed.project_id)).await.unwrap_err();
-    let released: uuid::Uuid = sqlx::query_scalar(
+    let released: Option<uuid::Uuid> = sqlx::query_scalar(
         "SELECT release_id FROM app.portfolio_rebalance_releases WHERE build_run_id=$1",
     )
     .bind(build.as_uuid())
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
     .unwrap();
+    let released = match released {
+        Some(id) => id,
+        None => {
+            let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            let probes: Vec<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as("SELECT observed_at,valid_until FROM app.runtime_probe_observations ORDER BY observed_at DESC LIMIT 3").fetch_all(pool).await.unwrap();
+            let deadline: Option<chrono::DateTime<chrono::Utc>> =
+                sqlx::query_scalar("SELECT valid_until FROM app.evaluations WHERE id=$1")
+                    .bind(evaluation.as_uuid())
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
+            panic!("Worker Release absent: now={now:?}, latest Runtime observations={probes:?}, evaluation deadline={deadline:?}, policy deadline={:?}", policy.content.valid_until);
+        }
+    };
     let released = store
         .release(actor, released.to_string().try_into().unwrap())
         .await
