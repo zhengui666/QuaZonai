@@ -371,6 +371,21 @@ fn native_runtime_openapi_keeps_binary_upload_and_stable_job_contracts() {
         ["content"]["application/octet-stream"]["schema"];
     assert_eq!(body["type"], "string");
     assert_eq!(body["format"], "binary");
+    for (path, method) in [
+        ("/runtime/v1/jobs/{external_job_id}", "get"),
+        ("/runtime/v1/jobs/{external_job_id}/cancel", "post"),
+        ("/runtime/v1/jobs/{external_job_id}/result", "get"),
+        (
+            "/runtime/v1/jobs/{external_job_id}/artifacts/{storage_ref}",
+            "get",
+        ),
+    ] {
+        assert_eq!(
+            document["paths"][path][method]["responses"]["503"]["content"]["application/json"]
+                ["schema"]["$ref"],
+            "#/components/schemas/RuntimeProblem"
+        );
+    }
     let schemas = &document["components"]["schemas"];
     for name in [
         "JobSpecV1",

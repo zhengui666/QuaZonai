@@ -189,7 +189,7 @@ test('Approval reads all decisions and retries the exact original intent', async
     if (url.pathname === `/api/v2/releases/${release.id}/approvals` && request.method() === 'POST') {
       const body = request.postDataJSON() as Schema['ReleaseApproveV1']; writes.push({ body, key: request.headers()['idempotency-key'] });
       if (writes.length === 1) return route.abort('failed');
-      const resource: Schema['ApprovalViewV1'] = { id: id(410), project_id: project.id, release_id: release.id, candidate_id: release.candidate_id, downstream_id: body.downstream_id, environment: body.environment, authority_kind: 'OPERATOR', automation_policy_id: null, evidence_set_id: id(411), granted_at: release.created_at, created_at: release.created_at, valid_until: body.valid_until, downstream_revision: body.expected_downstream_revision, decision_ordinal: 2, readiness_observation_id: id(412) };
+      const resource: Schema['ApprovalViewV1'] = { id: id(410), project_id: project.id, release_id: release.id, candidate_id: release.candidate_id, downstream_id: body.downstream_id, environment: body.environment, authority_kind: 'OPERATOR', automation_policy_id: null, evidence_set_id: id(411), granted_at: release.created_at, created_at: release.created_at, valid_until: writes.length === 2 ? '2097-01-01T00:00:00Z' : body.valid_until, downstream_revision: body.expected_downstream_revision, decision_ordinal: 2, readiness_observation_id: id(412) };
       return reply(route, { schema_version: 1, resource, replayed: true }, 201);
     }
     return route.fallback();
@@ -208,8 +208,11 @@ test('Approval reads all decisions and retries the exact original intent', async
   await expect(modal.getByRole('button', { name: '确认审批', exact: true })).toBeEnabled();
   await modal.getByRole('button', { name: '确认审批', exact: true }).click();
   await modal.getByRole('button', { name: '重试同一审批', exact: true }).click();
+  await expect(modal.getByText('结果尚未确认，重试保留原请求及幂等键。', { exact: true })).toBeVisible();
+  await expect(modal.getByText('原审批已保存，尚未发送 Offer。', { exact: true })).toHaveCount(0);
+  await modal.getByRole('button', { name: '重试同一审批', exact: true }).click();
   await expect(modal.getByText('原审批已保存，尚未发送 Offer。', { exact: true })).toBeVisible();
-  expect(cursors).toContain(id(403)); expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1]);
+  expect(cursors).toContain(id(403)); expect(writes).toHaveLength(3); expect(writes[0]).toEqual(writes[1]); expect(writes[0]).toEqual(writes[2]);
   expect(writes[0]!.body).toEqual({ schema_version: 1, downstream_id: down.id, environment: 'PAPER', expected_downstream_revision: '7', expected_latest_decision_id: id(402), valid_until: '2098-01-01T00:00:00.000Z' });
 });
 

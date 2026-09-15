@@ -34,7 +34,7 @@ export function ReleaseApprove({ release, close }: { release: Schema['ReleaseVie
   const mutation = useMutation({ mutationFn: async (body: Schema['ReleaseApproveV1']) => {
     const result = dataOf(await api.POST('/api/v2/releases/{id}/approvals', { body, params: { path: { id: release.id }, header: intent.current.headers('POST', `/api/v2/releases/${release.id}/approvals`, body) } }));
     const a = result.resource;
-    if (a.project_id !== release.project_id || a.release_id !== release.id || a.candidate_id !== release.candidate_id || a.downstream_id !== body.downstream_id || a.environment !== body.environment || a.downstream_revision !== body.expected_downstream_revision || a.authority_kind !== 'OPERATOR') throw new Error('审批回执与原请求不匹配。');
+    if (a.project_id !== release.project_id || a.release_id !== release.id || a.candidate_id !== release.candidate_id || a.downstream_id !== body.downstream_id || a.environment !== body.environment || a.downstream_revision !== body.expected_downstream_revision || a.authority_kind !== 'OPERATOR' || Date.parse(a.valid_until) !== Date.parse(body.valid_until)) throw new Error('审批回执与原请求不匹配。');
     return a;
   }, onSuccess: async result => { setReceipt(result); intent.current.clear(); await client.invalidateQueries({ queryKey: ['release-approvals', release.id] }); }, onError: error => {
     const rejected = error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE');

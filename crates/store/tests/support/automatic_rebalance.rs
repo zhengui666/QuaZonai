@@ -171,6 +171,36 @@ async fn check(
     candidate: Id,
 ) {
     let (release, policy, input) = Box::pin(prepare(pool, store, actor, f, build, candidate)).await;
+    // Later arrivals must not displace the newer, still-valid source observation.
+    let snapshot: uuid::Uuid = sqlx::query_scalar("SELECT snapshot_id FROM app.portfolio_build_tasks t JOIN app.portfolio_candidates c ON c.run_id=t.run_id WHERE c.id=$1")
+        .bind(candidate.as_uuid()).fetch_one(pool).await.unwrap();
+    for expired in [false, true] {
+        let report = Id::new();
+        let message = if expired {
+            "expired-late-arrival"
+        } else {
+            "older-late-arrival"
+        };
+        let mut content: serde_json::Value =
+            sqlx::query_scalar("SELECT content FROM app.forward_weight_snapshots WHERE id=$1")
+                .bind(snapshot)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        content["source"]["external_message_id"] = serde_json::json!(message);
+        if expired {
+            content["valid_until_ns"] = serde_json::json!("1");
+        } else {
+            let asof: u64 = content["asof_ns"].as_str().unwrap().parse().unwrap();
+            content["asof_ns"] = serde_json::json!((asof - 1).to_string());
+        }
+        let bytes = serde_json::to_vec(&content).unwrap();
+        f.objects.put(report, &bytes).unwrap();
+        sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) SELECT $1,project_id,'REPORT','application/json','qz.portfolio_current_weights','1','LOCAL',$2,'1',$3,'RESEARCH','SYNTHETIC','IMPORT','REFERENCED' FROM app.forward_weight_snapshots WHERE id=$4")
+            .bind(report.as_uuid()).bind(report.to_string()).bind(bytes.len() as i64).bind(snapshot).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO app.forward_weight_snapshots(id,project_id,downstream_id,environment,external_message_id,report_artifact_id,content) SELECT $1,project_id,downstream_id,environment,$2,$3,$4 FROM app.forward_weight_snapshots WHERE id=$5")
+            .bind(Id::new().as_uuid()).bind(message).bind(report.as_uuid()).bind(content).bind(snapshot).execute(pool).await.unwrap();
+    }
     let before: i64 = sqlx::query_scalar("SELECT count(*) FROM app.command_receipts")
         .fetch_one(pool)
         .await
@@ -243,6 +273,10 @@ async fn check(
     let original: contracts::portfolio::PortfolioBuildRequestV1 =
         serde_json::from_value(original).unwrap();
     assert_eq!(original.input_set_id, input);
+    assert_eq!(
+        serde_json::to_value(original.current_weights_source).unwrap(),
+        serde_json::json!({"kind": "FORWARD_SNAPSHOT", "snapshot_id": snapshot})
+    );
     assert_eq!(
         original.expected_runtime_revision,
         build.expected_runtime_revision

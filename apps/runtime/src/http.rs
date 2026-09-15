@@ -294,7 +294,7 @@ async fn submit(
 }
 
 #[utoipa::path(get, path = "/runtime/v1/jobs/{external_job_id}", params(("external_job_id" = String, Path)),
-    responses((status=200, body=RuntimeJobStatusV1), (status=404, body=RuntimeProblem)))]
+    responses((status=200, body=RuntimeJobStatusV1), (status=404, body=RuntimeProblem), (status=503, body=RuntimeProblem)))]
 async fn status(
     State(state): State<Arc<HttpState>>,
     id: std::result::Result<Path<String>, PathRejection>,
@@ -304,7 +304,7 @@ async fn status(
 }
 
 #[utoipa::path(post, path = "/runtime/v1/jobs/{external_job_id}/cancel", params(("external_job_id" = String, Path)), request_body=RuntimeCancelV1,
-    responses((status=200, body=RuntimeJobStatusV1), (status=202, body=RuntimeJobStatusV1), (status=409, body=RuntimeProblem)))]
+    responses((status=200, body=RuntimeJobStatusV1), (status=202, body=RuntimeJobStatusV1), (status=409, body=RuntimeProblem), (status=503, body=RuntimeProblem)))]
 async fn cancel(
     State(state): State<Arc<HttpState>>,
     id: std::result::Result<Path<String>, PathRejection>,
@@ -326,7 +326,7 @@ async fn cancel(
 }
 
 #[utoipa::path(get, path = "/runtime/v1/jobs/{external_job_id}/result", params(("external_job_id" = String, Path)),
-    responses((status=200, body=ResultManifestV1), (status=404, body=RuntimeProblem), (status=409, body=RuntimeProblem)))]
+    responses((status=200, body=ResultManifestV1), (status=404, body=RuntimeProblem), (status=409, body=RuntimeProblem), (status=503, body=RuntimeProblem)))]
 async fn result(
     State(state): State<Arc<HttpState>>,
     id: std::result::Result<Path<String>, PathRejection>,
@@ -372,7 +372,7 @@ async fn object(
         (inline(RuntimeBytes) = "application/wasm"),
         (inline(RuntimeBytes) = "application/vnd.apache.arrow.file"),
         (contracts::execution::NativeJsonOutputV1 = "application/json")
-    )), (status=404, body=RuntimeProblem), (status=409, body=RuntimeProblem)))]
+    )), (status=404, body=RuntimeProblem), (status=409, body=RuntimeProblem), (status=503, body=RuntimeProblem)))]
 async fn artifact(
     State(state): State<Arc<HttpState>>,
     path: std::result::Result<Path<(String, Id)>, PathRejection>,

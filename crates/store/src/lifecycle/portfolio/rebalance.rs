@@ -106,7 +106,7 @@ impl Store {
             return Err(StoreError::Invalid("automation_daily_quota"));
         }
         let cutoff_ns = cutoff.timestamp_nanos_opt().ok_or(StoreError::Integrity)?;
-        let weights: Option<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM app.forward_weight_snapshots WHERE project_id=$1 AND downstream_id=$2 AND environment=$3 AND (content->>'asof_ns')::bigint<=$4 AND (content->>'available_ns')::bigint<=$4 ORDER BY id DESC LIMIT 1")
+        let weights: Option<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM app.forward_weight_snapshots WHERE project_id=$1 AND downstream_id=$2 AND environment=$3 AND (content->>'asof_ns')::bigint<=$4 AND (content->>'available_ns')::bigint<=$4 AND (content->>'valid_until_ns')::bigint>$4 ORDER BY (content->>'asof_ns')::bigint DESC,(content->>'available_ns')::bigint DESC,id DESC LIMIT 1")
             .bind(project.as_uuid()).bind(downstream.as_uuid()).bind(db::code(&request.environment)?).bind(cutoff_ns).fetch_optional(&mut *tx).await?;
         let Some(weights) = weights else {
             return Ok(None);
