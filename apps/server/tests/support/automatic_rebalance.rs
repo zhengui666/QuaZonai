@@ -46,7 +46,15 @@ async fn tick(
     worker: &server::worker::Worker,
     project: Id,
 ) -> Result<(), server::worker::WorkerFailure> {
-    let (cursor, result) = Box::pin(worker.process_automation(None)).await;
+    use tracing::instrument::WithSubscriber;
+    let diagnostics = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_test_writer()
+        .with_ansi(false)
+        .finish();
+    let (cursor, result) = Box::pin(worker.process_automation(None))
+        .with_subscriber(diagnostics)
+        .await;
     assert_eq!(cursor, Some(project));
     result
 }

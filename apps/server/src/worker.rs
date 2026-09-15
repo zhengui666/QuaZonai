@@ -16,6 +16,7 @@ use tokio::{sync::watch, task::JoinSet};
 
 pub mod mission;
 
+#[derive(Debug)]
 enum RebalanceStage {
     Build,
     Study,
@@ -336,6 +337,9 @@ impl Worker {
                 .await
                 .map(|v| v.map(|release| release.id)),
         };
+        if let Err(error) = &result {
+            tracing::warn!(project_id=%project, ?stage, error=%error, "bounded rebalance stage failed");
+        }
         for id in allocated.into_iter().filter(|_| result.is_err()) {
             let objects = self.objects.clone();
             if self
