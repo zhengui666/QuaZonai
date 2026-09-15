@@ -5301,3 +5301,30 @@ Source inventory unchanged, owned PostgreSQL stopped. No API contract or UI
 implementation changed. This does not establish full transitive old lineage,
 open-ended legacy reference resolution or real backup/recovery; full delivery and
 remote gates remain open.
+
+### 2026-09-15 offline restored-access cutover
+
+Full-requirement audit identified missing same-version restore access invalidation.
+New local recover-access --recovery-id uses the migration owner's connection;
+current/session identities must have native owner privileges. It requires paused
+API/Worker writers and settles authority transactions using native table locks.
+One transaction advances the epoch above all retained login/device/grant epochs,
+keeps TOTP replay steps monotonic, appends existing native machine credential
+revocations, and writes a SYSTEM_RECOVERY immutable nonsecret receipt. Reusing the
+same restore ID returns that receipt without another cutover. A new restore must
+use a new ID. No HTTP/MCP capability or new authentication algorithm is introduced.
+
+verify-E38pWC passed all-target compile, formatting, strict Clippy and 66 native
+checks (prior 64 plus two recovery cases). Actual server CLI against disposable
+PostgreSQL proves rollback on injected receipt failure, byte-identical receipt
+replay, old cookie/token rejection, preserved verifier reference and successful
+fresh TOTP login with retained project data. A separate ordinary login role is
+rejected without changing the epoch. Source inventory unchanged; owned PG stopped.
+Native recover-access --help also executed. Initial c7A2qq stopped on a test syntax
+error; 78Wl2d exposed the incorrect assumption of a revoked_at credential column.
+Corrected implementation appends machine_credential_revocations as existing
+control-plane revocation does; original credentials remain immutable.
+
+This is a restore prerequisite, not pg_dump/pg_restore, artifact consistency,
+in-flight remote reconciliation, disk-full or measured RPO/RTO proof. Those and
+full T42/real-account/data acceptance remain unfinished. PR is still unpushed.

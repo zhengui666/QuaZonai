@@ -89,6 +89,14 @@ enum Command {
         #[arg(long)]
         application_role: Option<String>,
     },
+    /// Offline restore only: invalidate old sessions, devices, grants and machine credentials.
+    RecoverAccess {
+        #[command(flatten)]
+        database: Database,
+        /// Retain this ID when retrying after an uncertain result.
+        #[arg(long,value_parser=parse_id)]
+        recovery_id: contracts::Id,
+    },
     /// Issue a one-use, expiring local initialization capability. Never use remotely.
     Bootstrap {
         #[command(flatten)]
@@ -419,6 +427,13 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 .migrate_with_application_role(application_role.as_deref())
                 .await?;
             println!("Domain and native session migrations completed. Run serve with the non-owner application identity.");
+        }
+        Command::RecoverAccess {
+            database,
+            recovery_id,
+        } => {
+            let store = Store::connect(&database.database_url).await?;
+            println!("{}", store.invalidate_restored_access(recovery_id).await?);
         }
         Command::Bootstrap { database } => {
             let store = Store::connect(&database.database_url).await?;

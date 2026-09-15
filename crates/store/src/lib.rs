@@ -33,6 +33,7 @@ pub mod lifecycle;
 pub mod machine_auth;
 mod migration;
 pub mod portfolio;
+mod recovery;
 pub mod research;
 pub mod runtime;
 mod selection;

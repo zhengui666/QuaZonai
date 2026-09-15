@@ -398,7 +398,7 @@ Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立�
 
 统一 request_id/project_id/cycle_id/run_id/attempt，tracing/OpenTelemetry 兼容；指标含队列等待/重投/lease loss、时长、未确认取消、孤儿任务、数据失败、预算耗尽、审批过期、反馈迟到。readiness 分 research/sealed/portfolio/paper/live，含组件、状态、reason、checked_at/valid_until；健康检查不每次启动 Codex/付费调用。检测连接是显式有总超时动作。
 
-复用 PostgreSQL 原生备份/pgBackRest、restic 等，不建备份平台。备份数据库、引用 artifacts、配置和受保护原生 Codex profile；市场目录由原所有者按版本备份，密钥与数据分离。恢复先暂停 admission，恢复一致版本、查悬空引用、reconcile 未完成远端任务，再恢复消费；不盲目重放 Live。重置/恢复明确处理旧 session/设备/凭据。RPO 24h/RTO 60min 是待演练目标，只有实际记录才声称达到。
+复用 PostgreSQL 原生备份/pgBackRest、restic 等，不建备份平台。备份数据库、引用 artifacts、配置和受保护原生 Codex profile；市场目录由原所有者按版本备份，密钥与数据分离。恢复先暂停 admission，恢复一致版本、查悬空引用、reconcile 未完成远端任务，再恢复消费；不盲目重放 Live。重置/恢复明确处理旧 session/设备/凭据。 同版本恢复在保持API/Worker停止期间，以迁移所有者运行本机recover-access及固定recovery-id；同事务将auth epoch提高到全部已记录授权之上，废止旧浏览器/设备/grant，撤销未撤销机器凭据，并保留非秘密回执供未知结果重放。TOTP密文及历史事实不删除；当前或更早TOTP步拒绝，下一步可重新登录。此入口不提供HTTP/MCP能力，非所有者拒绝。RPO 24h/RTO 60min 是待演练目标，只有实际记录才声称达到。
 
 升级检查版本、磁盘、备份与兼容矩阵；不可逆 schema 用备份恢复回滚，不声称旧二进制任意读新 schema。磁盘满/DB断连/runtime离线停止接新任务并明确告警。恢复报告包含备份时点、DB/产物验证、reconcile 清单、未重复 Handoff、凭据处理、耗时和损失区间。
 

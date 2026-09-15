@@ -698,3 +698,11 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 旧库移除外键不代表引用已有效。导入会按已支持的0029表关系基线补查可投影引用；
 MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，重复约束不会重复计数。
 这项检查不替代多态身份、密封证据沿袭或真实备份恢复验收。
+
+恢复访问切换使用 [CLI recover-access](CLI.md#恢复后的访问切换)。只在API/Worker停止和旧事务
+结束后，以迁移所有者连接恢复库执行；非所有者拒绝。保留本次恢复编号与回执以处理未知
+结果，新的恢复另取编号。保留对应原生密钥及TOTP密文后重新登录，重新签发所需机器凭据；
+外部Provider/Downstream凭据和原生Codex profile按其所有者的恢复流程核对。
+备份与归档恢复参数以 [PostgreSQL 18 pg_dump](https://www.postgresql.org/docs/18/app-pgdump.html)
+和 [pg_restore](https://www.postgresql.org/docs/18/app-pgrestore.html) 为准；访问切换测试不能证明
+数据库、artifacts/historical-artifacts和远端任务已一致恢复。RPO/RTO仍待实际演练记录。

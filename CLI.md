@@ -1094,3 +1094,22 @@ Operator 事务完成且确认无引用后移除本次具体对象；未知状�
 POLYMORPHIC 表示已知旧主体关系的目标尚未投影；POLYMORPHIC_UNRESOLVED 表示旧任务、
 事件或预检的开放类型尚未解析。二者均需复核，不代表已通过引用检查。已知类型的目标若
 已投影但找不到原ID，或曝光/披露层级违反旧合同，则拒绝整个导入。
+
+### 恢复后的访问切换
+
+API和Worker已停止、旧事务已结束后，对恢复的数据库使用受保护的迁移所有者连接：
+
+```sh
+# DATABASE_URL comes from the private migration configuration, not command arguments.
+# RECOVERY_ID is a UUIDv7 saved once for THIS restore attempt.
+cargo run --locked -p server -- recover-access --recovery-id "$RECOVERY_ID"
+```
+
+支持 UUIDv7 的 util-linux 可用 `uuidgen --time-v7` 生成一次编号并私下保存。未知结果重试
+保留原编号；另一次恢复必须用新编号，避免命中备份中的旧回执。命令同事务提高会话授权
+epoch、追加机器凭据撤销和非秘密回执；所有者检查或任一步失败均回滚。浏览器、受信设备、
+旧单次grant和旧机器token失效。TOTP密文、凭据原记录、项目及研究历史保留；已消费或当前
+TOTP步不能重放，等待下一步重新登录，再按需要重新发放机器凭据。它没有HTTP/MCP入口。
+返回 schema_version、recovery_id、previous_epoch、new_epoch、revoked_machine_credentials；
+计数以十进制字符串表示。保存回执，核对原编号及两次epoch，不将调用失败当作成功切换。
+实际完整备份、产物恢复、远端任务核对、防重复交付及RPO/RTO演练仍需完成。
