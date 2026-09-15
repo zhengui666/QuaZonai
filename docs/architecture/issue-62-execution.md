@@ -5357,3 +5357,29 @@ This is quiescent synthetic database/vault recovery evidence only. Referenced ac
 and historical artifacts, application nonowner startup after restore, external
 profiles, pending remote reconciliation, disk-full/dependency-offline behavior,
 measured RPO/RTO and full T42 remain outstanding. PR remains unpushed/unmerged.
+
+### 2026-09-15 restored runtime identity and referenced object
+
+Extended the existing native archive test rather than adding a backup subsystem.
+After no-owner/no-ACL restore, the existing migration entrypoint grants a newly
+created application login. All restored HTTP authentication, receipt replay and
+artifact reads now use that distinct nonowner connection, not SET ROLE from an
+owner session. The native runtime-role guard rejects the owner and accepts this
+application login. Recovery mutation returns Forbidden and TRUNCATE fails with
+native insufficient_privilege; subsequent original project readback still passes.
+The disposable login is dropped after the disposable target database is removed.
+
+A real HTTP-uploaded synthetic CODE artifact is included before the archive.
+Restoring only its database record yields 503 for content. Copying its original
+private file restores identical public metadata and byte-for-byte download through
+the authenticated HTTP route. This keeps missing-object failure distinct from a
+successful database restore, without synthetic business SQL or new integrity IDs.
+
+verify-bHZA2b passed the separate-login extension. Final verify-UGZN15 passed
+workspace/all-target compilation, formatting, strict Clippy and all three native
+recovery tests after the artifact extension. Source inventory was unchanged and
+the owned PostgreSQL stopped. Previous 67-test suite at cOAS3t remains prior-head
+evidence, not a claim of rerunning that whole suite for this change. This is still
+an in-process real Axum/PG/native-archive fixture: full server-process startup,
+historical-artifact coverage, remote reconciliation, disk-full/dependency offline,
+RPO/RTO and full T42 remain unproven. No remote CI/review/merge was performed.

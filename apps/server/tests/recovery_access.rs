@@ -222,7 +222,28 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
 
     // Keep the SAME key: rejection must follow the restored epoch, not a changed cookie key.
     let cookie_key = Key::generate();
-    let f = support::fixture_with_key(pool.clone(), None, None, cookie_key.clone()).await;
+    let mut f = support::fixture_with_key(pool.clone(), None, None, cookie_key.clone()).await;
+    f.app = server::router(
+        server::AppState::new(
+            f.store.clone(),
+            SecretVault::open(
+                &f._state.path().join("secrets"),
+                &f._state.path().join("master.key"),
+            )
+            .unwrap(),
+            server::WebPolicy::new(
+                "https://research.example",
+                "127.0.0.1:8080".parse().unwrap(),
+                false,
+            )
+            .unwrap(),
+        )
+        .with_artifact_store(
+            integrations::artifacts::ArtifactStore::open(&f._state.path().join("artifacts"))
+                .unwrap(),
+        ),
+        cookie_key.clone(),
+    );
     let (enrollment, initial, totp) = support::start(&f).await;
     let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
     assert_eq!(login.status, StatusCode::OK);
@@ -237,9 +258,18 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     )
     .await;
     assert_eq!(original.status, StatusCode::CREATED);
+    let content = "// restored synthetic source, never production evidence\n// 中文\n";
+    let artifact = client::browser(&f, &cookie, "archived-artifact", "/api/v2/artifacts", json!({"schema_version":1,"project_id":original.body["resource"]["id"],"kind":"CODE","content":content})).await;
+    assert_eq!(artifact.status, StatusCode::CREATED);
+    let artifact_id = artifact.body["resource"]["id"].as_str().unwrap();
     let before = f.store.authentication_snapshot().await.unwrap();
     // No workers or requests run while copying this synthetic instance's vault and DB.
     let state = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        f._state.path().join("artifacts").join(artifact_id),
+        state.path().join("archived-object"),
+    )
+    .unwrap();
     std::fs::create_dir(state.path().join("secrets")).unwrap();
     std::fs::set_permissions(
         state.path().join("secrets"),
@@ -318,8 +348,53 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         restored.stderr.is_empty(),
         "pg_restore emitted a warning requiring investigation"
     );
-    let store = store::Store::from_pool(restored_pool.clone());
-    store.migrate().await.unwrap();
+    let owner = store::Store::from_pool(restored_pool.clone());
+    assert!(owner.verify_runtime_role().await.is_err());
+    // Restore intentionally excludes global roles/ACLs. Reapply runtime grants via
+    // the deployment migration command, then use a genuinely separate login.
+    let role = format!("restored_app_{}", Id::new().to_string().replace('-', ""));
+    let password = Id::new().to_string();
+    let ddl: String =
+        sqlx::query_scalar("SELECT format('CREATE ROLE %I LOGIN PASSWORD %L',$1::text,$2::text)")
+            .bind(&role)
+            .bind(&password)
+            .fetch_one(&restored_pool)
+            .await
+            .unwrap();
+    assert!(sqlx::query(&ddl).execute(&restored_pool).await.is_ok());
+    owner
+        .migrate_with_application_role(Some(&role))
+        .await
+        .unwrap();
+    let application_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect_with(
+            restored_pool
+                .connect_options()
+                .as_ref()
+                .clone()
+                .username(&role)
+                .password(&password),
+        )
+        .await
+        .unwrap();
+    let store = store::Store::from_pool(application_pool.clone());
+    store.verify_runtime_role().await.unwrap();
+    assert!(matches!(
+        store.invalidate_restored_access(Id::new()).await,
+        Err(store::StoreError::Forbidden)
+    ));
+    let forbidden = sqlx::query("TRUNCATE app.projects CASCADE")
+        .execute(&application_pool)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        forbidden
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("42501")
+    );
     assert_eq!(
         store.authentication_snapshot().await.unwrap().epoch,
         before.epoch
@@ -340,6 +415,10 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
                 )
                 .unwrap(),
                 policy,
+            )
+            .with_artifact_store(
+                integrations::artifacts::ArtifactStore::open(&state.path().join("artifacts"))
+                    .unwrap(),
             ),
             cookie_key,
         ),
@@ -381,6 +460,51 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         .timestamp() as u64;
     let login = support::call(&restored,"POST","/api/v2/auth/login",json!({"schema_version":1,"code":totp.generate((now/30+1)*30),"trust_device":false,"device_label":null}),None).await;
     assert_eq!(login.status, StatusCode::OK);
+    let artifact_path = format!("/api/v2/artifacts/{artifact_id}/content");
+    // A restored DB alone must not claim that absent object bytes are available.
+    assert_eq!(
+        support::call(
+            &restored,
+            "GET",
+            &artifact_path,
+            Value::Null,
+            login.cookie.as_deref()
+        )
+        .await
+        .status,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    std::fs::copy(
+        restored._state.path().join("archived-object"),
+        restored._state.path().join("artifacts").join(artifact_id),
+    )
+    .unwrap();
+    let metadata = support::call(
+        &restored,
+        "GET",
+        &format!("/api/v2/artifacts/{artifact_id}"),
+        Value::Null,
+        login.cookie.as_deref(),
+    )
+    .await;
+    assert_eq!(metadata.status, StatusCode::OK);
+    assert_eq!(metadata.body, artifact.body["resource"]);
+    let request = Request::builder()
+        .uri(&artifact_path)
+        .header(header::HOST, "research.example")
+        .header(header::COOKIE, login.cookie.as_deref().unwrap())
+        .body(Body::empty())
+        .unwrap();
+    use tower::ServiceExt;
+    let downloaded = restored.app.clone().oneshot(request).await.unwrap();
+    assert_eq!(downloaded.status(), StatusCode::OK);
+    assert_eq!(
+        axum::body::to_bytes(downloaded.into_body(), 65536)
+            .await
+            .unwrap()
+            .as_ref(),
+        content.as_bytes()
+    );
     let replay = client::browser(
         &restored,
         login.cookie.as_deref().unwrap(),
@@ -414,8 +538,13 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         before.epoch
     );
     drop(restored);
+    application_pool.close().await;
     restored_pool.close().await;
     sqlx::query(&format!("DROP DATABASE {database}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!("DROP ROLE {role}"))
         .execute(&pool)
         .await
         .unwrap();
