@@ -26,6 +26,7 @@ pub mod execution_assumptions;
 pub mod experiments;
 pub mod forward;
 mod historical_import;
+pub use historical_import::{HistoricalArtifactPublication, HistoricalImportSource};
 mod historical_rows;
 mod historical_source;
 pub mod lifecycle;

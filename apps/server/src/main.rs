@@ -522,6 +522,9 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 AppState::new(store, vault, policy)
                     .with_historical_exports(historical_exports)
                     .with_artifact_store(objects)
+                    .with_historical_artifact_store(ArtifactStore::open(
+                        &state_dir.join("historical-artifacts"),
+                    )?)
                     .with_codex_deployment(codex)
                     .with_runtime_targets(targets)
                     .with_downstream_targets(downstream_targets),

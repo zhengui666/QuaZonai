@@ -309,3 +309,27 @@ pub struct HistoricalFieldContentV1 {
     pub text: Option<String>,
     pub next_offset: Option<DbCounter>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalArtifactSummaryV1 {
+    pub schema_version: SchemaV1,
+    pub report_id: Id,
+    pub source_records: DbCounter,
+    pub projected_records: DbCounter,
+    pub selected_records: DbCounter,
+    pub readable_records: DbCounter,
+    pub stored_records: DbCounter,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalArtifactResultV1 {
+    pub id: Id,
+    pub report_id: Id,
+    pub identity: HistoricalIdentityV1,
+    pub record_id: Option<Id>,
+    pub source_outcome: Option<HistoricalArtifactOutcomeV1>,
+    pub verified_readable: bool,
+    pub stored: bool,
+    pub byte_count: Option<DbCounter>,
+}

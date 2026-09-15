@@ -12773,6 +12773,111 @@
         ],
         "type": "object"
       },
+      "HistoricalArtifactOutcomeV1": {
+        "enum": [
+          "COPIED",
+          "MISSING",
+          "UNSUPPORTED",
+          "UNREADABLE",
+          "SEALED_RETAINED",
+          "MANUAL_REVIEW_REQUIRED"
+        ],
+        "type": "string"
+      },
+      "HistoricalArtifactResultV1": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_count": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/HistoricalIdentityV1"
+          },
+          "record_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "report_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "source_outcome": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HistoricalArtifactOutcomeV1"
+              }
+            ]
+          },
+          "stored": {
+            "type": "boolean"
+          },
+          "verified_readable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "report_id",
+          "identity",
+          "verified_readable",
+          "stored"
+        ],
+        "type": "object"
+      },
+      "HistoricalArtifactSummaryV1": {
+        "additionalProperties": false,
+        "properties": {
+          "projected_records": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "readable_records": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "report_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "selected_records": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "source_records": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "stored_records": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "schema_version",
+          "report_id",
+          "source_records",
+          "projected_records",
+          "selected_records",
+          "readable_records",
+          "stored_records"
+        ],
+        "type": "object"
+      },
       "HistoricalColumnExclusionV1": {
         "additionalProperties": false,
         "properties": {
@@ -12961,6 +13066,28 @@
         ],
         "type": "string"
       },
+      "HistoricalIdentityV1": {
+        "additionalProperties": false,
+        "description": "Old UUIDs are native UUIDs, not new-system UUIDv7 identities.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/HistoricalKindV1"
+          },
+          "source_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source_table": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "source_table",
+          "source_id"
+        ],
+        "type": "object"
+      },
       "HistoricalImportReportV1": {
         "additionalProperties": false,
         "description": "Import of reviewed projections is not approval of excluded or legacy evidence.",
@@ -13036,6 +13163,19 @@
           "dry_run"
         ],
         "type": "object"
+      },
+      "HistoricalKindV1": {
+        "enum": [
+          "RESEARCH",
+          "RUN",
+          "ARTIFACT",
+          "STRATEGY",
+          "EVALUATION",
+          "EVIDENCE",
+          "APPROVAL",
+          "HANDOFF"
+        ],
+        "type": "string"
       },
       "HistoricalMappingViewV1": {
         "additionalProperties": false,
@@ -18500,6 +18640,90 @@
                 "state",
                 "offered_at",
                 "expires_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Id"
+              }
+            ]
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_HistoricalArtifactResultV1": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "byte_count": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DbCounter"
+                    }
+                  ]
+                },
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "identity": {
+                  "$ref": "#/components/schemas/HistoricalIdentityV1"
+                },
+                "record_id": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  ]
+                },
+                "report_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "source_outcome": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/HistoricalArtifactOutcomeV1"
+                    }
+                  ]
+                },
+                "stored": {
+                  "type": "boolean"
+                },
+                "verified_readable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "report_id",
+                "identity",
+                "verified_readable",
+                "stored"
               ],
               "type": "object"
             },
@@ -33838,6 +34062,330 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Historical migration"
+        ]
+      }
+    },
+    "/api/v2/migrations/reports/{id}/artifacts": {
+      "get": {
+        "operationId": "list_historical_artifact_results",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_HistoricalArtifactResultV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Historical migration"
+        ]
+      }
+    },
+    "/api/v2/migrations/reports/{id}/artifacts/summary": {
+      "get": {
+        "operationId": "get_historical_artifact_summary",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalArtifactSummaryV1"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Historical migration"
+        ]
+      }
+    },
+    "/api/v2/migrations/reports/{id}/artifacts/{record}/content": {
+      "get": {
+        "operationId": "get_historical_artifact_content",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "path",
+            "name": "record",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "description": "OpenAPI-only binary shape; the actual handler streams the original bytes.",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

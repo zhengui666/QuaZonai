@@ -116,6 +116,7 @@ pub struct AppState {
     pub run_stream_slots: Arc<Semaphore>,
     pub artifact_store: Option<Arc<integrations::artifacts::ArtifactStore>>,
     pub artifact_slots: Arc<Semaphore>,
+    pub historical_artifact_store: Option<Arc<integrations::artifacts::ArtifactStore>>,
     pub historical_exports: Arc<migrations::HistoricalExports>,
     pub historical_import_slots: Arc<Semaphore>,
     pub integration_slots: Arc<Semaphore>,
@@ -134,6 +135,7 @@ impl AppState {
             run_stream_slots: Arc::new(Semaphore::new(32)),
             artifact_store: None,
             artifact_slots: Arc::new(Semaphore::new(4)),
+            historical_artifact_store: None,
             historical_exports: Arc::new(migrations::HistoricalExports::default()),
             historical_import_slots: Arc::new(Semaphore::new(1)),
             integration_slots: Arc::new(Semaphore::new(4)),
@@ -141,6 +143,13 @@ impl AppState {
             runtime_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
             codex_deployment: Arc::new(codex_profiles::CodexDeployment::default()),
         }
+    }
+    pub fn with_historical_artifact_store(
+        mut self,
+        store: integrations::artifacts::ArtifactStore,
+    ) -> Self {
+        self.historical_artifact_store = Some(Arc::new(store));
+        self
     }
     pub fn with_historical_exports(mut self, exports: migrations::HistoricalExports) -> Self {
         self.historical_exports = Arc::new(exports);
@@ -187,6 +196,18 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route(
             "/api/v2/migrations/reports/{id}/records/{record}/field",
             get(migrations::field),
+        )
+        .route(
+            "/api/v2/migrations/reports/{id}/artifacts/summary",
+            get(migrations::artifact_summary),
+        )
+        .route(
+            "/api/v2/migrations/reports/{id}/artifacts",
+            get(migrations::artifact_results),
+        )
+        .route(
+            "/api/v2/migrations/reports/{id}/artifacts/{record}/content",
+            get(migrations::artifact_content),
         )
         .route("/api/v2/migrations/import", post(migrations::import))
         .route("/api/v2/migrations/reports", get(migrations::reports))
@@ -624,7 +645,7 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(migrations::fields,migrations::field,migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::bootstrap_status,auth::bootstrap_start,auth::bootstrap_confirm,auth::login,auth::logout,auth::session_status,auth::verify,auth::devices,auth::revoke_device,
+#[openapi(paths(migrations::artifact_summary,migrations::artifact_results,migrations::artifact_content,migrations::fields,migrations::field,migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::bootstrap_status,auth::bootstrap_start,auth::bootstrap_confirm,auth::login,auth::logout,auth::session_status,auth::verify,auth::devices,auth::revoke_device,
 control::projects,control::project,control::create_project,control::update_project,
 control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,

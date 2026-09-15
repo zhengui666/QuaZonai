@@ -19,6 +19,7 @@ fn registry(directory: &Path, reference: Id) -> HistoricalExports {
     HistoricalExports::load(vec![ExportRegistration {
         export_ref: reference,
         directory: directory.into(),
+        artifact_directory: None,
     }])
     .unwrap()
 }
@@ -76,11 +77,13 @@ async fn frozen_export_browser_and_cli_import_preserve_original_history_and_scop
     assert!(HistoricalExports::load(vec![
         ExportRegistration {
             export_ref: reference,
-            directory: directory.clone()
+            directory: directory.clone(),
+            artifact_directory: None
         },
         ExportRegistration {
             export_ref: reference,
-            directory: directory.clone()
+            directory: directory.clone(),
+            artifact_directory: None
         }
     ])
     .is_err());
@@ -392,4 +395,181 @@ async fn frozen_export_browser_and_cli_import_preserve_original_history_and_scop
         404
     );
     task.abort();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn registered_public_artifacts_are_report_scoped_native_downloads(pool: PgPool) {
+    use integrations::artifacts::ArtifactStore;
+    use tower::ServiceExt;
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("rows");
+    fs::create_dir(&directory).unwrap();
+    sqlx::raw_sql("CREATE TABLE public.alembic_version(version_num text NOT NULL); INSERT INTO public.alembic_version VALUES('0029_portfolio_candidate_exposure'); CREATE TABLE public.mission_artifacts(id uuid PRIMARY KEY,mission_id uuid NOT NULL,turn_id uuid,kind varchar(80) NOT NULL,revision integer NOT NULL,schema_version varchar(40) NOT NULL,state varchar(40) NOT NULL,storage_uri text NOT NULL,metadata jsonb NOT NULL,created_at timestamptz NOT NULL); INSERT INTO public.mission_artifacts SELECT ('00000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'11111111-1111-4111-8111-111111111111',NULL,'REPORT',1,'1','AVAILABLE','excluded-original-path','{}','2020-01-01' FROM generate_series(1,3) n").execute(&pool).await.unwrap();
+    let installation = Id::new();
+    let mut files = std::collections::BTreeMap::<Id, Vec<u8>>::new();
+    let report = store::Store::from_pool(pool.clone())
+        .export_historical_rows(installation, |id, chunk| {
+            files.entry(id).or_default().extend_from_slice(chunk);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    for (id, bytes) in files {
+        fs::write(directory.join(format!("{id}.csv")), bytes).unwrap();
+    }
+    fs::write(
+        directory.join("report.json"),
+        serde_json::to_vec(&report).unwrap(),
+    )
+    .unwrap();
+    let old = root.path().join("old");
+    fs::create_dir(&old).unwrap();
+    let bytes = b"\xff\0PUBLIC HTTP COPY";
+    fs::write(old.join("public.bin"), bytes).unwrap();
+    let selection = root.path().join("selection.json");
+    let identity = |n| json!({"kind":"ARTIFACT","source_table":"mission_artifacts","source_id":format!("00000000-0000-4000-8000-{n:012}")});
+    fs::write(&selection,serde_json::to_vec(&json!({"schema_version":1,"source_installation_id":installation,"artifacts":[
+        {"identity":identity(1),"relative_path":"public.bin","disposition":"COPY_PUBLIC"},
+        {"identity":identity(2),"relative_path":"never-open-sealed.bin","disposition":"SEALED_RETAINED"}
+    ]})).unwrap()).unwrap();
+    let artifact_directory = root.path().join("artifact-export");
+    let status = tokio::process::Command::new(env!("CARGO_BIN_EXE_server"))
+        .args(["export-historical-artifacts", "--source-root"])
+        .arg(&old)
+        .arg("--selection")
+        .arg(&selection)
+        .arg("--output")
+        .arg(&artifact_directory)
+        .output()
+        .await
+        .unwrap()
+        .status;
+    assert!(status.success());
+    let reference = Id::new();
+    let exports = HistoricalExports::load(vec![ExportRegistration {
+        export_ref: reference,
+        directory: directory.clone(),
+        artifact_directory: Some(artifact_directory.clone()),
+    }])
+    .unwrap();
+    // After registration neither the old file nor the exported object remains trusted.
+    let artifact_report: contracts::imports::HistoricalArtifactExportV1 =
+        serde_json::from_slice(&fs::read(artifact_directory.join("report.json")).unwrap()).unwrap();
+    let native = ArtifactStore::open(&artifact_directory.join("objects")).unwrap();
+    let object = artifact_report.artifacts[0].object_ref.unwrap();
+    native.discard_unpublished(object).unwrap();
+    fs::write(old.join("public.bin"), "replaced").unwrap();
+    let f = support::fixture_with_deployment(pool.clone(), None, Some(exports)).await;
+    let (enrollment, initial, native) = support::start(&f).await;
+    let (login, _) = support::confirm(&f, &enrollment, &initial, &native, true).await;
+    assert_eq!(login.status, StatusCode::OK);
+    let cookie = login.cookie.unwrap_or(initial);
+    let headers = [
+        ("cookie", cookie.as_str()),
+        ("origin", "https://research.example"),
+        ("idempotency-key", "dry-artifacts"),
+    ];
+    let dry = send(
+        &f,
+        "POST",
+        "/api/v2/migrations/import",
+        json!({"schema_version":1,"export_ref":reference,"dry_run":true}),
+        &headers,
+    )
+    .await;
+    assert_eq!(dry.status, StatusCode::ACCEPTED, "{}", dry.body);
+    let dry_id = dry.body["resource"]["id"].as_str().unwrap();
+    let headers = [
+        ("cookie", cookie.as_str()),
+        ("origin", "https://research.example"),
+        ("idempotency-key", "actual-artifacts"),
+    ];
+    let actual = send(
+        &f,
+        "POST",
+        "/api/v2/migrations/import",
+        json!({"schema_version":1,"export_ref":reference,"dry_run":false}),
+        &headers,
+    )
+    .await;
+    assert_eq!(actual.status, StatusCode::ACCEPTED, "{}", actual.body);
+    let id = actual.body["resource"]["id"].as_str().unwrap();
+    let get_headers = [("cookie", cookie.as_str())];
+    let summary = send(
+        &f,
+        "GET",
+        &format!("/api/v2/migrations/reports/{id}/artifacts/summary"),
+        Value::Null,
+        &get_headers,
+    )
+    .await;
+    assert_eq!(summary.status, StatusCode::OK);
+    assert_eq!(summary.body["stored_records"], "1");
+    assert_eq!(summary.body["source_records"], "3");
+    let list = send(
+        &f,
+        "GET",
+        &format!("/api/v2/migrations/reports/{id}/artifacts?limit=100"),
+        Value::Null,
+        &get_headers,
+    )
+    .await;
+    assert_eq!(list.status, StatusCode::OK);
+    let items = list.body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    let record = items.iter().find(|r| r["stored"] == true).unwrap()["record_id"]
+        .as_str()
+        .unwrap();
+    let request = Request::builder()
+        .uri(format!(
+            "/api/v2/migrations/reports/{id}/artifacts/{record}/content"
+        ))
+        .header(header::HOST, "research.example")
+        .header(header::COOKIE, &cookie)
+        .body(Body::empty())
+        .unwrap();
+    let response = f.app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/octet-stream"
+    );
+    assert!(response.headers()[header::CONTENT_DISPOSITION]
+        .to_str()
+        .unwrap()
+        .starts_with("attachment;"));
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), 64 * 1024 * 1024)
+            .await
+            .unwrap()
+            .as_ref(),
+        bytes
+    );
+    for (report, record) in [
+        (dry_id, record),
+        (
+            id,
+            items
+                .iter()
+                .find(|r| r["source_outcome"] == "SEALED_RETAINED")
+                .unwrap()["record_id"]
+                .as_str()
+                .unwrap(),
+        ),
+    ] {
+        let denied = send(
+            &f,
+            "GET",
+            &format!("/api/v2/migrations/reports/{report}/artifacts/{record}/content"),
+            Value::Null,
+            &get_headers,
+        )
+        .await;
+        assert_eq!(denied.status, StatusCode::NOT_FOUND);
+    }
+    let active: i64 = sqlx::query_scalar("SELECT count(*) FROM app.artifacts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(active, 0);
 }

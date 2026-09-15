@@ -157,11 +157,25 @@ pub async fn content(
             error => error.into(),
         })?;
     let objects = native(&state)?;
+    native_content(
+        objects,
+        locator.local_object_id,
+        locator.metadata.byte_count,
+        capacity,
+    )
+    .await
+}
+pub(crate) async fn native_content(
+    objects: Arc<ArtifactStore>,
+    id: Id,
+    byte_count: contracts::DbCounter,
+    capacity: ArtifactCapacity,
+) -> Result<Response, ApiError> {
     let permit = capacity.0.clone();
     let bytes = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         objects
-            .read(locator.local_object_id, locator.metadata.byte_count)
+            .read(id, byte_count)
             .map_err(|_| ApiError::internal())
     })
     .await

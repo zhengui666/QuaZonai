@@ -38,12 +38,16 @@ async fn import(
             request,
             |reference| {
                 assert_eq!(reference, request.export_ref);
-                Ok(report.clone())
+                Ok(store::HistoricalImportSource {
+                    rows: report.clone(),
+                    artifacts: None,
+                })
             },
             |reference, id| {
                 assert_eq!(reference, request.export_ref);
                 Ok(Cursor::new(files[&id].clone()))
             },
+            |_| async { panic!("no selected artifacts") },
         )
         .await
 }
@@ -87,6 +91,7 @@ async fn dry_run_then_import_replays_original_keys_without_new_business_authorit
             |_, _| -> Result<Cursor<Vec<u8>>, store::StoreError> {
                 panic!("replay must not reopen CSV")
             },
+            |_| async { panic!("replay must not publish") },
         )
         .await
         .unwrap();
@@ -186,6 +191,7 @@ async fn auth_precedes_source_access_and_modified_relation_cannot_be_imported(po
             |_, _| -> Result<Cursor<Vec<u8>>, store::StoreError> {
                 panic!("unauthorized file access")
             },
+            |_| async { panic!("unauthorized publication") },
         )
         .await;
     assert!(denied.is_err());
@@ -531,5 +537,220 @@ async fn original_fields_are_scoped_and_native_unicode_pages_reconstruct_exact_v
             }
         )
         .await
+        .is_err());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn public_artifact_binding_dry_run_repeat_conflict_and_rollback(pool: PgPool) {
+    use contracts::{control::ListQuery, DbCounter};
+    use integrations::artifacts::ArtifactStore;
+    source(&pool).await;
+    sqlx::raw_sql("CREATE TABLE public.mission_artifacts(id uuid PRIMARY KEY,mission_id uuid NOT NULL,turn_id uuid,kind varchar(80) NOT NULL,revision integer NOT NULL,schema_version varchar(40) NOT NULL,state varchar(40) NOT NULL,storage_uri text NOT NULL,metadata jsonb NOT NULL,created_at timestamptz NOT NULL); INSERT INTO public.mission_artifacts SELECT ('00000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'11111111-1111-4111-8111-111111111111',NULL,'REPORT',1,'1','AVAILABLE','excluded-original-path','{}','2020-01-01' FROM generate_series(1,3) n").execute(&pool).await.unwrap();
+    let (store, actor) = support::operator(&pool).await;
+    let (rows, files) = exported(&pool, Id::new()).await;
+    let bytes = b"\xff\0PUBLIC COPY";
+    let mut artifacts:HistoricalArtifactExportV1=serde_json::from_value(serde_json::json!({"schema_version":1,"source_installation_id":rows.source_installation_id,"exported_at":"2020-01-01T00:00:00Z","artifacts":[
+        {"identity":{"kind":"ARTIFACT","source_table":"mission_artifacts","source_id":"00000000-0000-4000-8000-000000000001"},"outcome":"COPIED","object_ref":Id::new(),"byte_count":bytes.len().to_string()},
+        {"identity":{"kind":"ARTIFACT","source_table":"mission_artifacts","source_id":"00000000-0000-4000-8000-000000000002"},"outcome":"SEALED_RETAINED","object_ref":null,"byte_count":null}
+    ]})).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let native = ArtifactStore::open(&root.path().join("historical-artifacts")).unwrap();
+    let mut request = HistoricalImportRequestV1 {
+        schema_version: SchemaV1,
+        export_ref: Id::new(),
+        dry_run: true,
+    };
+    for dry in [true, false, false] {
+        request.dry_run = dry;
+        let key = Id::new().to_string();
+        let result = store
+            .import_historical_rows(
+                &actor,
+                &key,
+                &request,
+                |_| {
+                    Ok(store::HistoricalImportSource {
+                        rows: rows.clone(),
+                        artifacts: Some(artifacts.clone()),
+                    })
+                },
+                |_, id| Ok(Cursor::new(files[&id].clone())),
+                |p| {
+                    let native = &native;
+                    let object = artifacts.artifacts[0].object_ref.unwrap();
+                    async move {
+                        assert_eq!(p.source_object, object);
+                        if !p.dry_run && !p.existing {
+                            native.put(p.target.unwrap(), bytes).unwrap();
+                        }
+                        if !p.dry_run || p.existing {
+                            assert_eq!(
+                                native.read(p.target.unwrap(), p.byte_count).unwrap(),
+                                bytes
+                            );
+                        }
+                        Ok(())
+                    }
+                },
+            )
+            .await
+            .unwrap();
+        let summary = store
+            .historical_artifact_summary(&actor, result.resource.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                summary.source_records.get(),
+                summary.projected_records.get(),
+                summary.selected_records.get(),
+                summary.readable_records.get(),
+                summary.stored_records.get()
+            ),
+            (3, 3, 2, 1, if dry { 0 } else { 1 })
+        );
+        let items = store
+            .historical_artifact_results(&actor, result.resource.id, &ListQuery::default())
+            .await
+            .unwrap()
+            .items;
+        assert_eq!(items.len(), 3);
+        let copied = items.iter().find(|r| r.verified_readable).unwrap();
+        assert_eq!(copied.stored, !dry);
+        if dry {
+            assert!(copied.record_id.is_none());
+            assert!(root
+                .path()
+                .join("historical-artifacts")
+                .read_dir()
+                .unwrap()
+                .next()
+                .is_none());
+        } else {
+            let record = copied.record_id.unwrap();
+            assert_eq!(
+                store
+                    .historical_artifact_content(&actor, result.resource.id, record)
+                    .await
+                    .unwrap()
+                    .get(),
+                bytes.len() as u64
+            );
+            assert!(!store
+                .discard_unpublished_historical_artifact(record, |_| async {
+                    panic!("referenced data cannot be removed")
+                })
+                .await
+                .unwrap());
+            let sealed = items
+                .iter()
+                .find(|r| r.source_outcome == Some(HistoricalArtifactOutcomeV1::SealedRetained))
+                .unwrap();
+            assert!(matches!(
+                store
+                    .historical_artifact_content(
+                        &actor,
+                        result.resource.id,
+                        sealed.record_id.unwrap()
+                    )
+                    .await,
+                Err(store::StoreError::NotFound)
+            ));
+        }
+    }
+    assert_eq!(
+        root.path()
+            .join("historical-artifacts")
+            .read_dir()
+            .unwrap()
+            .count(),
+        1
+    );
+    let count_before: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.historical_import_reports")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    // A same-size native byte mismatch fails the whole batch, not just its item.
+    let failed = store
+        .import_historical_rows(
+            &actor,
+            "different-bytes",
+            &request,
+            |_| {
+                Ok(store::HistoricalImportSource {
+                    rows: rows.clone(),
+                    artifacts: Some(artifacts.clone()),
+                })
+            },
+            |_, id| Ok(Cursor::new(files[&id].clone())),
+            |p| {
+                let native = &native;
+                async move {
+                    assert!(p.existing);
+                    let original = native.read(p.target.unwrap(), p.byte_count).unwrap();
+                    let mut changed = original.clone();
+                    changed[0] ^= 1;
+                    if changed != original {
+                        return Err(store::StoreError::Conflict);
+                    }
+                    Ok(())
+                }
+            },
+        )
+        .await;
+    assert!(matches!(failed, Err(store::StoreError::Conflict)));
+    artifacts.artifacts[0].identity.source_id =
+        "00000000-0000-4000-8000-999999999999".parse().unwrap();
+    let failed = store
+        .import_historical_rows(
+            &actor,
+            "foreign-identity",
+            &request,
+            |_| {
+                Ok(store::HistoricalImportSource {
+                    rows: rows.clone(),
+                    artifacts: Some(artifacts.clone()),
+                })
+            },
+            |_, id| Ok(Cursor::new(files[&id].clone())),
+            |_| async { panic!("foreign identity cannot open bytes") },
+        )
+        .await;
+    assert!(matches!(
+        failed,
+        Err(store::StoreError::Invalid("historical_artifact_identity"))
+    ));
+    let count_after: i64 = sqlx::query_scalar("SELECT count(*) FROM app.historical_import_reports")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count_before, count_after);
+    let active: i64 = sqlx::query_scalar("SELECT count(*) FROM app.artifacts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(active, 0);
+    // PostgreSQL must reject a readable result lacking its measured length.
+    let result_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM app.historical_import_reports LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(sqlx::query("INSERT INTO app.historical_artifact_results(report_id,source_table,source_id,source_outcome,verified_readable,stored) VALUES($1,'mission_artifacts',gen_random_uuid(),'COPIED',true,false)").bind(result_id).execute(&pool).await.is_err());
+    let orphan = Id::new();
+    native.put(orphan, bytes).unwrap();
+    assert!(store
+        .discard_unpublished_historical_artifact(orphan, |id| {
+            let native = &native;
+            async move {
+                native.discard_unpublished(id).unwrap();
+                Ok(())
+            }
+        })
+        .await
+        .unwrap());
+    assert!(native
+        .read(orphan, DbCounter::new(bytes.len() as u64).unwrap())
         .is_err());
 }

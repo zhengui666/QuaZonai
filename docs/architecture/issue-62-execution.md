@@ -5184,3 +5184,36 @@ These are controlled source and presentation fixtures, not the user's actual old
 backup or complete T42. Historical artifact association, complete semantic/sealed
 lineage, real backup/recovery and remaining delivery gates still require work.
 No push, latest-head remote review/CI, merge or Issue closure is claimed.
+
+### 2026-09-15 historical public artifact binding and HTTP retrieval
+
+Migration 077 stores immutable per-report coverage/results and native historical
+copy references, separate from active app.artifacts. Deployment registration can
+bind same-installation native row and artifact exports; only COPIED bytes enter
+sealed startup snapshots. Store verifies each original table/UUID against the
+batch's actual native projection before publication. Dry runs read but do not
+publish copies. Actual mappings, copy references, results and receipt commit
+atomically; repeated identities require identical bytes. Native publication uses
+state-dir/historical-artifacts, keeping historical copies outside active-object
+cleanup. Failed publication recovery waits for the original Operator lock and
+checks the specific historical reference before discarding; uncertain outcomes
+retain possible data, never scan user directories.
+
+Scoped HTTP endpoints return coverage, paginated item results and attachment
+bytes. Dry-run, unselected and sealed items cannot download a copy through that
+report. Downloads reuse the bounded native artifact stream. No old script or
+model is executed and no active scientific authority is created.
+
+verify-B7adul passed all-target compilation, formatting, strict Clippy and 62
+checks: integrations 25, existing artifact HTTP 18, historical HTTP 2, OpenAPI
+references 2, Store import 6, native source/artifact export 8, binary publication
+1. Source inventory unchanged; owned PostgreSQL stopped. Native tests cover
+original source/export replacement after registration, binary readback,
+same-length differences, duplicate identities, missing selection, dry-run,
+sealed reads denied, rollback and referenced-object retention. Initial
+y19UCk failed a test async borrow; ZuUgig passed its tests but failed strict
+Clippy on an unnecessary unit expression; both were corrected before B7adul.
+web-verify-U7MNET independently reproduced generated contracts with handwritten
+sources unchanged. These are controlled disposable fixtures, not real old-data
+recovery. Browser/CLI artifact presentation, complete semantic/sealed lineage,
+real backup/recovery and full T42 remain outstanding. No push or closure claimed.

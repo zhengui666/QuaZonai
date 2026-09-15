@@ -1030,7 +1030,9 @@ CSV 使用 PostgreSQL 原生 UTF-8、HEADER、FORCE_QUOTE、UTC与ISO时间编�
 ### 历史投影注册和导入
 
 Linux 部署者在 `serve` 的 `HISTORICAL_EXPORTS` 环境项提供 JSON 数组：
-`[{"export_ref":"原包的UUIDv7注册编号","directory":"/绝对路径/行导出目录"}]`。
+`[{"export_ref":"原包的UUIDv7注册编号","directory":"/绝对路径/行导出目录","artifact_directory":"/绝对路径/产物导出目录"}]`。
+`artifact_directory` 可省略；提供时必须是同一原安装的原生产物导出。只有 COPIED
+对象会被冻结，每项最多64MiB，并计入共同8GiB上限；密封/未确认公开项不读取。
 目录须来自上面的原生行导出，含完整 report.json 和 UUID.csv 文件。启动时冻结
 原生只读快照，原目录随后替换不会改变本次服务的输入。相同编号始终绑定相同原包；
 变更包使用新编号，不覆盖旧备份。最多32份、每表512MiB、总量8GiB，Linux原生
@@ -1050,7 +1052,7 @@ DSN、源报告或自报 PASS。CLI 使用已有 `client` 连接参数、凭据�
 不创建活动 Job/资格。未知结果用相同授权、幂等键和参数重放。
 `migrate report UUID` / `GET /api/v2/migrations/reports/{id}` 读取摘要；浏览器 Operator
 可读报告，CLI 仅可读同一有效凭据实际发起的导入报告。缺表、排除项或未核验关系
-仍标明人工复核；此入口尚不包含产物关联、全部密封沿袭和完整旧快照迁移验收。
+仍标明人工复核；此入口尚未完成全部密封沿袭和完整旧快照迁移验收。
 
 
 `migrate reports [--cursor UUID] [--limit 1..100]` 按报告编号倒序分页；
@@ -1071,3 +1073,13 @@ CLI 仍仅限本有效凭据的报告，猜测其他报告编号或游标不扩�
 空串、total_characters为"0"。无next_offset才是末段，不能把一段视作整个长字段。
 每次读取仍核对凭据和批次成员；被排除字段和其他批次记录返回404，越界偏移返回422。
 数据库可能为每段解压原大字段，响应分段限制应用内存，不承诺大字段的随机读取耗时。
+
+
+历史产物 HTTP 查询：`GET /api/v2/migrations/reports/{id}/artifacts/summary` 返回源行数、
+已投影、选择、读取和存储计数；`GET .../artifacts?limit=50&cursor=UUID` 分页返回原身份、
+可空选择结果、可读性及副本记录编号。`GET .../artifacts/{record}/content` 只允许该实际
+导入报告中 stored=true 的副本，以附件下载原字节。dry-run、未选择或密封项不可下载。
+权限与报告读取相同；旧报告若没有产物摘要会返回404。当前这些新入口尚无 CLI 专用子命令。
+副本位于 state-dir/historical-artifacts，必须随新数据库备份和恢复。它不进入活动产物、
+科学资格或执行流程；重复导入比较原字节，内容差异导致整个批次失败。失败清理只在原
+Operator 事务完成且确认无引用后移除本次具体对象；未知状态保留待核对，不扫描旧数据。

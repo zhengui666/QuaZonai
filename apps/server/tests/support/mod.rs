@@ -63,7 +63,14 @@ pub async fn fixture_with_deployment(
         );
     }
     if let Some(exports) = exports {
-        state = state.with_historical_exports(exports);
+        state = state
+            .with_historical_exports(exports)
+            .with_historical_artifact_store(
+                integrations::artifacts::ArtifactStore::open(
+                    &root.path().join("historical-artifacts"),
+                )
+                .unwrap(),
+            );
     }
     let app = server::router(state, Key::generate());
     Fixture {

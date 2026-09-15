@@ -16,6 +16,9 @@ use std::{
     io::{Read, Seek},
 };
 
+mod artifacts;
+pub use artifacts::{HistoricalArtifactPublication, HistoricalImportSource};
+
 fn invalid() -> StoreError {
     StoreError::Invalid("historical_import_source")
 }
@@ -29,18 +32,21 @@ fn quote(name: &str) -> String {
 impl Store {
     /// Both callbacks resolve deployment-registered input by export_ref. They are
     /// deliberately invoked only after authorization and the original replay check.
-    pub async fn import_historical_rows<L, F, R>(
+    pub async fn import_historical_rows<L, F, R, P, Published>(
         &self,
         actor: &Actor,
         key: &str,
         request: &HistoricalImportRequestV1,
         load: L,
         mut read: F,
+        mut publish: P,
     ) -> Result<CommandResult<HistoricalImportReportV1>, StoreError>
     where
-        L: FnOnce(Id) -> Result<HistoricalRowExportV1, StoreError>,
+        L: FnOnce(Id) -> Result<HistoricalImportSource, StoreError>,
         F: FnMut(Id, Id) -> Result<R, StoreError>,
         R: Read + Seek,
+        P: FnMut(HistoricalArtifactPublication) -> Published,
+        Published: std::future::Future<Output = Result<(), StoreError>>,
     {
         let mut connection = self.pool.acquire().await?;
         connection.close_on_drop();
@@ -59,6 +65,8 @@ impl Store {
             return Ok(replay);
         }
         let source = load(request.export_ref)?;
+        let artifact_source = source.artifacts;
+        let source = source.rows;
         if source.inspection.source_schema_version != "0029_portfolio_candidate_exposure"
             || source.tables.len() > 256
             || source.inspection.tables.len() != source.tables.len()
@@ -255,6 +263,16 @@ impl Store {
         if !request.dry_run && inserted.checked_add(existing) != Some(projected) {
             return Err(StoreError::Conflict);
         }
+        manual |= artifacts::publish(
+            &mut tx,
+            &staged,
+            &source,
+            artifact_source.as_ref(),
+            prepared.target,
+            request,
+            &mut publish,
+        )
+        .await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         let report = HistoricalImportReportV1 {
             schema_version: SchemaV1,
@@ -462,7 +480,7 @@ async fn read_scope(
         }
     }
 }
-async fn readable_report(
+pub(super) async fn readable_report(
     tx: &mut Transaction<'_, Postgres>,
     actor: &Actor,
     id: Id,

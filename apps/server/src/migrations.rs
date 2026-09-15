@@ -21,8 +21,8 @@ use contracts::{
 use integrations::mission_files::{FrozenFile, MissionFiles};
 use serde::Deserialize;
 use std::{
-    collections::BTreeMap,
-    io::{Seek, SeekFrom},
+    collections::{BTreeMap, BTreeSet},
+    io::{Read, Seek, SeekFrom},
     path::PathBuf,
 };
 use store::StoreError;
@@ -32,9 +32,11 @@ use store::StoreError;
 pub struct ExportRegistration {
     pub export_ref: Id,
     pub directory: PathBuf,
+    pub artifact_directory: Option<PathBuf>,
 }
 struct RegisteredExport {
     report: HistoricalRowExportV1,
+    artifacts: Option<HistoricalArtifactExportV1>,
     objects: BTreeMap<Id, FrozenFile>,
 }
 #[derive(Default)]
@@ -86,20 +88,77 @@ impl HistoricalExports {
                     return Err(invalid());
                 }
             }
+            let artifacts = if let Some(directory) = registration.artifact_directory {
+                let files = MissionFiles::open(&directory).map_err(|_| invalid())?;
+                let bytes = files
+                    .read_bytes("report.json", 4 * 1024 * 1024)
+                    .map_err(|_| invalid())?;
+                let artifacts: HistoricalArtifactExportV1 =
+                    serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+                if artifacts.source_installation_id != report.source_installation_id
+                    || artifacts.artifacts.len() > 10_000
+                {
+                    return Err(invalid());
+                }
+                let mut identities = BTreeSet::new();
+                for item in &artifacts.artifacts {
+                    if item.identity.kind != HistoricalKindV1::Artifact
+                        || !matches!(
+                            item.identity.source_table.as_str(),
+                            "mission_artifacts" | "alpha_signal_artifacts"
+                        )
+                        || item.identity.source_id.is_nil()
+                        || item.identity.source_id.is_max()
+                        || !identities.insert(item.identity.clone())
+                    {
+                        return Err(invalid());
+                    }
+                    if item.outcome != HistoricalArtifactOutcomeV1::Copied {
+                        if item.object_ref.is_some() || item.byte_count.is_some() {
+                            return Err(invalid());
+                        }
+                        continue;
+                    }
+                    let reference = item.object_ref.ok_or_else(invalid)?;
+                    let size = item.byte_count.ok_or_else(invalid)?.get();
+                    total = total.checked_add(size).ok_or_else(invalid)?;
+                    if size == 0
+                        || size > 64 * 1024 * 1024
+                        || total > 8 * 1024 * 1024 * 1024
+                        || objects.contains_key(&reference)
+                    {
+                        return Err(invalid());
+                    }
+                    let mut snapshot = files
+                        .snapshot(&format!("objects/{reference}"), size)
+                        .map_err(|_| invalid())?;
+                    if snapshot.seek(SeekFrom::End(0)).map_err(|_| invalid())? != size {
+                        return Err(invalid());
+                    }
+                    snapshot.rewind().map_err(|_| invalid())?;
+                    objects.insert(reference, snapshot);
+                }
+                Some(artifacts)
+            } else {
+                None
+            };
             result.entries.insert(
                 registration.export_ref,
-                RegisteredExport { report, objects },
+                RegisteredExport {
+                    report,
+                    artifacts,
+                    objects,
+                },
             );
         }
         Ok(result)
     }
-    fn report(&self, reference: Id) -> Result<HistoricalRowExportV1, StoreError> {
-        Ok(self
-            .entries
-            .get(&reference)
-            .ok_or(StoreError::NotFound)?
-            .report
-            .clone())
+    fn report(&self, reference: Id) -> Result<store::HistoricalImportSource, StoreError> {
+        let entry = self.entries.get(&reference).ok_or(StoreError::NotFound)?;
+        Ok(store::HistoricalImportSource {
+            rows: entry.report.clone(),
+            artifacts: entry.artifacts.clone(),
+        })
     }
     fn object(&self, reference: Id, object: Id) -> Result<FrozenFile, StoreError> {
         self.entries
@@ -118,22 +177,67 @@ pub async fn import(
     body: Result<Json<HistoricalImportRequestV1>, JsonRejection>,
 ) -> Result<(StatusCode, Json<CommandResult<HistoricalImportReportV1>>), ApiError> {
     let request = json(body)?;
-    let key = idempotency_key(&headers)?;
-    let _slot = state
+    let key = idempotency_key(&headers)?.to_owned();
+    let slot = state
         .historical_import_slots
-        .try_acquire()
+        .clone()
+        .try_acquire_owned()
         .map_err(|_| ApiError::internal())?;
-    let exports = &state.historical_exports;
-    let result = state
-        .store
-        .import_historical_rows(
-            &actor,
-            key,
-            &request,
-            |reference| exports.report(reference),
-            |reference, object| exports.object(reference, object),
-        )
-        .await?;
+    // Keep the native I/O and DB transaction alive together if the HTTP waiter leaves.
+    let result = tokio::spawn(async move {
+        let _slot = slot;
+        let exports = &state.historical_exports;
+        let mut attempted = Vec::new();
+        let result = state
+            .store
+            .import_historical_rows(
+                &actor,
+                &key,
+                &request,
+                |reference| exports.report(reference),
+                |reference, object| exports.object(reference, object),
+                |publication| {
+                    if !publication.existing && !publication.dry_run {
+                        if let Some(id) = publication.target {
+                            attempted.push(id);
+                        }
+                    }
+                    let exports = state.historical_exports.clone();
+                    let objects = state.historical_artifact_store.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            publish_copy(&exports, objects.as_deref(), publication)
+                        })
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                    }
+                },
+            )
+            .await;
+        if result.is_err() {
+            if let Some(objects) = &state.historical_artifact_store {
+                for id in attempted {
+                    let objects = objects.clone();
+                    // Failed or uncertain cleanup retains the object for reconciliation.
+                    let _ = state
+                        .store
+                        .discard_unpublished_historical_artifact(id, |id| async move {
+                            tokio::task::spawn_blocking(move || {
+                                objects
+                                    .discard_unpublished(id)
+                                    .map_err(|_| StoreError::Integrity)
+                            })
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                        })
+                        .await;
+                }
+            }
+        }
+        result
+    })
+    .await
+    .map_err(|_| ApiError::internal())??;
     Ok((StatusCode::ACCEPTED, Json(result)))
 }
 #[utoipa::path(get,path="/api/v2/migrations/reports/{id}",operation_id="get_historical_import_report",tag="Historical migration",params(("id"=Id,Path)),responses((status=200,body=HistoricalImportReportV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
@@ -219,4 +323,157 @@ pub async fn field(
             .historical_record_field(&actor, id, record, &query)
             .await?,
     ))
+}
+
+#[utoipa::path(get,path="/api/v2/migrations/reports/{id}/artifacts/summary",operation_id="get_historical_artifact_summary",tag="Historical migration",params(("id"=Id,Path)),responses((status=200,body=HistoricalArtifactSummaryV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn artifact_summary(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+) -> Result<Json<HistoricalArtifactSummaryV1>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state.store.historical_artifact_summary(&actor, id).await?,
+    ))
+}
+#[utoipa::path(get,path="/api/v2/migrations/reports/{id}/artifacts",operation_id="list_historical_artifact_results",tag="Historical migration",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<HistoricalArtifactResultV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn artifact_results(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> Result<Json<Page<HistoricalArtifactResultV1>>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let Query(query) = query.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state
+            .store
+            .historical_artifact_results(&actor, id, &query)
+            .await?,
+    ))
+}
+#[utoipa::path(get,path="/api/v2/migrations/reports/{id}/artifacts/{record}/content",operation_id="get_historical_artifact_content",tag="Historical migration",params(("id"=Id,Path),("record"=Id,Path)),responses((status=200,body=inline(crate::artifacts::ArtifactBytes),content_type="application/octet-stream"),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn artifact_content(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    capacity: crate::artifacts::ArtifactCapacity,
+    path: Result<Path<(Id, Id)>, PathRejection>,
+) -> Result<axum::response::Response, ApiError> {
+    let Path((id, record)) = path.map_err(|_| ApiError::validation())?;
+    let bytes = state
+        .store
+        .historical_artifact_content(&actor, id, record)
+        .await?;
+    let objects = state
+        .historical_artifact_store
+        .ok_or_else(ApiError::internal)?;
+    crate::artifacts::native_content(objects, record, bytes, capacity).await
+}
+
+fn publish_copy(
+    exports: &HistoricalExports,
+    objects: Option<&integrations::artifacts::ArtifactStore>,
+    publication: store::HistoricalArtifactPublication,
+) -> Result<(), StoreError> {
+    let mut source = exports.object(publication.export_ref, publication.source_object)?;
+    let mut bytes = Vec::new();
+    source
+        .by_ref()
+        .take(publication.byte_count.get() + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| StoreError::Integrity)?;
+    if bytes.len() as u64 != publication.byte_count.get() {
+        return Err(StoreError::Integrity);
+    }
+    if publication.dry_run && !publication.existing {
+        return Ok(());
+    }
+    let objects = objects.ok_or(StoreError::Integrity)?;
+    let target = publication.target.ok_or(StoreError::Integrity)?;
+    if !publication.dry_run && !publication.existing {
+        match objects.put(target, &bytes) {
+            Ok(()) => (),
+            Err(integrations::artifacts::ArtifactError::Io(e))
+                if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err(StoreError::Integrity),
+        }
+    }
+    let original = objects
+        .read(target, publication.byte_count)
+        .map_err(|_| StoreError::Integrity)?;
+    if original != bytes {
+        return Err(StoreError::Conflict);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod artifact_tests {
+    use super::*;
+    use contracts::DbCounter;
+    use integrations::artifacts::ArtifactStore;
+    use std::fs;
+
+    #[test]
+    fn frozen_binary_publication_compares_original_bytes_and_never_overwrites() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        let bytes = b"\xff\0original";
+        fs::write(source.join("one"), bytes).unwrap();
+        fs::write(source.join("two"), b"\xfe\0original").unwrap();
+        let files = MissionFiles::open(&source).unwrap();
+        let reference = Id::new();
+        let first = Id::new();
+        let second = Id::new();
+        // No row parsing here: the native SQL importer independently proves identity.
+        let report: HistoricalRowExportV1 = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"source_installation_id":Id::new(),"missing_tables":[],
+            "inspection":{"schema_version":1,"source_schema_version":"0029_portfolio_candidate_exposure","inspected_at":"2020-01-01T00:00:00Z","tables":[],"foreign_keys":[]},"tables":[]
+        })).unwrap();
+        let exports = HistoricalExports {
+            entries: BTreeMap::from([(
+                reference,
+                RegisteredExport {
+                    report,
+                    artifacts: None,
+                    objects: BTreeMap::from([
+                        (first, files.snapshot("one", bytes.len() as u64).unwrap()),
+                        (second, files.snapshot("two", bytes.len() as u64).unwrap()),
+                    ]),
+                },
+            )]),
+        };
+        fs::write(source.join("one"), "replaced").unwrap();
+        let target = Id::new();
+        let count = DbCounter::new(bytes.len() as u64).unwrap();
+        let publication = |source_object, existing, dry_run| store::HistoricalArtifactPublication {
+            export_ref: reference,
+            source_object,
+            target: Some(target),
+            byte_count: count,
+            existing,
+            dry_run,
+        };
+        assert!(publish_copy(&exports, None, publication(first, false, true)).is_ok());
+        let native = ArtifactStore::open(&root.path().join("historical-artifacts")).unwrap();
+        publish_copy(&exports, Some(&native), publication(first, false, false)).unwrap();
+        publish_copy(&exports, Some(&native), publication(first, true, false)).unwrap();
+        publish_copy(&exports, Some(&native), publication(first, false, false)).unwrap();
+        assert!(matches!(
+            publish_copy(&exports, Some(&native), publication(second, true, false)),
+            Err(StoreError::Conflict)
+        ));
+        assert!(matches!(
+            publish_copy(&exports, Some(&native), publication(second, false, false)),
+            Err(StoreError::Conflict)
+        ));
+        assert_eq!(native.read(target, count).unwrap(), bytes);
+        assert_eq!(
+            fs::read_dir(root.path().join("historical-artifacts"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
 }
