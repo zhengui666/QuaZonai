@@ -536,6 +536,7 @@ pub(super) enum Output {
     Json(fn(&[u8]) -> Result<serde_json::Value>),
     Binary {
         id: Id,
+        report: Option<Id>,
     },
     Events {
         run: Id,
@@ -546,6 +547,22 @@ pub(super) enum Output {
 }
 #[derive(Subcommand)]
 pub enum Migrate {
+    ArtifactSummary {
+        id: String,
+    },
+    Artifacts {
+        id: String,
+        #[command(flatten)]
+        page: List,
+    },
+    Artifact {
+        id: String,
+        record: String,
+    },
+    Download {
+        id: String,
+        record: String,
+    },
     Fields {
         id: String,
         record: String,
@@ -662,6 +679,44 @@ impl Command {
         const POST: Method = Method::POST;
         let result = match self {
             Self::Migrate(command) => match command {
+                Migrate::ArtifactSummary { id: report } => {
+                    Request::get::<contracts::imports::HistoricalArtifactSummaryV1>(format!(
+                        "/api/v2/migrations/reports/{}/artifacts/summary",
+                        id(report)?
+                    ))
+                }
+                Migrate::Artifacts { id: report, page } => {
+                    Request::get::<Page<contracts::imports::HistoricalArtifactResultV1>>(format!(
+                        "/api/v2/migrations/reports/{}/artifacts",
+                        id(report)?
+                    ))
+                    .page(page)?
+                }
+                Migrate::Artifact { id: report, record } => {
+                    Request::get::<contracts::imports::HistoricalArtifactResultV1>(format!(
+                        "/api/v2/migrations/reports/{}/artifacts/{}",
+                        id(report)?,
+                        id(record)?
+                    ))
+                }
+                Migrate::Download { id: report, record } => {
+                    let report = id(report)?;
+                    let record = id(record)?;
+                    Request {
+                        method: GET,
+                        route: format!(
+                            "/api/v2/migrations/reports/{report}/artifacts/{record}/content"
+                        ),
+                        query: vec![],
+                        body: None,
+                        status: 200,
+                        operator: false,
+                        output: Output::Binary {
+                            id: record,
+                            report: Some(report),
+                        },
+                    }
+                }
                 Migrate::Fields { id: report, record } => {
                     Request::get::<contracts::imports::HistoricalRecordFieldsV1>(format!(
                         "/api/v2/migrations/reports/{}/records/{}/fields",
@@ -1426,7 +1481,7 @@ impl Command {
                         body: None,
                         status: 200,
                         operator: false,
-                        output: Output::Binary { id },
+                        output: Output::Binary { id, report: None },
                     }
                 }
             },

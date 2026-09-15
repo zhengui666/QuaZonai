@@ -1079,7 +1079,10 @@ CLI 仍仅限本有效凭据的报告，猜测其他报告编号或游标不扩�
 已投影、选择、读取和存储计数；`GET .../artifacts?limit=50&cursor=UUID` 分页返回原身份、
 可空选择结果、可读性及副本记录编号。`GET .../artifacts/{record}/content` 只允许该实际
 导入报告中 stored=true 的副本，以附件下载原字节。dry-run、未选择或密封项不可下载。
-权限与报告读取相同；旧报告若没有产物摘要会返回404。当前这些新入口尚无 CLI 专用子命令。
+权限与报告读取相同；旧报告若没有产物摘要会返回404。CLI 对应 `migrate artifact-summary REPORT`、`migrate artifacts REPORT [--limit 50 --cursor UUID]`、
+`migrate artifact REPORT RECORD` 和 `migrate download REPORT RECORD`。下载先读取同报告
+单条元数据并核对 stored、原编号和字节数；成功后才把完整二进制写到 stdout，可重定向保存。
+失败不向 stdout 写入部分内容。
 副本位于 state-dir/historical-artifacts，必须随新数据库备份和恢复。它不进入活动产物、
 科学资格或执行流程；重复导入比较原字节，内容差异导致整个批次失败。失败清理只在原
 Operator 事务完成且确认无引用后移除本次具体对象；未知状态保留待核对，不扫描旧数据。

@@ -452,6 +452,12 @@ async fn registered_public_artifacts_are_report_scoped_native_downloads(pool: Pg
         artifact_directory: Some(artifact_directory.clone()),
     }])
     .unwrap();
+    let cli_exports = HistoricalExports::load(vec![ExportRegistration {
+        export_ref: reference,
+        directory: directory.clone(),
+        artifact_directory: Some(artifact_directory.clone()),
+    }])
+    .unwrap();
     // After registration neither the old file nor the exported object remains trusted.
     let artifact_report: contracts::imports::HistoricalArtifactExportV1 =
         serde_json::from_slice(&fs::read(artifact_directory.join("report.json")).unwrap()).unwrap();
@@ -567,6 +573,136 @@ async fn registered_public_artifacts_are_report_scoped_native_downloads(pool: Pg
         .await;
         assert_eq!(denied.status, StatusCode::NOT_FOUND);
     }
+
+    let project=client::browser(&f,&cookie,"copy-project","/api/v2/projects",json!({"schema_version":1,"name":"Copy CLI","description":"History","fork_from_project_id":null})).await;
+    let principal=client::browser(&f,&cookie,"copy-cli","/api/v2/machine-principals",json!({"schema_version":1,"name":"Copy reader","kind":"CLI","project_id":project.body["resource"]["id"],"downstream_id":null,"enabled":true})).await;
+    let credential=client::browser(&f,&cookie,"copy-token",&format!("/api/v2/machine-principals/{}/credentials",principal.body["resource"]["id"].as_str().unwrap()),json!({"schema_version":1,"scope_codes":["RESEARCH_READ"],"expires_at":chrono::Utc::now()+chrono::Duration::hours(1)})).await;
+    assert_eq!(credential.status, StatusCode::CREATED);
+    let token = credential.body["token"].as_str().unwrap();
+    let bearer = format!("Bearer {token}");
+    let now = f
+        .store
+        .authentication_snapshot()
+        .await
+        .unwrap()
+        .database_now
+        .timestamp() as u64;
+    let body = json!({"schema_version":1,"export_ref":reference,"dry_run":false});
+    let grant=send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"MIGRATION_IMPORT","request":body},"target_id":null,"code":native.generate((now/30+1)*30)}),&[("authorization",&bearer),("idempotency-key","copy-grant")]).await;
+    assert_eq!(grant.status, StatusCode::CREATED);
+    let credential_file = root.path().join("credential");
+    fs::write(&credential_file, token).unwrap();
+    fs::set_permissions(&credential_file, fs::Permissions::from_mode(0o600)).unwrap();
+    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = socket.local_addr().unwrap();
+    let origin = format!("http://{address}");
+    let state = server::AppState::new(
+        f.store.clone(),
+        SecretVault::open(
+            &f._state.path().join("secrets"),
+            &f._state.path().join("master.key"),
+        )
+        .unwrap(),
+        server::WebPolicy::new(&origin, address, true).unwrap(),
+    )
+    .with_historical_exports(cli_exports)
+    .with_historical_artifact_store(
+        ArtifactStore::open(&f._state.path().join("historical-artifacts")).unwrap(),
+    );
+    let app = server::router(state, tower_sessions::cookie::Key::generate());
+    let task = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+    let imported = client::invoke(
+        &origin,
+        &credential_file,
+        &[
+            "--idempotency-key",
+            "cli-copy",
+            "--operator-grant",
+            grant.body["resource"]["id"].as_str().unwrap(),
+            "migrate",
+            "import",
+            "--export-ref",
+            &reference.to_string(),
+        ],
+        Value::Null,
+    )
+    .await;
+    assert!(
+        imported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&imported.stderr)
+    );
+    let imported: Value = serde_json::from_slice(&imported.stdout).unwrap();
+    let cli_report = imported["resource"]["id"].as_str().unwrap();
+    for command in ["artifact-summary", "artifacts"] {
+        let output = client::invoke(
+            &origin,
+            &credential_file,
+            &["migrate", command, cli_report],
+            Value::Null,
+        )
+        .await;
+        assert!(output.status.success());
+        let denied = client::invoke(
+            &origin,
+            &credential_file,
+            &["migrate", command, id],
+            Value::Null,
+        )
+        .await;
+        assert!(!denied.status.success());
+        assert_eq!(
+            serde_json::from_slice::<Value>(&denied.stderr).unwrap()["status"],
+            404
+        );
+    }
+    let metadata = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "artifact", cli_report, record],
+        Value::Null,
+    )
+    .await;
+    assert!(metadata.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&metadata.stdout).unwrap()["record_id"],
+        record
+    );
+    let download = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "download", cli_report, record],
+        Value::Null,
+    )
+    .await;
+    assert!(download.status.success());
+    assert_eq!(download.stdout, bytes);
+    let denied = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "download", id, record],
+        Value::Null,
+    )
+    .await;
+    assert!(!denied.status.success());
+    assert!(denied.stdout.is_empty());
+    let sealed = items
+        .iter()
+        .find(|r| r["source_outcome"] == "SEALED_RETAINED")
+        .unwrap()["record_id"]
+        .as_str()
+        .unwrap();
+    let denied = client::invoke(
+        &origin,
+        &credential_file,
+        &["migrate", "download", cli_report, sealed],
+        Value::Null,
+    )
+    .await;
+    assert!(!denied.status.success());
+    assert!(denied.stdout.is_empty());
+    task.abort();
+    let _ = task.await;
     let active: i64 = sqlx::query_scalar("SELECT count(*) FROM app.artifacts")
         .fetch_one(&pool)
         .await

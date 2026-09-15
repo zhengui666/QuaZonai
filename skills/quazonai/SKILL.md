@@ -322,4 +322,4 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 
 历史字段核对：映射行展开字段目录，或 `migrate fields/field` 按next_offset继续。每段16,384字符，保留NULL/空串/Unicode；每段重新鉴权，不读排除字段，不执行旧内容。
 
-历史产物核对：部署者可按 CLI 注册 artifact_directory；报告的 artifacts/summary、分页 artifacts 和 artifacts/{record}/content 为受原报告权限约束的 HTTP 入口。分别核对源行数/选择数/可读数/存储数；仅实际存储且属于本报告的公开副本可下载，dry-run/密封/未选择项不可下载。副本位于独立 historical-artifacts 目录并随数据库备份。网页/CLI专用产物入口及真实恢复验收仍未完成。
+历史产物核对：部署者可按 CLI 注册 artifact_directory；报告的 artifacts/summary、分页 artifacts 和 artifacts/{record}/content 为受原报告权限约束的 HTTP 入口。分别核对源行数/选择数/可读数/存储数；仅实际存储且属于本报告的公开副本可下载，dry-run/密封/未选择项不可下载。副本位于独立 historical-artifacts 目录并随数据库备份。网页报告展开“历史附件与覆盖情况”，CLI使用 migrate artifact-summary/artifacts/artifact/download。下载只返回原字节，不执行旧文件；真实恢复验收仍未完成。

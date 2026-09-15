@@ -5217,3 +5217,31 @@ web-verify-U7MNET independently reproduced generated contracts with handwritten
 sources unchanged. These are controlled disposable fixtures, not real old-data
 recovery. Browser/CLI artifact presentation, complete semantic/sealed lineage,
 real backup/recovery and full T42 remain outstanding. No push or closure claimed.
+
+### 2026-09-15 historical artifact browser and native CLI access
+
+The report drawer now shows artifact coverage and paginated original identities,
+selection outcomes and byte counts. Only stored public copies have an enabled
+download button; dry-run, sealed and unselected items do not. The browser checks
+report identity and coverage ordering, verifies downloaded length and saves a
+binary attachment without executing or rendering its content. Native object URLs
+are released on the next transfer or component cleanup.
+
+GET reports/{id}/artifacts/{record} exposes the scoped original result metadata.
+CLI migrate artifact-summary/artifacts/artifact/download reuses existing request
+parsing and binary transfer. Download first reads metadata from the same report,
+checks original record, stored/readable status, COPIED outcome and bounded byte
+count, then validates the complete response before writing stdout. No caller
+supplies a secondary URL or trusted length.
+
+web-verify-lnjAHJ passed reproducible generation, unchanged handwritten inventory,
+typecheck, unit and wire checks, production build and 48 browser tests at three
+widths. New browser cases compare the actual downloaded bytes and filename and
+exercise pagination, sealed/unselected disabled actions and dry-run behavior.
+verify-A6dWU3 passed all-target compile, formatting, strict Clippy and the same
+62 native checks as B7adul, with the historical HTTP case extended to real CLI
+requests over TCP: its own granted import, summary/list/metadata/download,
+byte-for-byte output, foreign-report denial and sealed download rejection with
+empty stdout. Inventory unchanged and disposable PostgreSQL stopped. These
+fixtures still do not prove full old-data semantic/sealed lineage or real recovery.
+No push, remote-head review/CI, merge or Issue closure is claimed.

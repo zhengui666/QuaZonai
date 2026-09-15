@@ -105,3 +105,37 @@ test('field viewer preserves Unicode pages and distinguishes SQL NULL from empty
   await drawer.getByRole('button', { name: '查看字段 empty', exact: true }).click();
   await expect(drawer.getByText('空字符串（0字符）', { exact: true })).toBeVisible();
 });
+
+for (const dry of [false, true]) test(`historical artifact coverage selection and original binary download: dry=${dry}`, async ({ page }) => {
+  await setup(page);
+  const bytes = Buffer.from([0,255,128,10]);
+  const item: Schema['HistoricalArtifactResultV1'] = { id: id(221), report_id: report.id, identity: { kind: 'ARTIFACT', source_table: 'mission_artifacts', source_id: '11111111-1111-4111-8111-111111111111' }, record_id: dry ? null : id(222), source_outcome: 'COPIED', verified_readable: true, stored: !dry, byte_count: '4' };
+  await page.route(`**/api/v2/migrations/reports/${report.id}`, route => reply(route, { ...report, dry_run: dry }));
+  await page.route('**/api/v2/migrations/reports/*/artifacts/summary', route => reply(route, { schema_version: 1, report_id: report.id, source_records: '3', projected_records: '3', selected_records: '2', readable_records: '1', stored_records: dry ? '0' : '1' }));
+  await page.route('**/api/v2/migrations/reports/*/artifacts?*', route => {
+    const next = new URL(route.request().url()).searchParams.has('cursor');
+    return reply(route, { schema_version: 1, items: next ? [{ ...item, id: id(225), record_id: dry ? null : id(226), source_outcome: null, verified_readable: false, stored: false, byte_count: null }] : [item, { ...item, id: id(223), record_id: dry ? null : id(224), source_outcome: 'SEALED_RETAINED', verified_readable: false, stored: false, byte_count: null }], next_cursor: next ? null : id(223) });
+  });
+  let reads = 0;
+  await page.route('**/api/v2/migrations/reports/*/artifacts/*/content', route => { reads++; return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: bytes }); });
+  await page.getByRole('button', { name: report.id, exact: true }).click();
+  await page.getByText('历史附件与覆盖情况', { exact: true }).click();
+  const section = page.getByRole('region', { name: '历史附件', exact: true });
+  await expect(section.getByText('3 / 3 / 2', { exact: true })).toBeVisible();
+  await expect(section.getByText('保留密封，不读取', { exact: true })).toBeVisible();
+  const buttons = section.getByRole('button', { name: /^下载副本/ });
+  await expect(buttons.nth(1)).toBeDisabled();
+  if (dry) await expect(buttons.first()).toBeDisabled();
+  else {
+    const download = page.waitForEvent('download'); await buttons.first().click(); const file = await download;
+    expect(file.suggestedFilename()).toBe(`${id(222)}.bin`);
+    const stream = await file.createReadStream(); const chunks: Buffer[] = []; for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks)).toEqual(bytes);
+  }
+  expect(reads).toBe(dry ? 0 : 1);
+  await section.getByRole('button', { name: '下一页', exact: true }).click();
+  await expect(section.getByText('未选择', { exact: true })).toBeVisible();
+  await expect(section.getByRole('button', { name: /^下载副本/ })).toBeDisabled();
+  const audit = await new AxeBuilder({ page }).include('.ant-drawer-body').analyze();
+  expect(audit.violations.filter(v => ['serious','critical'].includes(v.impact ?? ''))).toEqual([]);
+});

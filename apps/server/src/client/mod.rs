@@ -251,6 +251,38 @@ impl Connection {
         Err(Failure::Rejected(Box::new(problem)))
     }
 
+    async fn historical_artifact_metadata(
+        &self,
+        report: Id,
+        record: Id,
+    ) -> Result<contracts::imports::HistoricalArtifactResultV1> {
+        let request = commands::Command::Migrate(commands::Migrate::Artifact {
+            id: report.to_string(),
+            record: record.to_string(),
+        })
+        .request()?;
+        let response = self
+            .checked(self.send(&request, None, None).await?, 200)
+            .await?;
+        media(&response, "application/json")?;
+        let bytes = body(response, 1024 * 1024).await?;
+        verify(&bytes, &self.credential)?;
+        let metadata: contracts::imports::HistoricalArtifactResultV1 =
+            serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
+        if metadata.report_id != report
+            || metadata.record_id != Some(record)
+            || !metadata.stored
+            || !metadata.verified_readable
+            || metadata.source_outcome
+                != Some(contracts::imports::HistoricalArtifactOutcomeV1::Copied)
+            || metadata
+                .byte_count
+                .is_none_or(|n| n.get() == 0 || n.get() > 64 * 1024 * 1024)
+        {
+            return Err(Failure::Contract);
+        }
+        Ok(metadata)
+    }
     async fn artifact_metadata(&self, id: Id) -> Result<ArtifactView> {
         let request = commands::Command::Artifact(commands::Artifact::Show { id: id.to_string() })
             .request()?;
@@ -334,7 +366,22 @@ pub async fn run(arguments: Arguments) -> Result<()> {
     // A download is bound to the same immutable ID and its declared bytes/media,
     // not an assumed octet-stream response or a caller-chosen secondary URL.
     let metadata = match &request.output {
-        commands::Output::Binary { id } => Some(connection.artifact_metadata(*id).await?),
+        commands::Output::Binary { id, report: None } => {
+            let metadata = connection.artifact_metadata(*id).await?;
+            Some((metadata.media_type, metadata.byte_count))
+        }
+        commands::Output::Binary {
+            id,
+            report: Some(report),
+        } => {
+            let metadata = connection
+                .historical_artifact_metadata(*report, *id)
+                .await?;
+            Some((
+                "application/octet-stream".to_owned(),
+                metadata.byte_count.ok_or(Failure::Contract)?,
+            ))
+        }
         _ => None,
     };
     let response = connection
@@ -358,9 +405,8 @@ pub async fn run(arguments: Arguments) -> Result<()> {
         }
         commands::Output::Binary { .. } => {
             let metadata = metadata.ok_or(Failure::Contract)?;
-            media(&response, &metadata.media_type)?;
-            let maximum =
-                usize::try_from(metadata.byte_count.get()).map_err(|_| Failure::ResponseLimit)?;
+            media(&response, &metadata.0)?;
+            let maximum = usize::try_from(metadata.1.get()).map_err(|_| Failure::ResponseLimit)?;
             let bytes = body(response, maximum).await?;
             if bytes.len() != maximum
                 || bytes

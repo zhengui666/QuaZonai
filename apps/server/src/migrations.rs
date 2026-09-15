@@ -352,6 +352,17 @@ pub async fn artifact_results(
             .await?,
     ))
 }
+#[utoipa::path(get,path="/api/v2/migrations/reports/{id}/artifacts/{record}",operation_id="get_historical_artifact",tag="Historical migration",params(("id"=Id,Path),("record"=Id,Path)),responses((status=200,body=HistoricalArtifactResultV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn artifact(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    path: Result<Path<(Id, Id)>, PathRejection>,
+) -> Result<Json<HistoricalArtifactResultV1>, ApiError> {
+    let Path((id, record)) = path.map_err(|_| ApiError::validation())?;
+    Ok(Json(
+        state.store.historical_artifact(&actor, id, record).await?,
+    ))
+}
 #[utoipa::path(get,path="/api/v2/migrations/reports/{id}/artifacts/{record}/content",operation_id="get_historical_artifact_content",tag="Historical migration",params(("id"=Id,Path),("record"=Id,Path)),responses((status=200,body=inline(crate::artifacts::ArtifactBytes),content_type="application/octet-stream"),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn artifact_content(
     State(state): State<AppState>,

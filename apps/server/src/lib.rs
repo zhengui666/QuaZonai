@@ -209,6 +209,10 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/migrations/reports/{id}/artifacts/{record}/content",
             get(migrations::artifact_content),
         )
+        .route(
+            "/api/v2/migrations/reports/{id}/artifacts/{record}",
+            get(migrations::artifact),
+        )
         .route("/api/v2/migrations/import", post(migrations::import))
         .route("/api/v2/migrations/reports", get(migrations::reports))
         .route(
@@ -645,7 +649,7 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(migrations::artifact_summary,migrations::artifact_results,migrations::artifact_content,migrations::fields,migrations::field,migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::bootstrap_status,auth::bootstrap_start,auth::bootstrap_confirm,auth::login,auth::logout,auth::session_status,auth::verify,auth::devices,auth::revoke_device,
+#[openapi(paths(migrations::artifact,migrations::artifact_summary,migrations::artifact_results,migrations::artifact_content,migrations::fields,migrations::field,migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::bootstrap_status,auth::bootstrap_start,auth::bootstrap_confirm,auth::login,auth::logout,auth::session_status,auth::verify,auth::devices,auth::revoke_device,
 control::projects,control::project,control::create_project,control::update_project,
 control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,

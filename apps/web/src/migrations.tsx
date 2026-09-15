@@ -1,6 +1,6 @@
 import { Alert, App, Button, Checkbox, Collapse, Descriptions, Drawer, Form, Input, Modal, Space, Table, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { uuidPattern } from './auth';
@@ -97,6 +97,7 @@ function ImportDetail({ id, close }: { id: string; close: () => void }) {
           { title: '排除字段及原因', key: 'excluded', render: (_, row) => row.excluded_columns.map(c => `${c.column}：${c.reason}`).join('；') || '无' },
         ]} />
         <Collapse items={[{ key: 'relations', label: '原外键与类型检查元数据', children: <pre tabIndex={0} className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(value.source.inspection, null, 2)}</pre> }]} />
+        <Collapse items={[{ key: 'artifacts', label: '历史附件与覆盖情况', children: <HistoricalArtifacts report={value.report} /> }]} />
         <Typography.Title level={3}>原身份映射</Typography.Title>
         <Mappings report={value.report} />
       </Space>}
@@ -163,4 +164,54 @@ function FieldContent({ report, record, field }: { report: string; record: strin
     </QueryPanel>
     <Pager history={history} next={query.isError ? undefined : query.data?.next_offset} loading={query.isFetching} move={setHistory} />
   </Space>;
+}
+
+
+type HistoricalArtifact = Schema['HistoricalArtifactResultV1'];
+const artifactOutcome = { COPIED: '公开副本可读取', MISSING: '原文件缺失', UNSUPPORTED: '不支持的文件', UNREADABLE: '原文件不可读取', SEALED_RETAINED: '保留密封，不读取', MANUAL_REVIEW_REQUIRED: '尚待人工确认公开' };
+function HistoricalArtifacts({ report }: { report: Report }) {
+  const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
+  const transfer = useRef<{ controller: AbortController; url?: string } | undefined>(undefined);
+  useEffect(() => () => { transfer.current?.controller.abort(); if (transfer.current?.url) URL.revokeObjectURL(transfer.current.url); }, []);
+  const query = useQuery({ queryKey: ['historical-artifacts', report.id, history.at(-1)], queryFn: async ({ signal }) => {
+    const [summary, results] = await Promise.all([
+      api.GET('/api/v2/migrations/reports/{id}/artifacts/summary', { params: { path: { id: report.id } }, signal }).then(dataOf),
+      api.GET('/api/v2/migrations/reports/{id}/artifacts', { params: { path: { id: report.id }, query: { cursor: history.at(-1), limit: 25 } }, signal }).then(dataOf),
+    ]);
+    if (summary.report_id !== report.id || BigInt(summary.stored_records) > BigInt(summary.readable_records)
+      || BigInt(summary.readable_records) > BigInt(summary.selected_records) || BigInt(summary.selected_records) > BigInt(summary.projected_records) || BigInt(summary.projected_records) > BigInt(summary.source_records)
+      || (report.dry_run && summary.stored_records !== '0')
+      || results.items.some(r => r.report_id !== report.id || (r.stored && (report.dry_run || !r.record_id || !r.verified_readable || r.source_outcome !== 'COPIED' || !r.byte_count || BigInt(r.byte_count) === 0n || BigInt(r.byte_count) > 67108864n)))) throw new Error('附件结果不属于这份报告或计数不一致。');
+    return { summary, results };
+  } });
+  const download = useMutation({ mutationFn: async (row: HistoricalArtifact) => {
+    if (!row.stored || !row.record_id || !row.byte_count || report.dry_run) throw new Error('此报告没有可下载的副本。');
+    transfer.current?.controller.abort(); if (transfer.current?.url) URL.revokeObjectURL(transfer.current.url);
+    const current = { controller: new AbortController(), url: undefined as string | undefined }; transfer.current = current;
+    const blob = dataOf(await api.GET('/api/v2/migrations/reports/{id}/artifacts/{record}/content', { params: { path: { id: report.id, record: row.record_id } }, parseAs: 'blob', signal: current.controller.signal }));
+    if (current.controller.signal.aborted) return;
+    if (!(blob instanceof Blob) || BigInt(blob.size) !== BigInt(row.byte_count)) throw new Error('下载字节数与原副本不一致。');
+    current.url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a'); anchor.href = current.url; anchor.download = `${row.record_id}.bin`; anchor.click();
+  } });
+  const value = query.isError ? undefined : query.data;
+  return <section aria-label="历史附件"><Space orientation="vertical" className="full-width">
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+      {value && <>
+        <Descriptions column={1} items={[
+          { key: 'coverage', label: '原附件 / 可映射 / 已选择', children: `${value.summary.source_records} / ${value.summary.projected_records} / ${value.summary.selected_records}` },
+          { key: 'copies', label: '可读取 / 已存储', children: `${value.summary.readable_records} / ${value.summary.stored_records}` },
+        ]} />
+        <Alert showIcon type="info" title={report.dry_run ? '试运行未保存副本，不能下载。' : '仅可下载本报告已保存的公开副本。'} description="未选择、密封及未确认公开的文件不提供下载。副本不继承科学资格，也不证明完整迁移验收通过。" />
+        <Table<HistoricalArtifact> rowKey="id" dataSource={value.results.items} pagination={false} scroll={{ x: 800 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="本报告没有可映射的历史附件。" /> }} columns={[
+          { title: '原表 / 编号', key: 'identity', render: (_, row) => <span className="break-word">{row.identity.source_table} / {row.identity.source_id}</span> },
+          { title: '结果', key: 'outcome', render: (_, row) => row.source_outcome ? artifactOutcome[row.source_outcome] : '未选择' },
+          { title: '字节数', key: 'bytes', render: (_, row) => row.byte_count ?? '未读取' },
+          { title: '副本', key: 'download', render: (_, row) => <Button disabled={!row.stored || query.isFetching || download.isPending} onClick={() => download.mutate(row)}>下载副本 {row.record_id ?? row.identity.source_id}</Button> },
+        ]} />
+      </>}
+    </QueryPanel>
+    <ErrorNotice error={download.error} />
+    <Pager history={history} next={query.isError ? undefined : value?.results.next_cursor} loading={query.isFetching} move={setHistory} />
+  </Space></section>;
 }

@@ -156,34 +156,30 @@ impl Store {
             .bind(report.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let items = rows
             .iter()
-            .map(|r| {
-                Ok(HistoricalArtifactResultV1 {
-                    id: db::id(r.try_get("id")?)?,
-                    report_id: report,
-                    identity: HistoricalIdentityV1 {
-                        kind: HistoricalKindV1::Artifact,
-                        source_table: r.try_get("source_table")?,
-                        source_id: r.try_get("source_id")?,
-                    },
-                    record_id: db::optional_id(r, "record_id")?,
-                    source_outcome: r
-                        .try_get::<Option<String>, _>("source_outcome")?
-                        .map(|s| {
-                            serde_json::from_value(serde_json::Value::String(s))
-                                .map_err(|_| StoreError::Integrity)
-                        })
-                        .transpose()?,
-                    verified_readable: r.try_get("verified_readable")?,
-                    stored: r.try_get("stored")?,
-                    byte_count: r
-                        .try_get::<Option<i64>, _>("byte_count")?
-                        .map(|n| count(n as u64))
-                        .transpose()?,
-                })
-            })
+            .map(|r| artifact_result(r, report))
             .collect::<Result<Vec<_>, StoreError>>()?;
         tx.commit().await?;
         Ok(crate::control::page(items, query.limit, |r| r.id))
+    }
+    pub async fn historical_artifact(
+        &self,
+        actor: &Actor,
+        report: Id,
+        record: Id,
+    ) -> Result<HistoricalArtifactResultV1, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        readable_report(&mut tx, actor, report).await?;
+        let row = sqlx::query(
+            "SELECT * FROM app.historical_artifact_results WHERE report_id=$1 AND record_id=$2",
+        )
+        .bind(report.as_uuid())
+        .bind(record.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        let result = artifact_result(&row, report)?;
+        tx.commit().await?;
+        Ok(result)
     }
     /// Only references from this actual import permit access, not dry-run selections.
     pub async fn historical_artifact_content(
@@ -231,4 +227,33 @@ impl Store {
         tx.commit().await?;
         Ok(!referenced)
     }
+}
+
+fn artifact_result(
+    r: &sqlx::postgres::PgRow,
+    report: Id,
+) -> Result<HistoricalArtifactResultV1, StoreError> {
+    Ok(HistoricalArtifactResultV1 {
+        id: db::id(r.try_get("id")?)?,
+        report_id: report,
+        identity: HistoricalIdentityV1 {
+            kind: HistoricalKindV1::Artifact,
+            source_table: r.try_get("source_table")?,
+            source_id: r.try_get("source_id")?,
+        },
+        record_id: db::optional_id(r, "record_id")?,
+        source_outcome: r
+            .try_get::<Option<String>, _>("source_outcome")?
+            .map(|s| {
+                serde_json::from_value(serde_json::Value::String(s))
+                    .map_err(|_| StoreError::Integrity)
+            })
+            .transpose()?,
+        verified_readable: r.try_get("verified_readable")?,
+        stored: r.try_get("stored")?,
+        byte_count: r
+            .try_get::<Option<i64>, _>("byte_count")?
+            .map(|n| count(n as u64))
+            .transpose()?,
+    })
 }
