@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiFailure, Intent, dataOf, isCounter, isDecimal, makeClient, responseFailure, retryAt } from './api';
+import { ApiFailure, Intent, sameInstant, dataOf, isCounter, isDecimal, makeClient, responseFailure, retryAt } from './api';
 import { validateResponse } from './generated/responses.cjs';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -84,4 +84,12 @@ describe('canonical scalar and command identity', () => {
     expect(retryAt('Thu, 01 Jan 1970 00:00:02 GMT', 1000)).toBe(2000);
     expect(retryAt(null, 1000)).toBe(0);
   });
+});
+
+it('compares expiry instants without discarding fractional digits', () => {
+  expect(sameInstant('2098-01-01T00:00:00.000Z', '2098-01-01T00:00:00.000999Z')).toBe(false);
+  expect(sameInstant('2098-01-01T00:00:00.123456Z', '2098-01-01T00:00:00.123457Z')).toBe(false);
+  expect(sameInstant('2098-01-01T00:00:00.123456Z', '2098-01-01T08:00:00.123456000+08:00')).toBe(true);
+  expect(sameInstant('2098-01-01T00:00:00.000Z', '2098-01-01T00:00:00Z')).toBe(true);
+  expect(sameInstant('invalid', 'invalid')).toBe(false);
 });

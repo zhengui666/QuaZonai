@@ -1,7 +1,7 @@
 import { Alert, App, Button, Input, Modal, Space, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
-import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
+import { api, ApiFailure, sameInstant, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, useGuard, useOnline } from './ui';
 
@@ -32,7 +32,7 @@ export function HandoffOffer({ release, approval, close }: { release: Schema['Re
   const mutation = useMutation({ mutationFn: async (body: Schema['HandoffOfferV1']) => {
     const result = dataOf(await api.POST('/api/v2/handoffs', { body, params: { header: intent.current.headers('POST', '/api/v2/handoffs', body) } }));
     const h = result.resource;
-    if (h.project_id !== release.project_id || h.candidate_id !== release.candidate_id || h.mandate_id !== release.mandate_id || h.release_id !== body.release_id || h.approval_id !== body.approval_id || h.downstream_id !== approval.downstream_id || h.environment !== approval.environment || h.supersedes_handoff_id !== body.supersedes_handoff_id || Date.parse(h.expires_at) !== Date.parse(body.expires_at)) throw new Error('Offer 回执与原请求不匹配。');
+    if (h.project_id !== release.project_id || h.candidate_id !== release.candidate_id || h.mandate_id !== release.mandate_id || h.release_id !== body.release_id || h.approval_id !== body.approval_id || h.downstream_id !== approval.downstream_id || h.environment !== approval.environment || h.supersedes_handoff_id !== body.supersedes_handoff_id || !sameInstant(h.expires_at, body.expires_at)) throw new Error('Offer 回执与原请求不匹配。');
     return h;
   }, onSuccess: async result => { setReceipt(result); intent.current.clear(); await client.invalidateQueries({ queryKey: ['handoffs', release.project_id] }); }, onError: error => {
     const rejected = error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE');

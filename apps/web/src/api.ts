@@ -120,6 +120,16 @@ export function isCounter(value: string, positive = false): boolean {
 }
 // The generated native schema owns decimal syntax, precision and byte boundaries.
 export const isDecimal = validateDecimal;
+// Compare validated RFC 3339 instants without losing fractional precision.
+export function sameInstant(left: string, right: string): boolean {
+  const split = (value: string) => /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/i.exec(value);
+  const a = split(left); const b = split(right);
+  if (!a || !b) return false;
+  const seconds = Date.parse(a[1]! + a[3]!);
+  return Number.isFinite(seconds) && seconds === Date.parse(b[1]! + b[3]!)
+    && (a[2] ?? '').replace(/0+$/, '') === (b[2] ?? '').replace(/0+$/, '');
+}
+
 export function displayTime(value: string | null | undefined): string {
   if (value === null || value === undefined) return '尚无记录';
   const date = new Date(value);

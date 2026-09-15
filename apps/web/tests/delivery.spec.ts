@@ -189,7 +189,7 @@ test('Approval reads all decisions and retries the exact original intent', async
     if (url.pathname === `/api/v2/releases/${release.id}/approvals` && request.method() === 'POST') {
       const body = request.postDataJSON() as Schema['ReleaseApproveV1']; writes.push({ body, key: request.headers()['idempotency-key'] });
       if (writes.length === 1) return route.abort('failed');
-      const resource: Schema['ApprovalViewV1'] = { id: id(410), project_id: project.id, release_id: release.id, candidate_id: release.candidate_id, downstream_id: body.downstream_id, environment: body.environment, authority_kind: 'OPERATOR', automation_policy_id: null, evidence_set_id: id(411), granted_at: release.created_at, created_at: release.created_at, valid_until: writes.length === 2 ? '2097-01-01T00:00:00Z' : body.valid_until, downstream_revision: body.expected_downstream_revision, decision_ordinal: 2, readiness_observation_id: id(412) };
+      const resource: Schema['ApprovalViewV1'] = { id: id(410), project_id: project.id, release_id: release.id, candidate_id: release.candidate_id, downstream_id: body.downstream_id, environment: body.environment, authority_kind: 'OPERATOR', automation_policy_id: null, evidence_set_id: id(411), granted_at: release.created_at, created_at: release.created_at, valid_until: writes.length === 2 ? body.valid_until.replace('.000Z', '.000999Z') : body.valid_until, downstream_revision: body.expected_downstream_revision, decision_ordinal: 2, readiness_observation_id: id(412) };
       return reply(route, { schema_version: 1, resource, replayed: true }, 201);
     }
     return route.fallback();
