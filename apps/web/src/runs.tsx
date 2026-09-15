@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiFailure, AUTH_CHANGED, dataOf, displayTime, Intent, responseFailure, terminal } from './api';
-import { responseKind } from './generated/responses.cjs';
+import { responseKind } from '@quazonai/web/response-contract';
 import type { Schema } from './api';
 import { decodeRunEvent } from './run-events';
 import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';

@@ -48,6 +48,8 @@
 
 当前没有可声明为“一条命令完整演示”的无凭据 Demo。`apps/web/tests/pwa-server.mjs` 仅用于 Service Worker 生命周期测试，不能作为完整业务演示或部署入口。
 
+已有依赖的开发工作区可运行 `npm --prefix apps/web run demo:preview`，在 `http://127.0.0.1:4179` 查看开发中的只读合成预览。它复用正式界面及原生响应合同，展示研究、两个 Alpha 的版本和运行记录，拒绝全部写入与 Claim；不连接真实 API、数据库或账号。组合、交付和其他完整场景仍待补齐，不能替代 T02/T42；请勿在预览中输入真实凭据。
+
 以下证据仍须按 [DESIGN 验收合同](DESIGN.md) 补齐，不能以局部测试通过替代：
 
 - T02：明确标记 synthetic/fixture、不能生产领取的完整 UI Demo。

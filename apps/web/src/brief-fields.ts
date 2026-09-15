@@ -2,7 +2,7 @@ import type { Schema } from './api';
 import { ApiFailure, isCounter } from './api';
 import { costBudgetErrors } from './cost-budget';
 import { budgetRelationError } from './authoring-constraints';
-import { validateBaseCurrency } from './generated/responses.cjs';
+import { validateBaseCurrency } from '@quazonai/web/response-contract';
 export type BriefContent = Schema['BriefContentV1'];
 export const initialBudget: Schema['BudgetV1'] = {
   schema_version: 1, max_experiments: 10, max_parallel_runs: 1, max_turns_per_mission: 10,

@@ -18,5 +18,6 @@ export default defineConfig({
   webServer: [
     { command: 'npm run preview', url: 'http://127.0.0.1:4173', reuseExistingServer: false, timeout: 30_000 },
     { command: 'node tests/pwa-server.mjs', url: 'http://127.0.0.1:4180/__fixture__/health', reuseExistingServer: false, timeout: 30_000 },
+    { command: 'npm run demo:preview', url: 'http://127.0.0.1:4179', reuseExistingServer: false, timeout: 30_000 },
   ],
 });

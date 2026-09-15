@@ -19,6 +19,7 @@ const proxy = {
 export default defineConfig({
   // This same-origin UI has no browser secrets or .env-based backend settings.
   envDir: false,
+  optimizeDeps: { include: ['@quazonai/web/response-contract'] },
   plugins: [
     react(),
     VitePWA({

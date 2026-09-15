@@ -1,6 +1,6 @@
 import createClient from 'openapi-fetch';
 import type { components, paths } from './generated/api';
-import { responseKind, validateDecimal, validateProblem, validateResponse } from './generated/responses.cjs';
+import { responseKind, validateDecimal, validateProblem, validateResponse } from '@quazonai/web/response-contract';
 
 export type Schema = components['schemas'];
 export type Problem = Schema['Problem'];

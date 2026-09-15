@@ -11,7 +11,7 @@ import { uuidPattern } from './auth';
 import { counterRules } from './budget-fields';
 import { ResourceSelect } from './resource-select';
 import { ErrorNotice, GuardContext, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
-import { validateBaseCurrency } from './generated/responses.cjs';
+import { validateBaseCurrency } from '@quazonai/web/response-contract';
 
 type Mandate = Schema['MandateViewV1'];
 type Content = Schema['MandateContentV1'];

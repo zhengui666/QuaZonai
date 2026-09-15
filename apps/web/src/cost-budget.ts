@@ -1,5 +1,5 @@
 // Joint authoring constraints. The server remains the authority at submission.
-import { validateCostAmount, validateCostCurrency } from './generated/responses.cjs';
+import { validateCostAmount, validateCostCurrency } from '@quazonai/web/response-contract';
 import { costOptions } from './authoring-options';
 
 export type CostFields = {
