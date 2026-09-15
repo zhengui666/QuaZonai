@@ -12,7 +12,7 @@ POST /api/v2/automation-policies/{id}/revoke：schema_version、expected_latest_
 （首次null）、effective_at（null立即，或未来时刻）、reason；需精确POLICY_REVOKE人工grant。
 201只追加撤销，后续记录不能推迟最早生效时间，不停止已领取执行。归档项目仍可撤销。
 `client automation revocations POLICY_UUID --limit 50`分页原撤销；未知结果保留原键/正文。
-政策管理及自动 Paper/Live 原生消费已接通，对应界面尚未接通。
+政策管理及自动 Paper/Live 原生消费已接通；浏览器“交付 / 自动化政策”提供冻结、历史读取与追加撤销。
 
 `client handoff ack HANDOFF_UUID`提交HandoffAckV1到POST /api/v2/handoffs/{id}/ack：
 schema_version=1、external_ack_id（同Claim编号规则）、external_claim_id、
@@ -46,7 +46,7 @@ release_id、approval_id、supersedes_handoff_id（首次null，否则精确最�
 新Offer会同事务撤销仍未领取的前版；已领取前版保留事实，不代表停止或撤单。
 `client handoff show UUID` 读 GET /api/v2/handoffs/{id}当前状态。原创建回执重放仍是
 原结果，不能据其OFFERED判断当前状态。下游仅凭对应项目/下游的CLAIM或ACK scope
-读取自身Offer。人工Offer、Claim、ACK及显式审批撤销已接通；界面仍待实现。
+读取自身Offer。浏览器提供人工Offer、审批撤销及交付历史；Claim/ACK由下游凭据通过原生HTTP/CLI执行，Operator页面不能代领或代确认。
 
 `client release approve RELEASE_UUID` 向 POST /api/v2/releases/{id}/approvals
 提交 ReleaseApproveV1：schema_version=1、downstream_id、environment=PAPER|LIVE、
@@ -56,7 +56,7 @@ RELEASE_APPROVE人工grant与幂等键。服务端重验原REAL Package、当前
 下游配置及新鲜探测，并在同一事务冻结原评估报告引用；不接收evidence_set_id。
 201返回不可变Approval，不能当作已领取或执行。`client approval show APPROVAL_UUID`
 读取 GET /api/v2/approvals/{id} 原元数据，需精确项目RESEARCH_READ。历史记录不是
-当前有效性证明；人工Offer/Claim已接通；自动 Paper/Live 原生消费已接通，审批界面尚未接通。未知结果保持原请求/键。
+当前有效性证明；人工Offer/Claim已接通；自动 Paper/Live 原生消费已接通；浏览器Release详情提供人工审批和原审批历史。未知结果保持原请求/键。
 
 `client release reject RELEASE_UUID`读取ReleaseRejectV1；`client release reconsider DECISION_UUID`
 读取ReleaseReopenV1，字段/最新决定CAS见DESIGN A7.1。需要对应精确目标的
@@ -160,7 +160,7 @@ server client --origin https://research.example --credential-file /private/cli.t
 
 watch以NDJSON输出 `schema_version/event_id/event`，最后输出 `watch_ended/last_event_id/events_received/cancellation_requested=false`。`$LAST_EVENT_ID` 格式为同一Run的 `UUIDv7:十进制seq`；首次观察可省略 `--after`。流量16MiB、最多3600秒/10000事件；Ctrl-C、断线或达到上限均不取消服务器任务。兼容未知事件只保留公开envelope；reset-required或不兼容合同返回错误，不假装连续。需继续观察时使用最后已验证cursor显式调用，不自动重连。导出失败时调用方不得把空或未完成的重定向文件视为成功产物；必须检查退出码。
 
-当前这些CLI命令与已有HTTP实现同步；Alpha资格、完整组合Release/自动化等B2后续命令仍属于Issue62必交范围，不能因入口列表增加而宣称全量生产验收完成。
+当前CLI已提供Alpha资格查询、组合Study/Release和自动化政策命令，分别复用原HTTP权限与事务；完整真实账号、市场数据及Web/CLI双入口验收仍属Issue62必交范围，不能用入口列表代替验收。
 
 ## 可信 Worker 与正式数据验证
 
@@ -282,13 +282,13 @@ min(solver_tolerance, exposure_tolerance²)，不改变最终贡献容差和低�
 不再接收covariance矩阵。历史收益须保留与forecasts相同资产/bar/期限/币种、
 严格递增窗口结束和不晚于决策的可用时点；VARIANCE由原生样本估计进入Clarabel，
 CVAR直接使用完整场景，不能预先挑选极端收益或把未知历史补零。
-格式见合成输入文件和DESIGN A5.2；历史来源的可信目录/产物/许可绑定仍待完整编排。
+格式见合成输入文件和DESIGN A5.2；正式Build通过Store绑定原目录、产物和许可，不能把直接执行此原生命令当作正式准入。
 
 受管PORTFOLIO_BUILD不接受上述手填数值输入；必须使用dataset_revision_id与
 NativePortfolioBuildRequestV1，包含selection、mandate、current_weights_artifact_id、current_weights、
 assets与原Alpha/model/calibration成员。仅挂载明确FORWARD目录和MODEL产物，
 原生运行生成预测与历史收益，输出qz.native_portfolio/1。模型数值执行不代替
-Store的当前资格、许可、政策与资金来源检查，完整Candidate编排仍待完成。
+Store的当前资格、许可、政策与资金来源检查；正式Candidate由Worker采纳原结果并完成发布核对后产生，完整真实数据链仍待验收。
 
 current_weights是PortfolioCurrentWeightsV1的原冻结副本，独立REPORT输入必须提供
 同一current_weights_artifact_id的原JSON。source严格区分FORWARD_SNAPSHOT
@@ -360,7 +360,7 @@ CALENDAR_SESSION需portfolio-calendar/2，calendar字段绑定原PARAMETERS会�
 字段/覆盖/原可用时间见DESIGN，必须逐值匹配原Runtime元数据登记的完整会话表。
 Universe读取返回可空calendar_artifact_id，不返回会话内容或补默认表。截止取原close_ns加
 显式秒偏移；不推断节假日、不排序、不补点，也不接受手动覆盖。
-正式PORTFOLIO准入/发布仍待实现，不能授予PASS。
+正式PORTFOLIO准入/发布使用下文的原计划Study入口与可信Worker；直接运行此科学命令不会授予正式PASS。
 SIMULATE_PORTFOLIO_SEQUENCE使用portfolio-sequence/1，sources逐项绑定原Candidate、
 可信可用时间和目标文件，同一settings_artifact_id重读核验；完整源质量与实际
 模拟结果分别输出。不提供手填权重的正式评估API，Store序列准入/发布仍待接入。
@@ -417,7 +417,7 @@ Store在Build准入与Candidate发布时重读原报告/配置、核对当前许
 （原Dataset/选择）；报告必须以DATA_QUALITY角色提供原字节。job逐项核对原报告
 与assets.available_notional、原选择、币种、年龄及Mandate参与率，不接受无绑定
 的数值。需portfolio-liquidity/1镜像能力及原结果版本声明；不得把原生检查替代
-Store来源采纳与当前期限检查。DATA_BACKED和完整独立组合验证仍待完成。
+Store来源采纳与当前期限检查。当前不支持DATA_BACKED；独立组合Study/评估发布已有原生入口，完整真实数据验证仍待验收。
 原生Build还必须冻结完整execution_settings，并以PARAMETERS角色传入原
 transaction_costs_ref文档；job核对完整原字节解析值、币种、本金及逐资产taker费用。
 准入与结果均要求portfolio-cost-source/1，Candidate发布重读原文档与保存配置。
@@ -454,7 +454,7 @@ cargo run --locked -p server -- client evidence metrics EVALUATION_UUID --limit 
 写入仍按CLI全局选项携带同一幂等键和精确人工grant，不把TOTP或凭据写入请求文件。
 创建校验原生模型版本、有效Runtime探测、CONVEX_QP、执行镜像、政策项目及原执行
 假设，币种/资本/费用/流动性/参与率/日历须一致。无能力或引用不一致时不落版本。
-保存配置不是科学PASS、Alpha资格或Candidate/Release交付；Ant Design操作页尚待接通。
+保存配置不是科学PASS、Alpha资格或Candidate/Release交付；浏览器“组合 / 组合配置”提供创建、原版本查看和构建请求。
 
 已有受授权只读 Nautilus Parquet 快照、实际 Wasm 模型和相应冻结请求文件时，运行时使用以下入口；路径不是 HTTP/MCP 请求字段：
 
@@ -601,7 +601,7 @@ cargo run --locked -p server -- serve --state-dir ./var \
 
 ## 已实现的控制面 HTTP 合同
 
-`server openapi` 包含实际 Project 与机器身份路由，不是手写路径清单或待实现占位。项目命令的 HTTP/CLI/MCP 统一以服务端事务为准，不提供 SQL 业务后门。控制面专用远程 CLI 与 MCP 仍在同一 PR 中接通，不能把本机 `server` 管理命令视作已实现全部研究命令。
+`server openapi` 包含实际 Project 与机器身份路由，不是手写路径清单或待实现占位。项目命令的 HTTP/CLI/MCP 统一以服务端事务为准，不提供 SQL 业务后门。远程 `server client` 使用HTTP与原授权；MCP仅暴露Mission允许的受限工具，不能把本机管理命令或CLI权限转给Agent。完整流程验收仍见README。
 
 真实浏览器：原生 TOTP 登录后使用同源私有 cookie，写操作携带 Origin、Idempotency-Key 和 DTO 的 expected_revision。机器：只使用独立 Bearer token，不复制浏览器 cookie；`GET /api/v2/auth/machine` 显示自身公开归属/权限/到期，`GET /api/v2/projects` 只返回授权项目。项目和凭据管理要求 Operator 浏览器的最近认证，或专属 CLI 身份提交原生 TOTP 后获得一次性精确命令 grant；Agent、自动化和下游不能取得该人工授权。
 
@@ -655,7 +655,7 @@ Worker现自动刷新尚未到期的未领取Offer及ACTIVE项目当前有效自
 失效、发布失败或数据库写入超时会回滚；清理等待同一下游发布锁，未知提交不删已引用
 文件。使用同一STATE_DIR原DOWNSTREAM凭据和独立部署允许列表，不继承Runtime目标。
 关闭Worker停止新领取并等待已开始的有界I/O。自动刷新不创建审批或交付；冻结政策
-自动消费与完整交付仍待实现。
+自动消费已接入Worker；完整真实账号、市场数据及交付验收仍未完成。
 
 `POST /api/v2/integrations/runtimes/{id}/probe` 接收 schema_version=1、expected_revision，
 需要近期人类认证或 RUNTIME_PROBE 单次 CLI grant。响应200表示探测已记录；必须检查
@@ -930,9 +930,9 @@ IMPORT/EXPORT/DATA_VALIDATE 可由受信任内部服务以无 Cycle 路径准入
 
 自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级已接入同一 Worker，条件与证据边界见下段。
 
-自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变，完整市场/部署验收与界面仍未完成。
+自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”提供自动化政策、原审批/交付记录及Forward观察历史。完整市场与部署验收仍未完成。
 
-Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过，这些消费链仍在实现。
+Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过；Worker分别执行原窗口评估和当前政策下的晋级检查，结果以原Evaluation、观察及交付记录为准。
 
 
 `client forward observations PROJECT_UUID --limit 50` 与 `client forward wakes PROJECT_UUID --limit 50` 只读原观察/唤醒历史；后续页传入返回的 `--cursor UUID`。仅 Operator 或精确项目 RESEARCH_READ CLI 可读；不向 Downstream、Mission 或 Reviewer 开放。历史分类与 CONSUMED 不表示当前资格或周期仍在运行，读取不触发调度。字段及权限见 DESIGN A7.9.1。
@@ -941,7 +941,7 @@ Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭�
 
 Forward收益频率：报告可声明 `returns_frequency=UTC_DAY`（完整UTC日，样本为右端午夜，complete不得缺日）或 `REPORTED_OBSERVATION`；缺失表示未知，不能推断日频/年化或独立样本。同stream含纠正历史的频率不一致时窗口返回 `FREQUENCY_MISMATCH`、合格计数为0。此来源检查尚不等于原生ForwardEvaluate完成。
 
-原生 ForwardEvaluate 科学job已支持冻结原REPORT输入、原纠正链重验及nautilus-analysis 0.63.0的UTC日均值/波动率/Sharpe（365日年化）。Runtime仅在明确登记FORWARD_EVALUATE固定镜像后宣布该能力；不接受额外目录/模型。当前已具备受冻结政策约束的Store准入与原Run/PGMQ队列，已接原Worker终态Evaluation/window发布，自动调度已接通，原生观察、待处理Wake及受限Cycle消费已接通，尚待Live晋级，不把直接job结果当作Live/Wake资格；输入/结果/上限见DESIGN A7.5。
+原生 ForwardEvaluate 科学job已支持冻结原REPORT输入、原纠正链重验及nautilus-analysis 0.63.0的UTC日均值/波动率/Sharpe（365日年化）。Runtime仅在明确登记FORWARD_EVALUATE固定镜像后宣布该能力；不接受额外目录/模型。当前已具备受冻结政策约束的Store准入与原Run/PGMQ队列，已接原Worker终态Evaluation/window发布，自动调度已接通，原生观察、待处理Wake、受限Cycle消费及政策约束的Live晋级已接通，不把直接job结果当作Live/Wake资格；输入/结果/上限见DESIGN A7.5。
 
 Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完整原日频报告在项目锁内冻结为受限FORWARD输入，固定30CPU秒/60墙钟秒/512MiB/1MiB输出、无Cycle并发2，同来源重放不新增Run。纠正、撤销、替换或过期会阻止未发送任务；普通InputSet接口仍不能复制受限报告。原Worker会在终态采纳后、ACK前发表测量Evaluation与封口窗口，decision为INCONCLUSIVE；更正/撤权/过期或不完整统计不产生有效样本。Worker沿用五秒项目轮询，每轮至多预约一个原反馈流，失败三十秒后公平重试，新增/纠正可提前重试；相同来源不重复入队。Worker在ACK前按原政策追加原生观察：维持要求不通过为DEGRADED，维持通过但晋级要求不通过为WATCH，两组通过为HEALTHY，缺失/过期/无效为INSUFFICIENT_DATA。只有当前有效DEGRADED追加唯一待处理Wake；观察/Wake失败保留原消息重试。Wake消费复用原人工研究上下文及冷却/日额度；Live晋级消费完整原生HEALTHY观察集合，详见DESIGN A7.6–A7.11。
 

@@ -60,7 +60,7 @@ EVALUATE_SEALED_ALPHA是内部受管操作，不是Agent工具；不得自行提
 Sealed机会绑定原Attempt并按根血缘累计，失败和取消不退款；不得换UUID或请求补写历史预约。
 可信Worker须在ACK前发表原封存评估及全部指标；Agent不得调用发布器、读取报告或把源Validation的PASS当作封存结果。
 人工alpha evaluate需精确Alpha目标的Operator授权和运行中Cycle冻结上下文/预算；Mission不能调用或借用该授权。参数不接收模型/校准/原生路径，202不授资格。
-不要为尚未接通的可信数据登记/Brief冻结/Worker 路径编造成功结果或使用 SQL 后门。
+可信数据登记、Brief冻结和Worker已有原生路径；只有原接口回执与实际运行证据才能确认结果，不得编造成功或使用SQL后门。
 
 
 ### 交付人工决定
@@ -264,7 +264,7 @@ PORTFOLIO_SIMULATE人工授权；不授Mission权限，202只表示Run，不是E
 `client portfolio build`以原资格、Mandate、Cycle、Forward输入申请Run；
 current_weights_source选择下游快照或LAST_TARGET原Candidate目标假设。
 CLI需目标Mandate的精确PORTFOLIO_BUILD人工grant。不得手填预测、持仓、费用
-或把202称为合格Candidate；当前完整成功准入/发布链及全成本来源仍待完成。
+或把202称为合格Candidate；正式Candidate须由Worker采纳原生结果并完成发布核对，完整真实数据链及全成本来源仍待验收。
 单基础币种CurrencyPair必须显式MARGIN，Equity可用CASH/MARGIN；不改写旧假设。
 浏览器在“组合”选择项目后切到“执行假设”，使用同一创建/列表/详情API；未知响应
 保留原输入重试，不重新生成费用或种子，也不把关闭编辑器当成撤销。
@@ -284,9 +284,9 @@ Worker下游刷新使用独立DOWNSTREAM_TARGETS与原DOWNSTREAM vault引用，�
 
 自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级已接入同一 Worker，条件与证据边界见下段。
 
-自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变，完整市场/部署验收与界面仍未完成。
+自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”提供自动化政策、原审批/交付记录及Forward观察历史。完整市场与部署验收仍未完成。
 
-Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过，这些消费链仍在实现。
+Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过；Worker分别执行原窗口评估和当前政策下的晋级检查，结果以原Evaluation、观察及交付记录为准。
 
 
 `client forward observations PROJECT_UUID --limit 50` 与 `client forward wakes PROJECT_UUID --limit 50` 只读原观察/唤醒历史；后续页传入返回的 `--cursor UUID`。仅 Operator 或精确项目 RESEARCH_READ CLI 可读；不向 Downstream、Mission 或 Reviewer 开放。历史分类与 CONSUMED 不表示当前资格或周期仍在运行，读取不触发调度。字段及权限见 DESIGN A7.9.1。
@@ -295,7 +295,7 @@ Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭�
 
 Forward收益频率：报告可声明 `returns_frequency=UTC_DAY`（完整UTC日，样本为右端午夜，complete不得缺日）或 `REPORTED_OBSERVATION`；缺失表示未知，不能推断日频/年化或独立样本。同stream含纠正历史的频率不一致时窗口返回 `FREQUENCY_MISMATCH`、合格计数为0。此来源检查尚不等于原生ForwardEvaluate完成。
 
-原生 ForwardEvaluate 科学job已支持冻结原REPORT输入、原纠正链重验及nautilus-analysis 0.63.0的UTC日均值/波动率/Sharpe（365日年化）。Runtime仅在明确登记FORWARD_EVALUATE固定镜像后宣布该能力；不接受额外目录/模型。当前已具备受冻结政策约束的Store准入与原Run/PGMQ队列，已接原Worker终态Evaluation/window发布，自动调度已接通，原生观察、待处理Wake及受限Cycle消费已接通，尚待Live晋级，不把直接job结果当作Live/Wake资格；输入/结果/上限见DESIGN A7.5。
+原生 ForwardEvaluate 科学job已支持冻结原REPORT输入、原纠正链重验及nautilus-analysis 0.63.0的UTC日均值/波动率/Sharpe（365日年化）。Runtime仅在明确登记FORWARD_EVALUATE固定镜像后宣布该能力；不接受额外目录/模型。当前已具备受冻结政策约束的Store准入与原Run/PGMQ队列，已接原Worker终态Evaluation/window发布，自动调度已接通，原生观察、待处理Wake、受限Cycle消费及政策约束的Live晋级已接通，不把直接job结果当作Live/Wake资格；输入/结果/上限见DESIGN A7.5。
 
 Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完整原日频报告在项目锁内冻结为受限FORWARD输入，固定30CPU秒/60墙钟秒/512MiB/1MiB输出、无Cycle并发2，同来源重放不新增Run。纠正、撤销、替换或过期会阻止未发送任务；普通InputSet接口仍不能复制受限报告。原Worker会在终态采纳后、ACK前发表测量Evaluation与封口窗口，decision为INCONCLUSIVE；更正/撤权/过期或不完整统计不产生有效样本。Worker沿用五秒项目轮询，每轮至多预约一个原反馈流，失败三十秒后公平重试，新增/纠正可提前重试；相同来源不重复入队。Worker在ACK前按原政策追加原生观察：维持要求不通过为DEGRADED，维持通过但晋级要求不通过为WATCH，两组通过为HEALTHY，缺失/过期/无效为INSUFFICIENT_DATA。只有当前有效DEGRADED追加唯一待处理Wake；观察/Wake失败保留原消息重试。Wake消费复用原人工研究上下文及冷却/日额度；Live晋级消费完整原生HEALTHY观察集合，详见DESIGN A7.6–A7.11。
 

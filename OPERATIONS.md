@@ -563,7 +563,7 @@ SSE 为每批最多16条的持久查询，不要求内存消息通知和 sticky 
 
 这些是受信任 Store 与 HTTP 的已实现入口，不是远端 Job 网关/隔离容器、完整研究
 调度、科学 PASS 或交付资格的验收。当前不提供任意任务 JSON、任意 URL 或任意
-命令的公开 enqueue/terminal 入口；尚未接通的研究服务必须使用同一准入事务。
+命令的公开 enqueue/terminal 入口；研究入口使用同一准入事务，不可绕过原授权直接入队。
 
 ## 增量升级：转移历史与请求超时
 
@@ -600,7 +600,7 @@ PAPER许可不能用于LIVE；审批期限不能超过原Release或当前来源�
 考虑只允许申请新审批，不恢复旧审批。`client approval show APPROVAL_UUID`仅查看
 原历史；配置版本改变后须重新审批。人工Offer使用 `client handoff offer`，绑定原审批并重验当前来源/下游；显式选择同项目/mandate/下游/环境的最新Offer作为前版，字段见CLI。
 同一Release不能换键重复发送。新Offer只撤销尚未领取的前版，已领取事实不改写。
-`client handoff show UUID`读取当前状态，原幂等回执不代替当前状态。下游使用 `client handoff claim UUID` 及其DOWNSTREAM_CLAIM凭据领取；external_claim_id必须与幂等键相同，200含原Package与转移。相同编号重试只取原回执，不能换编号再次领取。Worker补记尚未领取Offer的到期和审批撤销；已领取事实不改写。下游使用 `client handoff ack UUID` 与精确DOWNSTREAM_ACK凭据记录接受或拒绝，字段见CLI；原领取编号必须匹配，重复回执不产生新交付。Operator使用 `client approval revoke UUID` 与精确人工grant追加立即或未来撤销；最早生效日期不能被后续记录推迟，`client approval revocations UUID`查看原历史。自动 Paper/Live 原生消费已接通，Web界面仍待实现。
+`client handoff show UUID`读取当前状态，原幂等回执不代替当前状态。下游使用 `client handoff claim UUID` 及其DOWNSTREAM_CLAIM凭据领取；external_claim_id必须与幂等键相同，200含原Package与转移。相同编号重试只取原回执，不能换编号再次领取。Worker补记尚未领取Offer的到期和审批撤销；已领取事实不改写。下游使用 `client handoff ack UUID` 与精确DOWNSTREAM_ACK凭据记录接受或拒绝，字段见CLI；原领取编号必须匹配，重复回执不产生新交付。Operator使用 `client approval revoke UUID` 与精确人工grant追加立即或未来撤销；最早生效日期不能被后续记录推迟，`client approval revocations UUID`查看原历史。自动 Paper/Live 原生消费已接通；浏览器提供政策、人工审批、Offer、撤销及交付历史。Claim/ACK仍由下游凭据通过原生HTTP/CLI执行，页面不能代领。
 
 Cycle 启动须明确提供 `researcher_profile` 和 `reviewer_profile`，各包含 Codex Profile 的 `profile_id` 与当前 `expected_revision`。两个选择随本周期冻结，不属于可重复使用的 Brief；可以明确选择同一 Profile，但研究和独立审阅使用不同 Thread。缺失、过期版本或正在登录/注销的配置不能启动。随后修改 Profile 不会修改旧周期或旧回执，也不能让旧周期自动采用新模型/账号配置；应以新选择启动新周期。历史没有选择的记录只保留原事实，不补造账号。
 
@@ -643,13 +643,13 @@ Mission/Automation/Downstream不能借此读取额外证据。Sealed及独立Rev
 
 自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”提供自动化政策、原审批/交付记录及Forward观察历史。完整市场与部署验收仍未完成。
 
-Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过，这些消费链仍在实现。
+Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过；Worker分别执行原窗口评估和当前政策下的晋级检查，结果以原Evaluation、观察及交付记录为准。
 
 `client forward window HANDOFF_UUID --stream STREAM`读取原始窗口来源投影：最新纠正版、连续性、合格样本数及缺序/partial/缺失/重叠原因。partial纠正不会回退旧complete版本，任一缺口或重叠将合格计数清零；原报告仍不公开。空stream返回NO_MESSAGES。此投影尚不是已封口的Forward统计评估，不授予自动Live或Wake资格；完整字段与原生来源/容量边界见DESIGN A7.4。
 
 Forward收益频率：报告可声明 `returns_frequency=UTC_DAY`（完整UTC日，样本为右端午夜，complete不得缺日）或 `REPORTED_OBSERVATION`；缺失表示未知，不能推断日频/年化或独立样本。同stream含纠正历史的频率不一致时窗口返回 `FREQUENCY_MISMATCH`、合格计数为0。此来源检查尚不等于原生ForwardEvaluate完成。
 
-原生 ForwardEvaluate 科学job已支持冻结原REPORT输入、原纠正链重验及nautilus-analysis 0.63.0的UTC日均值/波动率/Sharpe（365日年化）。Runtime仅在明确登记FORWARD_EVALUATE固定镜像后宣布该能力；不接受额外目录/模型。当前已具备受冻结政策约束的Store准入与原Run/PGMQ队列，已接原Worker终态Evaluation/window发布，自动调度已接通，原生观察、待处理Wake及受限Cycle消费已接通，尚待Live晋级，不把直接job结果当作Live/Wake资格；输入/结果/上限见DESIGN A7.5。
+原生 ForwardEvaluate 科学job已支持冻结原REPORT输入、原纠正链重验及nautilus-analysis 0.63.0的UTC日均值/波动率/Sharpe（365日年化）。Runtime仅在明确登记FORWARD_EVALUATE固定镜像后宣布该能力；不接受额外目录/模型。当前已具备受冻结政策约束的Store准入与原Run/PGMQ队列，已接原Worker终态Evaluation/window发布，自动调度已接通，原生观察、待处理Wake、受限Cycle消费及政策约束的Live晋级已接通，不把直接job结果当作Live/Wake资格；输入/结果/上限见DESIGN A7.5。
 
 Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完整原日频报告在项目锁内冻结为受限FORWARD输入，固定30CPU秒/60墙钟秒/512MiB/1MiB输出、无Cycle并发2，同来源重放不新增Run。纠正、撤销、替换或过期会阻止未发送任务；普通InputSet接口仍不能复制受限报告。原Worker会在终态采纳后、ACK前发表测量Evaluation与封口窗口，decision为INCONCLUSIVE；更正/撤权/过期或不完整统计不产生有效样本。Worker沿用五秒项目轮询，每轮至多预约一个原反馈流，失败三十秒后公平重试，新增/纠正可提前重试；相同来源不重复入队。Worker在ACK前按原政策追加原生观察：维持要求不通过为DEGRADED，维持通过但晋级要求不通过为WATCH，两组通过为HEALTHY，缺失/过期/无效为INSUFFICIENT_DATA。只有当前有效DEGRADED追加唯一待处理Wake；观察/Wake失败保留原消息重试。Wake消费复用原人工研究上下文及冷却/日额度；Live晋级消费完整原生HEALTHY观察集合，详见DESIGN A7.6–A7.11。
 
