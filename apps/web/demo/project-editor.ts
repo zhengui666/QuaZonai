@@ -15,13 +15,14 @@ export function projectEditor() {
   return (method: string, path: string, body?: unknown, key?: string) => {
     if (method === 'GET' && path === `/api/v2/projects/${project.id}`) return { status: 200, value: project };
     if (method === 'GET' && path === '/api/v2/projects') return { status: 200, value: { schema_version: 1, items: [project], next_cursor: null } };
-    if (method !== 'PATCH' || path !== `/api/v2/projects/${project.id}` || !valid(body) || !key || key.length > 128) return undefined;
+    if (method !== 'PATCH' || path !== `/api/v2/projects/${project.id}`) return undefined;
     const denied = demoResponse('PATCH', path);
+    if (!valid(body) || !key || key.length > 200 || key.trim() !== key || !/^[\x20-\x7e]+$/.test(key)) return { status: 422, value: { ...denied.value as Schema['Problem'], status: 422, code: 'VALIDATION_ERROR', detail: '请求或幂等键不符合原生合同。' } };
     if (body.state !== project.state) return denied;
-    const encoded = JSON.stringify(body);
+    const encoded = JSON.stringify([body.schema_version, body.expected_revision, body.name, body.description, body.state]);
     const previous = receipts.get(key);
     if (previous) return previous.body === encoded
-      ? { status: 200, value: { schema_version: 1, resource: previous.resource, replayed: true } } : denied;
+      ? { status: 200, value: { schema_version: 1, resource: previous.resource, replayed: true } } : { status: 409, value: { ...denied.value as Schema['Problem'], status: 409, code: 'IDEMPOTENCY_CONFLICT', detail: '此幂等键已用于不同请求，不能重用。' } };
     if (body.expected_revision !== project.revision) return { status: 409, value: {
       ...denied.value as Schema['Problem'], status: 409, code: 'REVISION_CONFLICT', current_revision: project.revision,
       detail: '合成项目已修改，请重新读取。',

@@ -41,12 +41,13 @@ export default defineConfig({
             const chunks: Buffer[] = []; let size = 0;
             for await (const chunk of request) {
               const bytes = Buffer.from(chunk); size += bytes.length; chunks.push(bytes);
-              if (size > 16384) { response.writeHead(413); response.end(); return; }
+              if (size > 128 * 1024) { response.writeHead(413); response.end(); return; }
             }
             body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           } catch { response.writeHead(400); response.end(); return; }
         }
-        const key = request.headers['idempotency-key'];
+        const keys = request.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === 'idempotency-key');
+        const key = keys.length === 1 ? request.headers['idempotency-key'] : undefined;
         const result = edit(request.method ?? 'GET', pathname, body, typeof key === 'string' ? key : undefined) ?? demoResponse(request.method ?? 'GET', pathname, url.searchParams.get('partition'));
         response.writeHead(result.status, { 'Content-Type': 'binary' in result ? 'application/octet-stream' : result.status === 200 ? 'application/json' : 'application/problem+json',
           'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
