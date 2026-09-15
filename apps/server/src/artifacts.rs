@@ -96,7 +96,10 @@ pub async fn create(
                 }
                 Ok(())
             } else {
-                objects.put(id, &bytes).map_err(|_| ApiError::internal())
+                objects
+                    .put(id, &bytes)
+                    .map_err(crate::error::artifact_storage)
+                    .map_err(ApiError::from)
             }
         })
         .await

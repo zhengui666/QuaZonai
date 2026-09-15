@@ -164,7 +164,7 @@ impl Worker {
                         })
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                     },
                 )
                 .await?;
@@ -232,7 +232,7 @@ impl Worker {
                     tokio::task::spawn_blocking(move || publishing.put(object.id, &object.bytes))
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                 },
             )
             .await?;
@@ -282,7 +282,7 @@ impl Worker {
                         })
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                     },
                 )
                 .await?;
@@ -300,7 +300,7 @@ impl Worker {
             tokio::task::spawn_blocking(move || publishing.put(object.id, &object.bytes))
                 .await
                 .map_err(|_| StoreError::Integrity)?
-                .map_err(|_| StoreError::Integrity)
+                .map_err(crate::error::artifact_storage)
         };
         let validation = matches!(work, ExperimentWork::Validate(_));
         match work {

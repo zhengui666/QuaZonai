@@ -61,7 +61,7 @@ pub async fn create(
                         })
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                     }
                 },
             )

@@ -59,7 +59,7 @@ pub async fn weights(
                     tokio::task::spawn_blocking(move || publishing.put(object.id, &object.bytes))
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                 }
             })
             .await;
@@ -141,7 +141,7 @@ pub async fn message(
                         })
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                     }
                 },
             )

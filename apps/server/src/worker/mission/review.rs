@@ -28,7 +28,7 @@ fn materialize(
         .read(work.parameter_artifact_id, work.parameter_bytes)
         .map_err(|_| WorkerFailure::Contract)?;
     let copies = ArtifactStore::open(&workspace.join(format!("review-{}", work.experiment_id)))
-        .map_err(|_| WorkerFailure::Contract)?;
+        .map_err(crate::error::artifact_storage)?;
     for (id, bytes) in [
         (work.code_artifact_id, code),
         (work.parameter_artifact_id, parameters),
@@ -41,7 +41,7 @@ fn materialize(
             Err(ArtifactError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
                 copies
                     .put(id, &bytes)
-                    .map_err(|_| WorkerFailure::Contract)?;
+                    .map_err(crate::error::artifact_storage)?;
             }
             _ => return Err(WorkerFailure::Contract),
         }
@@ -83,7 +83,7 @@ impl Worker {
                         })
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                     },
                 )
                 .await?;
@@ -119,7 +119,7 @@ impl Worker {
                         })
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                     },
                 )
                 .await?;

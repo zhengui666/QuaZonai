@@ -53,7 +53,7 @@ pub async fn probe(
                     tokio::task::spawn_blocking(move || publishing_objects.put(artifact, &bytes))
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                 }
             })
             .await;
@@ -149,7 +149,7 @@ pub(crate) async fn refresh(
                 tokio::task::spawn_blocking(move || publishing_objects.put(artifact, &bytes))
                     .await
                     .map_err(|_| StoreError::Integrity)?
-                    .map_err(|_| StoreError::Integrity)
+                    .map_err(crate::error::artifact_storage)
             }
         })
         .await;

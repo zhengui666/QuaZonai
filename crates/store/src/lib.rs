@@ -73,6 +73,8 @@ pub enum StoreError {
     NativeIdentityConflict,
     #[error("registered integration is temporarily unavailable")]
     IntegrationUnavailable,
+    #[error("artifact storage is full")]
+    StorageFull,
     #[error("stored contract integrity check failed")]
     Integrity,
     #[error("secret reconciliation could not be completed")]

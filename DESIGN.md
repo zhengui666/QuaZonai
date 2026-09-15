@@ -400,7 +400,7 @@ Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立�
 
 复用 PostgreSQL 原生备份/pgBackRest、restic 等，不建备份平台。备份数据库、引用 artifacts、配置和受保护原生 Codex profile；市场目录由原所有者按版本备份，密钥与数据分离。恢复先暂停 admission，恢复一致版本、查悬空引用、reconcile 未完成远端任务，再恢复消费；不盲目重放 Live。重置/恢复明确处理旧 session/设备/凭据。 同版本恢复在保持API/Worker停止期间，以迁移所有者运行本机recover-access及固定recovery-id；同事务将auth epoch提高到全部已记录授权之上，废止旧浏览器/设备/grant，撤销未撤销机器凭据，并保留非秘密回执供未知结果重放。TOTP密文及历史事实不删除；当前或更早TOTP步拒绝，下一步可重新登录。此入口不提供HTTP/MCP能力，非所有者拒绝。RPO 24h/RTO 60min 是待演练目标，只有实际记录才声称达到。
 
-升级检查版本、磁盘、备份与兼容矩阵；不可逆 schema 用备份恢复回滚，不声称旧二进制任意读新 schema。磁盘满/DB断连/runtime离线停止接新任务并明确告警。恢复报告包含备份时点、DB/产物验证、reconcile 清单、未重复 Handoff、凭据处理、耗时和损失区间。
+升级检查版本、磁盘、备份与兼容矩阵；不可逆 schema 用备份恢复回滚，不声称旧二进制任意读新 schema。磁盘满/DB断连/runtime离线停止接新任务并明确告警。原生产物写入返回 ENOSPC 时，控制面保留 STORAGE_FULL 分类，HTTP 返回 503 与可重试提示，后台输出同一安全错误码；不输出宿主路径、产物内容或凭据。该错误不提交新的准入事务，空间恢复后使用原请求编号重试，已有回执仍按原事实重放。恢复报告包含备份时点、DB/产物验证、reconcile 清单、未重复 Handoff、凭据处理、耗时和损失区间。
 
 ## 11. 迁移、删除与 README
 

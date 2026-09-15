@@ -393,9 +393,18 @@ async fn native_full_filesystem_rolls_back_cycle_admission_and_allows_same_inten
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("STORAGE_FULL"),
+            "native storage alert must be emitted"
+        );
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
         return;
     };
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::ERROR)
+        .without_time()
+        .with_ansi(false)
+        .init();
     let (f, cookie, data) = setup(&pool).await;
     let frozen = browser(
         &f,
@@ -447,7 +456,18 @@ async fn native_full_filesystem_rolls_back_cycle_admission_and_allows_same_inten
         body.clone(),
     )
     .await;
-    assert!(rejected.status.is_server_error(), "{}", rejected.body);
+    assert_eq!(
+        rejected.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        rejected.body
+    );
+    assert_eq!(rejected.body["code"], "STORAGE_FULL");
+    assert_eq!(rejected.body["retryable"], true);
+    assert!(rejected.body["detail"]
+        .as_str()
+        .unwrap()
+        .contains("存储空间已满"));
     assert_eq!(rejected.headers[header::CACHE_CONTROL], "no-store");
     // Independent database reads prove the failed request left no admitted work.
     for table in ["app.research_cycles", "app.runs", "pgmq.q_runs"] {

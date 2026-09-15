@@ -67,7 +67,7 @@ pub async fn validate(
                         })
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                     }
                 },
             )
@@ -341,7 +341,7 @@ pub async fn register(
                             for object in publications {
                                 publishing
                                     .put(object.id, &object.bytes)
-                                    .map_err(|_| StoreError::Integrity)?;
+                                    .map_err(crate::error::artifact_storage)?;
                             }
                             Ok(())
                         })

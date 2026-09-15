@@ -94,6 +94,21 @@ impl IntoResponse for ApiError {
         response
     }
 }
+/// Preserve native capacity failure without exposing filesystem paths or bytes.
+pub(crate) fn artifact_storage(error: integrations::artifacts::ArtifactError) -> StoreError {
+    if matches!(error, integrations::artifacts::ArtifactError::Io(ref error)
+        if error.kind() == std::io::ErrorKind::StorageFull)
+    {
+        tracing::error!(
+            code = "STORAGE_FULL",
+            "artifact publication unavailable: storage full"
+        );
+        StoreError::StorageFull
+    } else {
+        StoreError::Integrity
+    }
+}
+
 impl From<StoreError> for ApiError {
     fn from(error: StoreError) -> Self {
         match error {
@@ -152,6 +167,11 @@ impl From<StoreError> for ApiError {
                 StatusCode::CONFLICT,
                 "NATIVE_IDENTITY_CONFLICT",
                 "这个原生身份已绑定其他不可变内容，不能通过更换标识覆盖来源或授权。",
+            ),
+            StoreError::StorageFull => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "STORAGE_FULL",
+                "产物存储空间已满。请联系运维恢复可用空间，再使用原请求编号重试；不要删除仍被引用的产物。",
             ),
             StoreError::IntegrationUnavailable => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,

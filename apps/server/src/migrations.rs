@@ -406,7 +406,7 @@ fn publish_copy(
             Ok(()) => (),
             Err(integrations::artifacts::ArtifactError::Io(e))
                 if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(_) => return Err(StoreError::Integrity),
+            Err(error) => return Err(crate::error::artifact_storage(error)),
         }
     }
     let original = objects

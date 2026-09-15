@@ -722,3 +722,5 @@ MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，
 磁盘故障的原生回归：Linux 上运行 `cargo test --locked -p integrations --test artifact_publication`。需要 util-linux 的 `unshare`/`mount` 及允许创建用户、挂载命名空间；不可用会失败，不跳过。测试只在子进程私有的 64 KiB tmpfs 内制造 ENOSPC，核对已有产物、失败暂存清理及后续重试，退出后宿主挂载点仍为空。CI 为复制到临时目录的原生 unshare 设置作业专用 AppArmor userns 许可并在结束时移除，不修改全局 userns 策略。这项证据不代替任务准入事务、自动任务、告警或完整 T40 恢复演练。
 
 Cycle 准入的磁盘满回归位于 `apps/server/tests/cycles_http.rs`：在一次性 PostgreSQL/PGMQ 环境运行 `cargo test --locked -p server --features native-codex --test cycles_http`。子进程私有 16 MiB tmpfs 写满后，真实认证 HTTP 启动失败；独立数据库读取确认没有 Cycle/Run/队列残留，旧产物逐字节保留。释放填充文件后，同一请求首次成功且随后重放原回执，只保留一次入队。此项仍不证明所有自动任务、明确存储告警或完整恢复验收。
+
+控制面产物写入遇到原生 ENOSPC 时返回 HTTP 503 / `STORAGE_FULL`，运行日志记录同名错误码。请恢复存储可用空间后使用原请求编号重试，不删除仍被引用的产物。现有回执保持原样；此提示不声称磁盘已恢复或远端任务已停止。

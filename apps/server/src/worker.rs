@@ -316,7 +316,7 @@ impl Worker {
                 tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
                     .await
                     .map_err(|_| StoreError::Integrity)?
-                    .map_err(|_| StoreError::Integrity)
+                    .map_err(crate::error::artifact_storage)
             }
         };
         let result = match stage {
@@ -386,7 +386,7 @@ impl Worker {
                         tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
                             .await
                             .map_err(|_| StoreError::Integrity)?
-                            .map_err(|_| StoreError::Integrity)
+                            .map_err(crate::error::artifact_storage)
                     }
                 },
             )
@@ -438,7 +438,7 @@ impl Worker {
                         tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
                             .await
                             .map_err(|_| StoreError::Integrity)?
-                            .map_err(|_| StoreError::Integrity)
+                            .map_err(crate::error::artifact_storage)
                     }
                 },
             )
@@ -533,7 +533,7 @@ impl Worker {
                         })
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                     }
                 },
             )
@@ -684,7 +684,7 @@ impl Worker {
                     tokio::task::spawn_blocking(move || objects.put(id, &bytes))
                         .await
                         .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                 }
             })
             .await;
@@ -891,7 +891,7 @@ impl Worker {
                             for object in objects {
                                 publishing
                                     .put(object.id, &object.bytes)
-                                    .map_err(|_| StoreError::Integrity)?;
+                                    .map_err(crate::error::artifact_storage)?;
                             }
                             Ok(())
                         })

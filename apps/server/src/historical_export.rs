@@ -101,7 +101,14 @@ pub fn export(source_root: &Path, selection: &Path, output: &Path) -> std::io::R
                 Ok(bytes) => {
                     let id = contracts::Id::new();
                     let count = DbCounter::new(bytes.len() as u64).map_err(|_| invalid())?;
-                    objects.put(id, &bytes).map_err(|_| invalid())?;
+                    objects.put(id, &bytes).map_err(|error| match error {
+                        integrations::artifacts::ArtifactError::Io(error)
+                            if error.kind() == std::io::ErrorKind::StorageFull =>
+                        {
+                            std::io::Error::new(std::io::ErrorKind::StorageFull, "STORAGE_FULL")
+                        }
+                        _ => invalid(),
+                    })?;
                     if objects.read(id, count).map_err(|_| invalid())? != bytes {
                         return Err(invalid());
                     }

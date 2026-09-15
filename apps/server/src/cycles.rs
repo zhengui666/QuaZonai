@@ -136,7 +136,7 @@ pub async fn start(
                         })
                         .await
                         .map_err(|_| store::StoreError::Integrity)?
-                        .map_err(|_| store::StoreError::Integrity)
+                        .map_err(crate::error::artifact_storage)
                     }
                 },
             )

@@ -146,7 +146,7 @@ async fn run_portfolio(
                 tokio::task::spawn_blocking(move || publishing.put(object.id, &object.bytes))
                     .await
                     .map_err(|_| StoreError::Integrity)?
-                    .map_err(|_| StoreError::Integrity)
+                    .map_err(crate::error::artifact_storage)
             }
         };
         let result = match command {

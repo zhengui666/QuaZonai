@@ -75,7 +75,7 @@ pub async fn create(
                         tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
                             .await
                             .map_err(|_| StoreError::Integrity)?
-                            .map_err(|_| StoreError::Integrity)
+                            .map_err(crate::error::artifact_storage)
                     }
                 },
             )
