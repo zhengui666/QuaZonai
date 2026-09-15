@@ -5245,3 +5245,31 @@ byte-for-byte output, foreign-report denial and sealed download rejection with
 empty stdout. Inventory unchanged and disposable PostgreSQL stopped. These
 fixtures still do not prove full old-data semantic/sealed lineage or real recovery.
 No push, remote-head review/CI, merge or Issue closure is claimed.
+
+### 2026-09-15 expected 0029 foreign-key coverage
+
+The importer now supplements actually declared source foreign keys with a fixed
+baseline from the final 0029 model definitions in Git 313b0e27^. Static AST reading
+of the supported 85 tables found 214 relations, including 40 composite keys; the
+baseline contains only schema references, not old executable models or user data.
+References to excluded credential_sets/plugin_releases remain explicitly
+unverified. Baseline orphan_rows zero is an internal placeholder, never an
+observed source result: native SQL checks the projected data before increasing
+checked_relationships; unavailable projections stay unverified.
+
+For each present source table, a missing declaration adds MISSING_DECLARED to
+unverified_relationships and requires manual review. When both projections are
+available the same native join still rejects orphan references even if the old
+constraint has been removed. Matching uses source/target columns and MATCH
+semantics rather than the constraint name. Duplicate equivalent constraints do
+not inflate the count, and all reported nonzero orphan counts still reject.
+
+verify-Y5ckfC passed workspace/all-target compile, formatting, strict Clippy and
+63 native checks (previous 62 plus the new relationship test). Disposable native
+PostgreSQL tests prove undeclared single-key orphan rejection, valid data with
+missing-declaration reporting, renamed/duplicate constraint handling and a
+composite family/program mandate mismatch despite an existing program ID. Source
+inventory unchanged and owned PostgreSQL stopped. No API, generated contract or
+browser implementation changed in this step. This is foreign-key coverage, not
+complete polymorphic identity, semantic sealed-exposure lineage or real old-data
+recovery. Those remain part of the unfinished delivery; no remote closure claimed.

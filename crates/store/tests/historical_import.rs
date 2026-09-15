@@ -754,3 +754,93 @@ async fn public_artifact_binding_dry_run_repeat_conflict_and_rollback(pool: PgPo
         .read(orphan, DbCounter::new(bytes.len() as u64).unwrap())
         .is_err());
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn expected_relations_detect_undeclared_single_and_composite_orphans(pool: PgPool) {
+    source(&pool).await;
+    let (store, actor) = support::operator(&pool).await;
+    sqlx::raw_sql("CREATE TABLE public.clarification_questions(id uuid PRIMARY KEY,idea_draft_id uuid NOT NULL,ordinal integer NOT NULL,round_no integer NOT NULL,question_text text NOT NULL,created_at timestamptz NOT NULL); CREATE TABLE public.clarification_answers(id uuid PRIMARY KEY,question_id uuid NOT NULL,answer_text text NOT NULL,created_at timestamptz NOT NULL); INSERT INTO public.clarification_questions VALUES('11111111-1111-4111-8111-111111111120','11111111-1111-4111-8111-111111111121',1,1,'Question','2020-01-01'); INSERT INTO public.clarification_answers VALUES('11111111-1111-4111-8111-111111111122','11111111-1111-4111-8111-111111111129','Answer','2020-01-01')").execute(&pool).await.unwrap();
+    let installation = Id::new();
+    let request = HistoricalImportRequestV1 {
+        schema_version: SchemaV1,
+        export_ref: Id::new(),
+        dry_run: false,
+    };
+    let (report, files) = exported(&pool, installation).await;
+    assert!(!report
+        .inspection
+        .foreign_keys
+        .iter()
+        .any(|r| r.source_table == "public.clarification_answers"));
+    assert!(matches!(
+        import(
+            &store,
+            &actor,
+            "missing-fk-orphan",
+            &request,
+            &report,
+            &files
+        )
+        .await,
+        Err(store::StoreError::Invalid("historical_import_relationship"))
+    ));
+    assert_eq!(records(&pool).await, 0);
+    sqlx::query("UPDATE public.clarification_answers SET question_id='11111111-1111-4111-8111-111111111120'").execute(&pool).await.unwrap();
+    let (report, files) = exported(&pool, installation).await;
+    let first = import(
+        &store,
+        &actor,
+        "missing-fk-valid",
+        &request,
+        &report,
+        &files,
+    )
+    .await
+    .unwrap();
+    assert!(first.resource.manual_review_required);
+    assert!(first.resource.unverified_relationships.iter().any(|r| {
+        r=="MISSING_DECLARED:clarification_answers(question_id)->clarification_questions(id):SIMPLE"
+    }));
+    sqlx::raw_sql("ALTER TABLE public.clarification_answers ADD CONSTRAINT renamed_question_fk FOREIGN KEY(question_id) REFERENCES public.clarification_questions(id); ALTER TABLE public.clarification_answers ADD CONSTRAINT repeated_question_fk FOREIGN KEY(question_id) REFERENCES public.clarification_questions(id)").execute(&pool).await.unwrap();
+    let (report, files) = exported(&pool, installation).await;
+    let again = import(
+        &store,
+        &actor,
+        "renamed-fk-valid",
+        &request,
+        &report,
+        &files,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        again.resource.checked_relationships,
+        first.resource.checked_relationships
+    );
+    assert!(!again
+        .resource
+        .unverified_relationships
+        .iter()
+        .any(|r| r.starts_with("MISSING_DECLARED:clarification_answers(")));
+    // Both program IDs exist, but the candidate family names a different mandate.
+    sqlx::raw_sql("CREATE TABLE public.portfolio_programs(id uuid PRIMARY KEY,mandate_version_id uuid NOT NULL,current_candidate_id uuid,mandate_name varchar(200),state varchar(40) NOT NULL,created_at timestamptz NOT NULL,updated_at timestamptz NOT NULL); CREATE TABLE public.portfolio_candidate_families(id uuid PRIMARY KEY,portfolio_program_id uuid NOT NULL,mandate_version_id uuid NOT NULL,created_at timestamptz NOT NULL); INSERT INTO public.portfolio_programs VALUES('11111111-1111-4111-8111-111111111130','11111111-1111-4111-8111-111111111131',NULL,NULL,'ACTIVE','2020-01-01','2020-01-01'); INSERT INTO public.portfolio_candidate_families VALUES('11111111-1111-4111-8111-111111111132','11111111-1111-4111-8111-111111111130','11111111-1111-4111-8111-111111111139','2020-01-01')").execute(&pool).await.unwrap();
+    let (report, files) = exported(&pool, installation).await;
+    assert!(matches!(
+        import(
+            &store,
+            &actor,
+            "composite-mismatch",
+            &request,
+            &report,
+            &files
+        )
+        .await,
+        Err(store::StoreError::Invalid("historical_import_relationship"))
+    ));
+    sqlx::query("UPDATE public.portfolio_candidate_families SET mandate_version_id='11111111-1111-4111-8111-111111111131'").execute(&pool).await.unwrap();
+    let (report, files) = exported(&pool, installation).await;
+    let valid = import(&store, &actor, "composite-valid", &request, &report, &files)
+        .await
+        .unwrap();
+    assert!(valid.resource.unverified_relationships.iter().any(|r|r=="MISSING_DECLARED:portfolio_candidate_families(portfolio_program_id,mandate_version_id)->portfolio_programs(id,mandate_version_id):SIMPLE"));
+}

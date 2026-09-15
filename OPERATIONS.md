@@ -694,3 +694,7 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 只有本报告已保存的公开副本提供下载按钮。CLI 的 migrate artifact-summary/artifacts/artifact/download
 提供相同入口，下载成功后向 stdout 输出完整原字节。
 真实旧备份、完整密封沿袭及 T42 恢复验收仍未完成。
+
+旧库移除外键不代表引用已有效。导入会按已支持的0029表关系基线补查可投影引用；
+MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，重复约束不会重复计数。
+这项检查不替代多态身份、密封证据沿袭或真实备份恢复验收。

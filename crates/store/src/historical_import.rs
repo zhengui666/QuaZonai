@@ -161,13 +161,44 @@ impl Store {
         }
         let mut checked = 0u64;
         let mut unverified = Vec::new();
-        for relation in &source.inspection.foreign_keys {
+        let expected: Vec<HistoricalForeignKeyCheckV1> =
+            serde_json::from_str(include_str!("historical_relations_0029.json"))
+                .map_err(|_| StoreError::Integrity)?;
+        let mut relations = source.inspection.foreign_keys.clone();
+        for relation in expected {
+            if !inspected.contains_key(
+                &relation
+                    .source_table
+                    .trim_start_matches("public.")
+                    .to_owned(),
+            ) {
+                continue;
+            }
+            if !relations
+                .iter()
+                .any(|actual| same_relation(actual, &relation))
+            {
+                unverified.push(format!("MISSING_DECLARED:{}", relation.constraint));
+                relations.push(relation);
+            }
+        }
+        // ponytail: at most 1024 reported plus 0029's fixed baseline relations;
+        // native SQL checks each semantic relation once even if constraints repeat.
+        let mut checked_relations = Vec::new();
+        for relation in &relations {
             if relation.orphan_rows != DbCounter::ZERO
                 || relation.source_columns.is_empty()
                 || relation.source_columns.len() != relation.target_columns.len()
             {
                 return Err(invalid());
             }
+            if checked_relations
+                .iter()
+                .any(|old| same_relation(old, relation))
+            {
+                continue;
+            }
+            checked_relations.push(relation.clone());
             let pair = staged
                 .get(&relation.source_table)
                 .zip(staged.get(&relation.target_table));
@@ -506,4 +537,12 @@ async fn readable_record(
         .execute(&mut **tx)
         .await?;
     Ok(())
+}
+
+fn same_relation(a: &HistoricalForeignKeyCheckV1, b: &HistoricalForeignKeyCheckV1) -> bool {
+    a.source_table == b.source_table
+        && a.target_table == b.target_table
+        && a.source_columns == b.source_columns
+        && a.target_columns == b.target_columns
+        && a.match_type == b.match_type
 }
