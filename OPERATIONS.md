@@ -718,3 +718,5 @@ MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，
 恢复对应原文件后，原元数据和下载字节完全一致。恢复库通过迁移入口重新授予应用角色
 权限，随后以独立非所有者登录执行登录、查询和下载；该角色不能运行恢复切换或TRUNCATE。
 这证明此受控样例的访问与文件恢复，不代表全部历史产物覆盖或完整服务进程重启验收。
+
+磁盘故障的原生回归：Linux 上运行 `cargo test --locked -p integrations --test artifact_publication`。需要 util-linux 的 `unshare`/`mount` 及允许创建用户、挂载命名空间；不可用会失败，不跳过。测试只在子进程私有的 64 KiB tmpfs 内制造 ENOSPC，核对已有产物、失败暂存清理及后续重试，退出后宿主挂载点仍为空。CI 为复制到临时目录的原生 unshare 设置作业专用 AppArmor userns 许可并在结束时移除，不修改全局 userns 策略。这项证据不代替任务准入事务、自动任务、告警或完整 T40 恢复演练。

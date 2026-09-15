@@ -26,6 +26,20 @@ jobs:
           persist-credentials: false
       - name: Require the exact event Head before executing repository code
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - name: Prepare isolated native filesystem fault test
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/native-evidence
+          cp /usr/bin/unshare /tmp/native-evidence/unshare
+          cat > /tmp/native-evidence/artifact-filesystem.apparmor <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile quazonai-ci-artifact-filesystem /tmp/native-evidence/unshare flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /tmp/native-evidence/artifact-filesystem.apparmor
+          echo 'QZ_TEST_UNSHARE=/tmp/native-evidence/unshare' >> "$GITHUB_ENV"
       - name: Verify committed Rust sources and native dependency graph
         run: |
           set -euo pipefail
@@ -86,6 +100,11 @@ jobs:
           test ! -e .github/workflows/publish-native-source.yml
           test ! -e .github/workflows/apply-review-fixes.yml
           git diff --exit-code
+      - name: Remove the job-only filesystem test profile
+        if: always()
+        run: |
+          profile=/tmp/native-evidence/artifact-filesystem.apparmor
+          if test -f "$profile"; then sudo apparmor_parser -R "$profile"; fi
       - name: Record exactly tested source and actual outcomes
         if: always()
         run: |

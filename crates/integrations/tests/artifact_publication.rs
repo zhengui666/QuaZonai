@@ -133,3 +133,51 @@ fn directory_collisions_do_not_remove_existing_children_or_publish_partial_bytes
         .collect();
     assert_eq!(names, vec![std::ffi::OsString::from(id.to_string())]);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_full_filesystem_preserves_objects_and_recovers_without_partial_publication() {
+    use std::process::Command;
+
+    const CHILD: &str = "QZ_ARTIFACT_FULL_FILESYSTEM_TEST";
+    if let Some(root) = std::env::var_os(CHILD) {
+        let root = std::path::PathBuf::from(root);
+        let objects = root.join("objects");
+        let store = ArtifactStore::open(&objects).unwrap();
+        let original = Id::new();
+        let bytes = b"retained object";
+        store.put(original, bytes).unwrap();
+        let failed = Id::new();
+        // The private tmpfs is 64 KiB. This real write must exhaust it partway.
+        assert!(matches!(store.put(failed, &vec![7; 128 * 1024]),
+            Err(ArtifactError::Io(error)) if error.raw_os_error() == Some(libc::ENOSPC)));
+        assert_eq!(store.read(original, count(bytes)).unwrap(), bytes);
+        assert!(!objects.join(failed.to_string()).exists());
+        assert_eq!(fs::read_dir(&objects).unwrap().count(), 1);
+        // Failed staging bytes were released; retrying the unpublished identity works.
+        store.put(failed, b"recovered").unwrap();
+        assert_eq!(
+            store.read(failed, count(b"recovered")).unwrap(),
+            b"recovered"
+        );
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let output = Command::new(std::env::var_os("QZ_TEST_UNSHARE").unwrap_or_else(|| "unshare".into()))
+        .args(["--user", "--map-root-user", "--mount", "--", "sh", "-eu", "-c",
+            "mount -t tmpfs -o size=64k,mode=0700 tmpfs \"$1\"; exec \"$2\" --exact native_full_filesystem_preserves_objects_and_recovers_without_partial_publication --nocapture",
+            "artifact-full-filesystem"])
+        .arg(root.path())
+        .arg(std::env::current_exe().unwrap())
+        .env(CHILD, root.path())
+        .output()
+        .expect("native unshare and mount must be installed");
+    assert!(
+        output.status.success(),
+        "isolated full-filesystem test failed: {} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The mount lived only in the child namespace, never on the host filesystem.
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+}
