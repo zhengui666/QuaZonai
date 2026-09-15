@@ -28,6 +28,7 @@ const privateValues = new Set();
 const stages = [];
 const services = [];
 const commands = new Set();
+const screenshots = [];
 let diagnosticsSafe = true;
 let interruptedExitCode;
 let privateDir;
@@ -265,6 +266,10 @@ async function main() {
     cwd: web, timeout: 240_000,
     env: { ...childEnv, QUAZONAI_WEB_E2E_FIXTURE: fixture, QUAZONAI_WEB_E2E_ORIGIN: baseUrl },
   });
+  for (const width of [1440, 768, 390]) {
+    const name = `projects-${width}.png`;
+    screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
+  }
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
@@ -288,11 +293,16 @@ catch (error) { failure ??= error; }
 try { await cleanup(); }
 catch (error) { failure ??= error; }
 if (adminEnv) {
+  // Failed tests or cleanup never publish images from the private runtime.
+  if (!failure) for (const { name, bytes } of screenshots) {
+    await writeFile(resolve(report, name), bytes, { mode: 0o600 });
+  }
   await writeFile(resolve(report, 'result.json'), JSON.stringify({ schema_version: 1,
     status: failure ? 'FAILED' : 'PASSED', stages,
     error: failure ? redact(failure.message) : null,
     acceptance_scope: 'real first TOTP enrollment, project writes, CSRF, mobile layout and logout; not complete Issue62 acceptance',
     private_artifacts_retained: false,
+    screenshots: failure ? [] : screenshots.map(({ name }) => name),
   }, null, 2), { mode: 0o600 });
 }
 if (failure) {

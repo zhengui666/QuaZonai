@@ -152,6 +152,13 @@ test('real TOTP enrollment, lost-ACK project retry, CSRF, mobile layout and logo
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
       await page.getByRole('button', { name: '取消', exact: true }).click();
       await expect(page.getByLabel('研究名称')).toHaveCount(0);
+      // Capture only the authenticated project surface, never enrollment/OTP UI.
+      await expect(page.getByLabel('动态验证码')).toHaveCount(0);
+      await expect(page.getByLabel('一次性初始化凭据')).toHaveCount(0);
+      await page.locator('.console-layout').screenshot({
+        path: resolve(dirname(config.redactionsFile), `projects-${viewport.width}.png`),
+        animations: 'disabled',
+      });
     }
   });
 

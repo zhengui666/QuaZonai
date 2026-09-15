@@ -6,6 +6,12 @@
 
 ## 已有实现与边界
 
+下图来自 2026-09-15 的真实 Chromium → Rust API → PostgreSQL 验收：在一次性测试实例中完成 TOTP 初始化和项目写入、丢失响应后的原键重试，再截取研究工作台。测试项目不是市场研究或收益证据，截图不代表完整 Demo/T42 已通过。
+
+![真实原生服务的桌面研究工作台](docs/images/native-projects-1440.png)
+
+[平板视口](docs/images/native-projects-768.png) · [手机视口](docs/images/native-projects-390.png)。按下文 `npm run test:e2e:native` 复现；只有验收和资源清理成功，`test-results/native-summary` 才导出三个 `projects-*.png`，不截取认证页面。
+
 | 内容 | 当前事实 |
 |---|---|
 | 原生回测 | Nautilus Rust 0.63.0 的原生不可变 Catalog 读取、受限预测和共享资金目标序列模拟；另保留明确标记 FIXTURE 的原生兼容探针。模拟结果不自动成为资格或交付证据 |

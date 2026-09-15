@@ -128,7 +128,10 @@ test('effort-only mode uses the observed model and exact bigint revision without
   const dialog = await edit(page);
   await dialog.getByRole('switch', { name: '使用 Codex 原生默认模型设置' }).click();
   const slider = dialog.getByRole('slider', { name: '保存的推理强度' });
+  // Keyboard actions do not wait for a div-based slider to become enabled.
+  await expect(slider).toBeEnabled();
   await slider.focus(); await slider.press('End');
+  await expect(slider).toHaveAttribute('aria-valuenow', '2');
   await expect(dialog.getByText('保存值：exhaustive', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: '保存 Codex 配置', exact: true }).click();
   await expect(dialog).toBeHidden();
