@@ -18,7 +18,6 @@ const validKey = (key?: string): key is string => !!key && key.length <= 200 && 
 const validState = ajv.compile({ $ref: 'native#/components/schemas/RunState' });
 const validId = ajv.compile({ $ref: 'native#/components/schemas/Id' });
 const validLimit = ajv.compile(document.paths['/api/v2/projects'].get.parameters.find(parameter => parameter.name === 'limit')!.schema);
-const empty = { status: 200, value: { schema_version: 1, items: [], next_cursor: null } };
 
 // Local presentation state only; never reaches a native project or issues authority.
 export function projectEditor() {
@@ -36,7 +35,7 @@ export function projectEditor() {
     const briefPage = project && parts.length === 6 && parts[5] === 'briefs';
     if (method === 'GET') {
       const selected = query.get('project_id');
-      const nestedPage = project && project.id !== original.id && parts.length === 6 && ['briefs', 'cycles', 'execution-assumptions', 'portfolio-mandates', 'portfolio-candidates', 'releases', 'handoffs', 'automation-policies', 'forward', 'forward-observations', 'forward-weight-snapshots', 'wakes'].includes(parts[5]!);
+      const nestedPage = project && parts.length === 6 && ['briefs', 'cycles', 'execution-assumptions', 'portfolio-mandates', 'portfolio-candidates', 'releases', 'handoffs', 'automation-policies', 'forward', 'forward-observations', 'forward-weight-snapshots', 'wakes'].includes(parts[5]!);
       const globalPage = ['/api/v2/alphas', '/api/v2/artifacts', '/api/v2/evaluation-policies', '/api/v2/experiments', '/api/v2/input-sets', '/api/v2/runs'].includes(path);
       const limit = Number(query.get('limit') ?? '50'); const cursor = query.get('cursor');
       if (globalPage && path !== '/api/v2/runs' && selected === null) return invalid;
@@ -59,7 +58,7 @@ export function projectEditor() {
       }
       if (brief && parts.length === 5) return { status: 200, value: brief };
       if (project && parts.length === 5) return { status: 200, value: project };
-      if (nestedPage) return empty;
+      if (nestedPage) return paginate(project.id === original.id ? (records.get(path)?.value as { items: { id: string }[] } | undefined)?.items ?? [] : []);
       return undefined;
     }
     const creatingBrief = method === 'POST' && parts[3] === 'projects' && parts.length === 6 && parts[5] === 'briefs';

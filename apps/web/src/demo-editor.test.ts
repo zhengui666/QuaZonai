@@ -78,6 +78,13 @@ test('all temporary project pages validate pagination and text follows native co
   expect(edit('PATCH', `${path}/${project}`, { ...update, name: 'A\nB' }, 'invalid-update')?.status).toBe(422);
   expect(edit('PATCH', `${path}/${project}`, { ...update, description: 'A\u0000B' }, 'invalid-update')?.status).toBe(422);
   for (const suffix of ['briefs', 'cycles', 'execution-assumptions', 'portfolio-mandates', 'portfolio-candidates', 'releases', 'handoffs', 'automation-policies', 'forward', 'forward-observations', 'forward-weight-snapshots', 'wakes']) {
+    const originalRoute = `${path}/${id(1)}/${suffix}`;
+    for (const query of ['limit=0', 'limit=101', 'cursor=bad', 'cursor=', 'limit=1&limit=2', 'unknown=1']) expect(edit('GET', originalRoute, undefined, undefined, new URLSearchParams(query))?.status).toBe(422);
+    const originalPage = edit('GET', originalRoute)!;
+    expect(validateResponse(`/api/v2/projects/{id}/${suffix}`, 'get', 200, originalPage.value, 'application/json')).toBe(true);
+    const originalRows = (originalPage.value as { items: { id: string }[] }).items;
+    expect(edit('GET', originalRoute, undefined, undefined, new URLSearchParams('limit=1'))).toMatchObject({ value: { items: originalRows.slice(0, 1), next_cursor: originalRows.length > 1 ? originalRows[0]!.id : null } });
+    if (originalRows.length > 1) expect(edit('GET', originalRoute, undefined, undefined, new URLSearchParams({ cursor: originalRows[0]!.id }))).toMatchObject({ value: { items: originalRows.slice(1) } });
     const route = `${path}/${project}/${suffix}`;
     const page = edit('GET', route)!;
     expect(page).toMatchObject({ status: 200, value: { items: [], next_cursor: null } });
