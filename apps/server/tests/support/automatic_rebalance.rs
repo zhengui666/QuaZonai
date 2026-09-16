@@ -59,6 +59,37 @@ async fn tick(
     result
 }
 
+// Match the production scheduler's eventual advancement under SKIP LOCKED.
+async fn advance(
+    pool: &PgPool,
+    worker: &server::worker::Worker,
+    project: Id,
+    query: &str,
+    parent: Id,
+) -> Option<uuid::Uuid> {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let rows: Vec<uuid::Uuid> = sqlx::query_scalar(query)
+                .bind(parent.as_uuid())
+                .fetch_all(pool)
+                .await
+                .unwrap();
+            assert!(rows.len() <= 1, "a rebalance stage must publish only once");
+            if let Some(id) = rows.first() {
+                return *id;
+            }
+            let result = Box::pin(tick(worker, project)).await;
+            assert!(
+                matches!(result, Ok(()) | Err(server::worker::WorkerFailure::Store)),
+                "{result:?}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .ok()
+}
+
 async fn check(
     pool: &PgPool,
     store: &Store,
@@ -72,19 +103,67 @@ async fn check(
         .fetch_one(pool)
         .await
         .unwrap();
+    // A held project lock must defer, not block or bypass original admission.
+    let mut held = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM app.projects WHERE id=$1 FOR UPDATE")
+        .bind(seed.project_id.as_uuid())
+        .fetch_one(&mut *held)
+        .await
+        .unwrap();
+    let deferred = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        Box::pin(store.automate_rebalance_build(
+            seed.project_id,
+            |_, _| async { panic!("locked Build must not read artifacts") },
+            |_| async { panic!("locked Build must not publish artifacts") },
+        )),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(deferred.is_none());
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.portfolio_rebalances WHERE project_id=$1")
+            .bind(seed.project_id.as_uuid())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+    held.rollback().await.unwrap();
     // The Paper failure must not starve independent bounded research stages.
     Box::pin(tick(worker, seed.project_id)).await.unwrap_err();
-    let build: uuid::Uuid = sqlx::query_scalar("SELECT run_id FROM app.portfolio_rebalances WHERE project_id=$1 AND policy_id=$2 AND input_set_id=$3")
-        .bind(seed.project_id.as_uuid()).bind(policy.id.as_uuid()).bind(input.as_uuid())
-        .fetch_one(pool).await.unwrap();
+    let build = Box::pin(advance(
+        pool,
+        worker,
+        seed.project_id,
+        "SELECT run_id FROM app.portfolio_rebalances WHERE project_id=$1",
+        seed.project_id,
+    ))
+    .await
+    .expect("Worker Build did not advance within the bounded polling window");
+    let lineage: (uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT policy_id,input_set_id FROM app.portfolio_rebalances WHERE run_id=$1",
+    )
+    .bind(build)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(lineage, (policy.id.as_uuid(), input.as_uuid()));
     let build: Id = build.to_string().try_into().unwrap();
     let candidate = Box::pin(complete_stage(pool, store, f, build)).await;
     let _ = tokio::join!(
         Box::pin(tick(worker, seed.project_id)),
         Box::pin(tick(worker, seed.project_id))
     );
-    // Both concurrent ticks may defer across independent project-locked lanes.
-    Box::pin(tick(worker, seed.project_id)).await.unwrap_err();
+    Box::pin(advance(
+        pool,
+        worker,
+        seed.project_id,
+        "SELECT study_run_id FROM app.portfolio_rebalance_studies WHERE build_run_id=$1",
+        build,
+    ))
+    .await
+    .expect("Worker Study did not advance within the bounded polling window");
     let studies: Vec<uuid::Uuid> = sqlx::query_scalar(
         "SELECT study_run_id FROM app.portfolio_rebalance_studies WHERE build_run_id=$1",
     )
@@ -100,14 +179,14 @@ async fn check(
         studies[0].to_string().try_into().unwrap(),
     ))
     .await;
-    Box::pin(tick(worker, seed.project_id)).await.unwrap_err();
-    let released: Option<uuid::Uuid> = sqlx::query_scalar(
+    let released = Box::pin(advance(
+        pool,
+        worker,
+        seed.project_id,
         "SELECT release_id FROM app.portfolio_rebalance_releases WHERE build_run_id=$1",
-    )
-    .bind(build.as_uuid())
-    .fetch_optional(pool)
-    .await
-    .unwrap();
+        build,
+    ))
+    .await;
     let released = match released {
         Some(id) => id,
         None => {
