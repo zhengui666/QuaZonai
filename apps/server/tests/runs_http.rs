@@ -340,6 +340,48 @@ async fn sse_cursors_fail_before_headers_and_disconnect_does_not_cancel(pool: Pg
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn live_sse_readers_poll_new_commits_and_resume_the_same_cursor(pool: PgPool) {
+    let (f, cookie) = authenticated(pool.clone()).await;
+    let run = admitted(&pool, &f, "live-readers").await;
+    let http = Http::start(f.app.clone()).await;
+    let path = format!("/api/v2/runs/{}", run.id);
+    let events = format!("{path}/events");
+    let mut first = http.get(&events, Some(&cookie)).await;
+    let mut second = http.get(&events, Some(&cookie)).await;
+    assert_eq!(frame_ids(&one_event(&mut first).await), vec![1]);
+    assert_eq!(frame_ids(&one_event(&mut second).await), vec![1]);
+    // Commit through the real command API after both readers exhausted their
+    // initial batches. The server polls persisted events, without a notifier.
+    let response = http
+        .request(
+            reqwest::Method::POST,
+            &format!("{path}/cancel"),
+            Some(&cookie),
+        )
+        .header("idempotency-key", "live-readers-cancel")
+        .json(&json!({"schema_version":1,"expected_revision":run.revision}))
+        .send()
+        .await
+        .unwrap();
+    json_reply(response, StatusCode::ACCEPTED).await;
+    let (first, second) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(first.text(), second.text())
+    })
+    .await
+    .expect("both live streams must poll the new terminal event");
+    assert_eq!(frame_ids(&first.unwrap()), vec![2]);
+    assert_eq!(frame_ids(&second.unwrap()), vec![2]);
+    let resumed = http
+        .request(reqwest::Method::GET, &events, Some(&cookie))
+        .header("last-event-id", format!("{}:1", run.id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resumed.status(), StatusCode::OK);
+    assert_eq!(frame_ids(&resumed.text().await.unwrap()), vec![2]);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn sse_notices_revoked_authority_without_leaking_future_events(pool: PgPool) {
     let (f, cookie) = authenticated(pool.clone()).await;
     let run = admitted(&pool, &f, "revocation").await;

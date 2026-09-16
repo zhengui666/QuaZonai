@@ -475,9 +475,14 @@ async fn qualified_members(
             panic!("original Sealed admission");
         };
         experiment_support::complete_sealed(&pool, &store, &f, *lease).await;
-        validation_publication::publish(&store, &f, sealed)
-            .await
-            .unwrap();
+        // Result-before-ACK redelivery must not issue a second qualification.
+        let (first, replay) = tokio::join!(
+            validation_publication::publish(&store, &f, sealed),
+            validation_publication::publish(&store, &f, sealed)
+        );
+        let (first, replay) = (first.unwrap(), replay.unwrap());
+        assert_eq!(first.resource, replay.resource);
+        assert_ne!(first.replayed, replay.replayed);
         let (a, b) = tokio::join!(
             store.acknowledge_run(&message),
             store.acknowledge_run(&message)
