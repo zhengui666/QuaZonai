@@ -165,31 +165,39 @@ async fn fresh_admission_and_same_transaction_replay_never_commit_the_caller(poo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn queue_error_drops_the_whole_caller_transaction_and_can_retry(pool: PgPool) {
+async fn event_or_queue_error_drops_the_whole_caller_transaction_and_can_retry(pool: PgPool) {
     let (fixture, request) = setup(&pool).await;
     sqlx::raw_sql(
-        "CREATE FUNCTION public.reject_initial_queue() RETURNS trigger LANGUAGE plpgsql AS $$ \
-         BEGIN RAISE EXCEPTION 'injected queue failure'; END $$; \
-         CREATE TRIGGER reject_initial_queue BEFORE INSERT ON pgmq.q_runs \
-         FOR EACH ROW EXECUTE FUNCTION public.reject_initial_queue();",
+        "CREATE FUNCTION public.reject_initial_admission() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN RAISE EXCEPTION 'injected admission failure'; END $$;",
     )
     .execute(&pool)
     .await
     .unwrap();
-    let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
-    assert!(matches!(
-        Store::enqueue_run_in_transaction(tx, "initial", &request).await,
-        Err(StoreError::Database(_))
-    ));
-    // No caller-owned Tx survives the error, even if the caller handles it.
-    assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
-        (0, 0, 0, 0, 0)
-    );
-    sqlx::query("DROP TRIGGER reject_initial_queue ON pgmq.q_runs")
+    for table in ["app.run_events", "pgmq.q_runs"] {
+        sqlx::query(&format!(
+            "CREATE TRIGGER reject_initial_admission BEFORE INSERT ON {table} \
+             FOR EACH ROW EXECUTE FUNCTION public.reject_initial_admission()"
+        ))
         .execute(&pool)
         .await
         .unwrap();
+        let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
+        assert!(matches!(
+            Store::enqueue_run_in_transaction(tx, "initial", &request).await,
+            Err(StoreError::Database(_))
+        ));
+        // Check all staged domain, admission, event and queue rows from another connection.
+        assert_eq!(
+            visible_counts(&pool, request.cycle_id).await,
+            (0, 0, 0, 0, 0),
+            "failed insert into {table} must discard the whole caller transaction"
+        );
+        sqlx::query(&format!("DROP TRIGGER reject_initial_admission ON {table}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
     let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
     let (tx, retried) = Store::enqueue_run_in_transaction(tx, "initial", &request)
         .await
