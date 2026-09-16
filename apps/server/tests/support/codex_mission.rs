@@ -32,7 +32,7 @@ impl Drop for Provider {
     }
 }
 impl Provider {
-    async fn start(home: &Path, f: &native::Fixture) -> Self {
+    async fn start(home: &Path, f: &native::Fixture, canary: &str) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         std::fs::write(
@@ -54,7 +54,7 @@ impl Provider {
         // Neither the name nor value has a conventional KEY/TOKEN suffix. This
         // checks native filesystem permissions, not a credential-name filter.
         let command = format!(
-            "printf QZ_WORKSPACE > native-proof.txt; /bin/cat native-proof.txt; if /bin/cat '{}' 2>/dev/null; then printf QZ_CREDENTIAL_READ; else printf QZ_CREDENTIAL_UNREADABLE; fi; /usr/bin/printenv QZ_NATIVE_CANARY; printf QZ_FILE_CHECK_DONE",
+            "printf QZ_WORKSPACE > native-proof.txt; /bin/cat native-proof.txt; if /bin/cat '{}' 2>/dev/null; then printf QZ_CREDENTIAL_READ; else printf QZ_CREDENTIAL_UNREADABLE; fi; /usr/bin/printenv {canary}; printf QZ_FILE_CHECK_DONE",
             sentinel.display()
         );
         let seen = Arc::new(Mutex::new(Seen {
@@ -204,7 +204,7 @@ async fn respond(
 fn message(text: &str) -> Value {
     json!({"type":"message","role":"assistant","id":text,"content":[{"type":"output_text","text":text}]})
 }
-fn launch(home: &Path, work: &Path) -> Launch {
+fn launch(home: &Path, work: &Path, canary: &str) -> Launch {
     Launch {
         binary: std::env::var_os("CODEX_NATIVE_BIN")
             .expect("pinned native binary required")
@@ -214,7 +214,7 @@ fn launch(home: &Path, work: &Path) -> Launch {
         working_directory: work.into(),
         executable_path: std::env::var_os("PATH").unwrap(),
         native_environment: BTreeMap::from([(
-            "QZ_NATIVE_CANARY".into(),
+            canary.into(),
             "TEST_ONLY_NATIVE_ENV_CREDENTIAL".into(),
         )]),
         custom_provider: None,
@@ -267,11 +267,14 @@ async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts
 async fn native_mission_owns_mcp_dispatch_and_resumes_without_exposing_credentials(pool: PgPool) {
     let f = native::fixture(&pool, &["RUN_READ", "RESEARCH_READ"]).await;
     let home = tempfile::tempdir().unwrap();
-    let provider = Provider::start(home.path(), &f).await;
+    let canary = format!("QZ_{}", contracts::Id::new().to_string().replace('-', ""));
+    let provider = Provider::start(home.path(), &f, &canary).await;
     let options = f.mission_options();
     let params = options.start_params().unwrap();
     assert!(params["config"]["mcp_servers"]["quazonai_mission"].is_object());
-    let mut first = Client::start(launch(home.path(), &f.work)).await.unwrap();
+    let mut first = Client::start(launch(home.path(), &f.work, &canary))
+        .await
+        .unwrap();
     assert!(matches!(
         first.start_thread(&options).await,
         Err(server::codex_native::NativeFailure::ProfileInstructions)
@@ -336,7 +339,9 @@ async fn native_mission_owns_mcp_dispatch_and_resumes_without_exposing_credentia
         "QZ_WORKSPACE"
     );
     first.close().await.unwrap();
-    let mut second = Client::start(launch(home.path(), &f.work)).await.unwrap();
+    let mut second = Client::start(launch(home.path(), &f.work, &canary))
+        .await
+        .unwrap();
     let resumed = second
         .resume_thread(&thread.thread.id, &options)
         .await
