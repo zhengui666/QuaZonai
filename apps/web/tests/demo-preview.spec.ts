@@ -67,7 +67,7 @@ test('synthetic preview renders native-contract records without a backend or wri
   await page.getByRole('tab', { name: '评估政策', exact: true }).click();
   await page.getByRole('button', { name: '政策 v1', exact: true }).click();
   const policy = page.getByRole('dialog', { name: '不可变评估政策', exact: true });
-  await expect(policy.getByLabel('原完整评估政策', { exact: true })).toContainText('SYNTHETIC · 真实数据与独立证据仍是资格前提');
+  await expect(policy.getByLabel('原完整评估政策', { exact: true })).toContainText('SYNTHETIC · 仅合成研究，不授予真实资格');
   await page.keyboard.press('Escape');
   await expect(policy).toBeHidden();
   await navigate(page, '交付');

@@ -495,7 +495,7 @@ async fn native_candidate_simulation(sequence: bool) {
     }
     let run = Id::new();
     f.runs.push(run);
-    let spec = JobSpecV1 {
+    let mut spec = JobSpecV1 {
         schema_version: SchemaV1,
         run_id: run,
         attempt_no: 1,
@@ -558,6 +558,7 @@ async fn native_candidate_simulation(sequence: bool) {
         assert_eq!(fs::read(&path).unwrap(), corrupted);
         f.assert_private_logs();
         fs::write(path, original).unwrap();
+        spec.deadline_at = runtime::now() + chrono::Duration::seconds(50);
     }
     let accepted = f.submit(&spec).await;
     assert_eq!(f.terminal(&spec).await.state, RuntimeJobState::Succeeded);

@@ -5,6 +5,7 @@ import policyInput from '../../../tests/contracts/research-policy.json';
 
 export const id = (n: number) => `01990000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 const at = '2026-09-15T00:00:00Z';
+const frozenAt = '2026-09-14T00:00:00Z';
 const page = (items: unknown[]) => ({ schema_version: 1, items, next_cursor: null });
 export const records = new Map<string, { contract: string; value: unknown }>();
 function record(path: string, contract: string, value: unknown) { records.set(path, { contract, value }); }
@@ -13,7 +14,7 @@ const project: Schema['ProjectView'] = {
   id: id(1), root_lineage_id: id(1), name: 'SYNTHETIC · 双 Alpha 研究示例',
   description: '固定合成界面记录；没有执行研究、模型推理或交付。', state: 'DRAFT',
   current_brief_id: id(10), current_automation_policy_id: null, created_by: 'OPERATOR',
-  archived_at: null, created_at: at, updated_at: at, revision: '1',
+  archived_at: null, created_at: frozenAt, updated_at: at, revision: '1',
 };
 const brief: Schema['BriefView'] = {
   id: id(10), project_id: project.id, version: 1, revision: '1', state: 'FROZEN',
@@ -21,7 +22,7 @@ const brief: Schema['BriefView'] = {
     economic_rationale: '仅解释界面与记录关联，不代表经济有效性。' } as Schema['BriefContentV1'],
   bindings: [...briefInput.bindings as Schema['BriefBindingV1'][],
     { dataset_revision_id: id(901), role: 'VALIDATION', access_policy: 'RESEARCH_READ' }],
-  supersedes_id: null, frozen_at: at, created_at: at, updated_at: at,
+  supersedes_id: null, frozen_at: frozenAt, created_at: frozenAt, updated_at: frozenAt,
 };
 const run: Schema['RunSnapshotV1'] = {
   schema_version: 1, id: id(20), project_id: project.id, cycle_id: null, kind: 'IMPORT',
@@ -40,7 +41,7 @@ record(`/api/v2/projects/${project.id}/briefs`, '/api/v2/projects/{id}/briefs', 
 record(`/api/v2/briefs/${brief.id}`, '/api/v2/briefs/{id}', brief);
 record('/api/v2/runs', '/api/v2/runs', page([run]));
 const inputSet = {
-  id: id(21), project_id: project.id, purpose: 'DISCOVERY', decision_cutoff: at, frozen_at: at, revision: '1', created_at: at,
+  id: id(21), project_id: project.id, purpose: 'DISCOVERY', decision_cutoff: frozenAt, frozen_at: frozenAt, revision: '1', created_at: frozenAt,
 } satisfies Schema['InputSetSummary'];
 const inputs = [inputSet,
   { ...inputSet, id: policyInput.comparison_input_set_id, purpose: 'VALIDATION' },
@@ -85,9 +86,15 @@ for (const [n, alpha] of alphas.entries()) {
 
 const { schema_version: _schema, selection, comparison_input_set_id, execution_assumptions_id: _assumptions, ...policyFields } = policyInput as Schema['EvaluationPolicyCreate'];
 const policy: Schema['EvaluationPolicyView'] = {
-  ...policyFields, id: brief.content.evaluation_policy_id, project_id: project.id, version: 1, created_at: at,
-  question: 'SYNTHETIC · 真实数据与独立证据仍是资格前提', portfolio_metric_requirements: null, portfolio_study_plan: null,
-  selection_rule: { ...selection, schema_version: 1, comparison_input_set_id, execution_assumptions_id: brief.content.execution_assumptions_id,
+  ...policyFields, id: brief.content.evaluation_policy_id, project_id: project.id, version: 1, created_at: frozenAt,
+  question: 'SYNTHETIC · 仅合成研究，不授予真实资格', require_real_data: false,
+  split_policy: { ...policyFields.split_policy, label_horizon_observations: brief.content.horizon_value, purge_observations: briefInput.content.horizon_value,
+    sealed_revision_id: brief.bindings.find(binding => binding.role === 'SEALED')!.dataset_revision_id },
+  metric_requirements: policyFields.metric_requirements.map(item => ({ ...item, metric_code: 'PEARSON_IC', scope: 'asset:0/fold:0', method_allowlist: ['ndarray-stats.pearson_correlation'] })),
+  sealed_metric_requirements: policyFields.sealed_metric_requirements!.map(item => ({ ...item, metric_code: 'PEARSON_IC', scope: 'asset:0/fold:0', method_allowlist: ['ndarray-stats.pearson_correlation'] })),
+  required_capabilities: [], portfolio_metric_requirements: null, portfolio_study_plan: null,
+  selection_rule: { ...selection, metric_code: 'PEARSON_IC', metric_scope: 'asset:0/fold:0', method_id: 'ndarray-stats.pearson_correlation',
+    method_version: '0.7.0', unit: 'CORRELATION', frequency: `1-MINUTE-LAST-EXTERNAL;horizon=${brief.content.horizon_value}`, schema_version: 1, comparison_input_set_id, execution_assumptions_id: brief.content.execution_assumptions_id,
     comparable_scope: 'FAMILY_LINEAGE', root_lineage_id: project.root_lineage_id, family_id: id(205), tie_break: 'EXPERIMENT_ID_ASC', missing_required_metric: 'INCONCLUSIVE' },
 };
 const cycle: Schema['CycleViewV1'] = {
@@ -124,7 +131,7 @@ const assumptions: Schema['ExecutionAssumptionsViewV1'] = {
   id: brief.content.execution_assumptions_id, project_id: project.id, input_set_id: id(21), dataset_revision_id: brief.bindings[0]!.dataset_revision_id,
   runtime_id: id(220), capability_snapshot_artifact_id: id(221), fee_schedule_artifact_id: id(201), engine_image_ref: 'synthetic.invalid/example:fixture',
   venue_capability_ref: 'SYNTHETIC', calendar_version: 'fixture-v1', settlement_rule_ref: 'fixture-only', cost_assumption_status: 'CONSERVATIVE_ASSUMPTION',
-  bar_liquidity: null, bar_liquidity_valid_until: null, rolling_liquidity: null, rolling_liquidity_artifact_id: null, created_at: at,
+  bar_liquidity: null, bar_liquidity_valid_until: null, rolling_liquidity: null, rolling_liquidity_artifact_id: null, created_at: frozenAt,
   settings: { schema_version: 1, base_currency: 'USD', starting_capital: '1000', account_kind: 'CASH', leverage: '1', snapshot_interval_ms: 1000, exposure_tolerance: '0.000001',
     fee_rates: [{ instrument_id: 'SYNTHETIC.EXAMPLE', maker: '0.001', taker: '0.002' }],
     fee_model: { schema_version: 1, adapter_kind: 'NAUTILUS_MAKER_TAKER', upstream_class: 'nautilus_execution::models::fee::MakerTakerFeeModel', upstream_version: '0.63.0', parameters: {} },
@@ -172,14 +179,14 @@ record(`/api/v2/portfolio-candidates/${candidate.id}`, '/api/v2/portfolio-candid
 record(`/api/v2/portfolio-candidates/${candidate.id}/evaluations`, '/api/v2/portfolio-candidates/{id}/evaluations', page([]));
 
 const runtime: Schema['RuntimeView'] = {
-  id: id(220), revision: '1', protocol_version: 1, credential_configured: false, ca_configured: false,
-  last_capability_snapshot_artifact_id: null, created_at: at, updated_at: at,
+  id: id(220), revision: '2', protocol_version: 1, credential_configured: false, ca_configured: false,
+  last_capability_snapshot_artifact_id: null, created_at: '2026-01-01T00:00:00Z', updated_at: at,
   configuration: { name: 'SYNTHETIC · 未连接 Runtime', endpoint: 'https://synthetic.invalid', tls_policy: 'SYSTEM_CA',
     enabled: false, development_http: false, allowed_capabilities: ['DATA_VALIDATE'] },
 };
 const source: Schema['DataSourceView'] = {
   id: id(230), name: 'SYNTHETIC · 演示目录', runtime_id: runtime.id, native_catalog_ref: 'synthetic/catalog',
-  provider_kind: 'NAUTILUS_CATALOG', enabled: false, revision: '1', created_at: at, updated_at: at,
+  provider_kind: 'NAUTILUS_CATALOG', enabled: false, revision: '2', created_at: '2026-01-01T00:00:00Z', updated_at: at,
 };
 const grant: Schema['DataGrantView'] = {
   id: id(231), source_id: source.id, version: '1', license_reference: 'SYNTHETIC · 已过期的演示许可',
@@ -190,21 +197,23 @@ const universe: Schema['UniverseView'] = {
   id: brief.content.universe_version_id, name: 'SYNTHETIC · 演示投资域', registration_state: 'LEGACY_UNVERIFIED',
   membership_artifact_id: id(233), instrument_definitions_artifact_id: id(234), calendar_ref: 'fixture-calendar',
   calendar_version: 'fixture-v1', selection_asof: at, has_historical_membership: false,
-  coverage_start: '2026-01-01T00:00:00Z', coverage_end: at, created_at: at,
+  coverage_start: '2026-01-01T00:00:00Z', coverage_end: at, created_at: '2026-01-01T00:00:00Z',
 };
 const datasets: Schema['DatasetView'][] = brief.bindings.map((binding, n) => ({
   id: binding.dataset_revision_id, source_id: source.id, data_use_grant_id: grant.id, native_snapshot_ref: `synthetic/snapshot-${n}`,
   storage_version: '1', universe_version_id: universe.id, schema_version: '1', data_kind: 'BAR', partition: binding.role,
-  event_start: '2026-01-01T00:00:00Z', event_end: at, available_through: at, row_count: '0', timezone: 'UTC',
-  quality_artifact_id: id(250 + n), pit_status: 'UNVERIFIED', revision_policy: 'UNKNOWN', origin: 'FIXTURE', created_at: at,
-  native_metadata_artifact_id: id(240 + n), registration_observed_at: at,
+  event_start: `2026-0${binding.role === 'DISCOVERY' ? 1 : binding.role === 'VALIDATION' ? 2 : 3}-01T00:00:00Z`,
+  event_end: `2026-0${binding.role === 'DISCOVERY' ? 1 : binding.role === 'VALIDATION' ? 2 : 3}-02T00:00:00Z`,
+  available_through: frozenAt, row_count: '200', timezone: 'UTC',
+  quality_artifact_id: id(250 + n), pit_status: 'UNVERIFIED', revision_policy: 'UNKNOWN', origin: 'FIXTURE', created_at: frozenAt,
+  native_metadata_artifact_id: id(240 + n), registration_observed_at: frozenAt,
   source_enabled: false, runtime_enabled: false, license_state: 'EXPIRED', checked_at: at,
 }));
 record('/api/v2/integrations/runtimes', '/api/v2/integrations/runtimes', page([runtime]));
 record(`/api/v2/integrations/runtimes/${runtime.id}`, '/api/v2/integrations/runtimes/{id}', runtime);
 record(`/api/v2/briefs/${brief.id}/execution-context`, '/api/v2/briefs/{id}/execution-context', {
   schema_version: 1, brief, execution_context: { schema_version: 1,
-    runtime_id: runtime.id, runtime_revision: runtime.revision,
+    runtime_id: runtime.id, runtime_revision: '1',
     discovery_input_set_id: inputSet.id, validation_input_set_id: policyInput.comparison_input_set_id, sealed_input_set_id: id(900),
   },
 } satisfies Schema['FrozenBriefV1']);
