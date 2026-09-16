@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { demoPackage, demoResponse, id, packageBytes, records } from '../demo/records';
+import { demoPackage, demoSealedEvaluations, demoResponse, id, packageBytes, records } from '../demo/records';
 import { validateProblem, validateResponse } from './generated/responses.cjs';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
@@ -114,5 +114,29 @@ test('frozen synthetic context resolves exact project, partition and Runtime ref
     expect(universe.selection_asof <= dataset.available_through).toBe(true);
     expect(dataset.origin).toBe('FIXTURE');
     previousEnd = dataset.event_end;
+  }
+});
+
+
+test('historical qualifications resolve to their distinct sealed evaluations', () => {
+  for (const n of [0, 1]) {
+    const alpha = (records.get('/api/v2/alphas')!.value as { items: import('./api').Schema['AlphaView'][] }).items.find(item => item.id === id(400 + n))!;
+    expect(alpha.lifecycle).toBe('QUALIFIED');
+    const history = records.get(`/api/v2/alpha-versions/${alpha.active_version_id}/qualifications`)!.value as { items: import('./api').Schema['QualificationView'][] };
+    expect(history.items).toHaveLength(1);
+    const qualification = history.items[0]!;
+    const sealed = demoSealedEvaluations.find(item => item.id === qualification.qualifying_evaluation_id)!;
+    expect(sealed).toMatchObject({ evaluation_kind: 'SEALED', subject_alpha_version_id: alpha.active_version_id, policy_id: qualification.policy_id, origin: 'FIXTURE' });
+    const evaluations = records.get(`/api/v2/alpha-versions/${alpha.active_version_id}/evaluations`)!.value as { items: import('./api').Schema['EvaluationView'][] };
+    expect(evaluations.items).not.toContainEqual(sealed);
+    expect(demoResponse('GET', `/api/v2/evaluations/${sealed.id}`).status).toBe(404);
+    expect(demoResponse('GET', `/api/v2/evaluations/${sealed.id}/metrics`).status).toBe(404);
+    const validation = evaluations.items.find(item => item.evaluation_kind === 'WALK_FORWARD')!;
+    expect(validation.id).not.toBe(sealed.id);
+    expect(validation.run_id).not.toBe(sealed.run_id);
+    const run = records.get(`/api/v2/runs/${sealed.run_id}`)!.value as import('./api').Schema['RunSnapshotV1'];
+    const input = records.get(`/api/v2/input-sets/${sealed.input_set_id}`)!.value as import('./api').Schema['InputSetView'];
+    expect(run.input_set_id).toBe(sealed.input_set_id);
+    expect(input.header.purpose).toBe('SEALED');
   }
 });

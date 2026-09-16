@@ -36,6 +36,7 @@ test('synthetic two-Alpha history keeps expired qualification and original portf
     await expect(evaluation.getByText('本评估没有发表指标；不能把缺失解释成0或通过。', { exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(evaluation).toBeHidden();
+    await expect(page.getByRole('button', { name: `评估 0000049${n - 1}`, exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: '返回 Alpha 列表', exact: true }).click();
   }
   await navigate(page, '组合');

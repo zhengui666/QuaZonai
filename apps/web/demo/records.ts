@@ -250,11 +250,13 @@ for (const dataset of datasets) record(`/api/v2/data/revisions/${dataset.id}`, '
 const expired = '2026-09-15T00:05:00Z';
 const observed = '2026-09-16T00:00:00Z';
 const demoAlphaRuns: Schema['RunSnapshotV1'][] = [];
+// Private synthetic history: native public evaluation routes exclude SEALED.
+export const demoSealedEvaluations: Schema['EvaluationView'][] = [];
 const demoAlphas: Schema['AlphaView'][] = alphas.map((alpha, n) => ({ ...alpha,
-  id: id(400 + n), name: `SYNTHETIC · 历史展示 ${n + 1}`, active_version_id: id(410 + n),
+  id: id(400 + n), name: `SYNTHETIC · 历史展示 ${n + 1}`, active_version_id: id(410 + n), lifecycle: 'QUALIFIED',
 }));
 for (const [n, alpha] of demoAlphas.entries()) {
-  const evaluationRun: Schema['RunSnapshotV1'] = { ...run, id: id(450 + n), active_attempt_id: id(953 + n), kind: 'ALPHA_EVALUATE', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY' };
+  const evaluationRun: Schema['RunSnapshotV1'] = { ...run, id: id(450 + n), active_attempt_id: id(953 + n), input_set_id: policy.selection_rule.comparison_input_set_id, kind: 'ALPHA_EVALUATE', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY' };
   demoAlphaRuns.push(evaluationRun);
   record(`/api/v2/runs/${evaluationRun.id}`, '/api/v2/runs/{id}', evaluationRun);
   record(`/api/v2/runs/${evaluationRun.id}/rebalance`, '/api/v2/runs/{id}/rebalance', { schema_version: 1, rebalance: null } satisfies Schema['RunRebalanceViewV1']);
@@ -265,13 +267,19 @@ for (const [n, alpha] of demoAlphas.entries()) {
   };
   const evaluation: Schema['EvaluationView'] = {
     id: id(420 + n), project_id: project.id, subject_alpha_version_id: version.id, subject_candidate_id: null,
-    input_set_id: id(21), policy_id: policy.id, run_id: evaluationRun.id, evaluation_kind: 'WALK_FORWARD',
+    input_set_id: evaluationRun.input_set_id, policy_id: policy.id, run_id: evaluationRun.id, evaluation_kind: 'WALK_FORWARD',
     execution_status: 'SUCCEEDED', evidence_status: 'VALID', decision: 'PASS', origin: 'FIXTURE',
     report_artifact_id: id(480 + n), method_versions_artifact_id: id(480 + n), concluded_at: at,
     valid_until: expired, checked_at: observed, unexpired_at_read: false,
   };
+  const sealedRun: Schema['RunSnapshotV1'] = { ...evaluationRun, id: id(960 + n), active_attempt_id: id(970 + n), input_set_id: id(900) };
+  demoAlphaRuns.push(sealedRun);
+  record(`/api/v2/runs/${sealedRun.id}`, '/api/v2/runs/{id}', sealedRun);
+  record(`/api/v2/runs/${sealedRun.id}/rebalance`, '/api/v2/runs/{id}/rebalance', { schema_version: 1, rebalance: null } satisfies Schema['RunRebalanceViewV1']);
+  const sealed: Schema['EvaluationView'] = { ...evaluation, id: id(490 + n), run_id: sealedRun.id,
+    input_set_id: sealedRun.input_set_id, evaluation_kind: 'SEALED', report_artifact_id: id(980 + n), method_versions_artifact_id: id(980 + n) };
   const qualification: Schema['QualificationView'] = { id: id(430 + n), alpha_version_id: version.id,
-    policy_id: policy.id, qualifying_evaluation_id: id(490 + n), granted_at: at, valid_until: expired,
+    policy_id: policy.id, qualifying_evaluation_id: sealed.id, granted_at: at, valid_until: expired,
     created_at: at, checked_at: observed, grant_window_open: false, revocation: null,
   };
   record(`/api/v2/alphas/${alpha.id}/versions`, '/api/v2/alphas/{id}/versions', page([version]));
@@ -279,6 +287,7 @@ for (const [n, alpha] of demoAlphas.entries()) {
   record(`/api/v2/alpha-versions/${version.id}/evaluations`, '/api/v2/alpha-versions/{id}/evaluations', page([evaluation]));
   record(`/api/v2/evaluations/${evaluation.id}`, '/api/v2/evaluations/{id}', evaluation);
   record(`/api/v2/evaluations/${evaluation.id}/metrics`, '/api/v2/evaluations/{id}/metrics', page([]));
+  demoSealedEvaluations.push(sealed);
   record(`/api/v2/alpha-versions/${version.id}/qualifications`, '/api/v2/alpha-versions/{id}/qualifications', page([qualification]));
 }
 record('/api/v2/alphas', '/api/v2/alphas', page([...alphas, ...demoAlphas]));
