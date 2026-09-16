@@ -45,12 +45,12 @@ Full database/OCI/browser/CodeQL coverage is delegated to the existing GitHub wo
 <a id="review"></a>
 ## Review
 
-Independent GitHub Codex review and latest-Head CI are required. No review result is presumed.
+[PR #84](https://github.com/zhengui666/QuaZonai/pull/84) owns the independent GitHub Codex review, threads and latest-Head CI. Read its actual results before accepting delivery; this document does not freeze a future result as green. The separate [fresh-context evaluation](../../evals/runs/2026-09-17-onboarding.md) found and verified fixes for Attempt timing and the lifecycle source link; all three reading cases met their expected behavior.
 
 <a id="delivery"></a>
 ## Delivery
 
-Implementation and local verification are complete. Publish this scope as a new PR; its live merge state and checks are the delivery record. No formal release or incident occurred, so neither record is fabricated.
+Implementation and local verification are complete; delivery is [PR #84](https://github.com/zhengui666/QuaZonai/pull/84). Its native merge state, exact-Head CI and review are the canonical acceptance record under the owner's endpoint. Follow the [review procedure](../../review.md#approval), then verify the resulting main commit and its checks. No formal product release or incident occurred, so neither record is fabricated.
 
 <a id="handoff"></a>
 ## Handoff
