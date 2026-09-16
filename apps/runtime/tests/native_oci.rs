@@ -17,6 +17,46 @@ use runtime::engine::{NativeEngine, NativeImage};
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, time::Duration};
 use support::{count, docker, Fixture, SIGNAL, SLOW_SIGNAL};
 
+#[tokio::test]
+async fn native_capabilities_exclude_binary_options_without_hiding_supported_markets() {
+    use contracts::runtime::{RuntimeCapabilitiesV1, RuntimeDataKind};
+    let mut f = Fixture::open().await;
+    let catalog = f.directory.path().join("catalog");
+    fs::create_dir(&catalog).unwrap();
+    let metadata_path = f.directory.path().join("catalog-metadata.json");
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(&f.config_path).unwrap()).unwrap();
+    config["catalogs"] = serde_json::json!([{"root":catalog,"metadata_file":metadata_path}]);
+    // Only capability advertisement is under test: metadata is explicitly synthetic,
+    // and an empty directory must never be reported as a successful scientific run.
+    for class in ["CurrencyPair", "BinaryOption", "Equity"] {
+        f.crash();
+        let mut metadata = catalog_fixture::metadata();
+        metadata.universe.instrument_definitions = vec![serde_json::json!({
+            class: {"id": "EUR/USD.SIM", "fixture_only": true}
+        })];
+        domain::catalogs::metadata(&metadata, runtime::now()).unwrap();
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        fs::write(&f.config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        f.restart().await;
+        let capabilities: RuntimeCapabilitiesV1 = f
+            .json(Method::GET, &["capabilities"], None, &[StatusCode::OK])
+            .await;
+        domain::runtime::capabilities(&capabilities, runtime::now()).unwrap();
+        assert!(!capabilities.image_refs.is_empty());
+        if class == "BinaryOption" {
+            assert!(capabilities.venues.is_empty());
+        } else {
+            assert_eq!(capabilities.venues.len(), 1);
+            let venue = &capabilities.venues[0];
+            assert_eq!(venue.venue, "SIM");
+            assert_eq!(venue.instrument_classes, [class]);
+            assert_eq!(venue.data_kinds, [RuntimeDataKind::Bar]);
+            assert!(!venue.expiry_and_settlement);
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_native_candidate_simulation_consumes_original_target_and_settings_files() {
     native_candidate_simulation(false).await;
