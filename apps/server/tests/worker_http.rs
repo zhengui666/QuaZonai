@@ -2,6 +2,8 @@
 //! Remote reports here are controlled fault fixtures, never real science or qualification.
 #[path = "support/worker_runtime.rs"]
 mod native;
+#[path = "support/postgres.rs"]
+mod postgres;
 #[path = "../../../crates/store/tests/support/native_tasks.rs"]
 mod tasks;
 
@@ -103,7 +105,7 @@ async fn actual_worker_loop_reconciles_lost_submit_ack_without_reposting_and_arc
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn a_new_worker_recovers_the_exact_sent_attempt_after_real_lease_expiry(pool: PgPool) {
+async fn a_restored_database_recovers_the_exact_sent_attempt_without_reposting(pool: PgPool) {
     let harness = native::setup(&pool, Behavior::LostSubmitAck).await;
     let f = &harness.fixture;
     let run = tasks::start(f, "worker-recovery", &f.request)
@@ -139,15 +141,75 @@ async fn a_new_worker_recovers_the_exact_sent_attempt_after_real_lease_expiry(po
         transport.submit_job(&job.spec).await,
         Err(server::runtime_transport::RuntimeRequestError::Unavailable)
     ));
-    // No live driver owns the lease now. This is an actual lease-expiry/recovery
-    // test, not a claim that the test killed a production OS process.
-    tasks::wait_expired(&pool, old.fence.attempt_id).await;
+    // No driver is running during this real archive. Keep the original remote job
+    // and state volume; only the control database is restored into an isolated DB.
+    let dump = postgres::postgres_tool(&pool, "pg_dump")
+        .args(["--format=custom", "--no-owner", "--no-privileges"])
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        dump.status.success() && dump.stderr.is_empty(),
+        "test archive failed"
+    );
+    assert!(dump.stdout.starts_with(b"PGDMP"));
+    let database = format!("worker_restore_{}", Id::new().to_string().replace('-', ""));
+    sqlx::query(&format!("CREATE DATABASE {database} TEMPLATE template0"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let restored = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect_with(pool.connect_options().as_ref().clone().database(&database))
+        .await
+        .unwrap();
+    let mut child = postgres::postgres_tool(&restored, "pg_restore")
+        .args([
+            "--dbname",
+            "",
+            "--single-transaction",
+            "--exit-on-error",
+            "--no-owner",
+            "--no-privileges",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    use tokio::io::AsyncWriteExt;
+    let (written, output) = tokio::join!(
+        async {
+            input.write_all(&dump.stdout).await?;
+            input.shutdown().await
+        },
+        child.wait_with_output()
+    );
+    let output = output.unwrap();
+    assert!(
+        written.is_ok() && output.status.success() && output.stderr.is_empty(),
+        "test restore failed"
+    );
+    let restored_store = store::Store::from_pool(restored.clone());
+    let root = f.data.directory.path();
+    let worker = Worker::new(
+        restored_store.clone(),
+        integrations::secrets::SecretVault::open(
+            &root.join("worker-secrets"),
+            &root.join("worker-master.key"),
+        )
+        .unwrap(),
+        integrations::artifacts::ArtifactStore::open(&root.join("objects")).unwrap(),
+        harness.targets.clone(),
+        2,
+    )
+    .unwrap();
+    tasks::wait_expired(&restored, old.fence.attempt_id).await;
     let (_stop, receiver) = watch::channel(false);
     tokio::time::timeout(
         Duration::from_secs(10),
-        harness
-            .worker
-            .process_message(message, "recovered-driver", receiver),
+        worker.process_message(message, "restored-driver", receiver),
     )
     .await
     .unwrap()
@@ -158,15 +220,30 @@ async fn a_new_worker_recovers_the_exact_sent_attempt_after_real_lease_expiry(po
     );
     assert_eq!(harness.counts().submits, 1);
     assert_eq!(harness.counts().uploads, 1);
-    let stored = f.data.store.get_run(&f.data.actor, run.id).await.unwrap();
+    let stored = restored_store.get_run(&f.data.actor, run.id).await.unwrap();
     assert_eq!(stored.state, RunState::Succeeded);
     assert_eq!(stored.active_attempt_id, Some(old.fence.attempt_id));
     let epoch: i64 = sqlx::query_scalar("SELECT owner_epoch FROM app.run_attempts WHERE id=$1")
         .bind(old.fence.attempt_id.as_uuid())
-        .fetch_one(&pool)
+        .fetch_one(&restored)
         .await
         .unwrap();
     assert!(epoch as u64 > old.fence.owner_epoch.get());
+    assert_ne!(
+        f.data
+            .store
+            .get_run(&f.data.actor, run.id)
+            .await
+            .unwrap()
+            .state,
+        RunState::Succeeded
+    );
+    drop(worker);
+    restored.close().await;
+    sqlx::query(&format!("DROP DATABASE {database} WITH (FORCE)"))
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 #[sqlx::test(migrations = "../../migrations")]
