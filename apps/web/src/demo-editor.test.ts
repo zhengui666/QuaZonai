@@ -97,7 +97,11 @@ test('all temporary project pages validate pagination and text follows native co
     expect(validateResponse(route, 'get', 200, original.value, 'application/json')).toBe(true);
     const rows = (original.value as { items: { id: string; project_id: string }[] }).items;
     expect(rows.every(item => item.project_id === id(1))).toBe(true);
-    expect(edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: id(99999) }))).toMatchObject({ value: { items: [] } });
+    const missing = edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: id(99999) }))!;
+    expect(missing.status).toBe(route === '/api/v2/runs' ? 200 : 404);
+    expect(validateResponse(route, 'get', missing.status, missing.value, missing.status === 200 ? 'application/json' : 'application/problem+json')).toBe(true);
+    if (route === '/api/v2/runs') expect(missing).toMatchObject({ value: { items: [] } });
+    expect(rows.map(item => item.id)).toEqual(rows.map(item => item.id).sort((a, b) => route === '/api/v2/runs' ? a.localeCompare(b) : b.localeCompare(a)));
     expect(edit('GET', route)?.status).toBe(route === '/api/v2/runs' ? 200 : 422);
     const first = edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: id(1), limit: '1' }))!;
     expect(first).toMatchObject({ value: { items: rows.slice(0, 1), next_cursor: rows.length > 1 ? rows[0]!.id : null } });

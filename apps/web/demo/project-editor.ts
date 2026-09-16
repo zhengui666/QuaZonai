@@ -44,12 +44,15 @@ export function projectEditor() {
         if ((selected !== null && !validId(selected)) || !/^\d+$/.test(query.get('limit') ?? '50') || !validLimit(limit) || (cursor !== null && !validId(cursor)) || (query.has('state') && !validState(query.get('state'))) || [...query.keys()].some(name => !allowed.includes(name) || query.getAll(name).length !== 1)) return invalid;
       }
       const paginate = <T extends { id: string }>(rows: T[]) => {
-        const items = rows.filter(item => !cursor || item.id < cursor).sort((a, b) => b.id.localeCompare(a.id));
+        const ascending = path === '/api/v2/runs';
+        const items = rows.filter(item => !cursor || (ascending ? item.id > cursor : item.id < cursor))
+          .sort((a, b) => ascending ? a.id.localeCompare(b.id) : b.id.localeCompare(a.id));
         return { status: 200, value: { schema_version: 1, items: items.slice(0, limit), next_cursor: items.length > limit ? items[limit - 1]!.id : null } };
       };
       if (path === '/api/v2/projects') return paginate([...projects.values()]);
       if (briefPage) return paginate([...briefs.values()].filter(item => item.project_id === project.id));
       if (globalPage) {
+        if (path !== '/api/v2/runs' && !projects.has(selected!)) return demoResponse('GET', `/api/v2/projects/${selected}`);
         const rows = (records.get(path)?.value as { items: { id: string; project_id: string; state?: string }[] } | undefined)?.items ?? [];
         return paginate(rows.filter(item => (!selected || item.project_id === selected) && (!query.has('state') || item.state === query.get('state'))));
       }
