@@ -22,8 +22,12 @@ mod forward_result;
 #[path = "../../../tests/support/forward.rs"]
 #[allow(dead_code)]
 mod forward_support;
+#[path = "support/graph_recovery.rs"]
+mod graph_recovery;
 #[path = "../../../tests/support/missions.rs"]
 mod mission_support;
+#[path = "support/postgres.rs"]
+mod postgres;
 #[path = "../../../tests/support/experiments.rs"]
 mod proposal_support;
 #[path = "../../../crates/store/tests/support/qualified_portfolio.rs"]
@@ -939,6 +943,11 @@ async fn claim_http(
     .await;
     listener.abort_all();
     probe_server.abort();
+    Box::pin(graph_recovery::check(
+        pool,
+        &directory.path().join("objects"),
+    ))
+    .await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
