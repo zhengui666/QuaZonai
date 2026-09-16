@@ -346,7 +346,7 @@ record(`/api/v2/releases/${demoRelease.id}/decisions`, '/api/v2/releases/{id}/de
 record('/api/v2/artifacts', '/api/v2/artifacts', page([...records.values()].filter(item => item.contract === '/api/v2/artifacts/{id}').map(item => item.value)));
 
 // No approval, Claim or account is issued by this preview.
-for (const suffix of ['handoffs', 'automation-policies', 'forward', 'forward-observations', 'wakes']) {
+for (const suffix of ['handoffs', 'automation-policies', 'forward', 'forward-observations', 'forward-weight-snapshots', 'wakes']) {
   record(`/api/v2/projects/${project.id}/${suffix}`, `/api/v2/projects/{id}/${suffix}`, page([]));
 }
 for (const path of ['/api/v2/auth/devices', '/api/v2/settings/codex', '/api/v2/integrations/downstreams', '/api/v2/migrations/reports']) {

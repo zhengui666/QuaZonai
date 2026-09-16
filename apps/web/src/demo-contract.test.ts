@@ -17,6 +17,9 @@ test('synthetic preview preserves native response contracts and denies every wri
   }
   expect(demoResponse('POST', '/api/v2/handoffs/arbitrary/claim').status).toBe(403);
   expect(demoResponse('GET', '/api/v2/unknown').status).toBe(404);
+  expect(demoResponse('GET', `/api/v2/projects/${id(1)}/forward-weight-snapshots`)).toEqual({
+    status: 200, value: { schema_version: 1, items: [], next_cursor: null },
+  });
   expect(demoResponse('GET', '/api/v2/data/revisions', 'SEALED')).toMatchObject({ status: 200, value: {
     items: [{ partition: 'SEALED', origin: 'FIXTURE', row_count: '200', license_state: 'EXPIRED', source_enabled: false, runtime_enabled: false }],
   } });
