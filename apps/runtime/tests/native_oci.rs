@@ -529,34 +529,84 @@ async fn native_candidate_simulation(sequence: bool) {
         .unwrap();
         let files = native.list_parquet_files("data").unwrap();
         assert!(!files.is_empty());
-        let path = catalog.path().join(&files[0]);
+        let bar = observed.series[0].bars[0];
+        let path = catalog.path().join(
+            files
+                .iter()
+                .find(|path| path.contains(&bar.bar_type.to_string()))
+                .unwrap(),
+        );
         let original = fs::read(&path).unwrap();
         let mut corrupted = original.clone();
         let footer = corrupted.len() - 8;
         corrupted[footer..footer + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-        fs::write(&path, &corrupted).unwrap();
-        let mut invalid = spec.clone();
-        invalid.run_id = Id::new();
-        invalid.external_job_id = domain::runtime_jobs::external_id(invalid.run_id, 1).unwrap();
-        f.runs.push(invalid.run_id);
-        let accepted = f.submit(&invalid).await;
-        let terminal = f.terminal(&invalid).await;
-        assert_eq!(terminal.state, RuntimeJobState::Failed);
-        let failed = f.manifest(&invalid).await;
-        domain::runtime_jobs::manifest(&failed, &invalid, accepted.submitted_at, runtime::now())
+        let compressed_directory = tempfile::tempdir().unwrap();
+        let compressed_catalog =
+            nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+                compressed_directory.path().to_str().unwrap(),
+                None,
+                Some(4096),
+                None,
+                None,
+            )
             .unwrap();
-        assert!(failed.artifacts.is_empty());
-        assert_eq!(failed.resource_usage.output_bytes.get(), 0);
-        let error = failed.error.as_ref().unwrap();
-        assert_eq!(error.code, RuntimeFailureCode::NativeJobFailed);
-        assert_eq!(error.safe_message, "The native job process failed.");
-        let container = f.native_container(&invalid).await;
-        let state = container.state.unwrap();
-        assert_eq!(state.exit_code, Some(1));
-        assert_eq!(state.oom_killed, Some(false));
-        assert_eq!(f.submit(&invalid).await, terminal);
-        assert_eq!(fs::read(&path).unwrap(), corrupted);
-        f.assert_private_logs();
+        assert_eq!(format!("{:?}", compressed_catalog.compression), "SNAPPY");
+        let bars: Vec<_> = (0..50_000_u64)
+            .map(|offset| {
+                let mut value = bar;
+                value.ts_event = (bar.ts_event.as_u64() + offset).into();
+                value.ts_init = (bar.ts_init.as_u64() + offset).into();
+                value
+            })
+            .collect();
+        let compressed_path = compressed_directory.path().join(
+            compressed_catalog
+                .write_to_parquet(&bars, None, None, None)
+                .unwrap(),
+        );
+        let compressed = fs::read(compressed_path).unwrap();
+        assert!(compressed.len() * 4 < std::mem::size_of_val(bars.as_slice()));
+        // Both malformed metadata and bounded decompression must fail through OCI.
+        for (bytes, expected_limit) in [(corrupted, false), (compressed, true)] {
+            fs::write(&path, &bytes).unwrap();
+            if expected_limit {
+                let error = job::catalog::load_catalog(
+                    catalog.path(),
+                    &metadata.quality.datasets[0].selection,
+                )
+                .err()
+                .unwrap();
+                assert_eq!(error.to_string(), "CATALOG_ROW_LIMIT");
+            }
+            let mut invalid = spec.clone();
+            invalid.deadline_at = runtime::now() + chrono::Duration::seconds(50);
+            invalid.run_id = Id::new();
+            invalid.external_job_id = domain::runtime_jobs::external_id(invalid.run_id, 1).unwrap();
+            f.runs.push(invalid.run_id);
+            let accepted = f.submit(&invalid).await;
+            let terminal = f.terminal(&invalid).await;
+            assert_eq!(terminal.state, RuntimeJobState::Failed);
+            let failed = f.manifest(&invalid).await;
+            domain::runtime_jobs::manifest(
+                &failed,
+                &invalid,
+                accepted.submitted_at,
+                runtime::now(),
+            )
+            .unwrap();
+            assert!(failed.artifacts.is_empty());
+            assert_eq!(failed.resource_usage.output_bytes.get(), 0);
+            let error = failed.error.as_ref().unwrap();
+            assert_eq!(error.code, RuntimeFailureCode::NativeJobFailed);
+            assert_eq!(error.safe_message, "The native job process failed.");
+            let container = f.native_container(&invalid).await;
+            let state = container.state.unwrap();
+            assert_eq!(state.exit_code, Some(1));
+            assert_eq!(state.oom_killed, Some(false));
+            assert_eq!(f.submit(&invalid).await, terminal);
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            f.assert_private_logs();
+        }
         fs::write(path, original).unwrap();
         spec.deadline_at = runtime::now() + chrono::Duration::seconds(50);
     }
