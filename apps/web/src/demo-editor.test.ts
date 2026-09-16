@@ -87,6 +87,12 @@ test('all temporary project pages validate pagination and text follows native co
   const globalRoutes = Object.entries(document.paths).filter(([path, operations]) => !path.includes('{') && 'get' in operations && 'parameters' in operations.get && operations.get.parameters.some(parameter => parameter.in === 'query' && parameter.name === 'project_id')).map(([path]) => path);
   expect(globalRoutes).toEqual(expect.arrayContaining(['/api/v2/artifacts', '/api/v2/experiments', '/api/v2/input-sets']));
   for (const route of globalRoutes) {
+    for (const query of ['project_id=bad', 'project_id=', `project_id=${id(1)}&project_id=${project}`, `project_id=${id(1)}&limit=0`, 'limit=0']) {
+      const rejected = edit('GET', route, undefined, undefined, new URLSearchParams(query))!;
+      expect(rejected.status).toBe(422);
+      expect(validateResponse(route, 'get', 422, rejected.value, 'application/problem+json')).toBe(true);
+    }
+    expect(edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: id(1) }))).toBeUndefined();
     const page = edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: project }))!;
     expect(page).toMatchObject({ status: 200, value: { items: [], next_cursor: null } });
     expect(validateResponse(route, 'get', 200, page.value, 'application/json')).toBe(true);

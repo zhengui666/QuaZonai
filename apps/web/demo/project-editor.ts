@@ -9,7 +9,7 @@ addFormats(ajv); ajv.addSchema(document, 'native');
 const validUpdate = ajv.compile<Schema['ProjectUpdate']>({ $ref: 'native#/components/schemas/ProjectUpdate' });
 const validCreate = ajv.compile<Schema['ProjectCreate']>({ $ref: 'native#/components/schemas/ProjectCreate' });
 const validState = ajv.compile({ $ref: 'native#/components/schemas/RunState' });
-const validCursor = ajv.compile({ $ref: 'native#/components/schemas/Id' });
+const validId = ajv.compile({ $ref: 'native#/components/schemas/Id' });
 const validLimit = ajv.compile(document.paths['/api/v2/projects'].get.parameters.find(parameter => parameter.name === 'limit')!.schema);
 const empty = { status: 200, value: { schema_version: 1, items: [], next_cursor: null } };
 
@@ -26,18 +26,18 @@ export function projectEditor() {
     if (method === 'GET') {
       const selected = query.get('project_id');
       const nestedPage = project && project.id !== original.id && parts.length === 6 && ['briefs', 'cycles', 'execution-assumptions', 'portfolio-mandates', 'portfolio-candidates', 'releases', 'handoffs', 'automation-policies', 'forward', 'forward-observations', 'forward-weight-snapshots', 'wakes'].includes(parts[5]!);
-      const globalPage = selected && selected !== original.id && projects.has(selected) && ['/api/v2/alphas', '/api/v2/artifacts', '/api/v2/evaluation-policies', '/api/v2/experiments', '/api/v2/input-sets', '/api/v2/runs'].includes(path);
+      const globalPage = ['/api/v2/alphas', '/api/v2/artifacts', '/api/v2/evaluation-policies', '/api/v2/experiments', '/api/v2/input-sets', '/api/v2/runs'].includes(path);
       const limit = Number(query.get('limit') ?? '50'); const cursor = query.get('cursor');
       if (path === '/api/v2/projects' || nestedPage || globalPage) {
         const allowed = ['limit', 'cursor', ...(globalPage ? ['project_id', ...(path === '/api/v2/runs' ? ['state'] : [])] : [])];
-        if (!/^\d+$/.test(query.get('limit') ?? '50') || !validLimit(limit) || (cursor !== null && !validCursor(cursor)) || (query.has('state') && !validState(query.get('state'))) || [...query.keys()].some(name => !allowed.includes(name) || query.getAll(name).length !== 1)) return invalid;
+        if ((selected !== null && !validId(selected)) || !/^\d+$/.test(query.get('limit') ?? '50') || !validLimit(limit) || (cursor !== null && !validId(cursor)) || (query.has('state') && !validState(query.get('state'))) || [...query.keys()].some(name => !allowed.includes(name) || query.getAll(name).length !== 1)) return invalid;
       }
       if (path === '/api/v2/projects') {
         const items = [...projects.values()].filter(item => !cursor || item.id < cursor).sort((a, b) => b.id.localeCompare(a.id));
         return { status: 200, value: { schema_version: 1, items: items.slice(0, limit), next_cursor: items.length > limit ? items[limit - 1]!.id : null } };
       }
       if (project && parts.length === 5) return { status: 200, value: project };
-      if (nestedPage || globalPage) return empty;
+      if (nestedPage || (globalPage && selected && selected !== original.id && projects.has(selected))) return empty;
       return undefined;
     }
     const creating = method === 'POST' && path === '/api/v2/projects';
