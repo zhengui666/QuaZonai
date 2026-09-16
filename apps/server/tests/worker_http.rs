@@ -144,11 +144,15 @@ async fn a_restored_database_recovers_the_exact_sent_attempt_without_reposting(p
     // No driver is running during this archive. Restore both control database
     // and state files, while keeping the original remote task identity alive.
     let recovered_state = tempfile::tempdir().unwrap();
+    let recovered_key = tempfile::tempdir().unwrap();
+    let key_path = recovered_key.path().join("worker-master.key");
+    std::fs::copy(f.data.directory.path().join("worker-master.key"), &key_path).unwrap();
     let archive = tempfile::NamedTempFile::new().unwrap();
     let saved = tokio::process::Command::new("tar")
         .env_clear()
         .arg("-C")
         .arg(f.data.directory.path())
+        .arg("--exclude=./worker-master.key")
         .arg("-cf")
         .arg(archive.path())
         .arg(".")
@@ -174,6 +178,7 @@ async fn a_restored_database_recovers_the_exact_sent_attempt_without_reposting(p
         unpacked.status.success() && unpacked.stderr.is_empty(),
         "test state restore failed"
     );
+    assert!(!recovered_state.path().join("worker-master.key").exists());
     let dump = postgres::postgres_tool(&pool, "pg_dump")
         .args(["--format=custom", "--no-owner", "--no-privileges"])
         .output()
@@ -226,11 +231,7 @@ async fn a_restored_database_recovers_the_exact_sent_attempt_without_reposting(p
     let root = recovered_state.path();
     let worker = Worker::new(
         restored_store.clone(),
-        integrations::secrets::SecretVault::open(
-            &root.join("worker-secrets"),
-            &root.join("worker-master.key"),
-        )
-        .unwrap(),
+        integrations::secrets::SecretVault::open(&root.join("worker-secrets"), &key_path).unwrap(),
         integrations::artifacts::ArtifactStore::open(&root.join("objects")).unwrap(),
         harness.targets.clone(),
         2,
