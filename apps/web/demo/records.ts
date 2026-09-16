@@ -2,6 +2,7 @@
 import type { Schema } from '../src/api';
 import briefInput from '../../../tests/contracts/research-brief.json';
 import policyInput from '../../../tests/contracts/research-policy.json';
+import runtimeCapabilities from '../../../tests/contracts/runtime-capabilities.fixture.json';
 
 export const id = (n: number) => `01990000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 const at = '2026-09-15T00:00:00Z';
@@ -91,7 +92,7 @@ const policy: Schema['EvaluationPolicyView'] = {
   split_policy: { ...policyFields.split_policy, label_horizon_observations: brief.content.horizon_value, purge_observations: briefInput.content.horizon_value,
     sealed_revision_id: brief.bindings.find(binding => binding.role === 'SEALED')!.dataset_revision_id },
   metric_requirements: policyFields.metric_requirements.map(item => ({ ...item, metric_code: 'PEARSON_IC', scope: 'asset:0/fold:0', method_allowlist: ['ndarray-stats.pearson_correlation'] })),
-  sealed_metric_requirements: policyFields.sealed_metric_requirements!.map(item => ({ ...item, metric_code: 'PEARSON_IC', scope: 'asset:0/fold:0', method_allowlist: ['ndarray-stats.pearson_correlation'] })),
+  sealed_metric_requirements: policyFields.sealed_metric_requirements!.map(item => ({ ...item, metric_code: 'PEARSON_IC', scope: 'asset:0', method_allowlist: ['ndarray-stats.pearson_correlation'] })),
   required_capabilities: [], portfolio_metric_requirements: null, portfolio_study_plan: null,
   selection_rule: { ...selection, metric_code: 'PEARSON_IC', metric_scope: 'asset:0/fold:0', method_id: 'ndarray-stats.pearson_correlation',
     method_version: '0.7.0', unit: 'CORRELATION', frequency: `1-MINUTE-LAST-EXTERNAL;horizon=${brief.content.horizon_value}`, schema_version: 1, comparison_input_set_id, execution_assumptions_id: brief.content.execution_assumptions_id,
@@ -196,7 +197,7 @@ const grant: Schema['DataGrantView'] = {
 const universe: Schema['UniverseView'] = {
   id: brief.content.universe_version_id, name: 'SYNTHETIC · 演示投资域', registration_state: 'LEGACY_UNVERIFIED',
   membership_artifact_id: id(233), instrument_definitions_artifact_id: id(234), calendar_ref: 'fixture-calendar',
-  calendar_version: 'fixture-v1', selection_asof: at, has_historical_membership: false,
+  calendar_version: 'fixture-v1', selection_asof: frozenAt, has_historical_membership: false,
   coverage_start: '2026-01-01T00:00:00Z', coverage_end: at, created_at: '2026-01-01T00:00:00Z',
 };
 const datasets: Schema['DatasetView'][] = brief.bindings.map((binding, n) => ({
@@ -218,7 +219,15 @@ record(`/api/v2/briefs/${brief.id}/execution-context`, '/api/v2/briefs/{id}/exec
   },
 } satisfies Schema['FrozenBriefV1']);
 record(`/api/v2/integrations/runtimes/${runtime.id}/readiness`, '/api/v2/integrations/runtimes/{id}/readiness', {
-  schema_version: 1, runtime_id: runtime.id, integration_revision: runtime.revision, state: 'DISABLED', available_job_kinds: [], latest_observation: null,
+  schema_version: 1, runtime_id: runtime.id, integration_revision: runtime.revision, state: 'DISABLED', available_job_kinds: [],
+  latest_observation: { id: id(222), runtime_id: runtime.id, integration_revision: '1', snapshot_artifact_id: id(221),
+    observed_at: '2026-09-13T23:55:00Z', valid_until: '2026-09-14T00:55:00Z',
+    outcome: { status: 'AVAILABLE', capabilities: {
+      ...runtimeCapabilities as Schema['RuntimeCapabilitiesV1'], checked_at: '2026-09-13T23:55:00Z',
+      engine_versions: { ...runtimeCapabilities.engine_versions, 'solow-cv': '0.7.3', 'ndarray-stats': '0.7.0', linregress: '0.5.4' },
+      artifact_schemas: [...runtimeCapabilities.artifact_schemas, { name: 'qz.alpha_validation', version: '1' }, { name: 'qz.alpha_sealed', version: '1' }],
+    } },
+  },
 } satisfies Schema['RuntimeReadinessV1']);
 record('/api/v2/data/sources', '/api/v2/data/sources', page([source]));
 record(`/api/v2/data/sources/${source.id}`, '/api/v2/data/sources/{id}', source);

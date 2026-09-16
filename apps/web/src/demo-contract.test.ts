@@ -47,6 +47,16 @@ test('frozen synthetic context resolves exact project, partition and Runtime ref
   const runtime = records.get(`/api/v2/integrations/runtimes/${context.runtime_id}`)!.value as import('./api').Schema['RuntimeView'];
   expect(BigInt(context.runtime_revision)).toBeLessThan(BigInt(runtime.revision));
   expect(runtime.configuration.enabled).toBe(false);
+  const readiness = records.get(`/api/v2/integrations/runtimes/${runtime.id}/readiness`)!.value as import('./api').Schema['RuntimeReadinessV1'];
+  expect(readiness.state).toBe('DISABLED');
+  expect(readiness.available_job_kinds).toEqual([]);
+  const probe = readiness.latest_observation!;
+  expect(probe.integration_revision).toBe(context.runtime_revision);
+  expect(probe.observed_at <= frozen.brief.frozen_at!).toBe(true);
+  expect(probe.valid_until > frozen.brief.frozen_at!).toBe(true);
+  expect(probe.outcome.status).toBe('AVAILABLE');
+  if (probe.outcome.status !== 'AVAILABLE') throw new Error('missing historical probe');
+  expect(probe.outcome.capabilities.job_kinds).toEqual(expect.arrayContaining(['DATA_VALIDATE', 'ALPHA_EVALUATE']));
   for (const purpose of ['DISCOVERY', 'VALIDATION', 'SEALED'] as const) {
     const field = `${purpose.toLowerCase()}_input_set_id` as 'discovery_input_set_id' | 'validation_input_set_id' | 'sealed_input_set_id';
     const input = records.get(`/api/v2/input-sets/${context[field]}`)!.value as import('./api').Schema['InputSetView'];
@@ -57,6 +67,9 @@ test('frozen synthetic context resolves exact project, partition and Runtime ref
   const policy = records.get(`/api/v2/evaluation-policies/${frozen.brief.content.evaluation_policy_id}`)!.value as import('./api').Schema['EvaluationPolicyView'];
   expect(policy.selection_rule.comparison_input_set_id).toBe(context.validation_input_set_id);
   expect(policy.require_real_data).toBe(false);
+  expect(policy.metric_requirements.every(item => item.scope === 'asset:0/fold:0')).toBe(true);
+  expect(policy.sealed_metric_requirements!.every(item => item.scope === 'asset:0')).toBe(true);
+  const universe = records.get(`/api/v2/data/universes/${frozen.brief.content.universe_version_id}`)!.value as import('./api').Schema['UniverseView'];
   expect(policy.split_policy.label_horizon_observations).toBe(frozen.brief.content.horizon_value);
   expect(BigInt(policy.split_policy.purge_observations)).toBeGreaterThanOrEqual(BigInt(frozen.brief.content.horizon_value!));
   expect(policy.split_policy.sealed_revision_id).toBe(frozen.brief.bindings.find(binding => binding.role === 'SEALED')!.dataset_revision_id);
@@ -68,6 +81,7 @@ test('frozen synthetic context resolves exact project, partition and Runtime ref
     expect(dataset.event_start >= previousEnd).toBe(true);
     expect(dataset.event_end > dataset.event_start).toBe(true);
     expect(dataset.available_through <= frozen.brief.frozen_at!).toBe(true);
+    expect(universe.selection_asof <= dataset.available_through).toBe(true);
     expect(dataset.origin).toBe('FIXTURE');
     previousEnd = dataset.event_end;
   }
