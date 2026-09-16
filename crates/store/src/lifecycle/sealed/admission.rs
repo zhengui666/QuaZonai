@@ -233,7 +233,6 @@ where
         RunKind::AlphaEvaluate,
     )
     .await?;
-    domain::runtime::job_limits(&capabilities, &request.limits)?;
     let schemas = task.output_schemas();
     if !schemas.iter().all(|s| {
         capabilities
@@ -259,7 +258,6 @@ where
     .bind(request.runtime_id.as_uuid())
     .fetch_one(&mut *tx)
     .await?;
-    let cpu = native_cpu(&request.limits, &capabilities)?;
     let origin = combine_origin(
         dataset.origin,
         combine_origin(training.origin, db::enum_value(source, "discovery_origin")?),
@@ -280,7 +278,7 @@ where
         byte_count: size,
         role: ArtifactInputRole::Parameters,
     });
-    let (mut tx, admitted) = Store::enqueue_with_trial_charge(
+    let (mut tx, admitted, effective) = Store::enqueue_with_trial_charge(
         tx,
         &format!("alpha-evaluate/{}", Id::new()),
         &RunSubmission {
@@ -295,6 +293,7 @@ where
         parent_deadline,
     )
     .await?;
+    let cpu = native_cpu(&effective, &capabilities)?;
     bind_task(
         &mut tx,
         &admitted.resource,

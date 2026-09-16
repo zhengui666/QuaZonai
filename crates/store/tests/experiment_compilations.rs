@@ -301,6 +301,21 @@ async fn mission_cancellation_waits_for_admitted_compilation_but_not_future_fore
     assert_eq!(untouched, ("PENDING".into(), 0, 0));
 }
 
+async fn wait_for_ledger_read(pool: &PgPool) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND relation='app.model_turn_receipts'::regclass AND NOT granted)")
+                .fetch_one(pool).await.unwrap();
+            if waiting {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("admission must reach the blocked ledger read");
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn admission_lock_wait_does_not_extend_the_parent_deadline(pool: PgPool) {
     let (store, actor, f, lease, experiment) = setup(&pool).await;
@@ -312,20 +327,9 @@ async fn admission_lock_wait_does_not_extend_the_parent_deadline(pool: PgPool) {
         .await
         .unwrap();
     let release = async {
-        // The ledger read occurs after the caller bounds its remaining wall
-        // time, but before shared admission reads the database clock again.
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            loop {
-                let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND relation='app.model_turn_receipts'::regclass AND NOT granted)")
-                    .fetch_one(&pool).await.unwrap();
-                if waiting {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("admission must reach the blocked ledger read");
+        // The old caller froze relative wall time before this ledger read.
+        // Hold it across that rounding margin before admission reads the clock.
+        wait_for_ledger_read(&pool).await;
         sqlx::query("SELECT pg_sleep(1.1)")
             .execute(&mut *blocker)
             .await
@@ -356,6 +360,153 @@ async fn admission_lock_wait_does_not_extend_the_parent_deadline(pool: PgPool) {
     assert!(replay.replayed);
     assert_eq!(replay.resource, admitted.resource);
     assert_eq!(trial_usage(&pool, &lease).await, (1, 0));
+}
+
+async fn delayed_resource_fit(
+    pool: PgPool,
+    cpu_seconds: u64,
+    remaining: f64,
+    expected_cpu: Option<i16>,
+) {
+    let (store, actor) = research_support::operator(&pool).await;
+    let mut f = cycle_support::setup(&pool, &store, &actor).await;
+    let mut content = f.brief.content.clone();
+    content.budget.max_wall_seconds = 15;
+    content.budget.max_cpu_seconds = DbCounter::new(100).unwrap();
+    f.brief = store
+        .update_brief(
+            &actor,
+            "short-mission",
+            f.brief.id,
+            &contracts::brief::BriefUpdate {
+                schema_version: SchemaV1,
+                expected_revision: f.brief.revision,
+                content,
+                bindings: f.brief.bindings.clone(),
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    f.freeze.expected_revision = f.brief.revision;
+    let (store, actor, f, cycle, preparation) =
+        mission_support::start(store, actor, f, false).await;
+    mission_support::complete(&pool, &store, &f, preparation, false).await;
+    // Publish the proposal before starting the Mission's real database clock.
+    let experiment = experiment_support::propose(&pool, &store, &actor, &f, cycle).await;
+    assert!(store.advance_initial_cycle(preparation).await.unwrap());
+    let message = store.read_mission_messages(60, 1).await.unwrap().remove(0);
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_mission(&message, "bounded-cpu", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("Mission lease required");
+    };
+    let counters = "SELECT (SELECT count(*) FROM app.runs WHERE cycle_id=$1),(SELECT count(*) FROM pgmq.q_runs),reserved_experiments::bigint,reserved_cpu_seconds::bigint FROM app.research_cycles WHERE id=$1";
+    let before: (i64, i64, i64, i64) = sqlx::query_as(counters)
+        .bind(cycle.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let mut allocation = limits();
+    allocation.wall_seconds = 15;
+    allocation.cpu_seconds = DbCounter::new(cpu_seconds).unwrap();
+    let mut blocker = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE app.model_turn_receipts IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let release = async {
+        wait_for_ledger_read(&pool).await;
+        // Hold an actual lock until this absolute parent window remains. The
+        // frozen Run, limits, capability and database clock are never edited.
+        sqlx::query("SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM ($1::timestamptz-clock_timestamp()))::double precision-$2))")
+            .bind(lease.run.deadline_at).bind(remaining).execute(&mut *blocker).await.unwrap();
+        blocker.rollback().await.unwrap();
+    };
+    let objects = f.objects.clone();
+    let admission = store.start_experiment_compilation(
+        lease.run.id,
+        &lease.fence,
+        experiment,
+        &allocation,
+        move |object| async move {
+            objects
+                .put(object.id, &object.bytes)
+                .map_err(|_| StoreError::Integrity)
+        },
+    );
+    let (admission, ()) = tokio::join!(admission, release);
+    if let Some(expected_cpu) = expected_cpu {
+        let run = admission.unwrap().resource;
+        let (limits_json, cpu): (serde_json::Value, i16) = sqlx::query_as("SELECT a.limits,t.cpu FROM app.run_admissions a JOIN app.run_native_tasks t ON t.run_id=a.run_id WHERE a.run_id=$1")
+            .bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+        let effective: contracts::lifecycle::JobLimitsV1 =
+            serde_json::from_value(limits_json).unwrap();
+        assert_eq!(
+            cpu, expected_cpu,
+            "CPU must fit the post-wait parent window"
+        );
+        assert_eq!(
+            i64::from(effective.wall_seconds),
+            (run.deadline_at - run.queued_at).num_seconds()
+        );
+        assert!(effective.wall_seconds < allocation.wall_seconds);
+        let message = validation_publication::message(&pool, run.id).await;
+        let Some(ClaimResult::Leased(child)) = store
+            .claim_native_run(&message, "bounded-child", 60)
+            .await
+            .unwrap()
+        else {
+            panic!("child lease required");
+        };
+        let job = store.native_job(run.id, &child.fence).await.unwrap();
+        assert_eq!(job.spec.limits.cpu, expected_cpu as u16);
+        assert_eq!(job.spec.limits.wall_seconds, effective.wall_seconds);
+        assert_eq!(job.spec.deadline_at, run.deadline_at);
+    } else {
+        if remaining < 0.0 {
+            assert!(matches!(
+                admission,
+                Err(StoreError::Domain(domain::DomainError::BudgetExhausted(
+                    "wall_seconds"
+                )))
+            ));
+        } else {
+            assert!(matches!(
+                admission,
+                Err(StoreError::Domain(
+                    domain::DomainError::CapabilityUnavailable("native_cpu_capacity")
+                ))
+            ));
+        }
+        let after: (i64, i64, i64, i64) = sqlx::query_as(counters)
+            .bind(cycle.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            after, before,
+            "failed admission must not retain Run, queue or budget changes"
+        );
+        assert_eq!(trial_usage(&pool, &lease).await, (0, 0));
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn admission_recomputes_cpu_and_persists_the_post_wait_limits(pool: PgPool) {
+    delayed_resource_fit(pool, 10, 9.5, Some(2)).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn admission_rolls_back_when_post_wait_cpu_does_not_fit(pool: PgPool) {
+    delayed_resource_fit(pool, 20, 9.5, None).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn admission_rolls_back_when_parent_expires_during_the_wait(pool: PgPool) {
+    delayed_resource_fit(pool, 10, -0.1, None).await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]

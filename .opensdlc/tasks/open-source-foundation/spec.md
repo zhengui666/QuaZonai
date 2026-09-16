@@ -69,6 +69,8 @@ The first complete PR CI exposed a pre-existing Mission child-admission race: ca
 
 Reproduce with a real PostgreSQL ledger-table lock after the initial wall calculation, then verify successful bounded admission, original snapshot replay and one trial charge. Existing full Store/HTTP/native Mission checks must pass; do not increase budgets, tolerate deadline drift or hide the failing check.
 
+GitHub review also requires post-wait resource consistency: persist the effective wall allocation derived at admission, and compute native CPU from those same effective limits. If the smaller window no longer fits runtime CPU capacity, roll back admission and its budget/queue effects. Short Missions must be created through a legitimately updated draft Brief; regression tests must not rewrite immutable deadlines or capabilities.
+
 ## Verification and failure actions
 
 - `make check-architecture`: inspect Cargo's actual package metadata; reject forbidden dependency direction and unnamed workspace packages. Fix the actual ownership mistake, or revise DESIGN with the owner's architectural decision before changing the check.

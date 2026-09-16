@@ -471,14 +471,15 @@ impl Store {
         key: &str,
         request: &RunSubmission,
     ) -> Result<(Transaction<'a, Postgres>, CommandResult<RunSnapshotV1>), StoreError> {
-        Self::enqueue_with_trial_charge(
+        let (tx, result, _) = Self::enqueue_with_trial_charge(
             tx,
             key,
             request,
             request.kind == RunKind::AlphaEvaluate,
             None,
         )
-        .await
+        .await?;
+        Ok((tx, result))
     }
 
     // Only domain-owned experiment stages may differ from the generic Run kind.
@@ -489,7 +490,14 @@ impl Store {
         request: &RunSubmission,
         charge_trial: bool,
         parent_deadline: Option<DateTime<Utc>>,
-    ) -> Result<(Transaction<'a, Postgres>, CommandResult<RunSnapshotV1>), StoreError> {
+    ) -> Result<
+        (
+            Transaction<'a, Postgres>,
+            CommandResult<RunSnapshotV1>,
+            JobLimitsV1,
+        ),
+        StoreError,
+    > {
         commands::key(key)?;
         let normalized = json!({"schema_version":1,"cycle_id":request.cycle_id,"input_set_id":request.input_set_id,"runtime_id":request.runtime_id,"runtime_revision":request.runtime_revision,"kind":request.kind,"limits":request.limits});
         let project: uuid::Uuid =
@@ -505,7 +513,7 @@ impl Store {
         let c=sqlx::query("SELECT brief_id::uuid,state,budget_snapshot,reserved_experiments::bigint,used_experiments::bigint,reserved_cpu_seconds::bigint FROM app.research_cycles WHERE id=$1 AND project_id=$2 FOR UPDATE")
             .bind(request.cycle_id.as_uuid()).bind(project).fetch_one(&mut *tx).await?;
         if let Some(row) = sqlx::query(
-            "SELECT normalized_request,initial_snapshot FROM app.run_admissions \
+            "SELECT normalized_request,initial_snapshot,limits FROM app.run_admissions \
              WHERE cycle_id=$1 AND command_key=$2",
         )
         .bind(request.cycle_id.as_uuid())
@@ -525,6 +533,8 @@ impl Store {
                     replayed: true,
                     resource: run,
                 },
+                serde_json::from_value(row.try_get("limits")?)
+                    .map_err(|_| StoreError::Integrity)?,
             ));
         }
         let b=sqlx::query("SELECT state,budget,stop_rule FROM app.research_briefs WHERE id=$1 AND project_id=$2 FOR SHARE").bind(c.try_get::<uuid::Uuid,_>("brief_id")?).bind(project).fetch_one(&mut *tx).await?;
@@ -554,22 +564,24 @@ impl Store {
             .await?
             .ok_or(StoreError::NotFound)?;
         let caps: Vec<String> = r.try_get("allowed_capabilities")?;
-        if request.kind == RunKind::AgentResearch {
+        let capabilities = if request.kind == RunKind::AgentResearch {
             if !r.try_get::<bool, _>("enabled")?
                 || db::revision(r.try_get("revision")?)? != request.runtime_revision
             {
                 return Err(DomainError::CapabilityUnavailable("mission_runtime_binding").into());
             }
+            None
         } else {
-            crate::runtime::require_job(
-                &mut tx,
-                request.runtime_id,
-                request.runtime_revision,
-                request.kind,
-                &request.limits,
+            Some(
+                crate::runtime::require_capabilities(
+                    &mut tx,
+                    request.runtime_id,
+                    request.runtime_revision,
+                    request.kind,
+                )
+                .await?,
             )
-            .await?;
-        }
+        };
         let runtime = RuntimeSnapshot {
             schema_version: SchemaV1,
             endpoint: r.try_get("endpoint")?,
@@ -621,7 +633,23 @@ impl Store {
             cost,
             mission: None,
         };
-        let l = &request.limits;
+        // Freeze limits and deadline from one fresh clock after validation and
+        // lock waits. Native task CPU must use this same effective allocation.
+        let time = now(&mut tx).await?;
+        let mut limits = request.limits.clone();
+        if let Some(parent) = parent_deadline {
+            limits.wall_seconds = limits.wall_seconds.min(
+                u32::try_from((parent - time).num_seconds())
+                    .map_err(|_| DomainError::BudgetExhausted("wall_seconds"))?,
+            );
+            if limits.wall_seconds == 0 {
+                return Err(DomainError::BudgetExhausted("wall_seconds").into());
+            }
+        }
+        let l = &limits;
+        if let Some(capabilities) = capabilities {
+            domain::runtime::job_limits(&capabilities, l)?;
+        }
         let reserve = match (request.kind, charge_trial) {
             (RunKind::AgentResearch, false) => admission::reserve_mission,
             (RunKind::AgentResearch, true) => return Err(StoreError::Integrity),
@@ -642,16 +670,9 @@ impl Store {
                 model: None,
             },
         )?;
-        let time = now(&mut tx).await?;
         let deadline = time
             .checked_add_signed(Duration::seconds(i64::from(l.wall_seconds)))
             .ok_or(StoreError::Invalid("deadline"))?;
-        // Relative wall limits were computed before admission's database work.
-        // Preserve the parent's absolute bound across validation and lock waits.
-        let deadline = parent_deadline.map_or(deadline, |parent| deadline.min(parent));
-        if deadline <= time {
-            return Err(DomainError::BudgetExhausted("wall_seconds").into());
-        }
         let id = Id::new();
         sqlx::query("UPDATE app.research_cycles SET reserved_experiments=$2,reserved_cpu_seconds=$3 WHERE id=$1").bind(request.cycle_id.as_uuid()).bind(i64::from(reserved.reserved_experiments)).bind(reserved.reserved_cpu_seconds.get() as i64).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,deadline_at,queued_at) VALUES($1,$2,$3,$4,$5,'QUEUED',$6,$7)")
@@ -670,6 +691,7 @@ impl Store {
                 replayed: false,
                 resource: run,
             },
+            limits,
         ))
     }
 

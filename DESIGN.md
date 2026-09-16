@@ -1695,6 +1695,8 @@ policy/dataset关联，不另建任务队列；Run仍由原PGMQ/Attempt/Runtime�
 通过重新累加剩余秒数延长期限，也不能在仍有预算时误报耗尽。编译、Discovery、
 Validation和Reviewer发起的Sealed评估均传递该上限；以入队时数据库实际时间
 拒绝已到期上限，Run与首次回执保存同一期限，并与事件同事务提交；重放不重置预算或期限。
+有效wall_seconds须在此入队取时后收紧并持久化；原生任务CPU须从这份有效分配
+重新推导。锁等待后的CPU容量不足时整笔事务回滚，不保留Run、队列或试验/CPU预约。
 
 所有Alpha科学阶段选择的实际镜像须等于冻结ExecutionAssumptions；正式Validation
 还须等于原Alpha版本镜像。Runtime连接修订未变不代表原生镜像未变，不能借新探测
