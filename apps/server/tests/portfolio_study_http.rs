@@ -946,6 +946,7 @@ async fn claim_http(
     Box::pin(graph_recovery::check(
         pool,
         &directory.path().join("objects"),
+        operator,
     ))
     .await;
 }

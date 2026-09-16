@@ -25,7 +25,7 @@ async fn graph(pool: &PgPool) -> BTreeMap<String, serde_json::Value> {
     result
 }
 
-pub async fn check(pool: &PgPool, objects: &Path) {
+pub async fn check(pool: &PgPool, objects: &Path, actor: &store::authority::Actor) {
     let before = graph(pool).await;
     for required in [
         "qualifications",
@@ -141,6 +141,54 @@ pub async fn check(pool: &PgPool, objects: &Path) {
             "restored original artifact differs"
         );
     }
+    let source_store = store::Store::from_pool(pool.clone());
+    let restored_store = store::Store::from_pool(restored_pool.clone());
+    let source_objects = integrations::artifacts::ArtifactStore::open(objects).unwrap();
+    let streams: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT DISTINCT handoff_id,stream_id FROM app.forward_messages ORDER BY handoff_id,stream_id",
+    )
+    .fetch_all(&restored_pool)
+    .await
+    .unwrap();
+    assert!(!streams.is_empty());
+    for (handoff, stream_id) in streams {
+        let handoff: contracts::Id = handoff.to_string().try_into().unwrap();
+        let query = contracts::forward::ForwardWindowQueryV1 { stream_id };
+        let source = source_store
+            .forward_window(actor, handoff, &query, |id, size| {
+                std::future::ready(
+                    source_objects
+                        .read(id, size)
+                        .map_err(|_| store::StoreError::Integrity),
+                )
+            })
+            .await
+            .unwrap();
+        let recovered = restored_store
+            .forward_window(actor, handoff, &query, |id, size| {
+                std::future::ready(
+                    restored_objects
+                        .read(id, size)
+                        .map_err(|_| store::StoreError::Integrity),
+                )
+            })
+            .await
+            .unwrap();
+        assert!(
+            serde_json::to_value(source).unwrap() == serde_json::to_value(recovered).unwrap(),
+            "restored original Forward projection differs"
+        );
+        let original = source_store.handoff(actor, handoff).await.unwrap();
+        let recovered = restored_store.handoff(actor, handoff).await.unwrap();
+        assert!(
+            serde_json::to_value(original).unwrap() == serde_json::to_value(recovered).unwrap(),
+            "restored original Claim history differs"
+        );
+    }
+    assert!(
+        graph(&restored_pool).await == before,
+        "restored reads mutated the graph"
+    );
     assert!(
         graph(pool).await == before,
         "source business graph changed during recovery"
