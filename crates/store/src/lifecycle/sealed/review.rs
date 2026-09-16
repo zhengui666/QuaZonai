@@ -44,10 +44,6 @@ impl Store {
         let mut limits: JobLimitsV1 = serde_json::from_value(locked.admission.try_get("limits")?)
             .map_err(|_| StoreError::Integrity)?;
         limits.experiments = 0;
-        limits.wall_seconds = limits.wall_seconds.min(
-            u32::try_from((locked.run.deadline_at - now(&mut tx).await?).num_seconds())
-                .map_err(|_| DomainError::BudgetExhausted("wall_seconds"))?,
-        );
         let request = AlphaEvaluateRequestV1 {
             schema_version: SchemaV1,
             cycle_id: cycle,
@@ -63,6 +59,7 @@ impl Store {
                 db::id(row.try_get("alpha_version_id")?)?,
                 &request,
                 "RUNTIME",
+                Some(locked.run.deadline_at),
                 read,
                 publish,
             )

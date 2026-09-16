@@ -39,7 +39,7 @@ impl Store {
             tx.commit().await?;
             return Ok(result);
         }
-        let (mut tx, admitted) = admit(tx, alpha, request, "OPERATOR", read, publish).await?;
+        let (mut tx, admitted) = admit(tx, alpha, request, "OPERATOR", None, read, publish).await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         let result = commands::finish(&mut tx, prepared, admitted.resource, 202).await?;
         tx.commit().await?;
@@ -54,6 +54,7 @@ pub(super) async fn admit<'a, R, Read, P, Published>(
     alpha: Id,
     request: &AlphaEvaluateRequestV1,
     created_by: &str,
+    parent_deadline: Option<DateTime<Utc>>,
     mut read: R,
     publish: P,
 ) -> Result<(Tx<'a>, CommandResult<RunSnapshotV1>), StoreError>
@@ -232,7 +233,6 @@ where
         RunKind::AlphaEvaluate,
     )
     .await?;
-    domain::runtime::job_limits(&capabilities, &request.limits)?;
     let schemas = task.output_schemas();
     if !schemas.iter().all(|s| {
         capabilities
@@ -258,7 +258,6 @@ where
     .bind(request.runtime_id.as_uuid())
     .fetch_one(&mut *tx)
     .await?;
-    let cpu = native_cpu(&request.limits, &capabilities)?;
     let origin = combine_origin(
         dataset.origin,
         combine_origin(training.origin, db::enum_value(source, "discovery_origin")?),
@@ -279,7 +278,7 @@ where
         byte_count: size,
         role: ArtifactInputRole::Parameters,
     });
-    let (mut tx, admitted) = Store::enqueue_with_trial_charge(
+    let (mut tx, admitted, effective) = Store::enqueue_with_trial_charge(
         tx,
         &format!("alpha-evaluate/{}", Id::new()),
         &RunSubmission {
@@ -291,8 +290,10 @@ where
             limits: request.limits.clone(),
         },
         false,
+        parent_deadline,
     )
     .await?;
+    let cpu = native_cpu(&effective, &capabilities)?;
     bind_task(
         &mut tx,
         &admitted.resource,

@@ -77,26 +77,28 @@ React + TypeScript + antd → REST/SSE 生成合同 → qz API/Domain/Worker/CLI
                                                    / 已验证的原生统计与研究组件
 ```
 
-默认布局（job 与 contracts/domain 已有受测切片，其余完整能力仍为目标，不是一 crate 一微服务）：
+当前源码布局（模块存在不代表完整产品验收，不是一 crate 一微服务）：
 
 ```text
 Cargo.toml / Cargo.lock / rust-toolchain.toml
-apps/server/                 API、Worker、CLI、MCP 入口，共享领域服务
-apps/runtime/         远程任务与受限数据访问网关
-apps/job/             一次任务一个进程的上游执行器
-crates/domain/        无 HTTP/SQLx 的领域规则
-crates/contracts/     DTO、错误、事件、政策、OpenAPI/JSON/Arrow 合同源
-crates/store/         SQLx、事务、PGMQ 薄适配
-crates/integrations/  Codex、OCI、原生存储、科学库和下游适配
-frontend/src/features/  research、alphas、portfolios、deliveries、runs、settings
-migrations/             新系统显式 SQLx 迁移
-contracts/generated/    原生工具/合同源生成，不手改
-runtimes/               锁定镜像和依赖，包含经论证的 Python 复用
-examples/               明确 provenance 的可重复示例
- tests/                 contract、golden、e2e、security、fault
- deploy/                compose、backup、observability、runbooks
- docs/                  product、architecture、adr、research、protocols、operations
+apps/server/           HTTP、Worker、CLI、MCP；Codex 与 Runtime 传输适配
+apps/runtime/          远程任务网关、SQLite 恢复日志和 OCI 生命周期
+apps/job/              一次任务一个进程的 Rust 科学执行器
+apps/web/              React/TypeScript/Ant Design、PWA 和浏览器测试
+crates/contracts/      DTO、错误、事件、OpenAPI/Arrow 合同源
+crates/domain/         无 HTTP/SQLx 的领域规则与已验证科学组件适配
+crates/store/          SQLx、事务、PGMQ 和持久状态迁移
+crates/integrations/   认证、秘密、产物和 Mission 文件的原生组件薄适配
+migrations/            显式 SQLx 迁移
+contracts/generated/   Rust 原生合同生成物，不手改
+runtimes/              Codex 锁定依赖和原生镜像装配
+tests/                 共享合同、原生探针与跨包测试辅助
+docs/                  架构导航、实现证据、复用研究和真实截图
+.opensdlc/             开发上下文、任务、review、运维流程和 Agent 评估
+.github/               原生 CI、贡献模板和 CODEOWNERS
 ```
+
+生产及构建依赖遵守以下直接 workspace 依赖方向；测试辅助可以跨层复用，但不因此进入生产路径。`contracts` 不依赖其他第一方包；`domain` 与 `integrations` 只依赖 `contracts`；`store` 只依赖 `contracts/domain`；`job` 只依赖 `contracts/domain`；`runtime` 只依赖 `contracts/domain/integrations`；`server` 只依赖 `contracts/domain/store/integrations`。领域与合同层不直接依赖 HTTP、SQLx、OCI 客户端或 MCP 传输库。`make check-architecture` 用原生 Cargo metadata 检查当前图；新增包或改变方向先更新本节，不为通过检查添加 wrapper。具体入口与调用链导航见 [架构导览](docs/architecture.md)。
 
 | 成熟组件/对标 | 采用能力 | 禁止重复建设 |
 |---|---|---|
@@ -1689,6 +1691,12 @@ policy/dataset关联，不另建任务队列；Run仍由原PGMQ/Attempt/Runtime�
 并发重放只返回同一Run，失败不清除原trial，experiments.run_id仍指原Discovery。
 编译及两个Alpha阶段先以原Mission剩余墙钟约束本次分配，再推导实际所需CPU数；
 超过Runtime容量明确拒绝，不能用缩短前的墙钟生成无法执行的JobSpec。
+共享入队事务还须以父Mission绝对deadline约束子Run；数据库校验或锁等待不能
+通过重新累加剩余秒数延长期限，也不能在仍有预算时误报耗尽。编译、Discovery、
+Validation和Reviewer发起的Sealed评估均传递该上限；以入队时数据库实际时间
+拒绝已到期上限，Run与首次回执保存同一期限，并与事件同事务提交；重放不重置预算或期限。
+有效wall_seconds须在此入队取时后收紧并持久化；原生任务CPU须从这份有效分配
+重新推导。锁等待后的CPU容量不足时整笔事务回滚，不保留Run、队列或试验/CPU预约。
 
 所有Alpha科学阶段选择的实际镜像须等于冻结ExecutionAssumptions；正式Validation
 还须等于原Alpha版本镜像。Runtime连接修订未变不代表原生镜像未变，不能借新探测

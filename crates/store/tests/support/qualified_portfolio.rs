@@ -474,6 +474,7 @@ async fn qualified_members(
         else {
             panic!("original Sealed admission");
         };
+        assert!(lease.run.deadline_at <= review.run.deadline_at);
         experiment_support::complete_sealed(&pool, &store, &f, *lease).await;
         // Result-before-ACK redelivery must not issue a second qualification.
         let (first, replay) = tokio::join!(
