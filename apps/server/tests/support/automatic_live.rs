@@ -274,47 +274,59 @@ pub(super) async fn check(
             package_schema_version: PackageSchemaVersion::V1,
         };
         if changed {
-            let mut message = feedback.message.clone();
-            message.external_message_id = "other-stream".into();
-            message.report.stream_id = "other".into();
-            store
-                .submit_forward_message(&feedback.actor, &message, read, publish)
-                .await
-                .unwrap();
-            assert!(matches!(
+            for (stream, mean, expected_reason) in [
+                ("other", 0.1, "automation_live_evidence_changed"),
+                ("degraded", -0.1, "automation_live_paper_not_qualified"),
+            ] {
+                let mut message = feedback.message.clone();
+                message.external_message_id = format!("{stream}-stream");
+                message.report.stream_id = stream.into();
                 store
-                    .claim_handoff(&machine, &key, offer.id, &claim, read)
-                    .await,
-                Err(StoreError::Invalid("automation_live_unevaluated_stream"))
-            ));
-            let run = store
-                .enqueue_forward_evaluation(feedback.handoff, "other", read, publish)
-                .await
-                .unwrap()
-                .resource;
-            forward_result::complete(pool, store, run.id, &feedback.caps, &feedback.objects, 0.1)
+                    .submit_forward_message(&feedback.actor, &message, read, publish)
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    store
+                        .claim_handoff(&machine, &key, offer.id, &claim, read)
+                        .await,
+                    Err(StoreError::Invalid("automation_live_unevaluated_stream"))
+                ));
+                let run = store
+                    .enqueue_forward_evaluation(feedback.handoff, stream, read, publish)
+                    .await
+                    .unwrap()
+                    .resource;
+                forward_result::complete(
+                    pool,
+                    store,
+                    run.id,
+                    &feedback.caps,
+                    &feedback.objects,
+                    mean,
+                )
                 .await;
-            for (id, bytes) in feedback.objects.lock().unwrap().iter() {
-                match f
-                    .objects
-                    .read(*id, DbCounter::new(bytes.len() as u64).unwrap())
-                {
-                    Ok(existing) => assert_eq!(&existing, bytes),
-                    Err(_) => f.objects.put(*id, bytes).unwrap(),
+                for (id, bytes) in feedback.objects.lock().unwrap().iter() {
+                    match f
+                        .objects
+                        .read(*id, DbCounter::new(bytes.len() as u64).unwrap())
+                    {
+                        Ok(existing) => assert_eq!(&existing, bytes),
+                        Err(_) => f.objects.put(*id, bytes).unwrap(),
+                    }
                 }
-            }
-            store
-                .publish_scientific_result(run.id, read, publish)
-                .await
-                .unwrap()
-                .unwrap();
-            store.observe_forward(run.id).await.unwrap().unwrap();
-            assert!(matches!(
                 store
-                    .claim_handoff(&machine, &key, offer.id, &claim, read)
-                    .await,
-                Err(StoreError::Invalid("automation_live_evidence_changed"))
-            ));
+                    .publish_scientific_result(run.id, read, publish)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                store.observe_forward(run.id).await.unwrap().unwrap();
+                assert!(matches!(
+                    store
+                        .claim_handoff(&machine, &key, offer.id, &claim, read)
+                        .await,
+                    Err(StoreError::Invalid(reason)) if reason == expected_reason
+                ));
+            }
             assert!(
                 sqlx::query("DELETE FROM app.live_promotion_evidence WHERE approval_id=$1")
                     .bind(offer.approval_id.as_uuid())
