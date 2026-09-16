@@ -367,6 +367,6 @@ pub(super) async fn check(
             .fetch_one(pool)
             .await
             .unwrap(),
-        6
+        7 // Two original offers plus five independent claim scenarios.
     );
 }

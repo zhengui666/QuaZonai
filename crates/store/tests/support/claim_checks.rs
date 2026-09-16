@@ -254,7 +254,7 @@ pub(super) async fn check(
         store.handoff(operator, offer.id).await.unwrap().state,
         HandoffStateV1::Acknowledged
     );
-    for scenario in ["scheduled", "revoke-race", "reject"] {
+    for scenario in ["scheduled", "revoke-race", "reject", "competing-claims"] {
         Box::pin(expiry(pool, store, operator, f, offer, scenario)).await;
     }
 }
@@ -467,6 +467,54 @@ async fn expiry(
         external_claim_id: "expiry-claim".into(),
         package_schema_version: PackageSchemaVersion::V1,
     };
+    if scenario == "competing-claims" {
+        let rival = HandoffClaimV1 {
+            external_claim_id: "claim-rival".into(),
+            ..request.clone()
+        };
+        let (left, right) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            tokio::join!(
+                Box::pin(store.claim_handoff(
+                    &machine,
+                    &request.external_claim_id,
+                    offer.id,
+                    &request,
+                    |id, size| f.read(id, size)
+                )),
+                Box::pin(store.claim_handoff(
+                    &machine,
+                    &rival.external_claim_id,
+                    offer.id,
+                    &rival,
+                    |id, size| f.read(id, size)
+                ))
+            )
+        })
+        .await
+        .expect("different claim identities must not deadlock");
+        let winner = match (left, right) {
+            (Ok(winner), Err(StoreError::Conflict)) | (Err(StoreError::Conflict), Ok(winner)) => {
+                winner
+            }
+            _ => panic!("exactly one distinct claim must transfer the Offer"),
+        };
+        assert!(!winner.replayed);
+        assert_eq!(winner.resource.handoff.state, HandoffStateV1::Claimed);
+        assert_eq!(winner.resource.package.release_id, original.id);
+        let stored = store.handoff(operator, offer.id).await.unwrap();
+        assert_eq!(
+            stored.external_claim_id,
+            winner.resource.handoff.external_claim_id
+        );
+        let transfers: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM app.handoff_transfers WHERE handoff_id=$1")
+                .bind(offer.id.as_uuid())
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(transfers, 1);
+        return;
+    }
     if scenario == "revoke-race" {
         let (claim, revoke) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
             tokio::join!(
