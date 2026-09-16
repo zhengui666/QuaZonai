@@ -1697,6 +1697,36 @@ async fn cancelled_native_identity_blocks_both_late_create_and_old_id_start() {
 }
 
 #[tokio::test]
+async fn real_native_compile_oom_is_reported_as_a_safe_resource_failure() {
+    let mut f = Fixture::open().await;
+    // The actual compiler materializes this retained constant inside its cgroup.
+    // Never compile this input directly on the host.
+    let code = format!("{SIGNAL}\n#[used] static PRESSURE: [u8; 1 << 30] = [1; 1 << 30];\n");
+    let mut spec = f.compile(&code, 30).await;
+    spec.limits.memory_mib = 64;
+    let accepted = f.submit(&spec).await;
+    let terminal = f.terminal(&spec).await;
+    assert_eq!(terminal.state, RuntimeJobState::Failed);
+    let manifest = f.manifest(&spec).await;
+    domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
+        .unwrap();
+    assert!(manifest.artifacts.is_empty());
+    assert_eq!(manifest.resource_usage.output_bytes.get(), 0);
+    let error = manifest.error.unwrap();
+    assert_eq!(error.code, RuntimeFailureCode::MemoryLimit);
+    assert_eq!(error.class, RuntimeFailureClass::ResourceLimit);
+    assert_eq!(
+        error.safe_message,
+        "The native job exceeded its memory limit."
+    );
+    let state = f.native_container(&spec).await.state.unwrap();
+    assert_eq!(state.oom_killed, Some(true));
+    assert_ne!(state.exit_code, Some(0));
+    assert_eq!(f.submit(&spec).await, terminal);
+    f.assert_private_logs();
+}
+
+#[tokio::test]
 async fn compiler_cannot_read_a_test_owned_host_secret_or_runtime_credential_namespace() {
     let mut f = Fixture::open().await;
     let sentinel = f.directory.path().join("not-mounted-native-sentinel");
