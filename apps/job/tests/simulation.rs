@@ -472,6 +472,17 @@ fn native_equities_rebalance_in_cash_and_margin_accounts_with_original_fees() {
                     .as_decimal(),
             );
             request.settings.base_currency = "EUR".into();
+            for point in &mut request.target_points {
+                for target in &mut point.targets {
+                    target.currency = "EUR".into();
+                }
+            }
+            assert_eq!(
+                job::simulation::simulate(directory.path(), &request)
+                    .unwrap_err()
+                    .to_string(),
+                "SIMULATION_MARKET_UNSUPPORTED"
+            );
             assert_eq!(
                 simulate(directory.path(), &request).unwrap_err().trim(),
                 "QZ_NATIVE_JOB_FAILED"

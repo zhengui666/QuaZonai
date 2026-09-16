@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import document from '../../../contracts/generated/api-v2.openapi.json';
 import { projectEditor } from '../demo/project-editor';
 import { id } from '../demo/records';
 import { validateResponse } from './generated/responses.cjs';
@@ -83,7 +84,12 @@ test('all temporary project pages validate pagination and text follows native co
     expect(validateResponse(`/api/v2/projects/{id}/${suffix}`, 'get', 200, page.value, 'application/json')).toBe(true);
     for (const query of ['limit=0', 'limit=101', 'cursor=bad', 'cursor=', 'limit=1&limit=2', 'unknown=1']) expect(edit('GET', route, undefined, undefined, new URLSearchParams(query))?.status).toBe(422);
   }
-  for (const route of ['/api/v2/alphas', '/api/v2/evaluation-policies', '/api/v2/runs']) {
+  const globalRoutes = Object.entries(document.paths).filter(([path, operations]) => !path.includes('{') && 'get' in operations && 'parameters' in operations.get && operations.get.parameters.some(parameter => parameter.in === 'query' && parameter.name === 'project_id')).map(([path]) => path);
+  expect(globalRoutes).toEqual(expect.arrayContaining(['/api/v2/artifacts', '/api/v2/experiments', '/api/v2/input-sets']));
+  for (const route of globalRoutes) {
+    const page = edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: project }))!;
+    expect(page).toMatchObject({ status: 200, value: { items: [], next_cursor: null } });
+    expect(validateResponse(route, 'get', 200, page.value, 'application/json')).toBe(true);
     for (const query of ['limit=0', 'cursor=bad', 'limit=1&limit=2', 'unknown=1']) expect(edit('GET', route, undefined, undefined, new URLSearchParams(`project_id=${project}&${query}`))?.status).toBe(422);
   }
   expect(edit('GET', '/api/v2/runs', undefined, undefined, new URLSearchParams({ project_id: project, state: 'SUCCEEDED' }))?.status).toBe(200);

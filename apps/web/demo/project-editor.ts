@@ -26,7 +26,7 @@ export function projectEditor() {
     if (method === 'GET') {
       const selected = query.get('project_id');
       const nestedPage = project && project.id !== original.id && parts.length === 6 && ['briefs', 'cycles', 'execution-assumptions', 'portfolio-mandates', 'portfolio-candidates', 'releases', 'handoffs', 'automation-policies', 'forward', 'forward-observations', 'forward-weight-snapshots', 'wakes'].includes(parts[5]!);
-      const globalPage = selected && selected !== original.id && projects.has(selected) && ['/api/v2/alphas', '/api/v2/evaluation-policies', '/api/v2/runs'].includes(path);
+      const globalPage = selected && selected !== original.id && projects.has(selected) && ['/api/v2/alphas', '/api/v2/artifacts', '/api/v2/evaluation-policies', '/api/v2/experiments', '/api/v2/input-sets', '/api/v2/runs'].includes(path);
       const limit = Number(query.get('limit') ?? '50'); const cursor = query.get('cursor');
       if (path === '/api/v2/projects' || nestedPage || globalPage) {
         const allowed = ['limit', 'cursor', ...(globalPage ? ['project_id', ...(path === '/api/v2/runs' ? ['state'] : [])] : [])];

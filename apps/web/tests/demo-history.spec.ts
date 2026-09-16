@@ -67,8 +67,17 @@ test('new synthetic draft can be created, edited and opened without inheriting r
   const create = page.getByRole('dialog', { name: '新建研究项目', exact: true });
   await create.getByLabel('研究名称', { exact: true }).fill(name);
   await create.getByLabel('研究说明', { exact: true }).fill('只在此预览内存中保存');
+  const created = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/projects' && response.request().method() === 'POST');
   await create.getByRole('button', { name: '保存项目', exact: true }).click();
   await expect(create).toBeHidden();
+  const project = (await (await created).json()).resource.id as string;
+  for (const route of ['artifacts', 'experiments', 'input-sets']) {
+    const response = await page.request.get(`/api/v2/${route}`, { params: { project_id: project, limit: 50 } });
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toEqual({ schema_version: 1, items: [], next_cursor: null });
+    expect((await page.request.get(`/api/v2/${route}`, { params: { project_id: project, limit: 0 } })).status()).toBe(422);
+  }
+
   const row = page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
   await expect(row.getByText('草稿', { exact: true })).toBeVisible();
   await row.getByRole('button', { name: '编辑', exact: true }).click();
