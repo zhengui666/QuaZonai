@@ -25,7 +25,7 @@ async fn graph(pool: &PgPool) -> BTreeMap<String, serde_json::Value> {
     result
 }
 
-pub async fn check(pool: &PgPool, objects: &Path, actor: &store::authority::Actor) {
+pub async fn check(pool: &PgPool, objects: &Path, actor: &store::authority::Actor) -> usize {
     let before = graph(pool).await;
     for required in [
         "qualifications",
@@ -185,6 +185,23 @@ pub async fn check(pool: &PgPool, objects: &Path, actor: &store::authority::Acto
             "restored original Claim history differs"
         );
     }
+    let claimed_live_projects: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT p.id FROM app.projects p JOIN app.automation_policies policy ON policy.id=p.current_automation_policy_id JOIN app.portfolio_candidates c ON c.project_id=p.id JOIN app.releases r ON r.candidate_id=c.id JOIN app.handoff_offers h ON h.release_id=r.id AND h.downstream_id=policy.downstream_id WHERE policy.mode='AUTO_HANDOFF' AND h.environment='LIVE' AND h.state IN ('CLAIMED','ACKNOWLEDGED')",
+    )
+    .fetch_all(&restored_pool)
+    .await
+    .unwrap();
+    let checked_live_projects = claimed_live_projects.len();
+    for project in claimed_live_projects {
+        let project: contracts::Id = project.to_string().try_into().unwrap();
+        assert!(restored_store
+            .automate_live(project, |_, _| async {
+                panic!("restored claimed Live must not republish its Package")
+            })
+            .await
+            .unwrap()
+            .is_none());
+    }
     assert!(
         graph(&restored_pool).await == before,
         "restored reads mutated the graph"
@@ -198,4 +215,5 @@ pub async fn check(pool: &PgPool, objects: &Path, actor: &store::authority::Acto
         .execute(pool)
         .await
         .unwrap();
+    checked_live_projects
 }

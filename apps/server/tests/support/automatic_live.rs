@@ -345,6 +345,16 @@ pub(super) async fn check(
                 .await
                 .unwrap();
             assert_eq!(claimed.resource.handoff.state, HandoffStateV1::Claimed);
+            assert_eq!(
+                Box::pin(graph_recovery::check(
+                    pool,
+                    &directory.path().join("objects"),
+                    operator,
+                ))
+                .await,
+                1,
+                "must check one restored claimed Live project"
+            );
             store
                 .revoke_automation(
                     operator,
