@@ -1,8 +1,8 @@
 use std::process::{Command, Stdio};
 
 #[test]
-fn every_native_client_help_works_without_credentials_or_database() {
-    let mut pending = vec![vec!["client".to_owned()]];
+fn every_native_help_works_without_credentials_or_database() {
+    let mut pending: Vec<Vec<String>> = vec![vec![]];
     let mut visited = std::collections::BTreeSet::new();
     while let Some(path) = pending.pop() {
         assert!(visited.insert(path.clone()), "duplicate command: {path:?}");
@@ -16,10 +16,7 @@ fn every_native_client_help_works_without_credentials_or_database() {
         assert!(output.status.success(), "help failed: {path:?}");
         assert!(output.stderr.is_empty(), "unexpected stderr: {path:?}");
         let help = String::from_utf8(output.stdout).unwrap();
-        assert!(
-            help.contains("Usage: server client"),
-            "missing usage: {path:?}"
-        );
+        assert!(help.contains("Usage: server"), "missing usage: {path:?}");
         let mut commands = false;
         for line in help.lines() {
             if line == "Commands:" {
@@ -38,4 +35,7 @@ fn every_native_client_help_works_without_credentials_or_database() {
     }
     assert!(visited.contains(&vec!["client".into(), "project".into(), "list".into()]));
     assert!(visited.contains(&vec!["client".into(), "brief".into(), "freeze".into()]));
+    assert!(visited.contains(&vec!["migrate".into()]));
+    assert!(visited.contains(&vec!["recover-access".into()]));
+    assert!(visited.contains(&vec!["mcp".into()]));
 }

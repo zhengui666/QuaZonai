@@ -2,7 +2,7 @@
 
 > 需求基线：2026-09-05，Issue #62 正文及附录 A（评论 5549224292）、B（评论 5549244417）。
 > 所有者修订：2026-09-05，PR #63 的执行要求——**优先 Rust，其次 Python；优先复用，其次造轮子**。
-> **状态：Draft 集成实施中。已实现原生适配及合同/领域初始切片；本文的目标合同不代表全量系统、全部测试或受保护验收已完成。**
+> **状态：PR #63 已合并，Issue #62 的完整产品验收仍未完成。** 当前实现与证据入口见 [实现证据](docs/architecture/issue-62-execution.md)，本文保留完整目标合同，不把代码存在或 CI 通过当作生产验收。
 
 本文包含完整字段合同、API/CLI/MCP 映射、状态机、故障场景、T01–T42 和交付边界，是唯一完整架构事实源。Issue 是需求出处和验收追溯链接，不是运行时或离线审查必须另行读取的规范依赖；其后续编辑不会自动改变本文。任何新要求必须先通过版本控制更新本文，再实现。不得以摘要、局部绿色 CI、缺失能力清单或语言修订缩小核心范围。
 
@@ -24,31 +24,25 @@
 - 某组件有满足本项目能力和安全合同的 Rust 实现，就使用该实现。不能以现有桥接方便、旧工具链、版本解析失败、语言占比或赶工为理由选择 Python。
 - Python 例外须先提交 `docs/research/reuse.md` 中的具名能力证据：审查的 Rust 候选和具体版本/API、真实缺口/失败复现、采用的 Python API/版本、接口/权限/进程边界、测试和替换条件。检索不到不等于证明不存在；只批准必要范围，可由执行者依据证据自主决定。
 - 已确认并实测：Nautilus `nautilus-backtest/model/trading 0.63.0`（官方 `v2.0.0rc4`）、Clarabel 0.11.1、Apache Arrow Rust 56.2.0；使用 Rust 1.98.0 满足上游 MSRV。第一方 job 不再通过 PyO3/CPython 调用这些能力。
-- 当前提交只实现受测原生适配与合同/领域基础，不声称完整控制面/UX/研究/交付已就绪。删除旧测试不满足新系统 T01–T42；缺失检查仍阻塞最终合并。
+- 原生适配与分项测试不代表完整控制面/UX/研究/交付已就绪。删除旧测试不满足新系统 T01–T42；缺失检查仍阻塞产品验收。
 
 ## 0.2 编译器补丁基线（2026-09-07）
 
 正式构建和本地验证固定 Rust **1.98.1**，不使用浮动 stable、不降低上游 MSRV。Rust 官方于 2026-09-03 发布该补丁，修复 1.98.0 的 trait-object vtable 错误生成及其未定义行为：<https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/>。更新 `rust-toolchain.toml`、workspace `rust-version` 与 CI 安装/选择；依赖版本和 Cargo.lock 不因工具链升级重新解析。
 
-历史 1.98.0 的已执行证据原样保留且仅作为历史；本补丁基线需重新执行原生合同、领域/数据库/HTTP、Clippy 与科学探针后才能记录通过。宿主可能用发行版 cargo 或覆盖变量绕过 rustup，不能只看文件内容推定实际编译器：验证入口使用明确的 `rustup run 1.98.1`，记录实际 `rustc -Vv`、Cargo/rustfmt 版本。安装工具链是本机执行器的环境操作，不是让其修改源码；失败返回真实诊断，由网页作者处理。
+历史 1.98.0 的已执行证据原样保留且仅作为历史；本补丁基线需重新执行原生合同、领域/数据库/HTTP、Clippy 与科学探针后才能记录通过。宿主可能用发行版 cargo 或覆盖变量绕过 rustup，不能只看文件内容推定实际编译器：验证入口使用明确的 `rustup run 1.98.1`，记录实际 `rustc -Vv`、Cargo/rustfmt 版本。安装工具链属于开发环境操作；失败保留真实诊断，由当前负责人修复，不降低版本或伪造通过。
 
 ## 0.3 所有者接管与个人项目范围修订（2026-09-11）
 
-所有者授权当前本机 Codex 直接完成 #62/#63 的全部开发、修复、验证和 Git/GitHub 操作，覆盖网页唯一作者及本机仅执行的旧分工。现有工作应核对并接续，不重复实现；GitHub Codex 仍仅做独立 review。全部开发完成、最新 Head 适用 CI 通过且 Codex 明确无问题后直接合并 main。
+所有者授权本机 Codex 直接完成项目开发、修复、验证、文档及 Git/GitHub 操作。现有工作应核对并接续，不重复实现；GitHub Codex 仍仅做独立 review。全部开发完成、最新 Head 适用 CI 通过且 Codex 明确无问题后直接合并 main。
 
 本项目为个人项目，安全工作的范围是防止账户密码、钱包、支付/API 凭证等敏感信息进入 LLM、源码和日志。不新增除此之外的网络安全专项、渗透测试、供应链安全审查或额外安全合并门禁；本文旧的专项安全要求以此修订为准。保留现有原生保护与回归测试；该范围调整不改变预算、科学有效性、Sealed 评估独立性、审批、target-only 交付、数据保留与故障恢复等产品合同，也不允许用假结果满足验收。
 
 ## 1. 当前实现与完整目标
 
-| 部分 | 已有事实 | 必须完成的目标 |
-|---|---|---|
-| 运行服务 | 旧实现从本分支删除；新系统未完成部署验收 | 按第 0 节重建并验收控制面，完整 Ant Design 产品面；显式切换后移除被替代路径 |
-| 原生科学计算 | `apps/job` 固定 FIXTURE 直接调用 Rust Clarabel、Nautilus、Arrow | 隔离真实研究、评估、至少两个 Alpha、完整约束与共享资金模拟 |
-| Codex | 无账号 stdio 握手、account/read、完整模型分页、默认与 effort-only Thread 探针 | 真实工具→Job→Evaluation→同 Thread 消费结果、独立 Reviewer、恢复、原生账号和权限隔离 |
-| PGMQ | 原生投递/结果/确认事务回滚探针 | 正式领域事务、预算、Run/Attempt 接管、恢复、取消和唯一结果采纳 |
-| 交付/迁移/运维/UX | 新系统完整链路尚未实现 | W0–W8、T01–T42；不能把此表当作 Future Work 排除项 |
+当前实现、实际测试入口、已合并基线及未完成验收统一记录在 [实现证据](docs/architecture/issue-62-execution.md)，README 只负责入口与使用说明，不另维护状态机或功能完成清单。
 
-同一 Draft 集成 PR 承载全部范围。从 `main@941dbcbbaa26293d17b14f733c0d415611035f57` 建立的 #63 不依赖未合并 PR；旧 Issue 不自动关闭，最终覆盖矩阵说明替代和独立保留关系。W0 成功也不能合并骨架或关闭 #62。
+[PR #63](https://github.com/zhengui666/QuaZonai/pull/63) 已合并至 main；其合并不证明本合同的全部目标已完成。后续修复通过新 PR 交付，[Issue #62](https://github.com/zhengui666/QuaZonai/issues/62) 继续承载 W0–W8/T01–T42 的全部完成责任。旧 Issue 不自动关闭，最终覆盖矩阵说明替代和独立保留关系。
 
 ## 2. 产品与所有权
 
@@ -450,7 +444,7 @@ POST /migrations/import 只接收受信任导出注册引用和 dry_run，不能
 
 README 对标 uv 的清晰定位/快速使用、Nautilus 的架构与支持边界、Qlib 的数据准备/实际流程、RD-Agent 的可运行研究示例、Ant Design 的文档/生态导航；不借用上游性能/收益/全部功能当本项目已交付。中文为主，英文状态同步。最终结构：一句话是什么/不是什么；真实 E2E 截图/短演示；已验证能力与限制；真实架构图；无付费凭据 Demo；原生登录/数据/远端/预算真实启动；流程与证据；开发测试；部署备份升级故障安全；路线图贡献许可证/第三方。
 
-Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；真实模式不依赖测试 seed/手工 SQL。所有 Quickstart、CLI Help、配置/Skill 示例和生成合同进入 smoke；不存在命令就不能写“一键可用”。截图来自真实界面，不用概念图冒充。README/Skill 不复制领域状态机，实际 CI/Review 链接替代永久 RELEASE READY 声明。
+Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；真实模式不依赖测试 seed/手工 SQL。所有 Quickstart、CLI Help、配置/Skill 示例和生成合同进入 smoke；不存在命令就不能写“一键可用”。截图来自真实界面，不用概念图冒充。README/Skill 不复制领域状态机，实际 CI/Review 链接替代永久 RELEASE READY 声明。文档维护复用原生链接检查、CLI help 回归和生成合同差异检查；本地文件/标题链接损坏或命令帮助失败应使 CI 失败。需要真实账号、数据或数据库的示例由对应验收覆盖，不自动执行 Markdown 中任意 Shell，也不把静态检查等同完整 T41。
 
 ## 12. 工作包与完成边界
 
@@ -466,9 +460,9 @@ Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；
 | W7 | 备份恢复、升级/切换、迁移、README/CLI/Skill、清理 | 冷启动/恢复演练、docs smoke、残留检查 |
 | W8 | 全部 T01–T42、检查族、Review、合并后证据 | 最新 Head/merge/main 可复核 |
 
-新增选择先说明消除哪些第一方代码、增加哪些运维成本。核心缺口在同一 PR 解决，不用空实现、永久关闭 Feature Flag、缩小范围或 Future Work 跳过。覆盖率不是正确性；相同 fixture 可共享但不能空断言。
+新增选择先说明消除哪些第一方代码、增加哪些运维成本。核心缺口仍属于 Issue #62 的交付范围，不用空实现、永久关闭 Feature Flag、缩小范围或 Future Work 跳过。覆盖率不是正确性；相同 fixture 可共享但不能空断言。
 
-结束顺序：完整实现同一 PR → 最新 Head 所有适用 CI 通过、所有 review threads 解决且 `@codex review` **明确无问题** → 才允许 merged → main 检查、迁移/完整链路/隔离/恢复/文档证据回填 → 才关闭 #62。更新 Head 必须重新满足；缺失、失败、取消、应运行却跳过、额度不足、未回复、旧 Head 或仅 emoji 都不算通过。创建 Issue/方案/空页面/PR/mock 不算完成。
+每个后续 PR 的结束顺序：完整实现其声明范围 → 最新 Head 所有适用 CI 通过、所有 review threads 解决且 `@codex review` **明确无问题** → merged → main 检查。只有全部 W0–W8/T01–T42 和迁移/完整链路/隔离/恢复/文档证据齐全，才关闭 #62 或声明产品完成。更新 Head 必须重新满足；缺失、失败、取消、应运行却跳过、额度不足、未回复、旧 Head 或仅 emoji 都不算通过。创建 Issue/方案/空页面/PR/mock 不算完成。
 
 **GitHub 上 Codex 只承担 review，禁止要求其修复、实现、提交或自动处理。执行者自行分析、修改、补测、push 后再请求 review。** 普通 PR 不携带生产密钥；真实账号/许可数据/远端只在经过审查、锁定待交付 Head、最小权限的受保护环境验收。缺账号/数据/额度/权限为 BLOCKED，不是 skipped pass。禁止 pull_request_target 等把未审查代码放进 secret-bearing 环境；不用真实下单证明代码正确。
 
@@ -486,7 +480,7 @@ Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；
 - 每表 `id:Id PK, created_at:Time`。可变表另有 `updated_at:Time, revision:Rev`；immutable 禁 UPDATE/DELETE，撤销/修订追加；append-only 没有伪 mutable revision。
 - 默认归档，不级联删除引用的研究/评估/审批/交付。封闭 enum 与合同/DB CHECK 一致；状态迁移带当前 state/revision，不接受客户端终态赋值。
 - JSONB 仅存版本化上游配置/政策，schema_version、严格字段校验、unknown-field 拒绝或明确兼容；不用 dict[str,any] 隐藏领域。
-- Ref 只能服务端登记的原生对象，不能用户/Agent 提交 file:///etc/passwd、任意公网/内网 URL/bucket 路径。
+- Ref 只能服务端登记的原生对象，不能用户/Agent 提交 `file:///etc/passwd`、任意公网/内网 URL/bucket 路径。
 - Web/CLI/MCP 同一领域服务/权限合同，Rust 优先按第 0 节，Agent/job 无 DB 凭据。
 - 发布引用环用 nullable draft pointer 或同事务分配 ID + DEFERRABLE FK，不禁 FK/跨事务半发布。owned FK 优先 `(id,project_id)` 复合唯一/外键，血缘无环等由事务校验并发测试。
 
@@ -3781,7 +3775,7 @@ Post-merge main Checks:
 Known Limitations / Residual Risks:
 ```
 
-填有链接的完整证据不是授权跳过任何检查。第12节顺序不可降低：完整实现 → 最新Head CI全绿且Codex明确无问题 → merged → main复核/证据回填；不满足即部分完成，不关闭Issue。
+填有链接的完整证据不是授权跳过任何检查。第12节的 PR 验证和完整产品验收边界不可降低；维护变更合并不替代产品证据，不满足完整合同即部分完成，不关闭 Issue。
 
 
 ## B12. PostgreSQL 初始持久化与逐轮 Store 实施合同

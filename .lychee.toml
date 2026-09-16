@@ -1,0 +1,6 @@
+# Deterministic PR checks: local files, images and heading/HTML anchors.
+# Remote URLs and environment-dependent examples need their own acceptance.
+offline = true
+include_fragments = "anchor-only"
+hidden = true
+no_progress = true

@@ -1,5 +1,16 @@
 # 运行与部署
 
+本页是实际运行手册；完整产品验收缺项集中在[证据索引](docs/architecture/issue-62-execution.md#acceptance)。合成预览、服务健康或分项 CI 不等于生产研究与交付已验收。
+
+- [首次启动与身份配置](#首次启动认证服务)
+- [原生计算 Runtime](#原生计算-runtime-的独立运行边界)
+- [Worker 与数据](#worker正式数据验证与025升级)
+- [数据、密钥与备份](#数据和密钥)
+- [升级提交边界](#完整迁移命令的提交边界)
+- [运行恢复](#run-admission--attempt--sse-运维边界)
+
+## 组合与目标交付操作
+
 “组合 / 组合配置”打开原版本后可“请求组合构建”：选择运行中 Cycle、具备
 PORTFOLIO_BUILD 能力的 Runtime、冻结 Forward 输入、PAPER/LIVE，以及原下游
 权重快照或历史目标假设。成员按原 Alpha → 版本 → 资格选择，至少两个不同 Alpha，
@@ -66,7 +77,7 @@ Candidate原始头、成员和目标快照。需要Operator或精确项目RESEAR
 构建请求的current_weights_source可明确选择FORWARD_SNAPSHOT或LAST_TARGET。
 后者使用同项目原Candidate的目标文件与子项，不延长期限、不冒称账户仓位。
 
-本分支已实现 Rust 原生组件、逐轮 PostgreSQL Store 和可运行的浏览器认证 API，**尚非完整研究与交付产品**。旧实现已删除，无兼容服务；完整目标和完成条件在 DESIGN。
+旧实现已从活动源码树删除，无兼容服务；完整产品目标和完成条件在 [DESIGN](DESIGN.md)。
 
 ## 原生计算 Runtime 的独立运行边界
 
@@ -496,7 +507,7 @@ cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var
 
 源码删除不授权删除运行中的旧库、用户 artifacts、备份或 Codex profile。不得将新 schema 直接应用到旧库；实际产品切换仍须完成只读导入、备份恢复和回滚演练。当前没有声称达到 RPO/RTO。
 
-## 尚待完成的产品部署验收
+## 组合运行配置与验收边界
 
 受管PORTFOLIO_BUILD已改为原FORWARD目录和MODEL产物生成预测/收益，再聚合及
 Clarabel求解，不接受手填预测或历史收益。更新必须重建并验证登记的新镜像；
@@ -542,7 +553,7 @@ portfolio-cvar/1 与 LINEAR_PROGRAM 镜像；不以方差或默认置信水平�
 这要求重建并登记 portfolio-variance-bound/1、SECOND_ORDER_CONE 镜像能力，
 不沿用不支持该约束的旧探测。发布复核误差最多为上限乘敞口容差。
 
-研究、组合、交付及Forward历史已提供Web/CLI操作面；Worker研究续轮、独立Reviewer、资格、组合发布及自动Paper/Live/Wake已有原生实现和分项测试。完整无凭据Demo、真实账号模型闭环、真实授权数据的Web/CLI新实例链路、用户旧备份迁移及完整恢复演练仍待验收，具体缺项见README“尚未完成的交付验收”。普通 PR CI 不携带生产秘密，真实受保护验收只运行经过审查的固定 Head。QZ 不持有 Broker 凭据或真实执行控制权。
+研究、组合、交付及Forward历史已提供Web/CLI操作面；Worker研究续轮、独立Reviewer、资格、组合发布及自动Paper/Live/Wake已有原生实现和分项测试。完整无凭据Demo、真实账号模型闭环、真实授权数据的Web/CLI新实例链路、用户旧备份迁移及完整恢复演练仍待验收，具体缺项见[实现证据](docs/architecture/issue-62-execution.md#acceptance)。普通 PR CI 不携带生产秘密，真实受保护验收只运行经过审查的固定 Head。QZ 不持有 Broker 凭据或真实执行控制权。
 
 ### 完整迁移命令的提交边界
 

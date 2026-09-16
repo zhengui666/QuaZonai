@@ -1,5 +1,14 @@
 # CLI 命令
 
+命令以实际 Rust `--help` 和生成 OpenAPI 为准；本页展开需要精确授权、原请求重试和输入边界的用法。
+
+- [HTTP CLI 与凭据](#面向用户的原生-http-cli)
+- [本机初始化和服务启动](#认证服务与本机管理)
+- [Runtime 与原生任务](#原生-runtime-网关与受管-job)
+- [开发测试](#开发测试)与[历史迁移](#旧只读快照的原生关系检查)
+
+## 自动化与目标交付命令
+
 `client automation authorize PROJECT_UUID`提交AutomationAuthorizeV1到
 POST /api/v2/projects/{id}/automation-policies：schema_version=1、expected_project_revision、
 content（完整AutomationPolicyContentV1，字段见DESIGN A7.0）。POLICY_AUTHORIZE人工grant
