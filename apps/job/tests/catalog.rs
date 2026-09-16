@@ -193,6 +193,13 @@ fn compressed_native_catalog_cannot_expand_past_the_decoded_row_limit() {
     let path = directory
         .path()
         .join(catalog.write_to_parquet(&bars, None, None, None).unwrap());
+    let native_directory = catalog.make_path(
+        <nautilus_model::data::Bar as nautilus_persistence::backend::catalog::CatalogPathPrefix>::path_prefix(),
+        Some(&bars[0].bar_type.to_string()),
+    ).unwrap();
+    let files = catalog.list_parquet_files(&native_directory).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(directory.path().join(&files[0]), path);
     let bytes = std::fs::read(&path).unwrap();
     assert!(
         bytes.len() * 4 < std::mem::size_of_val(bars.as_slice()),

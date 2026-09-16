@@ -529,7 +529,10 @@ async fn native_candidate_simulation(sequence: bool) {
         .unwrap();
         let bar = observed.series[0].bars[0];
         let directory = native
-            .make_path("bar", Some(&bar.bar_type.to_string()))
+            .make_path(
+                <nautilus_model::data::Bar as nautilus_persistence::backend::catalog::CatalogPathPrefix>::path_prefix(),
+                Some(&bar.bar_type.to_string()),
+            )
             .unwrap();
         let files = native.list_parquet_files(&directory).unwrap();
         assert_eq!(files.len(), 1);
