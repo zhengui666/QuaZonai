@@ -63,6 +63,7 @@ impl From<StoreError> for WorkerFailure {
         if matches!(error, StoreError::Domain(domain::DomainError::StaleAttempt)) {
             Self::LostAuthority
         } else {
+            tracing::warn!(error = %error, "native worker store operation rejected");
             Self::Store
         }
     }

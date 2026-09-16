@@ -581,6 +581,7 @@ async fn controlled_real_declaration_registers_original_reviewed_qualification(p
 }
 
 async fn settled_scientific_protocol(pool: PgPool, origin: DataOrigin) {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let declared_origin = serde_json::to_value(origin).unwrap();
     let f = fixture_with_selection(&pool, false, 1, origin).await;
     let experiment = experiment_support::propose(
