@@ -203,3 +203,53 @@ fn compressed_native_catalog_cannot_expand_past_the_decoded_row_limit() {
     assert_eq!(error.to_string(), "CATALOG_ROW_LIMIT");
     assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
+
+#[test]
+fn malformed_native_parquet_is_rejected_without_rewriting_the_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let (instrument, bars, selection) = fixture();
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(2),
+        None,
+        None,
+    )
+    .unwrap();
+    catalog.write_instruments(vec![instrument]).unwrap();
+    let path = directory
+        .path()
+        .join(catalog.write_to_parquet(&bars, None, None, None).unwrap());
+    let original = std::fs::read(&path).unwrap();
+    assert_eq!(load_catalog(directory.path(), &selection).unwrap().rows, 4);
+    let footer = original.len() - 8;
+    let metadata_len =
+        u32::from_le_bytes(original[footer..footer + 4].try_into().unwrap()) as usize;
+    let data_end = footer - metadata_len;
+    assert!(data_end > 4);
+    for variant in [
+        "truncated_footer",
+        "oversized_metadata",
+        "invalid_compressed_pages",
+    ] {
+        let mut corrupted = original.clone();
+        match variant {
+            "truncated_footer" => corrupted.truncate(footer),
+            "oversized_metadata" => {
+                corrupted[footer..footer + 4].copy_from_slice(&u32::MAX.to_le_bytes())
+            }
+            _ => corrupted[4..data_end].fill(0xff),
+        }
+        std::fs::write(&path, &corrupted).unwrap();
+        let error = load_catalog(directory.path(), &selection)
+            .err()
+            .expect(variant);
+        if variant == "oversized_metadata" {
+            assert_eq!(error.to_string(), "CATALOG_PARQUET_FOOTER_INVALID");
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), corrupted);
+    }
+    std::fs::write(path, original).unwrap();
+    let recovered = load_catalog(directory.path(), &selection).unwrap();
+    assert_eq!(recovered.series[0].bars, bars);
+}

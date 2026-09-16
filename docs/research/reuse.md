@@ -413,3 +413,19 @@ https://docs.rs/ndarray-stats/0.7.0/ndarray_stats/trait.DeviationExt.html
 - 测试复用：https://docs.rs/seccompiler/0.5.0/seccompiler/ （Rust VMM原生seccomp构建/加载）
 
 `directory_confinement.rs` 在全新测试子进程用成熟 seccompiler 令 openat2 分别返回 ENOSYS/EPERM，先通过 rustix 原生 openat2 确认注入生效，再执行完全相同的原生目录打开/文件读取/文件创建拒绝和合法根内软链对照。仅使用测试私有临时目录的兄弟哨兵；没有宿主真实文件、生产密钥或数据库操作。真实 ArtifactStore/SecretVault 原生字节发布/读取亦在每种模式内测试；父进程不安装过滤器，不用mock成功回执。seccompiler和libc直接依赖仅属于Linux dev-dependencies，不把测试注入带入运行服务。测试是否通过必须以实际命令和最新Head CI为证，不能把依赖声明或内核探测当完整T34/T35通过。
+
+
+## 原生 Parquet 页脚边界（2026-09-16）
+
+锁定的 Nautilus persistence 0.63.0 经 DataFusion 使用 Parquet 59.3.0。
+该版 [push decoder](https://github.com/apache/arrow-rs/blob/59.3.0/parquet/src/file/metadata/push_decoder.rs#L389)
+在读取页脚声明的元数据长度时直接做无符号减法；真实原生目录测试中，将该长度改为
+`u32::MAX` 会触发下溢 panic。共享 `job::catalog::load_catalog` 先复用原生目录列表，
+仅用标准库读取每个已挂载 Parquet 文件的固定八字节页脚，并核对声明长度不越过文件。
+元数据、压缩、类型和时间过滤仍完全交给原生组件，没有新增解析器或依赖。
+此预检会对已限定、不可变目录中的每个文件多读一次页脚；升级到经本回归验证会拒绝
+越界长度的原生读取器后删除预检，不把它扩展成格式或数值引擎。
+
+`apps/job/tests/catalog.rs` 以原生写入的目录验证截断页脚、超长元数据及损坏压缩页均返回
+错误且保留输入字节，恢复原文件后仍能读取原行情。压缩膨胀行数上限另有真实 SNAPPY
+回归。这些检查不替代 T35 的容器内压缩炸弹资源限制及安全错误回传验收。

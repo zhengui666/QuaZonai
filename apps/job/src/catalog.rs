@@ -9,7 +9,12 @@ use nautilus_model::{
     instruments::{Instrument, InstrumentAny},
 };
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
-use std::{collections::BTreeMap, path::Path, str::FromStr};
+use std::{
+    collections::BTreeMap,
+    io::{Read, Seek, SeekFrom},
+    path::Path,
+    str::FromStr,
+};
 
 pub struct NativeBarSeries {
     pub instrument: InstrumentAny,
@@ -132,6 +137,23 @@ pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<Nat
         .ok_or_else(|| anyhow::anyhow!("CATALOG_ROOT_INVALID"))?;
     // Use the fallible native constructor. Cloud storage support is not enabled.
     let mut catalog = ParquetDataCatalog::from_uri(text, None, Some(4096), None, None)?;
+    // The pinned native push decoder subtracts this untrusted length unchecked.
+    // Check only the fixed-size footer boundary; native Parquet still parses all
+    // metadata and pages. Runtime mounts are already scoped and immutable.
+    // ponytail: one footer read per mounted file; remove when the pinned decoder checks bounds.
+    for path in catalog.list_parquet_files("data")? {
+        let mut file = std::fs::File::open(root.join(path))?;
+        let length = file.metadata()?.len();
+        ensure!(length >= 8, "CATALOG_PARQUET_FOOTER_INVALID");
+        file.seek(SeekFrom::End(-8))?;
+        let mut footer = [0_u8; 8];
+        file.read_exact(&mut footer)?;
+        let metadata_length = u32::from_le_bytes(footer[..4].try_into()?);
+        ensure!(
+            u64::from(metadata_length) <= length - 8,
+            "CATALOG_PARQUET_FOOTER_INVALID"
+        );
+    }
     let ids = types
         .iter()
         .map(|kind| kind.instrument_id().to_string())
