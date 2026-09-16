@@ -24,7 +24,7 @@ export default defineConfig({
     transformIndexHtml() {
       return [{ tag: 'aside', attrs: { role: 'note', 'aria-label': '合成预览说明',
         style: 'padding:12px;background:#fff3cd;color:#3b2e00;font:16px/1.5 sans-serif' },
-      children: 'SYNTHETIC / FIXTURE · 合成界面预览，尚非完整 Demo。可临时新建草稿项目并编辑名称和说明（同一预览实例共享，重启清空）；其他写入禁用。PASS、资格及权重都是未经计算的假设记录；没有真实账号或交付，请勿输入凭据。', injectTo: 'body-prepend' }];
+      children: 'SYNTHETIC / FIXTURE · 合成界面预览，尚非完整 Demo。可临时新建草稿项目、编辑名称和说明，并在示例项目创建或编辑 Brief 草稿（同一预览实例共享，重启清空）；其他写入禁用。PASS、资格及权重都是未经计算的假设记录；没有真实账号或交付，请勿输入凭据。', injectTo: 'body-prepend' }];
     },
     configureServer(server) {
       const edit = projectEditor();
@@ -34,7 +34,7 @@ export default defineConfig({
         const pathname = url.pathname;
         if (!pathname.startsWith('/api/')) return next();
         let body: unknown;
-        if (request.method === 'PATCH' || (request.method === 'POST' && pathname === '/api/v2/projects')) {
+        if (request.method === 'PATCH' || (request.method === 'POST' && (pathname === '/api/v2/projects' || /^\/api\/v2\/projects\/[^/]+\/briefs$/.test(pathname)))) {
           const origin = request.headers.origin;
           if (origin && origin !== `http://${request.headers.host}`) { response.writeHead(403); response.end(); return; }
           try {

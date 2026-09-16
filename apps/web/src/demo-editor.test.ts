@@ -101,3 +101,46 @@ test('all temporary project pages validate pagination and text follows native co
   expect(edit('GET', '/api/v2/runs', undefined, undefined, new URLSearchParams({ project_id: project, state: 'SUCCEEDED' }))?.status).toBe(200);
   expect(edit('GET', '/api/v2/runs', undefined, undefined, new URLSearchParams({ project_id: project, state: 'invalid' }))?.status).toBe(422);
 });
+
+
+test('Brief drafts retain frozen history, references and idempotent revisions', () => {
+  const edit = projectEditor(); const path = `/api/v2/projects/${id(1)}/briefs`;
+  const frozen = structuredClone(edit('GET', `/api/v2/briefs/${id(10)}`)!.value) as import('./api').Schema['BriefView'];
+  const body = { schema_version: 1, content: frozen.content, bindings: frozen.bindings, supersedes_id: frozen.id };
+  const saved = edit('POST', path, body, 'brief-create')!;
+  expect(saved.status).toBe(201);
+  expect(validateResponse('/api/v2/projects/{id}/briefs', 'post', 201, saved.value, 'application/json')).toBe(true);
+  const draft = (saved.value as { resource: import('./api').Schema['BriefView'] }).resource;
+  expect(draft).toMatchObject({ version: 2, revision: '1', state: 'DRAFT', frozen_at: null, supersedes_id: frozen.id });
+  expect(draft.id).not.toBe(frozen.id);
+  const reordered = { ...body, content: Object.fromEntries(Object.entries(body.content).reverse()) };
+  expect(edit('POST', path, reordered, 'brief-create')).toMatchObject({ value: { replayed: true, resource: draft } });
+  const changed = { ...body.content, hypothesis: 'Edited hypothesis' };
+  expect(edit('POST', path, { ...body, content: changed }, 'brief-create')?.status).toBe(409);
+  const update = { schema_version: 1, content: changed, bindings: body.bindings, expected_revision: '1' };
+  expect(edit('PATCH', `/api/v2/briefs/${draft.id}`, update, 'brief-update')).toMatchObject({ status: 200, value: { resource: { revision: '2', content: { hypothesis: changed.hypothesis } } } });
+  expect(edit('POST', path, body, 'brief-create')).toMatchObject({ value: { resource: { revision: '1', content: frozen.content } } });
+  expect(edit('PATCH', `/api/v2/briefs/${draft.id}`, update, 'stale')?.status).toBe(409);
+  expect(edit('PATCH', `/api/v2/briefs/${frozen.id}`, update, 'frozen')?.status).toBe(403);
+  expect(edit('GET', `/api/v2/briefs/${frozen.id}`)?.value).toEqual(frozen);
+  expect(edit('POST', `/api/v2/briefs/${draft.id}/freeze`, {}, 'freeze')).toBeUndefined();
+  expect(edit('GET', `/api/v2/projects/${id(1)}`)).toMatchObject({ value: { current_brief_id: frozen.id, state: 'DRAFT' } });
+  const page = edit('GET', path, undefined, undefined, new URLSearchParams('limit=1'))!;
+  expect(validateResponse('/api/v2/projects/{id}/briefs', 'get', 200, page.value, 'application/json')).toBe(true);
+  expect(page).toMatchObject({ value: { items: [{ id: draft.id }], next_cursor: draft.id } });
+  expect(edit('GET', path, undefined, undefined, new URLSearchParams({ cursor: draft.id }))).toMatchObject({ value: { items: [frozen] } });
+  expect(edit('GET', path, undefined, undefined, new URLSearchParams('limit=0'))?.status).toBe(422);
+  for (const invalid of [
+    { ...body, supersedes_id: id(999) },
+    { ...body, content: { ...body.content, hypothesis: ' ' } },
+    { ...body, content: { ...body.content, hypothesis: 'a\u0000b' } },
+    { ...body, content: { ...body.content, evaluation_policy_id: id(999) } },
+    { ...body, content: { ...body.content, budget: { ...body.content.budget, max_repair_turns: 100 } } },
+    { ...body, bindings: [body.bindings[0], body.bindings[0]] },
+    { ...body, bindings: body.bindings.map(binding => ({ ...binding, access_policy: 'RESEARCH_READ' })) },
+  ]) expect(edit('POST', path, invalid, 'invalid')?.status).toBe(422);
+  const project = edit('POST', '/api/v2/projects', { schema_version: 1, name: 'New', description: '' }, 'project')!;
+  const projectId = (project.value as { resource: { id: string } }).resource.id;
+  expect(edit('POST', `/api/v2/projects/${projectId}/briefs`, body, 'foreign')?.status).toBe(403);
+  expect(projectEditor()('GET', `/api/v2/briefs/${draft.id}`)).toBeUndefined();
+});

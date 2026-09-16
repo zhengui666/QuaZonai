@@ -96,3 +96,32 @@ test('new synthetic draft can be created, edited and opened without inheriting r
   await page.getByRole('tab', { name: '交付记录', exact: true }).click();
   await expect(page.getByText('尚无交付记录。冻结目标包不会自动创建 Offer。', { exact: true })).toBeVisible();
 });
+
+
+test('synthetic Brief fork and edit preserve the frozen version', async ({ page }, testInfo) => {
+  const hypothesis = `SYNTHETIC draft ${testInfo.project.name}`;
+  await page.goto('/');
+  await page.getByRole('button', { name: 'SYNTHETIC · 双 Alpha 研究示例', exact: true }).click();
+  await page.getByRole('button', { name: '查看冻结版本', exact: true }).click();
+  await page.getByRole('button', { name: '以此创建新版本', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Brief · 版本 1 的新草稿', exact: true });
+  await editor.getByLabel('可检验的假设', { exact: true }).fill(hypothesis);
+  const response = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/briefs'));
+  await editor.getByRole('button', { name: '保存 Brief 草稿', exact: true }).click();
+  const created = await response; expect(created.status()).toBe(201);
+  const { resource } = await created.json();
+  await expect(editor).toBeHidden();
+  const row = page.getByRole('row').filter({ hasText: hypothesis });
+  await row.getByRole('button', { name: '查看 / 编辑', exact: true }).click();
+  const editing = page.getByRole('dialog', { name: `Brief · 版本 ${resource.version}`, exact: true });
+  await editing.getByLabel('可检验的假设', { exact: true }).fill(`${hypothesis} revised`);
+  await editing.getByRole('button', { name: '保存 Brief 草稿', exact: true }).click();
+  await expect(editing).toBeHidden();
+  await expect(page.getByText(`${hypothesis} revised`, { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '查看冻结版本', exact: true }).click();
+  const frozen = page.getByRole('dialog', { name: 'Brief · 版本 1', exact: true });
+  await expect(frozen.getByLabel('可检验的假设', { exact: true })).toHaveValue('SYNTHETIC：比较两种合成信号。');
+  await expect(frozen.getByText('冻结版本不可修改。', { exact: true })).toBeVisible();
+  const denied = await page.request.post(`/api/v2/briefs/${resource.id}/freeze`, { data: {} });
+  expect(denied.status()).toBe(403);
+});
