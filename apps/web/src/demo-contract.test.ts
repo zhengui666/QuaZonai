@@ -54,9 +54,13 @@ test('frozen synthetic context resolves exact project, partition and Runtime ref
   expect(probe.integration_revision).toBe(context.runtime_revision);
   expect(probe.observed_at <= frozen.brief.frozen_at!).toBe(true);
   expect(probe.valid_until > frozen.brief.frozen_at!).toBe(true);
+  expect(Date.parse(probe.valid_until) - Date.parse(probe.observed_at)).toBe(60_000);
   expect(probe.outcome.status).toBe('AVAILABLE');
   if (probe.outcome.status !== 'AVAILABLE') throw new Error('missing historical probe');
   expect(probe.outcome.capabilities.job_kinds).toEqual(expect.arrayContaining(['DATA_VALIDATE', 'ALPHA_EVALUATE']));
+  const assumptions = records.get(`/api/v2/execution-assumptions/${frozen.brief.content.execution_assumptions_id}`)!.value as import('./api').Schema['ExecutionAssumptionsViewV1'];
+  expect(assumptions.capability_snapshot_artifact_id).toBe(probe.snapshot_artifact_id);
+  expect(assumptions.engine_image_ref).toBe(probe.outcome.capabilities.image_refs.find(image => image.job_kind === 'ALPHA_EVALUATE')!.image_ref);
   for (const purpose of ['DISCOVERY', 'VALIDATION', 'SEALED'] as const) {
     const field = `${purpose.toLowerCase()}_input_set_id` as 'discovery_input_set_id' | 'validation_input_set_id' | 'sealed_input_set_id';
     const input = records.get(`/api/v2/input-sets/${context[field]}`)!.value as import('./api').Schema['InputSetView'];

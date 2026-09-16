@@ -130,7 +130,7 @@ record(`/api/v2/cycles/${cycle.id}/selection/trials`, '/api/v2/cycles/{id}/selec
 
 const assumptions: Schema['ExecutionAssumptionsViewV1'] = {
   id: brief.content.execution_assumptions_id, project_id: project.id, input_set_id: id(21), dataset_revision_id: brief.bindings[0]!.dataset_revision_id,
-  runtime_id: id(220), capability_snapshot_artifact_id: id(221), fee_schedule_artifact_id: id(201), engine_image_ref: 'synthetic.invalid/example:fixture',
+  runtime_id: id(220), capability_snapshot_artifact_id: id(221), fee_schedule_artifact_id: id(201), engine_image_ref: runtimeCapabilities.image_refs.find(image => image.job_kind === 'ALPHA_EVALUATE')!.image_ref,
   venue_capability_ref: 'SYNTHETIC', calendar_version: 'fixture-v1', settlement_rule_ref: 'fixture-only', cost_assumption_status: 'CONSERVATIVE_ASSUMPTION',
   bar_liquidity: null, bar_liquidity_valid_until: null, rolling_liquidity: null, rolling_liquidity_artifact_id: null, created_at: frozenAt,
   settings: { schema_version: 1, base_currency: 'USD', starting_capital: '1000', account_kind: 'CASH', leverage: '1', snapshot_interval_ms: 1000, exposure_tolerance: '0.000001',
@@ -221,9 +221,9 @@ record(`/api/v2/briefs/${brief.id}/execution-context`, '/api/v2/briefs/{id}/exec
 record(`/api/v2/integrations/runtimes/${runtime.id}/readiness`, '/api/v2/integrations/runtimes/{id}/readiness', {
   schema_version: 1, runtime_id: runtime.id, integration_revision: runtime.revision, state: 'DISABLED', available_job_kinds: [],
   latest_observation: { id: id(222), runtime_id: runtime.id, integration_revision: '1', snapshot_artifact_id: id(221),
-    observed_at: '2026-09-13T23:55:00Z', valid_until: '2026-09-14T00:55:00Z',
+    observed_at: '2026-09-13T23:59:30Z', valid_until: '2026-09-14T00:00:30Z',
     outcome: { status: 'AVAILABLE', capabilities: {
-      ...runtimeCapabilities as Schema['RuntimeCapabilitiesV1'], checked_at: '2026-09-13T23:55:00Z',
+      ...runtimeCapabilities as Schema['RuntimeCapabilitiesV1'], checked_at: '2026-09-13T23:59:30Z',
       engine_versions: { ...runtimeCapabilities.engine_versions, 'solow-cv': '0.7.3', 'ndarray-stats': '0.7.0', linregress: '0.5.4' },
       artifact_schemas: [...runtimeCapabilities.artifact_schemas, { name: 'qz.alpha_validation', version: '1' }, { name: 'qz.alpha_sealed', version: '1' }],
     } },
