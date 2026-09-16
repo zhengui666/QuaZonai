@@ -527,15 +527,13 @@ async fn native_candidate_simulation(sequence: bool) {
             None,
         )
         .unwrap();
-        let files = native.list_parquet_files("data").unwrap();
-        assert!(!files.is_empty());
         let bar = observed.series[0].bars[0];
-        let path = catalog.path().join(
-            files
-                .iter()
-                .find(|path| path.contains(&bar.bar_type.to_string()))
-                .unwrap(),
-        );
+        let directory = native
+            .make_path("bar", Some(&bar.bar_type.to_string()))
+            .unwrap();
+        let files = native.list_parquet_files(&directory).unwrap();
+        assert_eq!(files.len(), 1);
+        let path = catalog.path().join(&files[0]);
         let original = fs::read(&path).unwrap();
         let mut corrupted = original.clone();
         let footer = corrupted.len() - 8;
