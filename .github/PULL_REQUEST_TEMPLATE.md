@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- Explain the concrete problem, resulting behavior and affected users. Link the Issue without closing unfinished product scope. -->
+<!-- Explain the concrete problem, resulting behavior and affected users. Link the OpenSDLC task and Issue without closing unfinished product scope. -->
 
 ## Contracts and documentation
 

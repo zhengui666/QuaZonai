@@ -11,7 +11,8 @@ Read [AGENTS](../../AGENTS.md) for development authority and the relevant sectio
 
 | Work | Read |
 |---|---|
-| Entry, setup, preview and verification commands | [README](../../README.md) |
+| Entry and preview | [README](../../README.md) |
+| Contributor setup, check selection and source navigation | [CONTRIBUTING](../../CONTRIBUTING.md), [architecture](../../docs/architecture.md) and [OpenSDLC context](../../.opensdlc/project.md) |
 | HTTP/CLI bodies, pagination, human authorization and retry semantics | [CLI](../../CLI.md) and native `server ... --help` |
 | Startup, profiles, data registration, Worker, delivery and restore operations | [OPERATIONS](../../OPERATIONS.md) |
 | Remote task gateways, image assembly, lifecycle and limits | [Native Runtime](../../runtimes/native/README.md) |
@@ -24,6 +25,7 @@ Keep commands in CLI, operations in OPERATIONS and domain rules in DESIGN. Updat
 ## Execute and report
 
 1. Inspect branch, worktree, current diff and callers. Preserve unrelated changes and original user data; use an isolated worktree when necessary.
+   Reuse the current `.opensdlc/tasks/<task-id>/task.md` for intent, plan, actual verification and handoff. Read the repository language setting before naming a new task; missing configuration means English. Keep shared review and operational rules in their existing OpenSDLC entries.
 2. Follow the real flow through contracts, domain, Store transaction, Worker/native adapter and API/UI. Reuse existing Rust components and tests; generated OpenAPI/TypeScript/validators come from their actual generator.
 3. Run the narrowest relevant check, then affected cross-boundary checks. `make check-docs`, `make check-unit`, `make check-store`, `make check-http` and `make check-web` have distinct scopes; database suites require an explicitly disposable PostgreSQL/PGMQ instance. Do not use production credentials or data to run repository tests.
 4. Use real native processes for protocol, persistence, OCI, database concurrency and restore claims. Mock responses, FIXTURE catalogs and successful registration do not grant scientific qualification or production delivery.

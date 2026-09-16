@@ -1,4 +1,4 @@
-.PHONY: check check-unit check-store check-http check-docs check-links check-cli check-web require-test-database native demo-preview
+.PHONY: check check-unit check-store check-http check-docs check-links check-cli check-architecture check-web require-test-database native demo-preview
 
 # Use the repository pin even when a distribution cargo precedes rustup in PATH.
 RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)
@@ -31,6 +31,9 @@ check-links:
 
 check-cli:
 	$(CARGO) test --locked -p server --test client_help
+
+check-architecture:
+	$(CARGO) test --locked -p contracts --test architecture
 
 check-web:
 	npm --prefix apps/web run generate
