@@ -5,8 +5,10 @@ import policyInput from '../../../tests/contracts/research-policy.json';
 import runtimeCapabilities from '../../../tests/contracts/runtime-capabilities.fixture.json';
 
 export const id = (n: number) => `01990000-0000-7000-8000-${String(n).padStart(12, '0')}`;
-const at = '2026-09-15T00:00:00Z';
-const frozenAt = '2026-09-14T00:00:00Z';
+const at = '2026-09-15T00:00:10Z';
+const frozenAt = '2026-09-15T00:00:00Z';
+const checkedAt = '2026-09-16T00:00:00Z';
+const nativeImage = runtimeCapabilities.image_refs.find(image => image.job_kind === 'ALPHA_EVALUATE')!.image_ref;
 const page = (items: unknown[]) => ({ schema_version: 1, items, next_cursor: null });
 export const records = new Map<string, { contract: string; value: unknown }>();
 function record(path: string, contract: string, value: unknown) { records.set(path, { contract, value }); }
@@ -68,7 +70,7 @@ for (const [n, alpha] of alphas.entries()) {
     experiment_id: id(50 + n), root_lineage_id: project.root_lineage_id,
     code_artifact_id: id(60 + n), model_artifact_id: id(70 + n), signal_contract_version: '1',
     signal_kind: 'SCORE', horizon_kind: 'FIXED_BARS', horizon_value: '1', forecast_unit: 'UNITLESS_SCORE',
-    calibration_id: null, runtime_image_ref: 'synthetic.invalid/example:fixture', origin: 'FIXTURE', created_at: at,
+    calibration_id: null, runtime_image_ref: nativeImage, origin: 'FIXTURE', created_at: at,
   };
   const evaluation: Schema['EvaluationView'] = {
     id: id(80 + n), project_id: project.id, subject_alpha_version_id: version.id, subject_candidate_id: null,
@@ -130,8 +132,8 @@ record(`/api/v2/cycles/${cycle.id}/selection/trials`, '/api/v2/cycles/{id}/selec
 
 const assumptions: Schema['ExecutionAssumptionsViewV1'] = {
   id: brief.content.execution_assumptions_id, project_id: project.id, input_set_id: id(21), dataset_revision_id: brief.bindings[0]!.dataset_revision_id,
-  runtime_id: id(220), capability_snapshot_artifact_id: id(221), fee_schedule_artifact_id: id(201), engine_image_ref: runtimeCapabilities.image_refs.find(image => image.job_kind === 'ALPHA_EVALUATE')!.image_ref,
-  venue_capability_ref: 'SYNTHETIC', calendar_version: 'fixture-v1', settlement_rule_ref: 'fixture-only', cost_assumption_status: 'CONSERVATIVE_ASSUMPTION',
+  runtime_id: id(220), capability_snapshot_artifact_id: id(221), fee_schedule_artifact_id: id(201), engine_image_ref: nativeImage,
+  venue_capability_ref: 'EXAMPLE', calendar_version: 'fixture-v1', settlement_rule_ref: 'fixture-only', cost_assumption_status: 'CONSERVATIVE_ASSUMPTION',
   bar_liquidity: null, bar_liquidity_valid_until: null, rolling_liquidity: null, rolling_liquidity_artifact_id: null, created_at: frozenAt,
   settings: { schema_version: 1, base_currency: 'USD', starting_capital: '1000', account_kind: 'CASH', leverage: '1', snapshot_interval_ms: 1000, exposure_tolerance: '0.000001',
     fee_rates: [{ instrument_id: 'SYNTHETIC.EXAMPLE', maker: '0.001', taker: '0.002' }],
@@ -181,18 +183,18 @@ record(`/api/v2/portfolio-candidates/${candidate.id}/evaluations`, '/api/v2/port
 
 const runtime: Schema['RuntimeView'] = {
   id: id(220), revision: '2', protocol_version: 1, credential_configured: false, ca_configured: false,
-  last_capability_snapshot_artifact_id: null, created_at: '2026-01-01T00:00:00Z', updated_at: at,
+  last_capability_snapshot_artifact_id: null, created_at: '2026-01-01T00:00:00Z', updated_at: checkedAt,
   configuration: { name: 'SYNTHETIC · 未连接 Runtime', endpoint: 'https://synthetic.invalid', tls_policy: 'SYSTEM_CA',
     enabled: false, development_http: false, allowed_capabilities: ['DATA_VALIDATE'] },
 };
 const source: Schema['DataSourceView'] = {
   id: id(230), name: 'SYNTHETIC · 演示目录', runtime_id: runtime.id, native_catalog_ref: 'synthetic/catalog',
-  provider_kind: 'NAUTILUS_CATALOG', enabled: false, revision: '2', created_at: '2026-01-01T00:00:00Z', updated_at: at,
+  provider_kind: 'NAUTILUS_CATALOG', enabled: false, revision: '2', created_at: '2026-01-01T00:00:00Z', updated_at: checkedAt,
 };
 const grant: Schema['DataGrantView'] = {
   id: id(231), source_id: source.id, version: '1', license_reference: 'SYNTHETIC · 已过期的演示许可',
-  evidence_artifact_id: id(232), allowed_uses: 'RESEARCH', valid_from: '2026-01-01T00:00:00Z', valid_until: at,
-  created_at: '2026-01-01T00:00:00Z', license_state: 'EXPIRED', checked_at: at,
+  evidence_artifact_id: id(232), allowed_uses: 'RESEARCH', valid_from: '2026-01-01T00:00:00Z', valid_until: '2026-09-15T00:05:00Z',
+  created_at: '2026-01-01T00:00:00Z', license_state: 'EXPIRED', checked_at: checkedAt,
 };
 const universe: Schema['UniverseView'] = {
   id: brief.content.universe_version_id, name: 'SYNTHETIC · 演示投资域', registration_state: 'LEGACY_UNVERIFIED',
@@ -208,7 +210,7 @@ const datasets: Schema['DatasetView'][] = brief.bindings.map((binding, n) => ({
   available_through: frozenAt, row_count: '200', timezone: 'UTC',
   quality_artifact_id: id(250 + n), pit_status: 'UNVERIFIED', revision_policy: 'UNKNOWN', origin: 'FIXTURE', created_at: frozenAt,
   native_metadata_artifact_id: id(240 + n), registration_observed_at: frozenAt,
-  source_enabled: false, runtime_enabled: false, license_state: 'EXPIRED', checked_at: at,
+  source_enabled: false, runtime_enabled: false, license_state: 'EXPIRED', checked_at: checkedAt,
 }));
 record('/api/v2/integrations/runtimes', '/api/v2/integrations/runtimes', page([runtime]));
 record(`/api/v2/integrations/runtimes/${runtime.id}`, '/api/v2/integrations/runtimes/{id}', runtime);
@@ -221,11 +223,14 @@ record(`/api/v2/briefs/${brief.id}/execution-context`, '/api/v2/briefs/{id}/exec
 record(`/api/v2/integrations/runtimes/${runtime.id}/readiness`, '/api/v2/integrations/runtimes/{id}/readiness', {
   schema_version: 1, runtime_id: runtime.id, integration_revision: runtime.revision, state: 'DISABLED', available_job_kinds: [],
   latest_observation: { id: id(222), runtime_id: runtime.id, integration_revision: '1', snapshot_artifact_id: id(221),
-    observed_at: '2026-09-13T23:59:30Z', valid_until: '2026-09-14T00:00:30Z',
+    observed_at: '2026-09-14T23:59:30Z', valid_until: '2026-09-15T00:00:30Z',
     outcome: { status: 'AVAILABLE', capabilities: {
-      ...runtimeCapabilities as Schema['RuntimeCapabilitiesV1'], checked_at: '2026-09-13T23:59:30Z',
-      engine_versions: { ...runtimeCapabilities.engine_versions, 'solow-cv': '0.7.3', 'ndarray-stats': '0.7.0', linregress: '0.5.4' },
-      artifact_schemas: [...runtimeCapabilities.artifact_schemas, { name: 'qz.alpha_validation', version: '1' }, { name: 'qz.alpha_sealed', version: '1' }],
+      ...runtimeCapabilities as Schema['RuntimeCapabilitiesV1'], checked_at: '2026-09-14T23:59:30Z',
+      engine_versions: { ...runtimeCapabilities.engine_versions, 'solow-cv': '0.7.3', 'ndarray-stats': '0.7.0', linregress: '0.5.4', nautilus: '0.63.0', 'simulation-models': '1' },
+      job_kinds: [...runtimeCapabilities.job_kinds as Schema['RunKind'][], 'PORTFOLIO_SIMULATE'],
+      image_refs: [...runtimeCapabilities.image_refs as Schema['RuntimeImageV1'][], { job_kind: 'PORTFOLIO_SIMULATE', image_ref: nativeImage }],
+      venues: [{ venue: 'EXAMPLE', instrument_classes: ['Equity'], data_kinds: ['BAR'], expiry_and_settlement: false }],
+      artifact_schemas: [...runtimeCapabilities.artifact_schemas, ...['qz.alpha_validation', 'qz.alpha_sealed', 'qz.wasm_model', 'qz.model_compilation', 'qz.native_forecast', 'qz.native_simulation', 'qz.data_quality'].map(name => ({ name, version: '1' }))],
     } },
   },
 } satisfies Schema['RuntimeReadinessV1']);

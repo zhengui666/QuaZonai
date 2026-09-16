@@ -61,6 +61,23 @@ test('frozen synthetic context resolves exact project, partition and Runtime ref
   const assumptions = records.get(`/api/v2/execution-assumptions/${frozen.brief.content.execution_assumptions_id}`)!.value as import('./api').Schema['ExecutionAssumptionsViewV1'];
   expect(assumptions.capability_snapshot_artifact_id).toBe(probe.snapshot_artifact_id);
   expect(assumptions.engine_image_ref).toBe(probe.outcome.capabilities.image_refs.find(image => image.job_kind === 'ALPHA_EVALUATE')!.image_ref);
+  const capabilities = probe.outcome.capabilities;
+  expect(capabilities.job_kinds).toContain('PORTFOLIO_SIMULATE');
+  expect(capabilities.engine_versions).toMatchObject({ nautilus: '0.63.0', 'simulation-models': '1' });
+  expect(capabilities.image_refs.find(image => image.job_kind === 'PORTFOLIO_SIMULATE')!.image_ref).toBe(assumptions.engine_image_ref);
+  for (const fee of assumptions.settings.fee_rates) expect(capabilities.venues.some(venue => fee.instrument_id.endsWith(`.${venue.venue}`))).toBe(true);
+  expect(capabilities.artifact_schemas.map(item => item.name)).toEqual(expect.arrayContaining(['qz.wasm_model', 'qz.model_compilation', 'qz.native_forecast']));
+  for (const { contract, value } of records.values()) {
+    if (contract === '/api/v2/alphas/{id}/versions/{version}') {
+      const version = value as import('./api').Schema['AlphaVersionView'];
+      expect(version.runtime_image_ref).toBe(assumptions.engine_image_ref);
+      expect(version.created_at >= frozen.brief.frozen_at! && version.created_at < probe.valid_until).toBe(true);
+    }
+    if (contract === '/api/v2/runs/{id}') {
+      const run = value as import('./api').Schema['RunSnapshotV1'];
+      expect(run.started_at! >= probe.observed_at && run.finished_at! < probe.valid_until).toBe(true);
+    }
+  }
   for (const purpose of ['DISCOVERY', 'VALIDATION', 'SEALED'] as const) {
     const field = `${purpose.toLowerCase()}_input_set_id` as 'discovery_input_set_id' | 'validation_input_set_id' | 'sealed_input_set_id';
     const input = records.get(`/api/v2/input-sets/${context[field]}`)!.value as import('./api').Schema['InputSetView'];
