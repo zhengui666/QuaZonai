@@ -167,3 +167,39 @@ fn catalog_root_symlink_is_not_an_authorized_mount() {
     std::os::unix::fs::symlink(target, &link).unwrap();
     assert!(load_catalog(&link, &fixture().2).is_err());
 }
+
+#[test]
+fn compressed_native_catalog_cannot_expand_past_the_decoded_row_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let (instrument, original, mut selection) = fixture();
+    let bars: Vec<_> = (1..=50_000_u64)
+        .map(|timestamp| {
+            let mut bar = original[0];
+            bar.ts_event = timestamp.into();
+            bar.ts_init = (timestamp + 1).into();
+            bar
+        })
+        .collect();
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(4096),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(format!("{:?}", catalog.compression), "SNAPPY");
+    catalog.write_instruments(vec![instrument]).unwrap();
+    let path = directory
+        .path()
+        .join(catalog.write_to_parquet(&bars, None, None, None).unwrap());
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(
+        bytes.len() * 4 < std::mem::size_of_val(bars.as_slice()),
+        "fixture must actually expand substantially after native decoding"
+    );
+    selection.maximum_rows = 3;
+    let error = load_catalog(directory.path(), &selection).err().unwrap();
+    assert_eq!(error.to_string(), "CATALOG_ROW_LIMIT");
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}
