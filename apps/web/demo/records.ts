@@ -38,6 +38,15 @@ record(`/api/v2/projects/${project.id}`, '/api/v2/projects/{id}', project);
 record(`/api/v2/projects/${project.id}/briefs`, '/api/v2/projects/{id}/briefs', page([brief]));
 record(`/api/v2/briefs/${brief.id}`, '/api/v2/briefs/{id}', brief);
 record('/api/v2/runs', '/api/v2/runs', page([run]));
+const inputSet: Schema['InputSetSummary'] = {
+  id: id(21), project_id: project.id, purpose: 'DISCOVERY', decision_cutoff: at, frozen_at: at, revision: '1', created_at: at,
+};
+record('/api/v2/input-sets', '/api/v2/input-sets', page([inputSet]));
+record(`/api/v2/input-sets/${inputSet.id}`, '/api/v2/input-sets/{id}', {
+  header: inputSet, items: [{ id: id(22), ordinal: 0,
+    item: { kind: 'DATASET', dataset_revision_id: brief.bindings[0]!.dataset_revision_id, role: 'DISCOVERY' },
+    origin: 'FIXTURE', pit_status: 'UNVERIFIED' }],
+} satisfies Schema['InputSetView']);
 record(`/api/v2/runs/${run.id}`, '/api/v2/runs/{id}', run);
 
 const alphas: Schema['AlphaView'][] = [0, 1].map(n => ({
@@ -288,6 +297,8 @@ record(`/api/v2/projects/${project.id}/releases`, '/api/v2/projects/{id}/release
 record(`/api/v2/releases/${demoRelease.id}`, '/api/v2/releases/{id}', demoRelease);
 record(`/api/v2/releases/${demoRelease.id}/approvals`, '/api/v2/releases/{id}/approvals', page([]));
 record(`/api/v2/releases/${demoRelease.id}/decisions`, '/api/v2/releases/{id}/decisions', page([]));
+
+record('/api/v2/artifacts', '/api/v2/artifacts', page([...records.values()].filter(item => item.contract === '/api/v2/artifacts/{id}').map(item => item.value)));
 
 // No approval, Claim or account is issued by this preview.
 for (const suffix of ['handoffs', 'automation-policies', 'forward', 'forward-observations', 'wakes']) {

@@ -38,30 +38,41 @@ export function projectEditor() {
       const nestedPage = project && project.id !== original.id && parts.length === 6 && ['briefs', 'cycles', 'execution-assumptions', 'portfolio-mandates', 'portfolio-candidates', 'releases', 'handoffs', 'automation-policies', 'forward', 'forward-observations', 'forward-weight-snapshots', 'wakes'].includes(parts[5]!);
       const globalPage = ['/api/v2/alphas', '/api/v2/artifacts', '/api/v2/evaluation-policies', '/api/v2/experiments', '/api/v2/input-sets', '/api/v2/runs'].includes(path);
       const limit = Number(query.get('limit') ?? '50'); const cursor = query.get('cursor');
+      if (globalPage && path !== '/api/v2/runs' && selected === null) return invalid;
       if (path === '/api/v2/projects' || briefPage || nestedPage || globalPage) {
         const allowed = ['limit', 'cursor', ...(globalPage ? ['project_id', ...(path === '/api/v2/runs' ? ['state'] : [])] : [])];
         if ((selected !== null && !validId(selected)) || !/^\d+$/.test(query.get('limit') ?? '50') || !validLimit(limit) || (cursor !== null && !validId(cursor)) || (query.has('state') && !validState(query.get('state'))) || [...query.keys()].some(name => !allowed.includes(name) || query.getAll(name).length !== 1)) return invalid;
       }
-      if (path === '/api/v2/projects') {
-        const items = [...projects.values()].filter(item => !cursor || item.id < cursor).sort((a, b) => b.id.localeCompare(a.id));
+      const paginate = <T extends { id: string }>(rows: T[]) => {
+        const items = rows.filter(item => !cursor || item.id < cursor).sort((a, b) => b.id.localeCompare(a.id));
         return { status: 200, value: { schema_version: 1, items: items.slice(0, limit), next_cursor: items.length > limit ? items[limit - 1]!.id : null } };
-      }
-      if (briefPage) {
-        const items = [...briefs.values()].filter(item => item.project_id === project.id && (!cursor || item.id < cursor)).sort((a, b) => b.id.localeCompare(a.id));
-        return { status: 200, value: { schema_version: 1, items: items.slice(0, limit), next_cursor: items.length > limit ? items[limit - 1]!.id : null } };
+      };
+      if (path === '/api/v2/projects') return paginate([...projects.values()]);
+      if (briefPage) return paginate([...briefs.values()].filter(item => item.project_id === project.id));
+      if (globalPage) {
+        const rows = (records.get(path)?.value as { items: { id: string; project_id: string; state?: string }[] } | undefined)?.items ?? [];
+        return paginate(rows.filter(item => (!selected || item.project_id === selected) && (!query.has('state') || item.state === query.get('state'))));
       }
       if (brief && parts.length === 5) return { status: 200, value: brief };
       if (project && parts.length === 5) return { status: 200, value: project };
-      if (nestedPage || (globalPage && selected && selected !== original.id && projects.has(selected))) return empty;
+      if (nestedPage) return empty;
       return undefined;
     }
-    const creatingBrief = method === 'POST' && briefPage;
-    if (creatingBrief || (method === 'PATCH' && brief && parts.length === 5)) {
+    const creatingBrief = method === 'POST' && parts[3] === 'projects' && parts.length === 6 && parts[5] === 'briefs';
+    if (creatingBrief || (method === 'PATCH' && parts[3] === 'briefs' && parts.length === 5)) {
+      if (!validId(parts[4])) return invalid;
       const request = creatingBrief ? validBriefCreate(body) ? body : undefined : validBriefUpdate(body) ? body : undefined;
       if (!request || !validKey(key) || bindingListError(request.bindings)) return invalid;
       let content: Schema['BriefContentV1'];
       try { content = briefContent(request.content); } catch { return invalid; }
       if ([content.hypothesis, content.economic_rationale].some(text => !text.trim() || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text))) return invalid;
+      const encoded = [path, content, request.bindings, 'expected_revision' in request ? request.expected_revision : request.supersedes_id ?? null];
+      const receiptKey = `brief:${method}:${key}`;
+      const previous = receipts.get(receiptKey);
+      if (previous) return isDeepStrictEqual(previous.body, encoded)
+        ? { status: previous.status, value: { schema_version: 1, resource: previous.resource, replayed: true } }
+        : { status: 409, value: { ...denied.value as Schema['Problem'], status: 409, code: 'IDEMPOTENCY_CONFLICT', detail: '此幂等键已用于不同请求，不能重用。' } };
+      if (creatingBrief ? !project : !brief) return demoResponse('GET', path);
       const projectId = creatingBrief ? project!.id : brief!.project_id;
       // This offline scene owns only the original project's declared references.
       if (projectId !== originalBrief.project_id) return denied;
@@ -70,12 +81,6 @@ export function projectEditor() {
       }
       if (request.bindings.some(binding => !originalBrief.bindings.some(original => original.dataset_revision_id === binding.dataset_revision_id && original.role === binding.role)
         || (binding.role === 'SEALED' ? binding.access_policy === 'RESEARCH_READ' : binding.access_policy === 'EVALUATOR_ONLY'))) return invalid;
-      const encoded = [path, content, request.bindings, 'expected_revision' in request ? request.expected_revision : request.supersedes_id ?? null];
-      const receiptKey = `brief:${method}:${key}`;
-      const previous = receipts.get(receiptKey);
-      if (previous) return isDeepStrictEqual(previous.body, encoded)
-        ? { status: previous.status, value: { schema_version: 1, resource: previous.resource, replayed: true } }
-        : { status: 409, value: { ...denied.value as Schema['Problem'], status: 409, code: 'IDEMPOTENCY_CONFLICT', detail: '此幂等键已用于不同请求，不能重用。' } };
       if ('expected_revision' in request) {
         if (request.expected_revision !== brief!.revision) return { status: 409, value: { ...denied.value as Schema['Problem'], status: 409, code: 'REVISION_CONFLICT', current_revision: brief!.revision, detail: 'Brief 草稿已修改，请重新读取。' } };
         if (brief!.state !== 'DRAFT') return denied;

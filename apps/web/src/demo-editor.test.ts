@@ -92,12 +92,22 @@ test('all temporary project pages validate pagination and text follows native co
       expect(rejected.status).toBe(422);
       expect(validateResponse(route, 'get', 422, rejected.value, 'application/problem+json')).toBe(true);
     }
-    expect(edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: id(1) }))).toBeUndefined();
+    const original = edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: id(1) }))!;
+    expect(original.status).toBe(200);
+    expect(validateResponse(route, 'get', 200, original.value, 'application/json')).toBe(true);
+    const rows = (original.value as { items: { id: string; project_id: string }[] }).items;
+    expect(rows.every(item => item.project_id === id(1))).toBe(true);
+    expect(edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: id(99999) }))).toMatchObject({ value: { items: [] } });
+    expect(edit('GET', route)?.status).toBe(route === '/api/v2/runs' ? 200 : 422);
+    const first = edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: id(1), limit: '1' }))!;
+    expect(first).toMatchObject({ value: { items: rows.slice(0, 1), next_cursor: rows.length > 1 ? rows[0]!.id : null } });
+    if (rows.length > 1) expect(edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: id(1), cursor: rows[0]!.id }))).toMatchObject({ value: { items: rows.slice(1) } });
     const page = edit('GET', route, undefined, undefined, new URLSearchParams({ project_id: project }))!;
     expect(page).toMatchObject({ status: 200, value: { items: [], next_cursor: null } });
     expect(validateResponse(route, 'get', 200, page.value, 'application/json')).toBe(true);
     for (const query of ['limit=0', 'cursor=bad', 'limit=1&limit=2', 'unknown=1']) expect(edit('GET', route, undefined, undefined, new URLSearchParams(`project_id=${project}&${query}`))?.status).toBe(422);
   }
+  expect(edit('GET', '/api/v2/runs', undefined, undefined, new URLSearchParams({ project_id: id(1), state: 'QUEUED' }))).toMatchObject({ value: { items: [] } });
   expect(edit('GET', '/api/v2/runs', undefined, undefined, new URLSearchParams({ project_id: project, state: 'SUCCEEDED' }))?.status).toBe(200);
   expect(edit('GET', '/api/v2/runs', undefined, undefined, new URLSearchParams({ project_id: project, state: 'invalid' }))?.status).toBe(422);
 });
@@ -118,6 +128,21 @@ test('Brief drafts retain frozen history, references and idempotent revisions', 
   const changed = { ...body.content, hypothesis: 'Edited hypothesis' };
   expect(edit('POST', path, { ...body, content: changed }, 'brief-create')?.status).toBe(409);
   const update = { schema_version: 1, content: changed, bindings: body.bindings, expected_revision: '1' };
+  for (const [method, route, request] of [['POST', path, body], ['PATCH', `/api/v2/briefs/${draft.id}`, update]] as const) {
+    const probe = projectEditor();
+    probe('POST', path, body, 'setup');
+    const key = `reference-receipt-${method}`;
+    expect(probe(method, route, request, key)?.status).toBe(method === 'POST' ? 201 : 200);
+    for (const altered of [
+      { ...request, content: { ...request.content, evaluation_policy_id: id(999) } },
+      { ...request, bindings: request.bindings.map(binding => ({ ...binding, dataset_revision_id: id(binding.role === 'SEALED' ? 997 : 998) })) },
+    ]) expect(probe(method, route, altered, key)).toMatchObject({ status: 409, value: { code: 'IDEMPOTENCY_CONFLICT' } });
+    const malformed = method === 'POST' ? '/api/v2/projects/bad/briefs' : '/api/v2/briefs/bad';
+    const missing = method === 'POST' ? `/api/v2/projects/${id(999)}/briefs` : `/api/v2/briefs/${id(999)}`;
+    expect(probe(method, malformed, request, 'path')?.status).toBe(422);
+    expect(probe(method, missing, request, 'path')?.status).toBe(404);
+  }
+
   expect(edit('PATCH', `/api/v2/briefs/${draft.id}`, update, 'brief-update')).toMatchObject({ status: 200, value: { resource: { revision: '2', content: { hypothesis: changed.hypothesis } } } });
   expect(edit('POST', path, body, 'brief-create')).toMatchObject({ value: { resource: { revision: '1', content: frozen.content } } });
   expect(edit('PATCH', `/api/v2/briefs/${draft.id}`, update, 'stale')?.status).toBe(409);

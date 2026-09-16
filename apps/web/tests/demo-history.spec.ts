@@ -118,6 +118,13 @@ test('synthetic Brief fork and edit preserve the frozen version', async ({ page 
   await editing.getByRole('button', { name: '保存 Brief 草稿', exact: true }).click();
   await expect(editing).toBeHidden();
   await expect(page.getByText(`${hypothesis} revised`, { exact: true })).toBeVisible();
+  const inputs = page.waitForResponse(r => new URL(r.url()).pathname === '/api/v2/input-sets');
+  await row.getByRole('button', { name: '冻结执行上下文', exact: true }).click();
+  expect((await inputs).status()).toBe(200);
+  const preparation = page.getByRole('dialog', { name: '冻结 Brief 执行上下文', exact: true });
+  await expect(preparation.getByRole('button', { name: '确认冻结 Brief', exact: true })).toBeDisabled();
+  await preparation.getByRole('button', { name: '返回', exact: true }).click();
+  await expect(preparation).toBeHidden();
   await page.getByRole('button', { name: '查看冻结版本', exact: true }).click();
   const frozen = page.getByRole('dialog', { name: 'Brief · 版本 1', exact: true });
   await expect(frozen.getByLabel('可检验的假设', { exact: true })).toHaveValue('SYNTHETIC：比较两种合成信号。');
