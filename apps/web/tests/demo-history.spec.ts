@@ -144,3 +144,31 @@ test('synthetic Brief fork and edit preserve the frozen version', async ({ page 
   const denied = await page.request.post(`/api/v2/briefs/${resource.id}/freeze`, { data: {} });
   expect(denied.status()).toBe(403);
 });
+
+
+test('frozen synthetic execution context is visible without enabling a real Cycle', async ({ page }) => {
+  const projectId = '01990000-0000-7000-8000-000000000001';
+  const path = `/api/v2/projects/${projectId}`;
+  // Other viewport workers share this in-memory scene; honor native CAS conflicts.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await (await page.request.get(path)).json();
+    if (current.state === 'ACTIVE') break;
+    const changed = await page.request.patch(path, { headers: { 'Idempotency-Key': `context-${Date.now()}-${attempt}` }, data: {
+      schema_version: 1, expected_revision: current.revision, name: current.name, description: current.description, state: 'ACTIVE',
+    } });
+    if (changed.status() === 409) continue;
+    expect(changed.status()).toBe(200); break;
+  }
+  expect((await (await page.request.get(path)).json()).state).toBe('ACTIVE');
+  const failed: string[] = []; const starts: string[] = [];
+  page.on('response', response => { if (new URL(response.url()).pathname.startsWith('/api/') && !response.ok()) failed.push(String(response.status())); });
+  page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/cycles')) starts.push(request.url()); });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'SYNTHETIC · 双 Alpha 研究示例', exact: true }).click();
+  await page.getByRole('button', { name: '启动新 Cycle', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '确认启动研究 Cycle', exact: true });
+  await expect(dialog.getByText('冻结 Runtime / 修订', { exact: true })).toBeVisible();
+  for (const role of ['DISCOVERY', 'VALIDATION', 'SEALED']) await expect(dialog.getByText(`${role} 输入`, { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '确认启动 Cycle', exact: true })).toBeDisabled();
+  expect(starts).toEqual([]); expect(failed).toEqual([]);
+});

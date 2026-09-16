@@ -19,7 +19,8 @@ const brief: Schema['BriefView'] = {
   id: id(10), project_id: project.id, version: 1, revision: '1', state: 'FROZEN',
   content: { ...briefInput.content, hypothesis: 'SYNTHETIC：比较两种合成信号。',
     economic_rationale: '仅解释界面与记录关联，不代表经济有效性。' } as Schema['BriefContentV1'],
-  bindings: briefInput.bindings as Schema['BriefBindingV1'][],
+  bindings: [...briefInput.bindings as Schema['BriefBindingV1'][],
+    { dataset_revision_id: id(901), role: 'VALIDATION', access_policy: 'RESEARCH_READ' }],
   supersedes_id: null, frozen_at: at, created_at: at, updated_at: at,
 };
 const run: Schema['RunSnapshotV1'] = {
@@ -38,13 +39,17 @@ record(`/api/v2/projects/${project.id}`, '/api/v2/projects/{id}', project);
 record(`/api/v2/projects/${project.id}/briefs`, '/api/v2/projects/{id}/briefs', page([brief]));
 record(`/api/v2/briefs/${brief.id}`, '/api/v2/briefs/{id}', brief);
 record('/api/v2/runs', '/api/v2/runs', page([run]));
-const inputSet: Schema['InputSetSummary'] = {
+const inputSet = {
   id: id(21), project_id: project.id, purpose: 'DISCOVERY', decision_cutoff: at, frozen_at: at, revision: '1', created_at: at,
-};
-record('/api/v2/input-sets', '/api/v2/input-sets', page([inputSet]));
-record(`/api/v2/input-sets/${inputSet.id}`, '/api/v2/input-sets/{id}', {
-  header: inputSet, items: [{ id: id(22), ordinal: 0,
-    item: { kind: 'DATASET', dataset_revision_id: brief.bindings[0]!.dataset_revision_id, role: 'DISCOVERY' },
+} satisfies Schema['InputSetSummary'];
+const inputs = [inputSet,
+  { ...inputSet, id: policyInput.comparison_input_set_id, purpose: 'VALIDATION' },
+  { ...inputSet, id: id(900), purpose: 'SEALED' },
+] satisfies Schema['InputSetSummary'][];
+record('/api/v2/input-sets', '/api/v2/input-sets', page(inputs));
+for (const [index, input] of inputs.entries()) record(`/api/v2/input-sets/${input.id}`, '/api/v2/input-sets/{id}', {
+  header: input, items: [{ id: id(index === 0 ? 22 : 901 + index), ordinal: 0,
+    item: { kind: 'DATASET', dataset_revision_id: brief.bindings.find(binding => binding.role === input.purpose)!.dataset_revision_id, role: input.purpose },
     origin: 'FIXTURE', pit_status: 'UNVERIFIED' }],
 } satisfies Schema['InputSetView']);
 record(`/api/v2/runs/${run.id}`, '/api/v2/runs/{id}', run);
@@ -197,6 +202,12 @@ const datasets: Schema['DatasetView'][] = brief.bindings.map((binding, n) => ({
 }));
 record('/api/v2/integrations/runtimes', '/api/v2/integrations/runtimes', page([runtime]));
 record(`/api/v2/integrations/runtimes/${runtime.id}`, '/api/v2/integrations/runtimes/{id}', runtime);
+record(`/api/v2/briefs/${brief.id}/execution-context`, '/api/v2/briefs/{id}/execution-context', {
+  schema_version: 1, brief, execution_context: { schema_version: 1,
+    runtime_id: runtime.id, runtime_revision: runtime.revision,
+    discovery_input_set_id: inputSet.id, validation_input_set_id: policyInput.comparison_input_set_id, sealed_input_set_id: id(900),
+  },
+} satisfies Schema['FrozenBriefV1']);
 record(`/api/v2/integrations/runtimes/${runtime.id}/readiness`, '/api/v2/integrations/runtimes/{id}/readiness', {
   schema_version: 1, runtime_id: runtime.id, integration_revision: runtime.revision, state: 'DISABLED', available_job_kinds: [], latest_observation: null,
 } satisfies Schema['RuntimeReadinessV1']);

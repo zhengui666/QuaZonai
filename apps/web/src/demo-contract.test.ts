@@ -38,3 +38,21 @@ test('expired DEMO package uses the native package contract and original attachm
     expect(demoResponse('POST', path).status).toBe(403);
   }
 });
+
+
+test('frozen synthetic context resolves exact project, partition and Runtime references', () => {
+  const frozen = records.get(`/api/v2/briefs/${id(10)}/execution-context`)!.value as import('./api').Schema['FrozenBriefV1'];
+  expect(frozen.brief).toEqual(records.get(`/api/v2/briefs/${id(10)}`)!.value);
+  const context = frozen.execution_context;
+  const runtime = records.get(`/api/v2/integrations/runtimes/${context.runtime_id}`)!.value as import('./api').Schema['RuntimeView'];
+  expect(context.runtime_revision).toBe(runtime.revision);
+  for (const purpose of ['DISCOVERY', 'VALIDATION', 'SEALED'] as const) {
+    const field = `${purpose.toLowerCase()}_input_set_id` as 'discovery_input_set_id' | 'validation_input_set_id' | 'sealed_input_set_id';
+    const input = records.get(`/api/v2/input-sets/${context[field]}`)!.value as import('./api').Schema['InputSetView'];
+    expect(input.header).toMatchObject({ project_id: frozen.brief.project_id, purpose });
+    expect(input.items[0]).toMatchObject({ origin: 'FIXTURE', pit_status: 'UNVERIFIED', item: { kind: 'DATASET', role: purpose,
+      dataset_revision_id: frozen.brief.bindings.find(binding => binding.role === purpose)!.dataset_revision_id } });
+  }
+  const policy = records.get(`/api/v2/evaluation-policies/${frozen.brief.content.evaluation_policy_id}`)!.value as import('./api').Schema['EvaluationPolicyView'];
+  expect(policy.selection_rule.comparison_input_set_id).toBe(context.validation_input_set_id);
+});

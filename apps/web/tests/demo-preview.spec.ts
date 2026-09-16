@@ -109,7 +109,7 @@ test('synthetic preview renders native-contract records without a backend or wri
   await expect(page.getByText('SYNTHETIC · 已过期的演示许可', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '登记原生数据版本', exact: true })).toBeDisabled();
   await page.getByRole('tab', { name: '已登记数据版本', exact: true }).click();
-  await expect(page.getByRole('button', { name: '查看版本证据', exact: true })).toHaveCount(2);
+  await expect(page.getByRole('button', { name: '查看版本证据', exact: true })).toHaveCount(3);
   await page.getByRole('combobox', { name: '筛选数据分区', exact: true }).click();
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').getByText('SEALED', { exact: true }).click();
   await expect(page.getByRole('button', { name: '查看版本证据', exact: true })).toHaveCount(1);

@@ -139,7 +139,7 @@ test('Brief drafts retain frozen history, references and idempotent revisions', 
     expect(probe(method, route, request, key)?.status).toBe(method === 'POST' ? 201 : 200);
     for (const altered of [
       { ...request, content: { ...request.content, evaluation_policy_id: id(999) } },
-      { ...request, bindings: request.bindings.map(binding => ({ ...binding, dataset_revision_id: id(binding.role === 'SEALED' ? 997 : 998) })) },
+      { ...request, bindings: request.bindings.map((binding, index) => ({ ...binding, dataset_revision_id: id(997 + index) })) },
     ]) expect(probe(method, route, altered, key)).toMatchObject({ status: 409, value: { code: 'IDEMPOTENCY_CONFLICT' } });
     const malformed = method === 'POST' ? '/api/v2/projects/bad/briefs' : '/api/v2/briefs/bad';
     const missing = method === 'POST' ? `/api/v2/projects/${id(999)}/briefs` : `/api/v2/briefs/${id(999)}`;
