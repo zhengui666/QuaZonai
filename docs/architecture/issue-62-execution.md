@@ -5452,3 +5452,10 @@ passed locally, including the existing CurrencyPair cases. No scientific engine,
 production capability or dependency was added. This covers the advertised Equity
 spot path only; it does not prove expiry/settlement, unsupported prediction markets,
 real-data admission or the full T21/T42 acceptance contract.
+
+The companion BinaryOption regression writes and rereads actual Nautilus
+BinaryOption definitions and Parquet bars, preserving the original expiration
+time. Both before-expiry and after-expiry catalogs fail native portfolio
+simulation with SIMULATION_MARKET_UNSUPPORTED; the real job process exits
+unsuccessfully with no stdout result. This proves unsupported simulation rejection,
+not prediction-market readiness, expiry processing or settlement support.

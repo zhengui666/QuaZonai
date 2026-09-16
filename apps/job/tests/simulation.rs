@@ -483,3 +483,85 @@ fn native_equities_rebalance_in_cash_and_margin_accounts_with_original_fees() {
         );
     }
 }
+
+#[test]
+fn native_binary_options_do_not_produce_portfolio_results_before_or_after_expiry() {
+    use nautilus_model::{
+        enums::AssetClass,
+        instruments::{BinaryOption, Instrument, InstrumentAny},
+        types::{Currency, Price, Quantity},
+    };
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    let (source, request) = market::equity_market("0", 20);
+    let observed = job::catalog::load_catalog(source.path(), &request.selection).unwrap();
+    for expiration in [instant(5), instant(50)] {
+        let directory = tempfile::tempdir().unwrap();
+        let catalog = ParquetDataCatalog::from_uri(
+            directory.path().to_str().unwrap(),
+            None,
+            Some(16),
+            None,
+            None,
+        )
+        .unwrap();
+        for series in &observed.series {
+            let instrument = BinaryOption::builder()
+                .instrument_id(series.instrument.id())
+                .raw_symbol(series.instrument.raw_symbol())
+                .asset_class(AssetClass::Alternative)
+                .currency(Currency::USD())
+                .activation_ns(0_u64.into())
+                .expiration_ns(expiration.get().into())
+                .price_precision(5)
+                .size_precision(0)
+                .price_increment(Price::from("0.00001"))
+                .size_increment(Quantity::from("1"))
+                .ts_event(0_u64.into())
+                .ts_init(0_u64.into())
+                .build()
+                .unwrap();
+            catalog
+                .write_instruments(vec![InstrumentAny::BinaryOption(instrument)])
+                .unwrap();
+            let mut bars = series.bars.clone();
+            for bar in &mut bars {
+                bar.open = Price::new(bar.open.as_f64() / 10.0, 5);
+                bar.high = Price::new(bar.high.as_f64() / 10.0, 5);
+                bar.low = Price::new(bar.low.as_f64() / 10.0, 5);
+                bar.close = Price::new(bar.close.as_f64() / 10.0, 5);
+            }
+            catalog.write_to_parquet(&bars, None, None, None).unwrap();
+        }
+        let data = job::catalog::load_catalog(directory.path(), &request.selection).unwrap();
+        assert_eq!(data.rows, observed.rows);
+        assert!(data
+            .series
+            .iter()
+            .all(|s| matches!(s.instrument, InstrumentAny::BinaryOption(_))
+                && s.instrument.expiration_ns().map(|value| value.as_u64())
+                    == Some(expiration.get())));
+        assert_eq!(
+            job::simulation::simulate(directory.path(), &request)
+                .unwrap_err()
+                .to_string(),
+            "SIMULATION_MARKET_UNSUPPORTED"
+        );
+        let output = native::command(
+            &[
+                "simulate".as_ref(),
+                "--catalog".as_ref(),
+                directory.path().as_os_str(),
+            ],
+            &request,
+        );
+        assert!(!output.status.success());
+        assert!(
+            output.stdout.is_empty(),
+            "unsupported instruments must not publish a simulation result"
+        );
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap().trim(),
+            "QZ_NATIVE_JOB_FAILED"
+        );
+    }
+}
