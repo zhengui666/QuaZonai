@@ -195,6 +195,28 @@ Codex自行完成OAuth并保存/刷新令牌，QZ不实现另一套OAuth流程�
 模型与推理Slider只使用这次有效的原生目录，默认设置不发送覆盖，不改变已有Thread或研究预算。
 本地协议、数据库和浏览器测试不替代受保护的真实账号登录及推理验收。
 
+受保护的原生账号验收使用仓库内的 `protected_codex_login` 示例。先按 README 安装锁定的
+Codex0.144.4；在仓库根目录执行以下命令，可验证真实设备登录启动、取消、重启状态和退出：
+
+```sh
+cargo run --locked -p server --example protected_codex_login -- \
+  --codex-binary "$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex" \
+  --cancel-only
+```
+
+省略 `--cancel-only` 可运行完整原生登录检查；必须由操作人在未录制的私人交互终端执行。
+设备码和官方验证地址只显示在该终端，五分钟内完成授权。输入或输出被重定向时会在启动
+前拒绝完整检查。不要将设备码、终端录屏或原生认证文件发送到聊天、CI、Issue或PR。
+命令使用新建临时profile及原生file凭据存储，保留原生OAuth所有权；成功登录后重启
+App Server核对持久状态，再退出并重启确认注销，正常结束删除该临时profile。
+不读取既有profile、auth.json或账户令牌，也不执行推理。Ctrl+C或登录失败会尝试退出
+临时账号并关闭子进程；系统强制终止不保证临时目录清理。
+
+`--cancel-only` 的结果必须保留 `full_login=not_run`，不能记为完整T07通过。
+此示例补充[官方App Server账号协议](https://learn.chatgpt.com/docs/app-server)的原生运行证据；
+QZ网页账号操作、真实模型科学任务、同Thread消费结果和T42仍须分别验收。
+
+
 ### 应用认证与数据库
 
 依赖固定 Rust 工具链及 PostgreSQL18 + PGMQ1.10.0，使用独立的新数据库。由原生 PostgreSQL 管理工具创建不带超级用户、创建数据库、创建角色权限的应用登录角色，密码通过交互或受保护配置输入；迁移身份与应用身份分开。
