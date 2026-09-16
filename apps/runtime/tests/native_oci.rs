@@ -516,6 +516,49 @@ async fn native_candidate_simulation(sequence: bool) {
         deadline_at: runtime::now() + chrono::Duration::seconds(50),
         requested_output_schemas: operation.output_schemas(),
     };
+    if !sequence {
+        // Corrupt only this test-owned catalog, then restore it for the positive run.
+        // Exercise the real container and public error channel, not a parser mock.
+        let native = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+            catalog.path().to_str().unwrap(),
+            None,
+            Some(16),
+            None,
+            None,
+        )
+        .unwrap();
+        let files = native.list_parquet_files("data").unwrap();
+        assert!(!files.is_empty());
+        let path = catalog.path().join(&files[0]);
+        let original = fs::read(&path).unwrap();
+        let mut corrupted = original.clone();
+        let footer = corrupted.len() - 8;
+        corrupted[footer..footer + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        fs::write(&path, &corrupted).unwrap();
+        let mut invalid = spec.clone();
+        invalid.run_id = Id::new();
+        invalid.external_job_id = domain::runtime_jobs::external_id(invalid.run_id, 1).unwrap();
+        f.runs.push(invalid.run_id);
+        let accepted = f.submit(&invalid).await;
+        let terminal = f.terminal(&invalid).await;
+        assert_eq!(terminal.state, RuntimeJobState::Failed);
+        let failed = f.manifest(&invalid).await;
+        domain::runtime_jobs::manifest(&failed, &invalid, accepted.submitted_at, runtime::now())
+            .unwrap();
+        assert!(failed.artifacts.is_empty());
+        assert_eq!(failed.resource_usage.output_bytes.get(), 0);
+        let error = failed.error.as_ref().unwrap();
+        assert_eq!(error.code, RuntimeFailureCode::NativeJobFailed);
+        assert_eq!(error.safe_message, "The native job process failed.");
+        let container = f.native_container(&invalid).await;
+        let state = container.state.unwrap();
+        assert_eq!(state.exit_code, Some(1));
+        assert_eq!(state.oom_killed, Some(false));
+        assert_eq!(f.submit(&invalid).await, terminal);
+        assert_eq!(fs::read(&path).unwrap(), corrupted);
+        f.assert_private_logs();
+        fs::write(path, original).unwrap();
+    }
     let accepted = f.submit(&spec).await;
     assert_eq!(f.terminal(&spec).await.state, RuntimeJobState::Succeeded);
     let manifest = f.manifest(&spec).await;
