@@ -62,11 +62,12 @@ test('frozen synthetic context resolves exact project, partition and Runtime ref
   expect(assumptions.capability_snapshot_artifact_id).toBe(probe.snapshot_artifact_id);
   expect(assumptions.engine_image_ref).toBe(probe.outcome.capabilities.image_refs.find(image => image.job_kind === 'ALPHA_EVALUATE')!.image_ref);
   const capabilities = probe.outcome.capabilities;
-  expect(capabilities.job_kinds).toContain('PORTFOLIO_SIMULATE');
-  expect(capabilities.engine_versions).toMatchObject({ nautilus: '0.63.0', 'simulation-models': '1' });
+  expect(capabilities.job_kinds).toEqual(expect.arrayContaining(['PORTFOLIO_SIMULATE', 'PORTFOLIO_BUILD']));
+  expect(capabilities.engine_versions).toMatchObject({ nautilus: '0.63.0', 'simulation-models': '1', 'candidate-simulation': '2', 'portfolio-models': '4', 'portfolio-weights': '1', 'portfolio-cost-source': '1', clarabel: '0.11.1', ndarray: '0.17.1' });
   expect(capabilities.image_refs.find(image => image.job_kind === 'PORTFOLIO_SIMULATE')!.image_ref).toBe(assumptions.engine_image_ref);
   for (const fee of assumptions.settings.fee_rates) expect(capabilities.venues.some(venue => fee.instrument_id.endsWith(`.${venue.venue}`))).toBe(true);
-  expect(capabilities.artifact_schemas.map(item => item.name)).toEqual(expect.arrayContaining(['qz.wasm_model', 'qz.model_compilation', 'qz.native_forecast']));
+  expect(capabilities.artifact_schemas.map(item => item.name)).toEqual(expect.arrayContaining(['qz.wasm_model', 'qz.model_compilation', 'qz.native_forecast', 'qz.native_portfolio']));
+  const attempts = new Set<string>();
   for (const { contract, value } of records.values()) {
     if (contract === '/api/v2/alphas/{id}/versions/{version}') {
       const version = value as import('./api').Schema['AlphaVersionView'];
@@ -76,6 +77,14 @@ test('frozen synthetic context resolves exact project, partition and Runtime ref
     if (contract === '/api/v2/runs/{id}') {
       const run = value as import('./api').Schema['RunSnapshotV1'];
       expect(run.started_at! >= probe.observed_at && run.finished_at! < probe.valid_until).toBe(true);
+      expect(run.deadline_at > run.queued_at! && run.deadline_at > run.finished_at! && run.deadline_at < probe.valid_until).toBe(true);
+      expect(run.current_attempt_no).toBe(1);
+      expect(run.active_attempt_id).toBeTruthy();
+      expect(attempts.has(run.active_attempt_id!)).toBe(false);
+      attempts.add(run.active_attempt_id!);
+      if (['ALPHA_EVALUATE', 'PORTFOLIO_BUILD', 'PORTFOLIO_SIMULATE'].includes(run.kind)) {
+        expect(capabilities.image_refs.find(image => image.job_kind === run.kind)?.image_ref).toBe(assumptions.engine_image_ref);
+      }
     }
   }
   for (const purpose of ['DISCOVERY', 'VALIDATION', 'SEALED'] as const) {

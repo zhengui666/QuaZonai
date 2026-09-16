@@ -29,8 +29,8 @@ const brief: Schema['BriefView'] = {
 };
 const run: Schema['RunSnapshotV1'] = {
   schema_version: 1, id: id(20), project_id: project.id, cycle_id: null, kind: 'IMPORT',
-  input_set_id: id(21), state: 'SUCCEEDED', current_attempt_no: 1, active_attempt_id: null,
-  last_event_seq: '0', deadline_at: at, cancellation_requested_at: null, terminal_reason_code: null,
+  input_set_id: id(21), state: 'SUCCEEDED', current_attempt_no: 1, active_attempt_id: id(950),
+  last_event_seq: '0', deadline_at: '2026-09-15T00:00:20Z', cancellation_requested_at: null, terminal_reason_code: null,
   queued_at: at, started_at: at, finished_at: at, revision: '1',
 };
 record('/api/v2/bootstrap/status', '/api/v2/bootstrap/status', { schema_version: 1, initialized: true, setup_allowed: false });
@@ -109,7 +109,7 @@ const cycle: Schema['CycleViewV1'] = {
   available_actions: ['VIEW_BRIEF', 'VIEW_SELECTION'], revision: '1', created_at: at, started_at: at, ended_at: at,
 };
 const researchRun: Schema['RunSnapshotV1'] = {
-  ...run, id: id(301), cycle_id: cycle.id, kind: 'AGENT_RESEARCH', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY',
+  ...run, id: id(301), active_attempt_id: id(951), cycle_id: cycle.id, kind: 'AGENT_RESEARCH', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY',
 };
 record(`/api/v2/runs/${researchRun.id}`, '/api/v2/runs/{id}', researchRun);
 for (const item of [run, researchRun]) record(`/api/v2/runs/${item.id}/rebalance`, '/api/v2/runs/{id}/rebalance', {
@@ -164,7 +164,7 @@ const mandate: Schema['MandateViewV1'] = {
       session_offset_seconds: null, max_input_age_seconds: 60, target_ttl_seconds: 300 },
   },
 };
-const rejectedRun: Schema['RunSnapshotV1'] = { ...run, id: id(202), kind: 'PORTFOLIO_BUILD', state: 'FAILED', terminal_reason_code: 'SYNTHETIC_NO_QUALIFIED_ALPHA' };
+const rejectedRun: Schema['RunSnapshotV1'] = { ...run, id: id(202), active_attempt_id: id(952), kind: 'PORTFOLIO_BUILD', state: 'FAILED', terminal_reason_code: 'SYNTHETIC_NO_QUALIFIED_ALPHA' };
 const candidate: Schema['CandidateViewV1'] = {
   id: id(203), project_id: project.id, mandate_id: mandate.id, input_set_id: id(21), run_id: rejectedRun.id,
   decision_asof: at, created_at: at, execution_status: 'FAILED', solver_status: 'FAILED', evidence_status: 'INCOMPLETE',
@@ -226,11 +226,13 @@ record(`/api/v2/integrations/runtimes/${runtime.id}/readiness`, '/api/v2/integra
     observed_at: '2026-09-14T23:59:30Z', valid_until: '2026-09-15T00:00:30Z',
     outcome: { status: 'AVAILABLE', capabilities: {
       ...runtimeCapabilities as Schema['RuntimeCapabilitiesV1'], checked_at: '2026-09-14T23:59:30Z',
-      engine_versions: { ...runtimeCapabilities.engine_versions, 'solow-cv': '0.7.3', 'ndarray-stats': '0.7.0', linregress: '0.5.4', nautilus: '0.63.0', 'simulation-models': '1' },
-      job_kinds: [...runtimeCapabilities.job_kinds as Schema['RunKind'][], 'PORTFOLIO_SIMULATE'],
-      image_refs: [...runtimeCapabilities.image_refs as Schema['RuntimeImageV1'][], { job_kind: 'PORTFOLIO_SIMULATE', image_ref: nativeImage }],
+      engine_versions: { ...runtimeCapabilities.engine_versions, 'solow-cv': '0.7.3', 'ndarray-stats': '0.7.0', linregress: '0.5.4', nautilus: '0.63.0', 'simulation-models': '1', 'candidate-simulation': '2',
+        'portfolio-models': '4', 'portfolio-weights': '1', 'portfolio-cost-source': '1', clarabel: '0.11.1', ndarray: '0.17.1' },
+      job_kinds: [...runtimeCapabilities.job_kinds as Schema['RunKind'][], 'PORTFOLIO_SIMULATE', 'PORTFOLIO_BUILD'],
+      solver_capabilities: ['CONVEX_QP'],
+      image_refs: [...runtimeCapabilities.image_refs as Schema['RuntimeImageV1'][], { job_kind: 'PORTFOLIO_SIMULATE', image_ref: nativeImage }, { job_kind: 'PORTFOLIO_BUILD', image_ref: nativeImage }],
       venues: [{ venue: 'EXAMPLE', instrument_classes: ['Equity'], data_kinds: ['BAR'], expiry_and_settlement: false }],
-      artifact_schemas: [...runtimeCapabilities.artifact_schemas, ...['qz.alpha_validation', 'qz.alpha_sealed', 'qz.wasm_model', 'qz.model_compilation', 'qz.native_forecast', 'qz.native_simulation', 'qz.data_quality'].map(name => ({ name, version: '1' }))],
+      artifact_schemas: [...runtimeCapabilities.artifact_schemas, ...['qz.alpha_validation', 'qz.alpha_sealed', 'qz.wasm_model', 'qz.model_compilation', 'qz.native_forecast', 'qz.native_simulation', 'qz.native_portfolio', 'qz.data_quality'].map(name => ({ name, version: '1' }))],
     } },
   },
 } satisfies Schema['RuntimeReadinessV1']);
@@ -252,7 +254,7 @@ const demoAlphas: Schema['AlphaView'][] = alphas.map((alpha, n) => ({ ...alpha,
   id: id(400 + n), name: `SYNTHETIC · 历史展示 ${n + 1}`, active_version_id: id(410 + n),
 }));
 for (const [n, alpha] of demoAlphas.entries()) {
-  const evaluationRun: Schema['RunSnapshotV1'] = { ...run, id: id(450 + n), kind: 'ALPHA_EVALUATE', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY' };
+  const evaluationRun: Schema['RunSnapshotV1'] = { ...run, id: id(450 + n), active_attempt_id: id(953 + n), kind: 'ALPHA_EVALUATE', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY' };
   demoAlphaRuns.push(evaluationRun);
   record(`/api/v2/runs/${evaluationRun.id}`, '/api/v2/runs/{id}', evaluationRun);
   record(`/api/v2/runs/${evaluationRun.id}/rebalance`, '/api/v2/runs/{id}/rebalance', { schema_version: 1, rebalance: null } satisfies Schema['RunRebalanceViewV1']);
@@ -307,8 +309,8 @@ const demoRelease: Schema['ReleaseViewV1'] = { id: demoPackage.release_id, proje
   market_capability_version: 'SYNTHETIC_ONLY', environment: 'DEMO', asof: at, valid_from: at, valid_until: expired, created_at: at,
 };
 export const packageBytes = JSON.stringify(demoPackage, null, 2) + '\n';
-const demoRun: Schema['RunSnapshotV1'] = { ...run, id: id(501), kind: 'PORTFOLIO_BUILD', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY' };
-const simulationRun: Schema['RunSnapshotV1'] = { ...demoRun, id: id(512), kind: 'PORTFOLIO_SIMULATE' };
+const demoRun: Schema['RunSnapshotV1'] = { ...run, id: id(501), active_attempt_id: id(955), kind: 'PORTFOLIO_BUILD', terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY' };
+const simulationRun: Schema['RunSnapshotV1'] = { ...demoRun, id: id(512), active_attempt_id: id(956), kind: 'PORTFOLIO_SIMULATE' };
 record(`/api/v2/runs/${simulationRun.id}`, '/api/v2/runs/{id}', simulationRun);
 record(`/api/v2/runs/${simulationRun.id}/rebalance`, '/api/v2/runs/{id}/rebalance', { schema_version: 1, rebalance: null } satisfies Schema['RunRebalanceViewV1']);
 record('/api/v2/runs', '/api/v2/runs', page([run, researchRun, rejectedRun, ...demoAlphaRuns, demoRun, simulationRun]));
