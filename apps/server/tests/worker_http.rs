@@ -170,6 +170,137 @@ async fn a_new_worker_recovers_the_exact_sent_attempt_after_real_lease_expiry(po
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn killed_worker_process_reconciles_original_job_without_resubmission(pool: PgPool) {
+    use sqlx::ConnectOptions;
+    use std::{os::unix::process::ExitStatusExt, process::Stdio};
+
+    let harness = native::setup(&pool, Behavior::LostSubmitAck).await;
+    harness.hold_results(true);
+    let f = &harness.fixture;
+    let mut request = f.request.clone();
+    request.limits.wall_seconds = 180;
+    let run = tasks::start(f, "killed-worker", &request)
+        .await
+        .unwrap()
+        .resource;
+    // Move only this test's owned fixtures into the deployed CLI state layout.
+    // No parent in-process Worker or ArtifactStore is used after this point.
+    let state = f.data.directory.path();
+    for (from, to) in [
+        ("worker-secrets", "secrets"),
+        ("worker-master.key", "master.key"),
+        ("objects", "artifacts"),
+    ] {
+        std::fs::rename(state.join(from), state.join(to)).unwrap();
+    }
+    let role = format!("worker_crash_{}", Id::new().to_string().replace('-', ""));
+    let password = Id::new().to_string();
+    let ddl: String =
+        sqlx::query_scalar("SELECT format('CREATE ROLE %I LOGIN PASSWORD %L',$1::text,$2::text)")
+            .bind(&role)
+            .bind(&password)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(sqlx::query(&ddl).execute(&pool).await.is_ok());
+    f.data
+        .store
+        .migrate_with_application_role(Some(&role))
+        .await
+        .unwrap();
+    let database = pool
+        .connect_options()
+        .as_ref()
+        .clone()
+        .username(&role)
+        .password(&password)
+        .to_url_lossy();
+    let origin = &f.data.runtime.configuration.endpoint;
+    let address: std::net::SocketAddr = origin.strip_prefix("http://").unwrap().parse().unwrap();
+    let targets =
+        serde_json::json!([{ "origin": origin, "addresses": [address.to_string()] }]).to_string();
+    let launch = || {
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_server"))
+            .args(["worker", "--development-http", "--parallelism", "1"])
+            .arg("--state-dir")
+            .arg(state)
+            .env_clear()
+            .env("DATABASE_URL", database.as_str())
+            .env("RUNTIME_TARGETS", &targets)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap()
+    };
+    let mut first = launch();
+    queried(&harness).await;
+    assert!(first.try_wait().unwrap().is_none());
+    assert_eq!(harness.counts().submits, 1);
+    let original: (uuid::Uuid, String, i64) = sqlx::query_as(
+        "SELECT id,external_job_id,owner_epoch FROM app.run_attempts WHERE run_id=$1",
+    )
+    .bind(run.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let original_spec = harness.received_spec(&original.1);
+    first.kill().await.unwrap();
+    assert_eq!(first.wait().await.unwrap().signal(), Some(9));
+    tokio::time::timeout(
+        Duration::from_secs(75),
+        sqlx::query("SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM lease_expires_at-clock_timestamp()))+0.02) FROM app.run_attempts WHERE id=$1")
+            .bind(original.0).execute(&pool),
+    ).await.expect("the killed Worker's actual database lease must expire").unwrap();
+    harness.hold_results(false);
+    let mut recovered = launch();
+    assert_eq!(terminal(&pool, run.id).await, "SUCCEEDED");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM pgmq.q_runs")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            if queued == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("recovered Worker must acknowledge only after publication");
+    recovered.kill().await.unwrap();
+    assert_eq!(recovered.wait().await.unwrap().signal(), Some(9));
+    let current: (uuid::Uuid, String, i64) = sqlx::query_as(
+        "SELECT id,external_job_id,owner_epoch FROM app.run_attempts WHERE run_id=$1",
+    )
+    .bind(run.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(current.0, original.0);
+    assert_eq!(current.1, original.1);
+    assert!(current.2 > original.2);
+    assert_eq!(harness.received_spec(&original.1), original_spec);
+    let counts = harness.counts();
+    assert_eq!(counts.submits, 1);
+    assert_eq!(counts.uploads, 1);
+    assert_eq!(counts.output_reads, 1);
+    assert_eq!(counts.cancels, 0);
+    let facts: (i64, i64, i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.run_attempts WHERE run_id=$1),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT count(*) FROM app.artifacts WHERE producer_run_id=$1),(SELECT count(*) FROM pgmq.q_runs),(SELECT count(*) FROM pgmq.a_runs)")
+        .bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (1, 1, 2, 0, 1));
+    sqlx::query(&format!("DROP OWNED BY {role}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!("DROP ROLE {role}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn native_404_is_not_cancellation_and_only_the_matching_durable_tombstone_closes_the_run(
     pool: PgPool,
 ) {

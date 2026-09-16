@@ -69,8 +69,8 @@ async fn stage_cycle(
     tx
 }
 
-/// This pool query uses a different connection while the writer owns its Tx.
-async fn visible_counts(pool: &PgPool, cycle: Id) -> (i64, i64, i64, i64, i64) {
+/// The observer stays checked out before staging; it cannot become the writer session.
+async fn visible_counts(observer: &mut sqlx::PgConnection, cycle: Id) -> (i64, i64, i64, i64, i64) {
     sqlx::query_as(
         "SELECT \
          (SELECT count(*) FROM app.research_cycles WHERE id=$1),\
@@ -80,7 +80,7 @@ async fn visible_counts(pool: &PgPool, cycle: Id) -> (i64, i64, i64, i64, i64) {
          (SELECT count(*) FROM pgmq.q_runs)",
     )
     .bind(cycle.as_uuid())
-    .fetch_one(pool)
+    .fetch_one(observer)
     .await
     .unwrap()
 }
@@ -88,6 +88,7 @@ async fn visible_counts(pool: &PgPool, cycle: Id) -> (i64, i64, i64, i64, i64) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn caller_commit_publishes_cycle_run_budget_event_and_queue_together(pool: PgPool) {
     let (fixture, request) = setup(&pool).await;
+    let mut observer = pool.acquire().await.unwrap();
     let store = Store::from_pool(pool.clone());
     let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
     let (mut tx, admitted) = Store::enqueue_run_in_transaction(tx, "initial", &request)
@@ -97,7 +98,7 @@ async fn caller_commit_publishes_cycle_run_budget_event_and_queue_together(pool:
     assert_eq!(admitted.resource.cycle_id, Some(request.cycle_id));
     assert_eq!(admitted.resource.last_event_seq.get(), 1);
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (0, 0, 0, 0, 0)
     );
     assert!(store.read_run_messages(30, 100).await.unwrap().is_empty());
@@ -113,7 +114,7 @@ async fn caller_commit_publishes_cycle_run_budget_event_and_queue_together(pool:
     tx.commit().await.unwrap();
 
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (1, 1, 1, 1, 1)
     );
     let replay = store.enqueue_run("initial", &request).await.unwrap();
@@ -123,7 +124,7 @@ async fn caller_commit_publishes_cycle_run_budget_event_and_queue_together(pool:
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].run_id, admitted.resource.id);
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (1, 1, 1, 1, 1)
     );
 }
@@ -131,6 +132,7 @@ async fn caller_commit_publishes_cycle_run_budget_event_and_queue_together(pool:
 #[sqlx::test(migrations = "../../migrations")]
 async fn fresh_admission_and_same_transaction_replay_never_commit_the_caller(pool: PgPool) {
     let (fixture, request) = setup(&pool).await;
+    let mut observer = pool.acquire().await.unwrap();
     let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
     let (tx, first) = Store::enqueue_run_in_transaction(tx, "initial", &request)
         .await
@@ -141,12 +143,12 @@ async fn fresh_admission_and_same_transaction_replay_never_commit_the_caller(poo
     assert!(replay.replayed);
     assert_eq!(replay.resource, first.resource);
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (0, 0, 0, 0, 0)
     );
     tx.rollback().await.unwrap();
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (0, 0, 0, 0, 0)
     );
 
@@ -159,7 +161,7 @@ async fn fresh_admission_and_same_transaction_replay_never_commit_the_caller(poo
     assert_ne!(retried.resource.id, first.resource.id);
     tx.commit().await.unwrap();
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (1, 1, 1, 1, 1)
     );
 }
@@ -167,6 +169,7 @@ async fn fresh_admission_and_same_transaction_replay_never_commit_the_caller(poo
 #[sqlx::test(migrations = "../../migrations")]
 async fn event_or_queue_error_drops_the_whole_caller_transaction_and_can_retry(pool: PgPool) {
     let (fixture, request) = setup(&pool).await;
+    let mut observer = pool.acquire().await.unwrap();
     sqlx::raw_sql(
         "CREATE FUNCTION public.reject_initial_admission() RETURNS trigger LANGUAGE plpgsql AS $$ \
          BEGIN RAISE EXCEPTION 'injected admission failure'; END $$;",
@@ -182,14 +185,23 @@ async fn event_or_queue_error_drops_the_whole_caller_transaction_and_can_retry(p
         .execute(&pool)
         .await
         .unwrap();
-        let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
+        let mut tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
+        let writer_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *observer)
+            .await
+            .unwrap();
+        assert_ne!(writer_pid, observer_pid);
         assert!(matches!(
             Store::enqueue_run_in_transaction(tx, "initial", &request).await,
             Err(StoreError::Database(_))
         ));
         // Check all staged domain, admission, event and queue rows from another connection.
         assert_eq!(
-            visible_counts(&pool, request.cycle_id).await,
+            visible_counts(&mut observer, request.cycle_id).await,
             (0, 0, 0, 0, 0),
             "failed insert into {table} must discard the whole caller transaction"
         );
@@ -205,7 +217,7 @@ async fn event_or_queue_error_drops_the_whole_caller_transaction_and_can_retry(p
     assert!(!retried.replayed);
     tx.commit().await.unwrap();
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (1, 1, 1, 1, 1)
     );
 }
@@ -213,6 +225,7 @@ async fn event_or_queue_error_drops_the_whole_caller_transaction_and_can_retry(p
 #[sqlx::test(migrations = "../../migrations")]
 async fn budget_rejection_and_invalid_key_discard_the_staged_cycle(pool: PgPool) {
     let (fixture, request) = setup(&pool).await;
+    let mut observer = pool.acquire().await.unwrap();
     let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
     let mut free = request.clone();
     free.limits.experiments = 0;
@@ -221,7 +234,7 @@ async fn budget_rejection_and_invalid_key_discard_the_staged_cycle(pool: PgPool)
         Err(StoreError::Domain(DomainError::Invalid("reservation")))
     ));
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (0, 0, 0, 0, 0)
     );
     let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
@@ -234,7 +247,7 @@ async fn budget_rejection_and_invalid_key_discard_the_staged_cycle(pool: PgPool)
         )))
     ));
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (0, 0, 0, 0, 0)
     );
 
@@ -244,7 +257,7 @@ async fn budget_rejection_and_invalid_key_discard_the_staged_cycle(pool: PgPool)
         Err(StoreError::Invalid("idempotency_key"))
     ));
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (0, 0, 0, 0, 0)
     );
 }
@@ -252,6 +265,7 @@ async fn budget_rejection_and_invalid_key_discard_the_staged_cycle(pool: PgPool)
 #[sqlx::test(migrations = "../../migrations")]
 async fn conflicting_replay_discards_all_preceding_caller_writes(pool: PgPool) {
     let (fixture, request) = setup(&pool).await;
+    let mut observer = pool.acquire().await.unwrap();
     let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
     let (tx, admitted) = Store::enqueue_run_in_transaction(tx, "initial", &request)
         .await
@@ -264,7 +278,7 @@ async fn conflicting_replay_discards_all_preceding_caller_writes(pool: PgPool) {
         Err(StoreError::IdempotencyConflict)
     ));
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (0, 0, 0, 0, 0)
     );
 }
@@ -272,6 +286,7 @@ async fn conflicting_replay_discards_all_preceding_caller_writes(pool: PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn deferred_commit_failure_does_not_publish_a_provisional_run(pool: PgPool) {
     let (fixture, request) = setup(&pool).await;
+    let mut observer = pool.acquire().await.unwrap();
     // A caller can add domain facts after admission. Their deferred failure must
     // still roll back the new Cycle, initial Run and native queue message.
     sqlx::query(
@@ -296,7 +311,7 @@ async fn deferred_commit_failure_does_not_publish_a_provisional_run(pool: PgPool
         .as_database_error()
         .is_some_and(|error| error.code().as_deref() == Some("23503")));
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (0, 0, 0, 0, 0)
     );
     assert!(Store::from_pool(pool)
@@ -309,6 +324,7 @@ async fn deferred_commit_failure_does_not_publish_a_provisional_run(pool: PgPool
 #[sqlx::test(migrations = "../../migrations")]
 async fn replay_of_committed_run_leaves_new_caller_changes_uncommitted(pool: PgPool) {
     let (fixture, request) = setup(&pool).await;
+    let mut observer = pool.acquire().await.unwrap();
     let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
     let (tx, initial) = Store::enqueue_run_in_transaction(tx, "initial", &request)
         .await
@@ -344,7 +360,7 @@ async fn replay_of_committed_run_leaves_new_caller_changes_uncommitted(pool: PgP
         .unwrap();
     assert_eq!(unchanged, original);
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (1, 1, 1, 1, 1)
     );
 }
@@ -352,6 +368,7 @@ async fn replay_of_committed_run_leaves_new_caller_changes_uncommitted(pool: PgP
 #[sqlx::test(migrations = "../../migrations")]
 async fn cancelling_blocked_admission_rolls_back_the_staged_cycle(pool: PgPool) {
     let (fixture, request) = setup(&pool).await;
+    let mut observer = pool.acquire().await.unwrap();
     let mut blocker = pool.begin().await.unwrap();
     sqlx::query("SELECT id FROM app.runtime_integrations WHERE id=$1 FOR UPDATE")
         .bind(request.runtime_id.as_uuid())
@@ -394,7 +411,7 @@ async fn cancelling_blocked_admission_rolls_back_the_staged_cycle(pool: PgPool) 
     );
     assert!(matches!(outcome, Err(error) if error.is_cancelled()));
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (0, 0, 0, 0, 0)
     );
 
@@ -405,7 +422,7 @@ async fn cancelling_blocked_admission_rolls_back_the_staged_cycle(pool: PgPool) 
     assert!(!retried.replayed);
     tx.commit().await.unwrap();
     assert_eq!(
-        visible_counts(&pool, request.cycle_id).await,
+        visible_counts(&mut observer, request.cycle_id).await,
         (1, 1, 1, 1, 1)
     );
 }

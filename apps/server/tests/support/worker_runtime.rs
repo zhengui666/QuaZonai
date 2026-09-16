@@ -59,6 +59,7 @@ struct NativeJob {
 #[derive(Default)]
 struct Journal {
     counts: Counts,
+    hold_results: bool,
     inputs: BTreeMap<Id, Vec<u8>>,
     jobs: BTreeMap<String, NativeJob>,
 }
@@ -84,6 +85,9 @@ impl Drop for Harness {
     }
 }
 impl Harness {
+    pub fn hold_results(&self, hold: bool) {
+        self.endpoint.journal.lock().unwrap().hold_results = hold;
+    }
     pub fn counts(&self) -> Counts {
         self.endpoint.journal.lock().unwrap().counts.clone()
     }
@@ -371,6 +375,9 @@ async fn status(
     }
     let mut journal = endpoint.journal.lock().unwrap();
     journal.counts.queries += 1;
+    if journal.hold_results {
+        return empty(StatusCode::SERVICE_UNAVAILABLE);
+    }
     if endpoint.behavior == Behavior::MissingUntilCancelled {
         return empty(StatusCode::NOT_FOUND);
     }
