@@ -109,3 +109,64 @@ fn native_cli_rejects_model_symlinks_and_fifos_without_opening_them() {
     assert!(!result.status.success());
     assert_eq!(result.stderr, b"QZ_NATIVE_JOB_FAILED\n");
 }
+
+#[test]
+fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    let (directory, request) = market("0", 20);
+    let model = directory.path().join("model.wasm");
+    std::fs::write(&model, module("f64.const 1")).unwrap();
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(16),
+        None,
+        None,
+    )
+    .unwrap();
+    let files = catalog.list_parquet_files("data").unwrap();
+    assert!(!files.is_empty());
+    let path = directory.path().join(&files[0]);
+    let original = std::fs::read(&path).unwrap();
+    let mut corrupted = original.clone();
+    let footer = corrupted.len() - 8;
+    corrupted[footer..footer + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    std::fs::write(&path, &corrupted).unwrap();
+    for result in [
+        command(
+            &[
+                "forecast".as_ref(),
+                "--catalog".as_ref(),
+                directory.path().as_os_str(),
+                "--model".as_ref(),
+                model.as_os_str(),
+            ],
+            &forecast_request(&request),
+        ),
+        command(
+            &[
+                "simulate".as_ref(),
+                "--catalog".as_ref(),
+                directory.path().as_os_str(),
+            ],
+            &request,
+        ),
+    ] {
+        assert_eq!(result.status.code(), Some(1));
+        assert!(result.stdout.is_empty());
+        assert_eq!(result.stderr, b"QZ_NATIVE_JOB_FAILED\n");
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), corrupted);
+    std::fs::write(path, original).unwrap();
+    let recovered = command(
+        &[
+            "simulate".as_ref(),
+            "--catalog".as_ref(),
+            directory.path().as_os_str(),
+        ],
+        &request,
+    );
+    assert!(recovered.status.success());
+    let result: NativeSimulationResultV1 = serde_json::from_slice(&recovered.stdout).unwrap();
+    assert_eq!(result.consumed_target_points.get(), 2);
+}
