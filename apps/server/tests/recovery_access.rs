@@ -275,6 +275,24 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     let artifact = client::browser(&f, &cookie, "archived-artifact", "/api/v2/artifacts", json!({"schema_version":1,"project_id":original.body["resource"]["id"],"kind":"CODE","content":content})).await;
     assert_eq!(artifact.status, StatusCode::CREATED);
     let artifact_id = artifact.body["resource"]["id"].as_str().unwrap();
+    let principal = client::browser(&f, &cookie, "archived-cli", "/api/v2/machine-principals", json!({"schema_version":1,"name":"Synthetic archived CLI","kind":"CLI","project_id":original.body["resource"]["id"],"downstream_id":null,"enabled":true})).await;
+    assert_eq!(principal.status, StatusCode::CREATED);
+    let credential = client::browser(&f, &cookie, "archived-cli-credential", &format!("/api/v2/machine-principals/{}/credentials", principal.body["resource"]["id"].as_str().unwrap()), json!({"schema_version":1,"scope_codes":["RESEARCH_READ"],"expires_at":chrono::Utc::now()+chrono::Duration::hours(1)})).await;
+    assert_eq!(credential.status, StatusCode::CREATED);
+    let token = credential.body["token"].as_str().unwrap();
+    let machine_request = || {
+        Request::builder()
+            .uri("/api/v2/projects")
+            .header(header::HOST, "research.example")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        support::exchange(&f.app, machine_request()).await.status,
+        StatusCode::OK
+    );
+
     let before = f.store.authentication_snapshot().await.unwrap();
     // No workers or requests run during this synthetic filesystem/DB checkpoint.
     let historical =
@@ -516,7 +534,16 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         .status,
         StatusCode::OK
     );
-    assert!(recover(&restored_pool, Id::new()).await.status.success());
+    assert_eq!(
+        support::exchange(&restored.app, machine_request())
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let cutover = recover(&restored_pool, Id::new()).await;
+    assert!(cutover.status.success());
+    let cutover: Value = serde_json::from_slice(&cutover.stdout).unwrap();
+    assert_eq!(cutover["revoked_machine_credentials"], "1");
     assert_eq!(
         support::call(
             &restored,
@@ -728,6 +755,19 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         .await
         .unwrap();
     assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+    let machine = http
+        .get(format!("http://{address}/api/v2/projects"))
+        .header(header::HOST, "research.example")
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(machine.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        support::exchange(&f.app, machine_request()).await.status,
+        StatusCode::OK
+    );
+
     let current = http
         .get(format!("http://{address}/api/v2/projects"))
         .header(header::HOST, "research.example")
@@ -759,7 +799,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         "backup_started_at":backup_started_at,"backup_finished_at":backup_finished_at,
         "source_write_after_backup_at":later_created_at,"restore_finished_at":restore_finished_at,
         "fixture_restore_elapsed_ms":restore_started.elapsed().as_millis(),
-        "restored_project_count":1,"source_only_project_count":1})
+        "restored_project_count":1,"source_only_project_count":1,"restored_machine_credentials_revoked":1})
     );
     // Recovery of the copy cannot change the live source's authority.
     assert_eq!(
