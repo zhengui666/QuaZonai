@@ -5,6 +5,7 @@ import document from '../../../contracts/generated/api-v2.openapi.json';
 import type { Schema } from '../src/api';
 import { briefContent } from '../src/brief-fields';
 import { bindingListError } from '../src/authoring-constraints';
+import { projectStateOptions } from '../src/authoring-options';
 import { demoResponse, id, records } from './records';
 
 const ajv = new Ajv2020({ strict: false, inlineRefs: false });
@@ -19,7 +20,7 @@ const validId = ajv.compile({ $ref: 'native#/components/schemas/Id' });
 const validLimit = ajv.compile(document.paths['/api/v2/projects'].get.parameters.find(parameter => parameter.name === 'limit')!.schema);
 const empty = { status: 200, value: { schema_version: 1, items: [], next_cursor: null } };
 
-// Local presentation state only; never activates a project or issues authority.
+// Local presentation state only; never reaches a native project or issues authority.
 export function projectEditor() {
   const original = structuredClone(records.get(`/api/v2/projects/${id(1)}`)!.value) as Schema['ProjectView'];
   const projects = new Map([[original.id, original]]);
@@ -115,7 +116,7 @@ export function projectEditor() {
     if (!('expected_revision' in request)) {
       if (request.fork_from_project_id != null) return denied;
     } else {
-      if (request.state !== project!.state) return denied;
+      if (!projectStateOptions(project!, briefs.get(project!.current_brief_id ?? '')).some(option => option.value === request.state)) return denied;
       if (request.expected_revision !== project!.revision) return { status: 409, value: {
         ...denied.value as Schema['Problem'], status: 409, code: 'REVISION_CONFLICT', current_revision: project!.revision,
         detail: '合成项目已修改，请重新读取。',
@@ -127,7 +128,7 @@ export function projectEditor() {
       id: newId, root_lineage_id: newId, name: request.name, description: request.description, state: 'DRAFT',
       current_brief_id: null, current_automation_policy_id: null, created_by: 'OPERATOR', archived_at: null,
       created_at: now, updated_at: now, revision: '1',
-    } : { ...project!, name: request.name, description: request.description, revision: String(BigInt(project!.revision) + 1n), updated_at: now };
+    } : { ...project!, name: request.name, description: request.description, state: (request as Schema['ProjectUpdate']).state, archived_at: (request as Schema['ProjectUpdate']).state === 'ARCHIVED' ? project!.archived_at ?? now : null, revision: String(BigInt(project!.revision) + 1n), updated_at: now };
     projects.set(resource.id, resource);
     const status = creating ? 201 : 200;
     receipts.set(receiptKey, { body: encoded, resource, status });

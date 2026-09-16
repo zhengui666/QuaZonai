@@ -95,6 +95,18 @@ test('new synthetic draft can be created, edited and opened without inheriting r
   await expect(page.getByRole('button', { name: 'Release 00000510', exact: true })).toBeHidden();
   await page.getByRole('tab', { name: '交付记录', exact: true }).click();
   await expect(page.getByText('尚无交付记录。冻结目标包不会自动创建 Offer。', { exact: true })).toBeVisible();
+  await navigate(page, '研究');
+  for (const state of ['暂停', '归档']) {
+    const row = page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
+    await row.getByRole('button', { name: '编辑', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: '编辑研究项目', exact: true });
+    await editor.getByLabel('项目状态', { exact: true }).click();
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: state }).click();
+    await editor.getByRole('button', { name: '保存项目', exact: true }).click();
+    await expect(editor).toBeHidden();
+    await expect(row.getByText(state, { exact: true })).toBeVisible();
+  }
+
 });
 
 

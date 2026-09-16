@@ -4,7 +4,7 @@ import { projectEditor } from '../demo/project-editor';
 import { id } from '../demo/records';
 import { validateResponse } from './generated/responses.cjs';
 
-test('synthetic metadata editing retains receipts and cannot activate or deliver', () => {
+test('synthetic metadata editing retains receipts and cannot deliver', () => {
   const edit = projectEditor(); const path = `/api/v2/projects/${id(1)}`;
   const body = { schema_version: 1, expected_revision: '1', name: 'SYNTHETIC edited', description: 'Temporary demo', state: 'DRAFT' };
   const saved = edit('PATCH', path, body, 'one')!;
@@ -15,7 +15,7 @@ test('synthetic metadata editing retains receipts and cannot activate or deliver
   expect(edit('PATCH', path, body, 'one')).toMatchObject({ value: { replayed: true, resource: { revision: '2' } } });
   expect(edit('GET', path)).toMatchObject({ value: { revision: '3', name: 'Second' } });
   expect(edit('PATCH', path, body, 'three')?.status).toBe(409);
-  expect(edit('PATCH', path, { ...body, state: 'ACTIVE' }, 'four')?.status).toBe(403);
+  expect(edit('PATCH', path, { ...body, state: 'ACTIVE' }, 'four')?.status).toBe(409);
   expect(edit('PATCH', path, { ...body, name: 12 }, 'bad')?.status).toBe(422);
   expect(edit('POST', '/api/v2/handoffs', body, 'claim')).toBeUndefined();
   expect(projectEditor()('GET', path)).toMatchObject({ value: { revision: '1' } });
@@ -29,8 +29,8 @@ test('demo accepts native header bounds and semantically equal request order', (
   expect(edit('PATCH', path, Object.fromEntries(Object.entries(body).reverse()), key)).toMatchObject({ value: { replayed: true } });
   expect(edit('PATCH', path, { ...body, name: 'Different' }, key)).toMatchObject({ status: 409, value: { code: 'IDEMPOTENCY_CONFLICT' } });
   expect(edit('PATCH', path, { ...body, state: 'ACTIVE' }, key)).toMatchObject({ status: 409, value: { code: 'IDEMPOTENCY_CONFLICT' } });
-  expect(edit('PATCH', path, { ...body, expected_revision: '2', state: 'ACTIVE' }, 'fresh')?.status).toBe(403);
-  expect(edit('GET', path)).toMatchObject({ value: { revision: '2', state: 'DRAFT' } });
+  expect(edit('PATCH', path, { ...body, expected_revision: '2', state: 'ACTIVE' }, 'fresh')?.status).toBe(200);
+  expect(edit('GET', path)).toMatchObject({ value: { revision: '3', state: 'ACTIVE' } });
   for (const key of ['', 'x'.repeat(201), ' a', 'a ', 'a\tb', '中文', 'a\x7f']) expect(edit('PATCH', path, body, key)?.status).toBe(422);
   expect(projectEditor()('PATCH', path, body, 'a b')?.status).toBe(200);
 });
@@ -172,4 +172,22 @@ test('Brief drafts retain frozen history, references and idempotent revisions', 
   const projectId = (project.value as { resource: { id: string } }).resource.id;
   expect(edit('POST', `/api/v2/projects/${projectId}/briefs`, body, 'foreign')?.status).toBe(403);
   expect(projectEditor()('GET', `/api/v2/briefs/${draft.id}`)).toBeUndefined();
+});
+
+
+test('synthetic project transitions retain exact revisions and irreversible archive state', () => {
+  const edit = projectEditor(); const path = `/api/v2/projects/${id(1)}`;
+  const original = edit('GET', path)!.value as { name: string; description: string };
+  let revision = 1;
+  for (const state of ['ACTIVE', 'PAUSED', 'ARCHIVED']) {
+    const body = { schema_version: 1, expected_revision: String(revision), name: original.name, description: original.description, state };
+    const response = edit('PATCH', path, body, state)!;
+    expect(response.status).toBe(200);
+    expect(validateResponse('/api/v2/projects/{id}', 'patch', 200, response.value, 'application/json')).toBe(true);
+    expect(edit('PATCH', path, body, state)).toMatchObject({ value: { replayed: true } });
+    expect(edit('GET', path)).toMatchObject({ value: { state, revision: String(++revision) } });
+  }
+  const archived = edit('GET', path)!.value as { archived_at: string };
+  expect(archived.archived_at).not.toBeNull();
+  expect(edit('PATCH', path, { schema_version: 1, expected_revision: String(revision), name: original.name, description: original.description, state: 'DRAFT' }, 'reopen')?.status).toBe(403);
 });
