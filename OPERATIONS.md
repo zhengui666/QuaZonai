@@ -196,7 +196,7 @@ Codex自行完成OAuth并保存/刷新令牌，QZ不实现另一套OAuth流程�
 本地协议、数据库和浏览器测试不替代受保护的真实账号登录及推理验收。
 
 受保护的原生账号验收使用仓库内的 `protected_codex_login` 示例。先按 README 安装锁定的
-Codex0.144.4；在仓库根目录执行以下命令，可验证真实设备登录启动、取消、重启状态和退出：
+Codex0.144.4；在仓库根目录执行以下命令，可验证真实设备登录启动、取消、重启空账号状态及空账号退出的幂等行为：
 
 ```sh
 cargo run --locked -p server --example protected_codex_login -- \
@@ -209,10 +209,11 @@ cargo run --locked -p server --example protected_codex_login -- \
 前拒绝完整检查。不要将设备码、终端录屏或原生认证文件发送到聊天、CI、Issue或PR。
 命令使用新建临时profile及原生file凭据存储，保留原生OAuth所有权；成功登录后重启
 App Server核对持久状态，再退出并重启确认注销，正常结束删除该临时profile。
-不读取既有profile、auth.json或账户令牌，也不执行推理。Ctrl+C或登录失败会尝试退出
-临时账号并关闭子进程；系统强制终止不保证临时目录清理。
+不读取既有profile、auth.json或账户令牌，也不执行推理。Ctrl+C或超时会按原登录ID请求取消并核对原生完成通知，已观察到的成功优先。
+随后先关闭原登录进程，再用独立的新进程清理临时账号并确认退出状态；系统强制终止不保证临时目录清理。
 
-`--cancel-only` 的结果必须保留 `full_login=not_run`，不能记为完整T07通过。
+`--cancel-only` 的结果必须保留 `logout_restart=not_run full_login=not_run`；
+`empty_account_logout=passed` 只证明空账号退出的幂等路径，不证明已登录凭据被移除，不能记为完整T07通过。
 此示例补充[官方App Server账号协议](https://learn.chatgpt.com/docs/app-server)的原生运行证据；
 QZ网页账号操作、真实模型科学任务、同Thread消费结果和T42仍须分别验收。
 

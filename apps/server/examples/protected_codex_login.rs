@@ -10,7 +10,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 struct Arguments {
     #[arg(long)]
     codex_binary: PathBuf,
-    /// Exercise real start/cancel/logout only; does NOT pass complete T07 acceptance.
+    /// Exercise real start/cancel and empty-account logout only; does NOT pass complete T07 acceptance.
     #[arg(long)]
     cancel_only: bool,
 }
@@ -27,13 +27,27 @@ fn launch(binary: &std::path::Path, root: &std::path::Path) -> Launch {
     }
 }
 
+// Match the production account owner: an already-observed success wins cancellation.
+async fn cancel_and_reconcile(client: &mut Client, login_id: &str) -> Result<bool> {
+    let cancelled = client.cancel_login(login_id).await?;
+    let observations = client.observations(Duration::ZERO).await?;
+    if observations.iter().any(|value| matches!(value, Observation::LoginCompleted { login_id: id, success: true } if id == login_id)) {
+        println!("phase=login_completed_before_cancel");
+        return Ok(true);
+    }
+    match cancelled.status {
+        LoginCancellationStatus::Canceled => Ok(false),
+        LoginCancellationStatus::NotFound => Err("NATIVE_LOGIN_CANCELLATION_UNCONFIRMED".into()),
+    }
+}
+
 async fn exercise(client: &mut Client, cancel_only: bool) -> Result<()> {
     if client.account().await?.account.is_some() {
         return Err("DISPOSABLE_PROFILE_ALREADY_AUTHENTICATED".into());
     }
     println!("phase=start_cancel");
     let login = client.device_login().await?;
-    if client.cancel_login(&login.login_id).await?.status != LoginCancellationStatus::Canceled {
+    if cancel_and_reconcile(client, &login.login_id).await? {
         return Err("NATIVE_LOGIN_NOT_CANCELED".into());
     }
     if client.account().await?.account.is_some() {
@@ -60,9 +74,18 @@ async fn exercise(client: &mut Client, cancel_only: bool) -> Result<()> {
             }
         }
     });
-    let success = tokio::select! {
-        result = completed => result??,
-        _ = tokio::signal::ctrl_c() => return Err("INTERACTIVE_LOGIN_INTERRUPTED".into()),
+    let outcome: Result<bool> = tokio::select! {
+        result = completed => result.map_err(|_| "INTERACTIVE_LOGIN_TIMED_OUT".into()).and_then(|value| value),
+        _ = tokio::signal::ctrl_c() => Err("INTERACTIVE_LOGIN_INTERRUPTED".into()),
+    };
+    let success = match outcome {
+        Ok(success) => success,
+        Err(error) => {
+            if !cancel_and_reconcile(client, &login.login_id).await? {
+                return Err(error);
+            }
+            true
+        }
     };
     if !success
         || !matches!(
@@ -86,12 +109,9 @@ async fn run(args: Arguments) -> Result<()> {
     )?;
     let mut client = Client::start(launch(&args.codex_binary, root.path())).await?;
     let result = exercise(&mut client, args.cancel_only).await;
-    if result.is_err() {
-        let _ = client.logout().await;
-    }
-    let closed = client.close().await;
-    result?;
-    closed?;
+    // Stop the process that owned the login before cleanup. Even an uncertain
+    // cancellation cannot write a late authentication result after this close.
+    client.close().await?;
     // Reopening observes native persistence, not an in-memory success flag.
     println!("phase=restart_status");
     let mut client = Client::start(launch(&args.codex_binary, root.path())).await?;
@@ -101,12 +121,20 @@ async fn run(args: Arguments) -> Result<()> {
     } else {
         matches!(account, Some(Account::Chatgpt { .. }))
     };
-    if !expected {
-        let _ = client.logout().await;
-        client.close().await?;
-        return Err("NATIVE_RESTART_ACCOUNT_STATE_MISMATCH".into());
-    }
-    println!("phase=logout");
+    let result = if result.is_ok() && !expected {
+        Err("NATIVE_RESTART_ACCOUNT_STATE_MISMATCH".into())
+    } else {
+        result
+    };
+    // Cleanup also runs after interruption/failure, using a process with no pending login.
+    println!(
+        "phase={}",
+        if args.cancel_only {
+            "empty_account_logout"
+        } else {
+            "logout"
+        }
+    );
     client.logout().await?;
     client.close().await?;
     let mut client = Client::start(launch(&args.codex_binary, root.path())).await?;
@@ -116,7 +144,8 @@ async fn run(args: Arguments) -> Result<()> {
         return Err("NATIVE_LOGOUT_DID_NOT_PERSIST".into());
     }
     root.close()?;
-    println!("native_version={} start_cancel=passed logout_restart=passed full_login={} temporary_profile_removed=true", server::codex_native::VERSION, if args.cancel_only { "not_run" } else { "passed" });
+    result?;
+    println!("native_version={} start_cancel=passed empty_account_logout={} logout_restart={} full_login={} temporary_profile_removed=true", server::codex_native::VERSION, if args.cancel_only { "passed" } else { "not_run" }, if args.cancel_only { "not_run" } else { "passed" }, if args.cancel_only { "not_run" } else { "passed" });
     Ok(())
 }
 
