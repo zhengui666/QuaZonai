@@ -189,5 +189,30 @@ test('synthetic project transitions retain exact revisions and irreversible arch
   }
   const archived = edit('GET', path)!.value as { archived_at: string };
   expect(archived.archived_at).not.toBeNull();
+  for (const state of ['DRAFT', 'ACTIVE', 'PAUSED']) {
+    expect(edit('PATCH', path, { schema_version: 1, expected_revision: '1', name: original.name, description: original.description, state }, `stale-${state}`)).toMatchObject({ status: 409, value: { code: 'REVISION_CONFLICT', current_revision: String(revision) } });
+  }
+  expect(edit('GET', path)?.value).toEqual(archived);
   expect(edit('PATCH', path, { schema_version: 1, expected_revision: String(revision), name: original.name, description: original.description, state: 'DRAFT' }, 'reopen')?.status).toBe(403);
+});
+
+
+test('archived synthetic projects refuse Brief writes while preserving original receipts', () => {
+  const edit = projectEditor(); const projectPath = `/api/v2/projects/${id(1)}`;
+  const briefPath = `${projectPath}/briefs`;
+  const frozen = edit('GET', `/api/v2/briefs/${id(10)}`)!.value as import('./api').Schema['BriefView'];
+  const create = { schema_version: 1, content: frozen.content, bindings: frozen.bindings, supersedes_id: frozen.id };
+  const saved = edit('POST', briefPath, create, 'create')!;
+  const draft = (saved.value as { resource: import('./api').Schema['BriefView'] }).resource;
+  const update = { schema_version: 1, expected_revision: draft.revision, content: frozen.content, bindings: frozen.bindings };
+  const updated = edit('PATCH', `/api/v2/briefs/${draft.id}`, update, 'update')!;
+  expect(updated.status).toBe(200);
+  const project = edit('GET', projectPath)!.value as import('./api').Schema['ProjectView'];
+  expect(edit('PATCH', projectPath, { schema_version: 1, expected_revision: project.revision, name: project.name, description: project.description, state: 'ARCHIVED' }, 'archive')?.status).toBe(200);
+  expect(edit('POST', briefPath, create, 'new')?.status).toBe(403);
+  expect(edit('PATCH', `/api/v2/briefs/${draft.id}`, { ...update, expected_revision: '2' }, 'new')?.status).toBe(403);
+  expect(edit('POST', briefPath, create, 'create')).toMatchObject({ value: { replayed: true, resource: draft } });
+  expect(edit('PATCH', `/api/v2/briefs/${draft.id}`, update, 'update')).toMatchObject({ value: { replayed: true, resource: (updated.value as { resource: unknown }).resource } });
+  expect(edit('GET', `/api/v2/briefs/${draft.id}`)?.value).toEqual((updated.value as { resource: unknown }).resource);
+  expect(edit('GET', `/api/v2/briefs/${frozen.id}`)?.value).toEqual(frozen);
 });

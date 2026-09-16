@@ -79,7 +79,7 @@ export function projectEditor() {
       if (creatingBrief ? !project : !brief) return demoResponse('GET', path);
       const projectId = creatingBrief ? project!.id : brief!.project_id;
       // This offline scene owns only the original project's declared references.
-      if (projectId !== originalBrief.project_id) return denied;
+      if (projectId !== originalBrief.project_id || projects.get(projectId)?.state === 'ARCHIVED') return denied;
       for (const field of ['universe_version_id', 'evaluation_policy_id', 'execution_assumptions_id', 'base_currency', 'benchmark_ref'] as const) {
         if (content[field] !== originalBrief.content[field]) return invalid;
       }
@@ -116,11 +116,11 @@ export function projectEditor() {
     if (!('expected_revision' in request)) {
       if (request.fork_from_project_id != null) return denied;
     } else {
-      if (!projectStateOptions(project!, briefs.get(project!.current_brief_id ?? '')).some(option => option.value === request.state)) return denied;
       if (request.expected_revision !== project!.revision) return { status: 409, value: {
         ...denied.value as Schema['Problem'], status: 409, code: 'REVISION_CONFLICT', current_revision: project!.revision,
         detail: '合成项目已修改，请重新读取。',
       } };
+      if (!projectStateOptions(project!, briefs.get(project!.current_brief_id ?? '')).some(option => option.value === request.state)) return denied;
     }
     if (receipts.size >= 256) return denied;
     const now = new Date().toISOString(); const newId = id(1000 + projects.size);

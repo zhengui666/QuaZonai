@@ -102,3 +102,27 @@ test('schema-valid but unsupported loaded cost and access values cannot submit',
   await expect(page.getByText('访问边界必须符合所选数据角色，请明确重选。')).toBeVisible();
   expect(state.commands).toHaveLength(0);
 });
+
+
+test('archived projects keep Brief history readable but disable authoring', async ({ page }) => {
+  const state = await fixture(page);
+  state.projects = [{ ...project, state: 'ARCHIVED', archived_at: '2026-09-08T00:00:00Z' }];
+  await page.route(url => url.pathname === `/api/v2/projects/${project.id}`, route => reply(route, state.projects[0]));
+  const draft = brief('DRAFT');
+  const frozen = { ...brief(), id: id(11), version: 2 };
+  await page.route(url => url.pathname === `/api/v2/projects/${project.id}/briefs`, route => reply(route, { schema_version: 1, items: [draft, frozen], next_cursor: null }));
+  await page.goto('/'); await page.getByRole('button', { name: project.name, exact: true }).click();
+  await expect(page.getByRole('button', { name: '新建 Brief 草稿', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '冻结执行上下文', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '启动新 Cycle', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: '查看 / 编辑', exact: true }).click();
+  await expect(page.getByLabel('可检验的假设', { exact: true })).toHaveValue(draft.content.hypothesis);
+  await expect(page.getByLabel('可检验的假设', { exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '保存 Brief 草稿', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await page.getByRole('button', { name: '查看冻结版本', exact: true }).click();
+  await expect(page.getByLabel('可检验的假设', { exact: true })).toHaveValue(frozen.content.hypothesis);
+  await expect(page.getByRole('button', { name: '以此创建新版本', exact: true })).toBeDisabled();
+  expect(state.commands).toHaveLength(0);
+});

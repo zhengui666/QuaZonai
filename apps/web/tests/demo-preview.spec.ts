@@ -16,6 +16,7 @@ test('synthetic preview renders native-contract records without a backend or wri
   page.on('request', request => { if (new URL(request.url()).pathname.endsWith('/events')) eventRequests.push(request.url()); });
   await page.goto('/');
   await expect(page.getByRole('note', { name: '合成预览说明' })).toContainText('尚非完整 Demo');
+  await expect(page.getByRole('note', { name: '合成预览说明' })).toContainText('项目状态（启用需冻结 Brief，归档不可退出）');
   await expect(page.getByRole('button', { name: 'SYNTHETIC · 双 Alpha 研究示例', exact: true })).toBeVisible()
     .catch(error => { throw new Error(`${error.message}\nBrowser errors: ${failures.join('; ')}`); });
   await page.getByRole('button', { name: 'SYNTHETIC · 双 Alpha 研究示例', exact: true }).click();

@@ -21,11 +21,12 @@ export function Briefs({ projectId, projectState }: { projectId: string; project
   const [editing, setEditing] = useState<Brief | 'new'>();
   const [executing, setExecuting] = useState<Brief>();
   const cursor = history.at(-1); const online = useOnline();
+  const editable = projectState !== undefined && projectState !== 'ARCHIVED';
   const query = useQuery({ queryKey: ['briefs', projectId, cursor], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}/briefs', { params: { path: { id: projectId }, query: { cursor, limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="middle">
     <Alert showIcon type="info" title="Brief 是研究假设、数据边界和预算的版本化记录。"
       description="先保存草稿，再绑定执行上下文并冻结；在项目状态中明确启用项目后，选择两角色的 Codex 配置启动。保存和排队均不代表研究完成、资格通过或可交付。" />
-    <Button type="primary" disabled={!online} onClick={() => setEditing('new')}>新建 Brief 草稿</Button>
+    <Button type="primary" disabled={!online || !editable} onClick={() => setEditing('new')}>新建 Brief 草稿</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Brief> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 600 }} locale={{ emptyText: <NoData text="尚无 Brief。请先填写可检验假设和真实数据引用。" /> }} columns={[
         { title: '版本', dataIndex: 'version' }, { title: '假设', key: 'hypothesis', render: (_, item) => <Typography.Paragraph ellipsis={{ rows: 2, expandable: true }}>{item.content.hypothesis}</Typography.Paragraph> },
@@ -34,11 +35,11 @@ export function Briefs({ projectId, projectState }: { projectId: string; project
       ]} />
       <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
     </QueryPanel>
-    {editing && <BriefEditor projectId={projectId} brief={editing === 'new' ? undefined : editing} close={() => setEditing(undefined)} />}
+    {editing && <BriefEditor projectId={projectId} editable={editable} brief={editing === 'new' ? undefined : editing} close={() => setEditing(undefined)} />}
     {executing && <BriefExecution brief={executing} close={() => setExecuting(undefined)} />}
   </Space>;
 }
-function BriefEditor({ projectId, brief, close }: { projectId: string; brief?: Brief; close: () => void }) {
+function BriefEditor({ projectId, editable, brief, close }: { projectId: string; editable: boolean; brief?: Brief; close: () => void }) {
   const [form] = Form.useForm<Fields>(); const [dirty, setDirty] = useState(false);
   const [fork, setFork] = useState(false);
   const online = useOnline(); const client = useQueryClient(); const { modal, message } = App.useApp();
@@ -61,7 +62,7 @@ function BriefEditor({ projectId, brief, close }: { projectId: string; brief?: B
   } });
   useGuard(dirty || mutation.isPending);
   const conflict = mutation.error instanceof ApiFailure && mutation.error.code === 'REVISION_CONFLICT';
-  const disabled = !online || mutation.isPending || readOnly || conflict;
+  const disabled = !online || !editable || mutation.isPending || readOnly || conflict;
   function dismiss() {
     if (mutation.isPending) return;
     if (!dirty) { close(); return; }
@@ -70,7 +71,7 @@ function BriefEditor({ projectId, brief, close }: { projectId: string; brief?: B
   return <Drawer title={brief ? `Brief · 版本 ${brief.version}${fork ? ' 的新草稿' : ''}` : '新建 Brief 草稿'} open width={840} onClose={dismiss} closable={!mutation.isPending} maskClosable={!mutation.isPending}>
     <Space orientation="vertical" className="full-width" size="middle">
       {brief && <ResourceFacts id={brief.id} revision={brief.revision} updated={brief.updated_at} />}
-      {readOnly && <Alert showIcon type="info" title="冻结版本不可修改。" action={<Button disabled={!online} onClick={() => { setFork(true); setDirty(true); }}>以此创建新版本</Button>} />}
+      {readOnly && <Alert showIcon type="info" title="冻结版本不可修改。" action={<Button disabled={!online || !editable} onClick={() => { setFork(true); setDirty(true); }}>以此创建新版本</Button>} />}
       <ErrorNotice error={mutation.error} />
       {conflict && <Button onClick={() => { void client.invalidateQueries({ queryKey: ['briefs', projectId] }); dismiss(); }}>关闭并重载服务器版本</Button>}
       <ConfigProvider getPopupContainer={trigger => trigger?.parentElement ?? document.body}>
