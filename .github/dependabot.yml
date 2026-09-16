@@ -8,6 +8,10 @@ updates:
     directory: /runtimes/codex
     schedule:
       interval: weekly
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: /
     schedule:

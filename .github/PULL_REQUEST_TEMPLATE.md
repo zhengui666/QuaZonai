@@ -1,20 +1,15 @@
 ## Summary
 
-<!-- Describe the problem, outcome, and affected users or maintainers. -->
+<!-- Explain the concrete problem, resulting behavior and affected users. Link the Issue without closing unfinished product scope. -->
 
-## Documentation and contracts
+## Contracts and documentation
 
-- [ ] This change stays within existing governed documentation.
-- [ ] I updated the affected source-of-truth documentation before implementation.
-- [ ] This change does not affect a product feature, API, schema, workflow, permission, architecture, or release gate.
+<!-- List affected DESIGN/CLI/OPERATIONS/README/Skill sections, or explain why no contract or documentation change is needed. Update the authoritative source instead of adding a duplicate implementation diary. -->
 
 ## Validation
 
-- [ ] I ran relevant checks and described the result below.
-- [ ] I did not add credentials, tokens, browser state, generated artifacts, or evidence.
+<!-- Record actual commands, results and remaining checks. Separate fixtures from real accounts/data and production acceptance. Link CI and review for this Head. -->
 
-<!-- Commands and results: -->
+## Delivery
 
-## Checklist
-
-- [ ] I read [README.md](../README.md) for the current project entry point and [AGENTS.md](../AGENTS.md) for repository governance.
+<!-- State migrations, deployment/rollback effects and incomplete acceptance. A maintenance PR does not establish production readiness or close Issue #62. -->

@@ -13,6 +13,25 @@ concurrency:
   group: native-ci-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  docs-links:
+    name: Documentation / local links and anchors
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require exact event Head
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git -c core.quotePath=false ls-files -- '*.md' > "$RUNNER_TEMP/documentation-files"
+      - uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8
+        with:
+          lycheeVersion: v0.24.2
+          args: --config .lychee.toml --files-from '${{ runner.temp }}/documentation-files'
+          output: ${{ runner.temp }}/lychee.md
+          token: ''
   rust-native-contracts:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -62,7 +81,7 @@ jobs:
           diff -u contracts/generated/domain-v1.openapi.json /tmp/native-evidence/domain-v1.openapi.json
           rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -q -p server -- openapi > /tmp/native-evidence/api-v2.openapi.json
           diff -u contracts/generated/api-v2.openapi.json /tmp/native-evidence/api-v2.openapi.json
-          rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -q -p server -- --help > /tmp/native-evidence/server-help.txt
+          make check-cli
           node tests/contracts/decimal-wire.mjs | tee /tmp/native-evidence/decimal-wire.log
           node tests/contracts/bigint-wire.mjs | tee /tmp/native-evidence/bigint-wire.log
           node tests/contracts/fraction-wire.mjs | tee /tmp/native-evidence/fraction-wire.log
@@ -89,7 +108,7 @@ jobs:
       - name: Reject legacy paths and prefixed directories
         run: |
           set -euo pipefail
-          if git ls-files | grep -E '(^|/)qz-[^/]*/|^(backend|plugins)/'; then
+          if git ls-files | grep -E '(^|/)qz-[^/]*/|^(backend|frontend|plugins)/'; then
             echo 'Forbidden legacy or prefixed directory remains' >&2
             exit 1
           fi
@@ -257,16 +276,18 @@ jobs:
         run: docker rm --force --volumes store-database
   foundation-checks:
     if: always()
-    needs: [rust-native-contracts, database-native, store-postgres]
+    needs: [docs-links, rust-native-contracts, database-native, store-postgres]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every foundation check to succeed
         env:
+          DOCS_RESULT: ${{ needs.docs-links.result }}
           RUST_RESULT: ${{ needs.rust-native-contracts.result }}
           DATABASE_RESULT: ${{ needs.database-native.result }}
           STORE_RESULT: ${{ needs.store-postgres.result }}
         run: |
+          test "$DOCS_RESULT" = success
           test "$RUST_RESULT" = success
           test "$DATABASE_RESULT" = success
           test "$STORE_RESULT" = success
-          echo 'Foundation checks passed; incomplete product acceptance remains documented and PR stays Draft.'
+          echo 'Maintained-source checks passed; full product acceptance is tracked separately in docs/architecture/issue-62-execution.md.'
