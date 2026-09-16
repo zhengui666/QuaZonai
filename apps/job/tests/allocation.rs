@@ -1,0 +1,953 @@
+//! Native Clarabel solves, checked against independent small analytical answers.
+//! Example instruments and assumptions are SYNTHETIC, not qualification evidence.
+use bigdecimal::ToPrimitive;
+use contracts::{portfolio::*, DecimalValue, Id};
+
+fn input() -> AllocationInputV1 {
+    serde_json::from_str(include_str!(
+        "../../../tests/contracts/allocation-input.json"
+    ))
+    .unwrap()
+}
+fn decimal(value: &str) -> DecimalValue {
+    value.parse().unwrap()
+}
+
+fn forecast_input() -> PortfolioForecastInputV1 {
+    use contracts::{brief::HorizonKind, evidence::ForecastUnit, DbCounter, SchemaV1};
+    let instruments: Vec<_> = input()
+        .assets
+        .into_iter()
+        .map(|a| a.instrument_id)
+        .collect();
+    let asof = DbCounter::new(10_000_000_000).unwrap();
+    let decision = DbCounter::new(20_000_000_000).unwrap();
+    let horizon = DbCounter::new(4).unwrap();
+    let bars: Vec<_> = instruments
+        .iter()
+        .map(|id| format!("{id}-1-MINUTE-LAST-EXTERNAL"))
+        .collect();
+    PortfolioForecastInputV1 {
+        schema_version: SchemaV1,
+        decision_asof_ns: decision,
+        forecast_asof_ns: asof,
+        horizon_kind: HorizonKind::FixedBars,
+        horizon_value: horizon,
+        base_currency: "USD".into(),
+        max_input_age_seconds: 10,
+        bar_types: bars.clone(),
+        instrument_ids: instruments.clone(),
+        members: [(vec![0.1, 0.2], "0.25"), (vec![0.3, 0.0], "0.75")]
+            .into_iter()
+            .map(|(forecasts, weight)| AlphaForecastV1 {
+                alpha_id: Id::new(),
+                alpha_version_id: Id::new(),
+                forecast_unit: ForecastUnit::ReturnPerHorizon,
+                horizon_kind: HorizonKind::FixedBars,
+                horizon_value: horizon,
+                base_currency: "USD".into(),
+                asof_ns: asof,
+                available_ns: decision,
+                ensemble_weight: decimal(weight),
+                bar_types: bars.clone(),
+                instrument_ids: instruments.clone(),
+                forecasts,
+            })
+            .collect(),
+    }
+}
+fn weights(request: &AllocationInputV1) -> Vec<f64> {
+    let result = job::allocate(request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal, "{result:?}");
+    domain::portfolio::allocation_result(request, &result).unwrap();
+    result
+        .targets
+        .unwrap()
+        .iter()
+        .map(|v| v.weight.as_decimal().to_f64().unwrap())
+        .collect()
+}
+fn near(actual: f64, expected: f64) {
+    assert!((actual - expected).abs() <= 1e-5, "{actual} != {expected}");
+}
+
+#[test]
+fn native_minimum_risk_uses_the_whole_covariance_not_equal_weights() {
+    let request = input();
+    let result = weights(&request);
+    near(result[0], 0.8);
+    near(result[1], 0.2);
+    let mut changed = request;
+    changed.return_history.asset_returns.swap(0, 1);
+    let changed = weights(&changed);
+    near(changed[0], 0.2);
+    near(changed[1], 0.8);
+}
+
+#[test]
+fn native_covariance_requires_original_causal_aligned_return_history() {
+    let original = input();
+    for mutation in 0..10 {
+        let mut bad = original.clone();
+        match mutation {
+            0 => {
+                bad.return_history.available_ns[0] =
+                    contracts::DbCounter::new(bad.forecasts.decision_asof_ns.get() + 1).unwrap()
+            }
+            1 => bad.return_history.available_ns[0] = contracts::DbCounter::new(99).unwrap(),
+            2 => bad.return_history.end_ns[1] = bad.return_history.end_ns[0],
+            3 => bad.return_history.instrument_ids.swap(0, 1),
+            4 => bad.return_history.bar_types.swap(0, 1),
+            5 => bad.return_history.horizon_value = contracts::DbCounter::new(3).unwrap(),
+            6 => bad.return_history.base_currency = "EUR".into(),
+            7 => {
+                bad.return_history.available_ns.pop();
+            }
+            8 => bad.return_history.asset_returns[0][0] = -1.01,
+            _ => bad.covariance_estimator = bad.alpha_ensemble.clone(),
+        }
+        assert!(job::allocate(&bad).is_err(), "history mutation {mutation}");
+    }
+    let mut wire = serde_json::to_value(&original).unwrap();
+    wire["covariance"] = serde_json::json!([[1, 0], [0, 4]]);
+    assert!(serde_json::from_value::<AllocationInputV1>(wire).is_err());
+    for missing in ["return_history", "covariance_estimator"] {
+        let mut wire = serde_json::to_value(&original).unwrap();
+        wire.as_object_mut().unwrap().remove(missing);
+        assert!(serde_json::from_value::<AllocationInputV1>(wire).is_err());
+    }
+    let mut translated = original;
+    for row in &mut translated.return_history.asset_returns {
+        for value in row {
+            *value += 10.0;
+        }
+    }
+    let result = weights(&translated);
+    near(result[0], 0.8);
+    near(result[1], 0.2);
+}
+
+#[test]
+fn native_utility_and_transaction_costs_change_the_optimum() {
+    let mut request = input();
+    request.objective = AllocationObjective::MaxUtility;
+    let result = weights(&request);
+    // f(x)=x²+4(1-x)²-0.1x-0.2(1-x), derivative 10x-7.9.
+    near(result[0], 0.79);
+    request.objective = AllocationObjective::MinRisk;
+    for asset in &mut request.assets {
+        asset.transaction_cost_rate = decimal("0.5");
+    }
+    // Both legs cost 0.5*|x-0.5|: derivative 10x-8+1 for x>=0.5.
+    near(weights(&request)[0], 0.7);
+}
+
+#[test]
+fn actual_fixed_mixture_predictions_feed_one_native_utility_problem() {
+    let forecasts = forecast_input();
+    let forecast = job::validation::aligned_portfolio_forecast(&forecasts).unwrap();
+    near(forecast[0], 0.25);
+    near(forecast[1], 0.05);
+    let mut request = input();
+    request.objective = AllocationObjective::MaxUtility;
+    request.forecasts = forecasts.clone();
+    // x²+4(1-x)²-0.25x-0.05(1-x) has derivative 10x-8.2.
+    let target = weights(&request);
+    near(target[0], 0.82);
+    near(target[1], 0.18);
+    assert_eq!(
+        forecasts
+            .members
+            .iter()
+            .map(|m| m.ensemble_weight.clone())
+            .collect::<Vec<_>>(),
+        [decimal("0.25"), decimal("0.75")]
+    );
+}
+
+#[test]
+fn incompatible_original_forecasts_never_reach_native_aggregation() {
+    use contracts::{brief::HorizonKind, evidence::ForecastUnit, DbCounter};
+    let mutations: &[fn(&mut PortfolioForecastInputV1)] = &[
+        |r| r.members[1].alpha_id = r.members[0].alpha_id,
+        |r| r.members[1].alpha_version_id = r.members[0].alpha_version_id,
+        |r| r.members[1].forecast_unit = ForecastUnit::UnitlessScore,
+        |r| r.members[1].forecast_unit = ForecastUnit::ResidualReturnPerHorizon,
+        |r| r.members[1].base_currency = "EUR".into(),
+        |r| r.members[1].horizon_kind = HorizonKind::FixedDuration,
+        |r| r.members[1].horizon_value = DbCounter::new(5).unwrap(),
+        |r| r.members[1].asof_ns = DbCounter::new(9_000_000_000).unwrap(),
+        |r| r.members[1].available_ns = DbCounter::new(20_000_000_001).unwrap(),
+        |r| r.members[1].available_ns = DbCounter::new(9_999_999_999).unwrap(),
+        |r| r.members[1].instrument_ids.swap(0, 1),
+        |r| r.members[1].bar_types[0] = r.members[1].bar_types[0].replace("MINUTE", "HOUR"),
+        |r| {
+            r.members[1].forecasts.pop();
+        },
+        |r| r.members[1].forecasts[0] = f64::NAN,
+        |r| r.instrument_ids[1] = r.instrument_ids[0].clone(),
+        |r| r.max_input_age_seconds = 9,
+        |r| r.max_input_age_seconds = 0,
+        |r| r.decision_asof_ns = DbCounter::new(9_999_999_999).unwrap(),
+        |r| r.horizon_kind = HorizonKind::VariableInterval,
+    ];
+    for (index, change) in mutations.iter().enumerate() {
+        let mut request = forecast_input();
+        change(&mut request);
+        assert!(
+            job::validation::aligned_portfolio_forecast(&request).is_err(),
+            "case {index}"
+        );
+    }
+    for malformed in [true, false] {
+        let mut request = forecast_input();
+        request.bar_types[0] = if malformed {
+            "invalid-native-bar".into()
+        } else {
+            request.bar_types[0].replace("MINUTE", "HOUR")
+        };
+        for member in &mut request.members {
+            member.bar_types = request.bar_types.clone();
+        }
+        assert!(job::validation::aligned_portfolio_forecast(&request).is_err());
+    }
+    let mut request = forecast_input();
+    let mut extra = request.members[0].clone();
+    extra.alpha_version_id = Id::new();
+    extra.ensemble_weight = decimal("0.125");
+    request.members[0].ensemble_weight = decimal("0.125");
+    request.members.push(extra);
+    job::validation::aligned_portfolio_forecast(&request).unwrap();
+    request.members[1].ensemble_weight = decimal("0");
+    request.members[0].ensemble_weight = decimal("0.5");
+    request.members[2].ensemble_weight = decimal("0.5");
+    assert!(
+        job::validation::aligned_portfolio_forecast(&request).is_err(),
+        "two positive versions of one Alpha cannot count as two distinct positive Alphas"
+    );
+    let mut request = forecast_input();
+    request.members[0].forecasts[0] = f64::NAN;
+    assert!(
+        serde_json::to_value(&request).is_err(),
+        "NaN cannot turn into a missing value"
+    );
+}
+
+#[test]
+fn native_mixture_rejects_missing_predictions_and_never_repairs_weights() {
+    use job::validation::fixed_weighted_forecast as mix;
+    let forecasts = [vec![0.1, 0.2], vec![0.3, 0.0]];
+    for weights in [
+        vec!["1"],
+        vec!["1", "1"],
+        vec!["1", "0"],
+        vec!["-1", "2"],
+        vec!["0.5", "0.500000000000000001"],
+    ] {
+        assert!(mix(
+            &forecasts,
+            &weights.into_iter().map(decimal).collect::<Vec<_>>()
+        )
+        .is_err());
+    }
+    let weights = [decimal("0.5"), decimal("0.5")];
+    for forecasts in [
+        vec![],
+        vec![vec![1.0]],
+        vec![vec![], vec![]],
+        vec![vec![1.0], vec![1.0, 2.0]],
+        vec![vec![f64::NAN], vec![0.0]],
+        vec![vec![1.0], vec![f64::INFINITY]],
+        vec![vec![1.0; MAX_ALLOCATION_ASSETS + 1]; 2],
+    ] {
+        assert!(mix(&forecasts, &weights).is_err());
+    }
+    let rows = vec![vec![0.1]; MAX_ALLOCATION_ASSETS + 1];
+    assert!(mix(&rows, &vec![decimal("0.5"); rows.len()]).is_err());
+}
+
+#[test]
+fn asset_overrides_and_group_bounds_enter_the_native_problem() {
+    let mut request = input();
+    request.constraints.asset_overrides.push(AssetBoundV1 {
+        instrument_id: request.assets[0].instrument_id.clone(),
+        min: decimal("0"),
+        max: decimal("0.6"),
+    });
+    near(weights(&request)[0], 0.6);
+    request.constraints.group_bounds.push(GroupBoundV1 {
+        group_id: "sector-a".into(),
+        min: decimal("0.3"),
+        max: decimal("0.4"),
+    });
+    near(weights(&request)[0], 0.4);
+}
+
+#[test]
+fn cash_and_net_exposure_are_one_shared_capital_constraint() {
+    let mut request = input();
+    request.constraints.min_cash_weight = decimal("0.2");
+    request.constraints.max_cash_weight = decimal("0.2");
+    request.constraints.min_net_exposure = decimal("0.8");
+    request.constraints.max_net_exposure = decimal("0.8");
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    near(
+        result.cash_weight.unwrap().as_decimal().to_f64().unwrap(),
+        0.2,
+    );
+    let result = weights(&request);
+    near(result[0], 0.64);
+    near(result[1], 0.16);
+}
+
+#[test]
+fn turnover_and_real_notional_participation_bound_both_legs() {
+    let mut request = input();
+    request.constraints.max_turnover_per_rebalance = decimal("0.1");
+    near(weights(&request)[0], 0.55);
+    request.constraints.max_turnover_per_rebalance = decimal("2");
+    request.constraints.max_participation = Some(decimal("0.1"));
+    request.constraints.liquidity_ref = Some(Id::new());
+    for asset in &mut request.assets {
+        asset.available_notional = Some(decimal("500000"));
+    }
+    near(weights(&request)[0], 0.55);
+    for asset in &mut request.assets {
+        asset.available_notional = Some(decimal("0"));
+    }
+    near(weights(&request)[0], 0.5);
+}
+
+#[test]
+fn signed_exposures_obey_native_gross_and_net_limits() {
+    let mut request = input();
+    request.objective = AllocationObjective::MaxUtility;
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        panic!("native optimizer");
+    };
+    parameters.risk_aversion = decimal("0.1");
+    request.constraints.long_only = false;
+    request.constraints.min_asset_weight = decimal("-1");
+    request.constraints.max_asset_weight = decimal("2");
+    request.constraints.max_gross_exposure = decimal("1.4");
+    for member in &mut request.forecasts.members {
+        member.forecasts[0] = 5.0;
+    }
+    let result = weights(&request);
+    near(result[0], 1.2);
+    near(result[1], -0.2);
+}
+
+#[test]
+fn native_infeasibility_never_publishes_a_certificate_as_targets() {
+    let mut request = input();
+    request.constraints.max_asset_weight = decimal("0.1");
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Infeasible);
+    assert!(result.targets.is_none());
+    assert!(result.cash_weight.is_none());
+    assert!(result.reason_code.is_some());
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+}
+
+#[test]
+fn no_iteration_or_accuracy_failure_becomes_a_fallback_allocation() {
+    let mut request = input();
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        panic!("native optimizer");
+    };
+    parameters.max_iterations = 1;
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Failed);
+    assert!(result.targets.is_none() && result.cash_weight.is_none());
+}
+
+#[test]
+fn native_model_references_bind_roles_versions_and_strict_parameters() {
+    let original = input();
+    let result = job::allocate(&original).unwrap();
+    for role in ["optimizer", "alpha_ensemble"] {
+        for (field, value) in [
+            ("adapter_kind", serde_json::json!("DEFAULT")),
+            ("upstream_class", serde_json::json!("unknown::Model")),
+            ("upstream_version", serde_json::json!("0.0.0")),
+            ("schema_version", serde_json::json!(2)),
+            ("extra", serde_json::json!(true)),
+        ] {
+            let mut bad = serde_json::to_value(&original).unwrap();
+            bad[role][field] = value;
+            if let Ok(bad) = serde_json::from_value::<AllocationInputV1>(bad) {
+                assert!(job::allocate(&bad).is_err(), "{role}.{field}");
+                assert!(domain::portfolio::allocation_result(&bad, &result).is_err());
+            }
+        }
+        let mut bad = serde_json::to_value(&original).unwrap();
+        bad[role]["parameters"]["unknown"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<AllocationInputV1>(bad).is_err());
+        let mut missing = serde_json::to_value(&original).unwrap();
+        missing.as_object_mut().unwrap().remove(role);
+        assert!(serde_json::from_value::<AllocationInputV1>(missing).is_err());
+    }
+    let mut reversed = original.clone();
+    std::mem::swap(&mut reversed.optimizer, &mut reversed.alpha_ensemble);
+    assert!(job::allocate(&reversed).is_err());
+    assert!(domain::portfolio::allocation_result(&reversed, &result).is_err());
+    let mut legacy = serde_json::to_value(&original).unwrap();
+    legacy["settings"] = legacy["optimizer"]["parameters"].clone();
+    assert!(serde_json::from_value::<AllocationInputV1>(legacy).is_err());
+}
+
+#[test]
+fn invalid_or_unsupported_inputs_are_not_silently_repaired() {
+    let mut legacy = serde_json::to_value(input()).unwrap();
+    legacy["assets"][0]["expected_return"] = serde_json::json!(100);
+    assert!(serde_json::from_value::<AllocationInputV1>(legacy).is_err());
+    let mut missing = serde_json::to_value(input()).unwrap();
+    missing.as_object_mut().unwrap().remove("forecasts");
+    assert!(serde_json::from_value::<AllocationInputV1>(missing).is_err());
+    let mut request = input();
+    request.return_history.asset_returns[0].pop();
+    assert!(job::allocate(&request).is_err());
+    request = input();
+    request.return_history.asset_returns[1] = request.return_history.asset_returns[0].clone();
+    assert!(job::allocate(&request).is_err());
+    request = input();
+    request.return_history.asset_returns[0][0] = f64::NAN;
+    assert!(job::allocate(&request).is_err());
+    assert!(serde_json::to_value(&request).is_err());
+    request = input();
+    request.assets[1].instrument_id = request.assets[0].instrument_id.clone();
+    assert!(job::allocate(&request).is_err());
+    request = input();
+    request.assets[0].transaction_cost_rate = decimal("-0.1");
+    assert!(job::allocate(&request).is_err());
+    request = input();
+    request.constraints.max_participation = Some(decimal("0.1"));
+    assert!(job::allocate(&request).is_err());
+    request = input();
+    request.current_cash_weight = decimal("0.1");
+    assert!(job::allocate(&request).is_err());
+    request = input();
+    request.risk = AllocationRisk::Cvar;
+    assert!(job::allocate(&request).is_err());
+    request = input();
+    request.objective = AllocationObjective::RiskBudgeting;
+    assert!(job::allocate(&request).is_err());
+    request = input();
+    request.constraints.max_ex_ante_risk = Some(decimal("0"));
+    assert!(job::allocate(&request).is_err());
+}
+
+#[test]
+fn native_variance_risk_budgeting_is_not_minimum_variance_or_capital_weighting() {
+    let mut request = input();
+    request.objective = AllocationObjective::RiskBudgeting;
+    let assets = request
+        .assets
+        .iter()
+        .map(|a| RiskBudgetAssetV1 {
+            instrument_id: a.instrument_id.clone(),
+            share: decimal("0.5"),
+            sign: RiskBudgetSign::Long,
+        })
+        .collect();
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+        schema_version: contracts::SchemaV1,
+        risky_gross_exposure: decimal("1"),
+        assets,
+    });
+    let actual = weights(&request);
+    near(actual[0], 2.0 / 3.0);
+    near(actual[1], 1.0 / 3.0);
+    for mutation in 0..5 {
+        let mut bad = request.clone();
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut bad.optimizer else {
+            unreachable!()
+        };
+        let budget = parameters.risk_budgeting.as_mut().unwrap();
+        match mutation {
+            0 => budget.assets[1].instrument_id = budget.assets[0].instrument_id.clone(),
+            1 => {
+                budget.assets.pop();
+            }
+            2 => budget.assets[0].share = decimal("0.49"),
+            3 => budget.risky_gross_exposure = decimal("0"),
+            _ => budget.assets[0].instrument_id = "UNKNOWN.EXAMPLE".into(),
+        }
+        assert!(job::allocate(&bad).is_err());
+    }
+    request.assets[0].transaction_cost_rate = decimal("0.3");
+    let with_cost = weights(&request);
+    near(with_cost[0], 2.0 / 3.0);
+    near(with_cost[1], 1.0 / 3.0);
+    let mut corrupt = job::allocate(&request).unwrap();
+    corrupt.targets.as_mut().unwrap()[0].weight = decimal("0.8");
+    corrupt.targets.as_mut().unwrap()[1].weight = decimal("0.2");
+    assert!(domain::portfolio::allocation_result(&request, &corrupt).is_err());
+    request.constraints.asset_overrides = vec![AssetBoundV1 {
+        instrument_id: request.assets[0].instrument_id.clone(),
+        min: decimal("0"),
+        max: decimal("0.5"),
+    }];
+    let impossible = job::allocate(&request).unwrap();
+    assert_eq!(impossible.solver_status, SolverStatus::Infeasible);
+    assert!(impossible.targets.is_none() && impossible.cash_weight.is_none());
+    request.constraints.asset_overrides.clear();
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    let budget = parameters.risk_budgeting.as_mut().unwrap();
+    budget.assets[0].share = decimal("0.2");
+    budget.assets[1].share = decimal("0.8");
+    budget.assets.reverse();
+    let actual = weights(&request);
+    near(actual[0], 0.5);
+    near(actual[1], 0.5);
+    request.return_history.asset_returns[1] = vec![0.0, 2.0, 4.0, 6.0, 3.0];
+    let correlated = weights(&request);
+    let ratio = (89.0_f64.sqrt() - 3.0) / 8.0;
+    near(correlated[0], ratio / (1.0 + ratio));
+    near(correlated[1], 1.0 / (1.0 + ratio));
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.max_iterations = 1;
+    let exhausted = job::allocate(&request).unwrap();
+    assert_eq!(exhausted.solver_status, SolverStatus::Failed);
+    assert!(exhausted.targets.is_none() && exhausted.iterations <= 1);
+}
+
+#[test]
+fn native_risk_budgeting_preserves_explicit_short_direction_and_zero_share() {
+    let mut request = input();
+    request.objective = AllocationObjective::RiskBudgeting;
+    request.constraints.long_only = false;
+    request.constraints.min_asset_weight = decimal("-1");
+    request.constraints.min_net_exposure = decimal("-1");
+    request.constraints.max_cash_weight = decimal("1");
+    let assets = request
+        .assets
+        .iter()
+        .enumerate()
+        .map(|(i, a)| RiskBudgetAssetV1 {
+            instrument_id: a.instrument_id.clone(),
+            share: decimal("0.5"),
+            sign: if i == 0 {
+                RiskBudgetSign::Long
+            } else {
+                RiskBudgetSign::Short
+            },
+        })
+        .collect();
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+        schema_version: contracts::SchemaV1,
+        risky_gross_exposure: decimal("1"),
+        assets,
+    });
+    let actual = weights(&request);
+    near(actual[0], 2.0 / 3.0);
+    near(actual[1], -1.0 / 3.0);
+    request.constraints.min_asset_weight = decimal("0");
+    request.constraints.long_only = true;
+    assert!(job::allocate(&request).is_err());
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    let budget = parameters.risk_budgeting.as_mut().unwrap();
+    budget.assets[0].share = decimal("1");
+    budget.assets[1].share = decimal("0");
+    let actual = weights(&request);
+    near(actual[0], 1.0);
+    near(actual[1], 0.0);
+    request.objective = AllocationObjective::MinRisk;
+    assert!(job::allocate(&request).is_err());
+}
+
+#[test]
+fn native_cvar_uses_tail_mass_and_changes_with_confidence() {
+    let mut request = input();
+    request.risk = AllocationRisk::Cvar;
+    request.return_history.asset_returns = vec![
+        vec![-0.1, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, -0.2, 0.0, 0.0, 0.0],
+    ];
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.8"));
+    let actual = weights(&request);
+    near(actual[0], 2.0 / 3.0);
+    near(actual[1], 1.0 / 3.0);
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.6"));
+    let actual = weights(&request);
+    near(actual[0], 1.0);
+    near(actual[1], 0.0);
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.8"));
+    request.objective = AllocationObjective::MaxUtility;
+    for member in &mut request.forecasts.members {
+        member.forecasts = vec![0.0, 1.0];
+    }
+    request.constraints.max_ex_ante_risk = Some(decimal("0.08"));
+    let actual = weights(&request);
+    near(actual[0], 0.6);
+    near(actual[1], 0.4);
+    let mut corrupt = job::allocate(&request).unwrap();
+    corrupt.targets.as_mut().unwrap()[0].weight = decimal("0.5");
+    corrupt.targets.as_mut().unwrap()[1].weight = decimal("0.5");
+    assert!(domain::portfolio::allocation_result(&request, &corrupt).is_err());
+    request.constraints.max_ex_ante_risk = Some(decimal("0.06"));
+    let impossible = job::allocate(&request).unwrap();
+    assert_eq!(impossible.solver_status, SolverStatus::Infeasible);
+    assert!(impossible.targets.is_none() && impossible.cash_weight.is_none());
+}
+
+#[test]
+fn native_cvar_risk_budgeting_preserves_tail_duals_and_fractional_contributions() {
+    let mut request = input();
+    request.risk = AllocationRisk::Cvar;
+    request.objective = AllocationObjective::RiskBudgeting;
+    request.return_history.asset_returns = vec![
+        vec![-0.1, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, -0.2, 0.0, 0.0, 0.0],
+    ];
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+        schema_version: contracts::SchemaV1,
+        risky_gross_exposure: decimal("1"),
+        assets: request
+            .assets
+            .iter()
+            .zip(["0.2", "0.8"])
+            .map(|(a, b)| RiskBudgetAssetV1 {
+                instrument_id: a.instrument_id.clone(),
+                share: decimal(b),
+                sign: RiskBudgetSign::Long,
+            })
+            .collect(),
+    });
+    for (confidence, expected) in [("0.6", 1.0 / 3.0), ("0.7", 0.5), ("0.8", 2.0 / 3.0)] {
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+            unreachable!()
+        };
+        parameters.cvar_confidence = Some(decimal(confidence));
+        let actual = weights(&request);
+        near(actual[0], expected);
+        near(actual[1], 1.0 - expected);
+    }
+    let solved = job::allocate(&request).unwrap();
+    let p = &solved
+        .cvar_risk_budget_witness
+        .as_ref()
+        .unwrap()
+        .scenario_weights;
+    near(p[0], 0.2);
+    near(p[1], 0.8);
+    for case in 0..7 {
+        let mut invalid = solved.clone();
+        let p = &mut invalid
+            .cvar_risk_budget_witness
+            .as_mut()
+            .unwrap()
+            .scenario_weights;
+        match case {
+            0 => {
+                p.pop();
+            }
+            1 => p[0] = -0.1,
+            2 => p[0] = f64::NAN,
+            3 => p[0] += 0.1,
+            4 => {
+                p[0] = 0.5;
+                p[1] = 0.5;
+            } // valid CVaR dual at tie, wrong original budget
+            5 => {
+                p[0] = 0.0;
+                p[1] = 0.0;
+                p[2] = 1.0;
+            } // not a tail optimum
+            _ => invalid.cvar_risk_budget_witness = None,
+        }
+        assert!(domain::portfolio::allocation_result(&request, &invalid).is_err());
+    }
+    request.assets[0].transaction_cost_rate = decimal("0.3");
+    near(weights(&request)[0], 2.0 / 3.0);
+    request.constraints.max_ex_ante_risk = Some(decimal("0.01"));
+    let impossible = job::allocate(&request).unwrap();
+    assert_eq!(impossible.solver_status, SolverStatus::Infeasible);
+    assert!(impossible.targets.is_none() && impossible.cvar_risk_budget_witness.is_none());
+    request.constraints.max_ex_ante_risk = None;
+    for row in &mut request.return_history.asset_returns {
+        for value in row {
+            *value *= 1e-6;
+        }
+    }
+    near(weights(&request)[0], 2.0 / 3.0);
+    request.constraints.max_ex_ante_risk = Some(decimal("0.00000001"));
+    let tiny = job::allocate(&request).unwrap();
+    assert!(matches!(
+        tiny.solver_status,
+        SolverStatus::Infeasible | SolverStatus::Failed
+    ));
+    assert!(tiny.targets.is_none() && tiny.cvar_risk_budget_witness.is_none());
+    request.constraints.max_ex_ante_risk = None;
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.max_iterations = 1;
+    let exhausted = job::allocate(&request).unwrap();
+    assert_eq!(exhausted.solver_status, SolverStatus::Failed);
+    assert!(exhausted.targets.is_none() && exhausted.cvar_risk_budget_witness.is_none());
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.max_iterations = 200;
+    request.return_history.asset_returns = vec![vec![0.1; 5], vec![0.2; 5]];
+    let unbounded = job::allocate(&request).unwrap();
+    assert_eq!(unbounded.solver_status, SolverStatus::Unbounded);
+    assert!(unbounded.targets.is_none() && unbounded.cvar_risk_budget_witness.is_none());
+    request.return_history.asset_returns = vec![vec![0.0; 5]; 2];
+    assert!(job::allocate(&request).is_err());
+    request.return_history.asset_returns = vec![
+        vec![-0.1, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, 0.2, 0.0, 0.0, 0.0],
+    ];
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    let budget = parameters.risk_budgeting.as_mut().unwrap();
+    budget.assets[0].share = decimal("1");
+    budget.assets[1].share = decimal("0");
+    budget.assets[1].sign = RiskBudgetSign::Short;
+    near(weights(&request)[0], 1.0);
+    request.constraints.long_only = false;
+    request.constraints.min_asset_weight = decimal("-1");
+    request.constraints.min_net_exposure = decimal("-1");
+    request.constraints.max_cash_weight = decimal("1");
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    let budget = parameters.risk_budgeting.as_mut().unwrap();
+    budget.assets[0].share = decimal("0.5");
+    budget.assets[1].share = decimal("0.5");
+    let signed = weights(&request);
+    near(signed[0], 2.0 / 3.0);
+    near(signed[1], -1.0 / 3.0);
+}
+
+#[test]
+fn native_cvar_risk_budgeting_composes_three_original_asset_power_cones() {
+    let mut request = input();
+    let mut third = request.assets[0].clone();
+    third.instrument_id = "THIRD.EXAMPLE".into();
+    third.current_weight = decimal("0");
+    request.assets.push(third);
+    request
+        .forecasts
+        .instrument_ids
+        .push("THIRD.EXAMPLE".into());
+    request
+        .forecasts
+        .bar_types
+        .push("THIRD.EXAMPLE-1-MINUTE-LAST-EXTERNAL".into());
+    for member in &mut request.forecasts.members {
+        member.instrument_ids = request.forecasts.instrument_ids.clone();
+        member.bar_types = request.forecasts.bar_types.clone();
+        member.forecasts.push(0.0);
+    }
+    request.return_history.instrument_ids = request.forecasts.instrument_ids.clone();
+    request.return_history.bar_types = request.forecasts.bar_types.clone();
+    request.return_history.asset_returns = vec![
+        vec![-0.1, 0.0, 0.0, 0.0, 0.0],
+        vec![0.0, -0.2, 0.0, 0.0, 0.0],
+        vec![0.0, 0.0, -0.4, 0.0, 0.0],
+    ];
+    request.risk = AllocationRisk::Cvar;
+    request.objective = AllocationObjective::RiskBudgeting;
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.4"));
+    parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+        schema_version: contracts::SchemaV1,
+        risky_gross_exposure: decimal("1"),
+        assets: request
+            .assets
+            .iter()
+            .zip(["0.2", "0.3", "0.5"])
+            .map(|(a, b)| RiskBudgetAssetV1 {
+                instrument_id: a.instrument_id.clone(),
+                share: decimal(b),
+                sign: RiskBudgetSign::Long,
+            })
+            .collect(),
+    });
+    parameters.risk_budgeting.as_mut().unwrap().assets.reverse();
+    let actual = weights(&request);
+    for (actual, expected) in actual.iter().zip([8.0 / 19.0, 6.0 / 19.0, 5.0 / 19.0]) {
+        near(*actual, expected);
+    }
+}
+
+#[test]
+fn cvar_publication_accounts_for_fractional_tail_ties_and_near_one_confidence() {
+    let mut request = input();
+    let mut result = job::allocate(&request).unwrap();
+    result.targets.as_mut().unwrap()[0].weight = decimal("1");
+    result.targets.as_mut().unwrap()[1].weight = decimal("0");
+    request.risk = AllocationRisk::Cvar;
+    for (returns, confidence, passing, failing) in [
+        (vec![-0.1, 0.0, 0.0, 0.0, 0.0], "0.7", "0.067", "0.066"),
+        (vec![-0.1, -0.1, 0.0, 0.0, 0.0], "0.7", "0.101", "0.099"),
+        (
+            vec![-0.1, 0.0, 0.0, 0.0, 0.0],
+            "0.999999999999999999",
+            "0.101",
+            "0.099",
+        ),
+    ] {
+        request.return_history.asset_returns[0] = returns;
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+            unreachable!()
+        };
+        parameters.cvar_confidence = Some(decimal(confidence));
+        request.constraints.max_ex_ante_risk = Some(decimal(passing));
+        domain::portfolio::allocation_result(&request, &result).unwrap();
+        request.constraints.max_ex_ante_risk = Some(decimal(failing));
+        assert!(domain::portfolio::allocation_result(&request, &result).is_err());
+    }
+}
+
+#[test]
+fn cvar_does_not_require_positive_definite_covariance_or_clip_negative_risk() {
+    let mut request = input();
+    request.risk = AllocationRisk::Cvar;
+    request.return_history.asset_returns = vec![vec![0.1; 5], vec![0.1; 5]];
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.8"));
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    near(result.objective_value.unwrap(), -0.1);
+    for bad in ["0", "1", "-0.1", "1.1"] {
+        let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+            unreachable!()
+        };
+        parameters.cvar_confidence = Some(decimal(bad));
+        assert!(job::allocate(&request).is_err());
+    }
+    request.risk = AllocationRisk::Variance;
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.cvar_confidence = Some(decimal("0.8"));
+    assert!(job::allocate(&request).is_err());
+}
+
+#[test]
+fn native_variance_cone_binds_correlated_assets_and_publication_rechecks_it() {
+    let mut request = input();
+    // Native sample covariance [[1,1],[1,5]]. With sum(w)=1, variance=1+4*w2^2.
+    request.return_history.asset_returns[1] = vec![0.0, 2.0, 4.0, 6.0, 3.0];
+    request.objective = AllocationObjective::MaxUtility;
+    for member in &mut request.forecasts.members {
+        member.forecasts = vec![0.0, 10.0];
+    }
+    request.constraints.max_ex_ante_risk = Some(decimal("1.25"));
+    let actual = weights(&request);
+    near(actual[0], 0.75);
+    near(actual[1], 0.25);
+    let mut corrupt = job::allocate(&request).unwrap();
+    corrupt.targets.as_mut().unwrap()[0].weight = decimal("0.7");
+    corrupt.targets.as_mut().unwrap()[1].weight = decimal("0.3");
+    assert!(domain::portfolio::allocation_result(&request, &corrupt).is_err());
+    request.constraints.max_ex_ante_risk = Some(decimal("0.9"));
+    let impossible = job::allocate(&request).unwrap();
+    assert_eq!(impossible.solver_status, SolverStatus::Infeasible);
+    assert!(impossible.targets.is_none() && impossible.cash_weight.is_none());
+}
+
+#[test]
+fn variance_publication_tolerance_scales_with_bound_not_absolute_exposure() {
+    let mut request = input();
+    let result = job::allocate(&request).unwrap();
+    for row in &mut request.return_history.asset_returns {
+        for value in row {
+            *value *= 0.000001;
+        }
+    }
+    request.constraints.max_ex_ante_risk = Some(decimal("0.0000000000008"));
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+    request.constraints.max_ex_ante_risk = Some(decimal("0.0000000000007"));
+    assert!(domain::portfolio::allocation_result(&request, &result).is_err());
+}
+
+#[test]
+fn publication_rechecks_exact_decimal_targets_and_original_identities() {
+    let request = input();
+    let original = job::allocate(&request).unwrap();
+    let mut result = original.clone();
+    result.targets.as_mut().unwrap()[0].weight = decimal("2");
+    assert!(domain::portfolio::allocation_result(&request, &result).is_err());
+    result = original.clone();
+    result.targets.as_mut().unwrap().swap(0, 1);
+    assert!(domain::portfolio::allocation_result(&request, &result).is_err());
+    result = original.clone();
+    result.targets.as_mut().unwrap()[0].currency = "EUR".into();
+    assert!(domain::portfolio::allocation_result(&request, &result).is_err());
+    result = original.clone();
+    result.cash_weight = None;
+    assert!(domain::portfolio::allocation_result(&request, &result).is_err());
+    result = original;
+    result.solver_status = SolverStatus::Infeasible;
+    assert!(domain::portfolio::allocation_result(&request, &result).is_err());
+}
+
+#[test]
+fn native_cli_consumes_exact_json_without_issuing_delivery_authority() {
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    let mut child = Command::new(env!("CARGO_BIN_EXE_job"))
+        .arg("allocate")
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(include_bytes!(
+            "../../../tests/contracts/allocation-input.json"
+        ))
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: AllocationResultV1 = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    domain::portfolio::allocation_result(&input(), &result).unwrap();
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("approval"));
+}

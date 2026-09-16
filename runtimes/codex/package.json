@@ -1,0 +1,7 @@
+{
+  "name": "quazonai-native-codex",
+  "version": "2.0.0-dev.1",
+  "private": true,
+  "description": "Pinned upstream Codex executable, not a custom Agent runtime",
+  "dependencies": {"@openai/codex": "0.144.4"}
+}

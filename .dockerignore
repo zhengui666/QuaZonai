@@ -1,27 +1,5 @@
-# Version control and local state
 .git
-.gitignore
-.env
-.venv
-**/__pycache__
-**/*.py[cod]
-.pytest_cache
-.mypy_cache
-.ruff_cache
-.coverage
-htmlcov
-backend/build
-backend/src/*.egg-info
-
-# Legacy backend trees are intentionally absent from the target image
-backend/app
-backend/scheduler
-backend/schema
-backend/workers
-backend/scripts
-scripts
-
-# Runtime data never enters the image
-var
-*.parquet
-*.whl
+target
+node_modules
+*.log
+.env*

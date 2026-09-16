@@ -1,18 +1,14 @@
 version: 2
 updates:
-  - package-ecosystem: github-actions
+  - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
-  - package-ecosystem: pip
-    directory: /backend
-    schedule:
-      interval: weekly
   - package-ecosystem: npm
-    directory: /frontend
+    directory: /runtimes/codex
     schedule:
       interval: weekly
-  - package-ecosystem: docker
+  - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly

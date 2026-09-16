@@ -1,0 +1,186 @@
+//! Thin adapters over native splitters and estimators; no qualification authority.
+use anyhow::{ensure, Result};
+use linregress::{FormulaRegressionBuilder, RegressionDataBuilder, RegressionModel};
+use ndarray::Array2;
+
+mod alpha;
+pub use alpha::validate_alpha;
+mod sealed;
+pub use sealed::evaluate_sealed_alpha;
+
+/// Apply saved native OLS coefficients; linregress 0.5.4 has no model decoder.
+/// No labels or fitting inputs are accepted by this fixed ndarray operation.
+pub fn predict_frozen_calibration(
+    model: &contracts::science::NativeFrozenCalibrationV1,
+    bar_type: &str,
+    horizon: contracts::DbCounter,
+    first_prediction_available_ns: contracts::DbCounter,
+    scores: &[f64],
+) -> Result<Vec<f64>> {
+    domain::execution::check_alpha_calibration(model)?;
+    ensure!(
+        horizon == model.horizon_observations
+            && first_prediction_available_ns > model.fit_end_available_ns,
+        "CALIBRATION_INPUT_TIME_OR_HORIZON"
+    );
+    ensure!(
+        (1..=MAX_VALIDATION_ROWS).contains(&scores.len()) && scores.iter().all(|v| v.is_finite()),
+        "CALIBRATION_INPUT_INVALID"
+    );
+    let fit = &model
+        .assets
+        .iter()
+        .find(|a| a.bar_type == bar_type)
+        .ok_or_else(|| anyhow::anyhow!("CALIBRATION_ASSET_MISSING"))?
+        .calibration;
+    let values = &ndarray::ArrayView1::from(scores) * fit.slope.unwrap() + fit.intercept.unwrap();
+    ensure!(
+        values.iter().all(|v| v.is_finite()),
+        "CALIBRATION_PREDICTION_INVALID"
+    );
+    Ok(values.to_vec())
+}
+
+pub use domain::execution::validation::{
+    validation_folds, MAX_VALIDATION_FOLDS, MAX_VALIDATION_INDICES, MAX_VALIDATION_ROWS,
+};
+
+/// Pure numerical adapter: callers must bind distinct qualified Alpha versions,
+/// common units/horizon/cutoff and this exact asset order before invoking it.
+/// Fixed mixture weights are configuration, not fitted calibration or targets.
+pub fn fixed_weighted_forecast(
+    forecasts: &[Vec<f64>],
+    weights: &[contracts::DecimalValue],
+) -> Result<Vec<f64>> {
+    use bigdecimal::ToPrimitive;
+    let maximum = contracts::portfolio::MAX_ALLOCATION_ASSETS;
+    ensure!(
+        (2..=maximum).contains(&forecasts.len()) && forecasts.len() == weights.len(),
+        "ENSEMBLE_MEMBER_LIMIT"
+    );
+    let assets = forecasts[0].len();
+    ensure!(
+        (1..=maximum).contains(&assets)
+            && forecasts
+                .iter()
+                .all(|row| row.len() == assets && row.iter().all(|v| v.is_finite())),
+        "ENSEMBLE_FORECAST_INVALID"
+    );
+    domain::portfolio::ensemble_weights(weights.iter())?;
+    let weights = weights
+        .iter()
+        .map(|w| {
+            let native = w
+                .as_decimal()
+                .to_f64()
+                .ok_or_else(|| anyhow::anyhow!("ENSEMBLE_WEIGHT_RANGE"))?;
+            ensure!(
+                native.is_finite() && (!w.is_positive() || native > 0.0),
+                "ENSEMBLE_WEIGHT_RANGE"
+            );
+            Ok(native)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let matrix = Array2::from_shape_vec(
+        (forecasts.len(), assets),
+        forecasts.iter().flatten().copied().collect(),
+    )?;
+    let forecast = ndarray::ArrayView1::from(&weights).dot(&matrix);
+    ensure!(
+        forecast.iter().all(|v| v.is_finite()),
+        "ENSEMBLE_RESULT_NONFINITE"
+    );
+    Ok(forecast.to_vec())
+}
+
+/// Common ordering and metadata are checked before any aggregation. This does not
+/// turn a caller-supplied UUID or unit label into authoritative evidence.
+pub fn aligned_portfolio_forecast(
+    input: &contracts::portfolio::PortfolioForecastInputV1,
+) -> Result<Vec<f64>> {
+    domain::portfolio::portfolio_forecast_alignment(input)?;
+    let bars = crate::catalog::bar_types(&input.bar_types)?;
+    ensure!(
+        bars.iter()
+            .zip(&input.instrument_ids)
+            .all(
+                |(bar, instrument)| bar.instrument_id().to_string() == *instrument
+                    && bar.spec() == bars[0].spec()
+            ),
+        "ENSEMBLE_BAR_CONTRACT_MISMATCH"
+    );
+    fixed_weighted_forecast(
+        &input
+            .members
+            .iter()
+            .map(|member| member.forecasts.clone())
+            .collect::<Vec<_>>(),
+        &input
+            .members
+            .iter()
+            .map(|member| member.ensemble_weight.clone())
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// A real fitted estimator, not a caller-provided multiplier masquerading as calibration.
+pub struct ScoreCalibration {
+    model: RegressionModel,
+    observations: usize,
+}
+impl ScoreCalibration {
+    /// Inputs must be selected from the same authorized training fold, with complete labels.
+    pub fn fit(scores: &[f64], returns: &[f64]) -> Result<Self> {
+        ensure!(
+            (3..=MAX_VALIDATION_ROWS).contains(&scores.len()) && scores.len() == returns.len(),
+            "CALIBRATION_SAMPLE_LIMIT"
+        );
+        ensure!(
+            scores.iter().chain(returns).all(|value| value.is_finite()),
+            "CALIBRATION_NONFINITE"
+        );
+        ensure!(
+            scores.iter().any(|value| *value != scores[0]),
+            "CALIBRATION_CONSTANT_SCORE"
+        );
+        let data = RegressionDataBuilder::new().build_from(vec![
+            ("return", returns.to_vec()),
+            ("score", scores.to_vec()),
+        ])?;
+        let model = FormulaRegressionBuilder::new()
+            .data(&data)
+            .formula("return ~ score")
+            .fit()?;
+        ensure!(
+            model.parameters().len() == 2 && model.parameters().iter().all(|v| v.is_finite()),
+            "CALIBRATION_FIT_INVALID"
+        );
+        Ok(Self {
+            model,
+            observations: scores.len(),
+        })
+    }
+
+    pub fn predict(&self, scores: &[f64]) -> Result<Vec<f64>> {
+        ensure!(
+            !scores.is_empty()
+                && scores.len() <= MAX_VALIDATION_ROWS
+                && scores.iter().all(|value| value.is_finite()),
+            "CALIBRATION_INPUT_INVALID"
+        );
+        let values = self.model.predict(vec![("score", scores.to_vec())])?;
+        ensure!(
+            values.len() == scores.len() && values.iter().all(|value| value.is_finite()),
+            "CALIBRATION_PREDICTION_INVALID"
+        );
+        Ok(values)
+    }
+
+    pub fn coefficients(&self) -> [f64; 2] {
+        [self.model.parameters()[0], self.model.parameters()[1]]
+    }
+
+    pub fn observations(&self) -> usize {
+        self.observations
+    }
+}

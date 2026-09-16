@@ -1,0 +1,543 @@
+//! One immutable Candidate per original terminal Run; never an approval.
+use super::*;
+
+const WINDOWS_CURRENT: &str = "SELECT (SELECT count(*)=cardinality($1::uuid[]) AND coalesce(bool_and(valid_until>statement_timestamp()),false) FROM app.qualifications WHERE id=ANY($1)) AND NOT EXISTS(SELECT 1 FROM app.input_set_items i JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id JOIN app.data_use_grants g ON g.id=d.data_use_grant_id WHERE i.input_set_id=ANY($2::uuid[]) AND g.valid_until<=statement_timestamp()) AND $3::timestamptz>statement_timestamp() AND $4::numeric>extract(epoch FROM statement_timestamp())*1000000000 AND EXISTS(SELECT 1 FROM app.portfolio_mandates m JOIN app.execution_assumption_sources s ON s.assumptions_id=m.execution_assumptions_id WHERE m.id=$5 AND (s.bar_liquidity_valid_until IS NULL OR s.bar_liquidity_valid_until>statement_timestamp()))";
+use contracts::{
+    evidence::EvidenceStatus,
+    runtime_jobs::{JobSpecV1, ResultManifestV1},
+};
+
+pub(in crate::lifecycle) async fn publish<R, Read, P, Published>(
+    mut tx: Tx<'_>,
+    locked: LockedRun,
+    mut read: R,
+    mut publish: P,
+) -> Result<Option<CommandResult<Id>>, StoreError>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    P: FnMut(NativeObjectPublication) -> Published,
+    Published: std::future::Future<Output = Result<(), StoreError>>,
+{
+    let run = &locked.run;
+    let binding = sqlx::query("SELECT b.request,t.parameters_artifact_id,t.image_ref,t.origin FROM app.portfolio_build_tasks b JOIN app.run_native_tasks t ON t.run_id=b.run_id WHERE b.run_id=$1")
+        .bind(run.id.as_uuid()).fetch_one(&mut *tx).await?;
+    let prior: Option<uuid::Uuid> = sqlx::query_scalar("SELECT c.id FROM app.portfolio_candidates c JOIN app.candidate_publications p ON p.candidate_id=c.id WHERE c.run_id=$1")
+        .bind(run.id.as_uuid()).fetch_optional(&mut *tx).await?;
+    if let Some(id) = prior {
+        tx.commit().await?;
+        return Ok(Some(CommandResult {
+            schema_version: SchemaV1,
+            replayed: true,
+            resource: db::id(id)?,
+        }));
+    }
+    if !run.state.is_terminal() {
+        return Err(StoreError::Conflict);
+    }
+    let request: PortfolioBuildRequestV1 =
+        serde_json::from_value(binding.try_get("request")?).map_err(|_| StoreError::Integrity)?;
+    domain::portfolio::build_selection(&request).map_err(|_| StoreError::Integrity)?;
+    let parameter = db::id(binding.try_get("parameters_artifact_id")?)?;
+    let bytes = validation::read_document(
+        &mut tx,
+        parameter,
+        None,
+        "qz.native_task",
+        8 * 1024 * 1024,
+        &mut read,
+    )
+    .await?;
+    let task: NativeTaskParametersV1 =
+        serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
+    let NativeTaskParametersV1::BuildPortfolio {
+        request: frozen, ..
+    } = &task
+    else {
+        return Err(StoreError::Integrity);
+    };
+    domain::execution::portfolio_build_request(frozen).map_err(|_| StoreError::Integrity)?;
+    let mandate = sqlx::query("SELECT * FROM app.portfolio_mandates WHERE id=$1")
+        .bind(request.mandate_id.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+    let mandate = crate::portfolio::view(&mandate)?;
+    if mandate.project_id != run.project_id || mandate.content != frozen.mandate {
+        return Err(StoreError::Integrity);
+    }
+    if request.input_set_id != run.input_set_id
+        || Some(request.cycle_id) != run.cycle_id
+        || request.members.len() != frozen.members.len()
+    {
+        return Err(StoreError::Integrity);
+    }
+    let terminal = sqlx::query("SELECT a.result_manifest_artifact_id FROM app.run_terminal_receipts t LEFT JOIN app.run_attempts a ON a.id=t.attempt_id WHERE t.run_id=$1 AND t.terminal_state=$2 AND t.attempt_id IS NOT DISTINCT FROM $3")
+        .bind(run.id.as_uuid()).bind(db::code(&run.state)?).bind(run.active_attempt_id.map(Id::as_uuid)).fetch_optional(&mut *tx).await?.ok_or(StoreError::Integrity)?;
+    let manifest_id = db::optional_id(&terminal, "result_manifest_artifact_id")?;
+    let mut native_report = None;
+    let mut result: Option<NativePortfolioBuildResultV1> = None;
+    if run.state == RunState::Succeeded {
+        let attempt = run.active_attempt_id.ok_or(StoreError::Integrity)?;
+        let original = sqlx::query("SELECT n.spec_json,a.created_at FROM app.run_native_attempts n JOIN app.run_attempts a ON a.id=n.attempt_id AND a.dispatch_state='TERMINAL' AND a.accepted_at IS NOT NULL WHERE n.run_id=$1 AND n.attempt_id=$2")
+            .bind(run.id.as_uuid()).bind(attempt.as_uuid()).fetch_one(&mut *tx).await?;
+        let spec: JobSpecV1 = serde_json::from_value(original.try_get("spec_json")?)
+            .map_err(|_| StoreError::Integrity)?;
+        if spec.parameters_artifact_id != parameter {
+            return Err(StoreError::Integrity);
+        }
+        domain::execution::task(&spec, &task).map_err(|_| StoreError::Integrity)?;
+        let raw = validation::read_document(
+            &mut tx,
+            manifest_id.ok_or(StoreError::Integrity)?,
+            Some((run.id, attempt)),
+            "qz.job_result",
+            domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES,
+            &mut read,
+        )
+        .await?;
+        let manifest: ResultManifestV1 =
+            serde_json::from_slice(&raw).map_err(|_| StoreError::Integrity)?;
+        let checked_at = now(&mut tx).await?;
+        if manifest
+            .engine_versions
+            .get("portfolio-cost-source")
+            .map(String::as_str)
+            != Some("1")
+        {
+            return Err(StoreError::Integrity);
+        }
+        if frozen.bar_liquidity.is_some()
+            && manifest
+                .engine_versions
+                .get("portfolio-liquidity")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(StoreError::Integrity);
+        }
+        if frozen.rolling_liquidity.is_some()
+            && manifest
+                .engine_versions
+                .get("portfolio-build-rolling")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(StoreError::Integrity);
+        }
+        domain::runtime_jobs::manifest(
+            &manifest,
+            &spec,
+            original.try_get("created_at")?,
+            checked_at,
+        )
+        .map_err(|_| StoreError::Integrity)?;
+        let outputs: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT a.id FROM app.run_native_outputs o JOIN app.artifacts a ON a.id=o.artifact_id WHERE o.attempt_id=$1 AND a.producer_run_id=$2 AND a.producer_attempt_id=$1 AND a.kind='REPORT' AND a.schema_name='qz.native_portfolio' AND a.schema_version='1' AND a.access_class='EVALUATOR_ONLY'")
+            .bind(attempt.as_uuid()).bind(run.id.as_uuid()).fetch_all(&mut *tx).await?;
+        let [id] = outputs.as_slice() else {
+            return Err(StoreError::Integrity);
+        };
+        let id = db::id(*id)?;
+        let raw = validation::read_document(
+            &mut tx,
+            id,
+            Some((run.id, attempt)),
+            "qz.native_portfolio",
+            contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
+            &mut read,
+        )
+        .await?;
+        let report: NativePortfolioBuildResultV1 =
+            serde_json::from_slice(&raw).map_err(|_| StoreError::Integrity)?;
+        domain::execution::portfolio_build_result(frozen, &report)
+            .map_err(|_| StoreError::Integrity)?;
+        if !report.slippage_references.is_empty()
+            && manifest
+                .engine_versions
+                .get("portfolio-slippage")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(StoreError::Integrity);
+        }
+        native_report = Some(id);
+        result = Some(report);
+    }
+    let (asof, until) = target_window(
+        frozen.selection.decision_cutoff_ns.get(),
+        frozen.mandate.rebalance_schedule.target_ttl_seconds,
+    )?;
+    let mut status = EvidenceStatus::Incomplete;
+    let mut reason = Some(
+        if run.state == RunState::Cancelled {
+            "PORTFOLIO_CANCELLED"
+        } else {
+            "PORTFOLIO_EXECUTION_FAILED"
+        }
+        .to_owned(),
+    );
+    let mut targets = None;
+    let mut cash = None;
+    let solver = result
+        .as_ref()
+        .map_or(SolverStatus::Failed, |r| r.allocation.solver_status);
+    if let Some(report) = &result {
+        reason = report.allocation.reason_code.clone();
+        status = EvidenceStatus::Valid;
+        match eligibility(
+            &mut tx,
+            run.project_id,
+            &request,
+            (frozen, report),
+            binding.try_get("image_ref")?,
+            until,
+            &mut read,
+        )
+        .await
+        {
+            Ok(()) => {
+                targets = report.allocation.targets.clone();
+                cash = report.allocation.cash_weight.clone();
+            }
+            Err(StoreError::Invalid(_) | StoreError::Domain(_)) => {
+                status = EvidenceStatus::Invalid;
+                reason = Some("PORTFOLIO_SOURCE_NO_LONGER_ELIGIBLE".into());
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let candidate = Id::new();
+    let diagnostics = Id::new();
+    let target_artifact = if let Some(targets) = &targets {
+        let id = Id::new();
+        document(&mut tx,run,id,"qz.portfolio_targets",binding.try_get("origin")?,
+            json!({"schema_version":1,"candidate_id":candidate,"base_currency":frozen.mandate.base_currency,"asof":asof,"valid_until":until,"cash_weight":cash,"targets":targets}),&mut publish).await?;
+        Some(id)
+    } else {
+        None
+    };
+    document(&mut tx,run,diagnostics,"qz.portfolio_candidate",binding.try_get("origin")?,
+        json!({"schema_version":1,"candidate_id":candidate,"run_id":run.id,"execution_status":run.state,"solver_status":solver,"evidence_status":status,"reason_code":reason,"native_report_artifact_id":native_report,"native_manifest_artifact_id":manifest_id,"target_artifact_id":target_artifact}),&mut publish).await?;
+    if targets.is_some() {
+        let report = result.as_ref().ok_or(StoreError::Integrity)?;
+        eligibility(
+            &mut tx,
+            run.project_id,
+            &request,
+            (frozen, report),
+            binding.try_get("image_ref")?,
+            until,
+            &mut read,
+        )
+        .await
+        .map_err(|e| match e {
+            StoreError::Invalid(_) | StoreError::Domain(_) => StoreError::Conflict,
+            other => other,
+        })?;
+    }
+    let source = match frozen.current_weights.source {
+        PortfolioWeightsSourceV1::ForwardSnapshot { .. } => "FORWARD_SNAPSHOT",
+        PortfolioWeightsSourceV1::LastTarget { .. } => "LAST_TARGET",
+    };
+    sqlx::query("INSERT INTO app.portfolio_candidates(id,project_id,mandate_id,input_set_id,decision_asof,run_id,solver_status,evidence_status,reason_code,forecast_artifact_id,diagnostics_artifact_id,target_artifact_id,cash_weight,current_weights_source,current_weights_artifact_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$15,$14)")
+        .bind(candidate.as_uuid()).bind(run.project_id.as_uuid()).bind(request.mandate_id.as_uuid()).bind(run.input_set_id.as_uuid()).bind(asof).bind(run.id.as_uuid()).bind(db::code(&solver)?).bind(db::code(&status)?).bind(reason).bind(native_report.map(Id::as_uuid)).bind(diagnostics.as_uuid()).bind(target_artifact.map(Id::as_uuid)).bind(cash.as_ref().map(|v|v.as_decimal())).bind(frozen.current_weights_artifact_id.as_uuid()).bind(source).execute(&mut *tx).await?;
+    for (chosen, member) in request.members.iter().zip(&frozen.members) {
+        let calibration: Option<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT calibration_id FROM app.alpha_versions WHERE id=$1 AND project_id=$2",
+        )
+        .bind(member.alpha_version_id.as_uuid())
+        .bind(run.project_id.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query("INSERT INTO app.candidate_alphas(candidate_id,alpha_version_id,qualification_id,ensemble_weight,calibration_id,forecast_unit,coverage_fraction) VALUES($1,$2,$3,$4,$5,'RETURN_PER_HORIZON',$6)")
+            .bind(candidate.as_uuid()).bind(member.alpha_version_id.as_uuid()).bind(chosen.qualification_id.as_uuid()).bind(member.ensemble_weight.as_decimal()).bind(calibration)
+            .bind(if result.is_some() {bigdecimal::BigDecimal::from(1)} else {bigdecimal::BigDecimal::from(0)}).execute(&mut *tx).await?;
+    }
+    for target in targets.into_iter().flatten() {
+        sqlx::query("INSERT INTO app.candidate_targets(candidate_id,instrument_id,target_weight,currency,asof,valid_until) VALUES($1,$2,$3,$4,$5,$6)")
+            .bind(candidate.as_uuid()).bind(target.instrument_id).bind(target.weight.as_decimal()).bind(target.currency).bind(asof).bind(until).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(Some(CommandResult {
+        schema_version: SchemaV1,
+        replayed: false,
+        resource: candidate,
+    }))
+}
+
+pub(super) fn target_window(
+    decision_ns: u64,
+    ttl: u32,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), StoreError> {
+    let deadline = decision_ns
+        .checked_add(u64::from(ttl) * 1_000_000_000)
+        .ok_or(StoreError::Integrity)?;
+    // Never round a target's validity outward at PostgreSQL's microsecond boundary.
+    let asof = DateTime::<Utc>::from_timestamp_micros(
+        i64::try_from(decision_ns.div_ceil(1000)).map_err(|_| StoreError::Integrity)?,
+    )
+    .ok_or(StoreError::Integrity)?;
+    let until = DateTime::<Utc>::from_timestamp_micros(
+        i64::try_from(deadline / 1000).map_err(|_| StoreError::Integrity)?,
+    )
+    .ok_or(StoreError::Integrity)?;
+    if until <= asof {
+        return Err(StoreError::Integrity);
+    }
+    Ok((asof, until))
+}
+
+pub(super) async fn eligibility<R, Read>(
+    tx: &mut Tx<'_>,
+    project: Id,
+    request: &PortfolioBuildRequestV1,
+    result: (
+        &NativePortfolioBuildRequestV1,
+        &NativePortfolioBuildResultV1,
+    ),
+    image: &str,
+    until: DateTime<Utc>,
+    read: &mut R,
+) -> Result<(), StoreError>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+{
+    let (frozen, report) = result;
+    let now = now(tx).await?;
+    if until <= now
+        || frozen.current_weights.valid_until_ns.get()
+            <= u64::try_from(now.timestamp_nanos_opt().ok_or(StoreError::Integrity)?)
+                .map_err(|_| StoreError::Integrity)?
+    {
+        return Err(StoreError::Invalid("portfolio_expired"));
+    }
+    let source = weights::resolve(tx, project, request, read).await?;
+    if source.content != frozen.current_weights || source.artifact.as_ref().is_some_and(|input| !matches!(input, RuntimeInputV1::Artifact {artifact_id,..} if *artifact_id == frozen.current_weights_artifact_id)) {
+        return Err(StoreError::Invalid("portfolio_weights_source"));
+    }
+    crate::research::revalidate_frozen_inputs(
+        tx,
+        request.input_set_id,
+        project,
+        request.runtime_id,
+    )
+    .await?;
+    {
+        let bindings = crate::data_validation::dataset_bindings(
+            tx,
+            request.input_set_id,
+            project,
+            request.runtime_id,
+            &[contracts::research::InputPurpose::Forward],
+            read,
+        )
+        .await?;
+        let [binding] = bindings.as_slice() else {
+            return Err(StoreError::Integrity);
+        };
+        if binding.selection.selection != frozen.selection {
+            return Err(StoreError::Integrity);
+        }
+        // These immutable inputs already passed admission at this same cutoff.
+        // Corruption is retryable, not a newly ineligible final Candidate.
+        domain::catalogs::execution_fees(&binding.metadata, &frozen.execution_settings)
+            .map_err(|_| StoreError::Integrity)?;
+        domain::catalogs::portfolio_slippage_sources(
+            &binding.metadata,
+            &report.slippage_references,
+        )
+        .map_err(|_| StoreError::Integrity)?;
+        let groups = domain::catalogs::portfolio_groups(
+            &binding.metadata.universe,
+            &frozen
+                .assets
+                .iter()
+                .map(|a| a.instrument_id.clone())
+                .collect::<Vec<_>>(),
+            &frozen.mandate.constraints.group_bounds,
+            frozen.selection.decision_cutoff_ns,
+        )
+        .map_err(|_| StoreError::Integrity)?;
+        if frozen
+            .assets
+            .iter()
+            .zip(groups)
+            .any(|(asset, groups)| asset.groups != groups)
+        {
+            return Err(StoreError::Integrity);
+        }
+    }
+    let cost_row = sqlx::query("SELECT s.input_set_id,s.settings FROM app.execution_assumption_sources s JOIN app.execution_assumptions e ON e.id=s.assumptions_id WHERE s.assumptions_id=$1 AND s.project_id=$2 AND s.runtime_id=$3 AND e.fee_schedule_artifact_id=$4")
+        .bind(frozen.mandate.execution_assumptions_id.as_uuid()).bind(project.as_uuid()).bind(request.runtime_id.as_uuid()).bind(frozen.mandate.constraints.transaction_costs_ref.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::Integrity)?;
+    let costs: uuid::Uuid = cost_row.try_get("input_set_id")?;
+    let original = crate::execution_assumptions::liquidity::document(
+        tx,
+        project,
+        frozen.mandate.constraints.transaction_costs_ref,
+        "qz.native_simulation_settings",
+        1024 * 1024,
+        read,
+    )
+    .await?;
+    let settings: NativeSimulationSettingsV1 =
+        serde_json::from_slice(&original).map_err(|_| StoreError::Integrity)?;
+    if db::json(&settings)? != db::json(&frozen.execution_settings)?
+        || db::json(&settings)? != cost_row.try_get::<serde_json::Value, _>("settings")?
+    {
+        return Err(StoreError::Integrity);
+    }
+    crate::research::revalidate_frozen_inputs(tx, db::id(costs)?, project, request.runtime_id)
+        .await?;
+    let rolling = crate::execution_assumptions::liquidity::rolling(
+        tx,
+        project,
+        request.runtime_id,
+        frozen.mandate.execution_assumptions_id,
+        read,
+    )
+    .await?;
+    if rolling.as_ref().map(|(policy, _)| policy) != frozen.rolling_liquidity.as_ref() {
+        return Err(StoreError::Integrity);
+    }
+    let mut source_until = until;
+    if let Some((policy, input)) = &rolling {
+        if !matches!(input, RuntimeInputV1::Artifact {artifact_id,..} if Some(*artifact_id) == frozen.mandate.constraints.liquidity_ref)
+        {
+            return Err(StoreError::Integrity);
+        }
+        let expiry = crate::execution_assumptions::liquidity::expiry(
+            &report.bar_notionals,
+            policy.maximum_age_seconds,
+        )
+        .map_err(|_| StoreError::Integrity)?;
+        source_until = source_until.min(expiry);
+        if expiry <= now {
+            return Err(StoreError::Invalid("rolling_liquidity_expired"));
+        }
+    }
+    let liquidity = if rolling.is_none() {
+        crate::execution_assumptions::liquidity::frozen(
+            tx,
+            project,
+            request.runtime_id,
+            frozen.mandate.execution_assumptions_id,
+            read,
+        )
+        .await?
+    } else {
+        None
+    };
+    if db::json(&liquidity.as_ref().map(|s| &s.binding))? != db::json(&frozen.bar_liquidity)? {
+        return Err(StoreError::Integrity);
+    }
+    if let Some(source) = &liquidity {
+        domain::execution::portfolio_build_liquidity(frozen, &source.report)
+            .map_err(|_| StoreError::Integrity)?;
+    }
+    for (chosen, original) in request.members.iter().zip(&frozen.members) {
+        let (current, _) = member_source(
+            tx,
+            project,
+            frozen.mandate.required_evaluation_policy_id,
+            request.runtime_id,
+            image,
+            chosen,
+            read,
+        )
+        .await?;
+        if db::json(&current)? != db::json(original)? {
+            return Err(StoreError::Invalid("portfolio_original_member"));
+        }
+    }
+    if !windows_current(
+        tx,
+        request,
+        &[db::id(costs)?],
+        frozen.current_weights.valid_until_ns,
+        source_until,
+    )
+    .await?
+    {
+        return Err(StoreError::Invalid("portfolio_source_expired"));
+    }
+    Ok(())
+}
+
+/// No file callback follows this final snapshot of qualification and license clocks.
+/// Original training/license windows are already bounded by qualification.valid_until.
+pub(super) async fn windows_current(
+    tx: &mut Tx<'_>,
+    request: &PortfolioBuildRequestV1,
+    additional_inputs: &[Id],
+    weights_until: DbCounter,
+    target_until: DateTime<Utc>,
+) -> Result<bool, StoreError> {
+    let qualifications: Vec<_> = request
+        .members
+        .iter()
+        .map(|m| m.qualification_id.as_uuid())
+        .collect();
+    let inputs: Vec<_> = std::iter::once(request.input_set_id)
+        .chain(additional_inputs.iter().copied())
+        .map(Id::as_uuid)
+        .collect();
+    Ok(sqlx::query_scalar(WINDOWS_CURRENT)
+        .bind(qualifications)
+        .bind(inputs.as_slice())
+        .bind(target_until)
+        .bind(weights_until.get() as i64)
+        .bind(request.mandate_id.as_uuid())
+        .fetch_one(&mut **tx)
+        .await?)
+}
+
+pub(in crate::lifecycle) async fn document<P, Published>(
+    tx: &mut Tx<'_>,
+    run: &RunSnapshotV1,
+    id: Id,
+    schema: &str,
+    origin: &str,
+    value: Value,
+    publish: &mut P,
+) -> Result<(), StoreError>
+where
+    P: FnMut(NativeObjectPublication) -> Published,
+    Published: std::future::Future<Output = Result<(), StoreError>>,
+{
+    let bytes = serde_json::to_vec(&value).map_err(|_| StoreError::Integrity)?;
+    let size = i64::try_from(bytes.len()).map_err(|_| StoreError::Integrity)?;
+    publish(NativeObjectPublication { id, bytes }).await?;
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'REPORT','application/json',$5,'1','LOCAL',$6,'1',$7,'EVALUATOR_ONLY',$8,'RUNTIME','REFERENCED')")
+        .bind(id.as_uuid()).bind(run.project_id.as_uuid()).bind(run.id.as_uuid()).bind(run.active_attempt_id.map(Id::as_uuid)).bind(schema).bind(id.to_string()).bind(size).bind(origin).execute(&mut **tx).await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn postgres_checks_the_final_window_without_inventing_qualification(pool: sqlx::PgPool) {
+        let future = Utc::now() + Duration::hours(1);
+        let qualifies: bool = sqlx::query_scalar(WINDOWS_CURRENT)
+            .bind(Vec::<uuid::Uuid>::new())
+            .bind(Vec::<uuid::Uuid>::new())
+            .bind(future)
+            .bind(future.timestamp_nanos_opt().unwrap())
+            .bind(Id::new().as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(!qualifies);
+    }
+    #[test]
+    fn target_window_never_extends_native_validity() {
+        for (ns, start) in [(1000, 1000), (1001, 2000), (1999, 2000)] {
+            let (asof, until) = target_window(ns, 1).unwrap();
+            assert_eq!(asof.timestamp_nanos_opt().unwrap(), start);
+            assert!(until.timestamp_nanos_opt().unwrap() as u64 <= ns + 1_000_000_000);
+            assert!(until > asof);
+        }
+        assert!(target_window(1001, 0).is_err());
+        assert!(target_window(u64::MAX, 1).is_err());
+    }
+}

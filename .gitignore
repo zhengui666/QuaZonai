@@ -1,31 +1,12 @@
-# Python
-__pycache__/
-*.py[cod]
-.venv/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Build
-build/
-dist/
-*.egg-info/
-target/
-node_modules/
-*.tsbuildinfo
-frontend/test-results/
-frontend/playwright-report/
-
-# Environment and runtime state
+/target/
+**/node_modules/
+**/dist/
+# Local developer handoffs, copied upstream sources, and execution evidence.
+/.ai-bridge/
+# Default private application state: never stage master keys or runtime objects.
+/var/
 .env
 .env.*
 !.env.example
-var/
 *.log
-
-# IDE / OS
 .DS_Store
-.idea/
-.vscode/

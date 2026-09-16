@@ -1,0 +1,410 @@
+//! Structural provenance checks; an ordered timestamp is not proof of historical availability.
+use crate::{control::text, research::invalid, DomainError};
+use chrono::{DateTime, Utc};
+use contracts::{catalogs::*, research::PitStatus, runtime::RuntimeDataKind};
+use std::collections::BTreeSet;
+
+fn bad(field: &str) -> DomainError {
+    invalid(field, "NATIVE_CATALOG_METADATA_INVALID")
+}
+
+/// Inspect the original externally tagged Rust InstrumentAny payload, without rewriting it.
+pub fn instrument_definition(
+    value: &serde_json::Value,
+) -> Result<(&str, &serde_json::Value), DomainError> {
+    let object = value
+        .as_object()
+        .filter(|v| v.len() == 1)
+        .ok_or_else(|| bad("instrument_definition"))?;
+    let (class, payload) = object
+        .iter()
+        .next()
+        .ok_or_else(|| bad("instrument_definition"))?;
+    text(class, 1, 120, false)?;
+    let id = payload
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| bad("instrument_definition.id"))?;
+    text(id, 1, 200, false)?;
+    Ok((class, payload))
+}
+
+/// Match the supported single-base-currency venue to Nautilus 0.63.0 add_instrument.
+pub fn execution_account(
+    class: &str,
+    account: contracts::science::NativeAccountKind,
+) -> Result<(), DomainError> {
+    use contracts::science::NativeAccountKind;
+    match (class, account) {
+        ("CurrencyPair", NativeAccountKind::Margin) | ("Equity", _) => Ok(()),
+        _ => Err(DomainError::CapabilityUnavailable(
+            "execution_assumption_account_instrument",
+        )),
+    }
+}
+
+/// Bind declared execution fees to this catalog's original instrument definitions.
+pub fn execution_fees(
+    metadata: &RuntimeCatalogMetadataV1,
+    settings: &contracts::science::NativeSimulationSettingsV1,
+) -> Result<(), DomainError> {
+    crate::portfolio::simulation_settings(settings)?;
+    let (fill, _) = crate::portfolio::simulation_models(settings)?;
+    let ids = &metadata
+        .quality
+        .datasets
+        .first()
+        .ok_or_else(|| bad("quality"))?
+        .instrument_ids;
+    if ids.len() != settings.fee_rates.len() {
+        return Err(bad("execution_fees"));
+    }
+    let definitions = metadata
+        .universe
+        .instrument_definitions
+        .iter()
+        .map(instrument_definition)
+        .collect::<Result<Vec<_>, _>>()?;
+    for rate in &settings.fee_rates {
+        let matches = definitions
+            .iter()
+            .filter(|(_, v)| v["id"].as_str() == Some(&rate.instrument_id))
+            .collect::<Vec<_>>();
+        let [(class, value)] = matches.as_slice() else {
+            return Err(bad("execution_fees.identity"));
+        };
+        execution_account(class, settings.account_kind)?;
+        let currency = match *class {
+            "CurrencyPair" => &value["quote_currency"],
+            "Equity" => &value["currency"],
+            _ => {
+                return Err(DomainError::CapabilityUnavailable(
+                    "execution_assumption_instrument",
+                ))
+            }
+        };
+        let maker: contracts::DecimalValue = serde_json::from_value(value["maker_fee"].clone())
+            .map_err(|_| bad("execution_fees.maker"))?;
+        let taker: contracts::DecimalValue = serde_json::from_value(value["taker_fee"].clone())
+            .map_err(|_| bad("execution_fees.taker"))?;
+        if fill.prob_slippage.is_positive() {
+            let tick: contracts::DecimalValue =
+                serde_json::from_value(value["price_increment"].clone())
+                    .map_err(|_| bad("slippage.price_increment"))?;
+            if !tick.is_positive() {
+                return Err(bad("slippage.price_increment"));
+            }
+        }
+        if !ids.contains(&rate.instrument_id)
+            || currency.as_str() != Some(&settings.base_currency)
+            || maker != rate.maker
+            || taker != rate.taker
+        {
+            return Err(bad("execution_fees.source"));
+        }
+    }
+    Ok(())
+}
+
+pub fn portfolio_slippage_sources(
+    metadata: &RuntimeCatalogMetadataV1,
+    references: &[contracts::science::NativePortfolioSlippageReferenceV1],
+) -> Result<(), DomainError> {
+    for reference in references {
+        let mut found = false;
+        for value in &metadata.universe.instrument_definitions {
+            let (_, instrument) = instrument_definition(value)?;
+            if instrument["id"].as_str() == Some(&reference.instrument_id) {
+                let tick: contracts::DecimalValue =
+                    serde_json::from_value(instrument["price_increment"].clone())
+                        .map_err(|_| bad("slippage.price_increment"))?;
+                if found || tick != reference.price_increment {
+                    return Err(bad("slippage.price_increment"));
+                }
+                found = true;
+            }
+        }
+        if !found {
+            return Err(bad("slippage.instrument"));
+        }
+    }
+    Ok(())
+}
+
+pub fn metadata(
+    value: &RuntimeCatalogMetadataV1,
+    observed_at: DateTime<Utc>,
+) -> Result<(), DomainError> {
+    for (field, text_value, maximum) in [
+        ("registered_ref", value.registered_ref.as_str(), 512),
+        (
+            "native_snapshot_ref",
+            value.native_snapshot_ref.as_str(),
+            512,
+        ),
+        ("provider_kind", value.provider_kind.as_str(), 120),
+        (
+            "provenance_reference",
+            value.provenance_reference.as_str(),
+            2000,
+        ),
+        (
+            "availability_provenance",
+            value.availability_provenance.as_str(),
+            8000,
+        ),
+    ] {
+        text(text_value, 1, maximum, false).map_err(|_| bad(field))?;
+    }
+    crate::runtime_jobs::storage_version(&value.storage_version)?;
+    if value.event_start >= value.event_end
+        || value.available_through < value.event_start
+        || value.available_through > observed_at + chrono::Duration::seconds(5)
+        || value.row_count.get() == 0
+        || value.row_count.get() > 1_000_000
+        || value.data_kind != RuntimeDataKind::Bar
+        || value.quality.native_version != "nautilus-persistence/0.63.0"
+        || value.quality.datasets.len() != 1
+        || value.quality.checked_at > observed_at + chrono::Duration::seconds(5)
+        || value.quality.checked_at < value.available_through
+        || (value.pit_status == PitStatus::Verified
+            && value.revision_policy != DataRevisionPolicy::AsKnownThen)
+    {
+        return Err(bad("snapshot"));
+    }
+    let quality = &value.quality.datasets[0];
+    if value.partition == contracts::research::DataPartition::Sealed
+        && quality.last_bar_notionals.is_some()
+    {
+        return Err(bad("quality.sealed_bar_values"));
+    }
+    bar_notionals(quality)?;
+    if quality.row_count != value.row_count
+        || quality.first_event_ns > quality.last_event_ns
+        || quality.last_event_ns > quality.available_through_ns
+        || quality.instrument_ids.is_empty()
+        || quality.instrument_ids.len() > 256
+    {
+        return Err(bad("quality"));
+    }
+    let event_start = value
+        .event_start
+        .timestamp_nanos_opt()
+        .ok_or_else(|| bad("event_start"))?;
+    let event_end = value
+        .event_end
+        .timestamp_nanos_opt()
+        .ok_or_else(|| bad("event_end"))?;
+    let available = value
+        .available_through
+        .timestamp_nanos_opt()
+        .ok_or_else(|| bad("available_through"))?;
+    if event_start < 0
+        || quality.first_event_ns.get() < event_start as u64
+        || quality.last_event_ns.get() >= event_end as u64
+        || quality.available_through_ns.get() > available as u64
+    {
+        return Err(bad("quality_times"));
+    }
+    let universe = &value.universe;
+    text(&universe.name, 1, 120, false)?;
+    text(&universe.calendar_ref, 1, 120, false)?;
+    text(&universe.calendar_version, 1, 120, false)?;
+    if let Some(calendar) = &universe.calendar_sessions {
+        calendar_sessions(calendar)?;
+        let start = universe
+            .coverage_start
+            .timestamp_nanos_opt()
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or_else(|| bad("universe.calendar_coverage"))?;
+        let end = universe
+            .coverage_end
+            .timestamp_nanos_opt()
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or_else(|| bad("universe.calendar_coverage"))?;
+        if calendar.calendar_ref != universe.calendar_ref
+            || calendar.calendar_version != universe.calendar_version
+            || calendar.coverage_start_ns.get() > start
+            || calendar.coverage_end_ns.get() < end
+            || chrono::DateTime::from_timestamp_nanos(calendar.available_at_ns.get() as i64)
+                > observed_at
+        {
+            return Err(bad("universe.calendar_binding"));
+        }
+    }
+    if universe.coverage_start > value.event_start
+        || universe.coverage_end < value.event_end
+        || universe.coverage_start >= universe.coverage_end
+        || universe.selection_asof > value.available_through
+        || !(1..=4096).contains(&universe.membership.len())
+        || !(1..=256).contains(&universe.instrument_definitions.len())
+    {
+        return Err(bad("universe"));
+    }
+    let mut members = BTreeSet::new();
+    let mut unique_members = BTreeSet::new();
+    for member in &universe.membership {
+        text(&member.instrument_id, 1, 200, false)?;
+        if let Some(groups) = &member.groups {
+            let mut unique = BTreeSet::new();
+            if groups.len() > contracts::portfolio::MAX_ALLOCATION_GROUPS {
+                return Err(bad("universe.groups"));
+            }
+            for group in groups {
+                text(group, 1, 120, false)?;
+                if !unique.insert(group) {
+                    return Err(bad("universe.groups"));
+                }
+            }
+        }
+        if member
+            .valid_until
+            .is_some_and(|until| until <= member.valid_from)
+            || member.available_at > value.available_through
+            || !unique_members.insert((&member.instrument_id, member.valid_from))
+        {
+            return Err(bad("universe.membership"));
+        }
+        members.insert(&member.instrument_id);
+    }
+    let mut instruments = BTreeSet::new();
+    for instrument in &quality.instrument_ids {
+        if !members.contains(instrument) || !instruments.insert(instrument) {
+            return Err(bad("quality.instrument_ids"));
+        }
+    }
+    let mut definitions = BTreeSet::new();
+    for definition in &universe.instrument_definitions {
+        let (_, payload) = instrument_definition(definition)?;
+        let id = payload["id"]
+            .as_str()
+            .ok_or_else(|| bad("instrument_definition.id"))?;
+        if !definitions.insert(id) {
+            return Err(bad("universe.instrument_definitions"));
+        }
+    }
+    if quality
+        .instrument_ids
+        .iter()
+        .any(|id| !definitions.contains(id.as_str()))
+    {
+        return Err(bad("universe.instrument_definitions"));
+    }
+    Ok(())
+}
+
+/// Shared original session structure; no holiday inference or source qualification.
+pub fn calendar_sessions(
+    value: &contracts::science::NativeCalendarSessionsV1,
+) -> Result<(), DomainError> {
+    text(&value.calendar_ref, 1, 120, false)?;
+    text(&value.calendar_version, 1, 120, false)?;
+    text(&value.source_reference, 1, 2000, false)?;
+    if value.timezone.parse::<chrono_tz::Tz>().is_err()
+        || value.coverage_start_ns >= value.coverage_end_ns
+        || !(1..=4096).contains(&value.sessions.len())
+    {
+        return Err(bad("calendar_sessions"));
+    }
+    let mut previous_close = None;
+    for session in &value.sessions {
+        if session.open_ns >= session.close_ns
+            || previous_close.is_some_and(|close| session.open_ns < close)
+            || session.close_ns < value.coverage_start_ns
+            || session.close_ns >= value.coverage_end_ns
+        {
+            return Err(bad("calendar_sessions.order_or_coverage"));
+        }
+        previous_close = Some(session.close_ns);
+    }
+    Ok(())
+}
+
+/// Validate measured last-bar facts without inventing unobserved market capacity.
+pub fn bar_notionals(
+    quality: &contracts::execution::NativeDatasetQualityV1,
+) -> Result<(), DomainError> {
+    let Some(values) = &quality.last_bar_notionals else {
+        return Ok(());
+    };
+    if values.is_empty() || values.len() != quality.instrument_ids.len() || values.len() > 256 {
+        return Err(bad("quality.last_bar_notionals"));
+    }
+    for (value, instrument) in values.iter().zip(&quality.instrument_ids) {
+        bar_notional(value)?;
+        if &value.instrument_id != instrument
+            || value.event_ns < quality.first_event_ns
+            || value.event_ns > quality.last_event_ns
+            || value.event_ns < quality.selection.event_start_ns
+            || value.event_ns >= quality.selection.event_end_ns
+            || value.available_ns > quality.available_through_ns
+            || value.available_ns > quality.selection.decision_cutoff_ns
+        {
+            return Err(bad("quality.last_bar_notionals"));
+        }
+    }
+    if values.iter().map(|v| v.event_ns).max() != Some(quality.last_event_ns)
+        || values.iter().map(|v| v.available_ns).max() != Some(quality.available_through_ns)
+    {
+        return Err(bad("quality.last_bar_notionals"));
+    }
+    Ok(())
+}
+
+pub fn bar_notional(value: &contracts::execution::NativeBarNotionalV1) -> Result<(), DomainError> {
+    text(&value.currency, 1, 16, false)?;
+    if value.available_ns < value.event_ns
+        || !value.close_price.is_positive()
+        || !value.traded_volume.is_nonnegative()
+        || !value.notional_value.is_nonnegative()
+        || (!value.traded_volume.is_positive() && value.notional_value.is_positive())
+    {
+        return Err(bad("quality.last_bar_notionals"));
+    }
+    Ok(())
+}
+
+/// Resolve only requested grouping, from original membership known at the decision.
+pub fn portfolio_groups(
+    universe: &NativeUniverseV1,
+    instruments: &[String],
+    required: &[contracts::portfolio::GroupBoundV1],
+    cutoff: contracts::DbCounter,
+) -> Result<Vec<Vec<String>>, DomainError> {
+    if required.is_empty() {
+        return Ok(vec![Vec::new(); instruments.len()]);
+    }
+    let bad_source = || bad("portfolio.group_source");
+    let ns = cutoff.get();
+    let at =
+        DateTime::<Utc>::from_timestamp((ns / 1_000_000_000) as i64, (ns % 1_000_000_000) as u32)
+            .ok_or_else(bad_source)?;
+    if at < universe.coverage_start || at > universe.coverage_end || at < universe.selection_asof {
+        return Err(bad_source());
+    }
+    let groups = instruments
+        .iter()
+        .map(|id| {
+            let mut matches = universe.membership.iter().filter(|m| {
+                &m.instrument_id == id
+                    && m.valid_from <= at
+                    && m.valid_until.is_none_or(|until| at < until)
+                    && m.available_at <= at
+            });
+            let member = matches.next().ok_or_else(bad_source)?;
+            if matches.next().is_some() {
+                return Err(bad_source());
+            }
+            member.groups.clone().ok_or_else(bad_source)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if required.iter().any(|bound| {
+        !groups
+            .iter()
+            .flatten()
+            .any(|group| group == &bound.group_id)
+    }) {
+        return Err(bad_source());
+    }
+    Ok(groups)
+}

@@ -1,0 +1,1212 @@
+[
+  {
+    "schema": "DbCounter",
+    "input": "0",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "01",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "+1",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "-1",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": " 1",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1 ",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1\\n",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1\n",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1\r",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1 ",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "１２",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "٢",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": null,
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": 1,
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": true,
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "10",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "100",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "10000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "100000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "10000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "100000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1000000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "10000000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "100000000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1000000000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "10000000000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "100000000000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1000000000000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "10000000000000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "100000000000000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1000000000000000000",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "10000000000000000000",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "100000000000000000000",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775768",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775769",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775770",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775771",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775772",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775773",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775774",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775775",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775776",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775777",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775778",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775779",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775780",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775781",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775782",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775783",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775784",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775785",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775786",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775787",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775788",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775789",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775790",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775791",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775792",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775793",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775794",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775795",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775796",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775797",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775798",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775799",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775800",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775801",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775802",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775803",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775804",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775805",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775806",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775807",
+    "valid": true
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775808",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775809",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775810",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775811",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775812",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775813",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775814",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775815",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775816",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775817",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775818",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775819",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775820",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775821",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775822",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775823",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775824",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775825",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775826",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775827",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775828",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775829",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775830",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775831",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775832",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775833",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775834",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775835",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775836",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775837",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775838",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775839",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775840",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775841",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775842",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775843",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775844",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775845",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775846",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775847",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "9223372036854775848",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "00000000000000000000",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "99999999999999999999",
+    "valid": false
+  },
+  {
+    "schema": "DbCounter",
+    "input": "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "0",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "1",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "01",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "+1",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "-1",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": " 1",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "1 ",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "1\\n",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "1\n",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "1\r",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "1 ",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "１２",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "٢",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": null,
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": 1,
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": true,
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "10",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "100",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "1000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "10000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "100000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "1000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "10000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "100000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "1000000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "10000000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "100000000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "1000000000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "10000000000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "100000000000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "1000000000000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "10000000000000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "100000000000000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "1000000000000000000",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "10000000000000000000",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "100000000000000000000",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775768",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775769",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775770",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775771",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775772",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775773",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775774",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775775",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775776",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775777",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775778",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775779",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775780",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775781",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775782",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775783",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775784",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775785",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775786",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775787",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775788",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775789",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775790",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775791",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775792",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775793",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775794",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775795",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775796",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775797",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775798",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775799",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775800",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775801",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775802",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775803",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775804",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775805",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775806",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775807",
+    "valid": true
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775808",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775809",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775810",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775811",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775812",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775813",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775814",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775815",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775816",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775817",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775818",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775819",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775820",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775821",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775822",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775823",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775824",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775825",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775826",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775827",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775828",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775829",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775830",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775831",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775832",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775833",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775834",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775835",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775836",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775837",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775838",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775839",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775840",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775841",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775842",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775843",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775844",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775845",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775846",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775847",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "9223372036854775848",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "00000000000000000000",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "99999999999999999999",
+    "valid": false
+  },
+  {
+    "schema": "Revision",
+    "input": "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+    "valid": false
+  }
+]

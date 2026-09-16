@@ -1,0 +1,128 @@
+name: CodeQL
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '37 5 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+concurrency:
+  group: codeql-native-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  sources:
+    name: CodeQL / exact source inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.inventory.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          persist-credentials: false
+      - name: Require the event source
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Select actual languages from native Git trees
+        id: inventory
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          const head = process.env.EXPECTED_HEAD;
+          const sha = value => { if (!/^[0-9a-f]{40}$/.test(value)) throw new Error('Invalid event commit'); return value; };
+          const include = [];
+          function add(target, commit, ref) {
+            sha(commit);
+            const files = execFileSync('git', ['ls-tree', '-r', '--name-only', '-z', commit], { encoding: 'utf8' }).split('\0');
+            const candidates = [
+              ['rust', file => /\.rs$/.test(file)],
+              ['javascript-typescript', file => /\.(?:[cm]?jsx?|tsx?)$/.test(file)],
+              ['python', file => /\.py$/.test(file)],
+              ['actions', file => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(file)],
+            ];
+            for (const [language, matches] of candidates) {
+              if (files.some(matches)) include.push({ target, language, commit, ref });
+            }
+          }
+          const pr = event.pull_request;
+          add('head', head, pr ? `refs/pull/${event.number}/head` : process.env.GITHUB_REF);
+          // During the rewrite, main still contains the previous implementation.
+          // Analyze its real tree too; never put fake Python back into the new tree.
+          // Explicit ref/sha overrides are not supported for fork PR uploads.
+          if (pr && pr.head.repo.full_name === process.env.GITHUB_REPOSITORY) {
+            const base = sha(pr.base.sha);
+            execFileSync('git', ['fetch', '--no-tags', '--depth=1', 'origin', base], { stdio: 'inherit' });
+            add('base', base, `refs/heads/${pr.base.ref}`);
+          }
+          if (!include.some(item => item.target === 'head' && item.language === 'rust')) throw new Error('Native Rust source missing');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
+          console.log(JSON.stringify(include, null, 2));
+          NODE
+  analyze:
+    name: CodeQL / ${{ matrix.target }} / ${{ matrix.language }}
+    needs: sources
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.sources.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    env:
+      ANALYZED_COMMIT: ${{ matrix.commit }}
+      RUSTUP_TOOLCHAIN: '1.98.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ matrix.commit }}
+          persist-credentials: false
+      - name: Verify the actual analysis commit
+        run: |
+          test "$(git rev-parse HEAD)" = "$ANALYZED_COMMIT"
+          printf 'Analyzed commit: %s\n' "$ANALYZED_COMMIT" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install the pinned compiler for native Rust analysis
+        if: matrix.language == 'rust'
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv
+      - name: Initialize official CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938
+        with:
+          tools: linked
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+      - name: Analyze and upload the exact source version
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938
+        with:
+          ref: ${{ matrix.ref }}
+          sha: ${{ matrix.commit }}
+          category: /language:${{ matrix.language }}
+          wait-for-processing: true
+  codeql-checks:
+    name: CodeQL / all applicable analyses
+    if: always()
+    needs: [sources, analyze]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail on missing, failed or cancelled analysis
+        env:
+          INVENTORY: ${{ needs.sources.result }}
+          ANALYSIS: ${{ needs.analyze.result }}
+        run: |
+          test "$INVENTORY" = success
+          test "$ANALYSIS" = success
