@@ -302,6 +302,63 @@ async fn mission_cancellation_waits_for_admitted_compilation_but_not_future_fore
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn admission_lock_wait_does_not_extend_the_parent_deadline(pool: PgPool) {
+    let (store, actor, f, lease, experiment) = setup(&pool).await;
+    let mut allocation = limits();
+    allocation.wall_seconds = 3600;
+    let mut blocker = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE app.model_turn_receipts IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let release = async {
+        // The ledger read occurs after the caller bounds its remaining wall
+        // time, but before shared admission reads the database clock again.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND relation='app.model_turn_receipts'::regclass AND NOT granted)")
+                    .fetch_one(&pool).await.unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("admission must reach the blocked ledger read");
+        sqlx::query("SELECT pg_sleep(1.1)")
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        blocker.rollback().await.unwrap();
+    };
+    let objects = f.objects.clone();
+    let admit = store.start_experiment_compilation(
+        lease.run.id,
+        &lease.fence,
+        experiment,
+        &allocation,
+        move |object| async move {
+            objects
+                .put(object.id, &object.bytes)
+                .map_err(|_| StoreError::Integrity)
+        },
+    );
+    let (admitted, ()) = tokio::join!(admit, release);
+    let admitted = admitted.expect("a database wait must not exhaust the Mission wall budget");
+    assert!(admitted.resource.deadline_at <= lease.run.deadline_at);
+    assert!(admitted.resource.deadline_at > admitted.resource.queued_at);
+    assert_eq!(
+        store.get_run(&actor, admitted.resource.id).await.unwrap(),
+        admitted.resource
+    );
+    let replay = start(&store, &f, &lease, experiment).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource, admitted.resource);
+    assert_eq!(trial_usage(&pool, &lease).await, (1, 0));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn compilation_replay_retains_one_code_producer_and_never_mounts_market_data(pool: PgPool) {
     let (store, actor, f, lease, experiment) = setup(&pool).await;
     let before: i64 =

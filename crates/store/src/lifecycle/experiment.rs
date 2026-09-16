@@ -506,13 +506,11 @@ impl Store {
             &format!("experiment/{experiment}/{stage_name}"),
             &submission,
             false,
+            Some(locked.run.deadline_at),
         )
         .await?;
         if admitted.replayed {
             return Err(StoreError::Integrity);
-        }
-        if admitted.resource.deadline_at > locked.run.deadline_at {
-            return Err(DomainError::BudgetExhausted("wall_seconds").into());
         }
         bind_task(
             &mut tx,
@@ -727,13 +725,11 @@ impl Store {
             &format!("experiment/{experiment}/compile"),
             &request,
             true,
+            Some(locked.run.deadline_at),
         )
         .await?;
         if admitted.replayed {
             return Err(StoreError::Integrity);
-        }
-        if admitted.resource.deadline_at > locked.run.deadline_at {
-            return Err(DomainError::BudgetExhausted("wall_seconds").into());
         }
         bind_task(
             &mut tx,

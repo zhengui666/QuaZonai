@@ -39,7 +39,7 @@ impl Store {
             tx.commit().await?;
             return Ok(result);
         }
-        let (mut tx, admitted) = admit(tx, alpha, request, "OPERATOR", read, publish).await?;
+        let (mut tx, admitted) = admit(tx, alpha, request, "OPERATOR", None, read, publish).await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         let result = commands::finish(&mut tx, prepared, admitted.resource, 202).await?;
         tx.commit().await?;
@@ -54,6 +54,7 @@ pub(super) async fn admit<'a, R, Read, P, Published>(
     alpha: Id,
     request: &AlphaEvaluateRequestV1,
     created_by: &str,
+    parent_deadline: Option<DateTime<Utc>>,
     mut read: R,
     publish: P,
 ) -> Result<(Tx<'a>, CommandResult<RunSnapshotV1>), StoreError>
@@ -291,6 +292,7 @@ where
             limits: request.limits.clone(),
         },
         false,
+        parent_deadline,
     )
     .await?;
     bind_task(

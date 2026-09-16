@@ -42,6 +42,10 @@ Baseline inspection: PRs #63 and #78 are merged; main is the commit above. No ex
 
 Full database/OCI/browser/CodeQL coverage is delegated to the existing GitHub workflows for the final Head. No production deployment, account/data acceptance or user-backup operation is part of this task. Full native command logs remain in the local execution session and CI, not duplicated here.
 
+The first full CI at `64beebb86afacac82c25a843ab18fa640f8e17df` passed documentation, Rust, database-native, Web, Runtime and all applicable CodeQL analyses, but failed Store's native Mission forecast with `BudgetExhausted("wall_seconds")`. Its clean Codex review does not accept the later fix. Investigation traced a pre-existing clock race across the shared admission boundary; the specification and DESIGN now state the absolute parent-deadline invariant. A real PostgreSQL/PGMQ lock-wait regression reproduced the exact error on the unchanged runtime source. The fix passes parent deadlines through compilation, forecast, validation and Reviewer Sealed admission without changing public contracts or test budgets. Latest-Head CI and review must run again.
+
+After the fix, all 43 `store/experiment_compilations` cases passed against isolated PostgreSQL 18.6 + PGMQ 1.10.0, including the new lock/replay/trial regression and Sealed deadline assertions. The original failing `server/mission_worker::controlled_real_declaration_registers_original_reviewed_qualification` passed with native Codex 0.144.4, including its deliberate publication/recovery faults (305.44 seconds). Targeted Store Clippy, formatting, documentation/CLI and architecture checks passed again. Independent source review traced every shared admission caller and corrected the DESIGN event wording: Run and initial receipt carry the deadline; events commit in the same transaction. These are controlled protocol fixtures, not real-market production acceptance.
+
 <a id="review"></a>
 ## Review
 
@@ -50,7 +54,7 @@ Full database/OCI/browser/CodeQL coverage is delegated to the existing GitHub wo
 <a id="delivery"></a>
 ## Delivery
 
-Implementation and local verification are complete; delivery is [PR #84](https://github.com/zhengui666/QuaZonai/pull/84). Its native merge state, exact-Head CI and review are the canonical acceptance record under the owner's endpoint. Follow the [review procedure](../../review.md#approval), then verify the resulting main commit and its checks. No formal product release or incident occurred, so neither record is fabricated.
+Delivery is [PR #84](https://github.com/zhengui666/QuaZonai/pull/84). Its native merge state, exact-Head CI and review are the canonical acceptance record under the owner's endpoint. Follow the [review procedure](../../review.md#approval), then verify the resulting main commit and its checks. No formal product release or incident occurred, so neither record is fabricated.
 
 <a id="handoff"></a>
 ## Handoff

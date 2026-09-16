@@ -471,8 +471,14 @@ impl Store {
         key: &str,
         request: &RunSubmission,
     ) -> Result<(Transaction<'a, Postgres>, CommandResult<RunSnapshotV1>), StoreError> {
-        Self::enqueue_with_trial_charge(tx, key, request, request.kind == RunKind::AlphaEvaluate)
-            .await
+        Self::enqueue_with_trial_charge(
+            tx,
+            key,
+            request,
+            request.kind == RunKind::AlphaEvaluate,
+            None,
+        )
+        .await
     }
 
     // Only domain-owned experiment stages may differ from the generic Run kind.
@@ -482,6 +488,7 @@ impl Store {
         key: &str,
         request: &RunSubmission,
         charge_trial: bool,
+        parent_deadline: Option<DateTime<Utc>>,
     ) -> Result<(Transaction<'a, Postgres>, CommandResult<RunSnapshotV1>), StoreError> {
         commands::key(key)?;
         let normalized = json!({"schema_version":1,"cycle_id":request.cycle_id,"input_set_id":request.input_set_id,"runtime_id":request.runtime_id,"runtime_revision":request.runtime_revision,"kind":request.kind,"limits":request.limits});
@@ -639,6 +646,12 @@ impl Store {
         let deadline = time
             .checked_add_signed(Duration::seconds(i64::from(l.wall_seconds)))
             .ok_or(StoreError::Invalid("deadline"))?;
+        // Relative wall limits were computed before admission's database work.
+        // Preserve the parent's absolute bound across validation and lock waits.
+        let deadline = parent_deadline.map_or(deadline, |parent| deadline.min(parent));
+        if deadline <= time {
+            return Err(DomainError::BudgetExhausted("wall_seconds").into());
+        }
         let id = Id::new();
         sqlx::query("UPDATE app.research_cycles SET reserved_experiments=$2,reserved_cpu_seconds=$3 WHERE id=$1").bind(request.cycle_id.as_uuid()).bind(i64::from(reserved.reserved_experiments)).bind(reserved.reserved_cpu_seconds.get() as i64).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,deadline_at,queued_at) VALUES($1,$2,$3,$4,$5,'QUEUED',$6,$7)")

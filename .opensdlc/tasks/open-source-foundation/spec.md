@@ -61,7 +61,13 @@ DESIGN remains the product authority. New workflow prose uses English under the 
 
 The seven existing Rust packages already separate wire contracts, pure domain rules, persistence, native integration and executable entrypoints. Keep these boundaries. Correct the obsolete DESIGN tree (`frontend/`, hypothetical `deploy/` and documentation subtrees), document current ownership, and guard direct workspace dependencies using native Cargo metadata. The check covers normal and build dependencies; test-only helpers may cross these boundaries and remain subject to behavior review. It is an architectural regression check, not a sandbox or a transitive dependency scanner.
 
-No product protocol, database migration, model, authorization rule or trading behavior changes. Remove no user data or other worktree content. No gratuitous service split, README-only feature claim, duplicate roadmap, new license or prefilled release/incident report is needed.
+No product protocol, database migration, model, authorization rule or trading authority changes. Remove no user data or other worktree content. No gratuitous service split, README-only feature claim, duplicate roadmap, new license or prefilled release/incident report is needed.
+
+### CI-discovered deadline race
+
+The first complete PR CI exposed a pre-existing Mission child-admission race: callers computed remaining whole wall seconds, then shared admission added those seconds to a later database time. A database wait could make a child exceed its parent's deadline and falsely reject a still-funded forecast; Reviewer Sealed admission could silently extend the parent deadline. Fix the common admission boundary with an optional absolute parent deadline, retaining fresh database time, existing resource checks and immutable receipts. Generic/Operator admissions remain uncapped by a parent. No public DTO or migration is needed.
+
+Reproduce with a real PostgreSQL ledger-table lock after the initial wall calculation, then verify successful bounded admission, original snapshot replay and one trial charge. Existing full Store/HTTP/native Mission checks must pass; do not increase budgets, tolerate deadline drift or hide the failing check.
 
 ## Verification and failure actions
 

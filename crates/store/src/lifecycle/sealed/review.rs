@@ -63,6 +63,7 @@ impl Store {
                 db::id(row.try_get("alpha_version_id")?)?,
                 &request,
                 "RUNTIME",
+                Some(locked.run.deadline_at),
                 read,
                 publish,
             )

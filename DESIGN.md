@@ -1691,6 +1691,10 @@ policy/dataset关联，不另建任务队列；Run仍由原PGMQ/Attempt/Runtime�
 并发重放只返回同一Run，失败不清除原trial，experiments.run_id仍指原Discovery。
 编译及两个Alpha阶段先以原Mission剩余墙钟约束本次分配，再推导实际所需CPU数；
 超过Runtime容量明确拒绝，不能用缩短前的墙钟生成无法执行的JobSpec。
+共享入队事务还须以父Mission绝对deadline约束子Run；数据库校验或锁等待不能
+通过重新累加剩余秒数延长期限，也不能在仍有预算时误报耗尽。编译、Discovery、
+Validation和Reviewer发起的Sealed评估均传递该上限；以入队时数据库实际时间
+拒绝已到期上限，Run与首次回执保存同一期限，并与事件同事务提交；重放不重置预算或期限。
 
 所有Alpha科学阶段选择的实际镜像须等于冻结ExecutionAssumptions；正式Validation
 还须等于原Alpha版本镜像。Runtime连接修订未变不代表原生镜像未变，不能借新探测
