@@ -424,6 +424,12 @@ async fn quota(
     let mut without_paper = content.clone();
     without_paper.downstream_id = down.id;
     without_paper.mode = AutomationModeV1::AutoHandoff;
+    let deadline: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT clock_timestamp()+interval '15 seconds'")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    without_paper.valid_until = deadline;
     store
         .authorize_automation(
             operator,
@@ -450,6 +456,24 @@ async fn quota(
         Err(StoreError::Invalid(
             "automation_live_complete_paper_required"
         ))
+    ));
+    // Wait on the gate's actual clock; never rewrite immutable policy timestamps.
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        sqlx::query("SELECT pg_sleep(GREATEST(EXTRACT(EPOCH FROM ($1::timestamptz-clock_timestamp())),0)::double precision+0.02)")
+            .bind(deadline)
+            .execute(pool)
+            .await
+            .unwrap();
+    })
+    .await
+    .expect("policy expiry must arrive within its bounded validity");
+    assert!(matches!(
+        store
+            .automate_live(f.data.project, |_, _| async {
+                panic!("expired policy must block before reading Package")
+            })
+            .await,
+        Err(StoreError::Invalid("automation_expiry"))
     ));
     let offers: i64 =
         sqlx::query_scalar("SELECT count(*) FROM app.handoff_offers WHERE downstream_id=$1")
