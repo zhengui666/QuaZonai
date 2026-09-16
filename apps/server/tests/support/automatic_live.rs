@@ -421,6 +421,43 @@ async fn quota(
         )
         .await
         .unwrap();
+    let mut without_paper = content.clone();
+    without_paper.downstream_id = down.id;
+    without_paper.mode = AutomationModeV1::AutoHandoff;
+    store
+        .authorize_automation(
+            operator,
+            "live-without-paper-policy",
+            f.data.project,
+            &AutomationAuthorizeV1 {
+                schema_version: SchemaV1,
+                expected_project_revision: store
+                    .project(operator, f.data.project)
+                    .await
+                    .unwrap()
+                    .revision,
+                content: without_paper,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .automate_live(f.data.project, |_, _| async {
+                panic!("missing Paper must block before reading Package")
+            })
+            .await,
+        Err(StoreError::Invalid(
+            "automation_live_complete_paper_required"
+        ))
+    ));
+    let offers: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.handoff_offers WHERE downstream_id=$1")
+            .bind(down.id.as_uuid())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(offers, 0);
     let approval = store
         .approve_release(
             operator,
