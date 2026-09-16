@@ -141,8 +141,39 @@ async fn a_restored_database_recovers_the_exact_sent_attempt_without_reposting(p
         transport.submit_job(&job.spec).await,
         Err(server::runtime_transport::RuntimeRequestError::Unavailable)
     ));
-    // No driver is running during this real archive. Keep the original remote job
-    // and state volume; only the control database is restored into an isolated DB.
+    // No driver is running during this archive. Restore both control database
+    // and state files, while keeping the original remote task identity alive.
+    let recovered_state = tempfile::tempdir().unwrap();
+    let archive = tempfile::NamedTempFile::new().unwrap();
+    let saved = tokio::process::Command::new("tar")
+        .env_clear()
+        .arg("-C")
+        .arg(f.data.directory.path())
+        .arg("-cf")
+        .arg(archive.path())
+        .arg(".")
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        saved.status.success() && saved.stderr.is_empty(),
+        "test state archive failed"
+    );
+    let unpacked = tokio::process::Command::new("tar")
+        .env_clear()
+        .arg("-C")
+        .arg(recovered_state.path())
+        .arg("-xf")
+        .arg(archive.path())
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        unpacked.status.success() && unpacked.stderr.is_empty(),
+        "test state restore failed"
+    );
     let dump = postgres::postgres_tool(&pool, "pg_dump")
         .args(["--format=custom", "--no-owner", "--no-privileges"])
         .output()
@@ -192,7 +223,7 @@ async fn a_restored_database_recovers_the_exact_sent_attempt_without_reposting(p
         "test restore failed"
     );
     let restored_store = store::Store::from_pool(restored.clone());
-    let root = f.data.directory.path();
+    let root = recovered_state.path();
     let worker = Worker::new(
         restored_store.clone(),
         integrations::secrets::SecretVault::open(
