@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './tests', testIgnore: '**/native-console.spec.ts',
+  testDir: './tests', testIgnore: ['**/native-console.spec.ts', '**/demo-complete.spec.ts'],
   fullyParallel: true, forbidOnly: !!process.env.CI,
   retries: 0, workers: 2, timeout: 30_000, expect: { timeout: 10_000 },
   reporter: [['list'], ['json', { outputFile: 'test-results/results.json' }]],

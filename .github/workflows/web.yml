@@ -71,6 +71,8 @@ jobs:
         run: node node_modules/vite/bin/vite.js build
       - name: Install Chromium and native browser dependencies
         run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Credential-free complete synthetic Demo
+        run: npm --ignore-scripts run test:demo
       - name: Three-viewport presentation, accessibility and PWA tests
         run: npm --ignore-scripts run test:e2e
       - name: Real browser, TOTP, idempotency and database acceptance

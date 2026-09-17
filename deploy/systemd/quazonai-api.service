@@ -1,0 +1,23 @@
+# Install as a USER unit and enable only for the quazonai account.
+# The native Mission launcher needs that user's manager and cgroup delegation.
+[Unit]
+Description=QuaZonai authenticated API
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+UMask=0077
+WorkingDirectory=/opt/quazonai/current
+EnvironmentFile=/etc/quazonai/quazonai.env
+ExecStart=/opt/quazonai/current/bin/server serve
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=300s
+KillSignal=SIGTERM
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

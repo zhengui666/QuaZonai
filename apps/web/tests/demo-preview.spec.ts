@@ -15,8 +15,11 @@ test('synthetic preview renders native-contract records without a backend or wri
   });
   page.on('request', request => { if (new URL(request.url()).pathname.endsWith('/events')) eventRequests.push(request.url()); });
   await page.goto('/');
-  await expect(page.getByRole('note', { name: '合成预览说明' })).toContainText('尚非完整 Demo');
-  await expect(page.getByRole('note', { name: '合成预览说明' })).toContainText('项目状态（启用需冻结 Brief，归档不可退出）');
+  const notice = page.getByRole('note', { name: '合成预览说明' });
+  await expect(notice).toContainText('SYNTHETIC / FIXTURE');
+  await expect(notice).toContainText('项目状态（启用需冻结 Brief，归档不可退出）');
+  await expect(notice).toContainText('新 Cycle 不执行实验、不生成合格候选');
+  await expect(notice).toContainText('没有真实账号、科学计算、资格、审批或下游交付');
   await expect(page.getByRole('button', { name: 'SYNTHETIC · 双 Alpha 研究示例', exact: true })).toBeVisible()
     .catch(error => { throw new Error(`${error.message}\nBrowser errors: ${failures.join('; ')}`); });
   await page.getByRole('button', { name: 'SYNTHETIC · 双 Alpha 研究示例', exact: true }).click();
@@ -123,7 +126,9 @@ test('synthetic preview renders native-contract records without a backend or wri
   await expect(page.getByText('SYNTHETIC · 演示投资域', { exact: true })).toBeVisible();
   await expect(page.getByText('历史记录未核验', { exact: true })).toBeVisible();
   await settingsCategory(page, '原生集成');
-  await page.getByRole('button', { name: '配置与原生探测', exact: true }).click();
+  const historicalRuntime = page.getByRole('row').filter({ hasText: 'SYNTHETIC · 未连接 Runtime' });
+  await expect(historicalRuntime).toHaveCount(1);
+  await historicalRuntime.getByRole('button', { name: '配置与原生探测', exact: true }).click();
   await expect(page.getByText('当前共同支持的任务：没有可准入的任务', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '执行原生探测', exact: true })).toBeDisabled();
   await page.getByRole('tab', { name: '目标交付下游', exact: true }).click();
