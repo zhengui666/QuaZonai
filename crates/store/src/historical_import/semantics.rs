@@ -32,10 +32,10 @@ pub(super) async fn check(
         {
             return Err(StoreError::Integrity);
         }
-        let kinds: Vec<String> = sqlx::query_scalar(&format!(
+        let kinds: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT subject_type FROM pg_temp.{}",
             from.table
-        ))
+        )))
         .fetch_all(&mut **tx)
         .await?;
         for kind in kinds {
@@ -51,7 +51,7 @@ pub(super) async fn check(
             if !to.columns.iter().any(|c| c == "id") {
                 return Err(StoreError::Integrity);
             }
-            let broken:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM pg_temp.{} s WHERE s.subject_type=$1 AND NOT EXISTS(SELECT 1 FROM pg_temp.{} t WHERE t.id=s.subject_id))",from.table,to.table)).bind(&kind).fetch_one(&mut **tx).await?;
+            let broken:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM pg_temp.{} s WHERE s.subject_type=$1 AND NOT EXISTS(SELECT 1 FROM pg_temp.{} t WHERE t.id=s.subject_id))",from.table,to.table))).bind(&kind).fetch_one(&mut **tx).await?;
             if broken {
                 return Err(StoreError::Invalid("historical_subject_reference"));
             }
@@ -62,10 +62,10 @@ pub(super) async fn check(
     // Preserve their identities, but never infer a target table from a string.
     for name in ["jobs", "events", "preflight_receipts"] {
         if let Some(table) = staged.get(&format!("public.{name}")) {
-            let present: bool = sqlx::query_scalar(&format!(
+            let present: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT EXISTS(SELECT 1 FROM pg_temp.{})",
                 table.table
-            ))
+            )))
             .fetch_one(&mut **tx)
             .await?;
             if present {
@@ -78,7 +78,7 @@ pub(super) async fn check(
         ("disclosures","NOT ((audience='CODEX' AND level=1) OR (audience='OPERATOR' AND level=2) OR (audience='POSTMORTEM' AND level=3)) OR length(classification_code)=0 OR NOT ((classification_code='QUALIFIED' AND reason_code IS NULL) OR (classification_code<>'QUALIFIED' AND reason_code IS NOT NULL AND length(reason_code)>0))"),
     ] {
         if let Some(table)=staged.get(&format!("public.{name}")) {
-            let broken:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM pg_temp.{} WHERE {predicate})",table.table)).fetch_one(&mut **tx).await?;
+            let broken:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM pg_temp.{} WHERE {predicate})",table.table))).fetch_one(&mut **tx).await?;
             if broken{return Err(StoreError::Invalid("historical_disclosure_semantics"));}
         }
     }

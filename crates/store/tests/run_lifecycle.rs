@@ -987,10 +987,12 @@ async fn review_terminal_attempt_without_manifest_cannot_be_rewritten(pool: PgPo
         "error_code='DIFFERENT'",
     ] {
         let mut tx = pool.begin().await.unwrap();
-        let result = sqlx::query(&format!("UPDATE app.run_attempts SET {change} WHERE id=$1"))
-            .bind(lease.fence.attempt_id.as_uuid())
-            .execute(&mut *tx)
-            .await;
+        let result = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE app.run_attempts SET {change} WHERE id=$1"
+        )))
+        .bind(lease.fence.attempt_id.as_uuid())
+        .execute(&mut *tx)
+        .await;
         tx.rollback().await.unwrap();
         assert!(result.is_err(), "terminal attempt accepted: {change}");
     }

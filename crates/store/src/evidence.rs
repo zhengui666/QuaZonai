@@ -191,9 +191,9 @@ async fn read_evaluation(
             .await?
             .ok_or(StoreError::NotFound)?;
     authorize(tx, actor, db::id(project)?).await?;
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{EVALUATION} AND ev.id=$1 UNION ALL {CANDIDATE_EVALUATION} AND ev.id=$1"
-    ))
+    )))
     .bind(id.as_uuid())
     .fetch_optional(&mut **tx)
     .await?
@@ -213,7 +213,7 @@ impl Store {
         let project:uuid::Uuid=sqlx::query_scalar("SELECT c.project_id FROM app.portfolio_candidates c JOIN app.candidate_publications p ON p.candidate_id=c.id WHERE c.id=$1")
             .bind(candidate.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
         authorize(&mut tx, actor, db::id(project)?).await?;
-        let rows=sqlx::query(&format!("{CANDIDATE_EVALUATION} AND ev.subject_candidate_id=$1 AND ($2::uuid IS NULL OR ev.id<$2) ORDER BY ev.id DESC LIMIT $3"))
+        let rows=sqlx::query(sqlx::AssertSqlSafe(format!("{CANDIDATE_EVALUATION} AND ev.subject_candidate_id=$1 AND ($2::uuid IS NULL OR ev.id<$2) ORDER BY ev.id DESC LIMIT $3")))
             .bind(candidate.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(evaluation).collect::<Result<Vec<_>, _>>()?,
@@ -316,7 +316,7 @@ impl Store {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
         alpha_project(&mut tx, actor, alpha).await?;
-        let rows = sqlx::query(&format!("{VERSION} WHERE v.alpha_id=$1 AND ($2::uuid IS NULL OR v.id<$2) ORDER BY v.id DESC LIMIT $3"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{VERSION} WHERE v.alpha_id=$1 AND ($2::uuid IS NULL OR v.id<$2) ORDER BY v.id DESC LIMIT $3")))
             .bind(alpha.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(version).collect::<Result<Vec<_>, _>>()?,
@@ -335,12 +335,14 @@ impl Store {
     ) -> Result<AlphaVersionView, StoreError> {
         let mut tx = self.pool.begin().await?;
         alpha_project(&mut tx, actor, alpha).await?;
-        let row = sqlx::query(&format!("{VERSION} WHERE v.alpha_id=$1 AND v.version=$2"))
-            .bind(alpha.as_uuid())
-            .bind(number.get() as i64)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(StoreError::NotFound)?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "{VERSION} WHERE v.alpha_id=$1 AND v.version=$2"
+        )))
+        .bind(alpha.as_uuid())
+        .bind(number.get() as i64)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(StoreError::NotFound)?;
         let result = version(&row)?;
         tx.commit().await?;
         Ok(result)
@@ -361,7 +363,7 @@ impl Store {
                 .await?
                 .ok_or(StoreError::NotFound)?;
         authorize(&mut tx, actor, db::id(project)?).await?;
-        let rows = sqlx::query(&format!("{EVALUATION} AND ev.subject_alpha_version_id=$1 AND ($2::uuid IS NULL OR ev.id<$2) ORDER BY ev.id DESC LIMIT $3"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{EVALUATION} AND ev.subject_alpha_version_id=$1 AND ($2::uuid IS NULL OR ev.id<$2) ORDER BY ev.id DESC LIMIT $3")))
             .bind(version.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(evaluation).collect::<Result<Vec<_>, _>>()?,
@@ -385,7 +387,7 @@ impl Store {
                 .await?
                 .ok_or(StoreError::NotFound)?;
         authorize(&mut tx, actor, db::id(project)?).await?;
-        let row = sqlx::query(&format!("SELECT ev.*,c.id AS calibration_id,c.estimator_kind,c.estimator_version,c.model_artifact_id,c.train_input_set_id,c.fit_end_available_at,c.output_unit,c.horizon_kind,c.horizon_value,c.created_at AS calibration_created_at
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT ev.*,c.id AS calibration_id,c.estimator_kind,c.estimator_version,c.model_artifact_id,c.train_input_set_id,c.fit_end_available_at,c.output_unit,c.horizon_kind,c.horizon_value,c.created_at AS calibration_created_at
             FROM app.alpha_versions target JOIN app.calibrations c ON c.id=target.calibration_id
             JOIN ({EVALUATION}) ev ON ev.id=c.validation_evaluation_id
             JOIN app.alpha_versions original ON original.id=ev.subject_alpha_version_id AND original.alpha_id=target.alpha_id
@@ -401,7 +403,7 @@ impl Store {
             WHERE target.id=$1 AND target.version=original.version+1 AND original.calibration_id IS NULL
               AND original.signal_kind='SCORE' AND c.estimator_kind='linregress.affine_ols' AND c.estimator_version='0.5.4'
               AND c.train_input_set_id=ev.input_set_id AND c.horizon_kind=target.horizon_kind AND c.horizon_value=target.horizon_value
-              AND c.output_unit='RETURN_PER_HORIZON' AND ev.execution_status='SUCCEEDED' AND ev.evidence_status='VALID'"))
+              AND c.output_unit='RETURN_PER_HORIZON' AND ev.execution_status='SUCCEEDED' AND ev.evidence_status='VALID'")))
             .bind(version.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
         let result = CalibrationView {
             id: db::id(row.try_get("calibration_id")?)?,

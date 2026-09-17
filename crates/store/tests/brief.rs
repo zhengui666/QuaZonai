@@ -416,7 +416,7 @@ async fn current_machine_scope_is_read_only_and_exact_project(pool: PgPool) {
 async fn real_non_owner_can_replace_only_draft_bindings_with_deployment_grants(pool: PgPool) {
     let (admin, actor, data, request) = setup(&pool).await;
     let role = format!("brief_test_{}", Id::new().to_string().replace('-', ""));
-    sqlx::query(&format!("CREATE ROLE {role} LOGIN PASSWORD 'disposable-test-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION NOINHERIT")).execute(&pool).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE ROLE {role} LOGIN PASSWORD 'disposable-test-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION NOINHERIT"))).execute(&pool).await.unwrap();
     admin
         .migrate_with_application_role(Some(&role))
         .await
@@ -467,11 +467,11 @@ async fn real_non_owner_can_replace_only_draft_bindings_with_deployment_grants(p
             .is_err()
     );
     native.close().await;
-    sqlx::query(&format!("DROP OWNED BY {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP OWNED BY {role}")))
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
         .execute(&pool)
         .await
         .unwrap();

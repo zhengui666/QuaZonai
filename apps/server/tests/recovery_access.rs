@@ -128,11 +128,16 @@ async fn ordinary_database_identity_cannot_invalidate_restored_access(pool: PgPo
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert!(sqlx::query(&ddl).execute(&pool).await.is_ok());
-    sqlx::query(&format!("GRANT USAGE ON SCHEMA app TO {role}"))
+    assert!(sqlx::query(sqlx::AssertSqlSafe(ddl.as_str()))
         .execute(&pool)
         .await
-        .unwrap();
+        .is_ok());
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "GRANT USAGE ON SCHEMA app TO {role}"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
     let restricted = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect_with(
@@ -154,11 +159,13 @@ async fn ordinary_database_identity_cannot_invalidate_restored_access(pool: PgPo
         before
     );
     restricted.close().await;
-    sqlx::query(&format!("REVOKE USAGE ON SCHEMA app FROM {role}"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(&format!("DROP ROLE {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "REVOKE USAGE ON SCHEMA app FROM {role}"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
         .execute(&pool)
         .await
         .unwrap();
@@ -354,10 +361,12 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     assert!(!state.path().join("master.key").exists());
     std::fs::copy(&saved_key, state.path().join("master.key")).unwrap();
     let database = format!("restore_test_{}", Id::new().to_string().replace('-', ""));
-    sqlx::query(&format!("CREATE DATABASE {database} TEMPLATE template0"))
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE DATABASE {database} TEMPLATE template0"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
     let restored_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
         .connect_with(pool.connect_options().as_ref().clone().database(&database))
@@ -408,7 +417,10 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
             .fetch_one(&restored_pool)
             .await
             .unwrap();
-    assert!(sqlx::query(&ddl).execute(&restored_pool).await.is_ok());
+    assert!(sqlx::query(sqlx::AssertSqlSafe(ddl.as_str()))
+        .execute(&restored_pool)
+        .await
+        .is_ok());
     owner
         .migrate_with_application_role(Some(&role))
         .await
@@ -760,11 +772,11 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     drop(restored);
     application_pool.close().await;
     restored_pool.close().await;
-    sqlx::query(&format!("DROP DATABASE {database}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {database}")))
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
         .execute(&pool)
         .await
         .unwrap();

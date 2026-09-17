@@ -322,7 +322,7 @@ where
 impl Store {
     pub async fn prepare_downstream_refresh(&self) -> Result<Option<RefreshTicket>, StoreError> {
         let mut tx = self.pool.begin().await?;
-        let row=sqlx::query(&format!("SELECT d.* FROM app.downstream_integrations d LEFT JOIN app.downstream_probe_refresh refresh ON refresh.downstream_id=d.id WHERE d.enabled AND {REFRESH_NEEDED} AND (refresh.next_attempt_at IS NULL OR refresh.next_attempt_at<=clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM app.downstream_probe_observations o WHERE o.id=(SELECT latest.id FROM app.downstream_probe_observations latest WHERE latest.downstream_id=d.id ORDER BY latest.started_at DESC,latest.id DESC LIMIT 1) AND o.integration_revision=d.revision AND o.valid_until>clock_timestamp()+interval '15 seconds') ORDER BY refresh.next_attempt_at NULLS FIRST,d.id LIMIT 1 FOR UPDATE OF d SKIP LOCKED"))
+        let row=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT d.* FROM app.downstream_integrations d LEFT JOIN app.downstream_probe_refresh refresh ON refresh.downstream_id=d.id WHERE d.enabled AND {REFRESH_NEEDED} AND (refresh.next_attempt_at IS NULL OR refresh.next_attempt_at<=clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM app.downstream_probe_observations o WHERE o.id=(SELECT latest.id FROM app.downstream_probe_observations latest WHERE latest.downstream_id=d.id ORDER BY latest.started_at DESC,latest.id DESC LIMIT 1) AND o.integration_revision=d.revision AND o.valid_until>clock_timestamp()+interval '15 seconds') ORDER BY refresh.next_attempt_at NULLS FIRST,d.id LIMIT 1 FOR UPDATE OF d SKIP LOCKED")))
             .fetch_optional(&mut *tx).await?;
         let Some(row) = row else {
             tx.commit().await?;
@@ -369,7 +369,7 @@ impl Store {
         Fut: std::future::Future<Output = Result<(), StoreError>>,
     {
         let mut tx = self.pool.begin().await?;
-        let exists=sqlx::query(&format!("SELECT d.id FROM app.downstream_integrations d JOIN app.downstream_probe_refresh r ON r.downstream_id=d.id WHERE d.id=$1 AND d.revision=$2 AND d.enabled AND r.lease_id=$3 AND r.lease_until>clock_timestamp() AND {REFRESH_NEEDED} FOR UPDATE OF d,r"))
+        let exists=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT d.id FROM app.downstream_integrations d JOIN app.downstream_probe_refresh r ON r.downstream_id=d.id WHERE d.id=$1 AND d.revision=$2 AND d.enabled AND r.lease_id=$3 AND r.lease_until>clock_timestamp() AND {REFRESH_NEEDED} FOR UPDATE OF d,r")))
             .bind(ticket.downstream_id.as_uuid()).bind(ticket.revision.get() as i64).bind(ticket.lease_id.as_uuid()).fetch_optional(&mut *tx).await?;
         if exists.is_none() {
             return Err(StoreError::Conflict);

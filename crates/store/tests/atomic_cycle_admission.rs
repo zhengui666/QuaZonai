@@ -178,10 +178,10 @@ async fn event_or_queue_error_drops_the_whole_caller_transaction_and_can_retry(p
     .await
     .unwrap();
     for table in ["app.run_events", "pgmq.q_runs"] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE TRIGGER reject_initial_admission BEFORE INSERT ON {table} \
              FOR EACH ROW EXECUTE FUNCTION public.reject_initial_admission()"
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();
@@ -205,10 +205,12 @@ async fn event_or_queue_error_drops_the_whole_caller_transaction_and_can_retry(p
             (0, 0, 0, 0, 0),
             "failed insert into {table} must discard the whole caller transaction"
         );
-        sqlx::query(&format!("DROP TRIGGER reject_initial_admission ON {table}"))
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TRIGGER reject_initial_admission ON {table}"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
     }
     let tx = stage_cycle(&pool, &fixture, request.cycle_id).await;
     let (tx, retried) = Store::enqueue_run_in_transaction(tx, "initial", &request)

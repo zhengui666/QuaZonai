@@ -207,9 +207,9 @@ async fn proposal_artifacts(
 }
 
 async fn read_one(tx: &mut Tx<'_>, project: Id, id: Id) -> Result<ExperimentView, StoreError> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{SELECT_VIEW} WHERE e.id=$1 AND e.project_id=$2 FOR SHARE OF e"
-    ))
+    )))
     .bind(id.as_uuid())
     .bind(project.as_uuid())
     .fetch_optional(&mut **tx)
@@ -334,7 +334,7 @@ impl Store {
         if exists.is_none() {
             return Err(StoreError::NotFound);
         }
-        let rows = sqlx::query(&format!("{SELECT_VIEW} WHERE e.project_id=$1 AND ($2::uuid IS NULL OR e.id<$2) ORDER BY e.id DESC LIMIT $3 FOR SHARE OF e"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{SELECT_VIEW} WHERE e.project_id=$1 AND ($2::uuid IS NULL OR e.id<$2) ORDER BY e.id DESC LIMIT $3 FOR SHARE OF e")))
             .bind(query.project_id.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit) + 1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(view).collect::<Result<Vec<_>, _>>()?,

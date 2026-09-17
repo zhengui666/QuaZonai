@@ -5,15 +5,17 @@ use store::{Store, StoreError};
 
 async fn role(pool: &PgPool) -> String {
     let name = format!("runtime_test_{}", Id::new().to_string().replace('-', ""));
-    sqlx::query(&format!("CREATE ROLE {name} LOGIN PASSWORD 'disposable-test-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION NOINHERIT"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE ROLE {name} LOGIN PASSWORD 'disposable-test-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION NOINHERIT")))
         .execute(pool).await.unwrap();
-    sqlx::query(&format!("GRANT USAGE ON SCHEMA app TO {name}"))
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "GRANT USAGE ON SCHEMA app TO {name}"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA app TO {name}"
-    ))
+    )))
     .execute(pool)
     .await
     .unwrap();
@@ -33,7 +35,10 @@ async fn connect(pool: &PgPool, role: &str) -> PgPool {
 }
 
 async fn execute(pool: &PgPool, sql: String) {
-    sqlx::query(&sql).execute(pool).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 async fn remove_role(pool: &PgPool, role: &str) {
@@ -194,7 +199,7 @@ async fn set_role_does_not_disguise_an_elevated_session_login(pool: PgPool) {
         .after_connect(move |connection, _| {
             let name = switched_role.clone();
             Box::pin(async move {
-                sqlx::query(&format!("SET ROLE {name}"))
+                sqlx::query(sqlx::AssertSqlSafe(format!("SET ROLE {name}")))
                     .execute(connection)
                     .await?;
                 Ok(())
@@ -329,7 +334,7 @@ async fn set_role_cannot_hide_database_owner_session_identity(pool: PgPool) {
         .after_connect(move |connection, _| {
             let name = switched_role.clone();
             Box::pin(async move {
-                sqlx::query(&format!("SET ROLE {name}"))
+                sqlx::query(sqlx::AssertSqlSafe(format!("SET ROLE {name}")))
                     .execute(connection)
                     .await?;
                 Ok(())
@@ -518,7 +523,7 @@ async fn admin_only_membership_is_rejected_before_self_regrant(pool: PgPool) {
     // Prove the privilege escalation using PostgreSQL itself, not a mocked graph.
     execute(&app, format!("GRANT {owner} TO {runtime} WITH SET TRUE")).await;
     let mut connection = app.acquire().await.unwrap();
-    sqlx::query(&format!("SET ROLE {owner}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("SET ROLE {owner}")))
         .execute(&mut *connection)
         .await
         .unwrap();
@@ -570,7 +575,7 @@ async fn multi_hop_admin_authority_and_masked_session_are_rejected(pool: PgPool)
     )
     .await;
     let mut connection = app.acquire().await.unwrap();
-    sqlx::query(&format!("SET ROLE {narrow}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("SET ROLE {narrow}")))
         .execute(&mut *connection)
         .await
         .unwrap();

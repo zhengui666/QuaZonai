@@ -74,10 +74,12 @@ async fn worker_schedules_original_feedback_once_and_publishes_cancelled_termina
     let mut before = Vec::new();
     for table in tables {
         before.push(
-            sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
-                .fetch_one(&pool)
-                .await
-                .unwrap(),
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+                "SELECT count(*) FROM {table}"
+            )))
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
         );
     }
     let filler_path = std::path::PathBuf::from(root).join("filler");
@@ -98,10 +100,11 @@ async fn worker_schedules_original_feedback_once_and_publishes_cancelled_termina
     assert_eq!(cursor, Some(f.f.project));
     assert!(rejected.is_err());
     for (table, before) in tables.into_iter().zip(before) {
-        let after: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let after: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(after, before, "failed native publication changed {table}");
     }
     let retained =

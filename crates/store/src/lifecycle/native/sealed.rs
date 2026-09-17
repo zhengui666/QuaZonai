@@ -176,7 +176,7 @@ WHERE s.run_id=$1
 "#,
         crate::evidence::EVALUATION
     );
-    let binding = sqlx::query(&binding_sql)
+    let binding = sqlx::query(sqlx::AssertSqlSafe(binding_sql))
         .bind(run.as_uuid())
         .fetch_optional(&mut **tx)
         .await?

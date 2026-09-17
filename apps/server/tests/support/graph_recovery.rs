@@ -14,9 +14,9 @@ async fn graph(pool: &PgPool) -> BTreeMap<String, serde_json::Value> {
     let mut result = BTreeMap::new();
     for table in tables {
         let quoted = table.replace('"', "\"\"");
-        let rows = sqlx::query_scalar(&format!(
+        let rows = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb) FROM app.\"{quoted}\" t"
-        ))
+        )))
         .fetch_one(pool)
         .await
         .unwrap();
@@ -69,10 +69,12 @@ pub async fn check(pool: &PgPool, objects: &Path, actor: &store::authority::Acto
         "graph_restore_{}",
         contracts::Id::new().to_string().replace('-', "")
     );
-    sqlx::query(&format!("CREATE DATABASE {database} TEMPLATE template0"))
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE DATABASE {database} TEMPLATE template0"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
     let restored_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
         .connect_with(pool.connect_options().as_ref().clone().database(&database))
@@ -211,7 +213,7 @@ pub async fn check(pool: &PgPool, objects: &Path, actor: &store::authority::Acto
         "source business graph changed during recovery"
     );
     restored_pool.close().await;
-    sqlx::query(&format!("DROP DATABASE {database}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {database}")))
         .execute(pool)
         .await
         .unwrap();

@@ -50,17 +50,17 @@ async fn epoch(pool: &PgPool) -> i64 {
 
 async fn role(pool: &PgPool) -> String {
     let name = format!("deploy_{}", Id::new().to_string().replace('-', ""));
-    sqlx::query(&format!("CREATE ROLE {name} LOGIN PASSWORD 'test-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE ROLE {name} LOGIN PASSWORD 'test-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION")))
         .execute(pool).await.unwrap();
     name
 }
 
 async fn remove_role(pool: &PgPool, name: &str) {
-    sqlx::query(&format!("DROP OWNED BY {name}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP OWNED BY {name}")))
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE {name}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {name}")))
         .execute(pool)
         .await
         .unwrap();

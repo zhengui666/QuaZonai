@@ -64,7 +64,7 @@ async fn advance(
     pool: &PgPool,
     worker: &server::worker::Worker,
     project: Id,
-    query: &str,
+    query: &'static str,
     parent: Id,
 ) -> Option<uuid::Uuid> {
     tokio::time::timeout(std::time::Duration::from_secs(10), async {

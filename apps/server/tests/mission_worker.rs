@@ -1351,7 +1351,7 @@ async fn daemon_recovers_summary_then_terminal_ack_without_another_model_request
         .unwrap();
     assert_eq!(absent, 0);
     sqlx::raw_sql("DROP TRIGGER reject_summary ON app.model_turn_summaries; DROP FUNCTION public.reject_summary_publication();").execute(&pool).await.unwrap();
-    sqlx::raw_sql(&format!("CREATE FUNCTION public.reject_mission_archive() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.message->>'run_id'='{}' THEN RAISE EXCEPTION 'injected Mission ACK failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_archive BEFORE INSERT ON pgmq.a_runs FOR EACH ROW EXECUTE FUNCTION public.reject_mission_archive();",f.lease.run.id)).execute(&pool).await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE FUNCTION public.reject_mission_archive() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.message->>'run_id'='{}' THEN RAISE EXCEPTION 'injected Mission ACK failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_archive BEFORE INSERT ON pgmq.a_runs FOR EACH ROW EXECUTE FUNCTION public.reject_mission_archive();",f.lease.run.id))).execute(&pool).await.unwrap();
     visible(&f, &pool).await;
     let (_stop, receiver) = tokio::sync::watch::channel(false);
     assert!(matches!(

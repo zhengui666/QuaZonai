@@ -31,14 +31,14 @@ pub(crate) async fn freeze(tx: &mut Tx<'_>, run: &RunSnapshotV1) -> Result<(), S
     }
     // Cancellation may settle before independent Validation publication. ACK
     // must wait for it, not freeze a false absence or resubmit the scientific job.
-    let pending: bool = sqlx::query_scalar(&format!("SELECT EXISTS(
+    let pending: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(
         SELECT 1 FROM app.runs r JOIN app.run_native_tasks n ON n.run_id=r.id
         WHERE r.cycle_id=$1 AND (NOT EXISTS(
             SELECT 1 FROM app.run_terminal_receipts t LEFT JOIN app.run_attempts a ON a.id=t.attempt_id
             WHERE t.run_id=r.id AND t.terminal_state=r.state AND t.attempt_id IS NOT DISTINCT FROM r.active_attempt_id
               AND (a.id IS NULL OR a.dispatch_state='TERMINAL') AND (r.state<>'SUCCEEDED' OR a.accepted_at IS NOT NULL))
           OR EXISTS(SELECT 1 FROM app.experiment_validations v WHERE v.run_id=r.id
-              AND NOT EXISTS(SELECT 1 FROM ({}) ev WHERE ev.run_id=v.run_id))))", evidence::EVALUATION))
+              AND NOT EXISTS(SELECT 1 FROM ({}) ev WHERE ev.run_id=v.run_id))))", evidence::EVALUATION)))
         .bind(cycle.as_uuid()).fetch_one(&mut **tx).await?;
     if pending {
         return Err(StoreError::Conflict);
@@ -128,7 +128,7 @@ FROM observed o LEFT JOIN ranked r USING(experiment_id)
 "#,
         evidence::EVALUATION
     );
-    sqlx::query(&query)
+    sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(cycle.as_uuid())
         .bind(run.project_id.as_uuid())
         .bind(db::json(&policy.selection_rule)?)

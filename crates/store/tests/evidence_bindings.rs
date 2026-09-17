@@ -575,7 +575,7 @@ async fn consumed_experiment_results_cannot_change_beneath_alpha_versions(pool: 
     ] {
         let sql = format!("UPDATE app.experiments SET {change} WHERE id=$1");
         sqlstate(
-            sqlx::query(&sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(a.experiment.as_uuid())
                 .execute(&pool)
                 .await
@@ -736,7 +736,7 @@ async fn accepted_manifest_requires_exact_producer_and_cannot_be_replaced(pool: 
     for field in ["accepted_at", "result_manifest_artifact_id"] {
         let sql = format!("UPDATE app.run_attempts SET {field}=NULL WHERE id=$1");
         sqlstate(
-            sqlx::query(&sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(f.fence.attempt_id.as_uuid())
                 .execute(&pool)
                 .await

@@ -87,9 +87,10 @@ async fn inspect(
         }
         let name: String = row.try_get("sql_name")?;
         // Identifiers are quoted by PostgreSQL from its own catalog, never caller SQL.
-        let rows: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {name}"))
-            .fetch_one(&mut **tx)
-            .await?;
+        let rows: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {name}")))
+                .fetch_one(&mut **tx)
+                .await?;
         let columns = sqlx::query("SELECT a.attname,format_type(a.atttypid,a.atttypmod) AS postgres_type,NOT a.attnotnull AS nullable,a.attidentity<>'' AS identity,a.attgenerated<>'' AS generated FROM pg_attribute a WHERE a.attrelid=$1::bigint::oid AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum")
                 .bind(row.try_get::<i64, _>("table_oid")?)
                 .fetch_all(&mut **tx).await?
@@ -153,9 +154,9 @@ async fn inspect(
                 nonnull.join(" OR ")
             ),
         };
-        let orphan_rows: i64 = sqlx::query_scalar(&format!(
+        let orphan_rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM {source} s WHERE {predicate}"
-        ))
+        )))
         .fetch_one(&mut **tx)
         .await?;
         foreign_keys.push(HistoricalForeignKeyCheckV1 {
