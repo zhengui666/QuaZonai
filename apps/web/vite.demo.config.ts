@@ -24,17 +24,17 @@ export default defineConfig({
     transformIndexHtml() {
       return [{ tag: 'aside', attrs: { role: 'note', 'aria-label': '合成预览说明',
         style: 'padding:12px;background:#fff3cd;color:#3b2e00;font:16px/1.5 sans-serif' },
-      children: 'SYNTHETIC / FIXTURE · 合成界面预览，尚非完整 Demo。可临时新建草稿项目、编辑名称、说明与项目状态（启用需冻结 Brief，归档不可退出），并在未归档示例项目创建或编辑 Brief 草稿（同一预览实例共享，重启清空）；其他写入禁用。PASS、资格及权重都是未经计算的假设记录；没有真实账号或交付，请勿输入凭据。', injectTo: 'body-prepend' }];
+      children: 'SYNTHETIC / FIXTURE · 无凭据完整交互演示。可编辑项目/Brief，并以显式合成 Runtime 与两个合成 Codex 配置冻结上下文、启动不会执行模型的演示 Cycle；Alpha、组合与目标包均为固定假设记录。所有状态仅在此进程内存中，重启清空；没有真实账号、科学计算、资格、审批或下游交付，请勿输入凭据。', injectTo: 'body-prepend' }];
     },
     configureServer(server) {
       const edit = projectEditor();
-      // This server has no upstream proxy or database connection.
+      // This server has no upstream proxy, database, Codex account or Runtime connection.
       server.middlewares.use(async (request, response, next) => {
         const url = new URL(request.url ?? '/', 'http://127.0.0.1');
         const pathname = url.pathname;
         if (!pathname.startsWith('/api/')) return next();
         let body: unknown;
-        if (request.method === 'PATCH' || (request.method === 'POST' && (pathname === '/api/v2/projects' || /^\/api\/v2\/projects\/[^/]+\/briefs$/.test(pathname)))) {
+        if (request.method === 'PATCH' || request.method === 'POST') {
           const origin = request.headers.origin;
           if (origin && origin !== `http://${request.headers.host}`) { response.writeHead(403); response.end(); return; }
           try {
@@ -43,7 +43,7 @@ export default defineConfig({
               const bytes = Buffer.from(chunk); size += bytes.length; chunks.push(bytes);
               if (size > 128 * 1024) { response.writeHead(413); response.end(); return; }
             }
-            body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
           } catch { response.writeHead(400); response.end(); return; }
         }
         const keys = request.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === 'idempotency-key');
