@@ -1,5 +1,6 @@
 // Complete credential-free SYNTHETIC interaction. It proves Demo behavior only;
 // no account, native model, Runtime, qualification or production delivery executes.
+import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import type { Schema } from '../src/api';
 import { navigate } from './fixtures';
@@ -108,10 +109,34 @@ test('credential-free Demo freezes context, starts a synthetic Cycle and reaches
   await navigate(page, '交付');
   await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: 'SYNTHETIC · 双 Alpha' }).click();
-  await expect(page.getByRole('button', { name: 'Release 00000510', exact: true })).toBeVisible();
+  const releaseId = '01990000-0000-7000-8000-000000000510';
+  const reading = page.waitForResponse(response => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === `/api/v2/releases/${releaseId}`);
   await page.getByRole('button', { name: 'Release 00000510', exact: true }).click();
-  await expect(page.getByText(/SYNTHETIC \/ FIXTURE/).first()).toBeVisible();
-  await expect(page.getByText(/不能审批、登记 Offer 或领取/).first()).toBeVisible();
+  const releaseResponse = await reading;
+  expect(releaseResponse.status()).toBe(200);
+  const release: Schema['ReleaseViewV1'] = await releaseResponse.json();
+  expect(release.environment).toBe('DEMO');
+  const details = page.getByRole('dialog', { name: '原始目标包版本', exact: true });
+  await expect(details.getByText('DEMO 目标包不能用于 Paper 或 Live 审批及交付。', { exact: true })).toBeVisible();
+  await expect(details.getByRole('button', { name: '审批此目标包', exact: true })).toBeDisabled();
+
+  // Inspect the original historical package; it is not evidence produced by the new Cycle.
+  const downloading = page.waitForEvent('download');
+  await details.getByRole('button', { name: '下载原始目标包', exact: true }).click();
+  const downloaded = await downloading;
+  expect(await downloaded.failure()).toBeNull();
+  expect(downloaded.suggestedFilename()).toBe(`${release.package_artifact_id}.bin`);
+  const file = await downloaded.path();
+  expect(file).not.toBeNull();
+  const contents: unknown = JSON.parse(await readFile(file!, 'utf8'));
+  expect(contents).toMatchObject({
+    release_id: releaseId, project_id: frozen.resource.brief.project_id,
+    limitations: expect.arrayContaining([
+      expect.stringContaining('SYNTHETIC / FIXTURE'),
+      expect.stringContaining('不能审批、登记 Offer 或领取'),
+    ]),
+  });
   expect(starts).toHaveLength(1);
   expect(failed).toEqual([]);
 });

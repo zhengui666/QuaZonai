@@ -129,15 +129,17 @@ export function projectEditor() {
     }
 
     if (method === 'POST' && parts[3] === 'briefs' && parts.length === 6 && parts[5] === 'freeze') {
-      if (!brief || !validBriefFreeze(body) || !validKey(key) || brief.state !== 'DRAFT') return invalid(method, path);
+      if (!validId(parts[4]) || !validBriefFreeze(body) || !validKey(key)) return invalid(method, path);
+      const encoded = [path, body]; const receiptKey = `freeze:${key}`;
+      // A lost acknowledgement remains replayable after freezing or archiving, as in Store.
+      const previous = replay(flowReceipts, receiptKey, encoded, method, path); if (previous) return previous;
+      if (!brief || brief.state !== 'DRAFT') return invalid(method, path);
       if (body.expected_revision !== brief.revision) return conflict(method, path, 'Brief 草稿已修改，请重新读取。');
       const project = projects.get(brief.project_id);
       if (!project || project.state === 'ARCHIVED' || body.execution_context.runtime_id !== demoRuntime.id || body.execution_context.runtime_revision !== demoRuntime.revision) return denied(method, path);
       const expected = (['DISCOVERY', 'VALIDATION', 'SEALED'] as const).map(purpose => originalInputs.get(purpose));
       const actual = [body.execution_context.discovery_input_set_id, body.execution_context.validation_input_set_id, body.execution_context.sealed_input_set_id];
       if (actual.some((value, index) => value !== expected[index])) return invalid(method, path);
-      const encoded = [path, body]; const receiptKey = `freeze:${key}`;
-      const previous = replay(flowReceipts, receiptKey, encoded, method, path); if (previous) return previous;
       const now = new Date().toISOString();
       const frozen: Schema['BriefView'] = { ...brief, state: 'FROZEN', frozen_at: now, updated_at: now };
       briefs.set(frozen.id, frozen); contexts.set(frozen.id, structuredClone(body.execution_context));
@@ -149,14 +151,16 @@ export function projectEditor() {
     }
 
     if (method === 'POST' && parts[3] === 'projects' && parts.length === 6 && parts[5] === 'cycles') {
-      if (!project || !validCycleStart(body) || !validKey(key) || project.state !== 'ACTIVE' || body.expected_revision !== project.revision) return invalid(method, path);
+      if (!validId(parts[4]) || !validCycleStart(body) || !validKey(key)) return invalid(method, path);
+      const encoded = [path, body]; const receiptKey = `cycle:${key}`;
+      // Replaying history must not depend on today's project state or create another Cycle.
+      const previous = replay(flowReceipts, receiptKey, encoded, method, path); if (previous) return previous;
+      if (!project || project.state !== 'ACTIVE' || body.expected_revision !== project.revision) return invalid(method, path);
       const selectedBrief = briefs.get(body.brief_id);
       if (!selectedBrief || selectedBrief.project_id !== project.id || selectedBrief.state !== 'FROZEN' || !contexts.has(selectedBrief.id)) return denied(method, path);
       const allowedProfiles = new Set(demoProfiles.map(item => item.id));
       if (!allowedProfiles.has(body.researcher_profile.profile_id) || !allowedProfiles.has(body.reviewer_profile.profile_id)
         || body.researcher_profile.expected_revision !== '1' || body.reviewer_profile.expected_revision !== '1') return invalid(method, path);
-      const encoded = [path, body]; const receiptKey = `cycle:${key}`;
-      const previous = replay(flowReceipts, receiptKey, encoded, method, path); if (previous) return previous;
       const ordinal = [...cycles.values()].filter(item => item.project_id === project.id).length + 1;
       const cycleId = id(3200 + cycles.size); const runId = id(3300 + dynamicRuns.size); const now = new Date().toISOString();
       const cycle: Schema['CycleViewV1'] = {
