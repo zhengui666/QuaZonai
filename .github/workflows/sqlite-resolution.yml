@@ -64,7 +64,7 @@ jobs:
           if (!files.includes('Cargo.lock')) files.unshift('Cargo.lock');
           const entries = [];
           for (const path of files) {
-            if (path !== 'Cargo.lock' && !/^(apps|crates|tests)\/.*\.rs$/.test(path)) {
+            if (!['Cargo.lock', 'docs/research/reuse.md'].includes(path) && !/^(apps|crates|tests)\/.*\.rs$/.test(path)) {
               throw new Error(`Unexpected generated change: ${path}`);
             }
             const content = await readFile(path, 'utf8');

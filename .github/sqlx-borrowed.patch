@@ -34,3 +34,79 @@
 @@ -36 +36 @@
 -    sqlx::query(sqlx::AssertSqlSafe(&sql)).execute(pool).await.unwrap();
 +    sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).execute(pool).await.unwrap();
+--- a/crates/store/src/lifecycle/portfolio.rs
++++ b/crates/store/src/lifecycle/portfolio.rs
+@@ -626 +626 @@
+-        pool.prepare(MEMBER_SOURCE).await.unwrap();
++        pool.prepare(sqlx::sql_str::SqlStr::from_static(MEMBER_SOURCE)).await.unwrap();
+--- a/crates/store/src/lifecycle/sealed/qualification.rs
++++ b/crates/store/src/lifecycle/sealed/qualification.rs
+@@ -74 +74 @@
+-        pool.prepare(INSERT).await.unwrap();
++        pool.prepare(sqlx::sql_str::SqlStr::from_static(INSERT)).await.unwrap();
+--- a/docs/research/reuse.md
++++ b/docs/research/reuse.md
+@@ -155 +155 @@
+-`apps/runtime` 使用既有SQLx **0.8.6** 的原生SQLite driver/migration、WAL与FULL同步模式，通过短 `BEGIN IMMEDIATE` 事务管理远端任务身份、对象BLOB与唯一终态；PostgreSQL/PGMQ仍是研究预算与业务权威，不复制业务队列。依据为[原生SQLx事务入口](https://docs.rs/sqlx/0.8.6/sqlx/struct.Pool.html#method.begin_with)及[SQLite WAL语义](https://sqlite.org/wal.html)。真实SQLite并发、重开、取消与输出/manifest事务已进入实际测试，不能用这些测试替代PostgreSQL或Docker隔离。
++`apps/runtime` 使用既有SQLx **0.9.0** 的原生SQLite driver/migration、WAL与FULL同步模式，通过短 `BEGIN IMMEDIATE` 事务管理远端任务身份、对象BLOB与唯一终态；PostgreSQL/PGMQ仍是研究预算与业务权威，不复制业务队列。依据为[原生SQLx事务入口](https://docs.rs/sqlx/0.9.0/sqlx/struct.Pool.html#method.begin_with)及[SQLite WAL语义](https://sqlite.org/wal.html)。真实SQLite并发、重开、取消与输出/manifest事务已进入实际测试，不能用这些测试替代PostgreSQL或Docker隔离。
+@@ -184 +184 @@
+-采用 Rust SQLx **0.8.6**（原生 PostgreSQL driver、Tokio、migration、test 宏），在独立数据库复用 PostgreSQL **18** 与 PGMQ **1.10.0**。本地实际测试版本为 PostgreSQL18.1；CI 继续固定原有原生 OCI digest 并输出实际版本。没有新增 Python 例外，也没有自建消息队列、迁移运行器或模型工具循环。
++当前采用 Rust SQLx **0.9.0**（原生 PostgreSQL driver、Tokio、migration、test 宏），在独立数据库复用 PostgreSQL **18** 与 PGMQ **1.10.0**。此前本地实际测试版本为 PostgreSQL18.1，该历史结果不证明新 SQLx 版本已通过；CI 继续固定原有原生 OCI digest 并输出实际版本。没有新增 Python 例外，也没有自建消息队列、迁移运行器或模型工具循环。
+@@ -187,2 +187,2 @@
+-- [SQLx0.8.6 test 宏](https://docs.rs/sqlx/0.8.6/sqlx/attr.test.html)：每个测试创建隔离数据库并应用指定迁移；失败保留用于诊断。采用 `#[sqlx::test(migrations="../../migrations")]`，不以 SQLite/in-memory mock 代替 PostgreSQL。
+-- [SQLx0.8.6 migrate 宏](https://docs.rs/sqlx/0.8.6/sqlx/macro.migrate.html)：复用原生 embedded migration runner；build.rs 监听 migrations，新增迁移也触发重编译。
++- [SQLx0.9.0 test 宏](https://docs.rs/sqlx/0.9.0/sqlx/attr.test.html)：每个测试创建隔离数据库并应用指定迁移；失败保留用于诊断。采用 `#[sqlx::test(migrations="../../migrations")]`，不以 SQLite/in-memory mock 代替 PostgreSQL。
++- [SQLx0.9.0 migrate 宏](https://docs.rs/sqlx/0.9.0/sqlx/macro.migrate.html)：复用原生 embedded migration runner；build.rs 监听 migrations，新增迁移也触发重编译。
+@@ -198,3 +198,3 @@
+-采用 [tower-sessions 0.14.0](https://docs.rs/tower-sessions/0.14.0/tower_sessions/)
+-和 [官方 SQLx Store 0.15.0](https://docs.rs/tower-sessions-sqlx-store/0.15.0/)
+-的 opaque cookie/session 与 PostgreSQL 持久化。上游明确警告并发 session 更新可能
++采用 [tower-sessions 0.15.0](https://docs.rs/tower-sessions/0.15.0/tower_sessions/)
++和 [官方 SQLx Store 修订 d18c9bf](https://github.com/maxcountryman/tower-sessions-stores/blob/d18c9bf76f1d4fb73130dbe5aa643197f14b5d2d/sqlx-store/src/postgres_store.rs)
++的 opaque cookie/session 与 PostgreSQL 持久化。该适配器是固定上游 Git 修订，虽仍标注 0.15.0，不能当作已发布的 SQLx0.9 兼容 crate；Time 固定为0.3.47。上游明确警告并发 session 更新可能
+@@ -282 +282 @@
+-The pinned `tower-sessions-sqlx-store 0.15.0` exposes only `migrate(&self)`;
++The pinned upstream `tower-sessions-sqlx-store` revision `d18c9bf76f1d4fb73130dbe5aa643197f14b5d2d` exposes only `migrate(&self)`;
+@@ -298,0 +299,36 @@
++
++### Bundled SQLite WAL reliability and SQLx compatibility
++
++Runtime pins `libsqlite3-sys =0.37.0` with SQLx `=0.9.0`; the bundled engine is
++SQLite **3.51.3**, which includes the upstream WAL-reset corruption fix.
++This is preventive data reliability, not evidence that existing user data is corrupt.
++Sources: [SQLite WAL](https://www.sqlite.org/wal.html),
++[3.51.3 release](https://www.sqlite.org/releaselog/3_51_3.html), and
++[the binding](https://docs.rs/crate/libsqlite3-sys/0.37.0).
++
++The initial Runtime-only change failed native Cargo resolution because old and new
++SQLite bindings both declare `links=sqlite3`. Unifying the existing SQLx consumers
++and using the exact official session adapter above avoids a second native library,
++database framework or first-party session store. The actual Cargo resolver owns
++Cargo.lock; no registry checksums or dependency graph are handwritten.
++
++SQLx0.9 requires `SqlSafeStr`. Existing dynamic SQL fragments are audited constants,
++closed choices or identifiers already quoted by the native PostgreSQL/projection
++path. Use upstream `AssertSqlSafe` at those call sites without changing SQL, value
++binds, authority, locks or transactions. It is an assertion, **not a sanitizer**;
++no blanket conversion for arbitrary strings is introduced. Owned strings and
++borrowed `&str` retain the actual query's lifetime. The migration call uses native
++`run_direct(None, connection, false)`: all pending versions execute, not skip.
++Sources: [SQLx0.9](https://github.com/transact-rs/sqlx/discussions/4271),
++[SqlSafeStr](https://docs.rs/sqlx/0.9.0/sqlx/sql_str/index.html), and
++[upstream migration execution](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-core/src/migrate/migrator.rs).
++
++The original session DDL attribution above remains historical. The new adapter's
++schema, bound CRUD and MessagePack record format were compared with the original
++source; that inspection does not replace real migration/session/TOTP/recovery
++tests. The existing Runtime journal test reads `sqlite_version()`, WAL mode,
++instance identity and integrity through the **linked SQLx connection**, not a host
++CLI. Existing PostgreSQL, browser, OCI and cold-restore checks remain required.
++[PR #87](https://github.com/zhengui666/QuaZonai/pull/87) owns exact-Head results and
++failed iterations. Compilation or this dependency fix is not complete T40/T42
++acceptance or an owner-host deployment.
+@@ -330 +366 @@
+-| 事务与数据库锁 | SQLx 0.8.6 `Transaction`；PostgreSQL18行锁/FK/trigger | 冻结预算、精确 Run/Attempt 关联、唯一回执与终态 |
++| 事务与数据库锁 | SQLx 0.9.0 `Transaction`；PostgreSQL18行锁/FK/trigger | 冻结预算、精确 Run/Attempt 关联、唯一回执与终态 |
+@@ -336 +372 @@
+-- https://docs.rs/sqlx/0.8.6/sqlx/struct.Transaction.html
++- https://docs.rs/sqlx/0.9.0/sqlx/struct.Transaction.html
