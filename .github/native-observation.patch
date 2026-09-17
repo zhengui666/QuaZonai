@@ -1,0 +1,72 @@
+--- a/apps/runtime/tests/native_oci.rs
++++ b/apps/runtime/tests/native_oci.rs
+@@ -1800,10 +1800,35 @@
+     let created = docker.create_container(Some(options), body).await.unwrap();
+     docker.start_container(&created.id, None).await.unwrap();
+     let outcome = tokio::time::timeout(Duration::from_secs(15), async {
++        let mut observed_terminal = None;
+         loop {
+             let current = docker.inspect_container(&created.id, None).await.unwrap();
+-            if current.state.as_ref().unwrap().running == Some(false) {
+-                return current;
++            let state = current.state.as_ref().unwrap();
++            if state.running == Some(false) {
++                let snapshot = (state.exit_code, state.oom_killed);
++                if observed_terminal != Some(snapshot) {
++                    let limits = current.host_config.as_ref().unwrap();
++                    // Native scalar evidence only; no credentials, paths or environment.
++                    println!(
++                        "{}",
++                        serde_json::json!({
++                            "scope": "test-owned native resource probe",
++                            "mode": mode,
++                            "running": state.running,
++                            "exit_code": state.exit_code,
++                            "oom_killed": state.oom_killed,
++                            "memory": limits.memory,
++                            "memory_swap": limits.memory_swap,
++                            "pids_limit": limits.pids_limit
++                        })
++                    );
++                    observed_terminal = Some(snapshot);
++                }
++                // Docker processes exit and OOM events separately. Do not delete
++                // the memory probe before observing both required facts.
++                if mode != "memory" || state.oom_killed == Some(true) {
++                    return current;
++                }
+             }
+             tokio::time::sleep(Duration::from_millis(50)).await;
+         }
+--- a/apps/runtime/tests/native_restore.rs
++++ b/apps/runtime/tests/native_restore.rs
+@@ -194,7 +194,13 @@
+     assert_eq!(fs::metadata(&state).unwrap().mode() & 0o777, 0o700);
+     // Comparison precedes reopening SQLite, which may legitimately checkpoint WAL.
+     tar("compare-restored-copy", "--compare", &checkpoint, &state).await;
+-    tar("compare-retained-original", "--compare", &checkpoint, &saved).await;
++    tar(
++        "compare-retained-original",
++        "--compare",
++        &checkpoint,
++        &saved,
++    )
++    .await;
+     assert!(!state.join("credential").exists());
+     assert!(!state.join("runtime.json").exists());
+ 
+@@ -254,7 +260,13 @@
+     assert!(container_ids(cancelled.run_id).await.is_empty());
+     assert_eq!(fixture.status(&original).await, status);
+     assert!(serde_json::to_value(fixture.manifest(&original).await).unwrap() == manifest_value);
+-    tar("compare-original-after-new-job", "--compare", &checkpoint, &saved).await;
++    tar(
++        "compare-original-after-new-job",
++        "--compare",
++        &checkpoint,
++        &saved,
++    )
++    .await;
+     fixture.assert_private_logs();
+     println!(
+         "{}",
