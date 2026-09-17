@@ -1,9 +1,9 @@
-import { App as AntApp, Alert, Button, ConfigProvider, Drawer, Grid, Layout, Menu, Result, Space, Typography } from 'antd';
+import { App as AntApp, Alert, Button, ConfigProvider, Drawer, Grid, Layout, Menu, Space, Typography } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { ApartmentOutlined, ExperimentOutlined, ExportOutlined, FundOutlined, MenuOutlined, PlayCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { Component, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ErrorInfo, ReactNode } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { api, AUTH_CHANGED, REAUTH_REQUIRED } from './api';
 import type { Schema } from './api';
 import { AuthBoundary, VerifyDialog } from './auth';
@@ -20,16 +20,6 @@ const queries = new QueryClient({ defaultOptions: {
   queries: { retry: false, staleTime: 15_000, gcTime: 60_000, networkMode: 'always', refetchOnWindowFocus: true },
   mutations: { retry: false, gcTime: 0, networkMode: 'always' },
 } });
-class RenderBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-  static getDerivedStateFromError() { return { failed: true }; }
-  componentDidCatch(_error: Error, _info: ErrorInfo) { /* Never log authentication or business payloads. */ }
-  render() {
-    return this.state.failed ? <main className="auth-page"><Result status="error" title="页面未能正常显示"
-      subTitle="这不代表服务器上的操作已失败或被取消。请重新载入，核对服务器记录后再操作。"
-      extra={<Button onClick={() => window.location.reload()}>重新载入页面</Button>} /></main> : this.props.children;
-  }
-}
 function AuthenticationRoot() {
   const client = useQueryClient();
   const [epoch, setEpoch] = useState(0);
@@ -114,7 +104,7 @@ function Console({ session, signedOut }: { session: Schema['BrowserSession']; si
         <ErrorNotice error={logoutError} />
         {content}
       </Layout.Content>
-      <Layout.Footer className="console-footer">QuaZonai · 当前为研究控制面，不是券商订单执行器。完整 Issue #62 产品验收尚未完成。</Layout.Footer>
+      <Layout.Footer className="console-footer">QuaZonai · 开发版本，完整生产验收尚未完成。仅交付目标组合，不执行券商订单。</Layout.Footer>
     </Layout>
     <Drawer title="主导航" placement="left" open={menuOpen && !screens.lg} onClose={() => setMenuOpen(false)} width={280}>{menu}</Drawer>
     <VerifyDialog open={verify} close={() => setVerify(false)} />
@@ -127,12 +117,12 @@ export default function App() {
   // so a later OS preference change cannot remount the console or discard a form.
   const [motionProviderReady, setMotionProviderReady] = useState(false);
   useLayoutEffect(() => { setMotionProviderReady(true); }, []);
-  return <RenderBoundary><ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{ token: {
+  return <ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{ token: {
     colorPrimary: '#2857b4', colorLink: '#2857b4', colorLinkHover: '#1f4796', colorLinkActive: '#183b80',
     colorError: '#b42318', colorErrorHover: '#8f1c13', colorErrorActive: '#72160f',
     colorTextSecondary: '#596273', colorTextTertiary: '#596273', colorTextDescription: '#596273', colorTextPlaceholder: '#596273',
     borderRadius: 8, controlHeight: 44, fontSize: 15, motion: motionProviderReady && !reducedMotion,
   } }}>
     <AntApp><QueryClientProvider client={queries}><GuardProvider><AuthenticationRoot /></GuardProvider></QueryClientProvider></AntApp>
-  </ConfigProvider></RenderBoundary>;
+  </ConfigProvider>;
 }

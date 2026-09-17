@@ -5,62 +5,67 @@
 
 **Task ID:** `personal-production`.
 
-**Source:** the owner's 2026-09-17 request to turn the demonstration into a genuinely usable personal project across code, architecture, documentation, deployment and user experience, using CodexPro and OpenSDLC.
+**Source:** the owner's 2026-09-17 request to make the demo genuinely usable as a personal production project across code, architecture, documentation, deployment and UX, using CodexPro and OpenSDLC.
 
-**Endpoint:** implemented behavior, actual acceptance of the complete research/delivery/recovery workflow, latest-Head CI and explicit independent clean review, then authorized delivery. A deployment template or a scoped maintenance PR does not complete this endpoint or [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62).
+**Endpoint:** implemented behavior, actual acceptance of the complete research/delivery/recovery workflow, latest-Head CI and explicit independent clean review, then authorized delivery. [PR #85](https://github.com/zhengui666/QuaZonai/pull/85) is the first implementation slice, not completion of the whole request or [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62).
 
 <a id="intent"></a>
 ## Intent
 
-A personal installation must have a real, persistent entry point, understandable operations and recoverable failures. Keep the existing single-user, Rust, official Ant Design and target-only ownership model. Remove obsolete product-facing development narration without removing limitations, migration history, licenses, user data or the evidence required to verify delivery.
+A personal installation needs a persistent real-service entry, understandable operations and recoverable failures. Keep the existing single-user, Rust, official Ant Design and target-only model. Clean product-facing development narration without deleting limitations, migration history, licenses, user data, Git history or acceptance evidence.
 
-Reuse the completed [maintenance](../production-maintenance/task.md) and [onboarding](../open-source-foundation/task.md) work rather than recreating their policies. [DESIGN](../../../DESIGN.md) remains the product contract; [the existing evidence index](../../../docs/architecture/issue-62-execution.md) owns whole-product coverage.
+Reuse the existing [maintenance](../production-maintenance/task.md) and [onboarding](../open-source-foundation/task.md) work. [DESIGN](../../../DESIGN.md) remains the product contract; the [existing evidence index](../../../docs/architecture/issue-62-execution.md) owns whole-product coverage. The repository has no language override; this new task and guide use OpenSDLC's English default while existing Chinese documents retain Chinese.
 
 <a id="spec"></a>
 ## Requirements and design
 
-The first implementation slice is a maintainable personal-hosting boundary, not a new business engine:
+| Area | Implemented slice | Remaining whole-request responsibility |
+| --- | --- | --- |
+| Code | Consolidate the existing rendering boundary at the real root, covering App's own hooks and descendants; require confirmed recovery and avoid printing exception payloads | Audit and resolve remaining domain/Worker/runtime gaps through their actual call chains, not an unverified rewrite |
+| Architecture | Reuse Caddy and systemd around the existing API/Worker/PostgreSQL/PGMQ/Codex/Runtime owners | Complete the original end-to-end product contract and real integration acceptance |
+| Documentation | Prioritize real hosting, separate synthetic preview, add one hosting/recovery guide, remove product-facing research/development narration | Audit oversized active manuals and historical annotations without losing fields, contracts or real evidence |
+| Deployment | Native API/Worker units, private environment example, exclusive same-origin gateway and actual gateway regressions | Real selected-host TLS, process restart, persistent data, backup and restore acceptance |
+| UX | Generic error state, keyboard-operable reload confirmation, no replay/cancellation claim, root and descendant browser fault cases at three widths; remove Issue-number narration from the footer while retaining development status | Full real research/evaluation/portfolio/target-delivery and mobile acceptance |
 
-- **Code:** protect the actual React root against rendering failures; recovery must not silently replay mutations, expose exception contents or imply that reloading cancels server work.
-- **Architecture:** retain the current API, Worker, PostgreSQL/PGMQ, Codex and separate Runtime responsibilities. Reuse native Caddy for static files and same-origin reverse proxying, and systemd for process supervision. Do not add a custom proxy, orchestration DSL, migration-on-start behavior or microservices.
-- **Documentation:** put real hosting before synthetic preview, with one operator path and links to authoritative configuration, research and recovery contracts. Keep the preview explicitly synthetic.
-- **Deployment:** provide actual API/Worker service definitions, operator-owned environment examples and a gateway configuration. Preserve Host/Origin, API status/body, SSE streaming and missing-asset errors. Never turn an API failure into the SPA shell. Keep the built web directory separate from private state, credentials and the source checkout.
-- **Experience:** render a readable, keyboard-accessible recovery state at desktop/tablet/mobile widths; require confirmation before a full reload discards unsubmitted UI state. Already submitted operations can remain active or have unknown outcomes.
-
-This packaging instantiates existing contracts; it does not alter qualification, approval, identity or research state machines. A live process is not readiness, and neither is research acceptance. Public TLS issuance, actual host restart, persistent data, real Codex/data/Runtime research, target delivery and backup restoration still require their respective real environments.
+A live process is not readiness. An empty integration allowlist or missing Codex binding is not research readiness. QZ does not own broker credentials, orders, positions, NAV or downstream trading controls. No domain state-machine, generated-contract or qualification change is introduced by this packaging.
 
 <a id="plan"></a>
-## Implementation plan
+## Implementation and reuse
 
-Inspected baseline: `0b9a47aa117175e9e204974b3b6942a427787fe1`; source tree `17e57ac411091002c10cd0f1d625b7a92d280179`. Read AGENTS, DESIGN ownership/layout, existing OpenSDLC tasks, README, architecture navigation, server CLI/router/shutdown/state creation, web entry/Vite/PWA/Playwright and the existing Web workflow. The API already has native graceful shutdown; reuse it rather than claim a new fix.
+Inspected baseline: `0b9a47aa117175e9e204974b3b6942a427787fe1`. Read AGENTS, DESIGN ownership/layout, current OpenSDLC records, README, architecture navigation, CONTRIBUTING, server CLI/router/shutdown/state creation, web main/App/Vite/PWA/Playwright and existing Web CI. Native shutdown already exists and is reused.
 
-1. Add `apps/web/src/AppErrorBoundary.tsx`, wrap `apps/web/src/main.tsx`, and add a real-browser rendering-fault regression to the existing three-viewport suite without production test hooks or new dependencies.
-2. Add `deploy/Caddyfile`, `deploy/systemd/quazonai-api.service`, `deploy/systemd/quazonai-worker.service` and `deploy/quazonai.env.example`. State initialization remains an explicit, new-directory-only command; migrations continue to use a separate privileged identity.
-3. Add `deploy/proxy.test.mjs` that runs real Caddy against an explicitly synthetic local HTTP peer and static directory. Test routing, Host/Origin, error preservation, missing assets, methods and streaming. Use Node's existing test runner. Add native deployment validation in `.github/workflows/deployment.yml`; do not deploy or inject production secrets.
-4. Add `docs/user-guide.md` for personal hosting and recovery; simplify README navigation and remove its product-facing development-research narration while retaining canonical research records and truthful acceptance limits.
-5. Run available checks, inspect exact-Head CI and request read-only GitHub Codex review. Fix actual findings. Keep this branch unmerged if required checks or review are unavailable. Do not substitute successful fixtures for the owner's complete production requirement.
-6. Continue with the existing evidence index's genuine whole-product gaps: full authorized research and independent evaluation, portfolio/target delivery, operational recovery and persistent real-host/browser acceptance. Audit large domain/UI modules and obsolete active documents with their call chains before deleting or restructuring them.
+`App.tsx` already had an inner `RenderBoundary`; reading only `main.tsx` initially missed it. Remove that duplicate and move its responsibility to `AppErrorBoundary` around the actual root, rather than keep two competing recovery behaviors. Add both root and nested-authentication fault cases; React's native `onCaughtError` emits only a fixed diagnostic, never the exception body. The unchanged base commit and fault fixture preserve the pre-fix version, but a runtime pre-fix failure has not been observed in this session.
 
-Highest risks: treating a template as a tested installation, masking API failures with HTML, losing in-memory unresolved-request data on reload, and erasing valid historical evidence while cleaning presentation. Do not reset the original dirty checkout or other worktrees.
+Paths: `apps/web/src/{App,AppErrorBoundary,main}.tsx`, `apps/web/tests/error-boundary.spec.ts`, `deploy/Caddyfile`, `deploy/systemd/quazonai-{api,worker}.service`, `deploy/quazonai.env.example`, `deploy/proxy.test.mjs`, `.github/workflows/deployment.yml`, `docs/user-guide.md`, README and this task.
+
+Gateway decisions: preserve original Host/Origin and backend path/status/body, keep API/health routes out of SPA fallback, leave missing build files as 404, retain native SSE streaming and no configured command retries. Serve only built public assets, never the checkout or state. systemd runs native foreground commands and does not migrate, initialize keys or synthesize readiness. `init-state` remains a new-directory-only operation. Existing data, credentials, worktrees and licenses are untouched.
 
 <a id="verification"></a>
 ## Verification
 
-At plan creation, no implementation checks have run for this branch. CodexPro's direct workspace entry, stable wrapper and configuration read returned upstream HTTP 502; no local workspace contents or local execution are claimed. GitHub reads and the isolated branch creation succeeded. Earlier PR results are baseline history only.
+Actually executed before the first implementation publication:
 
-The deployment fixture is a routing test, not real API/database/market acceptance. systemd parsing is not a started service. Browser rendering-fault tests are not real research acceptance. Record exact commands and outcomes as they occur; queued, unavailable, failed or skipped checks are not passes.
+- `node --check deploy/proxy.test.mjs`: exit 0 in the current sandbox.
+- Workflow YAML parsing and newline/trailing-whitespace checks: passed for the 11 initial implementation files.
+- Native `systemd-analyze verify` on both actual unit files: exit 0, using a temporary `/usr/bin/true` executable stand-in only for syntax resolution. No service started; the stand-in was removed.
+
+On implementation commit `82c02b8f6efd620fa85d24cef0f7106fd4fb9d2d`, the [Personal hosting run](https://github.com/zhengui666/QuaZonai/actions/runs/35169054480) passed. Its job `105036524174` executed actual Caddy 2.11.4: 8 tests passed, 0 failed/skipped, covering HTML/HEAD, PWA/missing assets, raw request and Host/Origin/idempotency preservation, backend 404/503, no observed mutation replay, non-navigation methods, first SSE event while upstream stayed open, and backend outage. Native systemd parsing and unchanged-source checks passed there too. This is a historical result for that exact commit, not automatic approval of later Heads.
+
+The routing peer is synthetic, not a database or scientific result. systemd syntax is not a started QZ service. Rendering fixtures do not execute research. Browser/TypeScript/build, full applicable repository CI, the subsequent root/descendant consolidation and independent review must be checked against the actual latest PR Head. They are pending unless the linked native results explicitly show otherwise.
+
+CodexPro direct workspace, stable wrapper, configuration and later minimal workspace reads returned HTTP 502. GitHub reads and writes succeeded. No owner-host execution, credentials, real-account research, live delivery, restart or restore has been observed. Do not call a skipped/unavailable prerequisite a pass.
 
 <a id="review"></a>
 ## Review
 
-Independent review and latest-Head CI are pending. GitHub will own their authoritative results. GitHub Codex may review only; it must not implement, commit or alter this branch. No author self-review counts as independent approval.
+[PR #85 review](https://github.com/zhengui666/QuaZonai/pull/85) is authoritative. GitHub Codex was requested read-only for `82c02b8`; it was running at the last observation before consolidation. A new Head requires new review. Do not count author inspection, an old-Head result or a queued review as independent approval. Resolve actionable findings and rerun affected validation before any merge.
 
 <a id="delivery"></a>
 ## Delivery
 
-No merge, deployment or production acceptance has occurred in this task. The complete owner request remains open even when this first implementation slice is published.
+Draft PR #85 exists on `codex/personal-production-20260917`. No merge, deployment or whole-product acceptance has occurred. The owner's full request and Issue #62 remain open. Do not close them for this scoped slice.
 
 <a id="handoff"></a>
-## Handoff
+## Handoff and next work
 
-Work branch: `codex/personal-production-20260917`, isolated from main and the inaccessible local checkout. Reconcile its actual Head, PR, CI and review before retrying writes or continuing. Recover CodexPro access before claiming any verification on the owner's host. Do not request or transmit account credentials in chat, logs or repository files.
+Reconcile actual PR Head, pending/failed CI and independent review first; fix observed defects rather than narrowing assertions. Then use the existing whole-product coverage index to complete real authorized research, independent evaluation, portfolio/target delivery and disposable restore/restart acceptance. Continue source/document cleanup only after tracing affected callers and preserving their contracts. Recover CodexPro access before claiming any execution on the owner's machine. Never reset the original dirty checkout or another worktree, paste credentials into chat/logs, or replace missing real evidence with fixtures.
