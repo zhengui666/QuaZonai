@@ -1,0 +1,50 @@
+# Draft-only native dependency generation. Remove before final PR acceptance.
+# This never modifies handwritten source, commits, pushes or uses account data.
+name: Runtime SQLite dependency resolution
+on:
+  pull_request:
+permissions:
+  contents: read
+env:
+  EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+  RUSTUP_TOOLCHAIN: '1.98.1'
+  CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+jobs:
+  resolve:
+    name: Draft / native lockfile and compatibility diagnostics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          persist-credentials: false
+      - name: Record the exact candidate and native compiler
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          mkdir -p "$RUNNER_TEMP/sqlite-resolution"
+          git rev-parse HEAD > "$RUNNER_TEMP/sqlite-resolution/tested-commit.txt"
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv > "$RUNNER_TEMP/sqlite-resolution/rustc.txt"
+      - name: Resolve the declared versions using Cargo, not handwritten checksums
+        run: |
+          set -euo pipefail
+          rustup run "$RUSTUP_TOOLCHAIN" cargo metadata --format-version 1 --features runtime/native-oci > "$RUNNER_TEMP/sqlite-resolution/cargo-metadata.json"
+          cp Cargo.lock "$RUNNER_TEMP/sqlite-resolution/Cargo.lock"
+          rustup run "$RUSTUP_TOOLCHAIN" cargo tree --locked -p runtime --edges normal,build > "$RUNNER_TEMP/sqlite-resolution/runtime-dependencies.txt"
+          git diff --exit-code -- . ':(exclude)Cargo.lock'
+      - name: Compile the Runtime targets against the generated lockfile
+        run: |
+          set -euo pipefail
+          rustup run "$RUSTUP_TOOLCHAIN" cargo check --locked -p runtime --all-targets --features native-oci --message-format=json > "$RUNNER_TEMP/sqlite-resolution/compiler.jsonl"
+          git diff --exit-code -- . ':(exclude)Cargo.lock'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sqlite-resolution-${{ env.EXPECTED_HEAD }}
+          path: ${{ runner.temp }}/sqlite-resolution/
+          retention-days: 7
+          if-no-files-found: error
