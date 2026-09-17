@@ -84,3 +84,62 @@ jobs:
             [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]]
             docker image rm "$image"
           fi
+  authored-file-transfer:
+    name: Draft / materialize the authored Mission regression
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          persist-credentials: false
+      - name: Apply only the exact authored patch and native formatter
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git apply --check .github/mission-expiry.patch
+          git apply .github/mission-expiry.patch
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt
+          rustup run "$RUSTUP_TOOLCHAIN" cargo fmt --all
+          git diff --check
+          mkdir -p "$RUNNER_TEMP/mission-authored"
+          git diff HEAD > "$RUNNER_TEMP/mission-authored/applied.diff"
+      - name: Stage the exact source without a commit, push or ref update
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { execFileSync } from 'node:child_process';
+          const path = 'apps/server/tests/mission_worker.rs';
+          const changed = execFileSync('git', ['diff', '--name-only', 'HEAD'], { encoding: 'utf8' }).trim();
+          if (changed !== path) throw new Error('Unexpected authored-source changes');
+          const content = await readFile(path, 'utf8');
+          const response = await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+              Accept: 'application/vnd.github+json',
+              'Content-Type': 'application/json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+            body: JSON.stringify({ content, encoding: 'utf-8' }),
+          });
+          if (response.status !== 201) throw new Error(`Source staging failed: HTTP ${response.status}`);
+          const blob = await response.json();
+          await writeFile(`${process.env.RUNNER_TEMP}/mission-authored/mission_worker.rs`, content);
+          await writeFile(`${process.env.RUNNER_TEMP}/mission-authored/entry.json`, JSON.stringify({
+            source_head: process.env.EXPECTED_HEAD,
+            path, mode: '100644', type: 'blob', sha: blob.sha,
+          }, null, 2) + '\n');
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mission-authored-${{ env.EXPECTED_HEAD }}
+          path: ${{ runner.temp }}/mission-authored/
+          if-no-files-found: error
+          retention-days: 7

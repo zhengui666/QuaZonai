@@ -1,0 +1,79 @@
+--- a/apps/server/tests/mission_worker.rs
++++ b/apps/server/tests/mission_worker.rs
+@@ -1609,7 +1609,12 @@
+         .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
+         .await
+         .unwrap();
+-    let deadline = sqlx::query_scalar("SELECT clock_timestamp()+interval '1 second'")
++    // Leave time for the real preparation transaction, then test both sides of
++    // its immutable deadline. Preparation speed is not the behavior under test.
++    let deadline = sqlx::query_scalar(
++        "SELECT LEAST(clock_timestamp()+interval '10 seconds',$1::timestamptz)",
++    )
++        .bind(f.lease.run.deadline_at)
+         .fetch_one(&pool)
+         .await
+         .unwrap();
+@@ -1636,7 +1641,37 @@
+         TurnProgress::Unresolved
+     );
+     assert_eq!(f.provider.request_count(), 0);
+-    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
++    let before = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
++    assert!(!before.state.is_terminal() && before.cancellation_requested_at.is_none());
++    let (stored_deadline, observed_at): (
++        chrono::DateTime<chrono::Utc>,
++        chrono::DateTime<chrono::Utc>,
++    ) = sqlx::query_as(
++        "SELECT deadline_at,clock_timestamp() FROM app.model_turn_reservations WHERE id=$1",
++    )
++    .bind(reserved.id.as_uuid())
++    .fetch_one(&pool)
++    .await
++    .unwrap();
++    assert_eq!(stored_deadline, deadline);
++    assert!(
++        observed_at < stored_deadline,
++        "observe the unresolved original dispatch before its real deadline"
++    );
++    // No held domain locks, edited reservation, simulated clock or fixed sleep.
++    sqlx::query("SELECT pg_sleep_until($1::timestamptz)")
++        .bind(stored_deadline)
++        .execute(&pool)
++        .await
++        .unwrap();
++    let expired: bool = sqlx::query_scalar(
++        "SELECT deadline_at<=clock_timestamp() FROM app.model_turn_reservations WHERE id=$1",
++    )
++    .bind(reserved.id.as_uuid())
++    .fetch_one(&pool)
++    .await
++    .unwrap();
++    assert!(expired, "the second poll must follow actual database expiry");
+     assert_eq!(
+         connection
+             .drive_turn(
+@@ -1652,7 +1687,7 @@
+     );
+     let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
+     assert_eq!(run.state, RunState::CancelRequested);
+-    assert!(run.cancellation_requested_at.is_some());
++    assert!(run.cancellation_requested_at.unwrap() >= stored_deadline);
+     let item = f
+         .store
+         .mission_turn_checkpoint(run.id, &f.lease.fence)
+@@ -1660,7 +1695,13 @@
+         .unwrap();
+     assert_eq!(item.accounted_tokens.get(), 0);
+     let latest = item.latest.unwrap();
+-    assert!(latest.sent && latest.native_turn_id.is_none() && latest.receipt.is_none());
++    assert_eq!(latest.reservation, reserved);
++    assert!(
++        latest.sent
++            && latest.native_turn_id.is_none()
++            && latest.terminal.is_none()
++            && latest.receipt.is_none()
++    );
+     assert_eq!(f.provider.request_count(), 0);
+     connection.client.close().await.unwrap();
+ }
