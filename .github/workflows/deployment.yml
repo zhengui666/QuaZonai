@@ -8,7 +8,7 @@ permissions:
   contents: read
 jobs:
   gateway:
-    name: Deployment / native gateway and service syntax
+    name: Deployment / gateway and user-manager prerequisites
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -31,12 +31,26 @@ jobs:
         env:
           CADDY_BIN: ${{ runner.temp }}/caddy
         run: node --test deploy/proxy.test.mjs
-      - name: Verify systemd syntax without starting or claiming real services
+      - name: Verify native user-manager launch and user-unit syntax
         run: |
           set -euo pipefail
-          # systemd-analyze also requires ExecStart to exist. This syntax-only
-          # fixture is confined to the disposable runner; it is not a QZ build.
+          # Reuse the Store workflow's native user-manager setup.
+          mission_uid=$(id -u)
+          sudo loginctl enable-linger "$mission_uid"
+          sudo systemctl start "user@$mission_uid.service"
+          export XDG_RUNTIME_DIR="/run/user/$mission_uid"
+          systemctl --user show --property=Version
+          # Syntax resolution only; this is not an executable QZ service.
           sudo install -D -m 0755 /usr/bin/true /opt/quazonai/current/bin/server
-          systemd-analyze verify deploy/systemd/quazonai-api.service deploy/systemd/quazonai-worker.service
+          systemd-analyze --user verify deploy/systemd/quazonai-api.service deploy/systemd/quazonai-worker.service
+          # A user service must be able to create the bounded native user scope
+          # used by Missions, without depending on an interactive login shell.
+          probe="quazonai-deployment-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'systemctl --user stop "$probe.service" "$probe.scope" >/dev/null 2>&1 || true' EXIT
+          systemd-run --user --unit="$probe.service" --wait --pipe --collect \
+            /usr/bin/systemd-run --user --scope --quiet --collect --expand-environment=no \
+            --unit="$probe.scope" --property=CPUQuota=25% --property=MemoryMax=64M \
+            --property=MemorySwapMax=0 --property=TasksMax=32 --property=RuntimeMaxSec=10 \
+            -- /usr/bin/prlimit --core=0:0 -- /usr/bin/true
       - name: Require unchanged source
         run: git diff --exit-code
