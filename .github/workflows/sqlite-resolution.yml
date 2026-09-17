@@ -1,5 +1,6 @@
 # Draft-only native dependency generation. Remove before final PR acceptance.
-# This never modifies handwritten source, commits, pushes or uses account data.
+# Uploads only Cargo's generated lockfile as an unreferenced Git blob.
+# No handwritten source edits, commits, branch updates, pushes or account data.
 name: Runtime SQLite dependency resolution
 on:
   pull_request:
@@ -16,6 +17,8 @@ jobs:
     name: Draft / native lockfile and compatibility diagnostics
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -36,6 +39,32 @@ jobs:
           cp Cargo.lock "$RUNNER_TEMP/sqlite-resolution/Cargo.lock"
           rustup run "$RUSTUP_TOOLCHAIN" cargo tree --locked -p runtime --edges normal,build > "$RUNNER_TEMP/sqlite-resolution/runtime-dependencies.txt"
           git diff --exit-code -- . ':(exclude)Cargo.lock'
+      - name: Upload only the native-generated lock blob without publishing a branch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises';
+          const content = await readFile('Cargo.lock', 'utf8');
+          const response = await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+              Accept: 'application/vnd.github+json',
+              'Content-Type': 'application/json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+            body: JSON.stringify({ content, encoding: 'utf-8' }),
+          });
+          if (response.status !== 201) throw new Error(`Native lock blob upload failed: HTTP ${response.status}`);
+          const blob = await response.json();
+          await writeFile(`${process.env.RUNNER_TEMP}/sqlite-resolution/generated-lock-blob.json`, JSON.stringify({
+            repository: process.env.GITHUB_REPOSITORY,
+            source_head: process.env.EXPECTED_HEAD,
+            sha: blob.sha,
+            url: blob.url,
+          }, null, 2) + '\n');
+          NODE
       - name: Compile all workspace targets against the generated lockfile
         run: |
           set -euo pipefail

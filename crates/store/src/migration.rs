@@ -1,6 +1,6 @@
 //! Native SQLx migration execution, surrounded by one PostgreSQL write cutover.
 use crate::{Store, StoreError};
-use sqlx::{migrate::Migrate, Connection};
+use sqlx::{migrate::Migrate, AssertSqlSafe, Connection};
 
 impl Store {
     /// Use the migration identity, after pausing API/worker writers. A dedicated
@@ -32,7 +32,7 @@ impl Store {
             ).fetch_all(&mut *tx).await?;
             for table in tables {
                 // Identifiers come exclusively from PostgreSQL's %I formatter.
-                sqlx::query(&format!("LOCK TABLE {table} IN SHARE ROW EXCLUSIVE MODE"))
+                sqlx::query(AssertSqlSafe(format!("LOCK TABLE {table} IN SHARE ROW EXCLUSIVE MODE")))
                     .execute(&mut *tx).await?;
             }
             let quoted_role = if let Some(role) = application_role {
@@ -49,8 +49,8 @@ impl Store {
             }
             // Native Migrate::lock above already serializes this exact database.
             // Retain it through the OUTER commit, rather than releasing it at a
-            // nested savepoint. No custom version/checksum/migration runner.
-            migrator.set_locking(false).run_direct(&mut *tx).await?;
+            // nested savepoint. None applies all versions; false never skips SQL.
+            migrator.set_locking(false).run_direct(None, &mut *tx, false).await?;
             // CREATE IF NOT EXISTS alone does not validate an existing table.
             let compatible: bool = sqlx::query_scalar(include_str!("session_schema.sql"))
                 .fetch_one(&mut *tx).await?;
@@ -58,6 +58,8 @@ impl Store {
                 return Err(StoreError::Invalid("native_session_schema_incompatible"));
             }
             if let Some(role) = quoted_role {
+                // The role is returned by pg_catalog.quote_ident above; values
+                // never enter these statements without native identifier quoting.
                 for statement in [
                     format!("GRANT USAGE ON SCHEMA app,tower_sessions,pgmq TO {role}"),
                     format!("GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA app TO {role}"),
@@ -65,7 +67,7 @@ impl Store {
                     format!("GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA tower_sessions,pgmq TO {role}"),
                     format!("GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA pgmq TO {role}"),
                 ] {
-                    sqlx::query(&statement).execute(&mut *tx).await?;
+                    sqlx::query(AssertSqlSafe(statement)).execute(&mut *tx).await?;
                 }
             }
             tx.commit().await?;

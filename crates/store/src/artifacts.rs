@@ -14,9 +14,10 @@ use contracts::{
     DbCounter, Id,
 };
 use serde_json::json;
-use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
+use sqlx::{postgres::PgRow, AssertSqlSafe, Postgres, Row, Transaction};
 
 type Tx = Transaction<'static, Postgres>;
+// Composed queries interpolate only this fixed projection; all values stay bound.
 const FIELDS: &str = "id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,byte_count,access_class,origin,created_by,created_at";
 
 fn view(row: &PgRow) -> Result<ArtifactView, StoreError> {
@@ -139,7 +140,7 @@ impl ArtifactUpload {
             "INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) \
              VALUES($1,$2,$3,$4,$5,$6,$7,'1','LOCAL',$8,'1',$9,'RESEARCH','SYNTHETIC',$10,'REFERENCED') RETURNING {FIELDS}",
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(AssertSqlSafe(query))
             .bind(id.as_uuid())
             .bind(self.project.as_uuid())
             .bind(self.authority.run.map(Id::as_uuid))
@@ -248,9 +249,9 @@ impl Store {
         if !exists {
             return Err(StoreError::NotFound);
         }
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(AssertSqlSafe(format!(
             "SELECT {FIELDS} FROM app.artifacts WHERE project_id=$1 AND access_class=ANY($2) AND ($3::uuid IS NULL OR id<$3) ORDER BY id DESC LIMIT $4",
-        )).bind(query.project_id.as_uuid()).bind(visible(actor)).bind(query.cursor.map(Id::as_uuid))
+        ))).bind(query.project_id.as_uuid()).bind(visible(actor)).bind(query.cursor.map(Id::as_uuid))
             .bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let items = rows.iter().map(view).collect::<Result<Vec<_>, _>>()?;
         tx.commit().await?;
@@ -295,7 +296,7 @@ impl Store {
 }
 
 async fn authorized_row(tx: &mut Tx, actor: &Actor, id: Id) -> Result<PgRow, StoreError> {
-    let row = sqlx::query(&format!("SELECT {FIELDS},storage_backend,storage_object_ref,storage_version FROM app.artifacts WHERE id=$1 AND project_id IS NOT NULL AND access_class=ANY($2)"))
+    let row = sqlx::query(AssertSqlSafe(format!("SELECT {FIELDS},storage_backend,storage_object_ref,storage_version FROM app.artifacts WHERE id=$1 AND project_id IS NOT NULL AND access_class=ANY($2)")))
         .bind(id.as_uuid()).bind(visible(actor)).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)?;
     let project = db::id(row.try_get("project_id")?)?;
     authority::read_project(tx, actor, project, MachineScope::ResearchRead).await?;
