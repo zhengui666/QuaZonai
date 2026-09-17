@@ -127,7 +127,10 @@ async fn cold_round_trip() {
     assert_eq!(native_state.running, Some(false));
     let instance =
         native.config.as_ref().unwrap().labels.as_ref().unwrap()["io.quazonai.runtime"].clone();
-    assert_eq!(container_ids(original.run_id).await, [container_id.clone()]);
+    assert_eq!(
+        container_ids(original.run_id).await.as_slice(),
+        std::slice::from_ref(&container_id)
+    );
 
     // Cancel before any POST for this new identity. The resulting tombstone must
     // survive the archive, even though it has no launch, container or outputs.
