@@ -59,9 +59,15 @@ async fn output_bytes(
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[header::CONTENT_TYPE], artifact.media_type);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            artifact.media_type
+        );
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-        assert_eq!(response.headers()[header::CONTENT_DISPOSITION], "attachment");
+        assert_eq!(
+            response.headers()[header::CONTENT_DISPOSITION],
+            "attachment"
+        );
         let bytes = response.bytes().await.unwrap();
         assert_eq!(bytes.len() as u64, artifact.byte_count.get());
         if artifact.kind == RuntimeOutputKind::Model {
@@ -119,9 +125,8 @@ async fn cold_round_trip() {
     let container_id = native.id.clone().unwrap();
     let native_state = native.state.as_ref().unwrap();
     assert_eq!(native_state.running, Some(false));
-    let instance = native.config.as_ref().unwrap().labels.as_ref().unwrap()
-        ["io.quazonai.runtime"]
-        .clone();
+    let instance =
+        native.config.as_ref().unwrap().labels.as_ref().unwrap()["io.quazonai.runtime"].clone();
     assert_eq!(container_ids(original.run_id).await, [container_id.clone()]);
 
     // Cancel before any POST for this new identity. The resulting tombstone must
@@ -152,7 +157,10 @@ async fn cold_round_trip() {
     let wal_bytes = fs::metadata(state.join("journal.sqlite-wal"))
         .expect("unclean native shutdown must retain its WAL checkpoint")
         .len();
-    assert!(wal_bytes > 32, "exercise actual WAL recovery, not an empty archive");
+    assert!(
+        wal_bytes > 32,
+        "exercise actual WAL recovery, not an empty archive"
+    );
     let checkpoint = fixture.directory.path().join("checkpoint.tar");
     let saved = fixture.directory.path().join("retained-original-state");
     let before_inode = fs::metadata(&state).unwrap().ino();
@@ -192,7 +200,10 @@ async fn cold_round_trip() {
     assert_eq!(fixture.submit(&cancelled).await, tombstone);
     assert!(container_ids(cancelled.run_id).await.is_empty());
     let recovered_container = fixture.native_container(&original).await;
-    assert_eq!(recovered_container.id.as_deref(), Some(container_id.as_str()));
+    assert_eq!(
+        recovered_container.id.as_deref(),
+        Some(container_id.as_str())
+    );
     assert_eq!(recovered_container.restart_count, native.restart_count);
     let recovered_state = recovered_container.state.as_ref().unwrap();
     assert_eq!(recovered_state.running, Some(false));
@@ -212,7 +223,13 @@ async fn cold_round_trip() {
     assert_eq!(next_manifest.state, RuntimeResultState::Succeeded);
     output_bytes(&fixture, &next, &next_manifest).await;
     let next_container = fixture.native_container(&next).await;
-    let next_labels = next_container.config.as_ref().unwrap().labels.as_ref().unwrap();
+    let next_labels = next_container
+        .config
+        .as_ref()
+        .unwrap()
+        .labels
+        .as_ref()
+        .unwrap();
     assert_eq!(next_labels["io.quazonai.runtime"], instance);
     assert_ne!(next_container.id, native.id);
     assert!(container_ids(cancelled.run_id).await.is_empty());
