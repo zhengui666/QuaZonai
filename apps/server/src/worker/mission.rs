@@ -53,7 +53,9 @@ impl Worker {
         message: RunMessage,
         owner: &'a str,
         mut shutdown: watch::Receiver<bool>,
-    ) -> impl std::future::Future<Output = Result<(), WorkerFailure>> + Send + 'a {
+    ) -> std::pin::Pin<
+        Box<impl std::future::Future<Output = Result<(), WorkerFailure>> + Send + 'a>,
+    > {
         Box::pin(async move {
             let launcher = self.missions.as_ref().ok_or(WorkerFailure::TaskKind)?;
             if *shutdown.borrow() || shutdown.has_changed().is_err() {
@@ -630,18 +632,24 @@ mod tests {
 
     #[test]
     fn mission_dispatch_does_not_inline_the_nested_pipeline() {
-        // Inspect the compiler's actual return type without a database, native
-        // process or constructing/polling the potentially oversized future.
-        fn inline_size<'a, F>(
-            _: impl FnOnce(&'a Worker, RunMessage, &'a str, watch::Receiver<bool>) -> F,
+        // Infer the boxed pointee, not the pointer-sized public handle. Removing
+        // the drive_mission pin must be visible in the enclosing async state.
+        // No database, process or potentially oversized future is constructed.
+        fn inline_size<'a, F: std::future::Future>(
+            _: impl FnOnce(
+                &'a Worker,
+                RunMessage,
+                &'a str,
+                watch::Receiver<bool>,
+            ) -> std::pin::Pin<Box<F>>,
         ) -> usize {
             std::mem::size_of::<F>()
         }
 
         let bytes = inline_size(Worker::process_mission_message);
         assert!(
-            bytes <= 1024,
-            "Mission dispatch embeds {bytes} bytes; keep the nested pipeline off parent futures"
+            bytes <= 64 * 1024,
+            "Mission dispatch state embeds {bytes} bytes; keep large child futures separately pinned"
         );
     }
 }
