@@ -14,30 +14,48 @@ Prepare the [supported build environment](../CONTRIBUTING.md#set-up-a-checkout),
 
 ### 1. Build a reviewed revision
 
-In the selected checkout, after its required checks and review are accepted:
+Select a revision whose required checks and review are accepted. Use a dedicated checkout, at its repository root, with no concurrent edits or branch switches. Preserve unfinished work in its existing checkout; do not reset, clean or stash it merely to install a release. Create the dedicated `quazonai` service account using the host's account-management tools, with its own group and home `/var/lib/quazonai`; inspect an existing account before reusing it.
+
+Run this entire block in one dedicated shell. It rejects tracked, staged or untracked source changes before building and checks the same revision and worktree again before installation. An error stops the block without selecting a release. Ignored build output is not source evidence; these checks do not replace independent CI/review or make concurrent editing safe.
 
 ```sh
-rustup run 1.98.1 cargo build --locked --release -p server --bin server
+set -eu
+worktree_state=$(git status --porcelain=v1 --untracked-files=all)
+if [ -n "$worktree_state" ]; then
+  printf '%s\n' 'Refusing release: checkout has uncommitted or untracked changes.' >&2
+  exit 1
+fi
+revision=$(git rev-parse --verify HEAD)
+
+rustup run 1.98.1 cargo build --locked --release --target-dir target -p server --bin server
 npm --prefix apps/web ci --ignore-scripts --no-audit --no-fund
 npm --prefix apps/web run build
-```
 
-`target/release/server` is the shared native CLI/API/Worker executable; `apps/web/dist` is the public static web build. Neither `make demo-preview` nor `vite preview` is the hosted production server. Do not put the source checkout, `.env`, database dumps, Codex home or private state under a web root.
-
-Create the dedicated `quazonai` service account using the host's account-management tools, with its own group and home `/var/lib/quazonai`. Do not modify an existing account without inspecting its use. Install a **new** release directory; keep existing releases and state intact:
-
-```sh
-revision=$(git rev-parse --verify HEAD)
+built_revision=$(git rev-parse --verify HEAD)
+worktree_state=$(git status --porcelain=v1 --untracked-files=all)
+if [ "$built_revision" != "$revision" ] || [ -n "$worktree_state" ]; then
+  printf '%s\n' 'Refusing release: source changed during the build.' >&2
+  exit 1
+fi
 release="/opt/quazonai/releases/$revision"
 sudo install -d -m 0755 /opt/quazonai/releases
-sudo mkdir "$release"
+sudo mkdir -m 0755 -- "$release"
 sudo install -d -m 0755 "$release/bin" "$release/web"
 sudo install -m 0755 target/release/server "$release/bin/server"
 sudo cp -R apps/web/dist/. "$release/web/"
 sudo chmod -R u=rwX,go=rX "$release/web"
+printf 'Installed release: %s\n' "$release"
 ```
 
-For a first installation only, `sudo ln -s "$release" /opt/quazonai/current` selects the release. It must fail rather than replace an existing selection; use the upgrade procedure below for an existing installation. The selected release and public web files should be owned by the administrator, not the API's writable service account.
+`target/release/server` is the shared native CLI/API/Worker executable; `apps/web/dist` is the public static web build. Neither `make demo-preview` nor `vite preview` is the hosted production server. Do not put the source checkout, `.env`, database dumps, Codex home or private state under a web root. The explicit directory modes allow the unprivileged services to traverse the release even when the administrator uses umask `077`. A release directory that already exists is rejected, not reused; inspect any incomplete installation before deciding how to handle it.
+
+For a **first installation only**, in the same successful shell session, select the installed release:
+
+```sh
+sudo ln -sT -- "$release" /opt/quazonai/current
+```
+
+The command must fail when `current` already exists, whether it is a symlink, directory or file. It does not overwrite the old selection or create a link inside an old release. Use the upgrade procedure below for an existing installation. The selected release and public web files should be owned by the administrator, not the API's writable service account. A copied release is not an activated or verified service.
 
 ### 2. Prepare persistent state and database access
 
@@ -129,10 +147,13 @@ Caddy terminates HTTPS and serves files; it does not own application sessions or
 ## Verify changes to the hosting boundary
 
 ```sh
+node --test deploy/install.test.mjs
 CADDY_BIN=/path/to/caddy node --test deploy/proxy.test.mjs
 npm --prefix apps/web run test:e2e -- error-boundary.spec.ts
 ```
 
+The installation regression executes the guide's build/install/selection control flow in a disposable Git checkout using real Git and GNU coreutils, but replaces compilation with explicitly synthetic files and does not use root. It tests directory modes, failure propagation, dirty-source rejection and existing-selection preservation, not compilation, account permissions or deployment. The real builds remain the responsibility of the existing CI/Web checks.
+
 The browser command uses the existing Playwright servers and requires the built web assets, installed dependencies and Chromium described in [CONTRIBUTING](../CONTRIBUTING.md#verify-the-change). The gateway test launches real Caddy with temporary files and an explicitly synthetic HTTP peer; it does not authenticate or execute research. The [hosting workflow](../.github/workflows/deployment.yml) also parses the actual user-unit files with a syntax-only executable stand-in and checks a native user-service → bounded user-scope launch with `prlimit`. The latter uses `/usr/bin/true`, not QZ, Codex or an account; it verifies only the native process-launch prerequisite. A valid unit file and a usable user manager still do not prove the configured QZ services started. The existing Web workflow verifies TypeScript, the browser regressions and its real-API suite. None of these checks is a production deployment.
 
-Implementation references: [Caddy SPA patterns](https://caddyserver.com/docs/caddyfile/patterns), [native proxy behavior](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy), [systemd services](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html), and [React error boundaries](https://react.dev/reference/react/Component#catching-rendering-errors-with-an-error-boundary).
+Implementation references: [Caddy SPA patterns](https://caddyserver.com/docs/caddyfile/patterns), [native proxy behavior](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy), [systemd services](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html), [React error boundaries](https://react.dev/reference/react/Component#catching-rendering-errors-with-an-error-boundary), [Git status](https://git-scm.com/docs/git-status), and [GNU target-directory behavior](https://www.gnu.org/software/coreutils/manual/html_node/Target-directory.html).

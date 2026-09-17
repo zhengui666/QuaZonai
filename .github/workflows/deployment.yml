@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
+      - name: Verify guide installation commands with native Git and coreutils
+        run: node --test deploy/install.test.mjs
       - name: Obtain the pinned native Caddy binary without starting a container
         run: |
           set -euo pipefail
