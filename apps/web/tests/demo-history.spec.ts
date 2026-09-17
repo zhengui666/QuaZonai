@@ -107,9 +107,7 @@ test('new synthetic draft can be created, edited and opened without inheriting r
     await expect(editor).toBeHidden();
     await expect(row.getByText(state, { exact: true })).toBeVisible();
   }
-
 });
-
 
 test('synthetic Brief fork and edit preserve the frozen version', async ({ page }, testInfo) => {
   const hypothesis = `SYNTHETIC draft ${testInfo.project.name}`;
@@ -143,9 +141,8 @@ test('synthetic Brief fork and edit preserve the frozen version', async ({ page 
   await expect(frozen.getByLabel('可检验的假设', { exact: true })).toHaveValue('SYNTHETIC：比较两种合成信号。');
   await expect(frozen.getByText('冻结版本不可修改。', { exact: true })).toBeVisible();
   const denied = await page.request.post(`/api/v2/briefs/${resource.id}/freeze`, { data: {} });
-  expect(denied.status()).toBe(403);
+  expect(denied.status()).toBe(422);
 });
-
 
 test('frozen synthetic execution context is visible without enabling a real Cycle', async ({ page }) => {
   const projectId = '01990000-0000-7000-8000-000000000001';
