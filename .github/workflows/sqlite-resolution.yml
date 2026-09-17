@@ -43,6 +43,10 @@ jobs:
               git apply --check --unidiff-zero .github/sqlx-borrowed.patch
               git apply --unidiff-zero .github/sqlx-borrowed.patch
             fi
+            if test -f .github/sqlx-docs.patch; then
+              git apply --check --unidiff-zero .github/sqlx-docs.patch
+              git apply --unidiff-zero .github/sqlx-docs.patch
+            fi
             rustup run "$RUSTUP_TOOLCHAIN" cargo fmt --all
           fi
       - name: Resolve the declared versions using Cargo, not handwritten checksums
@@ -64,7 +68,7 @@ jobs:
           if (!files.includes('Cargo.lock')) files.unshift('Cargo.lock');
           const entries = [];
           for (const path of files) {
-            if (!['Cargo.lock', 'docs/research/reuse.md'].includes(path) && !/^(apps|crates|tests)\/.*\.rs$/.test(path)) {
+            if (!['Cargo.lock', 'docs/research/reuse.md', 'DESIGN.md'].includes(path) && !/^(apps|crates|tests)\/.*\.rs$/.test(path)) {
               throw new Error(`Unexpected generated change: ${path}`);
             }
             const content = await readFile(path, 'utf8');
