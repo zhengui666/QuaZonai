@@ -159,7 +159,7 @@ test('Brief drafts retain frozen history, references and idempotent revisions', 
   expect(edit('PATCH', `/api/v2/briefs/${draft.id}`, update, 'stale')?.status).toBe(409);
   expect(edit('PATCH', `/api/v2/briefs/${frozen.id}`, update, 'frozen')?.status).toBe(403);
   expect(edit('GET', `/api/v2/briefs/${frozen.id}`)?.value).toEqual(frozen);
-  expect(edit('POST', `/api/v2/briefs/${draft.id}/freeze`, {}, 'freeze')).toBeUndefined();
+  expect(edit('POST', `/api/v2/briefs/${draft.id}/freeze`, {}, 'freeze')).toMatchObject({ status: 422, value: { code: 'VALIDATION_ERROR' } });
   expect(edit('GET', `/api/v2/projects/${id(1)}`)).toMatchObject({ value: { current_brief_id: frozen.id, state: 'DRAFT' } });
   const page = edit('GET', path, undefined, undefined, new URLSearchParams('limit=1'))!;
   expect(validateResponse('/api/v2/projects/{id}/briefs', 'get', 200, page.value, 'application/json')).toBe(true);
