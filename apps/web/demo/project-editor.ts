@@ -133,7 +133,7 @@ export function projectEditor() {
       if (body.expected_revision !== brief.revision) return conflict(method, path, 'Brief 草稿已修改，请重新读取。');
       const project = projects.get(brief.project_id);
       if (!project || project.state === 'ARCHIVED' || body.execution_context.runtime_id !== demoRuntime.id || body.execution_context.runtime_revision !== demoRuntime.revision) return denied(method, path);
-      const expected = ['DISCOVERY', 'VALIDATION', 'SEALED'].map(purpose => originalInputs.get(purpose));
+      const expected = (['DISCOVERY', 'VALIDATION', 'SEALED'] as const).map(purpose => originalInputs.get(purpose));
       const actual = [body.execution_context.discovery_input_set_id, body.execution_context.validation_input_set_id, body.execution_context.sealed_input_set_id];
       if (actual.some((value, index) => value !== expected[index])) return invalid(method, path);
       const encoded = [path, body]; const receiptKey = `freeze:${key}`;
