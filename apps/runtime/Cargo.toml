@@ -17,6 +17,11 @@ name = "native_oci"
 path = "tests/native_oci.rs"
 required-features = ["native-oci"]
 
+[[test]]
+name = "native_restore"
+path = "tests/native_restore.rs"
+required-features = ["native-oci"]
+
 [dependencies]
 contracts = { path = "../../crates/contracts" }
 domain = { path = "../../crates/domain" }
