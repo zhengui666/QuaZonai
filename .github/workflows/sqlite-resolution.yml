@@ -1,5 +1,5 @@
-# Temporary native execution entry. Delete this and its exact patch before delivery.
-# Applies only the assistant-authored patch; no model, commit, branch update or push.
+# Temporary native execution entry. Delete this and its exact patches before delivery.
+# Applies only assistant-authored patches; no model, commit, branch update or push.
 name: Runtime SQLite dependency resolution
 on:
   pull_request:
@@ -32,13 +32,17 @@ jobs:
           git archive --format=tar HEAD > "$RUNNER_TEMP/sqlite-resolution/source.tar"
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt
           rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv > "$RUNNER_TEMP/sqlite-resolution/rustc.txt"
-      - name: Apply only the exact authored patch and native formatting
+      - name: Apply only the exact authored patches and native formatting
         run: |
           set -euo pipefail
           if test -f .github/sqlx-compatibility.patch.gz; then
             gzip --decompress --stdout .github/sqlx-compatibility.patch.gz > "$RUNNER_TEMP/sqlite-resolution/authored.patch"
             git apply --check --unidiff-zero "$RUNNER_TEMP/sqlite-resolution/authored.patch"
             git apply --unidiff-zero "$RUNNER_TEMP/sqlite-resolution/authored.patch"
+            if test -f .github/sqlx-borrowed.patch; then
+              git apply --check --unidiff-zero .github/sqlx-borrowed.patch
+              git apply --unidiff-zero .github/sqlx-borrowed.patch
+            fi
             rustup run "$RUSTUP_TOOLCHAIN" cargo fmt --all
           fi
       - name: Resolve the declared versions using Cargo, not handwritten checksums

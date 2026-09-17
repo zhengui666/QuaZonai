@@ -1,0 +1,36 @@
+--- a/apps/server/tests/auth_http.rs
++++ b/apps/server/tests/auth_http.rs
+@@ -337 +337 @@
+-        sqlx::query(sqlx::AssertSqlSafe(&sql)).execute(&pool).await.unwrap();
++        sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).execute(&pool).await.unwrap();
+--- a/apps/server/tests/recovery_access.rs
++++ b/apps/server/tests/recovery_access.rs
+@@ -131 +131 @@
+-    assert!(sqlx::query(sqlx::AssertSqlSafe(&ddl)).execute(&pool).await.is_ok());
++    assert!(sqlx::query(sqlx::AssertSqlSafe(ddl.as_str())).execute(&pool).await.is_ok());
+@@ -411 +411 @@
+-    assert!(sqlx::query(sqlx::AssertSqlSafe(&ddl)).execute(&restored_pool).await.is_ok());
++    assert!(sqlx::query(sqlx::AssertSqlSafe(ddl.as_str())).execute(&restored_pool).await.is_ok());
+--- a/apps/server/tests/worker_http.rs
++++ b/apps/server/tests/worker_http.rs
+@@ -314 +314 @@
+-    assert!(sqlx::query(sqlx::AssertSqlSafe(&ddl)).execute(&pool).await.is_ok());
++    assert!(sqlx::query(sqlx::AssertSqlSafe(ddl.as_str())).execute(&pool).await.is_ok());
+--- a/crates/store/src/historical_rows.rs
++++ b/crates/store/src/historical_rows.rs
+@@ -41 +41 @@
+-        let sql = &staged.select;
++        let sql = staged.select.as_str();
+--- a/crates/store/tests/evidence_bindings.rs
++++ b/crates/store/tests/evidence_bindings.rs
+@@ -578 +578 @@
+-            sqlx::query(sqlx::AssertSqlSafe(&sql))
++            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+@@ -739 +739 @@
+-            sqlx::query(sqlx::AssertSqlSafe(&sql))
++            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+--- a/crates/store/tests/runtime_role.rs
++++ b/crates/store/tests/runtime_role.rs
+@@ -36 +36 @@
+-    sqlx::query(sqlx::AssertSqlSafe(&sql)).execute(pool).await.unwrap();
++    sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).execute(pool).await.unwrap();
