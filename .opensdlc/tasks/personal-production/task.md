@@ -47,7 +47,7 @@ Preview paths: `apps/web/demo/project-editor.ts`, `apps/web/src/demo-{editor,flo
 
 ### Exact-version, receipt and consistency repairs
 
-The initial [field-level plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5708172724) records the `e278832...` baseline. The [review/CI continuation plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5709034237) records the seven findings on `cf11b7be1fad4f62270d777700dd33f3dae842ec` and the actual failed browser checks.
+The initial [field-level plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5708172724) records the `e278832...` baseline. The [review/CI continuation plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5709034237) records the findings on `cf11b7be1fad4f62270d777700dd33f3dae842ec` and the actual failed browser checks.
 
 `demo-complete.spec.ts` scopes startup to the newly authored Brief row, not the first global button. Response waiters precede clicks. Assertions bind the freeze response's Brief ID to the startup dialog, request and returned Cycle, project and Run, and require one startup request. It opens the exact new Run and the separate historical Cycle's selection, retaining Alpha/portfolio/Release navigation. Normal-flow 4xx/5xx responses are failures.
 
@@ -58,6 +58,12 @@ The existing `replay` helper precedes mutable freeze/start state checks, after p
 The Cycle Map includes the original history, lists it once and allocates max ordinal plus one. A newly simulated Cycle returns `NO_SUPPORTED_CANDIDATE`, zero experiments and only `VIEW_BRIEF`/`VIEW_RUNS`; it cannot advertise a nonexistent selection. Its Run deadline derives from its queued time and frozen wall budget. The static selection and original records remain unchanged.
 
 The earlier proposed rebinding of the original Brief was rejected after reading `records.ts`: its context already exists and points to historical Runtime 220/revision 1, now disabled at revision 2. It remains readable but does not inherit Runtime 2980. The quickstart explicitly forks a new Brief for the interactive path. Runtime lists retain both records, reuse existing pagination and report the new configuration as `NOT_CHECKED` with no available jobs or probe. Unit regressions cover receipt reuse, exact bindings, no side effects, unique ordinals, deadlines, historical identity and honest readiness. The banner and README explain these same boundaries.
+
+### Static headers and draft-validation correction
+
+The [additional plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5709232741) follows inspection of both summary comments and actual inline threads. The original static response policy in `apps/web/Caddyfile` was missing from the new deployment entry. A native snippet now applies its same five header values to existing asset/navigation/fallback handlers, without altering API/health headers or adding a new security mechanism. The existing real-Caddy suite compares actual static response values against the established file, covers GET/HEAD/PWA/plain files/missing assets and verifies that a distinct upstream CSP/cache policy passes through unchanged. Existing status/body/single-dispatch/SSE checks remain.
+
+The new ALL-bindings regression originally expected an empty draft to save; this was a test-authoring error, not a production bug. `bindingListError` already requires 1–64 bindings. The corrected test explicitly rejects empty POST/PATCH drafts and checks unchanged project, Brief and list state. Three separate nonempty missing-role cases still prove that freeze fails without side effects and succeeds after restoring matching bindings. Neither the schema nor production validation is loosened; README distinguishes these stages.
 
 <a id="verification"></a>
 ## Verification
@@ -73,8 +79,9 @@ Historical prior-session sandbox checks recorded `node --check deploy/proxy.test
 | `e278832e89c557208cc66a3f48408f50f14150d2` | [Web 35173462519](https://github.com/zhengui666/QuaZonai/actions/runs/35173462519), job `105050663835`: Rust/OpenAPI, generation, types, 517 Vitest, 5 Node tests and build passed; Demo failed on ambiguous Cycle button | Later browser stages skipped |
 | `0cc9f5a51091f340ce3bd28cbe788fe50d6956ad` | [Web 35179601047](https://github.com/zhengui666/QuaZonai/actions/runs/35179601047), job `105068709837`: exact-version startup reached Release details; package-only text was incorrectly expected in DOM | Demo failed; later stages skipped |
 | `37308b87d728f4f6437267e3cbfdd66b97d624ab` | [Web 35179717849](https://github.com/zhengui666/QuaZonai/actions/runs/35179717849), job `105069667017`: TypeScript passed, 518 Vitest passed and six new receipt tests failed with 422 before replay | Recorded pre-repair regression |
-| `cf11b7be1fad4f62270d777700dd33f3dae842ec` | [Web 35180454929](https://github.com/zhengui666/QuaZonai/actions/runs/35180454929), job `105071255371`: types, 524 Vitest, 5 Node tests, build and complete Demo passed; three viewports 414 passed / 6 failed | Outdated banner and incomplete nested-auth fault fixture each failed at three widths; real-API acceptance skipped. Review also found seven consistency/documentation defects |
+| `cf11b7be1fad4f62270d777700dd33f3dae842ec` | [Web 35180454929](https://github.com/zhengui666/QuaZonai/actions/runs/35180454929), job `105071255371`: types, 524 Vitest, 5 Node tests, build and complete Demo passed; three viewports 414 passed / 6 failed | Outdated banner and incomplete nested-auth fault fixture each failed at three widths; real-API acceptance skipped. Independent review also identified consistency/documentation and static-header defects |
 | `cf11b7be1fad4f62270d777700dd33f3dae842ec` | [Native Runtime 35180454966](https://github.com/zhengui666/QuaZonai/actions/runs/35180454966), job `105072256454`: nalgebra 0.33.3 download failed with repeated HTTP 502 | Dependency transport failure; do not downgrade or remove checks. CI 35180454722, CodeQL 35180454681 and hosting 35180454817 succeeded for this Head only |
+| `b60b45fa3fd4346805296bdd84196f005e5ed568` | [Web 35185171980](https://github.com/zhengui666/QuaZonai/actions/runs/35185171980), job `105085579101`: Rust/OpenAPI, generation and TypeScript passed; **530 passed / 1 failed of 531 Vitest tests** | Empty-bindings test incorrectly expected 201 instead of the existing 422 draft rejection. Other 13 flow cases passed; subsequent Node/build/browser stages skipped. This led to the test correction above |
 
 Require the final published Head's full Web contract/unit/build/Demo/three-viewport/PWA/native-browser checks and every other applicable CI workflow. Read actual failures and fix the source or test fault; do not weaken assertions, increase timeouts to hide defects, or count queued/skipped/cancelled/absent checks as passes. Final verification and review evidence are recorded in PR #85 without treating historical green results as approval.
 
@@ -83,7 +90,7 @@ The routing peer is synthetic; user-manager probes use `/usr/bin/true`, not QZ/C
 <a id="review"></a>
 ## Review
 
-[PR #85](https://github.com/zhengui666/QuaZonai/pull/85) owns independent review and CI results. The prior clean response on `6335a23732` and review of `933c545` do not cover the Demo changes. The `cf11b7b` review reported seven findings; source/docs repairs above require fresh final-Head review, not author self-approval. GitHub Codex remains read-only.
+[PR #85](https://github.com/zhengui666/QuaZonai/pull/85) owns independent review and CI results. The prior clean response on `6335a23732` and review of `933c545` do not cover the Demo changes. Inspect the union of summary findings and all inline threads, including the static-header and pre-repair evidence findings. Source/docs repairs above require fresh final-Head review, not author self-approval. GitHub Codex remains read-only.
 
 <a id="delivery"></a>
 ## Delivery

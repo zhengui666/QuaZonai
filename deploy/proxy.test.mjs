@@ -13,6 +13,7 @@ import test from 'node:test';
 // authentication, database, scientific validity or production acceptance.
 const binary = process.env.CADDY_BIN || 'caddy';
 const index = '<!doctype html><title>gateway fixture</title><main>fixture-shell</main>';
+const headerNames = ['Content-Security-Policy', 'X-Content-Type-Options', 'X-Frame-Options', 'Referrer-Policy', 'Permissions-Policy'];
 
 async function unusedPort() {
   const socket = createSocket();
@@ -24,6 +25,16 @@ async function unusedPort() {
 }
 
 test('native personal-hosting gateway', { timeout: 45_000 }, async (t) => {
+  // Compare actual response values with the existing console policy, not a new one.
+  const established = await readFile(new URL('../apps/web/Caddyfile', import.meta.url), 'utf8');
+  const staticHeaders = headerNames.map((name) => {
+    const match = established.match(new RegExp(`^\\s*${name}\\s+"([^"]+)"\\s*$`, 'm'));
+    assert.ok(match, `Established header missing: ${name}`);
+    return [name, match[1]];
+  });
+  const assertStaticHeaders = (response) => {
+    for (const [name, value] of staticHeaders) assert.equal(response.headers.get(name), value, `${response.url}: ${name}`);
+  };
   const root = await mkdtemp(join(tmpdir(), 'quazonai-gateway-'));
   let child;
   let exited;
@@ -46,7 +57,8 @@ test('native personal-hosting gateway', { timeout: 45_000 }, async (t) => {
       response.write('data: first-event\n\n');
       // Deliberately leave the upstream open. A buffering proxy will time out.
     } else if (request.url?.startsWith('/api/echo?')) {
-      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(receipt));
+      response.writeHead(200, { 'Content-Type': 'application/json',
+        'Content-Security-Policy': "default-src 'none'", 'Cache-Control': 'no-store' }).end(JSON.stringify(receipt));
     } else {
       const status = request.url === '/api/unavailable' ? 503 : 404;
       response.writeHead(status, { 'Content-Type': 'application/problem+json' })
@@ -72,6 +84,7 @@ test('native personal-hosting gateway', { timeout: 45_000 }, async (t) => {
   await writeFile(join(web, 'assets', 'app.js'), 'window.fixtureLoaded = true;');
   await writeFile(join(web, 'sw.js'), '// service-worker-fixture');
   await writeFile(join(web, 'manifest.webmanifest'), '{"name":"fixture"}');
+  await writeFile(join(web, 'robots.txt'), 'User-agent: *\nDisallow: /\n');
   upstream.listen(0, '127.0.0.1');
   await once(upstream, 'listening');
   const port = await unusedPort();
@@ -117,20 +130,24 @@ test('native personal-hosting gateway', { timeout: 45_000 }, async (t) => {
     assert.equal(response.status, 200);
     assert.equal(await response.text(), index);
     assert.equal(response.headers.get('cache-control'), 'no-cache');
+    assertStaticHeaders(response);
     const head = await fetch(`${origin}/research/fixture`, { method: 'HEAD', headers: { Accept: 'text/html' } });
     assert.equal(head.status, 200);
     assert.equal(await head.text(), '');
+    assertStaticHeaders(head);
   });
   await t.test('PWA files remain real files and missing assets never become HTML', async () => {
-    for (const path of ['/sw.js', '/manifest.webmanifest', '/assets/app.js']) {
+    for (const path of ['/sw.js', '/manifest.webmanifest', '/assets/app.js', '/robots.txt']) {
       const response = await fetch(origin + path);
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('cache-control'), 'no-cache');
+      assertStaticHeaders(response);
       assert.ok(!(await response.text()).includes('fixture-shell'));
     }
     for (const path of ['/assets/missing.js', '/missing.js', '/missing.webmanifest', '/assets/missing']) {
       const response = await fetch(origin + path, { headers: { Accept: 'text/html' } });
       assert.equal(response.status, 404, path);
+      assertStaticHeaders(response);
       assert.ok(!(await response.text()).includes('fixture-shell'));
     }
   });
@@ -142,6 +159,9 @@ test('native personal-hosting gateway', { timeout: 45_000 }, async (t) => {
       headers: { Origin: origin, 'Content-Type': 'application/json', 'Idempotency-Key': 'fixture-key' },
     });
     assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-security-policy'), "default-src 'none'");
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    for (const name of headerNames.slice(1)) assert.equal(response.headers.get(name), null, `API must own ${name}`);
     assert.deepEqual(await response.json(), {
       method: 'POST', url: path, body, host: `127.0.0.1:${port}`, origin, key: 'fixture-key',
     });
@@ -153,11 +173,13 @@ test('native personal-hosting gateway', { timeout: 45_000 }, async (t) => {
       const status = path === '/api/unavailable' ? 503 : 404;
       assert.equal(response.status, status);
       assert.equal(response.headers.get('content-type'), 'application/problem+json');
+      for (const name of headerNames) assert.equal(response.headers.get(name), null, `${path} must retain upstream headers`);
       assert.deepEqual(await response.json(), { status, detail: 'upstream-fixture-error' });
       assert.equal(received.length, count + 1);
     }
     const live = await fetch(`${origin}/health/live`);
     assert.equal(live.status, 204);
+    for (const name of headerNames) assert.equal(live.headers.get(name), null);
   });
   await t.test('does not serve the shell for non-navigation methods', async () => {
     const response = await fetch(`${origin}/research/fixture`, { method: 'POST', headers: { Accept: 'text/html' } });

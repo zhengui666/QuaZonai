@@ -1,3 +1,14 @@
+# Preserve the established web-console policy on static responses only.
+(web_headers) {
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+}
+
 # Serve only the built web directory, never the checkout or private state.
 # The site name must match the API's PUBLIC_URL origin.
 {$QUAZONAI_SITE:quazonai.example.com} {
@@ -13,6 +24,7 @@
 		# Missing build assets must remain 404, even with an HTML Accept header.
 		@assets path /assets /assets/* *.js *.css *.webmanifest *.svg *.png *.ico *.json *.map *.woff *.woff2
 		handle @assets {
+			import web_headers
 			header Cache-Control "no-cache"
 			file_server
 		}
@@ -22,12 +34,14 @@
 			header Accept *text/html*
 		}
 		handle @navigation {
+			import web_headers
 			header Cache-Control "no-cache"
 			try_files {path} /index.html
 			file_server
 		}
 
 		handle {
+			import web_headers
 			header Cache-Control "no-cache"
 			file_server
 		}

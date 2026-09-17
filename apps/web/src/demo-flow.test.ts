@@ -119,11 +119,34 @@ test('synthetic flow receipts do not bypass request schema or key validation', (
   expect(edit('GET', projectPath)).toEqual(before);
 });
 
-test.each(['ALL', 'DISCOVERY', 'VALIDATION', 'SEALED'] as const)('Demo refuses a freeze with missing %s bindings without changing the project or draft', missing => {
+test('empty bindings are rejected at draft creation and update without changing existing records', () => {
+  const { edit, projectPath, frozen } = frozenFixture();
+  const collection = `${projectPath}/briefs`;
+  const create = { schema_version: 1, content: frozen.brief.content, bindings: frozen.brief.bindings, supersedes_id: frozen.brief.id };
+  const created = edit('POST', collection, create, 'valid-draft')!;
+  expect(created.status).toBe(201);
+  const draft = (created.value as { resource: Schema['BriefView'] }).resource;
+  const path = `/api/v2/briefs/${draft.id}`;
+  const beforeProject = structuredClone(edit('GET', projectPath));
+  const beforeBriefs = structuredClone(edit('GET', collection));
+  for (const [method, route, contract, request] of [
+    ['POST', collection, '/api/v2/projects/{id}/briefs', { ...create, bindings: [] }],
+    ['PATCH', path, '/api/v2/briefs/{id}', { schema_version: 1, expected_revision: draft.revision, content: draft.content, bindings: [] }],
+  ] as const) {
+    const rejected = edit(method, route, request, `empty-${method}`)!;
+    expect(rejected).toMatchObject({ status: 422, value: { code: 'VALIDATION_ERROR' } });
+    expect(validateResponse(contract, method.toLowerCase(), 422, rejected.value, 'application/problem+json')).toBe(true);
+    expect(edit('GET', projectPath)).toEqual(beforeProject);
+    expect(edit('GET', collection)).toEqual(beforeBriefs);
+    expect(edit('GET', path)?.value).toEqual(draft);
+  }
+});
+
+test.each(['DISCOVERY', 'VALIDATION', 'SEALED'] as const)('Demo refuses a freeze with missing %s bindings without changing the project or draft', missing => {
   const { edit, projectPath, freeze, frozen } = frozenFixture();
   const created = edit('POST', `${projectPath}/briefs`, {
     schema_version: 1, content: frozen.brief.content, supersedes_id: frozen.brief.id,
-    bindings: missing === 'ALL' ? [] : frozen.brief.bindings.filter(binding => binding.role !== missing),
+    bindings: frozen.brief.bindings.filter(binding => binding.role !== missing),
   }, 'incomplete-draft')!;
   expect(created.status).toBe(201);
   const draft = (created.value as { resource: Schema['BriefView'] }).resource;
