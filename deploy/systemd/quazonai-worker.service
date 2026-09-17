@@ -1,0 +1,25 @@
+[Unit]
+Description=QuaZonai research Worker
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=quazonai
+Group=quazonai
+UMask=0077
+WorkingDirectory=/opt/quazonai/current
+EnvironmentFile=/etc/quazonai/quazonai.env
+ExecStart=/opt/quazonai/current/bin/server worker
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=300s
+KillSignal=SIGTERM
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,35 @@
+# Serve only the built web directory, never the checkout or private state.
+# The site name must match the API's PUBLIC_URL origin.
+{$QUAZONAI_SITE:quazonai.example.com} {
+	root * "{$QUAZONAI_WEB_ROOT:/opt/quazonai/current/web}"
+
+	route {
+		@backend path /api /api/* /health /health/*
+		handle @backend {
+			# Native defaults preserve Host/Origin, disable retries and flush SSE.
+			reverse_proxy {$QUAZONAI_API_UPSTREAM:127.0.0.1:8080}
+		}
+
+		# Missing build assets must remain 404, even with an HTML Accept header.
+		@assets path /assets /assets/* *.js *.css *.webmanifest *.svg *.png *.ico *.json *.map *.woff *.woff2
+		handle @assets {
+			header Cache-Control "no-cache"
+			file_server
+		}
+
+		@navigation {
+			method GET HEAD
+			header Accept *text/html*
+		}
+		handle @navigation {
+			header Cache-Control "no-cache"
+			try_files {path} /index.html
+			file_server
+		}
+
+		handle {
+			header Cache-Control "no-cache"
+			file_server
+		}
+	}
+}
