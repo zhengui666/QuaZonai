@@ -31,7 +31,7 @@ serde_json.workspace = true
 axum = { version = "=0.8.9", features = ["macros"] }
 tokio = { version = "=1.53.1", features = ["full"] }
 futures-util = "=0.3.34"
-sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono"] }
 # SQLx accepts older bindings too; keep bundled SQLite on the WAL-reset fix.
 # https://www.sqlite.org/releaselog/3_51_3.html
 libsqlite3-sys = { version = "=0.37.0", default-features = false }

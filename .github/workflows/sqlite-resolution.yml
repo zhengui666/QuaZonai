@@ -32,14 +32,14 @@ jobs:
       - name: Resolve the declared versions using Cargo, not handwritten checksums
         run: |
           set -euo pipefail
-          rustup run "$RUSTUP_TOOLCHAIN" cargo metadata --format-version 1 --features runtime/native-oci > "$RUNNER_TEMP/sqlite-resolution/cargo-metadata.json"
+          rustup run "$RUSTUP_TOOLCHAIN" cargo metadata --format-version 1 --all-features > "$RUNNER_TEMP/sqlite-resolution/cargo-metadata.json"
           cp Cargo.lock "$RUNNER_TEMP/sqlite-resolution/Cargo.lock"
           rustup run "$RUSTUP_TOOLCHAIN" cargo tree --locked -p runtime --edges normal,build > "$RUNNER_TEMP/sqlite-resolution/runtime-dependencies.txt"
           git diff --exit-code -- . ':(exclude)Cargo.lock'
-      - name: Compile the Runtime targets against the generated lockfile
+      - name: Compile all workspace targets against the generated lockfile
         run: |
           set -euo pipefail
-          rustup run "$RUSTUP_TOOLCHAIN" cargo check --locked -p runtime --all-targets --features native-oci --message-format=json > "$RUNNER_TEMP/sqlite-resolution/compiler.jsonl"
+          rustup run "$RUSTUP_TOOLCHAIN" cargo check --locked --workspace --all-targets --all-features --message-format=json > "$RUNNER_TEMP/sqlite-resolution/compiler.jsonl"
           git diff --exit-code -- . ':(exclude)Cargo.lock'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

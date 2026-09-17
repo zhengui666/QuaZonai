@@ -12,3 +12,4 @@ repository = "https://github.com/zhengui666/QuaZonai"
 [workspace.dependencies]
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["raw_value"] }
+sqlx = { version = "=0.9.0", default-features = false }
