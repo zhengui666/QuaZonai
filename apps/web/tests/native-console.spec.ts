@@ -51,6 +51,7 @@ async ({ page, context }) => {
   if (config.phase === 'after-restart') {
     const saved: Checkpoint = JSON.parse(readFileSync(projectFile, 'utf8'));
     expect(typeof saved.key).toBe('string');
+    expect(saved.receipt.replayed).toBe(false);
     expect(saved.receipt.resource.id).toMatch(/^[0-9a-f-]{36}$/);
     await page.goto('/');
     await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
@@ -94,7 +95,7 @@ async ({ page, context }) => {
   const name = `Native browser ${randomUUID()}`;
   let projectId: string;
   let initialKey: string | undefined;
-  let initialRequest: unknown;
+  let initialRequest: Schema['ProjectCreate'] | undefined;
   let checkpoint: Checkpoint | undefined;
 
   await test.step('bind the first operator through the actual Rust API', async () => {
@@ -158,6 +159,7 @@ async ({ page, context }) => {
 
   await test.step('lose a real committed response and retry the same idempotency key', async () => {
     let committedStatus: number | undefined;
+    let originalReceipt: Checkpoint['receipt'] | undefined;
     let intercepted = false;
     await page.route('**/api/v2/projects', async (route) => {
       if (route.request().method() !== 'POST' || intercepted) return route.continue();
@@ -167,6 +169,7 @@ async ({ page, context }) => {
       // The real Rust transaction commits before we discard its ACK. No mock body.
       const upstream = await route.fetch({ maxRetries: 0, timeout: 20_000 });
       committedStatus = upstream.status();
+      originalReceipt = await upstream.json();
       await upstream.dispose();
       await route.abort('failed');
     });
@@ -178,6 +181,13 @@ async ({ page, context }) => {
     expect(committedStatus).toBeGreaterThanOrEqual(200);
     expect(committedStatus).toBeLessThan(300);
     expect(typeof initialKey).toBe('string');
+    expect(originalReceipt).toMatchObject({
+      schema_version: 1, replayed: false, resource: { name, revision: '1', state: 'DRAFT' },
+    });
+    if (!originalReceipt || !initialRequest || !initialKey || !committedStatus) {
+      throw new Error('The first real commit must yield its original request and receipt');
+    }
+    checkpoint = { key: initialKey, request: initialRequest, status: committedStatus, receipt: originalReceipt };
     await page.unroute('**/api/v2/projects');
     const retryPromise = page.waitForResponse((response) =>
       new URL(response.url()).pathname === '/api/v2/projects' && response.request().method() === 'POST');
@@ -187,9 +197,8 @@ async ({ page, context }) => {
     expect(retried.request().headers()['idempotency-key']).toBe(initialKey);
     const receipt: Checkpoint['receipt'] = await retried.json();
     expect(receipt.schema_version).toBe(1);
-    expect(receipt.replayed).toBe(true);
+    expect(receipt).toEqual({ ...originalReceipt, replayed: true });
     expect(retried.request().postDataJSON()).toEqual(initialRequest);
-    checkpoint = { key: initialKey!, request: retried.request().postDataJSON(), status: retried.status(), receipt };
     await expect(page.getByRole('row').filter({ hasText: name })).toHaveCount(1);
     const response = await page.request.get('/api/v2/projects?limit=100');
     expect(response.status()).toBe(200);

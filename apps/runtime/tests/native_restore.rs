@@ -15,7 +15,7 @@ use std::{
 };
 use support::{docker, Fixture, SIGNAL};
 
-async fn tar(mode: &str, archive: &Path, directory: &Path) {
+async fn tar(stage: &str, mode: &str, archive: &Path, directory: &Path) {
     let mut command = tokio::process::Command::new("tar");
     command
         .env_clear()
@@ -33,10 +33,26 @@ async fn tar(mode: &str, archive: &Path, directory: &Path) {
         .await
         .expect("native archive command deadline")
         .expect("native GNU tar must be installed");
+    // GNU tar reports metadata/operation diagnostics, never archived payloads.
+    // Keep test-owned path and credential/source sentinels out of failure logs.
+    let root = archive.parent().unwrap().to_string_lossy();
+    let diagnostic = |bytes: &[u8]| {
+        String::from_utf8_lossy(bytes)
+            .replace(root.as_ref(), "[fixture]")
+            .replace(support::SECRET, "[redacted]")
+            .replace(SIGNAL, "[redacted source]")
+            .chars()
+            .take(2048)
+            .collect::<String>()
+    };
     assert!(
         result.status.success() && result.stdout.is_empty() && result.stderr.is_empty(),
-        "native archive operation failed; archive and diagnostics remain private"
+        "native archive {stage} {mode}: status={}, stdout={:?}, stderr={:?}",
+        result.status,
+        diagnostic(&result.stdout),
+        diagnostic(&result.stderr)
     );
+    println!("native archive stage={stage} mode={mode}: passed");
 }
 
 async fn output_bytes(
@@ -167,18 +183,18 @@ async fn cold_round_trip() {
     let checkpoint = fixture.directory.path().join("checkpoint.tar");
     let saved = fixture.directory.path().join("retained-original-state");
     let before_inode = fs::metadata(&state).unwrap().ino();
-    tar("--create", &checkpoint, &state).await;
-    tar("--compare", &checkpoint, &state).await;
+    tar("create-checkpoint", "--create", &checkpoint, &state).await;
+    tar("compare-before-move", "--compare", &checkpoint, &state).await;
     let restore_started = Instant::now();
     fs::rename(&state, &saved).unwrap();
     fs::create_dir(&state).unwrap();
     fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
-    tar("--extract", &checkpoint, &state).await;
+    tar("extract-copy", "--extract", &checkpoint, &state).await;
     assert_ne!(fs::metadata(&state).unwrap().ino(), before_inode);
     assert_eq!(fs::metadata(&state).unwrap().mode() & 0o777, 0o700);
     // Comparison precedes reopening SQLite, which may legitimately checkpoint WAL.
-    tar("--compare", &checkpoint, &state).await;
-    tar("--compare", &checkpoint, &saved).await;
+    tar("compare-restored-copy", "--compare", &checkpoint, &state).await;
+    tar("compare-retained-original", "--compare", &checkpoint, &saved).await;
     assert!(!state.join("credential").exists());
     assert!(!state.join("runtime.json").exists());
 
@@ -194,7 +210,7 @@ async fn cold_round_trip() {
         .json(
             Method::POST,
             &["jobs"],
-            Some(serde_json::to_value(&conflicting).unwrap()),
+            Some(serde_json::to_value(conflicting).unwrap()),
             &[StatusCode::CONFLICT],
         )
         .await;
@@ -238,7 +254,7 @@ async fn cold_round_trip() {
     assert!(container_ids(cancelled.run_id).await.is_empty());
     assert_eq!(fixture.status(&original).await, status);
     assert!(serde_json::to_value(fixture.manifest(&original).await).unwrap() == manifest_value);
-    tar("--compare", &checkpoint, &saved).await;
+    tar("compare-original-after-new-job", "--compare", &checkpoint, &saved).await;
     fixture.assert_private_logs();
     println!(
         "{}",
