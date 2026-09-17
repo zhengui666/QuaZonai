@@ -48,8 +48,11 @@ export function projectEditor() {
   const projects = new Map([[original.id, original]]);
   const originalBrief = structuredClone(records.get(`/api/v2/briefs/${id(10)}`)!.value) as Schema['BriefView'];
   const briefs = new Map([[originalBrief.id, originalBrief]]);
+  // The original frozen context remains historical, including its now-disabled Runtime.
   const contexts = new Map<string, Schema['BriefExecutionContextV1']>();
-  const cycles = new Map<string, Schema['CycleViewV1']>();
+  const historicalCycles = structuredClone(records.get(`/api/v2/projects/${original.id}/cycles`)!.value) as { items: Schema['CycleViewV1'][] };
+  const cycles = new Map(historicalCycles.items.map(item => [item.id, item]));
+  const historicalRuntimes = structuredClone(records.get('/api/v2/integrations/runtimes')!.value) as { items: Schema['RuntimeView'][] };
   const dynamicRuns = new Map<string, Schema['RunSnapshotV1']>();
   const receipts = new Map<string, { body: unknown; resource: Schema['ProjectView'] | Schema['BriefView']; status: number }>();
   const flowReceipts = new Map<string, FlowReceipt>();
@@ -75,9 +78,13 @@ export function projectEditor() {
     const briefPage = project && parts.length === 6 && parts[5] === 'briefs';
 
     if (method === 'GET') {
-      if (path === '/api/v2/integrations/runtimes') return { status: 200, value: { schema_version: 1, items: [demoRuntime], next_cursor: null } };
+      const runtimePage = path === '/api/v2/integrations/runtimes';
+      const profilePage = path === '/api/v2/settings/codex';
       if (path === `/api/v2/integrations/runtimes/${demoRuntime.id}`) return { status: 200, value: demoRuntime };
-      if (path === '/api/v2/settings/codex') return { status: 200, value: { schema_version: 1, items: demoProfiles, next_cursor: null } };
+      if (path === `/api/v2/integrations/runtimes/${demoRuntime.id}/readiness`) return { status: 200, value: {
+        schema_version: 1, runtime_id: demoRuntime.id, integration_revision: demoRuntime.revision,
+        state: 'NOT_CHECKED', available_job_kinds: [], latest_observation: null,
+      } satisfies Schema['RuntimeReadinessV1'] };
       const profile = demoProfiles.find(item => path === `/api/v2/settings/codex/${item.id}`);
       if (profile) return { status: 200, value: profile };
       if (parts[3] === 'cycles' && parts.length === 5) {
@@ -100,7 +107,7 @@ export function projectEditor() {
       const globalPage = ['/api/v2/alphas', '/api/v2/artifacts', '/api/v2/evaluation-policies', '/api/v2/experiments', '/api/v2/input-sets', '/api/v2/runs'].includes(path);
       const limit = Number(query.get('limit') ?? '50'); const cursor = query.get('cursor');
       if (globalPage && path !== '/api/v2/runs' && selected === null) return invalid(method, path);
-      if (path === '/api/v2/projects' || briefPage || nestedPage || globalPage) {
+      if (path === '/api/v2/projects' || briefPage || nestedPage || globalPage || runtimePage || profilePage) {
         const allowed = ['limit', 'cursor', ...(globalPage ? ['project_id', ...(path === '/api/v2/runs' ? ['state'] : [])] : [])];
         if ((selected !== null && !validId(selected)) || !/^\d+$/.test(query.get('limit') ?? '50') || !validLimit(limit) || (cursor !== null && !validId(cursor)) || (query.has('state') && !validState(query.get('state'))) || [...query.keys()].some(name => !allowed.includes(name) || query.getAll(name).length !== 1)) return invalid(method, path);
       }
@@ -110,6 +117,8 @@ export function projectEditor() {
           .sort((a, b) => ascending ? a.id.localeCompare(b.id) : b.id.localeCompare(a.id));
         return { status: 200, value: { schema_version: 1, items: items.slice(0, limit), next_cursor: items.length > limit ? items[limit - 1]!.id : null } };
       };
+      if (runtimePage) return paginate([...historicalRuntimes.items, demoRuntime]);
+      if (profilePage) return paginate(demoProfiles);
       if (path === '/api/v2/projects') return paginate([...projects.values()]);
       if (briefPage) return paginate([...briefs.values()].filter(item => item.project_id === project.id));
       if (globalPage) {
@@ -122,7 +131,7 @@ export function projectEditor() {
       if (project && parts.length === 5) return { status: 200, value: project };
       if (nestedPage) {
         const stored = project.id === original.id ? (records.get(path)?.value as { items: { id: string }[] } | undefined)?.items ?? [] : [];
-        const rows = parts[5] === 'cycles' ? [...stored, ...cycles.values()].filter(item => (item as Schema['CycleViewV1']).project_id === project.id) : stored;
+        const rows = parts[5] === 'cycles' ? [...cycles.values()].filter(item => item.project_id === project.id) : stored;
         return paginate(rows);
       }
       return undefined;
@@ -137,9 +146,18 @@ export function projectEditor() {
       if (body.expected_revision !== brief.revision) return conflict(method, path, 'Brief 草稿已修改，请重新读取。');
       const project = projects.get(brief.project_id);
       if (!project || project.state === 'ARCHIVED' || body.execution_context.runtime_id !== demoRuntime.id || body.execution_context.runtime_revision !== demoRuntime.revision) return denied(method, path);
-      const expected = (['DISCOVERY', 'VALIDATION', 'SEALED'] as const).map(purpose => originalInputs.get(purpose));
+      const purposes = ['DISCOVERY', 'VALIDATION', 'SEALED'] as const;
+      const expected = purposes.map(purpose => originalInputs.get(purpose));
       const actual = [body.execution_context.discovery_input_set_id, body.execution_context.validation_input_set_id, body.execution_context.sealed_input_set_id];
       if (actual.some((value, index) => value !== expected[index])) return invalid(method, path);
+      for (const [index, purpose] of purposes.entries()) {
+        const input = records.get(`/api/v2/input-sets/${actual[index]}`)?.value as Schema['InputSetView'] | undefined;
+        const bound = new Set(brief.bindings.filter(binding => binding.role === purpose).map(binding => binding.dataset_revision_id));
+        if (!input || input.header.project_id !== brief.project_id || input.header.purpose !== purpose || bound.size === 0
+          || input.items.some(member => member.item.kind !== 'DATASET' || member.item.role !== purpose)) return invalid(method, path);
+        const datasets = new Set(input.items.flatMap(member => member.item.kind === 'DATASET' ? [member.item.dataset_revision_id] : []));
+        if (!isDeepStrictEqual(bound, datasets)) return invalid(method, path);
+      }
       const now = new Date().toISOString();
       const frozen: Schema['BriefView'] = { ...brief, state: 'FROZEN', frozen_at: now, updated_at: now };
       briefs.set(frozen.id, frozen); contexts.set(frozen.id, structuredClone(body.execution_context));
@@ -161,18 +179,20 @@ export function projectEditor() {
       const allowedProfiles = new Set(demoProfiles.map(item => item.id));
       if (!allowedProfiles.has(body.researcher_profile.profile_id) || !allowedProfiles.has(body.reviewer_profile.profile_id)
         || body.researcher_profile.expected_revision !== '1' || body.reviewer_profile.expected_revision !== '1') return invalid(method, path);
-      const ordinal = [...cycles.values()].filter(item => item.project_id === project.id).length + 1;
+      const ordinal = Math.max(0, ...[...cycles.values()].filter(item => item.project_id === project.id).map(item => item.ordinal)) + 1;
       const cycleId = id(3200 + cycles.size); const runId = id(3300 + dynamicRuns.size); const now = new Date().toISOString();
       const cycle: Schema['CycleViewV1'] = {
         schema_version: 1, id: cycleId, project_id: project.id, brief_id: selectedBrief.id, ordinal,
-        trigger: 'OPERATOR', state: 'COMPLETED', outcome: 'QUALIFIED_CANDIDATES', next_action: 'SYNTHETIC · 查看双 Alpha、组合候选与目标包演示。',
-        budget: selectedBrief.content.budget, used_experiments: 2, reserved_experiments: 0, reserved_cpu_seconds: '0',
+        trigger: 'OPERATOR', state: 'COMPLETED', outcome: 'NO_SUPPORTED_CANDIDATE',
+        next_action: 'SYNTHETIC · 本周期未执行实验、没有合格候选；双 Alpha、组合与目标包仅为独立历史展示。',
+        budget: selectedBrief.content.budget, used_experiments: 0, reserved_experiments: 0, reserved_cpu_seconds: '0',
         initial_run_id: runId, researcher_profile: body.researcher_profile, reviewer_profile: body.reviewer_profile,
-        available_actions: ['VIEW_BRIEF', 'VIEW_RUNS', 'VIEW_EXPERIMENTS', 'VIEW_SELECTION'], revision: '1', created_at: now, started_at: now, ended_at: now,
+        available_actions: ['VIEW_BRIEF', 'VIEW_RUNS'], revision: '1', created_at: now, started_at: now, ended_at: now,
       };
       const run: Schema['RunSnapshotV1'] = {
         ...baseRun, id: runId, project_id: project.id, cycle_id: cycle.id, kind: 'AGENT_RESEARCH', state: 'SUCCEEDED',
         current_attempt_no: 1, active_attempt_id: id(3400 + dynamicRuns.size), terminal_reason_code: 'SYNTHETIC_PRESENTATION_ONLY',
+        deadline_at: new Date(Date.parse(now) + selectedBrief.content.budget.max_wall_seconds * 1000).toISOString(),
         queued_at: now, started_at: now, finished_at: now, revision: '1',
       };
       cycles.set(cycle.id, cycle); dynamicRuns.set(run.id, run);

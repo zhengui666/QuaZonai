@@ -22,6 +22,7 @@ These are maintained test entrypoints, not claims that every full-product scenar
 | Contract family | Existing executable entrypoints | Important limit |
 |---|---|---|
 | T01, T14–T21: native science, allocation and simulation | [job tests](../../apps/job/tests), [OCI tests](../../apps/runtime/tests/native_oci.rs) | Controlled catalogs and golden cases do not prove real-market provenance, PIT or return expectations |
+| T02: credential-free interactive demonstration | `make demo-preview`, [complete browser flow](../../apps/web/tests/demo-complete.spec.ts), [preview/history suites](../../apps/web/tests/demo-preview.spec.ts), [receipt and consistency tests](../../apps/web/src/demo-flow.test.ts) | In-memory synthetic records only; historical Alpha/portfolio/Release samples are not outputs of the newly started Cycle |
 | T03–T09: native profiles, protocol, tools and Reviewer | [Codex](../../apps/server/tests/codex_native.rs), [MCP](../../apps/server/tests/mcp_authoring.rs), [Mission Worker](../../apps/server/tests/mission_worker.rs) | Controlled model responses are not protected real-account inference |
 | T10–T13, T15: budgets, evidence and eligibility | [Store tests](../../crates/store/tests), [research review](../../crates/store/tests/research_review.rs), [publication](../../crates/store/tests/evaluation_publication.rs) | Protocol fixtures and REAL/PIT declarations are not independently verified authorized market data |
 | Delivery, approval, Paper/Live, Forward and Wake | [portfolio/delivery](../../apps/server/tests/portfolio_study_http.rs), [Forward automation](../../apps/server/tests/forward_automation.rs), [downstream](../../apps/server/tests/downstream_http.rs) | No real broker authority or execution; downstream fixtures do not prove a production target delivery |
@@ -32,12 +33,20 @@ These are maintained test entrypoints, not claims that every full-product scenar
 
 Use the full T01–T42 definitions in DESIGN when collecting final acceptance; the groups above do not replace or remove any case.
 
+## Synthetic Demo evidence
+
+The [README quickstart](../../README.md#quickstart) starts the existing Vite preview with `make demo-preview`. The [isolated configuration](../../apps/web/playwright.demo.config.ts) runs `npm --prefix apps/web run test:demo`; the [three-viewport configuration](../../apps/web/playwright.config.ts) separately runs `npm --prefix apps/web run test:e2e`, including [historical qualification and portfolio views](../../apps/web/tests/demo-history.spec.ts). The [Web workflow](../../.github/workflows/web.yml) installs the documented prerequisites and runs both before real-API browser acceptance.
+
+The interactive flow forks and freezes a Brief with three matching input bindings, explicitly activates the project, selects two synthetic profiles, and checks the exact new Cycle/Run links. The new Cycle has no experiments or qualified candidates. Its original Run is readable, while only the historical Cycle advertises a selection snapshot. Historical Alpha/portfolio/Release views and the original DEMO Package download remain separate; the warning, disabled approval and refusal of production Claim preserve the no-delivery boundary. Original frozen history is not rebound to a newer Runtime.
+
+At `cf11b7be1fad4f62270d777700dd33f3dae842ec`, [Web run 35180454929](https://github.com/zhengui666/QuaZonai/actions/runs/35180454929), job `105071255371`, actually passed 524 Vitest tests, 5 Node tests and the single complete-Demo browser test. The subsequent three-viewport suite had **414 passes and 6 failures**, so real-API browser acceptance was skipped. The passing Demo did not detect the Cycle consistency findings later identified in review. The repairs and expanded checks are tracked in [PR #85](https://github.com/zhengui666/QuaZonai/pull/85) and its [OpenSDLC task](../../.opensdlc/tasks/personal-production/task.md); require their final-Head CI/review evidence, not the historical partial result, for acceptance. No account inference, market computation or deployment is established by this preview.
+
 <a id="acceptance"></a>
 ## Unfinished product acceptance
 
 | Contract | Missing acceptance evidence / next action |
 |---|---|
-| T02 | Complete interactive credential-free Demo. The current synthetic preview supports project/Brief editing and historical views, but refuses Brief freezing, research execution and production claims. Exercise the complete demonstrable workflow in a browser without adding production bypasses. |
+| T02 | Use the documented interactive entry and checks above; reconcile the final accepted Head, browser evidence and independent review in PR #85. Freezing/startup are simulated, not disabled; they do not generate research or replace T07/T08/T42. |
 | T07/T08 | Operator login in a dedicated native profile, then real model → scientific Job/Evaluation → consumption in the same persistent Thread. Keep account material private and use a reviewed fixed commit. |
 | T39 | Owner-selected legacy snapshot plus its artifacts, full mapping/precision/relationship report and explicit handling of unproven old qualifications. Existing projection import tests are insufficient. |
 | T40 | Complete fresh-process backup/restore and fault rehearsal with database, private state, historical artifacts and Runtime reconciliation; measure the intended recovery objective. Existing native archive tests cover only part of this. |

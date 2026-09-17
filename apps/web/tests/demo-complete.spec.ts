@@ -14,14 +14,14 @@ async function choose(page: import('@playwright/test').Page, label: string, text
   await expect(field).toHaveAttribute('aria-expanded', 'false');
 }
 
-test('credential-free Demo freezes context, starts a synthetic Cycle and reaches research-to-package evidence', async ({ page }) => {
+test('credential-free Demo freezes context, starts a synthetic Cycle and opens separate historical research and package evidence', async ({ page }) => {
   test.setTimeout(90_000);
   const failed: string[] = [];
   const starts: string[] = [];
   const hypothesis = 'SYNTHETIC · 完整交互 Demo，不构成真实研究结论';
   page.on('pageerror', error => failed.push(error.message));
   page.on('response', response => {
-    if (new URL(response.url()).pathname.startsWith('/api/') && response.status() >= 500) failed.push(`${response.status()} ${response.url()}`);
+    if (new URL(response.url()).pathname.startsWith('/api/') && response.status() >= 400) failed.push(`${response.status()} ${response.url()}`);
   });
   page.on('request', request => {
     if (request.method() === 'POST' && /^\/api\/v2\/projects\/[^/]+\/cycles$/.test(new URL(request.url()).pathname)) starts.push(request.url());
@@ -68,7 +68,7 @@ test('credential-free Demo freezes context, starts a synthetic Cycle and reaches
   await editor.getByRole('button', { name: '保存项目', exact: true }).click();
   await expect(editor).toBeHidden();
 
-  // Both frozen versions remain actionable; select by the new hypothesis, not row order.
+  // Both frozen versions remain visible; select the newly authored one, not row order.
   await expect(row).toHaveCount(1);
   await row.getByRole('button', { name: '启动新 Cycle', exact: true }).click();
   const startup = page.getByRole('dialog', { name: '确认启动研究 Cycle', exact: true });
@@ -91,8 +91,35 @@ test('credential-free Demo freezes context, starts a synthetic Cycle and reaches
   await page.getByRole('tab', { name: '研究周期', exact: true }).click();
   const cycleRow = page.getByRole('row').filter({ hasText: started.resource.cycle.id });
   await expect(cycleRow).toHaveCount(1);
-  await expect(cycleRow).toContainText('QUALIFIED_CANDIDATES');
-  await expect(cycleRow).toContainText('SYNTHETIC · 查看双 Alpha');
+  await expect(cycleRow).toContainText('NO_SUPPORTED_CANDIDATE');
+  await expect(cycleRow).toContainText('本周期未执行实验、没有合格候选');
+  await expect(cycleRow.getByRole('button', { name: '查看试验选择', exact: true })).toHaveCount(0);
+  await cycleRow.getByRole('button', { name: '查看准备运行', exact: true }).click();
+  const runDetails = page.getByRole('dialog', { name: '运行详情', exact: true });
+  await expect(runDetails).toContainText(started.resource.run.id);
+  await expect(runDetails).toContainText(started.resource.cycle.id);
+  await expect(runDetails).toContainText('SYNTHETIC_PRESENTATION_ONLY');
+  await expect(runDetails.getByRole('button', { name: '请求取消运行', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(runDetails).toBeHidden();
+
+  // Historical selection remains available; the new Cycle has no fabricated snapshot.
+  const historicalCycleId = '01990000-0000-7000-8000-000000000300';
+  const historicalRow = page.getByRole('row').filter({ hasText: historicalCycleId });
+  await expect(historicalRow).toHaveCount(1);
+  const selecting = page.waitForResponse(response => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === `/api/v2/cycles/${historicalCycleId}/selection`);
+  await historicalRow.getByRole('button', { name: '查看试验选择', exact: true }).click();
+  const selectionResponse = await selecting;
+  expect(selectionResponse.status()).toBe(200);
+  const selection: Schema['CycleSelectionV1'] = await selectionResponse.json();
+  expect(selection.cycle_id).toBe(historicalCycleId);
+  expect(selection.cycle_id).not.toBe(started.resource.cycle.id);
+  expect(selection.selected_count).toBe('0');
+  const selectionDetails = page.getByRole('dialog', { name: '冻结试验选择', exact: true });
+  await expect(selectionDetails.getByRole('row').filter({ hasText: 'INVALID_EVIDENCE' })).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await expect(selectionDetails).toBeHidden();
 
   await navigate(page, 'Alpha');
   await page.getByRole('combobox', { name: '选择 Alpha 所属项目', exact: true }).click();

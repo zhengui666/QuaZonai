@@ -1,7 +1,7 @@
 // These tests exercise only the in-memory synthetic preview, never native research.
 import { expect, test } from 'vitest';
 import { projectEditor } from '../demo/project-editor';
-import { id } from '../demo/records';
+import { demoResponse, id, records } from '../demo/records';
 import type { Schema } from './api';
 import { validateResponse } from './generated/responses.cjs';
 
@@ -14,7 +14,7 @@ function frozenFixture() {
   }, 'create')!;
   expect(saved.status).toBe(201);
   const draft = (saved.value as { resource: Schema['BriefView'] }).resource;
-  const runtime = (edit('GET', '/api/v2/integrations/runtimes')!.value as { items: Schema['RuntimeView'][] }).items[0]!;
+  const runtime = (edit('GET', '/api/v2/integrations/runtimes')!.value as { items: Schema['RuntimeView'][] }).items.find(item => item.configuration.enabled)!;
   const inputs = (edit('GET', '/api/v2/input-sets', undefined, undefined,
     new URLSearchParams({ project_id: original.project_id }))!.value as { items: Schema['InputSetSummary'][] }).items;
   const freeze: Schema['BriefFreezeV1'] = {
@@ -41,6 +41,17 @@ function setProjectState(edit: ReturnType<typeof projectEditor>, projectPath: st
   }, `state-${state}`)!;
   expect(changed.status).toBe(200);
   return (changed.value as { resource: Schema['ProjectView'] }).resource;
+}
+
+function startRequest(edit: ReturnType<typeof projectEditor>, project: Schema['ProjectView'], briefId: string): Schema['CycleStartV1'] {
+  const profiles = (edit('GET', '/api/v2/settings/codex')!.value as { items: Schema['CodexProfileViewV1'][] }).items;
+  const researcher = profiles.find(item => item.name === 'SYNTHETIC · Demo Researcher')!;
+  const reviewer = profiles.find(item => item.name === 'SYNTHETIC · Demo Reviewer')!;
+  return {
+    schema_version: 1, brief_id: briefId, expected_revision: project.revision,
+    researcher_profile: { profile_id: researcher.id, expected_revision: researcher.revision },
+    reviewer_profile: { profile_id: reviewer.id, expected_revision: reviewer.revision },
+  };
 }
 
 test('synthetic freeze retries return the original receipt before frozen or archived guards', () => {
@@ -74,12 +85,7 @@ test.each(['revision', 'context', 'path'] as const)('synthetic freeze rejects ch
 test.each(['PAUSED', 'ARCHIVED'] as const)('synthetic cycle retries survive a later %s project without duplicating work', state => {
   const { edit, projectPath, frozen } = frozenFixture();
   const active = setProjectState(edit, projectPath, 'ACTIVE');
-  const profiles = (edit('GET', '/api/v2/settings/codex')!.value as { items: Schema['CodexProfileViewV1'][] }).items;
-  const start: Schema['CycleStartV1'] = {
-    schema_version: 1, brief_id: frozen.brief.id, expected_revision: active.revision,
-    researcher_profile: { profile_id: profiles[0]!.id, expected_revision: profiles[0]!.revision },
-    reviewer_profile: { profile_id: profiles[1]!.id, expected_revision: profiles[1]!.revision },
-  };
+  const start = startRequest(edit, active, frozen.brief.id);
   const cyclePath = `${projectPath}/cycles`;
   const first = edit('POST', cyclePath, start, 'start')!;
   expect(first.status).toBe(202);
@@ -111,4 +117,122 @@ test('synthetic flow receipts do not bypass request schema or key validation', (
     expect(edit('POST', freezePath, freeze, key)?.status).toBe(422);
   }
   expect(edit('GET', projectPath)).toEqual(before);
+});
+
+test.each(['ALL', 'DISCOVERY', 'VALIDATION', 'SEALED'] as const)('Demo refuses a freeze with missing %s bindings without changing the project or draft', missing => {
+  const { edit, projectPath, freeze, frozen } = frozenFixture();
+  const created = edit('POST', `${projectPath}/briefs`, {
+    schema_version: 1, content: frozen.brief.content, supersedes_id: frozen.brief.id,
+    bindings: missing === 'ALL' ? [] : frozen.brief.bindings.filter(binding => binding.role !== missing),
+  }, 'incomplete-draft')!;
+  expect(created.status).toBe(201);
+  const draft = (created.value as { resource: Schema['BriefView'] }).resource;
+  const path = `/api/v2/briefs/${draft.id}`;
+  const before = structuredClone(edit('GET', projectPath));
+  const rejected = edit('POST', `${path}/freeze`, { ...freeze, expected_revision: draft.revision }, 'incomplete-freeze')!;
+  expect(rejected).toMatchObject({ status: 422, value: { code: 'VALIDATION_ERROR' } });
+  expect(validateResponse('/api/v2/briefs/{id}/freeze', 'post', 422, rejected.value, 'application/problem+json')).toBe(true);
+  expect(edit('GET', projectPath)).toEqual(before);
+  expect(edit('GET', path)?.value).toEqual(draft);
+  expect(edit('GET', `${path}/execution-context`) ?? demoResponse('GET', `${path}/execution-context`)).toMatchObject({ status: 404 });
+  const repaired = edit('PATCH', path, {
+    schema_version: 1, expected_revision: draft.revision, content: draft.content, bindings: [...frozen.brief.bindings].reverse(),
+  }, 'repair-bindings')!;
+  expect(repaired.status).toBe(200);
+  const revision = (repaired.value as { resource: Schema['BriefView'] }).resource.revision;
+  // Rejected commands did not publish a receipt; an explicitly corrected request can succeed.
+  expect(edit('POST', `${path}/freeze`, { ...freeze, expected_revision: revision }, 'incomplete-freeze')).toMatchObject({
+    status: 200, value: { replayed: false, resource: { brief: { id: draft.id, state: 'FROZEN' } } },
+  });
+});
+
+test('new Demo Cycles preserve unique ordinals and record actions without granting candidates or changing history', () => {
+  const { edit, projectPath, frozen } = frozenFixture();
+  const history = structuredClone([...records]);
+  const historicalCycles = (edit('GET', `${projectPath}/cycles`)!.value as { items: Schema['CycleViewV1'][] }).items;
+  expect(historicalCycles).toHaveLength(1);
+  const active = setProjectState(edit, projectPath, 'ACTIVE');
+  const start = startRequest(edit, active, frozen.brief.id);
+  for (const offset of [1, 2]) {
+    const response = edit('POST', `${projectPath}/cycles`, start, `new-${offset}`)!;
+    expect(response.status).toBe(202);
+    expect(validateResponse('/api/v2/projects/{id}/cycles', 'post', 202, response.value, 'application/json')).toBe(true);
+    const created = (response.value as { resource: Schema['CycleStartedV1'] }).resource;
+    expect(created.cycle).toMatchObject({ brief_id: frozen.brief.id, outcome: 'NO_SUPPORTED_CANDIDATE', used_experiments: 0,
+      reserved_experiments: 0, available_actions: ['VIEW_BRIEF', 'VIEW_RUNS'] });
+    expect(created.cycle.ordinal).toBe(Math.max(...historicalCycles.map(item => item.ordinal)) + offset);
+    expect(created.cycle.next_action).toContain('仅为独立历史展示');
+    expect(created.run.cycle_id).toBe(created.cycle.id);
+    expect(created.run.input_set_id).toBe(frozen.execution_context.discovery_input_set_id);
+    expect(created.run.terminal_reason_code).toBe('SYNTHETIC_PRESENTATION_ONLY');
+    expect(Date.parse(created.run.deadline_at) - Date.parse(created.run.queued_at)).toBe(frozen.brief.content.budget.max_wall_seconds * 1000);
+    expect(Date.parse(created.run.finished_at!)).toBeLessThanOrEqual(Date.parse(created.run.deadline_at));
+    for (const [path, contract, value] of [
+      [`/api/v2/cycles/${created.cycle.id}`, '/api/v2/cycles/{id}', created.cycle],
+      [`/api/v2/runs/${created.run.id}`, '/api/v2/runs/{id}', created.run],
+    ] as const) {
+      const read = edit('GET', path)!;
+      expect(read).toEqual({ status: 200, value });
+      expect(validateResponse(contract, 'get', 200, read.value, 'application/json')).toBe(true);
+    }
+    const missingPath = `/api/v2/cycles/${created.cycle.id}/selection`;
+    expect(edit('GET', missingPath) ?? demoResponse('GET', missingPath)).toMatchObject({ status: 404 });
+    const beforeCycles = structuredClone(edit('GET', `${projectPath}/cycles`));
+    const beforeRuns = structuredClone(edit('GET', '/api/v2/runs'));
+    expect(edit('POST', `${projectPath}/cycles`, start, `new-${offset}`)).toMatchObject({
+      status: 202, value: { resource: created, replayed: true },
+    });
+    expect(edit('GET', `${projectPath}/cycles`)).toEqual(beforeCycles);
+    expect(edit('GET', '/api/v2/runs')).toEqual(beforeRuns);
+  }
+  const rows = (edit('GET', `${projectPath}/cycles`)!.value as { items: Schema['CycleViewV1'][] }).items;
+  expect(rows).toHaveLength(3);
+  expect(new Set(rows.map(item => item.ordinal)).size).toBe(3);
+  expect(new Set(rows.map(item => item.id)).size).toBe(3);
+  expect(edit('GET', `/api/v2/cycles/${historicalCycles[0]!.id}`)?.value).toEqual(historicalCycles[0]);
+  expect([...records]).toEqual(history);
+});
+
+test('historical frozen contexts remain unchanged and do not inherit the new Demo Runtime', () => {
+  const { edit, projectPath, freeze } = frozenFixture();
+  const path = `/api/v2/briefs/${id(10)}/execution-context`;
+  const original = structuredClone(records.get(path)!.value) as Schema['FrozenBriefV1'];
+  const response = edit('GET', path) ?? demoResponse('GET', path);
+  expect(response.value).toEqual(original);
+  expect(validateResponse('/api/v2/briefs/{id}/execution-context', 'get', 200, response.value, 'application/json')).toBe(true);
+  expect(original.execution_context.runtime_id).not.toBe(freeze.execution_context.runtime_id);
+  const active = setProjectState(edit, projectPath, 'ACTIVE');
+  const before = structuredClone(edit('GET', `${projectPath}/cycles`));
+  expect(edit('POST', `${projectPath}/cycles`, startRequest(edit, active, original.brief.id), 'old-context')?.status).toBe(403);
+  expect(edit('GET', `${projectPath}/cycles`)).toEqual(before);
+  expect((edit('GET', path) ?? demoResponse('GET', path)).value).toEqual(original);
+});
+
+test('synthetic resource lists retain historical Runtimes, paginate, and never fabricate readiness', () => {
+  const edit = projectEditor();
+  for (const path of ['/api/v2/integrations/runtimes', '/api/v2/settings/codex']) {
+    const all = edit('GET', path)!;
+    expect(validateResponse(path, 'get', 200, all.value, 'application/json')).toBe(true);
+    const items = (all.value as { items: { id: string }[] }).items;
+    expect(items).toHaveLength(2);
+    expect(edit('GET', path, undefined, undefined, new URLSearchParams({ limit: '1' }))).toMatchObject({ value: {
+      items: [items[0]], next_cursor: items[0]!.id,
+    } });
+    expect(edit('GET', path, undefined, undefined, new URLSearchParams({ limit: '1', cursor: items[0]!.id }))).toMatchObject({ value: {
+      items: [items[1]], next_cursor: null,
+    } });
+    for (const query of ['limit=0', 'limit=101', 'cursor=bad', 'limit=1&limit=2', 'unknown=1']) {
+      expect(edit('GET', path, undefined, undefined, new URLSearchParams(query))?.status).toBe(422);
+    }
+  }
+  const runtimes = (edit('GET', '/api/v2/integrations/runtimes')!.value as { items: Schema['RuntimeView'][] }).items;
+  for (const runtime of runtimes) {
+    const path = `/api/v2/integrations/runtimes/${runtime.id}`;
+    expect((edit('GET', path) ?? demoResponse('GET', path)).value).toEqual(runtime);
+    const readiness = edit('GET', `${path}/readiness`) ?? demoResponse('GET', `${path}/readiness`);
+    expect(validateResponse('/api/v2/integrations/runtimes/{id}/readiness', 'get', 200, readiness.value, 'application/json')).toBe(true);
+    expect(readiness.value).toMatchObject({ runtime_id: runtime.id, integration_revision: runtime.revision,
+      state: runtime.configuration.enabled ? 'NOT_CHECKED' : 'DISABLED', available_job_kinds: [] });
+    if (runtime.configuration.enabled) expect(readiness.value).toMatchObject({ latest_observation: null });
+  }
 });

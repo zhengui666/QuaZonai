@@ -10,6 +10,7 @@ for (const target of ['application root', 'nested authentication view'] as const
   test(`${target}: confirmed recovery without exposing or replaying work`, async ({ page }) => {
     let failing = true;
     let moduleRequests = 0;
+    let nativeModuleRequests = 0;
     const mutations: string[] = [];
     const diagnostics: string[] = [];
     page.on('console', (message) => { diagnostics.push(message.text()); });
@@ -20,19 +21,30 @@ for (const target of ['application root', 'nested authentication view'] as const
       }
     });
     await page.route(target === 'application root' ? appModule : authModule, async (route) => {
+      const native = new URL(route.request().url());
+      if (native.searchParams.has('boundary-original')) {
+        nativeModuleRequests += 1;
+        await route.continue();
+        return;
+      }
       moduleRequests += 1;
       const body = failing
         ? 'throw new Error("private-render-fixture-detail");'
         : 'return "页面已恢复";';
+      native.searchParams.set('boundary-original', 'true');
+      // Keep uuidPattern, CodeField and every other real export needed by App's
+      // imports. Only AuthBoundary changes; missing exports fail before React renders.
       await route.fulfill({
         contentType: 'application/javascript',
         body: target === 'application root'
           ? `export default function App() { ${body} }`
-          : `export function AuthBoundary() { ${body} } export function VerifyDialog() { return null; }`,
+          : `export * from ${JSON.stringify(native.pathname + native.search)}; export function AuthBoundary() { ${body} }`,
       });
     });
 
     await page.goto(origin);
+    expect(moduleRequests).toBeGreaterThan(0);
+    if (target === 'nested authentication view') expect(nativeModuleRequests).toBeGreaterThan(0);
     const heading = page.getByRole('heading', { level: 1, name: '页面暂时无法显示' });
     await expect(heading).toBeVisible();
     await expect(page.locator('body')).not.toContainText('private-render-fixture-detail');

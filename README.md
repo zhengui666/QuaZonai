@@ -33,7 +33,7 @@ QuaZonai 是面向独立研究者的单用户、自托管研究工作台。Rust 
 <a id="quickstart"></a>
 ## 无凭据界面预览
 
-只看界面时，需要 Git、Node.js ≥22.12、npm 和 make；首次安装需要访问 npm registry：
+需要 Git、Node.js ≥22.12、npm 和 make；首次安装需要访问 npm registry。在仓库内，一条 `make demo-preview` 命令启动合成预览：
 
 ```sh
 git clone https://github.com/zhengui666/QuaZonai.git
@@ -41,9 +41,16 @@ cd QuaZonai
 make demo-preview
 ```
 
-打开 [http://127.0.0.1:4179](http://127.0.0.1:4179)。页面明确标注合成预览；可以临时创建或编辑项目、修改 Brief 草稿，并查看示例研究、组合与交付记录。按 **Ctrl+C** 停止。数据只在进程内存中，重启清空；最多保留 256 次项目创建/编辑回执。
+打开 [http://127.0.0.1:4179](http://127.0.0.1:4179)，页面始终标注 **SYNTHETIC / FIXTURE**。从预置的“双 Alpha 研究示例”体验以下流程：
 
-预览复用正式 React/Ant Design 界面和响应合同，但 Brief 冻结、研究执行和交付领取被禁用。它没有真实 API、数据库、账号或下游，也不等于完整 T02 Demo。请勿输入真实凭据；不要把预览进程接到个人部署的网关后面。
+1. 打开“查看冻结版本”→“以此创建新版本”，修改假设并保存草稿。保留原数据引用，以及 DISCOVERY、VALIDATION、SEALED 三个数据绑定；缺少绑定的草稿可以保存，但不能冻结。
+2. 在新草稿所在行选择“冻结执行上下文”，选择 `SYNTHETIC · Demo Runtime` 和对应的三个输入集。确认后，再通过“修改项目状态”明确启用项目；冻结不会自动启用。
+3. 从刚冻结的新版本启动 Cycle，分别选择 `SYNTHETIC · Demo Researcher` 与 `SYNTHETIC · Demo Reviewer`。这是内存中的交互演示，不执行模型或实验，不生成合格候选；可查看本次关联的运行记录。
+4. 查看原历史周期的试验选择，以及 Alpha、组合候选和 Release 的独立历史样例。在目标包详情下载原始 DEMO Package，检查其中的限制说明。它们不是本次新 Cycle 计算出的结果，不能用于审批、登记生产 Offer 或领取。
+
+原 Brief v1 保留其历史冻结上下文，指向已停用、版本已变化的 Runtime；新配置不会原地替换该上下文。要体验新的冻结/启动路径，应按上面步骤创建新版本。新建空项目只能演示元数据编辑，不会自动继承示例数据、研究或交付记录。启用项目需要冻结 Brief，归档不可退出。
+
+按 **Ctrl+C** 停止。数据只在进程内存中，重启清空；项目和 Brief 的创建/编辑回执合计最多 256 条。预览复用正式 React/Ant Design 界面和响应合同，但没有真实 API、数据库、账号、科学计算或下游连接；Runtime 的配置显示不代表已有原生探测能力。请勿输入真实凭据，不要把预览进程接到个人部署的网关后面。浏览器测试入口与 T02 覆盖范围见[验收证据](docs/architecture/issue-62-execution.md#synthetic-demo-evidence)，不能用它代替完整生产验收。
 
 ## 系统结构
 

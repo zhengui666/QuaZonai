@@ -24,7 +24,7 @@ export default defineConfig({
     transformIndexHtml() {
       return [{ tag: 'aside', attrs: { role: 'note', 'aria-label': '合成预览说明',
         style: 'padding:12px;background:#fff3cd;color:#3b2e00;font:16px/1.5 sans-serif' },
-      children: 'SYNTHETIC / FIXTURE · 无凭据完整交互演示。可编辑项目/Brief，并以显式合成 Runtime 与两个合成 Codex 配置冻结上下文、启动不会执行模型的演示 Cycle；Alpha、组合与目标包均为固定假设记录。所有状态仅在此进程内存中，重启清空；没有真实账号、科学计算、资格、审批或下游交付，请勿输入凭据。', injectTo: 'body-prepend' }];
+      children: 'SYNTHETIC / FIXTURE · 无凭据交互预览。可编辑项目/Brief，以显式合成 Runtime 和两个合成 Codex 配置冻结新草稿并启动演示 Cycle；项目状态（启用需冻结 Brief，归档不可退出）。新 Cycle 不执行实验、不生成合格候选；Alpha、组合与目标包为独立历史展示。所有状态仅在此进程内存中，重启清空；没有真实账号、科学计算、资格、审批或下游交付，请勿输入凭据。', injectTo: 'body-prepend' }];
     },
     configureServer(server) {
       const edit = projectEditor();
