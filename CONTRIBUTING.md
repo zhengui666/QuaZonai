@@ -60,13 +60,15 @@ Run commands at the repository root. Start with the affected behavior, then exer
 | Transactions, worker, HTTP or identity | `make check-store`, `make check-http`, or `make check` with disposable prerequisites | Persistence/transport failure: reproduce against the real native components |
 | Web or API contracts | `make check-web` | Generated drift, type, test or build failure: regenerate from source and fix behavior |
 | Browser, preview or PWA | Install Chromium below, then `npm --prefix apps/web run test:e2e` after `make check-web` | UI/accessibility/offline regression: inspect the actual browser at all three viewports |
-| Real API browser flow | `npm --prefix apps/web run test:e2e:native` with the [Web workflow prerequisites](.github/workflows/web.yml) | Native authentication/project failure: inspect sanitized results and clean only test resources |
+| Real hosted API and restart | `CADDY_BIN=/path/to/caddy npm --prefix apps/web run test:e2e:native` with the [Web workflow prerequisites](.github/workflows/web.yml) | Real gateway/authentication/persistence failure: inspect sanitized results and clean only test resources |
 | Native computation / OCI | `make native OUTPUT=/tmp/quazonai-native-example` with a new output path; [Runtime tests](runtimes/native/README.md) for OCI | A scientific or isolation failure: retain diagnostics; do not substitute a fixture for acceptance |
 
 ```sh
 cd apps/web
 node node_modules/@playwright/test/cli.js install chromium
 ```
+
+The native browser flow additionally needs the built `target/debug/server`, production `apps/web/dist`, an explicitly supplied disposable loopback PostgreSQL administrator (`QUAZONAI_WEB_TEST_ADMIN_URL`), `psql`, and native Caddy (2.11.4 in CI; set `CADDY_BIN` to its path or install it on PATH). It copies the reviewed binary/build into its private release directory, uses the actual `deploy/Caddyfile`, and verifies the original session/project/command receipt after a normal API stop and new-process restart. The gateway stays up during the API outage. It does not use Vite preview, seed application rows, reinstall state, or re-enroll between phases. Public TLS, systemd boot, Worker recovery and real research still require separate acceptance. Private browser state is deleted, not uploaded.
 
 `check-unit` excludes Store/Server tests and is not the full suite. Architecture checks inspect normal/build dependencies, not transitive code or test-only helpers. Links/help/schema checks cannot execute account-dependent runbooks. State unrun checks and reasons; a skipped prerequisite never becomes a pass.
 

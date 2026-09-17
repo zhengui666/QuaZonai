@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * Real browser -> Vite preview -> Rust -> PostgreSQL acceptance.
+ * Real browser -> deployment Caddy -> packaged Rust -> PostgreSQL acceptance.
+ * Verify retained sessions and original command receipts after an actual API restart.
  * Requires an explicitly supplied, disposable loopback PostgreSQL administrator.
  * Never reads .env, reuses an existing application database, or seeds domain rows.
  */
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
@@ -17,6 +18,7 @@ const repo = resolve(web, '../..');
 const report = resolve(process.env.QUAZONAI_WEB_TEST_REPORT_DIR ?? resolve(web, 'test-results/native-summary'));
 const binary = resolve(process.env.QUAZONAI_WEB_TEST_BIN ?? resolve(repo, 'target/debug/server'));
 const psql = process.env.QUAZONAI_WEB_TEST_PSQL ?? 'psql';
+const caddy = process.env.CADDY_BIN ? resolve(process.env.CADDY_BIN) : 'caddy';
 // Child processes receive only tooling essentials, never the administrator URL,
 // ambient database credentials, GitHub tokens, or the invoking shell's secrets.
 const childEnv = Object.fromEntries([
@@ -114,7 +116,7 @@ async function run(name, command, args, options = {}) {
   commands.delete(record);
   clearTimeout(timeout); clearTimeout(hardTimeout);
   stages.push({ name, exit_code: result.code, signal: result.signal, duration_ms: Date.now() - started });
-  if (name === 'browser') await privateRedactions();
+  if (name.startsWith('browser')) await privateRedactions();
   if (!options.privateOutput) {
     await writeFile(resolve(report, `${name}.log`), redact(record.stdout + record.stderr), { mode: 0o600 });
   }
@@ -148,19 +150,19 @@ async function freePort() {
   return address.port;
 }
 
-async function waitReady(baseUrl) {
+async function waitReady(baseUrl, initialized) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline && !stopping) {
-    if (services.some((service) => service.exited)) throw new Error('A test-owned service exited before readiness');
+    if (services.some((service) => service.exited && !service.retired)) throw new Error('A test-owned service exited before readiness');
     try {
       const response = await fetch(`${baseUrl}/api/v2/bootstrap/status`, { signal: AbortSignal.timeout(2_000) });
       if (response.ok) {
         const body = await response.json();
-        if (body.schema_version === 1 && body.initialized === false && body.setup_allowed === true) return;
-        throw new Error('Fresh application did not expose the expected uninitialized state');
+        if (body.schema_version === 1 && body.initialized === initialized && body.setup_allowed === !initialized) return;
+        throw new Error('Application initialization state does not match the current acceptance phase');
       }
     } catch (error) {
-      if (error.message?.startsWith('Fresh application')) throw error;
+      if (error.message?.startsWith('Application initialization')) throw error;
     }
     await new Promise((fulfil) => setTimeout(fulfil, 250));
   }
@@ -248,24 +250,79 @@ async function main() {
   let frontendPort = await freePort();
   while (frontendPort === backendPort) frontendPort = await freePort();
   const baseUrl = `http://127.0.0.1:${frontendPort}`;
-  const server = launch(binary, ['serve', '--state-dir', state, '--bind', `127.0.0.1:${backendPort}`,
-    '--public-url', baseUrl, '--development-http'], { env: applicationEnv });
-  server.name = 'rust-server'; services.push(server);
-  const preview = launch(process.execPath, [resolve(web, 'node_modules/vite/bin/vite.js'), 'preview',
-    '--host', '127.0.0.1', '--port', String(frontendPort), '--strictPort'], {
-    cwd: web, env: { ...childEnv, QUAZONAI_DEV_API_ORIGIN: `http://127.0.0.1:${backendPort}` },
-  });
-  preview.name = 'vite-preview'; services.push(preview);
-  await waitReady(baseUrl);
+  // Exercise a private release copy, not the source checkout or Vite preview.
+  const release = resolve(privateDir, 'release');
+  const installedBinary = resolve(release, 'bin/server');
+  const publicFiles = resolve(release, 'web');
+  await mkdir(dirname(installedBinary), { recursive: true, mode: 0o755 });
+  await copyFile(binary, installedBinary);
+  await chmod(installedBinary, 0o755);
+  await cp(resolve(web, 'dist'), publicFiles, { recursive: true, errorOnExist: true, force: false });
+  const index = await readFile(resolve(publicFiles, 'index.html'), 'utf8');
+  if (!index.includes('<html') || index.includes('/@vite/client')) throw new Error('Expected the real production web build');
+  stages.push({ name: 'package-native-release', exit_code: 0 });
+
+  const gatewayConfig = resolve(privateDir, 'Caddyfile');
+  const actualConfig = await readFile(resolve(repo, 'deploy/Caddyfile'), 'utf8');
+  // Only TLS issuance and the administrator listener are disabled on this
+  // disposable loopback fixture. The actual production route/policy stays intact.
+  await writeFile(gatewayConfig, `{\n  admin off\n  auto_https off\n}\n${actualConfig}`, { mode: 0o600 });
+  const gatewayEnv = {
+    ...childEnv, QUAZONAI_SITE: baseUrl, QUAZONAI_WEB_ROOT: publicFiles,
+    QUAZONAI_API_UPSTREAM: `127.0.0.1:${backendPort}`,
+    XDG_DATA_HOME: resolve(privateDir, 'caddy-data'), XDG_CONFIG_HOME: resolve(privateDir, 'caddy-config'),
+  };
+  await run('caddy-version', caddy, ['version'], { env: gatewayEnv, timeout: 10_000 });
+  await run('caddy-validate', caddy, ['validate', '--config', gatewayConfig, '--adapter', 'caddyfile'],
+    { env: gatewayEnv, timeout: 10_000 });
+  const startApi = (name) => {
+    const service = launch(installedBinary, ['serve', '--state-dir', state, '--bind', `127.0.0.1:${backendPort}`,
+      '--public-url', baseUrl, '--development-http'], { env: applicationEnv, cwd: release });
+    service.name = name; services.push(service);
+    return service;
+  };
+  const first = startApi('rust-server-before-restart');
+  const gateway = launch(caddy, ['run', '--config', gatewayConfig, '--adapter', 'caddyfile'], { env: gatewayEnv, cwd: release });
+  gateway.name = 'caddy'; services.push(gateway);
+  await waitReady(baseUrl, false);
   stages.push({ name: 'real-api-ready', exit_code: 0 });
+
   const fixture = resolve(privateDir, 'fixture.json');
-  await writeFile(fixture, JSON.stringify({ baseUrl, capabilityId: bootstrap.capability_id,
-    capability: bootstrap.capability, redactionsFile }), { mode: 0o600 });
-  await run('browser', process.execPath, [resolve(web, 'node_modules/@playwright/test/cli.js'),
-    'test', '--config', 'playwright.native.config.ts'], {
-    cwd: web, timeout: 240_000,
-    env: { ...childEnv, QUAZONAI_WEB_E2E_FIXTURE: fixture, QUAZONAI_WEB_E2E_ORIGIN: baseUrl },
-  });
+  const browser = async (phase) => {
+    await writeFile(fixture, JSON.stringify({ baseUrl, phase, capabilityId: bootstrap.capability_id,
+      capability: bootstrap.capability, redactionsFile }), { mode: 0o600 });
+    await run(`browser-${phase}`, process.execPath, [resolve(web, 'node_modules/@playwright/test/cli.js'),
+      'test', '--config', 'playwright.native.config.ts'], {
+      cwd: web, timeout: 240_000,
+      env: { ...childEnv, QUAZONAI_WEB_E2E_FIXTURE: fixture, QUAZONAI_WEB_E2E_ORIGIN: baseUrl },
+    });
+  };
+  await browser('before-restart');
+
+  // Keep the gateway, database, state path and cookie key unchanged. A new
+  // process must accept the original session/receipt without seeding or re-login.
+  const oldPid = first.child.pid;
+  if (!oldPid || first.exited) throw new Error('The original API exited before the restart checkpoint');
+  terminate(first, 'SIGTERM');
+  const forceStop = setTimeout(() => terminate(first, 'SIGKILL'), 5_000);
+  const stopped = await first.done;
+  clearTimeout(forceStop);
+  stages.push({ name: 'stop-original-api', exit_code: stopped.code, signal: stopped.signal });
+  if (stopped.code !== 0 || first.overflow) throw new Error('The original API did not shut down normally');
+  first.retired = true;
+  const unavailable = await fetch(`${baseUrl}/api/v2/bootstrap/status`, { signal: AbortSignal.timeout(5_000) });
+  if (unavailable.status !== 502 || (await unavailable.text()).includes('<html')) {
+    throw new Error('A stopped API must remain a gateway error, not the SPA shell');
+  }
+  const shell = await fetch(baseUrl, { headers: { Accept: 'text/html' }, signal: AbortSignal.timeout(5_000) });
+  if (shell.status !== 200 || await shell.text() !== index) throw new Error('The real static shell must remain available during API downtime');
+  stages.push({ name: 'gateway-with-stopped-api', exit_code: 0 });
+
+  const restarted = startApi('rust-server-after-restart');
+  if (!restarted.child.pid || restarted.child.pid === oldPid) throw new Error('API restart did not create a new process');
+  await waitReady(baseUrl, true);
+  stages.push({ name: 'restarted-api-ready', exit_code: 0, previous_pid: oldPid, current_pid: restarted.child.pid });
+  await browser('after-restart');
   for (const width of [1440, 768, 390]) {
     const name = `projects-${width}.png`;
     screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
@@ -300,7 +357,7 @@ if (adminEnv) {
   await writeFile(resolve(report, 'result.json'), JSON.stringify({ schema_version: 1,
     status: failure ? 'FAILED' : 'PASSED', stages,
     error: failure ? redact(failure.message) : null,
-    acceptance_scope: 'real first TOTP enrollment, project writes, CSRF, mobile layout and logout; not complete Issue62 acceptance',
+    acceptance_scope: 'packaged Rust and production Caddy routes, real first TOTP, retained session/project/receipt after API restart, CSRF, mobile layout and logout; no public TLS, systemd boot, active-job restore or complete Issue62 acceptance',
     private_artifacts_retained: false,
     screenshots: failure ? [] : screenshots.map(({ name }) => name),
   }, null, 2), { mode: 0o600 });
