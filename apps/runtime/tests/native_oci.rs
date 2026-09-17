@@ -1800,10 +1800,35 @@ async fn isolated_probe(
     let created = docker.create_container(Some(options), body).await.unwrap();
     docker.start_container(&created.id, None).await.unwrap();
     let outcome = tokio::time::timeout(Duration::from_secs(15), async {
+        let mut observed_terminal = None;
         loop {
             let current = docker.inspect_container(&created.id, None).await.unwrap();
-            if current.state.as_ref().unwrap().running == Some(false) {
-                return current;
+            let state = current.state.as_ref().unwrap();
+            if state.running == Some(false) {
+                let snapshot = (state.exit_code, state.oom_killed);
+                if observed_terminal != Some(snapshot) {
+                    let limits = current.host_config.as_ref().unwrap();
+                    // Native scalar evidence only; no credentials, paths or environment.
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "scope": "test-owned native resource probe",
+                            "mode": mode,
+                            "running": state.running,
+                            "exit_code": state.exit_code,
+                            "oom_killed": state.oom_killed,
+                            "memory": limits.memory,
+                            "memory_swap": limits.memory_swap,
+                            "pids_limit": limits.pids_limit
+                        })
+                    );
+                    observed_terminal = Some(snapshot);
+                }
+                // Docker processes exit and OOM events separately. Do not delete
+                // the memory probe before observing both required facts.
+                if mode != "memory" || state.oom_killed == Some(true) {
+                    return current;
+                }
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

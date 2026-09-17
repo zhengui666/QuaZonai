@@ -194,7 +194,13 @@ async fn cold_round_trip() {
     assert_eq!(fs::metadata(&state).unwrap().mode() & 0o777, 0o700);
     // Comparison precedes reopening SQLite, which may legitimately checkpoint WAL.
     tar("compare-restored-copy", "--compare", &checkpoint, &state).await;
-    tar("compare-retained-original", "--compare", &checkpoint, &saved).await;
+    tar(
+        "compare-retained-original",
+        "--compare",
+        &checkpoint,
+        &saved,
+    )
+    .await;
     assert!(!state.join("credential").exists());
     assert!(!state.join("runtime.json").exists());
 
@@ -254,7 +260,13 @@ async fn cold_round_trip() {
     assert!(container_ids(cancelled.run_id).await.is_empty());
     assert_eq!(fixture.status(&original).await, status);
     assert!(serde_json::to_value(fixture.manifest(&original).await).unwrap() == manifest_value);
-    tar("compare-original-after-new-job", "--compare", &checkpoint, &saved).await;
+    tar(
+        "compare-original-after-new-job",
+        "--compare",
+        &checkpoint,
+        &saved,
+    )
+    .await;
     fixture.assert_private_logs();
     println!(
         "{}",
