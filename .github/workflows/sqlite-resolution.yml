@@ -35,9 +35,10 @@ jobs:
       - name: Apply only the exact authored patch and native formatting
         run: |
           set -euo pipefail
-          if test -f .github/sqlx-compatibility.patch; then
-            git apply --check --unidiff-zero .github/sqlx-compatibility.patch
-            git apply --unidiff-zero .github/sqlx-compatibility.patch
+          if test -f .github/sqlx-compatibility.patch.gz; then
+            gzip --decompress --stdout .github/sqlx-compatibility.patch.gz > "$RUNNER_TEMP/sqlite-resolution/authored.patch"
+            git apply --check --unidiff-zero "$RUNNER_TEMP/sqlite-resolution/authored.patch"
+            git apply --unidiff-zero "$RUNNER_TEMP/sqlite-resolution/authored.patch"
             rustup run "$RUSTUP_TOOLCHAIN" cargo fmt --all
           fi
       - name: Resolve the declared versions using Cargo, not handwritten checksums
