@@ -38,12 +38,12 @@
 +++ b/crates/store/src/lifecycle/portfolio.rs
 @@ -626 +626 @@
 -        pool.prepare(MEMBER_SOURCE).await.unwrap();
-+        pool.prepare(sqlx::sql_str::SqlStr::from_static(MEMBER_SOURCE)).await.unwrap();
++        pool.prepare(sqlx::SqlStr::from_static(MEMBER_SOURCE)).await.unwrap();
 --- a/crates/store/src/lifecycle/sealed/qualification.rs
 +++ b/crates/store/src/lifecycle/sealed/qualification.rs
 @@ -74 +74 @@
 -        pool.prepare(INSERT).await.unwrap();
-+        pool.prepare(sqlx::sql_str::SqlStr::from_static(INSERT)).await.unwrap();
++        pool.prepare(sqlx::SqlStr::from_static(INSERT)).await.unwrap();
 --- a/docs/research/reuse.md
 +++ b/docs/research/reuse.md
 @@ -155 +155 @@
@@ -92,7 +92,7 @@
 +borrowed `&str` retain the actual query's lifetime. The migration call uses native
 +`run_direct(None, connection, false)`: all pending versions execute, not skip.
 +Sources: [SQLx0.9](https://github.com/transact-rs/sqlx/discussions/4271),
-+[SqlSafeStr](https://docs.rs/sqlx/0.9.0/sqlx/sql_str/index.html), and
++[SqlSafeStr](https://docs.rs/sqlx/0.9.0/sqlx/trait.SqlSafeStr.html), and
 +[upstream migration execution](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-core/src/migrate/migrator.rs).
 +
 +The original session DDL attribution above remains historical. The new adapter's
