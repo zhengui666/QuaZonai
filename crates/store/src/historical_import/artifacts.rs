@@ -44,7 +44,7 @@ where
         if !artifact_table(table_name) {
             continue;
         }
-        projected += sqlx::query(&format!("INSERT INTO pg_temp.historical_artifact_stage(source_table,source_id,record_id,existing_bytes) SELECT $2,(incoming.original_key->>'id')::uuid,r.id,c.byte_count FROM ({}) incoming LEFT JOIN app.historical_records r ON r.source_installation_id=$1 AND r.source_table=$2 AND r.original_key=incoming.original_key LEFT JOIN app.historical_artifact_copies c ON c.record_id=r.id",table.select))
+        projected += sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO pg_temp.historical_artifact_stage(source_table,source_id,record_id,existing_bytes) SELECT $2,(incoming.original_key->>'id')::uuid,r.id,c.byte_count FROM ({}) incoming LEFT JOIN app.historical_records r ON r.source_installation_id=$1 AND r.source_table=$2 AND r.original_key=incoming.original_key LEFT JOIN app.historical_artifact_copies c ON c.record_id=r.id",table.select)))
             .bind(source.source_installation_id.as_uuid()).bind(table_name).execute(&mut **tx).await?.rows_affected();
     }
     let mut selected = 0;

@@ -56,7 +56,7 @@ impl Store {
         if !exists {
             return Err(StoreError::NotFound);
         }
-        let rows = sqlx::query(&format!("{CANDIDATE} WHERE c.project_id=$1 AND ($2::uuid IS NULL OR c.id<$2) ORDER BY c.id DESC LIMIT $3"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{CANDIDATE} WHERE c.project_id=$1 AND ($2::uuid IS NULL OR c.id<$2) ORDER BY c.id DESC LIMIT $3")))
             .bind(project.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let items = rows.iter().map(candidate).collect::<Result<Vec<_>, _>>()?;
         tx.commit().await?;
@@ -76,7 +76,7 @@ pub(crate) async fn snapshot(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     id: Id,
 ) -> Result<CandidateDetailV1, StoreError> {
-    let row = sqlx::query(&format!("{CANDIDATE} WHERE c.id=$1"))
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!("{CANDIDATE} WHERE c.id=$1")))
         .bind(id.as_uuid())
         .fetch_optional(&mut **tx)
         .await?

@@ -96,10 +96,12 @@ async fn failed_selection_keeps_original_queue_and_replay_seals_members_not_othe
         .execute(&pool).await.unwrap();
     assert!(store.acknowledge_run(&queued).await.is_err());
     for table in ["cycle_selections", "cycle_selection_trials"] {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM app.{table}"))
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM app.{table}"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(count, 0, "whole snapshot rolled back");
     }
     assert_eq!(

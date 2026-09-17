@@ -215,10 +215,10 @@ where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
 {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{} WHERE e.id=$1 AND s.project_id=$2 AND s.runtime_id=$3",
         super::VIEW
-    ))
+    )))
     .bind(assumptions.as_uuid())
     .bind(project.as_uuid())
     .bind(runtime.as_uuid())
@@ -275,10 +275,10 @@ where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
 {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{} WHERE e.id=$1 AND s.project_id=$2 AND s.runtime_id=$3",
         super::VIEW
-    ))
+    )))
     .bind(assumptions.as_uuid())
     .bind(project.as_uuid())
     .bind(runtime.as_uuid())

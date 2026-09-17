@@ -385,7 +385,7 @@ fn reservation(row: PgRow) -> Result<Reservation, StoreError> {
 async fn load_reservation(tx: &mut Tx<'_>, reservation_id: Id) -> Result<Reservation, StoreError> {
     let sql = format!("SELECT {RESERVATION_COLUMNS} FROM app.model_turn_reservations WHERE id=$1");
     reservation(
-        sqlx::query(&sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(reservation_id.as_uuid())
             .fetch_optional(&mut **tx)
             .await?
@@ -701,7 +701,7 @@ async fn reserve_in_transaction(
     }
     let mission = lock_mission(tx, run_id, fence).await?;
     let sql=format!("SELECT {RESERVATION_COLUMNS} FROM app.model_turn_reservations WHERE session_id=$1 AND command_key=$2");
-    if let Some(row) = sqlx::query(&sql)
+    if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(mission.session_id)
         .bind(&request.command_key)
         .fetch_optional(&mut **tx)

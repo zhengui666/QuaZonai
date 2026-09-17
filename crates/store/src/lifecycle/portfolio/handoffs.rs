@@ -365,7 +365,7 @@ impl Store {
     /// Trusted worker maintenance only. Claim independently checks the DB clock.
     pub async fn reconcile_handoffs(&self) -> Result<u64, StoreError> {
         let revoked="EXISTS(SELECT 1 FROM app.approval_revocations r WHERE r.approval_id=h.approval_id AND r.effective_at<=clock_timestamp()) OR EXISTS(SELECT 1 FROM app.approvals a JOIN app.automation_policies policy ON policy.id=a.automation_policy_id JOIN app.projects project ON project.id=policy.project_id WHERE a.id=h.approval_id AND a.authority_kind='FROZEN_POLICY' AND (project.state<>'ACTIVE' OR project.current_automation_policy_id IS DISTINCT FROM policy.id OR NOT policy.enabled_for_new_rebalances OR policy.mode='MANUAL' OR EXISTS(SELECT 1 FROM app.policy_revocations r WHERE r.automation_policy_id=policy.id AND r.effective_at<=clock_timestamp())))";
-        let changed=sqlx::query(&format!("WITH pending AS (SELECT h.id,CASE WHEN {revoked} THEN 'REVOKED' ELSE 'EXPIRED' END AS state FROM app.handoff_offers h WHERE h.state='OFFERED' AND (h.expires_at<=clock_timestamp() OR {revoked}) ORDER BY h.expires_at,h.id LIMIT 128 FOR UPDATE OF h SKIP LOCKED) UPDATE app.handoff_offers h SET state=p.state FROM pending p WHERE h.id=p.id AND h.state='OFFERED'"))
+        let changed=sqlx::query(sqlx::AssertSqlSafe(format!("WITH pending AS (SELECT h.id,CASE WHEN {revoked} THEN 'REVOKED' ELSE 'EXPIRED' END AS state FROM app.handoff_offers h WHERE h.state='OFFERED' AND (h.expires_at<=clock_timestamp() OR {revoked}) ORDER BY h.expires_at,h.id LIMIT 128 FOR UPDATE OF h SKIP LOCKED) UPDATE app.handoff_offers h SET state=p.state FROM pending p WHERE h.id=p.id AND h.state='OFFERED'")))
             .execute(&self.pool).await?;
         Ok(changed.rows_affected())
     }

@@ -355,7 +355,7 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         let mission = lock_mission(&mut tx, run, fence).await?;
         let sql=format!("SELECT {RESERVATION_COLUMNS} FROM app.model_turn_reservations WHERE session_id=$1 ORDER BY ordinal DESC LIMIT 1");
-        let latest = if let Some(row) = sqlx::query(&sql)
+        let latest = if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(mission.session_id)
             .fetch_optional(&mut *tx)
             .await?

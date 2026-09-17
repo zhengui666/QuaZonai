@@ -46,52 +46,57 @@ pub struct MissionConnection {
 
 impl Worker {
     /// Trusted queue entry point, shared by the daemon and actual native tests.
-    pub async fn process_mission_message(
-        &self,
+    /// Pin the pipeline on the heap before callers embed it in larger futures.
+    /// This does not spawn work: polling and cancellation remain with the caller.
+    pub fn process_mission_message<'a>(
+        &'a self,
         message: RunMessage,
-        owner: &str,
+        owner: &'a str,
         mut shutdown: watch::Receiver<bool>,
-    ) -> Result<(), WorkerFailure> {
-        let launcher = self.missions.as_ref().ok_or(WorkerFailure::TaskKind)?;
-        if *shutdown.borrow() || shutdown.has_changed().is_err() {
-            return Err(WorkerFailure::LostAuthority);
-        }
-        let lease = match self.store.claim_mission(&message, owner, 60).await? {
-            None => return Err(WorkerFailure::TaskKind),
-            Some(ClaimResult::Busy) => return Ok(()),
-            Some(ClaimResult::Terminal(_)) => {
-                self.store.acknowledge_run(&message).await?;
-                return Ok(());
+    ) -> std::pin::Pin<Box<impl std::future::Future<Output = Result<(), WorkerFailure>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let launcher = self.missions.as_ref().ok_or(WorkerFailure::TaskKind)?;
+            if *shutdown.borrow() || shutdown.has_changed().is_err() {
+                return Err(WorkerFailure::LostAuthority);
             }
-            Some(ClaimResult::Leased(lease)) => *lease,
-        };
-        let heartbeat = async {
-            loop {
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                if self
-                    .store
-                    .renew_run_lease(lease.run.id, &lease.fence, 60)
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        };
-        let observed = shutdown.clone();
-        // Dropping this finite driver also drops/kills its owned native process.
-        // Neither shutdown nor a lost renewal fabricates a Turn/Run receipt.
-        tokio::select! {
-            biased;
-            _ = shutdown.changed() => Err(WorkerFailure::LostAuthority),
-            _ = heartbeat => Err(WorkerFailure::LostAuthority),
-            result = self.drive_mission(launcher, &lease, &observed) => {
-                if result? {
+            let lease = match self.store.claim_mission(&message, owner, 60).await? {
+                None => return Err(WorkerFailure::TaskKind),
+                Some(ClaimResult::Busy) => return Ok(()),
+                Some(ClaimResult::Terminal(_)) => {
                     self.store.acknowledge_run(&message).await?;
+                    return Ok(());
                 }
-                Ok(())
-            },
-        }
+                Some(ClaimResult::Leased(lease)) => *lease,
+            };
+            let heartbeat = async {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    if self
+                        .store
+                        .renew_run_lease(lease.run.id, &lease.fence, 60)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            };
+            let observed = shutdown.clone();
+            // Dropping this finite driver also drops/kills its owned native process.
+            // Neither shutdown nor a lost renewal fabricates a Turn/Run receipt.
+            tokio::select! {
+                biased;
+                _ = shutdown.changed() => Err(WorkerFailure::LostAuthority),
+                _ = heartbeat => Err(WorkerFailure::LostAuthority),
+                result = Box::pin(self.drive_mission(launcher, &lease, &observed)) => {
+                    if result? {
+                        self.store.acknowledge_run(&message).await?;
+                    }
+                    Ok(())
+                },
+            }
+        })
     }
 
     async fn drive_mission(
@@ -618,4 +623,32 @@ async fn issue(
         return Err(error.into());
     }
     Ok(token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mission_dispatch_does_not_inline_the_nested_pipeline() {
+        // Infer the boxed pointee, not the pointer-sized public handle. Removing
+        // the drive_mission pin must be visible in the enclosing async state.
+        // No database, process or potentially oversized future is constructed.
+        fn inline_size<'a, F: std::future::Future>(
+            _: impl FnOnce(
+                &'a Worker,
+                RunMessage,
+                &'a str,
+                watch::Receiver<bool>,
+            ) -> std::pin::Pin<Box<F>>,
+        ) -> usize {
+            std::mem::size_of::<F>()
+        }
+
+        let bytes = inline_size(Worker::process_mission_message);
+        assert!(
+            bytes <= 64 * 1024,
+            "Mission dispatch state embeds {bytes} bytes; keep large child futures separately pinned"
+        );
+    }
 }

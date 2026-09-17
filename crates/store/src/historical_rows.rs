@@ -38,8 +38,8 @@ impl Store {
         connection.close_on_drop();
         let mut tx = connection.begin().await?;
         let staged = stage(&mut tx, inspection, projection, &mut input).await?;
-        let sql = &staged.select;
-        let mut stream = sqlx::query(sql).fetch(&mut *tx);
+        let sql = staged.select.as_str();
+        let mut stream = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch(&mut *tx);
         let mut visited = 0u64;
         while let Some(row) = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
             let row = row?;
@@ -66,6 +66,8 @@ impl Store {
     }
 }
 
+// Dynamic SQL below uses only the fixed projection rules and quoted identifiers.
+// Callers retain this provenance when composing the returned SELECT and table.
 pub(crate) struct StagedProjection {
     pub table: String,
     pub select: String,
@@ -135,9 +137,9 @@ pub(crate) async fn stage<R: Read + Seek>(
         .map(|k| quote(k))
         .collect::<Vec<_>>()
         .join(",");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TEMP TABLE {table} ({definitions},PRIMARY KEY({keys})) ON COMMIT DROP"
-    ))
+    )))
     .execute(&mut **tx)
     .await?;
     input.seek(SeekFrom::Start(0)).map_err(|_| invalid())?;

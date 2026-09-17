@@ -23,10 +23,10 @@ async fn work(tx: &mut Tx<'_>, run: Id) -> Result<Option<ReviewWork>, StoreError
         return Ok(None);
     };
     let evaluation = id(row.try_get("evaluation_id")?)?;
-    let ev = sqlx::query(&format!(
+    let ev = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM ({}) formal WHERE id=$1",
         crate::evidence::EVALUATION
-    ))
+    )))
     .bind(evaluation.as_uuid())
     .fetch_one(&mut **tx)
     .await?;

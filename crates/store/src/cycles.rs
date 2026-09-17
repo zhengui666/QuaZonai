@@ -688,7 +688,7 @@ impl Store {
         .bind(request.request.reviewer_profile.expected_revision.get() as i64)
         .execute(&mut *tx)
         .await?;
-        let row = sqlx::query(&format!("{CYCLE} WHERE c.id=$1"))
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!("{CYCLE} WHERE c.id=$1")))
             .bind(cycle.as_uuid())
             .fetch_one(&mut *tx)
             .await?;
@@ -710,7 +710,7 @@ impl Store {
                 .ok_or(StoreError::NotFound)?;
         authority::read_project(&mut tx, actor, db::id(project)?, MachineScope::ResearchRead)
             .await?;
-        let row = sqlx::query(&format!("{CYCLE} WHERE c.id=$1"))
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!("{CYCLE} WHERE c.id=$1")))
             .bind(id.as_uuid())
             .fetch_one(&mut *tx)
             .await?;
@@ -728,7 +728,7 @@ impl Store {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
         authority::read_project(&mut tx, actor, project, MachineScope::ResearchRead).await?;
-        let rows = sqlx::query(&format!("{CYCLE} WHERE c.project_id=$1 AND ($2::uuid IS NULL OR c.id<$2) ORDER BY c.id DESC LIMIT $3"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{CYCLE} WHERE c.project_id=$1 AND ($2::uuid IS NULL OR c.id<$2) ORDER BY c.id DESC LIMIT $3")))
             .bind(project.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1)
             .fetch_all(&mut *tx).await?;
         let result = page(

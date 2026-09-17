@@ -623,6 +623,8 @@ mod tests {
     async fn postgres_prepares_original_qualification_selection_without_forging_evidence(
         pool: sqlx::PgPool,
     ) {
-        pool.prepare(MEMBER_SOURCE).await.unwrap();
+        pool.prepare(sqlx::SqlStr::from_static(MEMBER_SOURCE))
+            .await
+            .unwrap();
     }
 }

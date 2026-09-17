@@ -88,7 +88,7 @@ impl Store {
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(StoreError::NotFound)?;
-        let rows=sqlx::query(&format!("{MESSAGE} WHERE c.project_id=$1 AND ($2::uuid IS NULL OR m.downstream_id=$2) AND ($3::uuid IS NULL OR m.id<$3) ORDER BY m.id DESC LIMIT $4"))
+        let rows=sqlx::query(sqlx::AssertSqlSafe(format!("{MESSAGE} WHERE c.project_id=$1 AND ($2::uuid IS NULL OR m.downstream_id=$2) AND ($3::uuid IS NULL OR m.id<$3) ORDER BY m.id DESC LIMIT $4")))
             .bind(project.as_uuid()).bind(downstream.map(Id::as_uuid)).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let items = rows.iter().map(view).collect::<Result<Vec<_>, _>>()?;
         tx.commit().await?;
@@ -150,16 +150,16 @@ impl Store {
             .bind(&scope).bind(&request.external_message_id).fetch_optional(&mut *tx).await?;
         let existing = if let Some(alias) = alias {
             Some(
-                sqlx::query(&format!("{MESSAGE} WHERE m.id=$1"))
+                sqlx::query(sqlx::AssertSqlSafe(format!("{MESSAGE} WHERE m.id=$1")))
                     .bind(alias)
                     .fetch_optional(&mut *tx)
                     .await?
                     .ok_or(StoreError::Integrity)?,
             )
         } else {
-            let external = sqlx::query(&format!(
+            let external = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{MESSAGE} WHERE m.downstream_id=$1 AND m.external_message_id=$2"
-            ))
+            )))
             .bind(downstream.as_uuid())
             .bind(&request.external_message_id)
             .fetch_optional(&mut *tx)
@@ -167,7 +167,7 @@ impl Store {
             if external.is_some() {
                 external
             } else {
-                sqlx::query(&format!("{MESSAGE} WHERE m.handoff_id=$1 AND m.stream_id=$2 AND m.sequence=$3 AND m.message_revision=$4"))
+                sqlx::query(sqlx::AssertSqlSafe(format!("{MESSAGE} WHERE m.handoff_id=$1 AND m.stream_id=$2 AND m.sequence=$3 AND m.message_revision=$4")))
                     .bind(report.handoff_id.as_uuid()).bind(&report.stream_id).bind(report.sequence.get() as i64).bind(report.message_revision as i32).fetch_optional(&mut *tx).await?
             }
         };
@@ -258,7 +258,7 @@ impl Store {
         if issuer(&mut tx, actor, report.project_id).await? != downstream {
             return Err(StoreError::Forbidden);
         }
-        let row = sqlx::query(&format!("{MESSAGE} WHERE m.id=$1"))
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!("{MESSAGE} WHERE m.id=$1")))
             .bind(id.as_uuid())
             .fetch_one(&mut *tx)
             .await?;

@@ -13,10 +13,12 @@ fn code(error: StoreError, expected: &str) {
 }
 async fn count(pool: &PgPool, table: &str) -> i64 {
     // Test-owned table names, never user interpolation.
-    sqlx::query_scalar(&format!("SELECT count(*) FROM app.{table}"))
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM app.{table}"
+    )))
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -840,9 +842,9 @@ async fn zero_argument_revision_guard_preserves_native_identity_and_binding_chec
         .split("CREATE FUNCTION app.guard_frozen_parent()")
         .next()
         .unwrap();
-    sqlx::raw_sql(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE OR REPLACE FUNCTION app.guard_revision(){original}"
-    ))
+    )))
     .execute(&pool)
     .await
     .unwrap();
@@ -859,9 +861,9 @@ async fn zero_argument_revision_guard_preserves_native_identity_and_binding_chec
         .split("CREATE OR REPLACE FUNCTION app.guard_revision()")
         .nth(1)
         .unwrap();
-    sqlx::raw_sql(&format!(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE OR REPLACE FUNCTION app.guard_revision(){repair}"
-    ))
+    )))
     .execute(&pool)
     .await
     .unwrap();

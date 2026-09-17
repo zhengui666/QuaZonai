@@ -81,9 +81,9 @@ async fn locked_principal(
             .fetch_one(&mut **tx)
             .await?;
     }
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {PRINCIPAL} FROM app.machine_principals WHERE id=$1 FOR UPDATE"
-    ))
+    )))
     .bind(id.as_uuid())
     .fetch_one(&mut **tx)
     .await?;
@@ -119,7 +119,7 @@ impl Store {
                 Some(a.project_id.ok_or(StoreError::Forbidden)?.as_uuid())
             }
         };
-        let rows=sqlx::query(&format!("SELECT {PROJECT} FROM app.projects WHERE ($1::uuid IS NULL OR id=$1) AND ($2::uuid IS NULL OR id<$2) ORDER BY id DESC LIMIT $3"))
+        let rows=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {PROJECT} FROM app.projects WHERE ($1::uuid IS NULL OR id=$1) AND ($2::uuid IS NULL OR id<$2) ORDER BY id DESC LIMIT $3")))
             .bind(allowed).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(project).collect::<Result<Vec<_>, _>>()?,
@@ -132,11 +132,13 @@ impl Store {
     pub async fn project(&self, actor: &Actor, id: Id) -> Result<ProjectView, StoreError> {
         let mut tx = self.pool.begin().await?;
         authority::read_project(&mut tx, actor, id, MachineScope::ResearchRead).await?;
-        let row = sqlx::query(&format!("SELECT {PROJECT} FROM app.projects WHERE id=$1"))
-            .bind(id.as_uuid())
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(StoreError::NotFound)?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {PROJECT} FROM app.projects WHERE id=$1"
+        )))
+        .bind(id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(StoreError::NotFound)?;
         let result = project(&row)?;
         tx.commit().await?;
         Ok(result)
@@ -180,7 +182,7 @@ impl Store {
             .bind(lineage.as_uuid()).bind(if parent.is_some(){"FORK"}else{"NEW"}).bind(parent)
             .bind(if parent.is_some(){"Operator-created fork; parent evidence lineage is retained"}else{"Operator-created research project"})
             .execute(&mut *tx).await?;
-        let row=sqlx::query(&format!("INSERT INTO app.projects(id,root_lineage_id,name,description,state,created_by) VALUES($1,$2,$3,$4,'DRAFT','OPERATOR') RETURNING {PROJECT}"))
+        let row=sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO app.projects(id,root_lineage_id,name,description,state,created_by) VALUES($1,$2,$3,$4,'DRAFT','OPERATOR') RETURNING {PROJECT}")))
             .bind(command.target.as_uuid()).bind(lineage.as_uuid()).bind(&request.name).bind(&request.description).fetch_one(&mut *tx).await?;
         let result = commands::finish(&mut tx, command, project(&row)?, 201).await?;
         tx.commit().await?;
@@ -208,9 +210,9 @@ impl Store {
             tx.commit().await?;
             return Ok(result);
         }
-        let old = sqlx::query(&format!(
+        let old = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {PROJECT} FROM app.projects WHERE id=$1 FOR UPDATE"
-        ))
+        )))
         .bind(id.as_uuid())
         .fetch_optional(&mut *tx)
         .await?
@@ -238,7 +240,7 @@ impl Store {
                 return Err(domain::DomainError::InvalidTransition.into());
             }
         }
-        let row=sqlx::query(&format!("UPDATE app.projects SET name=$2,description=$3,state=$4,archived_at=CASE WHEN $4='ARCHIVED' THEN coalesce(archived_at,clock_timestamp()) ELSE NULL END WHERE id=$1 AND revision=$5 RETURNING {PROJECT}"))
+        let row=sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE app.projects SET name=$2,description=$3,state=$4,archived_at=CASE WHEN $4='ARCHIVED' THEN coalesce(archived_at,clock_timestamp()) ELSE NULL END WHERE id=$1 AND revision=$5 RETURNING {PROJECT}")))
             .bind(id.as_uuid()).bind(&request.name).bind(&request.description).bind(db::code(&request.state)?).bind(request.expected_revision.get() as i64)
             .fetch_one(&mut *tx).await?;
         let result = commands::finish(&mut tx, command, project(&row)?, 200).await?;
@@ -253,7 +255,7 @@ impl Store {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
         authority::browser(&mut tx, actor, false, false).await?;
-        let rows=sqlx::query(&format!("SELECT {PRINCIPAL} FROM app.machine_principals WHERE ($1::uuid IS NULL OR id<$1) ORDER BY id DESC LIMIT $2"))
+        let rows=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {PRINCIPAL} FROM app.machine_principals WHERE ($1::uuid IS NULL OR id<$1) ORDER BY id DESC LIMIT $2")))
             .bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(principal).collect::<Result<Vec<_>, _>>()?,
@@ -298,7 +300,7 @@ impl Store {
                 .await?
                 .ok_or(StoreError::NotFound)?;
         }
-        let row=sqlx::query(&format!("INSERT INTO app.machine_principals(id,name,kind,project_id,downstream_id,enabled,credential_epoch) VALUES($1,$2,$3,$4,$5,$6,1) RETURNING {PRINCIPAL}"))
+        let row=sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO app.machine_principals(id,name,kind,project_id,downstream_id,enabled,credential_epoch) VALUES($1,$2,$3,$4,$5,$6,1) RETURNING {PRINCIPAL}")))
             .bind(command.target.as_uuid()).bind(&request.name).bind(db::code(&request.kind)?).bind(request.project_id.map(Id::as_uuid))
             .bind(request.downstream_id.map(Id::as_uuid)).bind(request.enabled).fetch_one(&mut *tx).await?;
         let result = commands::finish(&mut tx, command, principal(&row)?, 201).await?;
@@ -336,7 +338,7 @@ impl Store {
         let epoch = (old.credential_epoch.get() as i64)
             .checked_add(i64::from(old.enabled != request.enabled))
             .ok_or(StoreError::Conflict)?;
-        let row=sqlx::query(&format!("UPDATE app.machine_principals SET name=$2,enabled=$3,credential_epoch=$4 WHERE id=$1 AND revision=$5 RETURNING {PRINCIPAL}"))
+        let row=sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE app.machine_principals SET name=$2,enabled=$3,credential_epoch=$4 WHERE id=$1 AND revision=$5 RETURNING {PRINCIPAL}")))
             .bind(id.as_uuid()).bind(&request.name).bind(request.enabled).bind(epoch).bind(request.expected_revision.get() as i64).fetch_one(&mut *tx).await?;
         let result = commands::finish(&mut tx, command, principal(&row)?, 200).await?;
         tx.commit().await?;
@@ -356,7 +358,7 @@ impl Store {
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(StoreError::NotFound)?;
-        let rows=sqlx::query(&format!("SELECT {CREDENTIAL} FROM app.machine_credentials c WHERE c.principal_id=$1 AND ($2::uuid IS NULL OR c.id<$2) ORDER BY c.id DESC LIMIT $3"))
+        let rows=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {CREDENTIAL} FROM app.machine_credentials c WHERE c.principal_id=$1 AND ($2::uuid IS NULL OR c.id<$2) ORDER BY c.id DESC LIMIT $3")))
             .bind(principal_id.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(credential).collect::<Result<Vec<_>, _>>()?,
@@ -474,9 +476,9 @@ impl Store {
             sqlx::query("INSERT INTO app.machine_credential_revocations(credential_id,effective_at,reason) VALUES($1,clock_timestamp(),$2)")
                 .bind(id.as_uuid()).bind(&request.reason).execute(&mut *tx).await?;
         }
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {CREDENTIAL} FROM app.machine_credentials c WHERE c.id=$1"
-        ))
+        )))
         .bind(id.as_uuid())
         .fetch_one(&mut *tx)
         .await?;
@@ -571,9 +573,9 @@ impl CredentialIssuance {
             .bind(command.target.as_uuid()).bind(principal.id.as_uuid()).bind(public_token_id.to_string()).bind(verifier_ref.to_string())
             .bind(principal.credential_epoch.get() as i64).bind(request.scope_codes.iter().map(|s|s.code()).collect::<Vec<_>>()).bind(request.expires_at)
             .execute(&mut *tx).await?;
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {CREDENTIAL} FROM app.machine_credentials c WHERE c.id=$1"
-        ))
+        )))
         .bind(command.target.as_uuid())
         .fetch_one(&mut *tx)
         .await?;

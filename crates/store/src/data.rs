@@ -101,9 +101,9 @@ fn universe(row: &PgRow) -> Result<UniverseView, StoreError> {
 }
 
 pub(crate) async fn universe_in_tx(tx: &mut Tx<'_>, id: Id) -> Result<UniverseView, StoreError> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {UNIVERSE_FIELDS} FROM app.universe_versions u WHERE u.id=$1"
-    ))
+    )))
     .bind(id.as_uuid())
     .fetch_optional(&mut **tx)
     .await?
@@ -533,7 +533,7 @@ impl Store {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
         read_authority(&mut tx, actor).await?;
-        let rows = sqlx::query(&format!("SELECT {UNIVERSE_FIELDS} FROM app.universe_versions u WHERE ($1::uuid IS NULL OR u.id<$1) ORDER BY u.id DESC LIMIT $2"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {UNIVERSE_FIELDS} FROM app.universe_versions u WHERE ($1::uuid IS NULL OR u.id<$1) ORDER BY u.id DESC LIMIT $2")))
             .bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit) + 1).fetch_all(&mut *tx).await?;
         let mut items = rows.iter().map(universe).collect::<Result<Vec<_>, _>>()?;
         let next_cursor = if items.len() > query.limit as usize {

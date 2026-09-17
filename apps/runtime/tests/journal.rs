@@ -130,6 +130,44 @@ fn completed(
 }
 
 #[tokio::test]
+async fn native_journal_uses_the_pinned_sqlite_wal_reset_fix() {
+    use sqlx::Connection;
+
+    let (directory, journal, _, _) = fixture().await;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(directory.path().join("journal.sqlite"))
+        .create_if_missing(false);
+    let mut connection = sqlx::SqliteConnection::connect_with(&options)
+        .await
+        .unwrap();
+    let version: String = sqlx::query_scalar("SELECT sqlite_version()")
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    assert_eq!(
+        version, "3.51.3",
+        "the linked engine, not the host CLI, must include the WAL-reset fix"
+    );
+    let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    assert_eq!(mode, "wal");
+    let identity: String =
+        sqlx::query_scalar("SELECT instance_id FROM runtime_meta WHERE singleton=1")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+    assert_eq!(identity, journal.instance_id.to_string());
+    let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    connection.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn immutable_object_replay_and_native_reopen_keep_exact_original_bytes() {
     let (directory, journal, _, _) = fixture().await;
     let id = Id::new();

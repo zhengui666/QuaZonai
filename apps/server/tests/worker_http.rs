@@ -190,10 +190,12 @@ async fn a_restored_database_recovers_the_exact_sent_attempt_without_reposting(p
     );
     assert!(dump.stdout.starts_with(b"PGDMP"));
     let database = format!("worker_restore_{}", Id::new().to_string().replace('-', ""));
-    sqlx::query(&format!("CREATE DATABASE {database} TEMPLATE template0"))
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE DATABASE {database} TEMPLATE template0"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
     let restored = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
         .connect_with(pool.connect_options().as_ref().clone().database(&database))
@@ -272,10 +274,12 @@ async fn a_restored_database_recovers_the_exact_sent_attempt_without_reposting(p
     );
     drop(worker);
     restored.close().await;
-    sqlx::query(&format!("DROP DATABASE {database} WITH (FORCE)"))
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE {database} WITH (FORCE)"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -311,7 +315,10 @@ async fn killed_worker_process_reconciles_original_job_without_resubmission(pool
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert!(sqlx::query(&ddl).execute(&pool).await.is_ok());
+    assert!(sqlx::query(sqlx::AssertSqlSafe(ddl.as_str()))
+        .execute(&pool)
+        .await
+        .is_ok());
     f.data
         .store
         .migrate_with_application_role(Some(&role))
@@ -399,11 +406,11 @@ async fn killed_worker_process_reconciles_original_job_without_resubmission(pool
     let facts: (i64, i64, i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.run_attempts WHERE run_id=$1),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT count(*) FROM app.artifacts WHERE producer_run_id=$1),(SELECT count(*) FROM pgmq.q_runs),(SELECT count(*) FROM pgmq.a_runs)")
         .bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
     assert_eq!(facts, (1, 1, 2, 0, 1));
-    sqlx::query(&format!("DROP OWNED BY {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP OWNED BY {role}")))
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
         .execute(&pool)
         .await
         .unwrap();

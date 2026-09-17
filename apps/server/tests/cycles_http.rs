@@ -471,10 +471,11 @@ async fn native_full_filesystem_rolls_back_cycle_admission_and_allows_same_inten
     assert_eq!(rejected.headers[header::CACHE_CONTROL], "no-store");
     // Independent database reads prove the failed request left no admitted work.
     for table in ["app.research_cycles", "app.runs", "pgmq.q_runs"] {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let count: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(count, 0, "{table}");
     }
     let mut after = fs::read_dir(&objects)

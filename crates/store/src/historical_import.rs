@@ -251,10 +251,10 @@ impl Store {
                         .join(" OR ")
                 ),
             };
-            let broken: bool = sqlx::query_scalar(&format!(
+            let broken: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT EXISTS(SELECT 1 FROM pg_temp.{} s WHERE {predicate})",
                 from.table
-            ))
+            )))
             .fetch_one(&mut *tx)
             .await?;
             if broken {
@@ -270,12 +270,12 @@ impl Store {
         for (qualified, table) in &staged {
             let source_table = qualified.strip_prefix("public.").ok_or_else(invalid)?;
             projected += table.rows.get();
-            let changed:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM ({}) incoming JOIN app.historical_records old ON old.source_installation_id=$1 AND old.source_table=$2 AND old.original_key=incoming.original_key WHERE old.fields<>incoming.fields)",table.select))
+            let changed:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM ({}) incoming JOIN app.historical_records old ON old.source_installation_id=$1 AND old.source_table=$2 AND old.original_key=incoming.original_key WHERE old.fields<>incoming.fields)",table.select)))
                 .bind(source.source_installation_id.as_uuid()).bind(source_table).fetch_one(&mut *tx).await?;
             if changed {
                 return Err(StoreError::Conflict);
             }
-            let prior:i64=sqlx::query_scalar(&format!("SELECT count(*) FROM ({}) incoming JOIN app.historical_records old ON old.source_installation_id=$1 AND old.source_table=$2 AND old.original_key=incoming.original_key",table.select))
+            let prior:i64=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM ({}) incoming JOIN app.historical_records old ON old.source_installation_id=$1 AND old.source_table=$2 AND old.original_key=incoming.original_key",table.select)))
                 .bind(source.source_installation_id.as_uuid()).bind(source_table).fetch_one(&mut *tx).await?;
             existing += u64::try_from(prior).map_err(|_| invalid())?;
             if !request.dry_run {
@@ -287,9 +287,9 @@ impl Store {
                 } else {
                     "READ_ONLY_HISTORY"
                 };
-                inserted+=sqlx::query(&format!("INSERT INTO app.historical_records(source_installation_id,source_table,original_key,fields,first_import_id,disposition) SELECT $1,$2,incoming.original_key,incoming.fields,$3,$4 FROM ({}) incoming ON CONFLICT(source_installation_id,source_table,original_key) DO NOTHING",table.select))
+                inserted+=sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO app.historical_records(source_installation_id,source_table,original_key,fields,first_import_id,disposition) SELECT $1,$2,incoming.original_key,incoming.fields,$3,$4 FROM ({}) incoming ON CONFLICT(source_installation_id,source_table,original_key) DO NOTHING",table.select)))
                     .bind(source.source_installation_id.as_uuid()).bind(source_table).bind(prepared.target.as_uuid()).bind(disposition).execute(&mut *tx).await?.rows_affected();
-                sqlx::query(&format!("INSERT INTO app.historical_import_members(report_id,record_id) SELECT $3,old.id FROM ({}) incoming JOIN app.historical_records old ON old.source_installation_id=$1 AND old.source_table=$2 AND old.original_key=incoming.original_key",table.select))
+                sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO app.historical_import_members(report_id,record_id) SELECT $3,old.id FROM ({}) incoming JOIN app.historical_records old ON old.source_installation_id=$1 AND old.source_table=$2 AND old.original_key=incoming.original_key",table.select)))
                     .bind(source.source_installation_id.as_uuid()).bind(source_table).bind(prepared.target.as_uuid()).execute(&mut *tx).await?;
             }
         }

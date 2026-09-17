@@ -98,9 +98,9 @@ pub(crate) async fn frozen_policy(
     tx: &mut Transaction<'_, Postgres>,
     id: Id,
 ) -> Result<EvaluationPolicyView, StoreError> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {POLICY} FROM app.evaluation_policies p {FAMILY} WHERE p.id=$1"
-    ))
+    )))
     .bind(id.as_uuid())
     .fetch_one(&mut **tx)
     .await?;
@@ -108,9 +108,9 @@ pub(crate) async fn frozen_policy(
 }
 
 async fn input(tx: &mut Transaction<'_, Postgres>, id: Id) -> Result<InputSetView, StoreError> {
-    let r = sqlx::query(&format!(
+    let r = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {INPUT} FROM app.input_sets WHERE id=$1 AND frozen_at IS NOT NULL"
-    ))
+    )))
     .bind(id.as_uuid())
     .fetch_optional(&mut **tx)
     .await?
@@ -446,7 +446,7 @@ impl Store {
         if !exists {
             return Err(StoreError::NotFound);
         }
-        let rows=sqlx::query(&format!("SELECT {INPUT} FROM app.input_sets WHERE project_id=$1 AND frozen_at IS NOT NULL AND ($2::uuid IS NULL OR id<$2) ORDER BY id DESC LIMIT $3"))
+        let rows=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {INPUT} FROM app.input_sets WHERE project_id=$1 AND frozen_at IS NOT NULL AND ($2::uuid IS NULL OR id<$2) ORDER BY id DESC LIMIT $3")))
             .bind(q.project_id.as_uuid()).bind(q.cursor.map(Id::as_uuid)).bind(i64::from(q.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(summary).collect::<Result<Vec<_>, _>>()?,
@@ -519,7 +519,7 @@ impl Store {
         if !exists {
             return Err(StoreError::NotFound);
         }
-        let rows=sqlx::query(&format!("SELECT {POLICY} FROM app.evaluation_policies p {FAMILY} WHERE p.project_id=$1 AND ($2::uuid IS NULL OR p.id<$2) ORDER BY p.id DESC LIMIT $3"))
+        let rows=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {POLICY} FROM app.evaluation_policies p {FAMILY} WHERE p.project_id=$1 AND ($2::uuid IS NULL OR p.id<$2) ORDER BY p.id DESC LIMIT $3")))
             .bind(q.project_id.as_uuid()).bind(q.cursor.map(Id::as_uuid)).bind(i64::from(q.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(policy).collect::<Result<Vec<_>, _>>()?,
@@ -656,9 +656,9 @@ impl Store {
             .bind(request.maximum_sealed_uses_per_lineage as i32).bind(request.validity_seconds.get() as i64).bind(db::json(&request.sealed_metric_requirements)?).bind(request.portfolio_metric_requirements.as_ref().map(db::json).transpose()?).bind(request.portfolio_study_plan.as_ref().map(db::json).transpose()?).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO app.experiment_families(id,project_id,root_lineage_id,question,selection_policy_id) VALUES($1,$2,$3,$4,$5)")
             .bind(family.as_uuid()).bind(request.project_id.as_uuid()).bind(root.as_uuid()).bind(&request.question).bind(id.as_uuid()).execute(&mut *tx).await?;
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {POLICY} FROM app.evaluation_policies p {FAMILY} WHERE p.id=$1"
-        ))
+        )))
         .bind(id.as_uuid())
         .fetch_one(&mut *tx)
         .await?;

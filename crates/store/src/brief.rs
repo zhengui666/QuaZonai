@@ -12,15 +12,16 @@ use contracts::{
     DbCounter, Id,
 };
 use domain::research::invalid;
-use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
+use sqlx::{postgres::PgRow, AssertSqlSafe, Postgres, Row, Transaction};
 
 type Tx<'a> = Transaction<'a, Postgres>;
 const FIELDS: &str = "id,project_id,version,revision,state,hypothesis,economic_rationale,universe_version_id,target_kind,horizon_kind,horizon_value,base_currency,benchmark_ref,evaluation_policy_id,execution_assumptions_id,budget,stop_rule,supersedes_id,frozen_at,created_at,updated_at";
 pub(crate) async fn row(tx: &mut Tx<'_>, id: Id, write: bool) -> Result<PgRow, StoreError> {
-    sqlx::query(&format!(
+    // Only the fixed projection and a closed lock-mode choice are interpolated.
+    sqlx::query(AssertSqlSafe(format!(
         "SELECT {FIELDS} FROM app.research_briefs WHERE id=$1 FOR {}",
         if write { "UPDATE" } else { "SHARE" }
-    ))
+    )))
     .bind(id.as_uuid())
     .fetch_optional(&mut **tx)
     .await?
@@ -164,7 +165,7 @@ impl Store {
         if !exists {
             return Err(StoreError::NotFound);
         }
-        let rows=sqlx::query(&format!("SELECT {FIELDS} FROM app.research_briefs WHERE project_id=$1 AND ($2::uuid IS NULL OR id<$2) ORDER BY id DESC LIMIT $3 FOR SHARE"))
+        let rows=sqlx::query(AssertSqlSafe(format!("SELECT {FIELDS} FROM app.research_briefs WHERE project_id=$1 AND ($2::uuid IS NULL OR id<$2) ORDER BY id DESC LIMIT $3 FOR SHARE")))
             .bind(project.as_uuid()).bind(q.cursor.map(Id::as_uuid)).bind(i64::from(q.limit)+1).fetch_all(&mut *tx).await?;
         let mut items = Vec::with_capacity(rows.len());
         for r in rows {

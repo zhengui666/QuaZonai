@@ -94,7 +94,7 @@ impl Store {
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(StoreError::NotFound)?;
-        let rows = sqlx::query(&format!("{VIEW} WHERE s.project_id=$1 AND ($2::uuid IS NULL OR e.id<$2) ORDER BY e.id DESC LIMIT $3"))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{VIEW} WHERE s.project_id=$1 AND ($2::uuid IS NULL OR e.id<$2) ORDER BY e.id DESC LIMIT $3")))
             .bind(project.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let items = rows.iter().map(view).collect::<Result<Vec<_>, _>>()?;
         tx.commit().await?;
@@ -107,7 +107,7 @@ impl Store {
         id: Id,
     ) -> Result<ExecutionAssumptionsViewV1, StoreError> {
         let mut tx = self.pool.begin().await?;
-        let row = sqlx::query(&format!("{VIEW} WHERE e.id=$1"))
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!("{VIEW} WHERE e.id=$1")))
             .bind(id.as_uuid())
             .fetch_optional(&mut *tx)
             .await?
@@ -343,7 +343,7 @@ impl Store {
                 return Err(StoreError::Invalid("bar_liquidity_expired"));
             }
         }
-        let row = sqlx::query(&format!("{VIEW} WHERE e.id=$1"))
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!("{VIEW} WHERE e.id=$1")))
             .bind(id.as_uuid())
             .fetch_one(&mut *tx)
             .await?;

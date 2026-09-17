@@ -338,7 +338,7 @@ BudgetV1 继续保留既有 Rust/serde 字段，原生 OpenAPI 用公共字段�
 
 ### 10.1 浏览器认证的具体实现合同
 
-浏览器 session 复用 tower-sessions 0.14.0 与官方 SQLx PostgreSQL Store 0.15.0；
+浏览器 session 复用 tower-sessions 0.15.0 与官方 SQLx PostgreSQL Store 的固定 Git 修订 `d18c9bf76f1d4fb73130dbe5aa643197f14b5d2d`（包版本仍为0.15.0，适配SQLx0.9.0，非新的已发布crate）；Time固定0.3.47。原生会话表、序列化与独立授权边界保持不变；
 TOTP 复用 totp-rs 5.7.0（SHA1 / 6 位 / 30 秒），密码学复用 RustCrypto。
 Cookie 只承载原生 opaque session ID，Secure（HTTPS）、HttpOnly、SameSite=Strict、
 Path=/，不放 TOTP secret、验证码、Provider token 或业务授权。每次请求还必须查询
@@ -3325,7 +3325,7 @@ ResultManifestV1 为 schema_version、run_id、attempt_no、external_job_id、in
 
 ### B4.4 远端原生执行器与持久身份
 
-`apps/runtime` 使用既有 Rust Axum/Tokio/Serde 合同及 SQLx 0.8.6 的 SQLite 后端，原生 Docker API 复用 Bollard 0.21.1；不建立第二套研究业务数据库、预算或工作流。SQLite WAL + synchronous FULL、短 `BEGIN IMMEDIATE` 事务管理远端身份、不可变有界对象和终态；宿主原生文件锁保证同一状态目录只运行一个执行监督进程。部署根与 Docker Unix socket 由操作者明确配置，不接受网络命令指定路径、环境、命令或挂载。参考原生 API：<https://docs.rs/sqlx/0.8.6/sqlx/struct.Pool.html#method.begin_with>、<https://docs.rs/bollard/latest/bollard/struct.Docker.html>、<https://docs.rs/bollard/latest/bollard/models/struct.HostConfig.html>。版本以 Cargo.lock 和实际原生验证为准，不用浮动 latest 构建。
+`apps/runtime` 使用既有 Rust Axum/Tokio/Serde 合同及 SQLx 0.9.0 的 SQLite 后端（固定 libsqlite3-sys 0.37.0，携带包含 WAL-reset 修复的 SQLite 3.51.3），原生 Docker API 复用 Bollard 0.21.1；不建立第二套研究业务数据库、预算或工作流。SQLite WAL + synchronous FULL、短 `BEGIN IMMEDIATE` 事务管理远端身份、不可变有界对象和终态；宿主原生文件锁保证同一状态目录只运行一个执行监督进程。部署根与 Docker Unix socket 由操作者明确配置，不接受网络命令指定路径、环境、命令或挂载。参考原生 API：<https://docs.rs/sqlx/0.9.0/sqlx/struct.Pool.html#method.begin_with>、<https://docs.rs/bollard/latest/bollard/struct.Docker.html>、<https://docs.rs/bollard/latest/bollard/models/struct.HostConfig.html>。版本以 Cargo.lock 和实际原生验证为准，不用浮动 latest 构建。
 
 网关的 `runtime_meta` 只保存服务器分配的 instance_id；`runtime_jobs` 以 canonical external_id 为主键，同时唯一 run_id/attempt_no，保存不可变 spec_json、首次 owner_epoch/submitted_us/deadline_us、一次写入的原生 ContainerCreateBody/容器ID/START intent，以及单调取消owner、取消时间、停止原因、隔离屏障ID和唯一终态/manifest。内部 phase 为 QUEUED/CREATING/CREATED/STARTING/RUNNING/TERMINAL，公开状态仍使用 B4.3；不把内部phase作为研究状态。`input_objects` 保存UUID/原生storage_version/精确BLOB/byte_count，同身份版本与原始字节才重放；`job_outputs` 以 external_id/storage_ref 唯一并原子保存元数据与原始字节，全部输出、manifest和终态同事务发表。64MiB单对象、256MiB研究对象总输入、1MiB请求/manifest及部署磁盘总额度分别检查；满额明确拒绝，不自动删除引用或terminal tombstone。SQLite BLOB事务代替额外的文件与元数据提交间隙，不新增应用内容hash。Runtime 的原生 SQLITE_FULL/ENOSPC 返回 HTTP 503、RUNTIME_STORAGE_FULL 与可重试标记，并仅记录安全错误码；原生完整性或其他存储错误不冒充磁盘满。原生 SQLITE_FULL 可能自动回滚而使 SQLx 的事务深度仍非零；连接回池前等待其队列处理，再拒绝复用仍有事务状态的连接，不修改任务身份或补写成功。
 

@@ -180,7 +180,7 @@ async fn run_row(tx: &mut Tx<'_>, id: Id, write: bool) -> Result<PgRow, StoreErr
             "FOR SHARE OF r"
         }
     );
-    sqlx::query(&query)
+    sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(id.as_uuid())
         .fetch_optional(&mut **tx)
         .await?
@@ -1369,7 +1369,7 @@ impl Store {
         }
         let project = query.project_id.or(scope.0);
         let sql=format!("SELECT {FIELDS} FROM app.runs r WHERE ($1::uuid IS NULL OR r.project_id=$1) AND ($2::uuid IS NULL OR r.id=$2) AND ($3::text IS NULL OR r.state=$3) AND ($4::uuid IS NULL OR r.id>$4) ORDER BY r.id LIMIT $5");
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(project.map(Id::as_uuid))
             .bind(scope.1.map(Id::as_uuid))
             .bind(query.state.as_ref().map(db::code).transpose()?)

@@ -71,6 +71,8 @@ mod tests {
     async fn native_postgres_checks_the_grant_statement_without_forging_real_evidence(
         pool: sqlx::PgPool,
     ) {
-        pool.prepare(INSERT).await.unwrap();
+        pool.prepare(sqlx::SqlStr::from_static(INSERT))
+            .await
+            .unwrap();
     }
 }
