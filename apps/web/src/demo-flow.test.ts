@@ -1,5 +1,5 @@
 // These tests exercise only the in-memory synthetic preview, never native research.
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { projectEditor } from '../demo/project-editor';
 import { demoResponse, id, records } from '../demo/records';
 import type { Schema } from './api';
@@ -27,10 +27,16 @@ function frozenFixture() {
     },
   };
   const freezePath = `/api/v2/briefs/${draft.id}/freeze`;
+  const beforeProject = edit('GET', projectPath)!.value as Schema['ProjectView'];
   const first = edit('POST', freezePath, freeze, 'freeze')!;
   expect(first.status).toBe(200);
   expect(validateResponse('/api/v2/briefs/{id}/freeze', 'post', 200, first.value, 'application/json')).toBe(true);
   const frozen = (first.value as { resource: Schema['FrozenBriefV1'] }).resource;
+  expect(frozen.brief.revision).toBe(String(BigInt(draft.revision) + 1n));
+  expect(edit('GET', `/api/v2/briefs/${draft.id}`)?.value).toEqual(frozen.brief);
+  expect(edit('GET', projectPath)).toMatchObject({ value: {
+    current_brief_id: draft.id, revision: String(BigInt(beforeProject.revision) + 1n),
+  } });
   return { edit, projectPath, freeze, freezePath, frozen };
 }
 
@@ -38,7 +44,7 @@ function setProjectState(edit: ReturnType<typeof projectEditor>, projectPath: st
   const project = edit('GET', projectPath)!.value as Schema['ProjectView'];
   const changed = edit('PATCH', projectPath, {
     schema_version: 1, expected_revision: project.revision, name: project.name, description: project.description, state,
-  }, `state-${state}`)!;
+  }, `state-${state}-${project.revision}`)!;
   expect(changed.status).toBe(200);
   return (changed.value as { resource: Schema['ProjectView'] }).resource;
 }
@@ -58,6 +64,9 @@ test('synthetic freeze retries return the original receipt before frozen or arch
   const { edit, projectPath, freeze, freezePath, frozen } = frozenFixture();
   const reordered = { execution_context: Object.fromEntries(Object.entries(freeze.execution_context).reverse()),
     expected_revision: freeze.expected_revision, schema_version: 1 };
+  const stale = edit('POST', freezePath, freeze, 'fresh-old-revision')!;
+  expect(stale).toMatchObject({ status: 409, value: { code: 'REVISION_CONFLICT', current_revision: frozen.brief.revision } });
+  expect(validateResponse('/api/v2/briefs/{id}/freeze', 'post', 409, stale.value, 'application/problem+json')).toBe(true);
   for (const archived of [false, true]) {
     if (archived) setProjectState(edit, projectPath, 'ARCHIVED');
     const before = structuredClone(edit('GET', projectPath));
@@ -66,7 +75,7 @@ test('synthetic freeze retries return the original receipt before frozen or arch
     expect(validateResponse('/api/v2/briefs/{id}/freeze', 'post', 200, replay.value, 'application/json')).toBe(true);
     expect(edit('GET', projectPath)).toEqual(before);
     expect(edit('GET', `/api/v2/briefs/${frozen.brief.id}/execution-context`)?.value).toEqual(frozen);
-    expect(edit('POST', freezePath, freeze, `fresh-${archived}`)?.status).not.toBe(200);
+    expect(edit('POST', freezePath, { ...freeze, expected_revision: frozen.brief.revision }, `fresh-${archived}`)?.status).not.toBe(200);
   }
 });
 
@@ -165,7 +174,7 @@ test.each(['DISCOVERY', 'VALIDATION', 'SEALED'] as const)('Demo refuses a freeze
   const revision = (repaired.value as { resource: Schema['BriefView'] }).resource.revision;
   // Rejected commands did not publish a receipt; an explicitly corrected request can succeed.
   expect(edit('POST', `${path}/freeze`, { ...freeze, expected_revision: revision }, 'incomplete-freeze')).toMatchObject({
-    status: 200, value: { replayed: false, resource: { brief: { id: draft.id, state: 'FROZEN' } } },
+    status: 200, value: { replayed: false, resource: { brief: { id: draft.id, revision: String(BigInt(revision) + 1n), state: 'FROZEN' } } },
   });
 });
 
@@ -257,5 +266,87 @@ test('synthetic resource lists retain historical Runtimes, paginate, and never f
     expect(readiness.value).toMatchObject({ runtime_id: runtime.id, integration_revision: runtime.revision,
       state: runtime.configuration.enabled ? 'NOT_CHECKED' : 'DISABLED', available_job_kinds: [] });
     if (runtime.configuration.enabled) expect(readiness.value).toMatchObject({ latest_observation: null });
+  }
+});
+
+test.each(['ACTIVE', 'PAUSED'] as const)('stale Cycle starts report the latest project revision before its %s admission state', state => {
+  const { edit, projectPath, frozen } = frozenFixture();
+  const active = setProjectState(edit, projectPath, 'ACTIVE');
+  const stale = startRequest(edit, active, frozen.brief.id);
+  const changed = edit('PATCH', projectPath, {
+    schema_version: 1, expected_revision: active.revision, name: `${active.name} · other tab`, description: active.description, state,
+  }, 'other-tab')!;
+  expect(changed.status).toBe(200);
+  let current = (changed.value as { resource: Schema['ProjectView'] }).resource;
+  const beforeProject = structuredClone(edit('GET', projectPath));
+  const beforeCycles = structuredClone(edit('GET', `${projectPath}/cycles`));
+  const beforeRuns = structuredClone(edit('GET', '/api/v2/runs'));
+  const rejected = edit('POST', `${projectPath}/cycles`, stale, 'stale-start')!;
+  expect(rejected).toMatchObject({ status: 409, value: { code: 'REVISION_CONFLICT', current_revision: current.revision, retryable: false } });
+  expect(validateResponse('/api/v2/projects/{id}/cycles', 'post', 409, rejected.value, 'application/problem+json')).toBe(true);
+  if (state === 'PAUSED') {
+    const closed = edit('POST', `${projectPath}/cycles`, startRequest(edit, current, frozen.brief.id), 'paused-start')!;
+    expect(closed).toMatchObject({ status: 409, value: { code: 'DOMAIN_CONFLICT' } });
+    expect(validateResponse('/api/v2/projects/{id}/cycles', 'post', 409, closed.value, 'application/problem+json')).toBe(true);
+  }
+  expect(edit('GET', projectPath)).toEqual(beforeProject);
+  expect(edit('GET', `${projectPath}/cycles`)).toEqual(beforeCycles);
+  expect(edit('GET', '/api/v2/runs')).toEqual(beforeRuns);
+  if (state === 'PAUSED') current = setProjectState(edit, projectPath, 'ACTIVE');
+  const refreshed = edit('POST', `${projectPath}/cycles`, startRequest(edit, current, frozen.brief.id), 'stale-start')!;
+  expect(refreshed).toMatchObject({ status: 202, value: { replayed: false, resource: { cycle: { brief_id: frozen.brief.id } } } });
+});
+
+test('daily Cycle quotas count the project across keys and Briefs, replay old receipts and reset only at UTC midnight', () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    vi.setSystemTime(new Date('2026-09-18T07:59:59.999+08:00'));
+    const { edit, projectPath, frozen, freeze } = frozenFixture();
+    const active = setProjectState(edit, projectPath, 'ACTIVE');
+    const request = startRequest(edit, active, frozen.brief.id);
+    expect(frozen.brief.content.budget.max_cycles_per_day).toBe(2);
+    const path = `${projectPath}/cycles`;
+    const first = edit('POST', path, request, 'first')!;
+    expect(first.status).toBe(202);
+    const second = edit('POST', path, request, 'second')!;
+    expect(second.status).toBe(202);
+    const originalReceipt = (first.value as { resource: Schema['CycleStartedV1'] }).resource;
+    const beforeCycles = structuredClone(edit('GET', path));
+    const beforeRuns = structuredClone(edit('GET', '/api/v2/runs'));
+    for (const key of ['third', 'another-key']) {
+      const rejected = edit('POST', path, request, key)!;
+      expect(rejected).toMatchObject({ status: 429, value: { code: 'BUDGET_EXHAUSTED', retryable: false,
+        field_errors: [{ field: 'budget', code: 'BUDGET_EXHAUSTED' }] } });
+      expect(validateResponse('/api/v2/projects/{id}/cycles', 'post', 429, rejected.value, 'application/problem+json')).toBe(true);
+    }
+    const draftResponse = edit('POST', `${projectPath}/briefs`, {
+      schema_version: 1, content: frozen.brief.content, bindings: frozen.brief.bindings, supersedes_id: frozen.brief.id,
+    }, 'quota-brief')!;
+    expect(draftResponse.status).toBe(201);
+    const draft = (draftResponse.value as { resource: Schema['BriefView'] }).resource;
+    expect(edit('POST', `/api/v2/briefs/${draft.id}/freeze`, { ...freeze, expected_revision: draft.revision }, 'quota-freeze')?.status).toBe(200);
+    setProjectState(edit, projectPath, 'PAUSED');
+    const resumed = setProjectState(edit, projectPath, 'ACTIVE');
+    const changedRequest = startRequest(edit, resumed, draft.id);
+    const beforeProject = structuredClone(edit('GET', projectPath));
+    expect(edit('POST', path, changedRequest, 'new-brief')).toMatchObject({ status: 429, value: { code: 'BUDGET_EXHAUSTED' } });
+    expect(edit('POST', path, request, 'first')).toEqual({ status: 202, value: { schema_version: 1, resource: originalReceipt, replayed: true } });
+    expect(edit('GET', projectPath)).toEqual(beforeProject);
+    expect(edit('GET', path)).toEqual(beforeCycles);
+    expect(edit('GET', '/api/v2/runs')).toEqual(beforeRuns);
+
+    vi.setSystemTime(new Date('2026-09-18T08:00:00+08:00'));
+    const nextDay = edit('POST', path, changedRequest, 'new-brief')!;
+    expect(nextDay.status).toBe(202);
+    expect(validateResponse('/api/v2/projects/{id}/cycles', 'post', 202, nextDay.value, 'application/json')).toBe(true);
+    const next = (nextDay.value as { resource: Schema['CycleStartedV1'] }).resource;
+    expect(next.cycle.created_at).toBe('2026-09-18T00:00:00.000Z');
+    expect(next.cycle.ordinal).toBe((second.value as { resource: Schema['CycleStartedV1'] }).resource.cycle.ordinal + 1);
+    const after = structuredClone(edit('GET', path));
+    expect((after!.value as { items: Schema['CycleViewV1'][] }).items).toHaveLength(4);
+    expect(edit('POST', path, request, 'first')).toMatchObject({ status: 202, value: { replayed: true, resource: originalReceipt } });
+    expect(edit('GET', path)).toEqual(after);
+  } finally {
+    vi.useRealTimers();
   }
 });

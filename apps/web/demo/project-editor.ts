@@ -61,7 +61,7 @@ export function projectEditor() {
   const originalInputs = new Map(inputPage.items.map(item => [item.purpose, item.id]));
   const denied = (method: string, path: string) => demoResponse(method === 'GET' ? 'PATCH' : method, path);
   const invalid = (method: string, path: string) => ({ status: 422, value: { ...denied(method, path).value as Schema['Problem'], status: 422, code: 'VALIDATION_ERROR', detail: '请求或幂等键不符合原生合同。' } });
-  const conflict = (method: string, path: string, detail: string) => ({ status: 409, value: { ...denied(method, path).value as Schema['Problem'], status: 409, code: 'REVISION_CONFLICT', detail } });
+  const conflict = (method: string, path: string, detail: string, current: string) => ({ status: 409, value: { ...denied(method, path).value as Schema['Problem'], status: 409, code: 'REVISION_CONFLICT', current_revision: current, detail } });
   const increment = (value: string) => String(BigInt(value) + 1n);
   const replay = (map: Map<string, FlowReceipt>, receiptKey: string, encoded: unknown, method: string, path: string) => {
     const previous = map.get(receiptKey);
@@ -142,8 +142,9 @@ export function projectEditor() {
       const encoded = [path, body]; const receiptKey = `freeze:${key}`;
       // A lost acknowledgement remains replayable after freezing or archiving, as in Store.
       const previous = replay(flowReceipts, receiptKey, encoded, method, path); if (previous) return previous;
-      if (!brief || brief.state !== 'DRAFT') return invalid(method, path);
-      if (body.expected_revision !== brief.revision) return conflict(method, path, 'Brief 草稿已修改，请重新读取。');
+      if (!brief) return demoResponse('GET', path);
+      if (body.expected_revision !== brief.revision) return conflict(method, path, 'Brief 草稿已修改，请重新读取。', brief.revision);
+      if (brief.state !== 'DRAFT') return invalid(method, path);
       const project = projects.get(brief.project_id);
       if (!project || project.state === 'ARCHIVED' || body.execution_context.runtime_id !== demoRuntime.id || body.execution_context.runtime_revision !== demoRuntime.revision) return denied(method, path);
       const purposes = ['DISCOVERY', 'VALIDATION', 'SEALED'] as const;
@@ -159,7 +160,7 @@ export function projectEditor() {
         if (!isDeepStrictEqual(bound, datasets)) return invalid(method, path);
       }
       const now = new Date().toISOString();
-      const frozen: Schema['BriefView'] = { ...brief, state: 'FROZEN', frozen_at: now, updated_at: now };
+      const frozen: Schema['BriefView'] = { ...brief, revision: increment(brief.revision), state: 'FROZEN', frozen_at: now, updated_at: now };
       briefs.set(frozen.id, frozen); contexts.set(frozen.id, structuredClone(body.execution_context));
       const current: Schema['ProjectView'] = { ...project, current_brief_id: frozen.id, revision: increment(project.revision), updated_at: now };
       projects.set(current.id, current);
@@ -171,16 +172,29 @@ export function projectEditor() {
     if (method === 'POST' && parts[3] === 'projects' && parts.length === 6 && parts[5] === 'cycles') {
       if (!validId(parts[4]) || !validCycleStart(body) || !validKey(key)) return invalid(method, path);
       const encoded = [path, body]; const receiptKey = `cycle:${key}`;
-      // Replaying history must not depend on today's project state or create another Cycle.
+      // Replaying history must not depend on today's project state, revision or quota.
       const previous = replay(flowReceipts, receiptKey, encoded, method, path); if (previous) return previous;
-      if (!project || project.state !== 'ACTIVE' || body.expected_revision !== project.revision) return invalid(method, path);
+      if (!project) return demoResponse('GET', `/api/v2/projects/${parts[4]}`);
+      if (body.expected_revision !== project.revision) return conflict(method, path, '合成项目已修改，请重新读取。', project.revision);
+      if (project.state !== 'ACTIVE') return { status: 409, value: {
+        ...denied(method, path).value as Schema['Problem'], status: 409, code: 'DOMAIN_CONFLICT', detail: '当前领域状态不允许该操作。',
+      } };
       const selectedBrief = briefs.get(body.brief_id);
       if (!selectedBrief || selectedBrief.project_id !== project.id || selectedBrief.state !== 'FROZEN' || !contexts.has(selectedBrief.id)) return denied(method, path);
       const allowedProfiles = new Set(demoProfiles.map(item => item.id));
       if (!allowedProfiles.has(body.researcher_profile.profile_id) || !allowedProfiles.has(body.reviewer_profile.profile_id)
         || body.researcher_profile.expected_revision !== '1' || body.reviewer_profile.expected_revision !== '1') return invalid(method, path);
-      const ordinal = Math.max(0, ...[...cycles.values()].filter(item => item.project_id === project.id).map(item => item.ordinal)) + 1;
-      const cycleId = id(3200 + cycles.size); const runId = id(3300 + dynamicRuns.size); const now = new Date().toISOString();
+      const now = new Date().toISOString();
+      const dayStart = Date.parse(`${now.slice(0, 10)}T00:00:00Z`);
+      const projectCycles = [...cycles.values()].filter(item => item.project_id === project.id);
+      const today = projectCycles.filter(item => Date.parse(item.created_at) >= dayStart && Date.parse(item.created_at) < dayStart + 86_400_000).length;
+      if (today >= selectedBrief.content.budget.max_cycles_per_day) return { status: 429, value: {
+        ...denied(method, path).value as Schema['Problem'], status: 429, code: 'BUDGET_EXHAUSTED', retryable: false,
+        detail: '请求超过已冻结的每日周期预算。请检查运行预算；不要自动重试或更换任务来绕过额度。',
+        field_errors: [{ field: 'budget', code: 'BUDGET_EXHAUSTED', message: '该资源的冻结预算不足。' }],
+      } };
+      const ordinal = Math.max(0, ...projectCycles.map(item => item.ordinal)) + 1;
+      const cycleId = id(3200 + cycles.size); const runId = id(3300 + dynamicRuns.size);
       const cycle: Schema['CycleViewV1'] = {
         schema_version: 1, id: cycleId, project_id: project.id, brief_id: selectedBrief.id, ordinal,
         trigger: 'OPERATOR', state: 'COMPLETED', outcome: 'NO_SUPPORTED_CANDIDATE',

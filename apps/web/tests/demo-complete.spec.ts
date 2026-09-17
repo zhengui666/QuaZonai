@@ -52,9 +52,19 @@ test('credential-free Demo freezes context, starts a synthetic Cycle and opens s
   const freezeResponse = await freezing;
   expect(freezeResponse.status()).toBe(200);
   const frozen: { resource: Schema['FrozenBriefV1'] } = await freezeResponse.json();
+  const freezeRequest: Schema['BriefFreezeV1'] = freezeResponse.request().postDataJSON();
   expect(frozen.resource.brief.state).toBe('FROZEN');
+  expect(frozen.resource.brief.revision).toBe(String(BigInt(freezeRequest.expected_revision) + 1n));
   expect(frozen.resource.brief.content.hypothesis).toBe(hypothesis);
   expect(new URL(freezeResponse.url()).pathname).toBe(`/api/v2/briefs/${frozen.resource.brief.id}/freeze`);
+  const key = freezeResponse.request().headers()['idempotency-key'];
+  expect(key).toBeTruthy();
+  const replay = await page.request.post(freezeResponse.url(), { headers: { 'Idempotency-Key': key! }, data: freezeRequest });
+  expect(replay.status()).toBe(200);
+  expect(await replay.json()).toEqual({ schema_version: 1, resource: frozen.resource, replayed: true });
+  const frozenRead = await page.request.get(`/api/v2/briefs/${frozen.resource.brief.id}`);
+  expect(frozenRead.status()).toBe(200);
+  expect(await frozenRead.json()).toEqual(frozen.resource.brief);
   await expect(page.getByText('Brief 已冻结，尚未启动研究。', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '返回查看记录', exact: true }).click();
 
