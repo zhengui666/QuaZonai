@@ -28,7 +28,7 @@ npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 rustup run 1.98.1 cargo install --locked lychee --version 0.24.2
 ```
 
-`make` explicitly selects the pinned Rust compiler, even if a distribution Cargo appears first in PATH. Do not lower the compiler version when a dependency fails. First check the actual toolchain, locked dependency and platform. Native OCI tests additionally need Docker and `wasm32-unknown-unknown`; use the [Runtime guide](runtimes/native/README.md). Store/HTTP tests need a **disposable PostgreSQL 18 + PGMQ 1.10.0 instance**, native Codex and OS prerequisites from [CLI](CLI.md#开发测试) and the [existing CI setup](.github/workflows/ci.yml). Do not point tests at a user database.
+`make` explicitly selects the pinned Rust compiler, even if a distribution Cargo appears first in PATH. Do not lower the compiler version when a dependency fails. First check the actual toolchain, locked dependency and platform. Native OCI tests additionally need Docker and `wasm32-unknown-unknown`; use the [Runtime guide](runtimes/native/README.md). The [cold archive target](apps/runtime/tests/native_restore.rs) also requires GNU tar/chown and noninteractive sudo for its own disposable mixed-owner files. Run Cargo and the Runtime as an ordinary user, not root; only the selected archive/ownership commands are elevated. Store/HTTP tests need a **disposable PostgreSQL 18 + PGMQ 1.10.0 instance**, native Codex and OS prerequisites from [CLI](CLI.md#开发测试) and the [existing CI setup](.github/workflows/ci.yml). Do not point tests at a user database.
 
 For the frontend:
 
