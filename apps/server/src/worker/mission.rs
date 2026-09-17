@@ -53,9 +53,8 @@ impl Worker {
         message: RunMessage,
         owner: &'a str,
         mut shutdown: watch::Receiver<bool>,
-    ) -> std::pin::Pin<
-        Box<impl std::future::Future<Output = Result<(), WorkerFailure>> + Send + 'a>,
-    > {
+    ) -> std::pin::Pin<Box<impl std::future::Future<Output = Result<(), WorkerFailure>> + Send + 'a>>
+    {
         Box::pin(async move {
             let launcher = self.missions.as_ref().ok_or(WorkerFailure::TaskKind)?;
             if *shutdown.borrow() || shutdown.has_changed().is_err() {
