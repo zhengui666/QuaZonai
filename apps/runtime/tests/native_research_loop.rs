@@ -1,5 +1,6 @@
-//! Real experiment compilation through Runtime/OCI and the production Worker.
-//! Cycle/data-quality preparation is controlled; this is not full T08 science or Thread acceptance.
+//! Native compilation and connected scientific feedback through the production Worker.
+//! The standalone compilation case retains controlled preparation; the connected case
+//! uses real catalog-backed computation and only a controlled account-waived provider.
 #[path = "../../../tests/support/cycles.rs"]
 mod cycle_support;
 #[path = "../../../tests/support/experiment_tasks.rs"]
@@ -13,13 +14,23 @@ mod runtime_support;
 #[path = "support/oci.rs"]
 mod support;
 
+#[path = "../../job/tests/support/market.rs"]
+mod market;
+#[path = "../../server/tests/support/codex_responses.rs"]
+#[allow(dead_code)] // Shared official Responses fixture also serves other protocol regressions.
+mod responses;
+#[path = "support/scientific_catalog.rs"]
+mod scientific_catalog;
+#[path = "support/scientific_feedback.rs"]
+mod scientific_feedback;
+
 use contracts::{
     execution::NativeModelCompilationV1,
     research::ArtifactInputRole,
     runtime::{RuntimeProbeOutcomeV1, RuntimeProbeRequestV1},
     runtime_jobs::{JobSpecV1, ResultManifestV1, RuntimeInputV1},
     settings::RuntimeUpdate,
-    Id, SchemaV1,
+    Id, Revision, SchemaV1,
 };
 use integrations::{artifacts::ArtifactStore, secrets::SecretVault};
 use server::{
@@ -31,23 +42,41 @@ use std::{fs, os::unix::fs::DirBuilderExt, sync::Arc};
 use store::{lifecycle::ClaimResult, runtime::ProbePreparation};
 use support::{count, Fixture as RuntimeFixture, SECRET};
 
+async fn configured_transport(
+    snapshot: &store::lifecycle::RuntimeSnapshot,
+    vault: Arc<SecretVault>,
+    targets: &RuntimeTargets,
+) -> RuntimeTransport {
+    let snapshot = snapshot.clone();
+    let targets = targets.clone();
+    tokio::task::spawn_blocking(move || {
+        let id = Id::try_from(snapshot.credential_ref.clone()).unwrap();
+        let credential = vault.read(id, "RUNTIME").unwrap();
+        assert!(snapshot.ca_certificate_ref.is_none());
+        RuntimeTransport::new(&targets, &snapshot, &credential, None).unwrap()
+    })
+    .await
+    .unwrap()
+}
+
 async fn actual_probe(
     store: &store::Store,
     actor: &store::authority::Actor,
-    data: &cycle_support::Fixture,
+    configuration: (Id, Revision),
+    objects: Arc<ArtifactStore>,
     vault: Arc<SecretVault>,
     targets: &RuntimeTargets,
 ) {
-    // Bind the observation before any network I/O. Credential and endpoint are
-    // resolved from this exact Store snapshot, not the fixture's HTTP client.
+    // Store binds identity before network I/O; credentials and endpoint are
+    // resolved from that exact snapshot, never a pre-authenticated fixture client.
     let ProbePreparation::Pending(ticket) = store
         .prepare_runtime_probe(
             actor,
             &Id::new().to_string(),
-            data.data.runtime,
+            configuration.0,
             &RuntimeProbeRequestV1 {
                 schema_version: SchemaV1,
-                expected_revision: data.freeze.execution_context.runtime_revision,
+                expected_revision: configuration.1,
             },
         )
         .await
@@ -55,23 +84,12 @@ async fn actual_probe(
     else {
         panic!("fresh native Runtime observation required");
     };
-    let snapshot = ticket.snapshot.clone();
-    let targets = targets.clone();
-    let native = tokio::task::spawn_blocking(move || {
-        let id = Id::try_from(snapshot.credential_ref.clone()).unwrap();
-        let credential = vault.read(id, "RUNTIME").unwrap();
-        // The fixture intentionally configures loopback without a private CA.
-        assert!(snapshot.ca_certificate_ref.is_none());
-        RuntimeTransport::new(&targets, &snapshot, &credential, None).unwrap()
-    })
-    .await
-    .unwrap();
+    let native = configured_transport(&ticket.snapshot, vault, targets).await;
     let capabilities = native.capabilities().await.unwrap();
     assert!(capabilities
         .image_refs
         .iter()
         .all(|image| image.image_ref == support::image()));
-    let objects = data.objects.clone();
     store
         .complete_runtime_probe(
             *ticket,
@@ -163,7 +181,18 @@ async fn experiment_compilation_runs_in_real_runtime_through_production_worker(p
         .unwrap()
         .resource;
     data.freeze.execution_context.runtime_revision = updated.revision;
-    actual_probe(&store, &actor, &data, vault.clone(), &targets).await;
+    actual_probe(
+        &store,
+        &actor,
+        (
+            data.data.runtime,
+            data.freeze.execution_context.runtime_revision,
+        ),
+        data.objects.clone(),
+        vault.clone(),
+        &targets,
+    )
+    .await;
 
     let (store, actor, data, cycle, preparation) =
         mission_support::start(store, actor, data, false).await;
@@ -182,7 +211,18 @@ async fn experiment_compilation_runs_in_real_runtime_through_production_worker(p
     let experiment = experiment_support::propose(&pool, &store, &actor, &data, cycle).await;
     // The shared proposal helper includes a controlled probe. Replace it with
     // the real configured transport's observation before native admission.
-    actual_probe(&store, &actor, &data, vault, &targets).await;
+    actual_probe(
+        &store,
+        &actor,
+        (
+            data.data.runtime,
+            data.freeze.execution_context.runtime_revision,
+        ),
+        data.objects.clone(),
+        vault,
+        &targets,
+    )
+    .await;
     let compilation = experiment_support::start(&store, &data, &parent, experiment)
         .await
         .unwrap()

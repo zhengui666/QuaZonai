@@ -13,7 +13,7 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -35,6 +35,13 @@ struct Seen {
     fail_continuation: AtomicBool,
     stop_continuation: AtomicBool,
     initial: AtomicBool,
+    science: Mutex<Option<SciencePlan>>,
+}
+
+struct SciencePlan {
+    proposal: contracts::experiments::ExperimentProposalV1,
+    experiment: Option<contracts::Id>,
+    observation: Option<Value>,
 }
 
 pub struct Provider {
@@ -69,6 +76,47 @@ impl Provider {
             axum::serve(listener, app).await.unwrap();
         });
         Self { seen, task }
+    }
+
+    #[allow(dead_code)] // The real science fixture shares this native provider with protocol tests.
+    pub fn submit_experiment(&self, proposal: contracts::experiments::ExperimentProposalV1) {
+        assert_eq!(self.seen.count.load(Ordering::SeqCst), 0);
+        assert!(self
+            .seen
+            .science
+            .lock()
+            .unwrap()
+            .replace(SciencePlan {
+                proposal,
+                experiment: None,
+                observation: None,
+            })
+            .is_none());
+    }
+
+    #[allow(dead_code)]
+    pub fn proposed_experiment(&self) -> contracts::Id {
+        self.seen
+            .science
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .experiment
+            .unwrap()
+    }
+
+    #[allow(dead_code)]
+    pub fn scientific_observation(&self) -> Value {
+        self.seen
+            .science
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .observation
+            .clone()
+            .expect("the original native Thread must actually receive scientific feedback")
     }
 
     pub fn request_count(&self) -> usize {
@@ -120,6 +168,22 @@ async fn respond(
         .transpose()
         .unwrap_or_default()
         .unwrap_or_default();
+    {
+        let mut plan = seen.science.lock().unwrap();
+        if let Some(plan) = plan.as_mut() {
+            assert!(
+                !headers.contains_key(header::AUTHORIZATION)
+                    && !headers.contains_key(header::COOKIE)
+            );
+            assert!(request["model"] == "gpt-5.4" && request["stream"] == true);
+            assert!(
+                !input_text.contains("qz2."),
+                "MCP authority must not enter native model input"
+            );
+            let item = science_item(&seen, plan, ordinal, &request, &input_text);
+            return stream_response(ordinal, item, false);
+        }
+    }
     let review = input_text.contains("QZ_MISSION_REVIEW_V1");
     let review_input_read = input.is_some_and(|items| {
         items.iter().any(|item| {
@@ -284,6 +348,15 @@ async fn respond(
         json!({"type":"message","role":"assistant","id":format!("qz-local-message-{ordinal}"),
             "content":[{"type":"output_text","text":reply}]})
     };
+    stream_response(ordinal, item, stop_continuation)
+}
+
+fn stream_response(
+    ordinal: usize,
+    item: Value,
+    stop_continuation: bool,
+) -> (StatusCode, [(header::HeaderName, &'static str); 1], String) {
+    let id = format!("qz-local-response-{ordinal}");
     let events = [
         json!({"type":"response.created","response":{"id":id}}),
         json!({"type":"response.output_item.done","item":item}),
@@ -306,6 +379,146 @@ async fn respond(
         [(header::CONTENT_TYPE, "text/event-stream")],
         body,
     )
+}
+
+// Recursively inspect already-parsed native tool output. Retain only the specific
+// actual Experiment ID, never canonical history, credentials or hidden reasoning.
+fn proposed_id(value: &Value, cycle: contracts::Id) -> Option<contracts::Id> {
+    if value["trial_source"] == "CODEX" && value["cycle_id"] == cycle.to_string() {
+        return value["id"]
+            .as_str()
+            .and_then(|id| id.to_owned().try_into().ok());
+    }
+    match value {
+        Value::Object(values) => values.values().find_map(|child| proposed_id(child, cycle)),
+        Value::Array(values) => values.iter().find_map(|child| proposed_id(child, cycle)),
+        Value::String(text) => serde_json::from_str::<Value>(text)
+            .ok()
+            .and_then(|child| proposed_id(&child, cycle)),
+        _ => None,
+    }
+}
+
+fn result_observation(value: &Value) -> Option<Value> {
+    match value {
+        Value::String(text) => text
+            .split("QZ_MISSION_RESULT_V1\n")
+            .nth(1)
+            .and_then(|suffix| suffix.lines().next())
+            .and_then(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|body| {
+                body["stage"] == "VALIDATION" && body["formal_evaluation"] == "PUBLISHED"
+            }),
+        Value::Object(values) => values.values().find_map(result_observation),
+        Value::Array(values) => values.iter().find_map(result_observation),
+        _ => None,
+    }
+}
+
+fn science_item(
+    seen: &Seen,
+    plan: &mut SciencePlan,
+    ordinal: usize,
+    request: &Value,
+    input: &str,
+) -> Value {
+    match ordinal {
+        0 => {
+            assert!(input.contains("QZ_MISSION_INITIAL_V1"));
+            assert!(request["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["type"] == "tool_search"));
+            json!({"type":"tool_search_call","call_id":"native-science-search","execution":"client",
+                "arguments":{"query":"quazonai_mission experiment propose","limit":4}})
+        }
+        1 => {
+            let search = request["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| {
+                    item["type"] == "tool_search_output"
+                        && item["call_id"] == "native-science-search"
+                })
+                .expect("the official App Server must return actual MCP discovery");
+            let (namespace, tool) = search["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find_map(|namespace| {
+                    namespace["tools"]
+                        .as_array()?
+                        .iter()
+                        .find(|tool| {
+                            tool["name"]
+                                .as_str()
+                                .is_some_and(|name| name.ends_with("experiment.propose"))
+                        })
+                        .map(|tool| (namespace, tool))
+                })
+                .expect("the actual experiment.propose tool must be discovered");
+            json!({"type":"function_call","namespace":namespace["name"],"name":tool["name"],
+                "call_id":"native-science-proposal",
+                "arguments":json!({"idempotency_key":"native-science-proposal","proposal":plan.proposal}).to_string()})
+        }
+        2 => {
+            let output = request["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| {
+                    item["type"] == "function_call_output"
+                        && item["call_id"] == "native-science-proposal"
+                })
+                .expect("the official App Server must consume the actual MCP reply");
+            plan.experiment = Some(
+                proposed_id(&output["output"], plan.proposal.cycle_id).expect(
+                    "MCP must publish the exact proposed experiment under CODEX authorship",
+                ),
+            );
+            json!({"type":"message","role":"assistant","id":"native-science-initial",
+                "content":[{"type":"output_text","text":FIRST_REPLY}]})
+        }
+        3 => {
+            let observed = result_observation(&request["input"])
+                .expect("the native resumed Thread must actually consume published science");
+            assert_eq!(
+                observed["experiment_id"],
+                plan.experiment.unwrap().to_string()
+            );
+            assert!(observed["origin"] == "FIXTURE" && observed["execution_state"] == "SUCCEEDED");
+            assert!(
+                input.contains("QZ_MISSION_INITIAL_V1") && input.contains(FIRST_REPLY),
+                "the result must return to the original persistent Thread"
+            );
+            for field in ["id", "report_artifact_id", "alpha_version_id"] {
+                let _: contracts::Id = observed["evaluation"][field]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+                    .try_into()
+                    .unwrap();
+            }
+            for field in ["forecast", "folds", "points", "calibration"] {
+                assert!(
+                    observed.get(field).is_none() && observed["evaluation"].get(field).is_none()
+                );
+            }
+            seen.prior_context.store(true, Ordering::SeqCst);
+            let reply = format!(
+                "QZ_NATIVE_SCIENTIFIC_CONCLUSION: evaluation={} decision={} report={}; this controlled response acknowledges actual FIXTURE science, not qualification or market evidence.",
+                observed["evaluation"]["id"].as_str().unwrap(),
+                observed["evaluation"]["decision"].as_str().unwrap(),
+                observed["evaluation"]["report_artifact_id"].as_str().unwrap(),
+            );
+            plan.observation = Some(observed);
+            json!({"type":"message","role":"assistant","id":"native-science-conclusion",
+                "content":[{"type":"output_text","text":reply}]})
+        }
+        _ => panic!("unexpected model call in the bounded native science fixture"),
+    }
 }
 
 pub async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts {
