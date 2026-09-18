@@ -113,18 +113,15 @@ fn output<'a>(request: &'a Value, kind: &str, call: &str) -> &'a Value {
 }
 
 fn mcp_document(value: &Value) -> Value {
-    let document: Value = if let Some(text) = value.as_str() {
-        serde_json::from_str(text).expect("native MCP JSON output")
-    } else {
-        value.clone()
-    };
-    assert_ne!(document["isError"], true, "the real MCP call must succeed");
-    if let Some(content) = document["content"].as_array() {
-        assert_eq!(content.len(), 1);
-        serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap()
-    } else {
-        document
-    }
+    // Pinned Codex serializes plain MCP content as a JSON array inside Text;
+    // it does not send the CallToolResult envelope to the Responses provider.
+    let content: Value =
+        serde_json::from_str(value.as_str().expect("native MCP text output")).unwrap();
+    let items = content.as_array().expect("native MCP content array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["type"], "text");
+    serde_json::from_str(items[0]["text"].as_str().unwrap())
+        .expect("the actual MCP tool must return its original HTTP receipt")
 }
 
 async fn respond(
@@ -246,6 +243,10 @@ async fn respond(
             assert_eq!(receipt["replayed"], false);
             let artifact = &receipt["resource"];
             assert_eq!(artifact["kind"], "REPORT");
+            assert_eq!(artifact["schema_name"], "qz.research_report");
+            assert_eq!(artifact["schema_version"], "1");
+            assert_eq!(artifact["media_type"], "application/json");
+            assert_eq!(artifact["created_by"], "AGENT");
             assert_eq!(artifact["origin"], "SYNTHETIC");
             assert_eq!(artifact["producer_run_id"], json!(seen.run));
             assert_eq!(artifact["producer_attempt_id"], json!(seen.attempt));
