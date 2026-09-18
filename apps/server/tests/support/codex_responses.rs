@@ -533,9 +533,10 @@ fn science_item(
                     text.contains(&plan.proposal.cycle_id.to_string()),
                 );
             }
-            plan.experiment = Some(proposed.expect(
-                "MCP must publish the exact proposed experiment under CODEX authorship",
-            ));
+            plan.experiment =
+                Some(proposed.expect(
+                    "MCP must publish the exact proposed experiment under CODEX authorship",
+                ));
             json!({"type":"message","role":"assistant","id":"native-science-initial",
                 "content":[{"type":"output_text","text":FIRST_REPLY}]})
         }
