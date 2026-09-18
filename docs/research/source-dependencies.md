@@ -14,10 +14,24 @@ The scan sees only Cargo.toml/Cargo.lock, apps/web/package.json/package-lock.jso
 runtimes/codex/package.json/package-lock.json. It does not scan the checkout's build
 outputs, downloaded dependencies, unrelated fixture locks or deleted legacy frontend.
 One native invocation writes Syft JSON and SPDX JSON into the existing native CI artifact,
-with the original inputs and tool version. Existing jq checks require nonempty output,
-the pinned generator and findings from all three lockfiles. A generation/check failure
-fails the existing job; there is no new workflow, release upload or dependency-submission
-permission. The original build/test checks and timeout remain unchanged.
+with the original inputs and tool version.
+
+The source scope includes development dependencies, so the generation step explicitly
+sets `SYFT_JAVASCRIPT_INCLUDE_DEV_DEPENDENCIES=true`; the upstream JavaScript default
+would omit them. The effective native metadata must confirm that setting. See the
+[pinned option](https://github.com/anchore/syft/blob/v1.52.0/cmd/syft/internal/options/javascript.go)
+and [configuration reference](https://oss.anchore.com/docs/reference/syft/configuration/).
+Existing jq checks retain nonempty output, the pinned generator and all three source paths.
+For each npm lock, jq projects the versioned, non-link records, including the root and
+actual alias names, into a sorted name/version set. It compares that set with the native
+npm findings for the same lock. The sorted TSV diagnostics are not replacement SBOMs;
+Syft still owns parsing/discovery and both original output formats. Missing items or
+failed parsing/sorting/comparison fail the existing job instead of silently narrowing
+coverage. Counts are derived from the inputs, never fixed to one revision.
+
+There is no new workflow, release upload or dependency-submission permission. The original
+build/test checks and timeout remain unchanged. Fix a failed tool invocation or coverage
+check at its source; do not add missing packages by hand or suppress development entries.
 
 ## Interpretation
 

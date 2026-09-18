@@ -62,6 +62,7 @@ jobs:
       - name: Generate native source dependency inventories
         env:
           SYFT_BIN: ${{ steps.syft.outputs.cmd }}
+          SYFT_JAVASCRIPT_INCLUDE_DEV_DEPENDENCIES: 'true'
         run: |
           set -euo pipefail
           "$SYFT_BIN" version > /tmp/native-evidence/syft-version.txt
@@ -71,6 +72,7 @@ jobs:
           jq -e '
             .descriptor.name == "syft" and .descriptor.version == "1.52.0" and
             (.artifacts | length > 0) and
+            .descriptor.configuration.packages.javascript["include-dev-dependencies"] == true and
             ([.artifacts[].locations[]?.accessPath] |
               any(.[]; endswith("Cargo.lock")) and
               any(.[]; endswith("apps/web/package-lock.json")) and
@@ -78,6 +80,24 @@ jobs:
           ' /tmp/native-evidence/source-dependencies.syft.json
           jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 0)' \
             /tmp/native-evidence/source-dependencies.spdx.json
+          for lockfile in apps/web/package-lock.json runtimes/codex/package-lock.json; do
+            group=${lockfile%%/*}
+            jq -er '
+              . as $lock | .packages | to_entries[] |
+              select(.value.link != true and .value.version != null) |
+              [(.value.name // (if .key == "" then $lock.name
+                else (.key | split("node_modules/") | last) end)), .value.version] | @tsv
+            ' "/tmp/native-evidence/dependency-inputs/$lockfile" \
+              | LC_ALL=C sort -u > "/tmp/native-evidence/$group-npm.expected.tsv"
+            jq -er --arg path "/$lockfile" '
+              .artifacts[] | select(.type == "npm") |
+              select(any(.locations[]?; .accessPath == $path)) |
+              [.name, .version] | @tsv
+            ' /tmp/native-evidence/source-dependencies.syft.json \
+              | LC_ALL=C sort -u > "/tmp/native-evidence/$group-npm.actual.tsv"
+            diff -u "/tmp/native-evidence/$group-npm.expected.tsv" \
+              "/tmp/native-evidence/$group-npm.actual.tsv"
+          done
           git diff --exit-code
       - name: Prepare isolated native filesystem fault test
         run: |
