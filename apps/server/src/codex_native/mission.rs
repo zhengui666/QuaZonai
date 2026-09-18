@@ -93,14 +93,14 @@ impl MissionOptions {
             // reject. API scopes/fences still authorize every request; no default
             // approval is granted to other tools or servers.
             json!({ MCP_NAME: {"command":self.server_binary,"args":args,
-                "env":{"QUAZONAI_MCP_TOKEN":token},"required":true,"enabled":true,
-                "startup_timeout_sec":45,"tool_timeout_sec":20,
-                "tools":{
-                    "research.get_brief":{"approval_mode":"approve"},
-                    "run.get":{"approval_mode":"approve"},
-                    "artifact.submit":{"approval_mode":"approve"},
-                    "experiment.propose":{"approval_mode":"approve"}
-                }}})
+            "env":{"QUAZONAI_MCP_TOKEN":token},"required":true,"enabled":true,
+            "startup_timeout_sec":45,"tool_timeout_sec":20,
+            "tools":{
+                "research.get_brief":{"approval_mode":"approve"},
+                "run.get":{"approval_mode":"approve"},
+                "artifact.submit":{"approval_mode":"approve"},
+                "experiment.propose":{"approval_mode":"approve"}
+            }}})
         } else {
             json!({MCP_NAME:{"command":self.server_binary,"args":args,
                 "enabled":false,"required":false}})
