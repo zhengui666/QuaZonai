@@ -486,11 +486,56 @@ fn science_item(
                         && item["call_id"] == "native-science-proposal"
                 })
                 .expect("the official App Server must consume the actual MCP reply");
-            plan.experiment = Some(
-                proposed_id(&output["output"], plan.proposal.cycle_id).expect(
-                    "MCP must publish the exact proposed experiment under CODEX authorship",
-                ),
-            );
+            let proposed = proposed_id(&output["output"], plan.proposal.cycle_id);
+            if proposed.is_none() {
+                // Shape and closed diagnostic markers only. Never print native
+                // input, raw tool output, credentials or arbitrary error prose.
+                let text = output["output"].to_string();
+                let markers: Vec<_> = [
+                    "Wall time:",
+                    "Output:",
+                    "MCP_CONFIGURATION_INVALID",
+                    "MCP_AUTHORITY_REJECTED",
+                    "MCP_CONTRACT_INCOMPATIBLE",
+                    "MCP_CONTROL_UNAVAILABLE",
+                    "MCP_WORKSPACE_FILE_REJECTED",
+                    "MCP_RESPONSE_LIMIT",
+                    "MCP_DEADLINE_EXCEEDED",
+                    "MCP_CONCURRENCY_LIMIT",
+                    "MCP_PROTOCOL_FAILED",
+                    "MCP_CONTROL_REJECTED",
+                    "http_status",
+                    "Unknown tool",
+                    "unknown tool",
+                    "not found",
+                    "Error parsing",
+                    "Invalid",
+                    "invalid",
+                    "missing field",
+                    "permission",
+                    "denied",
+                    "truncated",
+                    "trial_source",
+                    "cycle_id",
+                    "CODEX",
+                    "proposal",
+                    "idempotency_key",
+                ]
+                .into_iter()
+                .filter(|marker| text.contains(marker))
+                .collect();
+                eprintln!(
+                    "native proposal reply: string={} array={} object={} bytes={} expected_cycle={} markers={markers:?}",
+                    output["output"].is_string(),
+                    output["output"].is_array(),
+                    output["output"].is_object(),
+                    text.len(),
+                    text.contains(&plan.proposal.cycle_id.to_string()),
+                );
+            }
+            plan.experiment = Some(proposed.expect(
+                "MCP must publish the exact proposed experiment under CODEX authorship",
+            ));
             json!({"type":"message","role":"assistant","id":"native-science-initial",
                 "content":[{"type":"output_text","text":FIRST_REPLY}]})
         }
