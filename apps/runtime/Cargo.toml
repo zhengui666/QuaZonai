@@ -22,6 +22,11 @@ name = "native_restore"
 path = "tests/native_restore.rs"
 required-features = ["native-oci"]
 
+[[test]]
+name = "native_control_restore"
+path = "tests/native_control_restore.rs"
+required-features = ["native-oci"]
+
 [dependencies]
 contracts = { path = "../../crates/contracts" }
 domain = { path = "../../crates/domain" }
@@ -47,6 +52,10 @@ tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
 
 [dev-dependencies]
+# Real control-plane checkpoint acceptance only; not a Runtime production dependency.
+store = { path = "../../crates/store" }
+sqlx = { workspace = true, features = ["postgres", "uuid"] }
+url = "=2.5.8"
 job = { path = "../job" }
 # Reuse the existing native scientific fixture for actual OCI acceptance.
 nautilus-persistence = { version = "=0.63.0", default-features = false }
