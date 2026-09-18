@@ -41,6 +41,32 @@ The [README quickstart](../../README.md#quickstart) launches the existing Vite p
 
 The preview forks/freezes a Brief with matching inputs, explicitly activates its project, selects synthetic profiles and verifies the exact new Cycle/Run identity. That Cycle has no experiments or qualified candidates. Existing historical selection/Alpha/portfolio/Release views and the original DEMO Package download are separate; approval and production Claim remain unavailable. PR #85 and subsequent accepted checks cover this scoped presentation, not account inference, market computation or the owner's deployment.
 
+## Native science and persisted Thread
+
+The explicit [native science target](../../apps/server/tests/native_science_thread.rs) connects
+official App Server shell/tool-search dispatch, the real production `job allocate` executable,
+Mission MCP `artifact.submit`, HTTP/PostgreSQL/ArtifactStore publication and same-Thread
+continuation after a real process restart. Run it with the existing Native Runtime workflow's
+Job/Codex/PostgreSQL prerequisites:
+
+```sh
+QUAZONAI_NATIVE_JOB_BIN="$(pwd)/target/debug/job" \
+rustup run 1.98.1 cargo test --locked -p server --features native-science \
+  --test native_science_thread -- --test-threads=1 --nocapture
+```
+
+Supply the explicitly isolated `DATABASE_URL` and pinned `CODEX_NATIVE_BIN` as in that workflow,
+never a production database or real account. The provider emits controlled decisions, not
+scientific return values. The native Job must calculate both the optimal allocation and an
+infeasible case; the latter must have no weights. Original report bytes and producer identity
+are checked through the real storage interface, and each public fixture conclusion must cite
+its corresponding Artifact ID. No report is promoted to qualification or delivery evidence.
+
+At introduction the target is unexecuted; the active PR and exact-Head Actions results must
+establish its actual outcome. This focused connection is not the production Worker's complete
+experiment/Evaluation chain, real model inference or full T42. Keep those boundaries distinct;
+the account-only waiver remains unchanged.
+
 ## Native recovery evidence
 
 The [access suite](../../apps/server/tests/recovery_access.rs) restores real PostgreSQL/private state and invalidates old access; [graph recovery](../../apps/server/tests/support/graph_recovery.rs) compares persisted relationships and original Package/Forward bytes. The [cold target](../../apps/runtime/tests/native_restore.rs) independently restores actual SQLite/WAL, original manifests/bytes/tombstones and container identity, then compiles from restored inputs. The same target's metadata control demonstrates numeric-owner preservation. These remain required alongside the new joint test.
@@ -59,7 +85,7 @@ The [owner authorization](https://github.com/zhengui666/QuaZonai/issues/62#issue
 | T07 dedicated live subscription account | **Completed by owner waiver — NOT_RUN** | Owner has no dedicated account and explicitly authorized completion without execution. No real login/logout/paid-inference result is claimed. Existing account functionality and credential-free protocol checks remain. |
 | Dedicated-account/credential-dependent live-provider portions of T03–T05, T08 and T42 | **Completed by owner waiver — NOT_RUN** | Only the unavailable account execution is closed. Not a waiver of entire T08/T42, native SYSTEM/CUSTOM behavior, model directory or user workflow. |
 | T02 credential-free demonstration | Verified scoped UI on the recorded baseline | The accepted one-command Demo, history/non-delivery checks and three-viewports are exercised by Web CI. It remains synthetic; it does not establish real scientific results or the full T42 chain. |
-| T08 non-account Agent loop | Partial evidence; integrated completion still required | Actual App Server persistence/Thread and Mission protocol tests remain. Controlled provider/scientific-response fixtures must not be relabeled as real computation. Verify tool→genuine Job/Evaluation→same-Thread result consumption through the existing native chain without requiring the waived dedicated account. |
+| T08 non-account Agent loop | Partial evidence; new connection requires execution | The [native science/Thread target](../../apps/server/tests/native_science_thread.rs) must execute genuine Job output through native tools and immutable MCP/HTTP reports across a same-Thread restart. Provider decisions and parent records remain fixtures; complete Worker experiment/Evaluation orchestration is a separate remaining boundary. Account invocation stays waived. |
 | T39 historical migration | Remaining | Owner-selected real legacy snapshot/artifacts, precision/relationship mapping and treatment of old qualification. No snapshot waiver was given; synthetic source-schema tests are not that evidence. |
 | T40 recovery/disk-full/dependency-offline | Joint and individual checkpoints verified; reconcile remaining original cases | Use accepted joint/cold/access/graph/ENOSPC results, then complete missing original admission/version/offline/no-blind-replay evidence. Do not treat every test limitation as a demand for a new cross-host backup platform. |
 | T41 documentation and deployment commands | Partial; non-account examples remain | Native help, documented Demo and real loopback Caddy/API restart are exercised. Verify the remaining actual commands/deployment behavior. Do not demand the waived account example or a CodexPro connection. |

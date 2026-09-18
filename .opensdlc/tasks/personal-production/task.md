@@ -3,62 +3,62 @@
 <a id="task"></a>
 ## Task
 
-Task ID: `personal-production`. Deliver the owner's personal QuaZonai requirements against [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62), using the current [DESIGN](../../../DESIGN.md) and its [authorized acceptance scope](../../../DESIGN.md#acceptance-scope). Code, architecture, documentation, deployment and UX remain in scope. Keep per-turn execution logs in the active PR, not product manuals.
+Task ID: `personal-production`. Deliver the owner's personal QuaZonai requirements against [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62), using [DESIGN](../../../DESIGN.md) and its [owner-authorized scope](../../../DESIGN.md#acceptance-scope). Code, architecture, documentation, deployment and UX remain in scope. PR discussions hold each turn's public actions and evidence, not hidden reasoning or duplicated product history.
 
 <a id="intent"></a>
 ## Intent
 
-Continue without CodexPro or a dedicated live model account. The owner explicitly authorized GitHub Actions and completion of account-dependent acceptance without running it. Record that decision accurately, remove the stale account/executor blockers, and retain every unwaived scientific, persistence, user-workflow and data requirement.
+Continue core business acceptance without CodexPro or a dedicated live account. The web assistant authors through GitHub file tools; existing Actions run native verification. Account-dependent acceptance remains `COMPLETED_BY_OWNER_WAIVER` / `NOT_RUN`, not a test pass. Do not reopen it or request credentials.
 
-Single-user Rust, official Ant Design, native component reuse and target-only delivery remain unchanged. A scope waiver does not alter product authentication, readiness or evidence validity.
+Current work connects previously separate evidence: actual App Server tool execution, genuine numerical Job output, immutable Mission publication and result consumption after a same-Thread process restart. Controlled model responses must not replace computation, and a success result must not contaminate a later infeasible result.
 
 <a id="spec"></a>
-## Accepted scope
+## Scope and limits
 
-[The owner decision and plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5725878884), dated 2026-09-18, is implemented in DESIGN 0.4. Dedicated-account work is `COMPLETED_BY_OWNER_WAIVER` with execution `NOT_RUN`, not `PASSED`. T07's dedicated live-account tests are complete by waiver; only account-dependent live-provider portions of T03–T05/T08/T42 receive the same treatment. Entire T08/T42, application TOTP, real scientific computation, data provenance, migration, recovery and deployment are not waived.
+[PR #91](https://github.com/zhengui666/QuaZonai/pull/91) merged the owner amendment as `1368e1254b3b2ace4777709e07e9bf305291e096`. T07 and only dedicated-account portions of T03–T05/T08/T42 are closed by waiver. The original TOTP, data, science, independent Reviewer/Sealed, budget, persistence and business-flow requirements remain.
 
-Do not request a dedicated account or CodexPro reconnection, reopen the waived requirement without new owner authorization, or convert waiver into a fabricated run or passed-test count. Actual product research still requires a usable native profile/authentication. Keep empty-profile rejection, independent Reviewer/Sealed, budget, immutable evidence and Demo non-delivery behavior intact.
+The [native science/Thread plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5728884901) adds a bounded integration, not full T08 or T42 acceptance. Provider decisions and the parent research records are explicit fixtures. The production Job binary really computes both results; native App Server owns shell/MCP dispatch and persistence; the actual API and PostgreSQL/ArtifactStore own publication. No qualification or delivery authority is granted.
 
 <a id="plan"></a>
-## Implementation
+## Implementation and reuse
 
-[PR #91](https://github.com/zhengui666/QuaZonai/pull/91) starts from accepted main `6754d04166a22b3f0a6ac671e7dc44e47ca4a155`, branch `codex/actions-account-scope-20260918`. The web assistant authors source/documents through connected GitHub file tools; GitHub Actions executes native checks and generators. Do not use CodexPro/local Codex or delegate implementation to GitHub Codex.
+Branch `codex/native-science-thread-20260918` starts from main1368e125. Reconcile actual Head before any write. Preserve the existing task and English language; `.opensdlc/config.json` is absent.
 
-Update existing DESIGN, AGENTS, OPERATIONS, CLI, CONTRIBUTING, README, workflow Skill, OpenSDLC project/review/operations and acceptance index. DESIGN owns the scope decision; other documents link it rather than inventing an alternative policy. Preserve original optional account examples and all application code, dependency locks, generated contracts, tests and existing workflow behavior. No test-skip configuration, product bypass, new waiver engine or permanent source-transfer mechanism.
+`apps/server/tests/native_science_thread.rs` reuses the native Client/ThreadOptions, existing Mission MCP/HTTP fixture, allocation input and production `job allocate` CLI. Its explicit `native-science` test feature includes `native-codex`; the existing Native Runtime workflow builds the required Job and runs the target against its disposable PostgreSQL. No new dependency, lockfile, production API, permissions, model loop or numerical implementation.
 
-For the two large existing documents, a temporary Action applied the assistant-authored exact text diff and returned file bytes/unreferenced Git blobs, with no model or commit/push/ref operation. The assistant verified those bytes against the authored text before selecting the final tree. Remove `.github/accepted-account-scope.patch` and `.github/workflows/materialize-account-scope.yml` before final validation.
+The test copies the actually built Job executable into its private Mission workspace and uses native shell dispatch. The controlled provider receives the real tool output, validates it through the existing domain contract, discovers `artifact.submit` and submits the original output file through actual MCP/HTTP. Its public fixture conclusion must cite the returned Artifact ID and numerical status. The test checks the original bytes again through Store/ArtifactStore.
 
-Retain the existing native science, App Server/Thread/MCP, Store/Server, hosted browser, OCI/cold/joint recovery and dependency-inventory tests. Reconcile actual Head before writes and preserve concurrent work. Do not run repository shell commands in the web sandbox.
+After a real native process close, a new process resumes the same Thread. The first allocation is optimal; the second has valid but infeasible constraints, so it must produce no weights and cite its distinct new artifact while retaining the first reference in native context. Polling an unfinished exec session continues that session rather than launching a second command. Public-summary reads must not trigger model calls or return the newest answer for an older Turn. Controlled usage counters remain labeled as such.
+
+Reuse the already locked Codex install and existing Ubuntu native sandbox prerequisite, with scoped cleanup. All original OCI/cold/joint, Store, Web, hosting and CodeQL checks remain. No real account invocation, increased test limit, ignored prerequisite or automatic retry to hide failure is introduced. No project shell/compiler is executed in the web sandbox.
 
 <a id="verification"></a>
 ## Verification
 
-[PR #90's post-merge evidence](https://github.com/zhengui666/QuaZonai/pull/90#issuecomment-5725755490) identifies the baseline above: all five applicable workflows succeeded. Store artifact10533048663 has681 passes; Runtime artifact10533217399 has17OCI+2cold/ownership+1joint; Web artifact10532289340 completed both real hosted phases. These are baseline results, not approval of this new Head. Previous deliveries and failed iterations remain in their PRs.
+At authorship this new test has not executed. Test existence, source inspection and the earlier main's green checks are not a new pass. Read actual fmt/Clippy, native target and complete workflow outcomes for each candidate. On failure, repair the concrete source or fixture contract and preserve the failing evidence in the PR.
 
-Preparation run35313523613 / artifact10534237594 at `4fcfc95b660bb7cc49b1cabd9e3a37e4bf3e164d` applied only the exact DESIGN/OPERATIONS diff. Both returned files match the authored bytes and native Git blob identity. Text application is not build, application or account execution.
+Require two genuine Job results (optimal and infeasible), two original HTTP publications, exact producer Run/Attempt identity and bytes, one persisted Thread across two native processes, actual result consumption and no fabricated weights on the negative result. No private request bodies, credentials or canonical model-history files are uploaded.
 
-Independent review of4cf6590 found remaining account blockers in CLI/OPERATIONS, overly broad T03–T09 waiver wording and an obsolete contributor task route. The corrections enumerate the authorized IDs, preserve T06/T09 and other non-account checks, and point contributors to the current task or their own appropriate task. The same exact-text transfer is used for the two large manual corrections and removed before delivery; it does not run account tests.
-
-The final PR must pass its own original CI, Web, Native Runtime, Personal hosting and CodeQL after temporary-file removal. Check links/anchors and policy consistency; inspect the final diff to ensure no application source, test, lock or persistent workflow was changed. Existing credential-free native tests still run. Account waivers contribute no test passes and no protected-account evidence. Do not infer success from a configured step or old result.
+This connection does not verify production Worker's full experiment/evaluation orchestration, independently qualified Alphas, real market provenance, owner legacy migration or complete Web/CLI research-to-delivery. The [acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance) keeps these remaining requirements separate from the closed account scope.
 
 <a id="review"></a>
 ## Independent review
 
-Request explicit read-only `@codex review` for the exact final Head, address all actionable summary/inline findings and validate any changed source again. Verify waiver scope and provenance, retained functional requirements and absence of false completion claims. Author review is not independent approval.
+Request explicit read-only `@codex review` for the final Head, address every actionable summary and inline finding, and revalidate changed source. Author inspection and older clean results do not replace independent current review.
 
 <a id="delivery"></a>
 ## Delivery boundary
 
-1. Publish and complete the PR's declared scope.
-2. Require every applicable final-Head CI success, all actionable review findings resolved and explicit clean independent Codex feedback.
-3. Only then mark ready, merge with expected-Head verification and inspect main/post-merge checks.
-4. **Never ask GitHub Codex to fix, implement, edit, commit or push.** It is a read-only reviewer.
+1. Publish the PR and complete its declared scope with committed source and no temporary transfer machinery.
+2. Require all applicable final-Head CI successes, all actionable findings resolved and explicit clean independent review for that Head.
+3. Only then mark ready and merge using expected-Head verification, inspect main and post-merge checks, and record the actual merge.
+4. **Never ask GitHub Codex to fix, implement, edit, commit or push.** It reviews only; the web assistant authors all changes.
 
-Issue #62's closed metadata does not prove full delivery. The explicit account waiver closes only its accepted portion; all remaining requirements need their own actual evidence.
+Issue #62's closed metadata alone is not acceptance. Do not broaden the account waiver or count it as a passed test; do not use this focused connection to declare the entire product delivered.
 
 <a id="handoff"></a>
 ## Continuation
 
-Use the [current acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance) to continue T08/T42's non-account end-to-end business flow, T39's actual legacy snapshot and remaining original T40/T41 evidence through existing GitHub Actions and product entrypoints. Do not keep adding unrelated security/supply-chain work or automatically expand every test limitation into a new product requirement.
+Read AGENTS, CONTRIBUTING (`DEVELOPMENT.md` is absent), relevant DESIGN and the current PR/CI state before continuing. Do not request a CodexPro connection or dedicated account. Use file tools for authorship and Actions for execution, protect concurrent changes and user data, and record public turn stages in the active PR.
 
-The repository language remains English for this existing task; preserve its ID. Read AGENTS, CONTRIBUTING (`DEVELOPMENT.md` is absent), applicable DESIGN and actual GitHub state. Do not solicit secrets or touch owner data. Neither real account execution nor owner-host deployment is claimed; neither is a prerequisite to continue the authorized Actions work.
+Complete the remaining non-account Thread/Worker, data/migration, runbook and full business entrypoint acceptance using existing native interfaces. Missing real data or owner snapshot evidence is not silently waived by the account decision.
