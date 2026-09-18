@@ -31,14 +31,14 @@ pub struct Fixture {
     pub objects: Arc<ArtifactStore>,
     pub researcher_profile: CodexProfileChoiceV1,
     pub reviewer_profile: CodexProfileChoiceV1,
-    _directory: Option<tempfile::TempDir>,
+    pub directory: Option<tempfile::TempDir>,
 }
 
 pub async fn setup(pool: &PgPool, store: &Store, actor: &Actor) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let objects = Arc::new(ArtifactStore::open(&directory.path().join("objects")).unwrap());
     let mut fixture = setup_with_objects(pool, store, actor, objects).await;
-    fixture._directory = Some(directory);
+    fixture.directory = Some(directory);
     fixture
 }
 
@@ -368,7 +368,7 @@ pub async fn setup_with_policy_plan(
         brief,
         freeze,
         objects,
-        _directory: None,
+        directory: None,
     }
 }
 
