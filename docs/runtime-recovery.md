@@ -1,8 +1,8 @@
-# Native Runtime cold recovery
+# Native recovery checkpoints
 
 ## Scope and prerequisites
 
-This procedure restores a **quiescent Runtime checkpoint on the same host, at the same absolute state path**, with its original Docker identities still available. It uses GNU tar and SQLite's existing recovery, not a new backup service. The [Runtime guide](../runtimes/native/README.md) owns installation, configuration and native task semantics; [OPERATIONS](../OPERATIONS.md) owns the control-plane database, keys and access cutover.
+The standalone procedure below restores a **quiescent Runtime checkpoint on the same host, at the same absolute state path**, with its original Docker identities still available. It uses GNU tar and SQLite's existing recovery, not a new backup service. The [Runtime guide](../runtimes/native/README.md) owns installation, configuration and native task semantics; [OPERATIONS](../OPERATIONS.md) owns the control-plane database, keys and access cutover. The [joint-checkpoint regression](#joint-control-and-runtime-checkpoint) separately exercises a common database, control-state, Runtime and catalog checkpoint.
 
 Do not use a Runtime-only checkpoint to roll the whole application back independently. The database, artifact stores, Runtime journal and external work must agree on the recovery point. A task sent after the checkpoint can still exist in Docker even though the older journal does not contain it. That case requires explicit reconciliation, not resubmission or a new task ID. Cross-host relocation, active-job filesystem snapshots and complete production RPO/RTO are outside this cold procedure.
 
@@ -72,17 +72,17 @@ Start the reviewed Runtime **as its original unprivileged service account** with
 
 Read representative **original** job identities through the existing Runtime protocol. Confirm their run/attempt IDs, status, timestamps, result manifest and output bytes. Repeat a known original request only with its exact original identity and payload; it must return the same record, not create another container or restart the old one. Verify that a known cancelled identity stays closed. Missing images, catalogs, bytes, journal state or native container identity require investigation; never substitute a fabricated success or delete a tombstone.
 
-After historical checks and control-plane recovery reconciliation, explicitly authorize one bounded new task using the restored input references. Verify actual native execution and output retrieval. Then resume the intended services through their normal startup procedure. Keep the checkpoint and retained copy until the operator's existing retention policy permits removal.
+After historical checks and control-plane recovery reconciliation, explicitly authorize one bounded new task using the restored input references. New admission still requires a current native capability probe; restoration does not extend an old probe's validity. Verify actual execution and output retrieval, then resume the intended services through their normal startup procedure. Keep the checkpoint and retained copy until the operator's existing retention policy permits removal.
 
 If the restored Runtime cannot start, stop it, retain its diagnostics privately, and preserve both state trees. Selecting the retained original again is a separate deliberate recovery choice, not an automatic repair. Do not regenerate `instance_id`, change old JobSpecs or replay unknown START operations.
 
-## Executable regression and its limits
+## Executable Runtime regression
 
 [The cold-restore target](../apps/runtime/tests/native_restore.rs) reuses the existing native OCI fixture. It compiles real Rust to Wasm, creates a pre-submit cancellation, stops the gateway after native work terminates, archives a nonempty WAL checkpoint, moves the original directory aside and starts a new process from restored files at the original path. It checks original status/manifest/output bytes, immutable replay and conflict behavior, cancellation, unchanged native container identity and a new compile using restored inputs without reupload. It compares the retained original again after recovery.
 
-The same target contains a separate **metadata-only control**: a test-owned file is assigned65532:65532, the former unprivileged extraction must lose that owner and fail native comparison, and the corrected privileged extraction must preserve numeric owner/group, mode and bytes. This is deterministic filesystem coverage, not a synthetic model or extra Runtime research result. Archive stages retain bounded sanitized native diagnostics; all unexpected exits and differences fail.
+The same target contains a separate **metadata-only control**: a test-owned file is assigned65532:65532, the former unprivileged extraction must lose that owner and fail native comparison, and corrected privileged extraction must preserve numeric owner/group, mode and bytes. This is deterministic filesystem coverage, not a synthetic model or extra research result. The shared [archive helper](../apps/runtime/tests/support/archive.rs) retains the same numeric-owner procedure and bounded sanitized diagnostics; unexpected exits and differences fail.
 
-Use the build environment and pinned image described in the [Runtime guide](../runtimes/native/README.md#验证). Run the tests as an ordinary user with Docker access, GNU tar/chown and noninteractive `sudo` for their own disposable archive files. Only these native archive/ownership commands are elevated, never the Runtime or Cargo process. Both targets are explicit in the existing Native Runtime CI; absent prerequisites fail rather than skip:
+Use the build environment and pinned image described in the [Runtime guide](../runtimes/native/README.md#验证). Run tests as an ordinary user with Docker access, GNU tar/chown and noninteractive `sudo` for their own disposable archive files. Only archive/ownership commands are elevated, never Runtime or Cargo. The existing Native Runtime CI selects these tests explicitly; missing prerequisites fail:
 
 ```sh
 QUAZONAI_NATIVE_JOB_IMAGE='sha256:ACTUAL_NATIVE_IMAGE_ID' \
@@ -91,4 +91,26 @@ rustup run 1.98.1 cargo test --locked -p runtime --features native-oci \
   --test native_restore -- --test-threads=1 --nocapture
 ```
 
-The output's `cold_restore_elapsed_ms` measures only this disposable fixture's restore and historical verification, not production recovery time or data-loss tolerance. CI must actually pass on the accepted revision before counting either regression as evidence. The owner's installation, coordinated database/Runtime restoration, active-job fault rehearsal, real accounts and full [T40/T42 acceptance](architecture/issue-62-execution.md#acceptance) still require their own evidence.
+## Joint control and Runtime checkpoint
+
+[The joint target](../apps/runtime/tests/native_control_restore.rs) covers an additional boundary that separate database and Runtime tests cannot establish. A genuine native `DATA_VALIDATE` has finished remotely, while the control-plane Attempt is still `SENT_UNKNOWN`, its original message is unacknowledged and no result has been published. The test confirms the native container is terminal and stops the sole Runtime writer; there is no running control Worker. Only this known quiescent state forms the common checkpoint. It is not permission to snapshot an unknown or running remote task, nor to edit a control row to manufacture that state.
+
+The checkpoint consists of the native PostgreSQL dump, control artifact/secret directory, complete Runtime directory/configuration and actual Parquet catalog, with the original master key retained separately. The test restores a new database and same-path, new-inode copies, preserving originals and numeric ownership. Actual `recover-access` invalidates the old browser authority. The test's trusted Store verified-step input is not a real TOTP or model-account login.
+
+Recovery then uses the **built production Worker CLI**, not a successful-response mock. Withholding an original local parameter file must prevent publication, terminal receipt and ACK even though remote output exists. Returning the same file and allowing the real lease to expire lets a new Worker reconcile the same Attempt/external ID/spec with an advanced owner epoch. It must publish the original raw manifest/output bytes once and archive the original message, without restarting the original container. A separately authorized new task refreshes native capability observations and reads the restored catalog without registering replacement data. Fixture origin/PIT status remain unchanged; no scientific qualification is granted.
+
+In addition to the native image and archive prerequisites above, build `server`, supply a **disposable PostgreSQL18/PGMQ administrator URL**, and provide matching `pg_dump`/`pg_restore` clients. The test creates its own SQLx database, fresh restoration database and application role. Do not supply an installation's database. When using the existing CI PostgreSQL container, `QZ_TEST_PG_CONTAINER` selects its native clients; it must identify that same disposable server. Credentials and archives stay in the private fixture and are not uploaded.
+
+```sh
+rustup run 1.98.1 cargo build --locked -p server --bin server
+# Set DATABASE_URL locally to the disposable test administrator; never paste a real secret.
+QUAZONAI_NATIVE_SERVER_BIN="$(pwd)/target/debug/server" \
+QUAZONAI_NATIVE_JOB_IMAGE='sha256:ACTUAL_NATIVE_IMAGE_ID' \
+QUAZONAI_DOCKER_SOCKET=/var/run/docker.sock \
+rustup run 1.98.1 cargo test --locked -p runtime --features native-oci \
+  --test native_control_restore -- --test-threads=1 --nocapture
+```
+
+The [existing Native Runtime workflow](../.github/workflows/native-runtime.yml) builds the real server and image, runs the original OCI/cold/ownership suites, then runs this joint case. [PR #89](https://github.com/zhengui666/QuaZonai/pull/89) owns its actual candidate results and review; a listed command or compiled test is not a passing restore. Check the accepted commit and complete result before treating this scenario as evidence.
+
+`cold_restore_elapsed_ms` and `adoption_elapsed_ms` measure only disposable fixture phases, not production recovery time or data-loss tolerance. These scenarios do not prove active-job power-loss snapshots, cross-host relocation, arbitrary earlier rollback, real account/market licensing, the owner's recovery objective or complete [T40/T42 acceptance](architecture/issue-62-execution.md#acceptance). Keep those requirements separate.

@@ -16,7 +16,7 @@ use contracts::{
     data::DataValidateRequest,
     lifecycle::JobLimitsV1,
     research::{DataOrigin, DataPartition, InputItemV1, InputPurpose, InputSetCreate, PitStatus},
-    runtime::RuntimeCapabilitiesV1,
+    runtime::{RuntimeCapabilitiesV1, RuntimeProbeOutcomeV1, RuntimeProbeRequestV1},
     runtime_jobs::{
         JobSpecV1, ResultManifestV1, RuntimeInputV1, RuntimeJobState, RuntimeResultState,
     },
@@ -37,7 +37,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use store::{authority::Actor, Store};
+use store::{
+    authority::Actor, lifecycle::native::NativeObjectPublication, runtime::ProbePreparation,
+    Store,
+};
 use support::{count, Fixture};
 
 struct Worker {
@@ -287,34 +290,41 @@ async fn checkpoint(
     let key = key_root.path().join("master.key");
     SecretVault::initialize_key(&key).unwrap();
 
-    let (catalog, request) = market::market("0", 8);
-    fs::set_permissions(catalog.path(), fs::Permissions::from_mode(0o755)).unwrap();
-    let mut selection = request.selection;
-    selection.bar_types.truncate(1);
-    let observed = job::catalog::load_catalog(catalog.path(), &selection).unwrap();
-    assert_eq!(observed.rows, 8);
-    let [series] = observed.series.as_slice() else {
-        panic!("one controlled native instrument expected");
-    };
-    let mut metadata = tasks::data::catalog_fixture::metadata();
-    metadata.event_start =
-        chrono::DateTime::from_timestamp_nanos(selection.event_start_ns.get() as i64);
-    metadata.event_end =
-        chrono::DateTime::from_timestamp_nanos(selection.event_end_ns.get() as i64);
-    metadata.available_through =
-        chrono::DateTime::from_timestamp_nanos(selection.decision_cutoff_ns.get() as i64);
-    metadata.row_count = count(observed.rows as u64);
-    metadata.universe.coverage_end = metadata.event_end;
-    metadata.universe.instrument_definitions =
-        vec![serde_json::to_value(&series.instrument).unwrap()];
-    metadata.quality.checked_at = runtime::now();
-    let quality = &mut metadata.quality.datasets[0];
-    quality.selection = selection;
-    quality.row_count = metadata.row_count;
-    quality.first_event_ns = count(series.bars.first().unwrap().ts_event.as_u64());
-    quality.last_event_ns = count(series.bars.last().unwrap().ts_event.as_u64());
-    quality.available_through_ns = count(series.bars.last().unwrap().ts_init.as_u64());
-    domain::catalogs::metadata(&metadata, runtime::now()).unwrap();
+    // Nautilus bridges its synchronous Parquet API with block_in_place.
+    // Keep that blocking work off the SQLx test's current-thread executor.
+    let (catalog, metadata) = tokio::task::spawn_blocking(|| {
+        let (catalog, request) = market::market("0", 8);
+        fs::set_permissions(catalog.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let mut selection = request.selection;
+        selection.bar_types.truncate(1);
+        let observed = job::catalog::load_catalog(catalog.path(), &selection).unwrap();
+        assert_eq!(observed.rows, 8);
+        let [series] = observed.series.as_slice() else {
+            panic!("one controlled native instrument expected");
+        };
+        let mut metadata = tasks::data::catalog_fixture::metadata();
+        metadata.event_start =
+            chrono::DateTime::from_timestamp_nanos(selection.event_start_ns.get() as i64);
+        metadata.event_end =
+            chrono::DateTime::from_timestamp_nanos(selection.event_end_ns.get() as i64);
+        metadata.available_through =
+            chrono::DateTime::from_timestamp_nanos(selection.decision_cutoff_ns.get() as i64);
+        metadata.row_count = count(observed.rows as u64);
+        metadata.universe.coverage_end = metadata.event_end;
+        metadata.universe.instrument_definitions =
+            vec![serde_json::to_value(&series.instrument).unwrap()];
+        metadata.quality.checked_at = runtime::now();
+        let quality = &mut metadata.quality.datasets[0];
+        quality.selection = selection;
+        quality.row_count = metadata.row_count;
+        quality.first_event_ns = count(series.bars.first().unwrap().ts_event.as_u64());
+        quality.last_event_ns = count(series.bars.last().unwrap().ts_event.as_u64());
+        quality.available_through_ns = count(series.bars.last().unwrap().ts_init.as_u64());
+        domain::catalogs::metadata(&metadata, runtime::now()).unwrap();
+        (catalog, metadata)
+    })
+    .await
+    .expect("native catalog preparation must finish on the blocking pool");
 
     let mut remote = Fixture::open().await;
     remote.crash();
@@ -760,6 +770,43 @@ async fn checkpoint(
         .await
         .unwrap();
     let actor = Actor::Browser { login_id: login.id };
+    // Historical adoption above uses the original frozen identity. A new task
+    // still needs a fresh native capability observation after the recovery delay.
+    let ticket = match restored_store
+        .prepare_runtime_probe(
+            &actor,
+            "joint-post-restore-probe",
+            f.request.runtime_id,
+            &RuntimeProbeRequestV1 {
+                schema_version: SchemaV1,
+                expected_revision: f.request.expected_runtime_revision,
+            },
+        )
+        .await
+        .unwrap()
+    {
+        ProbePreparation::Pending(ticket) => *ticket,
+        ProbePreparation::Replay(_) => panic!("new post-restore probe unexpectedly replayed"),
+    };
+    let capabilities: RuntimeCapabilitiesV1 = remote
+        .json(
+            reqwest::Method::GET,
+            &["capabilities"],
+            None,
+            &[reqwest::StatusCode::OK],
+        )
+        .await;
+    let publishing = objects.clone();
+    restored_store
+        .complete_runtime_probe(
+            ticket,
+            RuntimeProbeOutcomeV1::Available {
+                capabilities: Box::new(capabilities),
+            },
+            move |id, bytes| tasks::publish_one(publishing, NativeObjectPublication { id, bytes }),
+        )
+        .await
+        .unwrap();
     let reader = objects.clone();
     let writer = objects.clone();
     let next = restored_store
