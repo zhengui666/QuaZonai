@@ -9,6 +9,7 @@ use contracts::{
     },
     codex::{CodexConnectionCreateV1, CodexProfileCreateV1, ProfileOrigin, SavedModelSettingsV1},
     control::ProjectCreate,
+    cycles::{BriefExecutionContextV1, BriefFreezeV1, CodexProfileChoiceV1},
     data::*,
     evidence::{Comparator, MetricRequirementV1},
     execution::{NativeDataQualityReportV1, NativeDatasetQualityV1},
@@ -57,7 +58,18 @@ fn catalog() -> (
     Vec<RuntimeCatalogMetadataV1>,
     NativeSimulationSettingsV1,
 ) {
-    let (seed, original) = market::market("0", 800);
+    let (seed, original) = market::market_direction(
+        "0",
+        800,
+        1.0,
+        "10000000",
+        false,
+        [
+            cycle_support::execution_models::fill(),
+            cycle_support::execution_models::fee(),
+            cycle_support::execution_models::latency(1_000_000),
+        ],
+    );
     let directory = tempfile::tempdir().unwrap();
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755)).unwrap();
     let all = job::catalog::load_catalog(seed.path(), &original.selection).unwrap();

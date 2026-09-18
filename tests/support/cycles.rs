@@ -5,7 +5,7 @@ use super::{research_support, runtime_support};
 #[path = "cycle_data.rs"]
 mod cycle_data;
 #[path = "execution_models.rs"]
-mod execution_models;
+pub mod execution_models;
 #[path = "native_liquidity.rs"]
 mod native_liquidity;
 use chrono::{DateTime, Utc};

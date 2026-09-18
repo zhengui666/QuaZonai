@@ -14,7 +14,7 @@ mod runtime_support;
 #[path = "support/oci.rs"]
 mod support;
 
-#[path = "../../job/tests/support/market.rs"]
+#[path = "../../job/tests/support/market_catalog.rs"]
 mod market;
 #[path = "../../server/tests/support/codex_responses.rs"]
 #[allow(dead_code)] // Shared official Responses fixture also serves other protocol regressions.
