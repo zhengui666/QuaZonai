@@ -4924,6 +4924,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "server",
  "sqlx",
  "store",
  "tempfile",
@@ -4934,6 +4935,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "utoipa",
+ "uuid",
  "wat",
 ]
 

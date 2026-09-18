@@ -3,62 +3,64 @@
 <a id="task"></a>
 ## Task
 
-Task ID: `personal-production`. Deliver the owner's personal QuaZonai requirements against [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62), using the current [DESIGN](../../../DESIGN.md) and its [authorized acceptance scope](../../../DESIGN.md#acceptance-scope). Code, architecture, documentation, deployment and UX remain in scope. Keep per-turn execution logs in the active PR, not product manuals.
+Task ID: `personal-production`. Deliver the owner's personal QuaZonai requirements against [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62), using [DESIGN](../../../DESIGN.md) and its [authorized acceptance scope](../../../DESIGN.md#acceptance-scope). Code, architecture, documentation, deployment and UX remain in scope. Keep per-turn execution logs and failed iterations in the active PR, not product manuals.
 
 <a id="intent"></a>
 ## Intent
 
-Continue without CodexPro or a dedicated live model account. The owner explicitly authorized GitHub Actions and completion of account-dependent acceptance without running it. Record that decision accurately, remove the stale account/executor blockers, and retain every unwaived scientific, persistence, user-workflow and data requirement.
-
-Single-user Rust, official Ant Design, native component reuse and target-only delivery remain unchanged. A scope waiver does not alter product authentication, readiness or evidence validity.
+Continue without CodexPro or a dedicated live model account. The web assistant authors source through connected file tools; GitHub Actions executes native checks and generators. GitHub Codex is an independent read-only reviewer, never the implementation agent. Retain single-user Rust, official Ant Design, existing native components and target-only delivery.
 
 <a id="spec"></a>
 ## Accepted scope
 
-[The owner decision and plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5725878884), dated 2026-09-18, is implemented in DESIGN 0.4. Dedicated-account work is `COMPLETED_BY_OWNER_WAIVER` with execution `NOT_RUN`, not `PASSED`. T07's dedicated live-account tests are complete by waiver; only account-dependent live-provider portions of T03–T05/T08/T42 receive the same treatment. Entire T08/T42, application TOTP, real scientific computation, data provenance, migration, recovery and deployment are not waived.
+[PR #91](https://github.com/zhengui666/QuaZonai/pull/91) merged as `1368e1254b3b2ace4777709e07e9bf305291e096`. DESIGN0.4 records the owner's 2026-09-18 authorization: dedicated-account work is `COMPLETED_BY_OWNER_WAIVER`, execution `NOT_RUN`, not `PASSED`. T07 and only account-dependent live-provider portions of T03–T05/T08/T42 are closed. Do not request a dedicated account or CodexPro reconnection. Actual product research still requires usable native authentication; an empty profile does not become ready.
 
-Do not request a dedicated account or CodexPro reconnection, reopen the waived requirement without new owner authorization, or convert waiver into a fabricated run or passed-test count. Actual product research still requires a usable native profile/authentication. Keep empty-profile rejection, independent Reviewer/Sealed, budget, immutable evidence and Demo non-delivery behavior intact.
+T08's actual scientific computation, same-Thread result consumption, independent Reviewer, Web/CLI, TOTP, migration, data and recovery obligations remain. Controlled provider responses do not constitute live model reasoning; controlled scientific outputs do not establish native computation. FIXTURE/PIT-UNVERIFIED data cannot be relabeled as REAL or granted production qualification.
 
 <a id="plan"></a>
 ## Implementation
 
-[PR #91](https://github.com/zhengui666/QuaZonai/pull/91) starts from accepted main `6754d04166a22b3f0a6ac671e7dc44e47ca4a155`, branch `codex/actions-account-scope-20260918`. The web assistant authors source/documents through connected GitHub file tools; GitHub Actions executes native checks and generators. Do not use CodexPro/local Codex or delegate implementation to GitHub Codex.
+Current [PR #92](https://github.com/zhengui666/QuaZonai/pull/92), branch `codex/native-science-feedback-20260918`, starts at the #91 merge. [The scientific-loop plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5727011023) defines the full non-account target. [The observed-failure repair](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5730177796) addresses the initial compilation-stage defects. Preserve concurrent work and reconcile actual Head before publishing.
 
-Update existing DESIGN, AGENTS, OPERATIONS, CLI, CONTRIBUTING, README, workflow Skill, OpenSDLC project/review/operations and acceptance index. DESIGN owns the scope decision; other documents link it rather than inventing an alternative policy. Preserve original optional account examples and all application code, dependency locks, generated contracts, tests and existing workflow behavior. No test-skip configuration, product bypass, new waiver engine or permanent source-transfer mechanism.
+### Native compilation checkpoint
 
-For the two large existing documents, a temporary Action applied the assistant-authored exact text diff and returned file bytes/unreferenced Git blobs, with no model or commit/push/ref operation. The assistant verified those bytes against the authored text before selecting the final tree. Remove `.github/accepted-account-scope.patch` and `.github/workflows/materialize-account-scope.yml` before final validation.
+The explicit `native_research_loop` target currently covers original-source experiment compilation, not the complete loop. It reuses the existing Cycle/Experiment preparation, actual Runtime/OCI and production Worker. Cycle/data-quality preparation is explicitly controlled; the compilation itself must be real. The shared Cycle helper accepts an explicitly built image when creating assumptions, before freeze. Original callers keep the original fixture behavior; frozen assumptions are not mutated.
 
-Retain the existing native science, App Server/Thread/MCP, Store/Server, hosted browser, OCI/cold/joint recovery and dependency-inventory tests. Reconcile actual Head before writes and preserve concurrent work. Do not run repository shell commands in the web sandbox.
+After Runtime configuration changes, prepare a Store probe ticket before I/O, resolve its credential reference through the existing SecretVault, and use production RuntimeTransport with that exact snapshot. Publish the actual observation before freezing. The proposal helper's controlled probe is replaced by another real configured observation before native compilation admission.
+
+After the Worker publishes and acknowledges the original message, inspect its exact Attempt/spec, real OCI container, qz.model_compilation and qz.wasm_model mapping. The accepted model must execute the submitted close-minus-previous source on four varied observations through the production Wasmi adapter. Check source ID, model reference/size, original raw manifest and unique terminal receipt/ACK. A non-fixture version label or Wasm header alone is not compilation proof.
+
+Server and UUID are test-only Runtime dependencies. Retain every accepted lockfile package/version/source and existing dependency list; only Runtime gains those two test edges. Native Cargo owns lockfile resolution and rustfmt owns formatting. The temporary exact-patch preparation entry and compressed patch are removed before formal-source validation. No permanent generator, dependency upgrade or changed product protocol is introduced. Restore the original Native Runtime concurrency group and preserve all original checks and limits.
+
+### Remaining scientific loop
+
+Replace controlled scientific completion with actual catalog-backed forecast and validation, publish the real Evaluation and bounded result through the original Mission/Thread, and verify the original official App Server session after restart. Reuse existing provider/transport fixtures only for the account-waived response boundary. Do not use fabricated 0.8 metrics or 1000 samples, manually write a successful Run, or sum unrelated tests into a claimed connected workflow. Invalid or inconclusive science remains a valid bounded result, not qualification. This compilation checkpoint alone cannot close T08 or justify merging the full PR scope.
 
 <a id="verification"></a>
 ## Verification
 
-[PR #90's post-merge evidence](https://github.com/zhengui666/QuaZonai/pull/90#issuecomment-5725755490) identifies the baseline above: all five applicable workflows succeeded. Store artifact10533048663 has681 passes; Runtime artifact10533217399 has17OCI+2cold/ownership+1joint; Web artifact10532289340 completed both real hosted phases. These are baseline results, not approval of this new Head. Previous deliveries and failed iterations remain in their PRs.
+At `4f82a9c33621975f2791025f466da9e88a689a2a`, [Runtime35336430591](https://github.com/zhengui666/QuaZonai/actions/runs/35336430591), job105572222463, passed formatting then failed Clippy at six undeclared UUID references in shared test helpers. No new scientific execution occurred. Independent review4046067745/751/757/762 identified missing pre-freeze probing, a controlled image mismatch, ticket/transport binding and inadequate model assertions.
 
-Preparation run35313523613 / artifact10534237594 at `4fcfc95b660bb7cc49b1cabd9e3a37e4bf3e164d` applied only the exact DESIGN/OPERATIONS diff. Both returned files match the authored bytes and native Git blob identity. Text application is not build, application or account execution.
+The earlier generate-lockfile invocation also changed unrelated transitive packages. That drift was rejected: baseline lock bc316acc was restored, and native metadata must retain all641 original packages and all dependency lists except the two Runtime test edges. [Preparation35347141805](https://github.com/zhengui666/QuaZonai/actions/runs/35347141805), artifact10546888516, applied the exact authored patch, resolved only those edges and formatted source. The four returned files were byte/blob-verified against the actual artifact; the source differences beyond the authored text were native formatting only. Preparation is not a compilation or test pass.
 
-Independent review of4cf6590 found remaining account blockers in CLI/OPERATIONS, overly broad T03–T09 waiver wording and an obsolete contributor task route. The corrections enumerate the authorized IDs, preserve T06/T09 and other non-account checks, and point contributors to the current task or their own appropriate task. The same exact-text transfer is used for the two large manual corrections and removed before delivery; it does not run account tests.
-
-The final PR must pass its own original CI, Web, Native Runtime, Personal hosting and CodeQL after temporary-file removal. Check links/anchors and policy consistency; inspect the final diff to ensure no application source, test, lock or persistent workflow was changed. Existing credential-free native tests still run. Account waivers contribute no test passes and no protected-account evidence. Do not infer success from a configured step or old result.
+Require final committed-source CI, Web, Native Runtime, hosting and CodeQL. Read the real compilation report/module behavior, original identity and ACK, then the future connected scientific/Thread results. Earlier main or preparation results do not approve new source. Missing, failed, skipped, ignored, cancelled and old-Head checks are not passes. Account waivers contribute no test passes.
 
 <a id="review"></a>
 ## Independent review
 
-Request explicit read-only `@codex review` for the exact final Head, address all actionable summary/inline findings and validate any changed source again. Verify waiver scope and provenance, retained functional requirements and absence of false completion claims. Author review is not independent approval.
+Request explicit read-only `@codex review` for the exact final Head. Address all actionable summary/inline findings and execute affected tests after repairs. Author inspection, a temporary generated tree and older clean review are not independent current approval.
 
 <a id="delivery"></a>
 ## Delivery boundary
 
-1. Publish and complete the PR's declared scope.
-2. Require every applicable final-Head CI success, all actionable review findings resolved and explicit clean independent Codex feedback.
+1. Complete the PR's declared scope and publish actual source without temporary transfer machinery.
+2. Require every applicable final-Head CI success, all actionable findings resolved and explicit clean independent review.
 3. Only then mark ready, merge with expected-Head verification and inspect main/post-merge checks.
-4. **Never ask GitHub Codex to fix, implement, edit, commit or push.** It is a read-only reviewer.
+4. **Never ask GitHub Codex to fix, implement, edit, commit or push.** It reviews only.
 
-Issue #62's closed metadata does not prove full delivery. The explicit account waiver closes only its accepted portion; all remaining requirements need their own actual evidence.
+Issue #62's closed metadata is not full acceptance. Its explicit account waiver closes only that portion, not the remaining business, scientific, migration or deployment requirements.
 
 <a id="handoff"></a>
 ## Continuation
 
-Use the [current acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance) to continue T08/T42's non-account end-to-end business flow, T39's actual legacy snapshot and remaining original T40/T41 evidence through existing GitHub Actions and product entrypoints. Do not keep adding unrelated security/supply-chain work or automatically expand every test limitation into a new product requirement.
-
-The repository language remains English for this existing task; preserve its ID. Read AGENTS, CONTRIBUTING (`DEVELOPMENT.md` is absent), applicable DESIGN and actual GitHub state. Do not solicit secrets or touch owner data. Neither real account execution nor owner-host deployment is claimed; neither is a prerequisite to continue the authorized Actions work.
+Use the [acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance), actual PR Head, checks and original DESIGN. Keep this English task and ID; CONTRIBUTING is the development entry because DEVELOPMENT.md is absent. Never solicit secrets or run repository shell commands in the web sandbox. Actions execution needs no CodexPro reconnection or dedicated account. Do not replace the actual research goal with unrelated security/supply-chain platforms.

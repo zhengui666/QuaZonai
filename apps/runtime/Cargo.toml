@@ -60,6 +60,7 @@ tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
 # Real control-plane checkpoint acceptance only; not a Runtime production dependency.
 store = { path = "../../crates/store" }
 server = { path = "../server" }
+uuid = "=1.26.0"
 sqlx = { workspace = true, features = ["postgres", "uuid"] }
 url = "=2.5.8"
 job = { path = "../job" }

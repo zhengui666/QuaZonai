@@ -13,7 +13,7 @@ env:
   CARGO_INCREMENTAL: '0'
   CARGO_PROFILE_DEV_DEBUG: '0'
 concurrency:
-  group: native-runtime-science-${{ github.event.pull_request.head.sha || github.sha }}
+  group: native-runtime-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   native-runtime:
@@ -80,9 +80,15 @@ jobs:
         run: |
           set -euo pipefail
           rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p runtime --features native-oci --test native_control_restore -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/runtime-evidence/native-control-restore-tests.log"
-          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p runtime --features native-oci --test native_research_loop -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/runtime-evidence/native-research-loop-tests.log"
           rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -q -p runtime -- openapi > "$RUNNER_TEMP/runtime-evidence/runtime-v1.openapi.json"
           diff -u contracts/generated/runtime-v1.openapi.json "$RUNNER_TEMP/runtime-evidence/runtime-v1.openapi.json"
+          git diff --exit-code
+      - name: Execute original-source compilation through the production Worker
+        env:
+          DATABASE_URL: postgresql://postgres:native-runtime-ci-only@127.0.0.1:55435/postgres
+        run: |
+          set -euo pipefail
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p runtime --features native-oci --test native_research_loop -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/runtime-evidence/native-research-loop-tests.log"
           git diff --exit-code
       - name: Record exact evidence scope without substituting for whole-product acceptance
         if: always()
@@ -90,7 +96,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/runtime-evidence"
           cp Cargo.lock "$RUNNER_TEMP/runtime-evidence/Cargo.lock"
-          printf '%s\n' 'Native Runtime/job and quiescent control/Runtime checkpoint only. No skipped prerequisites count as success. Account/model, active-job recovery, research/qualification/delivery and complete T01-T42 acceptance remain separate.' > "$RUNNER_TEMP/runtime-evidence/SCOPE.txt"
+          printf '%s\n' 'Native Runtime/job, quiescent control/Runtime checkpoint and original-source compilation only. No skipped prerequisites count as success. Account waiver is NOT_RUN; forecast/validation/Thread and full research-to-delivery acceptance remain separate.' > "$RUNNER_TEMP/runtime-evidence/SCOPE.txt"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -107,4 +113,3 @@ jobs:
             [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]]
             docker image rm "$image"
           fi
-

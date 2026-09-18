@@ -42,6 +42,30 @@ pub async fn setup(pool: &PgPool, store: &Store, actor: &Actor) -> Fixture {
     fixture
 }
 
+/// Relational preparation with an explicitly built native image. Data remains a fixture.
+pub async fn setup_with_native_image(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    image: &str,
+) -> Fixture {
+    assert!(domain::runtime::pinned_image(image));
+    let directory = tempfile::tempdir().unwrap();
+    let objects = Arc::new(ArtifactStore::open(&directory.path().join("objects")).unwrap());
+    let mut fixture = setup_plan(
+        pool,
+        store,
+        actor,
+        objects,
+        (DataOrigin::Fixture, DataUse::Research),
+        Liquidity::None,
+        (|_| {}, |_| {}, None, Some(image)),
+    )
+    .await;
+    fixture.directory = Some(directory);
+    fixture
+}
+
 pub async fn setup_with_objects(
     pool: &PgPool,
     store: &Store,
@@ -101,9 +125,35 @@ pub async fn setup_with_policy_plan(
         Option<contracts::science::NativeCalendarSessionsV1>,
     ),
 ) -> Fixture {
+    setup_plan(
+        pool,
+        store,
+        actor,
+        objects,
+        (origin, allowed_uses),
+        liquidity,
+        (customize, plan, calendar, None),
+    )
+    .await
+}
+
+async fn setup_plan(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    objects: Arc<ArtifactStore>,
+    (origin, allowed_uses): (DataOrigin, DataUse),
+    liquidity: Liquidity,
+    (customize, plan, calendar, image): (
+        impl FnOnce(&mut EvaluationPolicyCreate),
+        impl FnOnce(&mut EvaluationPolicyCreate),
+        Option<contracts::science::NativeCalendarSessionsV1>,
+        Option<&str>,
+    ),
+) -> Fixture {
     let mut data = research_support::setup(pool, store, actor).await;
     let capabilities = runtime_support::capabilities(Utc::now());
-    let image = &capabilities.image_refs[0].image_ref;
+    let image = image.unwrap_or(&capabilities.image_refs[0].image_ref);
     let assumptions = Id::new();
     sqlx::query("INSERT INTO app.execution_assumptions(id,venue_capability_ref,engine_image_ref,price_type,starting_capital,base_currency,fee_schedule_artifact_id,slippage_model,fill_model,cost_assumption_status,calendar_version,settlement_rule_ref) SELECT $1,venue_capability_ref,$2,price_type,starting_capital,base_currency,fee_schedule_artifact_id,slippage_model,fill_model,cost_assumption_status,calendar_version,settlement_rule_ref FROM app.execution_assumptions WHERE id=$3")
         .bind(assumptions.as_uuid()).bind(image).bind(data.assumptions.as_uuid())
