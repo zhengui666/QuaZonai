@@ -169,7 +169,7 @@ server client --origin https://research.example --credential-file /private/cli.t
 
 watch以NDJSON输出 `schema_version/event_id/event`，最后输出 `watch_ended/last_event_id/events_received/cancellation_requested=false`。`$LAST_EVENT_ID` 格式为同一Run的 `UUIDv7:十进制seq`；首次观察可省略 `--after`。流量16MiB、最多3600秒/10000事件；Ctrl-C、断线或达到上限均不取消服务器任务。兼容未知事件只保留公开envelope；reset-required或不兼容合同返回错误，不假装连续。需继续观察时使用最后已验证cursor显式调用，不自动重连。导出失败时调用方不得把空或未完成的重定向文件视为成功产物；必须检查退出码。
 
-当前CLI已提供Alpha资格查询、组合Study/Release和自动化政策命令，分别复用原HTTP权限与事务；完整真实账号、市场数据及Web/CLI双入口验收仍属Issue62必交范围，不能用入口列表代替验收。
+当前CLI已提供Alpha资格查询、组合Study/Release和自动化政策命令，分别复用原HTTP权限与事务。专用账号及其在线推理部分按[DESIGN第0.4节](DESIGN.md#acceptance-scope)已完成豁免（NOT_RUN），不再是Issue62账号待办；市场数据、实际科学计算、同Thread结果消费及Web/CLI双入口的非账号业务验收仍保留，不能用入口列表代替验收。
 
 ## 可信 Worker 与正式数据验证
 
@@ -664,7 +664,7 @@ Worker现自动刷新尚未到期的未领取Offer及ACTIVE项目当前有效自
 失效、发布失败或数据库写入超时会回滚；清理等待同一下游发布锁，未知提交不删已引用
 文件。使用同一STATE_DIR原DOWNSTREAM凭据和独立部署允许列表，不继承Runtime目标。
 关闭Worker停止新领取并等待已开始的有界I/O。自动刷新不创建审批或交付；冻结政策
-自动消费已接入Worker；完整真实账号、市场数据及交付验收仍未完成。
+自动消费已接入Worker；专用账号实测按[DESIGN第0.4节](DESIGN.md#acceptance-scope)已完成豁免（未执行），非账号的真实市场数据与完整交付验收仍以[验收索引](docs/architecture/issue-62-execution.md#acceptance)为准。
 
 `POST /api/v2/integrations/runtimes/{id}/probe` 接收 schema_version=1、expected_revision，
 需要近期人类认证或 RUNTIME_PROBE 单次 CLI grant。响应200表示探测已记录；必须检查
