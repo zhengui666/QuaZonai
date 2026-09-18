@@ -384,6 +384,9 @@ fn stream_response(
 // Recursively inspect already-parsed native tool output. Retain only the specific
 // actual Experiment ID, never canonical history, credentials or hidden reasoning.
 fn proposed_id(value: &Value, cycle: contracts::Id) -> Option<contracts::Id> {
+    if value["isError"] == true {
+        return None;
+    }
     if value["trial_source"] == "CODEX" && value["cycle_id"] == cycle.to_string() {
         return value["id"]
             .as_str()
@@ -392,9 +395,17 @@ fn proposed_id(value: &Value, cycle: contracts::Id) -> Option<contracts::Id> {
     match value {
         Value::Object(values) => values.values().find_map(|child| proposed_id(child, cycle)),
         Value::Array(values) => values.iter().find_map(|child| proposed_id(child, cycle)),
-        Value::String(text) => serde_json::from_str::<Value>(text)
-            .ok()
-            .and_then(|child| proposed_id(&child, cycle)),
+        Value::String(text) => {
+            // Pinned Codex McpToolOutput::response_payload adds this presentation
+            // header to text-only results. Decode only its original JSON body.
+            let body = text
+                .strip_prefix("Wall time: ")
+                .and_then(|wrapped| wrapped.split_once(" seconds\nOutput:\n"))
+                .map_or(text.as_str(), |(_, body)| body);
+            serde_json::from_str::<Value>(body)
+                .ok()
+                .and_then(|child| proposed_id(&child, cycle))
+        }
         _ => None,
     }
 }
@@ -572,4 +583,64 @@ pub async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCo
     })
     .await
     .expect("native turn terminal and usage deadline")
+}
+
+#[cfg(test)]
+mod science_reply_tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_original_experiment_through_native_text_wrappers() {
+        let cycle = contracts::Id::new();
+        let id = contracts::Id::new();
+        let receipt = json!({"schema_version":1,"replayed":false,
+            "resource":{"id":id,"cycle_id":cycle,"trial_source":"CODEX"}});
+        let text = receipt.to_string();
+        let header = "Wall time: 0.0123 seconds\nOutput:";
+        let wrapped = format!("{header}\n{text}");
+        assert!(serde_json::from_str::<Value>(&wrapped).is_err());
+        for output in [
+            receipt.clone(),
+            json!(text),
+            json!(wrapped),
+            json!([{"type":"input_text","text":header},
+                {"type":"input_text","text":receipt.to_string()}]),
+            json!(json!([{"type":"text","text":receipt.to_string()}]).to_string()),
+        ] {
+            assert_eq!(proposed_id(&output, cycle), Some(id));
+        }
+    }
+
+    #[test]
+    fn native_text_wrappers_never_grant_missing_or_foreign_experiments() {
+        let cycle = contracts::Id::new();
+        let id = contracts::Id::new();
+        let receipt = json!({"id":id,"cycle_id":cycle,"trial_source":"CODEX"});
+        let mut operator = receipt.clone();
+        operator["trial_source"] = json!("OPERATOR");
+        let mut foreign = receipt.clone();
+        foreign["cycle_id"] = json!(contracts::Id::new());
+        let mut invalid_id = receipt.clone();
+        invalid_id["id"] = json!("not-an-id");
+        for body in [
+            json!({"schema_version":1,"code":"MCP_CONTROL_REJECTED","http_status":403}),
+            json!({"isError":true,"content":[{"type":"text","text":receipt.to_string()}]}),
+            operator,
+            foreign,
+            invalid_id,
+            Value::Null,
+        ] {
+            assert_eq!(proposed_id(&body, cycle), None);
+            let wrapped = json!(format!("Wall time: 0.0123 seconds\nOutput:\n{body}"));
+            assert_eq!(proposed_id(&wrapped, cycle), None);
+        }
+        for text in [
+            format!("unrecognized wrapper\n{receipt}"),
+            format!("Wall time: 0.0123 seconds\nOutput:\n{receipt} trailing bytes"),
+            "Wall time: 0.0123 seconds\nOutput:\n{\"resource\":".into(),
+            "Wall time: 0.0123 seconds\nOutput:".into(),
+        ] {
+            assert_eq!(proposed_id(&json!(text), cycle), None);
+        }
+    }
 }
