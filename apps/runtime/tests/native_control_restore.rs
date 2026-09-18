@@ -38,8 +38,7 @@ use std::{
     time::{Duration, Instant},
 };
 use store::{
-    authority::Actor, lifecycle::native::NativeObjectPublication, runtime::ProbePreparation,
-    Store,
+    authority::Actor, lifecycle::native::NativeObjectPublication, runtime::ProbePreparation, Store,
 };
 use support::{count, Fixture};
 
