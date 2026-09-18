@@ -443,6 +443,8 @@ fn science_item(
                         && item["call_id"] == "native-science-search"
                 })
                 .expect("the official App Server must return actual MCP discovery");
+            // The pinned App Server maps MCP punctuation to underscores for the model.
+            // Invoke its discovered name and namespace; do not fabricate a tool alias.
             let (namespace, tool) = search["tools"]
                 .as_array()
                 .unwrap()
@@ -454,7 +456,7 @@ fn science_item(
                         .find(|tool| {
                             tool["name"]
                                 .as_str()
-                                .is_some_and(|name| name.ends_with("experiment.propose"))
+                                .is_some_and(|name| name.ends_with("experiment_propose"))
                         })
                         .map(|tool| (namespace, tool))
                 })
