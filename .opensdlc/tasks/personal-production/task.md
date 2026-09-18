@@ -42,6 +42,8 @@ The existing lost-send-ACK Mission regression must reach its intended checkpoint
 
 All temporary patch/materialization files and jobs are removed before acceptance. Keep original locked dependencies, generated contracts, production policies, resource bounds, test assertions and timeouts. No new persistent runner or compatibility layer.
 
+The [CodeQL delivery correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5723050977) retains the original language/head/base inventory, queries, SARIF upload/processing and aggregate failure check. It disables only the upstream optional database-bundle upload for separate remote queries: the actual e952 base-Rust job completed its queries and uploaded SARIF before bundle creation stalled and reached the existing deadline. No query, timeout, permission, product test or analysis result is waived. The trade-off is no fresh downloadable CodeQL database copy from this workflow; this is unrelated to application backups. Final-Head analysis and independent review remain required, and the failed run stays in the PR evidence.
+
 <a id="verification"></a>
 ## Verification
 
