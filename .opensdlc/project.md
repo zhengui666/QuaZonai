@@ -29,7 +29,7 @@ Read [AGENTS](../AGENTS.md). Preserve dirty worktrees and verify ownership. Upda
 <a id="owners"></a>
 ## Responsibilities
 
-[@zhengui666](https://github.com/zhengui666) is the repository/code owner in [CODEOWNERS](../.github/CODEOWNERS) and the decision route for requirements, engineering, releases and service operation. Local authors implement and verify; GitHub Codex supplies independent review. Product Operator/Reviewer/Downstream identities are distinct from development permissions.
+[@zhengui666](https://github.com/zhengui666) is the repository/code owner in [CODEOWNERS](../.github/CODEOWNERS) and the decision route for requirements, engineering, releases and service operation. For this delivery, the web assistant authors through connected file tools and existing GitHub Actions executes native checks; GitHub Codex supplies independent read-only review. [The owner amendment](../DESIGN.md#acceptance-scope) removes CodexPro and dedicated-account acceptance as blockers, without treating waived tests as executed. Product Operator/Reviewer/Downstream identities are distinct from development permissions.
 
 <a id="sources"></a>
 ## Authoritative sources
@@ -41,7 +41,7 @@ Read [AGENTS](../AGENTS.md). Preserve dirty worktrees and verify ownership. Upda
 | Coverage and unsupported acceptance | [Evidence index](../docs/architecture/issue-62-execution.md), [compatibility](../docs/architecture/compatibility-matrix.md) |
 | Contributor onboarding and development governance | [CONTRIBUTING](../CONTRIBUTING.md), [AGENTS](../AGENTS.md) |
 | Review, maintenance and agent behavior checks | [review](review.md), [operations](operations.md), [evaluations](evals/suite.md) |
-| Current open-source improvement | [Task and research](tasks/open-source-foundation/task.md) |
+| Current personal-production delivery | [Active task](tasks/personal-production/task.md); [open-source foundation](tasks/open-source-foundation/task.md) remains supporting context |
 
 <a id="native"></a>
 ## Native integration points

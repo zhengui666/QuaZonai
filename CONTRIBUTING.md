@@ -76,7 +76,7 @@ For a bug, establish the failing behavior before the fix and keep a focused regr
 
 ## Submit and maintain
 
-Use one [.opensdlc task](.opensdlc/tasks/open-source-foundation/task.md) for nontrivial work: intent, specification, plan, actual verification, review, delivery and handoff. Reuse an existing task; small corrections can keep the record short. New task prose/IDs use English unless `.opensdlc/config.json` explicitly selects `zh-CN`; preserve existing document languages. Do not generate empty release/incident files.
+Use one `.opensdlc/tasks/<task-id>/task.md` for each nontrivial task: intent, specification, plan, actual verification, review, delivery and handoff. Continue this delivery in the existing [personal-production task](.opensdlc/tasks/personal-production/task.md); other work reuses its own relevant task instead of writing into the old onboarding record. Small corrections can keep the record short. New task prose/IDs use English unless `.opensdlc/config.json` explicitly selects `zh-CN`; preserve existing document languages. Do not generate empty release/incident files.
 
 Open a PR against `main` using the [existing template](.github/PULL_REQUEST_TEMPLATE.md). Describe the concrete problem, resulting behavior, relevant tests, contract/docs changes and remaining limits. Link the task and issue; do not automatically close broader unfinished scope. Authors using AI remain responsible for understanding and verifying every submitted change. GitHub Codex reviews; it is not the product-code author.
 
