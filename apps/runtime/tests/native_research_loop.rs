@@ -172,39 +172,19 @@ async fn experiment_compilation_runs_in_real_runtime_through_production_worker(p
 
     let finished = store.get_run(&actor, compilation.id).await.unwrap();
     assert_eq!(finished.state, contracts::runs::RunState::Succeeded);
-    let container = remote.native_container(
-        &store
-            .native_job(
-                compilation.id,
-                &store
-                    .claim_native_run(
-                        &store
-                            .read_native_run_messages(1, 100)
-                            .await
-                            .unwrap()
-                            .into_iter()
-                            .find(|m| m.run_id == compilation.id)
-                            .unwrap_or_else(|| panic!("terminal queue message already archived")),
-                        "post-terminal-inspection",
-                        1,
-                    )
-                    .await
-                    .ok()
-                    .and_then(|claim| match claim {
-                        Some(ClaimResult::Leased(lease)) => Some(lease.fence.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| panic!("terminal native job is intentionally archived")),
-            )
-            .await
-            .unwrap()
-            .spec,
+    let spec_json: serde_json::Value = sqlx::query_scalar(
+        "SELECT spec_json FROM app.run_native_attempts WHERE run_id=$1",
     )
-    .await;
+    .bind(compilation.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let spec: contracts::runtime_jobs::JobSpecV1 = serde_json::from_value(spec_json).unwrap();
+    let container = remote.native_container(&spec).await;
     assert_eq!(container.state.as_ref().unwrap().running, Some(false));
 
-    let (report_id, report_bytes): (uuid::Uuid, i64) = sqlx::query_as(
-        "SELECT a.id,a.byte_count FROM app.run_native_outputs o JOIN app.artifacts a ON a.id=o.artifact_id JOIN app.run_attempts t ON t.id=o.attempt_id WHERE t.run_id=$1 AND a.schema_name='qz.model_compilation'",
+    let (report_id, report_bytes): (String, i64) = sqlx::query_as(
+        "SELECT a.id::text,a.byte_count FROM app.run_native_outputs o JOIN app.artifacts a ON a.id=o.artifact_id JOIN app.run_attempts t ON t.id=o.attempt_id WHERE t.run_id=$1 AND a.schema_name='qz.model_compilation'",
     )
     .bind(compilation.id.as_uuid())
     .fetch_one(&pool)
@@ -213,7 +193,7 @@ async fn experiment_compilation_runs_in_real_runtime_through_production_worker(p
     let report = data
         .objects
         .read(
-            Id::try_from(report_id.to_string()).unwrap(),
+            Id::try_from(report_id).unwrap(),
             contracts::DbCounter::new(report_bytes as u64).unwrap(),
         )
         .unwrap();
