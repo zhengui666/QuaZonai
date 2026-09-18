@@ -5,80 +5,71 @@
 
 Task ID: `personal-production`. The owner requested a genuinely usable personal QuaZonai across code, architecture, documentation, deployment and UX, removal of obsolete development traces, and complete delivery against [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62).
 
-[DESIGN](../../../DESIGN.md) owns W0–W8/T01–T42. [The acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance) owns remaining coverage. This entry routes continuation; PR discussions own per-turn execution logs, failures, reviews and merge evidence. Do not duplicate historical development narration in product manuals.
+[DESIGN](../../../DESIGN.md) owns W0–W8/T01–T42. [The acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance) owns coverage; PR discussions own per-turn execution logs, failures, reviews and merge evidence. Do not duplicate those histories in product manuals.
 
 <a id="intent"></a>
 ## Intent
 
-Provide persistent real services, recoverable failures and understandable personal operation using existing native capabilities. Retain single-user Rust, official Ant Design and target-only ownership. Remove stale narration and temporary tooling, not credentials, user data, immutable evidence, migration history or licenses. Reuse [maintenance](../production-maintenance/task.md) and [onboarding](../open-source-foundation/task.md).
+Provide persistent services, recoverable failures and understandable personal operation using existing native components. Retain single-user Rust, official Ant Design and target-only ownership. Remove stale narration and temporary tooling, not user data, credentials, immutable evidence, migrations or licenses. Reuse [maintenance](../production-maintenance/task.md) and [onboarding](../open-source-foundation/task.md).
 
 <a id="spec"></a>
 ## Scope and boundaries
 
-| Area | Implementation / acceptance work | Limit |
+| Area | Implemented or current acceptance work | Limit |
 |---|---|---|
-| Hosted application | Packaged Rust/dist through production Caddy routes; original TOTP/session/project/first receipt across clean API restart | Loopback is not public TLS, systemd boot or owner-host deployment |
-| Browser recovery | Confirmed reload, original-key recovery, mobile layout and logout | Does not cancel or recreate an uncertain command |
-| Runtime checkpoint | Complete SQLite/WAL archive with numeric ownership, retained original, new process and original inputs | Same-host/same-path terminal checkpoint, not active-job snapshot |
-| Joint checkpoint | PostgreSQL, control artifacts/secrets, real Runtime and catalog restored together; original uncertain Attempt reconciled by real Worker | Explicit FIXTURE/PIT-UNVERIFIED data; no account, scientific qualification or production RPO/RTO claim |
-| Documentation | Current commands, prerequisites and canonical evidence links | Written commands and listed tests are not executed results |
+| Hosted application | Packaged Rust/dist through real Caddy routes; TOTP/session/project/first receipt across API restart | Loopback is not public TLS, systemd boot or owner-host deployment |
+| Recovery | Original Runtime cold/UID cases and a joint PostgreSQL/control/Runtime/catalog checkpoint through the production Worker | Quiescent same-host/path evidence, not arbitrary rollback or the owner's measured recovery objective |
+| Dependencies | Source-lock SBOM generated with pinned upstream Syft in the existing native CI job | Not binary/image inventory, complete license clearance or vulnerability scanning |
+| Documentation | Current commands, ownership, prerequisites and actual evidence links | A listed command or configured check is not a pass |
 
-QZ does not own broker credentials, real orders, positions, account/NAV or downstream trading controls. Preview and historical samples cannot qualify new research. Real accounts, authorized data and owner-selected snapshots remain separate protected acceptance inputs.
+QZ does not own broker credentials, real orders, positions, account/NAV or downstream trading controls. Preview samples and FIXTURE/PIT-UNVERIFIED data do not qualify real research. Missing account/data/legacy inputs remain unverified requirements.
 
 <a id="plan"></a>
 ## Implementation and reuse
 
-Merged baselines: [#85](https://github.com/zhengui666/QuaZonai/pull/85) (`ff8bee7`, hosting/preview), [#86](https://github.com/zhengui666/QuaZonai/pull/86) (`45033f4`, isolated cold recovery), [#87](https://github.com/zhengui666/QuaZonai/pull/87) (`e426fc3`, SQLite/SQLx and Mission stack repair), and [#88](https://github.com/zhengui666/QuaZonai/pull/88) (`08c0af7`, actual hosted restart, mixed-owner archive and observed Mission deadline). Their exact accepted checks and failed iterations remain in those PRs; they do not approve later commits.
+Merged baselines: [#85](https://github.com/zhengui666/QuaZonai/pull/85) (`ff8bee7`, hosting/preview), [#86](https://github.com/zhengui666/QuaZonai/pull/86) (`45033f4`, cold recovery), [#87](https://github.com/zhengui666/QuaZonai/pull/87) (`e426fc3`, SQLite/SQLx and Mission stack repair), [#88](https://github.com/zhengui666/QuaZonai/pull/88) (`08c0af7`, hosted restart/ownership/deadline) and [#89](https://github.com/zhengui666/QuaZonai/pull/89) (`35a1625aa7a3349fc0d3f3c384a79b6d3b3e4699`, joint recovery). Their PRs retain exact accepted checks and failures, not approval of later source.
 
-Current [PR #89](https://github.com/zhengui666/QuaZonai/pull/89), branch `codex/native-control-restore-20260918`, starts from main `08c0af7ddb8a62375959a74cf24dad851113d017`. Reconcile actual Head before any write. The [joint-checkpoint plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5723177996) and [field-level plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5723535628) precede the implementation.
+Current branch `codex/source-dependency-inventory-20260918` begins at main35a1625. Reconcile actual Head before writing. The [B9 source-inventory plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5724780821) and [minimal placement](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5724801190) precede implementation. OpenSDLC has no language override; preserve this English task and ID.
 
-### Joint control and Runtime recovery
+### Source dependency evidence
 
-`apps/runtime/tests/native_control_restore.rs` reuses the actual Runtime/Docker fixture, native Parquet market fixture, Store data/authority helpers, PostgreSQL client helper and built `server worker` CLI. Test-only Store/PostgreSQL/UUID/url dependencies do not create a production Runtime→Store boundary. The original archive procedure moves to `tests/support/archive.rs`; existing cold/ownership assertions are not replaced or weakened.
+Extend only the existing Rust native CI job, current third-party notices, this task and one focused [upstream reuse note](../../../docs/research/source-dependencies.md). Git exports the committed Cargo manifest/lock, actual apps/web manifest/lock and native Codex manifest/lock. Syft scans only that directory once, producing its native JSON plus SPDX JSON in the existing native-evidence artifact. Preserve original input files, source commit and actual tool version. Existing jq checks require nonempty expected formats and findings at all three lockfile paths.
 
-Read actual catalog instrument/bars/time/count, retain FIXTURE/PIT UNVERIFIED provenance, and get metadata/capability bytes from the real Runtime. Existing Store commands freeze DATA_VALIDATE and its Attempt/spec. Submit that exact spec, observe terminal native output, but leave the control Attempt SENT_UNKNOWN with no terminal/publication/ACK. No control Worker is running when the terminal Runtime is stopped and the common checkpoint is captured.
+The official download action is pinned to e22c389904149dbc22b58101806040fa8d37a610 and Syft to v1.52.0. No application dependency, parser, scanner policy, hosted service, new workflow/job, permission increase, release upload or dependency-snapshot submission is introduced. Existing source/build/database/Web/Runtime/review checks and timeouts stay unchanged. Unknown licenses are not relabeled as safe; optional/development/platform entries and Git source metadata remain distinguishable. A source inventory is not a deployed-binary or image inventory.
 
-Native pg_dump/pg_restore restore a fresh database. Whole control state, Runtime directory/config and actual catalog restore into new-inode copies at their original paths, with originals retained. Keep the master key separate; actual recover-access invalidates old browser authority. Store's controlled verified-step setup is explicitly not real TOTP/model-account acceptance.
+### Retained recovery behavior
 
-Withhold and retain the original local parameter artifact. A real Worker must defer with no terminal/publication/ACK. Restore the same file, wait for the real database lease to expire, and start a new Worker. It must preserve the original Attempt/external identity/spec while advancing owner epoch, adopt exact raw manifest/output bytes once, then archive the original queue message. Original container/start/end/restart identity and the retained original state must stay unchanged. A distinct next DATA_VALIDATE must actually read the restored catalog and produce native output without re-uploading/re-registering the original data. Do not claim network request counts that were not observed.
+The joint target uses real Parquet and Runtime output while the original control Attempt remains SENT_UNKNOWN, with no publication/ACK. Stop all relevant writers, restore a fresh PostgreSQL database and same-path new-inode control/Runtime/catalog copies with originals retained and master key separate, then use actual recover-access. A real Worker must defer while an original local parameter is withheld, and a new owner must adopt original bytes once after that same file returns and the actual lease expires. Original Attempt/spec/container/queue identity is preserved; a distinct new task needs fresh capabilities and reads the restored catalog. Trusted Store authentication setup is not real model/TOTP acceptance. The [runbook](../../../docs/runtime-recovery.md) owns procedure and limits.
 
-The existing Native Runtime workflow adds its established PostgreSQL18/PGMQ service and built Worker. Keep the original17OCI, cold and ownership tests, limits, locked builds and unchanged-source assertions. Private database/archive/Worker logs and keys are not uploaded. Only test-owned fresh resources are cleaned after child guards end; failures must remain visible.
-
-### Retained native behavior
-
-Hosted recovery retains both original Playwright phases, first-response capture, same keys/database/session, normal old-process exit and a different new PID. Caddy502 during API downtime must not become a successful SPA response. No reseeding, new enrollment or Vite fallback. [CONTRIBUTING](../../../CONTRIBUTING.md#verify-the-change) and [hosting](../../../docs/user-guide.md) own the commands.
-
-The existing archive helper retains privileged numeric-owner GNU tar only; Runtime/Cargo stay unprivileged. Metadata controls prove ownership preservation, not a scientific result. The existing memory probe still uses its original limits/deadline and requires both stopped and OOM facts. The Mission deadline test observes actual persisted database time, not a fake clock or edited reservation. Earlier ambiguous failures and the optional CodeQL database-copy correction remain in #88; no query, SARIF upload or actual product backup is waived.
+Hosted tests retain both real Playwright phases, first-response capture, the same keys/database/session, normal old-process exit and a new PID. Caddy502 is not replaced by an SPA success. No reseeding, Vite fallback or re-enrollment. Native cold/ownership controls, bounded resource observation and actual database deadline checks remain unchanged. No temporary source-materialization machinery survives in the delivered tree.
 
 <a id="verification"></a>
 ## Verification
 
-At initial Head `7e8daed215021dee2556dd512d40ed1167c4b19e`, [Native Runtime35295820052](https://github.com/zhengui666/QuaZonai/actions/runs/35295820052) had one successful temporary format/native-lock job105448012165. Artifact10528501276 contains five byte/blob-verified entries, compiler build-finished=true with no diagnostics, and identical before/after check diffs. The only lock change adds the already-resolved Store and url test dependencies to Runtime. The archive helper is an exact move plus native formatting. This proves candidate compilation only; the original committed-source runtime job failed before execution.
+PR #89's final2236a0f97aa69d891d2de57422616aece30513b0 passed all five applicable workflows and explicit independent review5724323156 with both findings resolved. Runtime artifact10529466181 executed17OCI+2cold/ownership+1joint cases; Store artifact10529831989 has681 passes; Web artifact10529411623 passed both real hosted phases. The expected-Head merge35a1625 has no source diff. [The delivery record](https://github.com/zhengui666/QuaZonai/pull/89#issuecomment-5724695340) tracks post-merge observations separately.
 
-Publish the actual formatted source and native lock, removing `.github/joint-archive.patch` and the temporary authored-source job. No permanent transfer/generator framework is added. New committed-source CI must execute the joint scenario, not reuse the temporary compile as a pass.
+At authorship, the new SBOM steps have not executed. Require actual final-Head output, pinned generator version, all three lockfile locations, exact retained input bytes and representative Rust/frontend/Codex entries. Inspect unknown licenses and raw Git source metadata rather than claiming the SPDX conversion proves source provenance or license clearance. Tool/download/scan/structure failure remains a failed native job; keep actual errors in the PR and fix the cause.
 
-Use the actual final-Head CI/artifacts in #89: complete Rust/Store/Server and Web, original17OCI, cold/metadata restore and joint checkpoint, hosting and CodeQL. Inspect source identity, phase outcomes, original Attempt/fence/spec, exact bytes/publications, original queue ACK, fresh native job and owned cleanup. The new joint scenario has no executed success at this record. Update the existing recovery guide and acceptance index with the supported boundary and actual results before delivery. Missing, skipped, ignored, cancelled, failed or old-Head checks are not passes.
-
-Independent prior database or Runtime restores cannot substitute for the new combined result. Even a passing quiescent fixture does not establish active-job power-loss recovery, cross-host relocation, real licensing/accounts, production RPO/RTO or full T42.
+All existing CI remains applicable. No previously green commit validates these new steps. Public/owner deployment, protected account/data research, legacy migration and complete T40/T41/T42 acceptance require the original evidence; neither maintenance nor an SBOM fills them automatically.
 
 <a id="review"></a>
 ## Independent review
 
-Inspect summary and inline findings. After every source change request fresh read-only `@codex review` for the exact final Head. Resolve actionable threads with source and executed evidence; prior clean feedback cannot override a later finding. Author inspection is not independent approval.
+Inspect all summary and inline findings. After every source change request fresh read-only `@codex review` for the exact final Head. Resolve actionable findings with source and executed evidence; author inspection and older clean feedback cannot substitute for independent current approval.
 
 <a id="delivery"></a>
 ## Delivery boundary
 
-1. Complete the declared PR scope and publish actual source without temporary transfer machinery.
-2. Require every applicable final-Head CI to pass, all actionable findings resolved and explicit clean independent Codex review for that Head.
-3. Only then mark ready and merge with expected-Head verification; inspect main and post-merge checks and record the actual merge.
-4. **Never ask GitHub Codex to fix, implement, edit, commit or push.** It is the read-only reviewer; the web assistant authors changes.
+1. Complete the declared PR scope with committed source and no temporary transfer machinery.
+2. Require every applicable final-Head CI success, all actionable findings resolved and explicit clean independent Codex feedback for that Head.
+3. Only then mark ready and merge with expected-Head verification; inspect main/source identity and post-merge checks, recording the actual merge.
+4. **Never ask GitHub Codex to fix, implement, edit, commit or push.** It reviews only; the web assistant authors changes.
 
-Issue #62's closed metadata is not an acceptance certificate or scope waiver. Preserve all remaining contractual evidence requirements; a maintenance PR merge is not full personal-product production readiness.
+Issue #62's closed metadata is not an acceptance certificate or scope waiver. Do not enlarge the contract by treating every test's stated limitation as an additional product feature, or narrow it by calling missing protected evidence a pass.
 
 <a id="handoff"></a>
 ## Continuation
 
-Keep each turn's public execution summaries in the active PR, not product manuals. Read AGENTS, [CONTRIBUTING](../../../CONTRIBUTING.md) (`DEVELOPMENT.md` is absent), relevant DESIGN, OpenSDLC configuration and actual Head/checks. Preserve this English task and its ID; no language override was found.
+Keep each turn's public execution summary in the active PR. Read AGENTS, [CONTRIBUTING](../../../CONTRIBUTING.md) (`DEVELOPMENT.md` is absent), relevant DESIGN, OpenSDLC configuration and actual checks before continuing. Protect concurrent changes and user data.
 
-CodexPro discovery exposed no owner-workspace action. Connected file tools and isolated native GitHub CI are available, not an observed owner-host shell or local executor. No production database, private model account, owner snapshot or deployment was accessed. Continue account/data/migration/coordinated recovery/runbook/research acceptance through the canonical index; unavailable inputs remain unverified, never fabricated passes.
+CodexPro discovery did not expose an owner-workspace action in this session. Connected file tools and existing isolated GitHub CI are available; no local executor, owner-host shell, production database, private model account or user snapshot has been accessed. Continue the full contract through the canonical acceptance index without fabricating absent results.

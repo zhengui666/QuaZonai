@@ -45,6 +45,40 @@ jobs:
           persist-credentials: false
       - name: Require the exact event Head before executing repository code
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - name: Export only the committed application dependency inputs
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/native-evidence/dependency-inputs
+          git archive HEAD Cargo.toml Cargo.lock \
+            apps/web/package.json apps/web/package-lock.json \
+            runtimes/codex/package.json runtimes/codex/package-lock.json \
+            | tar --extract --directory /tmp/native-evidence/dependency-inputs
+          printf '%s\n' 'Source lockfile inventory only: includes optional/development/platform packages, not proven linked binaries or deployed images. Unknown licenses remain unknown; this is not license clearance or a vulnerability audit. Preserve original lockfiles and Syft metadata to distinguish Git sources.' > /tmp/native-evidence/sbom-scope.txt
+      - name: Install the pinned upstream SBOM generator
+        id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          syft-version: v1.52.0
+      - name: Generate native source dependency inventories
+        env:
+          SYFT_BIN: ${{ steps.syft.outputs.cmd }}
+        run: |
+          set -euo pipefail
+          "$SYFT_BIN" version > /tmp/native-evidence/syft-version.txt
+          "$SYFT_BIN" scan dir:/tmp/native-evidence/dependency-inputs \
+            -o syft-json=/tmp/native-evidence/source-dependencies.syft.json \
+            -o spdx-json=/tmp/native-evidence/source-dependencies.spdx.json
+          jq -e '
+            .descriptor.name == "syft" and .descriptor.version == "1.52.0" and
+            (.artifacts | length > 0) and
+            ([.artifacts[].locations[]?.accessPath] |
+              any(.[]; endswith("Cargo.lock")) and
+              any(.[]; endswith("apps/web/package-lock.json")) and
+              any(.[]; endswith("runtimes/codex/package-lock.json")))
+          ' /tmp/native-evidence/source-dependencies.syft.json
+          jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 0)' \
+            /tmp/native-evidence/source-dependencies.spdx.json
+          git diff --exit-code
       - name: Prepare isolated native filesystem fault test
         run: |
           set -euo pipefail
