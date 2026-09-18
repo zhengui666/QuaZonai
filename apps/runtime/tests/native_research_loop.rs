@@ -1,16 +1,16 @@
 //! Native non-account scientific acceptance. This first stage proves that a Store-frozen
 //! experiment compilation is executed by the real Runtime/OCI through the production Worker.
 //! Forecast/validation and same-Thread feedback are added in this PR before delivery.
+#[path = "../../../tests/support/cycles.rs"]
+mod cycle_support;
+#[path = "../../../tests/support/experiment_tasks.rs"]
+mod experiment_support;
+#[path = "../../../tests/support/missions.rs"]
+mod mission_support;
 #[path = "../../../tests/support/research.rs"]
 mod research_support;
 #[path = "../../../tests/support/runtime.rs"]
 mod runtime_support;
-#[path = "../../../tests/support/cycles.rs"]
-mod cycle_support;
-#[path = "../../../tests/support/missions.rs"]
-mod mission_support;
-#[path = "../../../tests/support/experiment_tasks.rs"]
-mod experiment_support;
 #[path = "support/oci.rs"]
 mod support;
 
@@ -172,13 +172,12 @@ async fn experiment_compilation_runs_in_real_runtime_through_production_worker(p
 
     let finished = store.get_run(&actor, compilation.id).await.unwrap();
     assert_eq!(finished.state, contracts::runs::RunState::Succeeded);
-    let spec_json: serde_json::Value = sqlx::query_scalar(
-        "SELECT spec_json FROM app.run_native_attempts WHERE run_id=$1",
-    )
-    .bind(compilation.id.as_uuid())
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let spec_json: serde_json::Value =
+        sqlx::query_scalar("SELECT spec_json FROM app.run_native_attempts WHERE run_id=$1")
+            .bind(compilation.id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     let spec: contracts::runtime_jobs::JobSpecV1 = serde_json::from_value(spec_json).unwrap();
     let container = remote.native_container(&spec).await;
     assert_eq!(container.state.as_ref().unwrap().running, Some(false));
