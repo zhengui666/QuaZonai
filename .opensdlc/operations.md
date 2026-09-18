@@ -13,6 +13,8 @@ Actual product commands and recovery procedures remain in [OPERATIONS](../OPERAT
 | Deploy, migrate or restore user data | Release/service owner decision; explicit native commands in OPERATIONS/CLI | Prepare the reviewed artifact/runbook; request only missing consequential authority/input |
 | Read account/secret material | Native private stores and scoped product interfaces | Keep secret values out of source, logs, chat and model context |
 
+The current [owner amendment](../DESIGN.md#acceptance-scope) selects GitHub Actions, not CodexPro/local Codex, for native execution. The web assistant writes through connected file tools. Dedicated-account acceptance is completed by owner waiver (NOT_RUN), not a test pass or a reason to wait for credentials; all other prerequisites and product authority remain unchanged.
+
 CI uses native GitHub permissions and test identities. Read [workflow configuration](../.github/workflows) for exact scopes. Main was observed without branch protection on 2026-09-17; prose and CODEOWNERS are not native enforcement. No new host hook or production automation is claimed here.
 
 <a id="delivery"></a>

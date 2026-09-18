@@ -5,7 +5,7 @@ description: Navigate QuaZonai development and native verification using its can
 
 # QuaZonai workflow
 
-Read [AGENTS](../../AGENTS.md) for development authority and the relevant section of [DESIGN](../../DESIGN.md) for product requirements before editing. Local Codex may author source, tests and documentation; GitHub Codex is used only for review. This development permission does not grant the product's research Agent Operator, Reviewer or Downstream authority.
+Read [AGENTS](../../AGENTS.md) for development authority and the relevant section of [DESIGN](../../DESIGN.md) for product requirements before editing. For the current delivery, the web assistant authors through GitHub file tools and GitHub Actions executes native verification under [the owner amendment](../../DESIGN.md#acceptance-scope). Do not use or wait for CodexPro/local Codex; GitHub Codex is read-only reviewer. This development permission does not grant the product's research Agent Operator, Reviewer or Downstream authority.
 
 ## Find the authoritative detail
 
@@ -29,7 +29,7 @@ Keep commands in CLI, operations in OPERATIONS and domain rules in DESIGN. Updat
 2. Follow the real flow through contracts, domain, Store transaction, Worker/native adapter and API/UI. Reuse existing Rust components and tests; generated OpenAPI/TypeScript/validators come from their actual generator.
 3. Run the narrowest relevant check, then affected cross-boundary checks. `make check-docs`, `make check-unit`, `make check-store`, `make check-http` and `make check-web` have distinct scopes; database suites require an explicitly disposable PostgreSQL/PGMQ instance. Do not use production credentials or data to run repository tests.
 4. Use real native processes for protocol, persistence, OCI, database concurrency and restore claims. Mock responses, FIXTURE catalogs and successful registration do not grant scientific qualification or production delivery.
-5. Report exact source, command, exit/result and untested scope. Changed source invalidates prior checks; resolve findings and verify the latest PR Head before merge. Full production acceptance remains the DESIGN contract and the evidence index's explicit gaps.
+5. Report exact source, command, exit/result and untested scope. Changed source invalidates prior checks; resolve findings and verify the latest PR Head before merge. Acceptance follows the amended DESIGN scope: dedicated-account work is complete by owner waiver (NOT_RUN), never a passed test. Preserve all unwaived tests and the evidence index's business/data/deployment gaps; do not reopen the account dependency without new owner authorization.
 
 ## Runtime authority
 

@@ -204,9 +204,9 @@ Codex自行完成OAuth并保存/刷新令牌，QZ不实现另一套OAuth流程�
 网页关闭不取消已接受的操作；服务重启、超时和UNKNOWN不能证明账号未变化。
 登录或注销开始后旧模型观测失效，操作结束后点击“探测Codex连接与模型”；探测不发起付费推理。
 模型与推理Slider只使用这次有效的原生目录，默认设置不发送覆盖，不改变已有Thread或研究预算。
-本地协议、数据库和浏览器测试不替代受保护的真实账号登录及推理验收。
+本地协议、数据库和浏览器测试不证明真实账号登录或付费推理。本次交付的专用账号实测已按[所有者验收修订](DESIGN.md#acceptance-scope)完成豁免（未执行），不再要求准备账号；其余科学/业务验证继续。实际使用研究功能仍需可用的原生Profile与认证，豁免不使空配置变为就绪。
 
-受保护的原生账号验收使用仓库内的 `protected_codex_login` 示例。先按 README 安装锁定的
+以下 `protected_codex_login` 是保留的可选原生账号检查示例，不属于本轮必测项，也不在普通 Actions 中执行真实登录。将来具备账号且另有明确授权时，先按 README 安装锁定的
 Codex0.144.4；在仓库根目录执行以下命令，可验证真实设备登录启动、取消、重启空账号状态及空账号退出的幂等行为：
 
 ```sh
@@ -226,7 +226,7 @@ App Server核对持久状态，再退出并重启确认注销，正常结束删�
 `--cancel-only` 的结果必须保留 `logout_restart=not_run full_login=not_run`；
 `empty_account_logout=passed` 只证明空账号退出的幂等路径，不证明已登录凭据被移除，不能记为完整T07通过。
 此示例补充[官方App Server账号协议](https://learn.chatgpt.com/docs/app-server)的原生运行证据；
-QZ网页账号操作、真实模型科学任务、同Thread消费结果和T42仍须分别验收。
+本次账号部分的关闭依据是所有者豁免，不是此示例的执行结果。QZ原生协议、同Thread工具/结果消费、实际科学任务及T42非账号业务部分仍须分别验收；不能用豁免补造这些结果。
 
 
 ### 应用认证与数据库
@@ -553,7 +553,7 @@ portfolio-cvar/1 与 LINEAR_PROGRAM 镜像；不以方差或默认置信水平�
 这要求重建并登记 portfolio-variance-bound/1、SECOND_ORDER_CONE 镜像能力，
 不沿用不支持该约束的旧探测。发布复核误差最多为上限乘敞口容差。
 
-研究、组合、交付及Forward历史已提供Web/CLI操作面；Worker研究续轮、独立Reviewer、资格、组合发布及自动Paper/Live/Wake已有原生实现和分项测试。完整无凭据Demo、真实账号模型闭环、真实授权数据的Web/CLI新实例链路、用户旧备份迁移及完整恢复演练仍待验收，具体缺项见[实现证据](docs/architecture/issue-62-execution.md#acceptance)。普通 PR CI 不携带生产秘密，真实受保护验收只运行经过审查的固定 Head。QZ 不持有 Broker 凭据或真实执行控制权。
+研究、组合、交付及Forward历史已提供Web/CLI操作面；Worker研究续轮、独立Reviewer、资格、组合发布及自动Paper/Live/Wake已有原生实现和分项测试。当前验收范围、已执行证据与剩余工作见[实现证据](docs/architecture/issue-62-execution.md#acceptance)。专用真实账号实测按[第0.4节](DESIGN.md#acceptance-scope)已完成豁免（未执行），不再是等待账号的阻塞；其余数据、业务双入口、迁移和恢复要求未被豁免。GitHub Actions验证精确提交，普通PR不携带生产秘密；真实账户将来的使用仍须原生认证及明确授权。
 
 ### 完整迁移命令的提交边界
 

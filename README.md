@@ -12,7 +12,9 @@ QuaZonai 是面向独立研究者的单用户、自托管研究工作台。Rust 
 
 > **当前仍为开发版本，完整生产验收未完成。** 真实服务部署与无凭据界面预览是两条不同路径。服务启动、部署模板和 CI 通过不证明真实账号、授权数据、完整研究交付或恢复已验收；实际状态见[验收证据](docs/architecture/issue-62-execution.md#acceptance)。
 >
-> **English:** A personal, self-hosted quantitative research workbench for traceable evidence and target-only portfolio delivery. Full production acceptance remains incomplete. See the [personal-hosting guide](docs/user-guide.md) or try the explicitly synthetic preview below.
+> 专用账号实测已按[所有者验收修订](DESIGN.md#acceptance-scope)完成豁免（未执行），其余验收使用 GitHub Actions 继续；这不证明真实账号登录或推理已运行。实际模型研究仍需配置可用的原生 Profile/认证，不能以豁免将空配置或 Demo 视为就绪。
+>
+> **English:** A personal, self-hosted quantitative research workbench for traceable evidence and target-only portfolio delivery. Dedicated-account acceptance is complete by owner waiver, not execution; other production acceptance remains incomplete. See the [personal-hosting guide](docs/user-guide.md) or try the explicitly synthetic preview below.
 
 ![真实 API 与数据库验收中的研究工作台](docs/images/native-projects-1440.png)
 
