@@ -34,11 +34,13 @@ jobs:
           cat > "$RUNNER_TEMP/scientific-source/imports.patch" <<'PATCH'
           --- a/apps/job/tests/support/market.rs
           +++ b/apps/job/tests/support/market.rs
-          @@ -7,3 +7,3 @@
+          @@ -7,5 +7,5 @@
            mod market_catalog;
            pub use market_catalog::{count, instant, INTERVAL_NS};
           -use contracts::{portfolio::AllocationTargetV1, science::*, DbCounter, SchemaV1};
           +use contracts::{science::*, SchemaV1};
+           
+           pub fn market(fee: &str, rows_per_asset: u32) -> (tempfile::TempDir, NativeSimulationRequestV1) {
           PATCH
           git apply --check "$RUNNER_TEMP/scientific-source/imports.patch"
           git apply "$RUNNER_TEMP/scientific-source/imports.patch"
