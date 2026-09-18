@@ -2,11 +2,13 @@
 
 Original QuaZonai code remains AGPL-3.0-only under LICENSE/NOTICE. Third-party software retains its upstream license. The authoritative application dependency inputs are Cargo.toml/Cargo.lock, apps/web/package.json/package-lock.json and runtimes/codex/package.json/package-lock.json. The current Ant Design frontend is a release input; deleted legacy Python/frontend manifests are not.
 
+The selected components below explain integration and attribution. The generated inventory and original lockfiles, not this abbreviated table, identify the complete source dependency set.
+
 | Component | Upstream license | Use |
 |---|---|---|
 | Nautilus Rust 0.63.0 | LGPL-3.0-only | Native BacktestEngine/model/trading; apps/job/src/backtest.rs adapts the official v2.0.0rc4 engine_ema_cross example and retains its copyright/license header |
 | Clarabel.rs 0.11.1 | Apache-2.0 | Native convex solver, not a QZ-owned numerical implementation |
-| Apache Arrow Rust 56.2.0 | Apache-2.0 | Native arrays/schema/IPC |
+| Apache Arrow Rust 56.2.0 / 59.3.0 | Apache-2.0 | Native arrays/schema/IPC; both versions occur in the resolved source graph |
 | Serde, UUID, Chrono, BigDecimal, utoipa, thiserror, proptest | Resolved upstream license texts | Wire types, standard scalar implementations, schema and testing |
 | iso_currency 0.7.0 | Upstream license and versioned data attribution | ISO-code membership; not an online authoritative ISO service |
 | OpenAI Codex 0.144.4 | Apache-2.0 | Native App Server binary/protocol; no copied Agent loop |
@@ -17,7 +19,7 @@ Original QuaZonai code remains AGPL-3.0-only under LICENSE/NOTICE. Third-party s
 | totp-rs-5.7.0 | MIT | Rust authentication / HTTP / persistence / CLI integration |
 | argon2-0.5.3 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |
 | chacha20poly1305-0.10.1 | Apache-2.0 OR MIT | Rust authentication / HTTP / persistence / CLI integration |
-| cap-std-3.4.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Rust authentication / HTTP / persistence / CLI integration |
+| cap-std-3.4.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Rust authentication / HTTP / persistence / CLI integration |
 | clap-4.5.46 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |
 | sqlx-0.9.0 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |
 | libsqlite3-sys-0.37.0 | MIT | Native SQLite binding, shared with SQLx; no separate persistence framework |
