@@ -475,7 +475,7 @@ async fn native_science_outputs_are_published_and_consumed_in_one_resumable_thre
         fs::read(f.work.join("result-0.json")).unwrap()
     );
     let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM app.artifacts WHERE producer_run_id=$1 AND producer_attempt_id=$2"
+        "SELECT count(*) FROM app.artifacts WHERE producer_run_id=$1 AND producer_attempt_id=$2",
     )
     .bind(f.binding.run_id.as_uuid())
     .bind(f.binding.attempt_id.as_uuid())
