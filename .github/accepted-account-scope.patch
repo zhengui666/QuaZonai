@@ -1,0 +1,45 @@
+--- a/CLI.md
++++ b/CLI.md
+@@ -169,7 +169,7 @@
+ 
+ watch以NDJSON输出 `schema_version/event_id/event`，最后输出 `watch_ended/last_event_id/events_received/cancellation_requested=false`。`$LAST_EVENT_ID` 格式为同一Run的 `UUIDv7:十进制seq`；首次观察可省略 `--after`。流量16MiB、最多3600秒/10000事件；Ctrl-C、断线或达到上限均不取消服务器任务。兼容未知事件只保留公开envelope；reset-required或不兼容合同返回错误，不假装连续。需继续观察时使用最后已验证cursor显式调用，不自动重连。导出失败时调用方不得把空或未完成的重定向文件视为成功产物；必须检查退出码。
+ 
+-当前CLI已提供Alpha资格查询、组合Study/Release和自动化政策命令，分别复用原HTTP权限与事务；完整真实账号、市场数据及Web/CLI双入口验收仍属Issue62必交范围，不能用入口列表代替验收。
++当前CLI已提供Alpha资格查询、组合Study/Release和自动化政策命令，分别复用原HTTP权限与事务。专用账号及其在线推理部分按[DESIGN第0.4节](DESIGN.md#acceptance-scope)已完成豁免（NOT_RUN），不再是Issue62账号待办；市场数据、实际科学计算、同Thread结果消费及Web/CLI双入口的非账号业务验收仍保留，不能用入口列表代替验收。
+ 
+ ## 可信 Worker 与正式数据验证
+ 
+@@ -664,7 +664,7 @@
+ 失效、发布失败或数据库写入超时会回滚；清理等待同一下游发布锁，未知提交不删已引用
+ 文件。使用同一STATE_DIR原DOWNSTREAM凭据和独立部署允许列表，不继承Runtime目标。
+ 关闭Worker停止新领取并等待已开始的有界I/O。自动刷新不创建审批或交付；冻结政策
+-自动消费已接入Worker；完整真实账号、市场数据及交付验收仍未完成。
++自动消费已接入Worker；专用账号实测按[DESIGN第0.4节](DESIGN.md#acceptance-scope)已完成豁免（未执行），非账号的真实市场数据与完整交付验收仍以[验收索引](docs/architecture/issue-62-execution.md#acceptance)为准。
+ 
+ `POST /api/v2/integrations/runtimes/{id}/probe` 接收 schema_version=1、expected_revision，
+ 需要近期人类认证或 RUNTIME_PROBE 单次 CLI grant。响应200表示探测已记录；必须检查
+--- a/OPERATIONS.md
++++ b/OPERATIONS.md
+@@ -301,7 +301,7 @@
+ 反馈；预测成功则继续正式Validation，待评估发表后才准备一次结果Turn。先提交
+ 原预算预约，下次消费恢复同一Thread；不为中间观察抽样新增模型请求。
+ 失败反馈只陈述公开原因，当前没有详细编译器诊断；修复应保留原实验父血缘。
+-重复消息不重复回送结果，未结算用量不继续调用模型；独立Reviewer及封存资格裁决见下文。原生队列测试不替代真实账号模型与科学任务的完整验收。
++重复消息不重复回送结果，未结算用量不继续调用模型；独立Reviewer及封存资格裁决见下文。专用账号在线推理部分按[DESIGN第0.4节](DESIGN.md#acceptance-scope)已完成豁免（未执行）；原生队列测试仍不能替代同Thread结果消费、实际科学任务与独立评估的完整非账号验收。
+ 
+ 034迁移统一首阶段记账：新编译必须为1、新预测为0，且后者须引用原已计数编译。
+ 各阶段仍累计CPU、输出、墙钟预算。已有账目不修改或退款；没有原始首阶段账目的
+@@ -399,11 +399,11 @@
+ 
+ 锁定Codex的Turn列表可能把断流失败重建为Completed，不能据此认定成功。QZ只以真实终态通知或已经保存的同一通知确认结果；丢失通知且没有记录时保留UNKNOWN/预约，列表“已完成”不触发自动结算、退款或重发。
+ 
+-研究Mission首轮请求使用冻结Brief与同Cycle剩余token额度，不自动选择另一Profile或扩大预算。完整原生用量结算后可使用剩余额度；结果未知时仍占用原预约，重试不会换请求或再插一轮。设置了费用上限但原生计费不可用时停止首轮准备，不假造价格。常驻Worker可显式启用Mission消费（完整参数见CLI）；它以独立容量领取、续约、准备首轮并驱动原生账本。仅首轮准备/模型回复不等于完整研究完成；全部执行与反馈对账后才按上述条件收束会话。后续Reviewer、封存评估与Cycle收束分别核对原关联和原科学结果，不能从研究Mission成功推断可交付；真实账号完整研究仍待验收。
++研究Mission首轮请求使用冻结Brief与同Cycle剩余token额度，不自动选择另一Profile或扩大预算。完整原生用量结算后可使用剩余额度；结果未知时仍占用原预约，重试不会换请求或再插一轮。设置了费用上限但原生计费不可用时停止首轮准备，不假造价格。常驻Worker可显式启用Mission消费（完整参数见CLI）；它以独立容量领取、续约、准备首轮并驱动原生账本。仅首轮准备/模型回复不等于完整研究完成；全部执行与反馈对账后才按上述条件收束会话。后续Reviewer、封存评估与Cycle收束分别核对原关联和原科学结果，不能从研究Mission成功推断可交付。专用账号实测按[DESIGN第0.4节](DESIGN.md#acceptance-scope)已完成豁免（未执行）；同Thread反馈、独立Reviewer、封存评估与研究业务链的其余验收不因豁免关闭。
+ 
+ 运行中的Turn用量达到本轮预约后，Worker先记录`mission.token_limit`和取消意图，再请求原生中断；事件里的用量只是首次达到阈值的观察，不是最终账单。缺最终回执时保留预约并阻止同Cycle的新模型支出。用量通知及中断是异步的，仍可能超额，不能视作逐token硬限额或严格美元限额。Codex的实验rollout budget跟踪/提醒不替代这条停止路径。
+ 
+-Mission使用不同于科学任务的队列选择，但共用现有PGMQ、Run/Attempt和租约。原生Thread回执一旦绑定不能替换，原生创建应答未知时不盲目新建；首轮预约不等于模型已经RUNNING。首轮、上述科学反馈、独立Reviewer、封存评估和会话收束已接常驻Worker。代码接通及受控测试不等于真实账号、市场数据和交付全链已验收；不应手工改库补成功状态。
++Mission使用不同于科学任务的队列选择，但共用现有PGMQ、Run/Attempt和租约。原生Thread回执一旦绑定不能替换，原生创建应答未知时不盲目新建；首轮预约不等于模型已经RUNNING。首轮、上述科学反馈、独立Reviewer、封存评估和会话收束已接常驻Worker。专用账号部分的关闭依据是[所有者豁免](DESIGN.md#acceptance-scope)，不是代码接通或受控响应；真实市场数据、科学与交付全链仍须相应证据，不应手工改库补成功状态。
+ 
+ Mission总Turn和修复Turn计数沿用原生App Server Turn，不是Provider HTTP请求计数。同一Turn的内部工具续请求仍占原预约、累计全部已观察token；QZ回送科学结果或要求修复的新Turn才单独预约。该计数不承诺限制内部HTTP请求数量，未知用量和超额仍按上述规则保留和停止。
+ 
