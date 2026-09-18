@@ -88,9 +88,19 @@ impl MissionOptions {
             "browser_use":false,"computer_use":false,"in_app_browser":false,"image_generation":false,
             "goals":false,"shell_snapshot":false,"code_mode":false,"code_mode_only":false});
         config["mcp_servers"] = if let Some(token) = &self.token {
+            // The launcher has already delegated these QZ tools to this Mission.
+            // Avoid a second native UI approval that a noninteractive client must
+            // reject. API scopes/fences still authorize every request; no default
+            // approval is granted to other tools or servers.
             json!({ MCP_NAME: {"command":self.server_binary,"args":args,
                 "env":{"QUAZONAI_MCP_TOKEN":token},"required":true,"enabled":true,
-                "startup_timeout_sec":45,"tool_timeout_sec":20}})
+                "startup_timeout_sec":45,"tool_timeout_sec":20,
+                "tools":{
+                    "research.get_brief":{"approval_mode":"approve"},
+                    "run.get":{"approval_mode":"approve"},
+                    "artifact.submit":{"approval_mode":"approve"},
+                    "experiment.propose":{"approval_mode":"approve"}
+                }}})
         } else {
             json!({MCP_NAME:{"command":self.server_binary,"args":args,
                 "enabled":false,"required":false}})
@@ -209,5 +219,69 @@ impl Client {
             }
         }
         Ok(params)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use contracts::Id;
+    use integrations::authentication::{format_machine_token, random_capability};
+
+    #[test]
+    fn only_scoped_mission_tools_are_preapproved_at_start_and_resume() {
+        let root = tempfile::tempdir().unwrap();
+        let mut options = ThreadOptions::read_only(root.path().to_path_buf());
+        options.mission = Some(MissionOptions {
+            server_binary: std::env::current_exe().unwrap(),
+            api_origin: "http://127.0.0.1:8080".into(),
+            development_http: true,
+            binding: MissionBinding {
+                project_id: Id::new(),
+                cycle_id: Id::new(),
+                run_id: Id::new(),
+                attempt_id: Id::new(),
+                brief_id: Id::new(),
+            },
+            token: Some(format_machine_token(Id::new(), &random_capability()).unwrap()),
+            executable_path: "/usr/bin".into(),
+        });
+        let expected = json!({
+            "research.get_brief":{"approval_mode":"approve"},
+            "run.get":{"approval_mode":"approve"},
+            "artifact.submit":{"approval_mode":"approve"},
+            "experiment.propose":{"approval_mode":"approve"}
+        });
+        for request in [
+            options.start_params().unwrap(),
+            options.resume_params("original-thread").unwrap(),
+        ] {
+            assert_eq!(request["approvalPolicy"], "never");
+            let servers = request["config"]["mcp_servers"].as_object().unwrap();
+            assert_eq!(servers.len(), 1);
+            let server = &servers[MCP_NAME];
+            assert_eq!(server["tools"], expected);
+            assert!(server.get("default_tools_approval_mode").is_none());
+            assert_eq!(server["enabled"], true);
+            assert_eq!(server["required"], true);
+            let permission = request["permissions"].as_str().unwrap();
+            assert_eq!(
+                request["config"]["permissions"][permission]["network"]["enabled"],
+                false
+            );
+        }
+
+        options.mission.as_mut().unwrap().token = None;
+        for request in [
+            options.start_params().unwrap(),
+            options.resume_params("original-thread").unwrap(),
+        ] {
+            assert_eq!(request["approvalPolicy"], "never");
+            let server = &request["config"]["mcp_servers"][MCP_NAME];
+            assert_eq!(server["enabled"], false);
+            assert_eq!(server["required"], false);
+            assert!(server.get("tools").is_none() && server.get("env").is_none());
+            assert!(server.get("default_tools_approval_mode").is_none());
+        }
     }
 }

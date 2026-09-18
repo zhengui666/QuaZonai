@@ -24,7 +24,7 @@ Current [PR #92](https://github.com/zhengui666/QuaZonai/pull/92), branch `codex/
 
 ### Native compilation checkpoint
 
-The explicit `native_research_loop` target currently covers original-source experiment compilation, not the complete loop. It reuses the existing Cycle/Experiment preparation, actual Runtime/OCI and production Worker. Cycle/data-quality preparation is explicitly controlled; the compilation itself must be real. The shared Cycle helper accepts an explicitly built image when creating assumptions, before freeze. Original callers keep the original fixture behavior; frozen assumptions are not mutated.
+The standalone `native_research_loop` case covers original-source experiment compilation, not the complete loop. It reuses the existing Cycle/Experiment preparation, actual Runtime/OCI and production Worker. Cycle/data-quality preparation is explicitly controlled; the compilation itself must be real. The shared Cycle helper accepts an explicitly built image when creating assumptions, before freeze. Original callers keep the original fixture behavior; frozen assumptions are not mutated.
 
 After Runtime configuration changes, prepare a Store probe ticket before I/O, resolve its credential reference through the existing SecretVault, and use production RuntimeTransport with that exact snapshot. Publish the actual observation before freezing. The proposal helper's controlled probe is replaced by another real configured observation before native compilation admission.
 
@@ -40,7 +40,13 @@ The [implementation detail](https://github.com/zhengui666/QuaZonai/issues/62#iss
 
 The test compares original Run/Attempt/spec/manifest/ACK identities, Wasm behavior, each forecast point against observed Parquet prices, validation sample/metric provenance, exact feedback and two original-Thread reservations. It expects no qualification for FIXTURE input, not a forced scientific PASS. Existing standalone compilation and protocol regressions stay. The original Runtime job reuses locked Codex and existing native user-manager prerequisites; no new dependency, control service, scientific engine or permanent workflow is added.
 
-At authorship this connected scenario has not executed. Its source and configuration are not acceptance evidence. Read its actual final-Head result before closing the supported T08 non-account portion; T09/T42 and remaining original obligations are not automatically fulfilled.
+The connected scenario has executed but has not passed. Its source and configuration are not acceptance evidence. Read its actual final-Head result before closing the supported T08 non-account portion; T09/T42 and remaining original obligations are not automatically fulfilled.
+
+### Noninteractive MCP delegation
+
+The [native approval repair](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5734040403) changes only the trusted Mission configuration, not the API's authority model. The pinned [Codex configuration types](https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/config/src/mcp_types.rs) expose per-tool `approval_mode`; the [call path](https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/core/src/mcp_tool_call.rs) applies it before invoking MCP. Without an explicit override, native tool approval can require an interactive request which the noninteractive QZ Wire intentionally rejects.
+
+With a valid Mission token, preauthorize only `research.get_brief`, `run.get`, `artifact.submit` and `experiment.propose` under the launcher's own `quazonai_mission` server using native `approve`. Do not set a server/global default, approve unknown tools or handle arbitrary interactive requests. Keep `approvalPolicy=never`, disabled ambient MCP servers, bounded filesystem/network configuration and all API scopes, fences and expiry checks. This does not grant a Reviewer write authority or grant qualification/approval/delivery. Token-free cancellation/reconciliation keeps that server disabled with no credential or approval map. Start/resume unit assertions cover the four exact entries and disabled path; real connected MCP/science execution remains the functional acceptance.
 
 <a id="verification"></a>
 ## Verification
@@ -49,9 +55,11 @@ At `4f82a9c33621975f2791025f466da9e88a689a2a`, [Runtime35336430591](https://gith
 
 The earlier generate-lockfile invocation also changed unrelated transitive packages. That drift was rejected: baseline lock bc316acc was restored, and native metadata must retain all641 original packages and all dependency lists except the two Runtime test edges. [Preparation35347141805](https://github.com/zhengui666/QuaZonai/actions/runs/35347141805), artifact10546888516, applied the exact authored patch, resolved only those edges and formatted source. The four returned files were byte/blob-verified against the actual artifact; the source differences beyond the authored text were native formatting only. Preparation is not a compilation or test pass.
 
-At `dd8f63a8454b16993851a5140ab7c90830d99b79`, [Runtime35347533422](https://github.com/zhengui666/QuaZonai/actions/runs/35347533422), artifact10549140604, passed17OCI,2cold/ownership,1joint recovery and1original-source compilation test. The compilation case executed the real model at four inputs and checked original manifest/publication/ACK. These are executed prerequisite results, not the unrun connected forecast/validation/Thread scenario.
+At `dd8f63a8454b16993851a5140ab7c90830d99b79`, [Runtime35347533422](https://github.com/zhengui666/QuaZonai/actions/runs/35347533422), artifact10549140604, passed17OCI,2cold/ownership,1joint recovery and1original-source compilation test. The compilation case executed the real model at four inputs and checked original manifest/publication/ACK. These are executed prerequisite results, not a passed connected forecast/validation/Thread scenario.
 
-Require final committed-source CI, Web, Native Runtime, hosting and CodeQL. Read the real compilation report/module behavior, original identity and ACK, then the future connected scientific/Thread results. Earlier main or preparation results do not approve new source. Missing, failed, skipped, ignored, cancelled and old-Head checks are not passes. Account waivers contribute no test passes.
+At `61d68ed96ab1703477a19930b6514f42423d0e58`, [Runtime35375341178](https://github.com/zhengui666/QuaZonai/actions/runs/35375341178), job105698586627/artifact10560362278, passed17OCI,2restore and1joint case. The research target had3passes/1failure: standalone compilation and two output-wrapper cases passed; the connected scenario still failed before obtaining a CODEX experiment receipt. Its bounded diagnostic found a short native text result without the expected Cycle or QZ error code. The preceding d8 candidate had stopped at formatting; 61d applied that exact format change. The subsequent per-tool native approval correction requires its own actual execution; no result is inferred from the diagnostic length or configured policy.
+
+Require final committed-source CI, Web, Native Runtime, hosting and CodeQL. Read the real compilation report/module behavior, original identity and ACK, then the connected scientific/Thread results. Earlier main or preparation results do not approve new source. Missing, failed, skipped, ignored, cancelled and old-Head checks are not passes. Account waivers contribute no test passes.
 
 <a id="review"></a>
 ## Independent review
