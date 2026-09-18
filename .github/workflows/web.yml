@@ -75,9 +75,18 @@ jobs:
         run: npm --ignore-scripts run test:demo
       - name: Three-viewport presentation, accessibility and PWA tests
         run: npm --ignore-scripts run test:e2e
-      - name: Real browser, TOTP, idempotency and database acceptance
+      - name: Prepare the pinned native production gateway
+        run: |
+          set -euo pipefail
+          container=$(docker create caddy:2.11.4)
+          trap 'docker rm "$container" >/dev/null' EXIT
+          docker cp "$container:/usr/bin/caddy" "$RUNNER_TEMP/caddy"
+          chmod +x "$RUNNER_TEMP/caddy"
+          "$RUNNER_TEMP/caddy" version
+      - name: Real hosted browser, API restart and database acceptance
         env:
           QUAZONAI_WEB_TEST_ADMIN_URL: postgresql://postgres:native-web-ci-only@127.0.0.1:55434/postgres
+          CADDY_BIN: ${{ runner.temp }}/caddy
         run: npm --ignore-scripts run test:e2e:native
       - name: Require unchanged generated and handwritten source
         run: git diff --exit-code

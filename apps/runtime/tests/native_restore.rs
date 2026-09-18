@@ -9,17 +9,27 @@ use reqwest::{header, Method, StatusCode};
 use std::{
     collections::HashMap,
     fs,
-    os::unix::fs::{MetadataExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::Path,
     time::{Duration, Instant},
 };
 use support::{docker, Fixture, SIGNAL};
 
-async fn tar(mode: &str, archive: &Path, directory: &Path) {
-    let mut command = tokio::process::Command::new("tar");
+async fn tar(stage: &str, mode: &str, archive: &Path, directory: &Path) {
+    if mode == "--create" {
+        // Keep the archive private and owned by the invoking operator, even
+        // though native tar needs privilege for mixed-UID job files.
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(archive)
+            .unwrap();
+    }
+    let mut command = tokio::process::Command::new("sudo");
     command
         .env_clear()
-        .args([mode, "--file"])
+        .args(["-n", "--", "tar", mode, "--numeric-owner", "--file"])
         .arg(archive)
         .arg("--directory")
         .arg(directory)
@@ -27,16 +37,32 @@ async fn tar(mode: &str, archive: &Path, directory: &Path) {
     if mode == "--create" {
         command.arg(".");
     } else if mode == "--extract" {
-        command.arg("--preserve-permissions");
+        command.args(["--same-owner", "--preserve-permissions"]);
     }
     let result = tokio::time::timeout(Duration::from_secs(20), command.output())
         .await
         .expect("native archive command deadline")
-        .expect("native GNU tar must be installed");
+        .expect("native GNU tar and noninteractive sudo must be available");
+    // GNU tar reports metadata/operation diagnostics, never archived payloads.
+    // Keep test-owned path and credential/source sentinels out of failure logs.
+    let root = archive.parent().unwrap().to_string_lossy();
+    let diagnostic = |bytes: &[u8]| {
+        String::from_utf8_lossy(bytes)
+            .replace(root.as_ref(), "[fixture]")
+            .replace(support::SECRET, "[redacted]")
+            .replace(SIGNAL, "[redacted source]")
+            .chars()
+            .take(2048)
+            .collect::<String>()
+    };
     assert!(
         result.status.success() && result.stdout.is_empty() && result.stderr.is_empty(),
-        "native archive operation failed; archive and diagnostics remain private"
+        "native archive {stage} {mode}: status={}, stdout={:?}, stderr={:?}",
+        result.status,
+        diagnostic(&result.stdout),
+        diagnostic(&result.stderr)
     );
+    println!("native archive stage={stage} mode={mode}: passed");
 }
 
 async fn output_bytes(
@@ -167,18 +193,24 @@ async fn cold_round_trip() {
     let checkpoint = fixture.directory.path().join("checkpoint.tar");
     let saved = fixture.directory.path().join("retained-original-state");
     let before_inode = fs::metadata(&state).unwrap().ino();
-    tar("--create", &checkpoint, &state).await;
-    tar("--compare", &checkpoint, &state).await;
+    tar("create-checkpoint", "--create", &checkpoint, &state).await;
+    tar("compare-before-move", "--compare", &checkpoint, &state).await;
     let restore_started = Instant::now();
     fs::rename(&state, &saved).unwrap();
     fs::create_dir(&state).unwrap();
     fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
-    tar("--extract", &checkpoint, &state).await;
+    tar("extract-copy", "--extract", &checkpoint, &state).await;
     assert_ne!(fs::metadata(&state).unwrap().ino(), before_inode);
     assert_eq!(fs::metadata(&state).unwrap().mode() & 0o777, 0o700);
     // Comparison precedes reopening SQLite, which may legitimately checkpoint WAL.
-    tar("--compare", &checkpoint, &state).await;
-    tar("--compare", &checkpoint, &saved).await;
+    tar("compare-restored-copy", "--compare", &checkpoint, &state).await;
+    tar(
+        "compare-retained-original",
+        "--compare",
+        &checkpoint,
+        &saved,
+    )
+    .await;
     assert!(!state.join("credential").exists());
     assert!(!state.join("runtime.json").exists());
 
@@ -194,7 +226,7 @@ async fn cold_round_trip() {
         .json(
             Method::POST,
             &["jobs"],
-            Some(serde_json::to_value(&conflicting).unwrap()),
+            Some(serde_json::to_value(conflicting).unwrap()),
             &[StatusCode::CONFLICT],
         )
         .await;
@@ -238,7 +270,13 @@ async fn cold_round_trip() {
     assert!(container_ids(cancelled.run_id).await.is_empty());
     assert_eq!(fixture.status(&original).await, status);
     assert!(serde_json::to_value(fixture.manifest(&original).await).unwrap() == manifest_value);
-    tar("--compare", &checkpoint, &saved).await;
+    tar(
+        "compare-original-after-new-job",
+        "--compare",
+        &checkpoint,
+        &saved,
+    )
+    .await;
     fixture.assert_private_logs();
     println!(
         "{}",
@@ -259,4 +297,100 @@ async fn cold_archive_restores_native_identity_outputs_and_cancellation() {
     tokio::time::timeout(Duration::from_secs(150), cold_round_trip())
         .await
         .expect("native cold-restore acceptance deadline");
+}
+
+// A deterministic metadata regression, not a model or a synthetic Runtime result.
+#[tokio::test]
+async fn archive_round_trip_preserves_native_file_ownership() {
+    let directory = tempfile::tempdir().unwrap();
+    let owner = fs::metadata(directory.path()).unwrap().uid();
+    assert!(
+        owner != 0 && owner != 65532,
+        "run native archive acceptance as an ordinary user with noninteractive sudo"
+    );
+    let source = directory.path().join("source");
+    let control = directory.path().join("unprivileged-copy");
+    let restored = directory.path().join("restored-copy");
+    for path in [&source, &control, &restored] {
+        fs::create_dir(path).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let payload = b"native ownership archive control";
+    let native_file = source.join("native-output.bin");
+    fs::write(&native_file, payload).unwrap();
+    fs::set_permissions(&native_file, fs::Permissions::from_mode(0o644)).unwrap();
+    let changed = tokio::time::timeout(
+        Duration::from_secs(20),
+        tokio::process::Command::new("sudo")
+            .env_clear()
+            .args(["-n", "--", "chown", "65532:65532"])
+            .arg(&native_file)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("test-owned native file ownership deadline")
+    .expect("native chown and noninteractive sudo must be available");
+    assert!(
+        changed.status.success() && changed.stdout.is_empty() && changed.stderr.is_empty(),
+        "failed to assign the test-owned native file's numeric ownership"
+    );
+    let original = fs::metadata(&native_file).unwrap();
+    assert_eq!((original.uid(), original.gid()), (65532, 65532));
+    let archive = directory.path().join("checkpoint.tar");
+    tar("metadata-create", "--create", &archive, &source).await;
+    assert_eq!(fs::metadata(&archive).unwrap().uid(), owner);
+    assert_eq!(fs::metadata(&archive).unwrap().mode() & 0o777, 0o600);
+
+    // Execute the old unprivileged procedure. Identical bytes and permissions
+    // do not mean that the archive's original owner was restored.
+    let old_extract = tokio::time::timeout(
+        Duration::from_secs(20),
+        tokio::process::Command::new("tar")
+            .env_clear()
+            .args(["--extract", "--preserve-permissions", "--file"])
+            .arg(&archive)
+            .arg("--directory")
+            .arg(&control)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("unprivileged extraction control deadline")
+    .unwrap();
+    assert!(
+        old_extract.status.success()
+            && old_extract.stdout.is_empty()
+            && old_extract.stderr.is_empty()
+    );
+    let wrong = control.join("native-output.bin");
+    assert_eq!(fs::read(&wrong).unwrap(), payload);
+    assert_eq!(fs::metadata(&wrong).unwrap().mode() & 0o777, 0o644);
+    assert_eq!(fs::metadata(&wrong).unwrap().uid(), owner);
+    let old_compare = tokio::time::timeout(
+        Duration::from_secs(20),
+        tokio::process::Command::new("tar")
+            .env_clear()
+            .args(["--compare", "--numeric-owner", "--file"])
+            .arg(&archive)
+            .arg("--directory")
+            .arg(&control)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("unprivileged comparison control deadline")
+    .unwrap();
+    assert_eq!(old_compare.status.code(), Some(1));
+    assert!(!old_compare.stdout.is_empty() && old_compare.stderr.is_empty());
+
+    tar("metadata-extract", "--extract", &archive, &restored).await;
+    tar("metadata-compare", "--compare", &archive, &restored).await;
+    let recovered = restored.join("native-output.bin");
+    let metadata = fs::metadata(&recovered).unwrap();
+    assert_eq!((metadata.uid(), metadata.gid()), (65532, 65532));
+    assert_eq!(metadata.mode() & 0o777, 0o644);
+    assert_eq!(fs::read(recovered).unwrap(), payload);
+    tar("metadata-original", "--compare", &archive, &source).await;
+    println!("native archive ownership: old control rejected; exact round-trip passed");
 }

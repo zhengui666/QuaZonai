@@ -112,6 +112,9 @@ jobs:
           ref: ${{ matrix.ref }}
           sha: ${{ matrix.commit }}
           category: /language:${{ matrix.language }}
+          # Keep every query and SARIF upload; omit the optional database copy
+          # for remote ad-hoc queries, whose bundling can stall after analysis.
+          upload-database: false
           wait-for-processing: true
   codeql-checks:
     name: CodeQL / all applicable analyses
