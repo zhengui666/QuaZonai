@@ -83,13 +83,48 @@ jobs:
           rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -q -p runtime -- openapi > "$RUNNER_TEMP/runtime-evidence/runtime-v1.openapi.json"
           diff -u contracts/generated/runtime-v1.openapi.json "$RUNNER_TEMP/runtime-evidence/runtime-v1.openapi.json"
           git diff --exit-code
+      - name: Prepare the locked official App Server and native Mission user manager
+        run: |
+          set -euo pipefail
+          npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
+          export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.144.4'
+          echo "CODEX_NATIVE_BIN=$CODEX_NATIVE_BIN" >> "$GITHUB_ENV"
+          uid=$(id -u)
+          sudo loginctl enable-linger "$uid"
+          sudo systemctl start "user@$uid.service"
+          export XDG_RUNTIME_DIR="/run/user/$uid"
+          systemctl --user show --property=Version > "$RUNNER_TEMP/runtime-evidence/systemd-version.txt"
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          cat > "$RUNNER_TEMP/runtime-evidence/science-codex.apparmor" <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile quazonai-ci-science-codex "$CODEX_NATIVE_BIN" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r "$RUNNER_TEMP/runtime-evidence/science-codex.apparmor"
+      - name: Execute native scientific results through the original Mission Thread
+        env:
+          DATABASE_URL: postgresql://postgres:native-runtime-ci-only@127.0.0.1:55435/postgres
+          QUAZONAI_NATIVE_SERVER_BIN: ${{ github.workspace }}/target/debug/server
+        run: |
+          set -euo pipefail
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p runtime --features native-oci --test native_research_loop -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/runtime-evidence/native-research-loop-tests.log"
+          git diff --exit-code
+      - name: Remove the job-only native Mission profile
+        if: always()
+        run: |
+          set -euo pipefail
+          profile="$RUNNER_TEMP/runtime-evidence/science-codex.apparmor"
+          if test -f "$profile"; then sudo apparmor_parser -R "$profile"; fi
       - name: Record exact evidence scope without substituting for whole-product acceptance
         if: always()
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/runtime-evidence"
           cp Cargo.lock "$RUNNER_TEMP/runtime-evidence/Cargo.lock"
-          printf '%s\n' 'Native Runtime/job and quiescent control/Runtime checkpoint only. No skipped prerequisites count as success. Account/model, active-job recovery, research/qualification/delivery and complete T01-T42 acceptance remain separate.' > "$RUNNER_TEMP/runtime-evidence/SCOPE.txt"
+          printf '%s\n' 'Native Runtime, quiescent recovery and connected scientific/Mission Thread fixtures. Actual phase results are required; controlled Responses are not account inference and FIXTURE data is not market qualification. Full T42/production acceptance remains separate.' > "$RUNNER_TEMP/runtime-evidence/SCOPE.txt"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
