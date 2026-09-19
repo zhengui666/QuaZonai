@@ -6,117 +6,182 @@
 Task ID: `personal-production`. Deliver the owner's personal QuaZonai request against
 [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62) and amended
 [DESIGN0.4](../../../DESIGN.md#acceptance-scope). The assistant authors through file
-tools; GitHub Actions performs native verification. No CodexPro is required.
-Dedicated-account checks remain **COMPLETED_BY_OWNER_WAIVER / NOT_RUN**, not passes.
+tools; Actions performs native verification. Dedicated-account checks remain
+**COMPLETED_BY_OWNER_WAIVER / NOT_RUN**, not passes. Do not use or wait for CodexPro.
 
 <a id="intent"></a>
 ## Intent
 
-Preserve the merged production Worker/scientific feedback path and finish the existing
-report-consumption draft without a second science engine. Real output, immutable
-publication and persistent Thread state must determine the visible conclusion. Stale
-weights must not survive a later genuinely infeasible solve.
+Connect actual scientific Validation to an independent Reviewer and the original
+Sealed execution path. Existing independent-review protocol tests use controlled
+scientific receipts; the accepted native-science path produced REJECT and did not
+exercise a reviewable target. Neither separately establishes this connected behavior.
+Preserve both rather than replacing them with another engine or staged PASS result.
 
 <a id="spec"></a>
 ## Scope and ownership
 
-[DESIGN](../../../DESIGN.md) owns the full product contract. The
+[DESIGN](../../../DESIGN.md) remains the product contract; the
 [acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance) routes
-remaining work; PR discussions own exact execution, failures, review and merge state.
-Reuse this English task and its existing anchors; do not duplicate history in manuals.
+coverage. PR discussions own exact execution, failures and delivery. Reuse these
+anchors and English task; keep development history out of product-facing manuals.
 
-Merged [PR #92](https://github.com/zhengui666/QuaZonai/pull/92), commit
-`fd05ff642038178b1bab578d90ca9f3a834048b8`, delivered real compilation, forecast,
-Validation, Evaluation and consumption in the original Thread using normal lease
-redelivery and per-tool native approval. Its actual Evaluation was REJECT; no research
-qualification was invented. Earlier hosting, account waiver, recovery and dependency
-work remain referenced by the acceptance index.
+[PR #92](https://github.com/zhengui666/QuaZonai/pull/92), merged as
+`fd05ff642038178b1bab578d90ca9f3a834048b8`, verified actual Worker/Runtime compilation,
+forecast, Validation, Evaluation and original-Thread feedback. Its actual result was
+REJECT with no qualification. [PR #93](https://github.com/zhengui666/QuaZonai/pull/93),
+merged as `118863e8b6a44defa2f209a79864ffe595dc23ad`, additionally executed actual
+Optimal/Infeasible allocation reports through MCP/HTTP and a restarted original Thread.
+That direct Job path is not the production portfolio workflow or independent Reviewer.
 
-Current [PR #93](https://github.com/zhengui666/QuaZonai/pull/93) supplements that path:
-real Job allocation with Optimal and Infeasible outcomes, actual REPORT submission
-through native MCP/HTTP and a restarted App Server resuming one Thread. Direct Job
-execution in the native session is not the production portfolio pipeline or independent
-Reviewer acceptance. Provider decisions and parent research remain controlled fixtures;
-solver outputs, publications and persistence are real. No account material is supplied.
+Current branch `codex/native-independent-review-20260919` starts from that merged main.
+The [field-level plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5739701572)
+precedes the implementation. Only tests and these canonical task/evidence documents
+change; no production policy, API, permissions, algorithms, dependencies or locks.
 
 <a id="implementation"></a>
 ## Implementation
 
-The [field-level continuation](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5739214306)
-reconciles the old draft with main through an explicit two-parent commit, preserving
-all #92 source, tests, generated contracts and locks. Only the five existing draft paths
-are changed relative to main: server test registration, native science Thread test,
-existing Runtime workflow, this task and the acceptance index. No new dependency,
-workflow, source-transfer machinery, timeout or concurrency change is introduced.
+Retain the original close-minus-previous native feedback case. Parameterize its existing
+`scientific_feedback.rs` path with two additional fresh fixtures using causal reciprocal
+close. On the authored linear-price catalog, h-step return is h times the price step
+divided by current close. This is an engineered positive control, not market evidence.
+The original source is compiled/executed, forecasts are compared against observed bars,
+and unchanged native Validation thresholds must actually yield PASS. Never write a
+scientific result, loosen the policy or relabel FIXTURE/PIT UNVERIFIED.
 
-`native_science_thread.rs` reads the pinned Codex0.144.4 exec `Output:` header and
-validates process state from header lines, not JSON content. It retains chunks from the
-same native session until successful exit, then validates the complete actual solver
-result. The first solve checks its two weights; changed bounds must yield Infeasible
-with no targets/cash rather than reuse old weights. MCP discovery supplies the real
-namespace and normalized `artifact_submit` name. The test removes only the native
-wall-time presentation header before decoding the original report receipt.
+Research feedback still returns to the original Thread through actual lease/PGMQ
+redelivery. Its normal ACK/selection must admit exactly one independent Reviewer using
+the frozen profile and a different Thread. Extend the existing controlled Responses
+provider only for the waived model decision: native exec reads the Worker-materialized
+original CODE, PARAMETERS and trusted Validation context. Compare actual bytes and
+Evaluation/input/policy/metric/source/observation identities before emitting PASS or
+REJECT. Research conversation, raw Sealed data and credentials do not enter that input.
 
-Both report byte streams, producer Run/Attempt, unique publication, cumulative native
-usage and public summaries are verified against actual state. After closing the first
-App Server, a new client resumes the same Thread and must retain the first summary and
-artifact reference. The second summary must cite its different report and retain no
-first-case targets. Only inputs, never result files, are prepared before native execution.
-Parsing controls exercise chunk boundaries and reject the incorrect old header/nonzero
-exit; they are not substituted for executing the real end-to-end test.
+The [review-correction plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5739920672)
+requires different researcher/reviewer Profile IDs and home bindings before Cycle freeze.
+The two independent-review scenarios create a second profile through the normal Store
+API and a new private native HOME/CODEX_HOME. They share only the test-created, credential-free
+Provider configuration, not auth files, sessions or research history. Assert actual Reviewer
+admission selects its frozen ID, not the Researcher ID, and compare the complete sorted
+credential scope set to EVIDENCE_READ, RESEARCH_READ and RUN_READ without deduplication.
+These are exact checks of existing routing/ownership, not new product permission rules.
 
-Upstream format owner:
-[ExecCommandToolOutput and McpToolOutput](https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/core/src/tools/context.rs).
-The existing Mission token and per-tool approval code from #92 remain unchanged; no
-blanket tool approval or test-specific product endpoint is added. The existing Runtime
-job retains all OCI, cold/ownership, joint-recovery and four research-loop cases, then
-runs the server test with the actual built Job and pinned App Server.
+The [complete-evidence correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5740010865)
+addresses the other two original review findings. Construct the full expected Reviewer
+context before its execution from original Experiment, original/selected Alpha versions,
+Evaluation, both frozen policies and every complete MetricValue record. Verify pagination
+is complete, bind metrics back to the native source report and compare the entire JSON
+actually read by exec, not a chosen subset or a copy of the generated review file.
+
+Retain the original compiled model ID/bytes and Validation JobSpec. Parse the actual
+Sealed task parameters and compare all EvaluateSealedAlpha IDs and request fields with
+that original Validation, original Calibration publication and registered native metadata.
+Compare the complete ordered input list including dataset version/role, model/calibration
+IDs and sizes, and the unique native Parameters artifact. This is test-only observation
+of existing records; no new producer, recomputed result or overwritten frozen input.
+
+The [output-identity correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5740538863)
+keeps local `artifact_id` and remote `remote_storage_ref` separate in the existing private
+publication helper. The standalone compile checks still compare remote references with the
+native manifest; Alpha/Sealed checks use the original mapped local Artifact IDs and bytes.
+Calibration is a local projection of Validation, not a raw Runtime output: obtain its ID
+through the original Calibration view and check the actual Run/Attempt-bound private
+artifact. Do not invent a remote output mapping or alter production IDs to satisfy tests.
+
+The accepted exec header/chunk parser moves unchanged into `codex_tool_output.rs` for
+both the original report-restart test and the new Reviewer fixture. Same-session chunks
+must be complete and actual process exit successful; do not rerun missing output.
+The production Worker, not the Provider fixture, projects the structured summary into
+the review ledger. Reviewer summaries are EVALUATOR_ONLY: preserve Browser NotFound,
+then use this trusted test's exact Run/Attempt/reservation-bound private publication and
+byte count to inspect the original summary. Do not grant a new public artifact permission.
+Verify the summary, independent Thread, scopes, usage and unique ACK.
+
+REJECT must leave the actual passing Validation unchanged and create no Sealed run or
+qualification. PASS must use the normal automatic Sealed admission and actual Runtime
+and Worker, comparing original native output/report/input/calibration references.
+Do not force the Sealed decision. FIXTURE cannot acquire qualification even if science
+passes. Preserve original run/attempt/evidence and terminal/ACK uniqueness throughout.
+
+The existing Native Runtime target already includes this scenario module; no new CI
+job, workflow, timeout, concurrency setting or materialization machinery is needed.
+All prior OCI, recovery, science, protocol and report-restart tests remain required.
 
 <a id="verification"></a>
 ## Verification
 
-PR #92 final `0a7273008d0a012c6f4744cda90b2591e0bda111` passed all applicable workflows,
-independent review5738526136 and four resolved threads before its expected-Head merge.
-Its original artifacts include688Store/Server,6native protocol tests,
-17OCI+2cold/ownership+1joint+4research, and both real hosted browser phases. These are
-historical evidence for that source, not approval of #93. Post-merge results are checked
-separately in the PR.
+PR #93 final `cc0a800c9c73869c4cad00b3191a17b8a84b3772` passed CI35420630439,
+Runtime35420630430, Web35420630457, hosting35420630448 and CodeQL35420630424, with
+clean review5739302356 and no unresolved threads. Downloaded evidence includes
+688Store/Server,6native protocol,17OCI+2cold/ownership+1joint+4research+5science-thread
+passes and17hosted browser phases. Its bound merge has no source diff; post-merge
+checks are recorded separately in that PR, not inferred from source equality.
 
-Old #93 Head `b2e80e928c4bf121daa0c70c5683fcc104af76ec` failed the new test in
-[Runtime35337746060](https://github.com/zhengui666/QuaZonai/actions/runs/35337746060),
-job105576413002: after native exit0 it tried the nonexistent `Final output:` heading,
-panicked at line184 and left the Turn failed. Existing17OCI+2cold/ownership+1joint passed;
-report publication and resumed consumption had not completed. The fixed format and
-current-main integration require their own full execution, not a guessed pass.
+Initial Head `ea61270192fad00efd5e1e46c293d7b6fb5bba77` failed Native Runtime35425512895,
+job105850636631, at rustfmt in three test helpers. No new scientific/Reviewer/Sealed
+scenario ran. Independent review4052432556/4052432557 identified the same-profile routing
+blind spot and incomplete scope assertion; 4052432559/4052432561 identified incomplete
+context and Sealed-input comparisons. All four are addressed above and require actual
+current-Head execution and independent review, not author self-approval.
 
-Read every applicable final-Head CI, native result and review in #93. Require actual
-Optimal/Infeasible reports, exactly two publications, original bytes and one resumed
-Thread, while retaining #92's connected Worker loop. Failed, absent, skipped, cancelled
-or old-Head results do not count as passing. Unknown market validity, full Reviewer,
-Web/CLI business, migration and deployment acceptance are not filled by this test.
+Head `66a409ef9108302bb47613cf540e9f9675998108`, Runtime35427059123/job105854732679,
+artifact10579542760, passed fmt/Clippy/build,17OCI,2cold/ownership and1joint restore.
+The research target had4passes/2failures. Both new positive-control paths actually passed
+native Validation and independent Reviewer execution, then failed at Browser artifact_content
+for the EVALUATOR_ONLY summary; Sealed was not reached. The existing visibility rule was
+correct. The test now checks its private publication as described above; no permission
+was weakened. Subsequent exact-Head results remain in [PR #94](https://github.com/zhengui666/QuaZonai/pull/94).
+
+Head `1bcc6ef61b5b248dc13dbde0dfa83baf51acaec3` failed Runtime35428339943/job105858162866
+at three exact formatting differences, before native scenario execution. `14d2829` applies
+only those differences. Runtime35432000431/job105868157280, artifact10580984846, passed
+native build,17OCI+2cold/ownership+1joint and4research cases; both independent branches
+failed at the local Alpha model ID versus remote output ID comparison before Reviewer
+execution. Inspection also found the local Calibration incorrectly queried as a raw output.
+The output-identity corrections require fresh full execution; none of those failed or
+unreached stages counts as acceptance.
+
+The [Sealed provenance correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5740725384)
+follows actual a198708 Runtime35433058412/artifact10582161268: the REJECT branch passed
+completely; PASS executed original Sealed and input comparisons, then its test queried a
+nonexistent evaluations.origin column. Origin is on the original report Artifact. Join the
+original publication/report/Run/Attempt/Alpha/InputSet in this trusted test and keep the
+Browser evaluation lookup NotFound; never add a column or expose a private evaluation.
+The research result was5passed/1failed, not complete acceptance. Fresh full execution is required.
+
+Require current-Head formatting/Clippy, complete tests, both native review branches,
+original raw scientific metrics and actual Sealed output before claiming acceptance.
+A positive-control assumption is not a measured PASS. If it fails, inspect the original
+native result and correct the test/source, never lower evaluation thresholds or edit
+frozen evidence. A parser-only pass is not the connected scenario.
+
+Prior green source and account waivers do not count for new checks. This scoped test
+still does not establish live model reasoning, real-market qualification, multiple
+qualified Alphas, production portfolio/Paper delivery or the entire fresh Web/CLI flow.
+Those remaining amended-contract requirements stay in the acceptance index.
 
 <a id="review"></a>
 ## Independent review
 
 After each source change request read-only `@codex review` on the exact Head. Inspect
-both summary and inline findings. Resolve actionable feedback using source and actual
-execution. Author inspection or an older clean reply is not current independent approval.
+summary and inline findings, and resolve actionable feedback with source and actual
+execution. Author inspection or an older clean reply is not current approval.
 
 <a id="delivery"></a>
 ## Delivery boundary
 
-1. Complete the declared PR scope with committed source and native inputs.
-2. Require all applicable final-Head CI success, all actionable findings resolved and an
-   explicit clean independent Codex result for that Head.
-3. Only then mark ready, merge with expected-Head verification and inspect actual main,
-   source identity and post-merge checks.
+1. Complete the declared scope using committed source and actual native inputs/results.
+2. Require every applicable final-Head CI success, all actionable findings resolved and
+   explicit clean independent Codex review for that Head.
+3. Only then mark ready and merge with expected-Head verification; inspect main, source
+   identity and actual post-merge checks.
 4. **Never ask GitHub Codex to fix, implement, edit, commit or push.** It reviews only.
 
 <a id="handoff"></a>
 ## Continuation
 
-Keep public turn summaries in the active PR. Read AGENTS, CONTRIBUTING and relevant
-DESIGN/OpenSDLC entries; DEVELOPMENT.md is absent. Preserve concurrent changes, user
-data, licenses and the account waiver. Do not require CodexPro or reopen dedicated
-account acceptance. Continue the remaining amended contract through its original user
-interfaces; do not replace product acceptance with additional security/platform tooling.
+Keep each turn's public execution summary in the active PR. Read AGENTS, CONTRIBUTING
+and relevant DESIGN/OpenSDLC entries; DEVELOPMENT.md is absent. Preserve concurrent
+changes, user data, licenses and the closed account waiver. Do not reopen dedicated
+account acceptance or substitute additional security/platform work for product delivery.

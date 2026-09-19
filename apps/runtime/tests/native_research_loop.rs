@@ -107,13 +107,21 @@ async fn actual_probe(
         .unwrap();
 }
 
+struct PublishedOutput {
+    artifact_id: Id,
+    remote_storage_ref: Id,
+    bytes: Vec<u8>,
+}
+
+// Runtime object references and locally published Artifact IDs are different
+// identities. Preserve their original Run/Attempt mapping explicitly.
 async fn published(
     pool: &PgPool,
     objects: &ArtifactStore,
     run: Id,
     attempt: Id,
     schema: &str,
-) -> (Id, Vec<u8>) {
+) -> PublishedOutput {
     let rows: Vec<(String, i64, String)> = sqlx::query_as(
         "SELECT a.id::text,a.byte_count,o.remote_storage_ref::text FROM app.run_native_outputs o JOIN app.artifacts a ON a.id=o.artifact_id WHERE o.attempt_id=$1 AND a.producer_attempt_id=$1 AND a.producer_run_id=$2 AND a.schema_name=$3",
     )
@@ -125,12 +133,18 @@ async fn published(
     .unwrap();
     assert_eq!(rows.len(), 1, "one original output per schema and Attempt");
     let (artifact, size, remote) = rows.into_iter().next().unwrap();
-    (
-        Id::try_from(remote).unwrap(),
-        objects
-            .read(Id::try_from(artifact).unwrap(), count(size as u64))
-            .unwrap(),
-    )
+    let artifact_id = Id::try_from(artifact).unwrap();
+    let remote_storage_ref = Id::try_from(remote).unwrap();
+    assert_ne!(artifact_id, remote_storage_ref);
+    let bytes = objects
+        .read(artifact_id, count(u64::try_from(size).unwrap()))
+        .unwrap();
+    assert_eq!(bytes.len() as u64, size as u64);
+    PublishedOutput {
+        artifact_id,
+        remote_storage_ref,
+        bytes,
+    }
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -274,7 +288,7 @@ async fn experiment_compilation_runs_in_real_runtime_through_production_worker(p
     let container = remote.native_container(&spec).await;
     assert_eq!(container.state.as_ref().unwrap().running, Some(false));
 
-    let (report_ref, report_bytes) = published(
+    let report_output = published(
         &pool,
         &data.objects,
         compilation.id,
@@ -282,8 +296,10 @@ async fn experiment_compilation_runs_in_real_runtime_through_production_worker(p
         "qz.model_compilation",
     )
     .await;
+    let report_ref = report_output.remote_storage_ref;
+    let report_bytes = report_output.bytes;
     let report: NativeModelCompilationV1 = serde_json::from_slice(&report_bytes).unwrap();
-    let (model_ref, model_bytes) = published(
+    let model_output = published(
         &pool,
         &data.objects,
         compilation.id,
@@ -291,6 +307,8 @@ async fn experiment_compilation_runs_in_real_runtime_through_production_worker(p
         "qz.wasm_model",
     )
     .await;
+    let model_ref = model_output.remote_storage_ref;
+    let model_bytes = model_output.bytes;
     let code = spec
         .inputs
         .iter()
