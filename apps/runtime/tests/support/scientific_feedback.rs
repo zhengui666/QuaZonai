@@ -1175,15 +1175,26 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
                 sealed_result.calibration_source_report_artifact_id,
                 Some(Id::try_from(source_report.clone()).unwrap())
             );
-            let sealed_evaluation: (String, String, String) = sqlx::query_as(
-                "SELECT decision,origin,evidence_status FROM app.evaluations WHERE run_id=$1 AND evaluation_kind='SEALED'",
+            // Sealed evaluations are private; provenance belongs to their original
+            // report Artifact, not a column or public projection of evaluations.
+            let sealed_evaluation: (String, String, String, String) = sqlx::query_as(
+                "SELECT e.id::text,e.decision,report.origin,e.evidence_status FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id JOIN app.artifacts report ON report.id=e.report_artifact_id AND report.id=e.method_versions_artifact_id AND report.project_id=e.project_id AND report.producer_run_id=e.run_id AND report.producer_attempt_id=$2 AND report.schema_name='qz.alpha_evaluation' AND report.schema_version='1' AND report.access_class='EVALUATOR_ONLY' WHERE e.run_id=$1 AND e.subject_alpha_version_id=$3 AND e.input_set_id=$4 AND e.evaluation_kind='SEALED' AND e.execution_status='SUCCEEDED'",
             )
             .bind(sealed.as_uuid())
+            .bind(finished.active_attempt_id.unwrap().as_uuid())
+            .bind(alpha.as_uuid())
+            .bind(finished.input_set_id.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();
-            assert_eq!(sealed_evaluation.1, "FIXTURE");
-            assert_eq!(sealed_evaluation.2, "VALID");
+            assert_eq!(sealed_evaluation.2, "FIXTURE");
+            assert_eq!(sealed_evaluation.3, "VALID");
+            assert!(matches!(
+                store
+                    .evaluation(&actor, Id::try_from(sealed_evaluation.0).unwrap())
+                    .await,
+                Err(store::StoreError::NotFound)
+            ));
             assert_eq!(
                 sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.sealed_opportunities")
                     .fetch_one(&pool)
@@ -1193,7 +1204,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             );
             println!(
                 "native independent review: real Sealed decision={}, fixture grants no qualification",
-                sealed_evaluation.0
+                sealed_evaluation.1
             );
         } else {
             assert_eq!(review_decision, Decision::Reject);

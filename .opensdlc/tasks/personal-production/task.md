@@ -142,6 +142,14 @@ execution. Inspection also found the local Calibration incorrectly queried as a 
 The output-identity corrections require fresh full execution; none of those failed or
 unreached stages counts as acceptance.
 
+The [Sealed provenance correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5740725384)
+follows actual a198708 Runtime35433058412/artifact10582161268: the REJECT branch passed
+completely; PASS executed original Sealed and input comparisons, then its test queried a
+nonexistent evaluations.origin column. Origin is on the original report Artifact. Join the
+original publication/report/Run/Attempt/Alpha/InputSet in this trusted test and keep the
+Browser evaluation lookup NotFound; never add a column or expose a private evaluation.
+The research result was5passed/1failed, not complete acceptance. Fresh full execution is required.
+
 Require current-Head formatting/Clippy, complete tests, both native review branches,
 original raw scientific metrics and actual Sealed output before claiming acceptance.
 A positive-control assumption is not a measured PASS. If it fails, inspect the original
