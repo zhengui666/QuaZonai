@@ -3,185 +3,145 @@
 <a id="task"></a>
 ## Task
 
-Task ID: `personal-production`. Deliver the owner's personal QuaZonai request against
-[Issue #62](https://github.com/zhengui666/QuaZonai/issues/62) and amended
-[DESIGN0.4](../../../DESIGN.md#acceptance-scope). The assistant authors through file
-tools; Actions performs native verification. Dedicated-account checks remain
-**COMPLETED_BY_OWNER_WAIVER / NOT_RUN**, not passes. Do not use or wait for CodexPro.
+Continue `personal-production` against [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62)
+and [DESIGN0.4](../../../DESIGN.md#acceptance-scope). The web assistant authors files;
+GitHub Actions executes verification. Dedicated-account scope stays
+**COMPLETED_BY_OWNER_WAIVER / NOT_RUN**, not a pass. Do not use or wait for CodexPro.
 
 <a id="intent"></a>
 ## Intent
 
-Connect actual scientific Validation to an independent Reviewer and the original
-Sealed execution path. Existing independent-review protocol tests use controlled
-scientific receipts; the accepted native-science path produced REJECT and did not
-exercise a reviewable target. Neither separately establishes this connected behavior.
-Preserve both rather than replacing them with another engine or staged PASS result.
+Verify the shipped API/Worker systemd user units with actual packaged services.
+Existing unit syntax and `/usr/bin/true` scope checks do not prove QZ services run;
+the prior real browser harness spawned the API directly. Reuse the existing
+browser/database/Caddy flow instead of adding another supervisor or deployment platform.
 
 <a id="spec"></a>
-## Scope and ownership
+## Scope and authoritative sources
 
-[DESIGN](../../../DESIGN.md) remains the product contract; the
-[acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance) routes
-coverage. PR discussions own exact execution, failures and delivery. Reuse these
-anchors and English task; keep development history out of product-facing manuals.
+[DESIGN](../../../DESIGN.md) owns the product contract. The [acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance)
+owns coverage and [user guide](../../../docs/user-guide.md#verify-changes-to-the-hosting-boundary)
+owns the operator procedure. PR discussions retain per-turn execution, errors and review.
 
-[PR #92](https://github.com/zhengui666/QuaZonai/pull/92), merged as
-`fd05ff642038178b1bab578d90ca9f3a834048b8`, verified actual Worker/Runtime compilation,
-forecast, Validation, Evaluation and original-Thread feedback. Its actual result was
-REJECT with no qualification. [PR #93](https://github.com/zhengui666/QuaZonai/pull/93),
-merged as `118863e8b6a44defa2f209a79864ffe595dc23ad`, additionally executed actual
-Optimal/Infeasible allocation reports through MCP/HTTP and a restarted original Thread.
-That direct Job path is not the production portfolio workflow or independent Reviewer.
+Base main is [PR #94](https://github.com/zhengui666/QuaZonai/pull/94) merge
+`a6686641ade4fc2b2204605eb8aa2c7d4a292236`. Its accepted Head2b0b2c0 passed all five
+workflows,688Store/Server,17OCI+2cold/ownership+1joint+6research+5science-thread,
+17real hosted browser phases and explicit clean review5740783341. Seven findings
+were resolved before merge. Real Validation/Reviewer/Sealed tests still grant no
+qualification to FIXTURE data; this deployment change does not replace them.
 
-Current branch `codex/native-independent-review-20260919` starts from that merged main.
-The [field-level plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5739701572)
-precedes the implementation. Only tests and these canonical task/evidence documents
-change; no production policy, API, permissions, algorithms, dependencies or locks.
+Current branch: `codex/native-user-services-20260919`.
+The [field-level deployment plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5740927983)
+precedes implementation. No production unit, API/schema, dependencies, locks,
+supervision policy, scientific threshold, workflow concurrency or timeout changes.
 
-<a id="implementation"></a>
+<a id="plan"></a>
 ## Implementation
 
-Retain the original close-minus-previous native feedback case. Parameterize its existing
-`scientific_feedback.rs` path with two additional fresh fixtures using causal reciprocal
-close. On the authored linear-price catalog, h-step return is h times the price step
-divided by current close. This is an engineered positive control, not market evidence.
-The original source is compiled/executed, forecasts are compared against observed bars,
-and unchanged native Validation thresholds must actually yield PASS. Never write a
-scientific result, loosen the policy or relabel FIXTURE/PIT UNVERIFIED.
+1. Keep the existing `apps/web/scripts/native-browser.mjs` migration/application-role
+   setup, original state, packaged server/dist, Caddyfile and both Playwright phases.
+   Reuse its command tracking, bounds and private diagnostic redaction.
+2. A thin `native-user-services.mjs` invokes native systemctl/journalctl. Copy the two
+   shipped units byte-for-byte under fresh test names. Enable them with native
+   `--user --runtime`; drop-ins change only executable/working-directory/environment-file
+   paths. Do not modify Type, Restart/15s, stop deadline, KillMode, UMask or output policy.
+3. Run both real services with the disposable application identity, original state,
+   loopback origin and empty Runtime/Downstream bindings. No admin/provider credentials
+   enter their environment. Observe actual native properties and `/proc` executable,
+   subcommand, user, directory and the test's configuration, without publishing environment values.
+4. After the first real TOTP/session/project/receipt phase, verify no research Run exists.
+   Send one unit-targeted SIGKILL to the idle Worker. Only systemd restarts it: require a
+   different PID/invocation and exactly one NRestarts increment. Then stop the API normally,
+   retain real gateway502/static availability, start that same unit and complete the original
+   post-restart browser checks without a new login or reseeding.
+5. Cleanup stops only owned units, confirms MainPID0 and empty service cgroups, collects
+   bounded private logs, disables runtime links and removes owned drop-ins. Stop the gateway
+   before deleting the disposable database/state. Unconfirmed shutdown retains private
+   state and fails; report the actual retention flag and publish no failure screenshots.
+6. Capture a unit's native ControlGroup at every show, before later process validation
+   can fail, and again before stop can clear that property. On a successful main flow,
+   final cleanup requires both services to exit normally; a timeout or signal is a failure.
+   An already failed/interrupted flow may retain its error Result, but still must prove
+   stopped/empty before deletion. Never treat a missing observation as an empty cgroup.
+7. Keep the four real DDL lost-ACK/SIGTERM cleanup regressions unchanged. Eight small
+   Node tests cover path formatting, real symlink targets, original-group capture,
+   strict normal shutdown, failed-flow cleanup ordering, populated-group refusal and
+   lost stop acknowledgement. Their scripted observations are not native systemd evidence;
+   full live browser/service execution remains required. The Web workflow runs these
+   early with script syntax checks and reuses the ordinary-user manager setup; full
+   checks, source-unchanged assertion, existing artifact upload and timeout stay unchanged.
+   No extra workflow/job.
 
-Research feedback still returns to the original Thread through actual lease/PGMQ
-redelivery. Its normal ACK/selection must admit exactly one independent Reviewer using
-the frozen profile and a different Thread. Extend the existing controlled Responses
-provider only for the waived model decision: native exec reads the Worker-materialized
-original CODE, PARAMETERS and trusted Validation context. Compare actual bytes and
-Evaluation/input/policy/metric/source/observation identities before emitting PASS or
-REJECT. Research conversation, raw Sealed data and credentials do not enter that input.
-
-The [review-correction plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5739920672)
-requires different researcher/reviewer Profile IDs and home bindings before Cycle freeze.
-The two independent-review scenarios create a second profile through the normal Store
-API and a new private native HOME/CODEX_HOME. They share only the test-created, credential-free
-Provider configuration, not auth files, sessions or research history. Assert actual Reviewer
-admission selects its frozen ID, not the Researcher ID, and compare the complete sorted
-credential scope set to EVIDENCE_READ, RESEARCH_READ and RUN_READ without deduplication.
-These are exact checks of existing routing/ownership, not new product permission rules.
-
-The [complete-evidence correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5740010865)
-addresses the other two original review findings. Construct the full expected Reviewer
-context before its execution from original Experiment, original/selected Alpha versions,
-Evaluation, both frozen policies and every complete MetricValue record. Verify pagination
-is complete, bind metrics back to the native source report and compare the entire JSON
-actually read by exec, not a chosen subset or a copy of the generated review file.
-
-Retain the original compiled model ID/bytes and Validation JobSpec. Parse the actual
-Sealed task parameters and compare all EvaluateSealedAlpha IDs and request fields with
-that original Validation, original Calibration publication and registered native metadata.
-Compare the complete ordered input list including dataset version/role, model/calibration
-IDs and sizes, and the unique native Parameters artifact. This is test-only observation
-of existing records; no new producer, recomputed result or overwritten frozen input.
-
-The [output-identity correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5740538863)
-keeps local `artifact_id` and remote `remote_storage_ref` separate in the existing private
-publication helper. The standalone compile checks still compare remote references with the
-native manifest; Alpha/Sealed checks use the original mapped local Artifact IDs and bytes.
-Calibration is a local projection of Validation, not a raw Runtime output: obtain its ID
-through the original Calibration view and check the actual Run/Attempt-bound private
-artifact. Do not invent a remote output mapping or alter production IDs to satisfy tests.
-
-The accepted exec header/chunk parser moves unchanged into `codex_tool_output.rs` for
-both the original report-restart test and the new Reviewer fixture. Same-session chunks
-must be complete and actual process exit successful; do not rerun missing output.
-The production Worker, not the Provider fixture, projects the structured summary into
-the review ledger. Reviewer summaries are EVALUATOR_ONLY: preserve Browser NotFound,
-then use this trusted test's exact Run/Attempt/reservation-bound private publication and
-byte count to inspect the original summary. Do not grant a new public artifact permission.
-Verify the summary, independent Thread, scopes, usage and unique ACK.
-
-REJECT must leave the actual passing Validation unchanged and create no Sealed run or
-qualification. PASS must use the normal automatic Sealed admission and actual Runtime
-and Worker, comparing original native output/report/input/calibration references.
-Do not force the Sealed decision. FIXTURE cannot acquire qualification even if science
-passes. Preserve original run/attempt/evidence and terminal/ACK uniqueness throughout.
-
-The existing Native Runtime target already includes this scenario module; no new CI
-job, workflow, timeout, concurrency setting or materialization machinery is needed.
-All prior OCI, recovery, science, protocol and report-restart tests remain required.
+Native interfaces: Ubuntu24.04 [systemctl](https://manpages.ubuntu.com/manpages/noble/man1/systemctl.1.html)
+and [unit/drop-in paths](https://manpages.ubuntu.com/manpages/noble/man5/systemd.unit.5.html).
+The native service manager owns restart and shutdown; polling observes facts and does
+not implement a second recovery policy. Retain existing static installation/scope tests.
 
 <a id="verification"></a>
 ## Verification
 
-PR #93 final `cc0a800c9c73869c4cad00b3191a17b8a84b3772` passed CI35420630439,
-Runtime35420630430, Web35420630457, hosting35420630448 and CodeQL35420630424, with
-clean review5739302356 and no unresolved threads. Downloaded evidence includes
-688Store/Server,6native protocol,17OCI+2cold/ownership+1joint+4research+5science-thread
-passes and17hosted browser phases. Its bound merge has no source diff; post-merge
-checks are recorded separately in that PR, not inferred from source equality.
+Initial Head `0291b477bd7651209665a8b5a8434c1d823b4d01` passed script syntax, Rust/API,
+frontend tests/Demo and the three-viewport suite in Web35441017004, but the real
+service scenario failed before unit registration. Artifact10584152255 records
+`require-fresh-api-unit` exit1, then real database/role cleanup and no retained state.
+Upstream systemd255 returns ENOENT for an empty filtered list. The corrected check reads
+the complete native unit-file collection, requires command success, then rejects an
+exact matching name; it does not ignore nonzero exits. See [the observed repair](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5741676926)
+and [shutdown refinement](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5741632213).
+The initial clean review5741617560 does not approve changed source or replace execution.
 
-Initial Head `ea61270192fad00efd5e1e46c293d7b6fb5bba77` failed Native Runtime35425512895,
-job105850636631, at rustfmt in three test helpers. No new scientific/Reviewer/Sealed
-scenario ran. Independent review4052432556/4052432557 identified the same-profile routing
-blind spot and incomplete scope assertion; 4052432559/4052432561 identified incomplete
-context and Sealed-input comparisons. All four are addressed above and require actual
-current-Head execution and independent review, not author self-approval.
+Head `3eb5437366cfc17259d96017032644d2ed3e0b0b`, Web35441840209/artifact10584240998,
+failed unit installation validation: systemd255.4 treats the outer quotes in
+WorkingDirectory as literal path characters and retained the original installation path.
+API/Worker never started; native cleanup completed and retained no private state.
+The [single-path correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5741912794)
+uses the upstream v255.4 parser rules for both WorkingDirectory and EnvironmentFile:
+unquoted single-line absolute paths, with literal percent signs escaped as specifiers.
+ExecStart words and environment-file values keep their separate native quotation rules.
+FragmentPath may name the runtime load link or its source, but realpath must identify
+this fixture's original unit; the supervision policy is still checked exactly.
+The new Node regressions are not a live startup pass. Current-source results belong to
+[PR #95](https://github.com/zhengui666/QuaZonai/pull/95).
 
-Head `66a409ef9108302bb47613cf540e9f9675998108`, Runtime35427059123/job105854732679,
-artifact10579542760, passed fmt/Clippy/build,17OCI,2cold/ownership and1joint restore.
-The research target had4passes/2failures. Both new positive-control paths actually passed
-native Validation and independent Reviewer execution, then failed at Browser artifact_content
-for the EVALUATOR_ONLY summary; Sealed was not reached. The existing visibility rule was
-correct. The test now checks its private publication as described above; no permission
-was weakened. Subsequent exact-Head results remain in [PR #94](https://github.com/zhengui666/QuaZonai/pull/94).
+Require new-Head native syntax, complete Web workflow, both browser phases, actual process/property snapshots,
+automatic Worker restart, graceful API stop and owned cleanup must all succeed
+on the final Head. A unit file, script or configured workflow is not execution evidence.
 
-Head `1bcc6ef61b5b248dc13dbde0dfa83baf51acaec3` failed Runtime35428339943/job105858162866
-at three exact formatting differences, before native scenario execution. `14d2829` applies
-only those differences. Runtime35432000431/job105868157280, artifact10580984846, passed
-native build,17OCI+2cold/ownership+1joint and4research cases; both independent branches
-failed at the local Alpha model ID versus remote output ID comparison before Reviewer
-execution. Inspection also found the local Calibration incorrectly queried as a raw output.
-The output-identity corrections require fresh full execution; none of those failed or
-unreached stages counts as acceptance.
+Run `CADDY_BIN=/path/to/caddy npm --prefix apps/web run test:e2e:native` with the
+disposable PostgreSQL, real Rust/dist/Chromium and user-manager prerequisites in
+CONTRIBUTING. Inspect result.json, native-user-services.json and redacted logs
+alongside the exact source commit. Missing systemd, active processes after cleanup,
+wrong executable/configuration, unexpected restarts or failed browser phases are failures,
+not skipped passes or reasons to use direct-spawn fallbacks.
 
-The [Sealed provenance correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5740725384)
-follows actual a198708 Runtime35433058412/artifact10582161268: the REJECT branch passed
-completely; PASS executed original Sealed and input comparisons, then its test queried a
-nonexistent evaluations.origin column. Origin is on the original report Artifact. Join the
-original publication/report/Run/Attempt/Alpha/InputSet in this trusted test and keep the
-Browser evaluation lookup NotFound; never add a column or expose a private evaluation.
-The research result was5passed/1failed, not complete acceptance. Fresh full execution is required.
-
-Require current-Head formatting/Clippy, complete tests, both native review branches,
-original raw scientific metrics and actual Sealed output before claiming acceptance.
-A positive-control assumption is not a measured PASS. If it fails, inspect the original
-native result and correct the test/source, never lower evaluation thresholds or edit
-frozen evidence. A parser-only pass is not the connected scenario.
-
-Prior green source and account waivers do not count for new checks. This scoped test
-still does not establish live model reasoning, real-market qualification, multiple
-qualified Alphas, production portfolio/Paper delivery or the entire fresh Web/CLI flow.
-Those remaining amended-contract requirements stay in the acceptance index.
+All previous Rust/Store/Runtime/science/Web/hosting/CodeQL checks remain applicable.
+The scenario is same-user, runtime-only and loopback. It does not establish public
+TLS, persistent installation for another account, host boot, active-Job recovery
+or the complete Web/CLI research/portfolio/Paper/Forward chain. These limits do not
+reopen the dedicated-account waiver or waive other #62 requirements.
 
 <a id="review"></a>
 ## Independent review
 
-After each source change request read-only `@codex review` on the exact Head. Inspect
-summary and inline findings, and resolve actionable feedback with source and actual
-execution. Author inspection or an older clean reply is not current approval.
+Request read-only `@codex review` for each new Head. Inspect every summary/inline
+finding, fix source personally and obtain actual final-Head tests. Previous clean
+feedback and author inspection do not approve changed source.
 
 <a id="delivery"></a>
 ## Delivery boundary
 
-1. Complete the declared scope using committed source and actual native inputs/results.
-2. Require every applicable final-Head CI success, all actionable findings resolved and
-   explicit clean independent Codex review for that Head.
-3. Only then mark ready and merge with expected-Head verification; inspect main, source
-   identity and actual post-merge checks.
+1. Complete this declared scope with committed source and actual native evidence.
+2. Require every applicable final-Head CI success, all actionable findings resolved,
+   and explicit clean independent Codex review for that same Head.
+3. Only then mark ready and merge using expected-Head verification; inspect main,
+   source identity and separately executed post-merge checks.
 4. **Never ask GitHub Codex to fix, implement, edit, commit or push.** It reviews only.
 
 <a id="handoff"></a>
 ## Continuation
 
-Keep each turn's public execution summary in the active PR. Read AGENTS, CONTRIBUTING
-and relevant DESIGN/OpenSDLC entries; DEVELOPMENT.md is absent. Preserve concurrent
-changes, user data, licenses and the closed account waiver. Do not reopen dedicated
-account acceptance or substitute additional security/platform work for product delivery.
+Keep public turn summaries in the active PR, not product manuals. Re-read AGENTS,
+CONTRIBUTING, relevant DESIGN and actual branch/check state before writing.
+DEVELOPMENT.md and OpenSDLC language override are absent; preserve this English task ID.
+Do not touch unrelated Dependabot work, user data, accounts, production services or
+licenses. Follow the acceptance index for the remaining non-account product work.

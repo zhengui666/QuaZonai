@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Real browser -> deployment Caddy -> packaged Rust -> PostgreSQL acceptance.
- * Verify retained sessions and original command receipts after an actual API restart.
+ * Shipped systemd user units run the real API/Worker; verify idle Worker automatic
+ * restart and retained sessions/original command receipts after an actual API stop/start.
  * Requires an explicitly supplied, disposable loopback PostgreSQL administrator.
  * Never reads .env, reuses an existing application database, or seeds domain rows.
  */
@@ -12,6 +13,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { NativeUserServices } from './native-user-services.mjs';
 
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(web, '../..');
@@ -43,6 +45,8 @@ let databaseCreationAttempted = false;
 let roleCreationAttempted = false;
 let cleanupPromise;
 let stopping = false;
+let userServices;
+let privateArtifactsRetained = false;
 
 function redact(value) {
   let text = String(value);
@@ -115,7 +119,7 @@ async function run(name, command, args, options = {}) {
   const result = await record.done;
   commands.delete(record);
   clearTimeout(timeout); clearTimeout(hardTimeout);
-  stages.push({ name, exit_code: result.code, signal: result.signal, duration_ms: Date.now() - started });
+  if (options.recordStage !== false) stages.push({ name, exit_code: result.code, signal: result.signal, duration_ms: Date.now() - started });
   if (name.startsWith('browser')) await privateRedactions();
   if (!options.privateOutput) {
     await writeFile(resolve(report, `${name}.log`), redact(record.stdout + record.stderr), { mode: 0o600 });
@@ -169,9 +173,24 @@ async function waitReady(baseUrl, initialized) {
   throw new Error('Real Rust application readiness timed out');
 }
 
-function cleanup() {
+function cleanup(graceful) {
   cleanupPromise ??= (async () => {
     let failure;
+    let processesStopped = true;
+    if (userServices) {
+      try { await userServices.cleanup({ graceful }); }
+      catch (error) { failure ??= error; }
+      processesStopped = userServices.quiescent;
+      try {
+        for (const unit of userServices.units) {
+          if (unit.log !== undefined) await writeFile(resolve(report, `native-${unit.kind}.log`),
+            diagnosticsSafe ? redact(unit.log) : 'Diagnostics withheld: private redaction manifest unavailable.\n',
+            { mode: 0o600 });
+        }
+        await writeFile(resolve(report, 'native-user-services.json'),
+          JSON.stringify(userServices.evidence, null, 2), { mode: 0o600 });
+      } catch (error) { failure ??= error; }
+    }
     for (const service of [...services].reverse()) {
       try {
         terminate(service, 'SIGTERM');
@@ -181,7 +200,11 @@ function cleanup() {
         await writeFile(resolve(report, `${service.name}.log`), diagnosticsSafe
           ? redact(service.stdout + service.stderr)
           : 'Diagnostics withheld: private redaction manifest unavailable.\n', { mode: 0o600 });
-      } catch (error) { failure ??= error; }
+      } catch (error) { processesStopped = false; failure ??= error; }
+    }
+    if (!processesStopped) {
+      privateArtifactsRetained = Boolean(privateDir);
+      throw failure ?? new Error('Test service stop could not be verified; private state retained');
     }
     if (databaseCreationAttempted) {
       try { await sql('drop-owned-database', `DROP DATABASE IF EXISTS "${database}" WITH (FORCE);\n`, adminEnv, true); }
@@ -191,8 +214,15 @@ function cleanup() {
       try { await sql('drop-owned-role', `DROP ROLE IF EXISTS "${role}";\n`, adminEnv, true); }
       catch (error) { failure ??= error; }
     }
-    if (privateDir) await rm(privateDir, { recursive: true, force: true });
-    if (failure) throw failure;
+    if (failure) {
+      privateArtifactsRetained = Boolean(privateDir);
+      throw failure;
+    }
+    if (privateDir) {
+      privateArtifactsRetained = true;
+      await rm(privateDir, { recursive: true, force: true });
+      privateArtifactsRetained = false;
+    }
   })();
   return cleanupPromise;
 }
@@ -220,6 +250,7 @@ async function main() {
   };
   await mkdir(report, { recursive: true, mode: 0o700 });
   privateDir = await mkdtemp(resolve(tmpdir(), 'quazonai-web-native-'));
+  privateArtifactsRetained = true;
   redactionsFile = resolve(privateDir, 'redactions.jsonl');
   await writeFile(redactionsFile, '', { mode: 0o600 });
   const ownerUrl = databaseUrl(admin, database);
@@ -275,13 +306,17 @@ async function main() {
   await run('caddy-version', caddy, ['version'], { env: gatewayEnv, timeout: 10_000 });
   await run('caddy-validate', caddy, ['validate', '--config', gatewayConfig, '--adapter', 'caddyfile'],
     { env: gatewayEnv, timeout: 10_000 });
-  const startApi = (name) => {
-    const service = launch(installedBinary, ['serve', '--state-dir', state, '--bind', `127.0.0.1:${backendPort}`,
-      '--public-url', baseUrl, '--development-http'], { env: applicationEnv, cwd: release });
-    service.name = name; services.push(service);
-    return service;
-  };
-  const first = startApi('rust-server-before-restart');
+  userServices = new NativeUserServices({
+    repo, root: privateDir, release, binary: installedBinary, run, env: childEnv,
+    interrupted: () => stopping,
+  });
+  await userServices.install({
+    DATABASE_URL: applicationUrl, STATE_DIR: state, BIND: `127.0.0.1:${backendPort}`,
+    PUBLIC_URL: baseUrl, DEVELOPMENT_HTTP: 'true', WORKER_PARALLELISM: '1',
+    RUNTIME_TARGETS: '[]', DOWNSTREAM_TARGETS: '[]', RUST_LOG: 'warn',
+  });
+  const first = await userServices.start('api');
+  const firstWorker = await userServices.start('worker');
   const gateway = launch(caddy, ['run', '--config', gatewayConfig, '--adapter', 'caddyfile'], { env: gatewayEnv, cwd: release });
   gateway.name = 'caddy'; services.push(gateway);
   await waitReady(baseUrl, false);
@@ -299,17 +334,18 @@ async function main() {
   };
   await browser('before-restart');
 
-  // Keep the gateway, database, state path and cookie key unchanged. A new
-  // process must accept the original session/receipt without seeding or re-login.
-  const oldPid = first.child.pid;
-  if (!oldPid || first.exited) throw new Error('The original API exited before the restart checkpoint');
-  terminate(first, 'SIGTERM');
-  const forceStop = setTimeout(() => terminate(first, 'SIGKILL'), 5_000);
-  const stopped = await first.done;
-  clearTimeout(forceStop);
-  stages.push({ name: 'stop-original-api', exit_code: stopped.code, signal: stopped.signal });
-  if (stopped.code !== 0 || first.overflow) throw new Error('The original API did not shut down normally');
-  first.retired = true;
+  await userServices.assertRunning('api', first);
+  // This browser scenario creates a project, not research. Test the supervisor
+  // with an actually idle Worker; active-job recovery has separate native tests.
+  await sql('require-idle-native-worker',
+    "DO $idle$ BEGIN IF EXISTS(SELECT 1 FROM app.runs) THEN RAISE EXCEPTION 'Expected an idle Worker fixture'; END IF; END $idle$;\n",
+    { ...adminEnv, PGDATABASE: database });
+  const restartedWorker = await userServices.crashWorker(firstWorker);
+
+  // The gateway/database/state/cookie key remain unchanged. Only the same API
+  // unit stops and starts; systemd must observe a normal exit, not a forced kill.
+  const oldPid = first.pid;
+  await userServices.stop('api');
   const unavailable = await fetch(`${baseUrl}/api/v2/bootstrap/status`, { signal: AbortSignal.timeout(5_000) });
   if (unavailable.status !== 502 || (await unavailable.text()).includes('<html')) {
     throw new Error('A stopped API must remain a gateway error, not the SPA shell');
@@ -318,11 +354,13 @@ async function main() {
   if (shell.status !== 200 || await shell.text() !== index) throw new Error('The real static shell must remain available during API downtime');
   stages.push({ name: 'gateway-with-stopped-api', exit_code: 0 });
 
-  const restarted = startApi('rust-server-after-restart');
-  if (!restarted.child.pid || restarted.child.pid === oldPid) throw new Error('API restart did not create a new process');
+  const restarted = await userServices.start('api');
+  if (restarted.pid === oldPid || restarted.invocation === first.invocation) throw new Error('API restart did not create a new invocation');
   await waitReady(baseUrl, true);
-  stages.push({ name: 'restarted-api-ready', exit_code: 0, previous_pid: oldPid, current_pid: restarted.child.pid });
+  stages.push({ name: 'restarted-api-ready', exit_code: 0, previous_pid: oldPid, current_pid: restarted.pid });
   await browser('after-restart');
+  await userServices.assertRunning('api', restarted);
+  await userServices.assertRunning('worker', restartedWorker);
   for (const width of [1440, 768, 390]) {
     const name = `projects-${width}.png`;
     screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
@@ -347,7 +385,7 @@ catch (error) { failure = error; }
 if (interruptedExitCode) failure ??= new Error('Native browser acceptance interrupted');
 try { await privateRedactions(); }
 catch (error) { failure ??= error; }
-try { await cleanup(); }
+try { await cleanup(!failure && !stopping); }
 catch (error) { failure ??= error; }
 if (adminEnv) {
   // Failed tests or cleanup never publish images from the private runtime.
@@ -357,8 +395,8 @@ if (adminEnv) {
   await writeFile(resolve(report, 'result.json'), JSON.stringify({ schema_version: 1,
     status: failure ? 'FAILED' : 'PASSED', stages,
     error: failure ? redact(failure.message) : null,
-    acceptance_scope: 'packaged Rust and production Caddy routes, real first TOTP, retained session/project/receipt after API restart, CSRF, mobile layout and logout; no public TLS, systemd boot, active-job restore or complete Issue62 acceptance',
-    private_artifacts_retained: false,
+    acceptance_scope: 'shipped systemd user units with real packaged API/Worker and production Caddy routes; idle Worker native automatic restart, real TOTP, retained session/project/receipt after normal API stop/start, CSRF, mobile layout and logout; no public TLS, host boot, active-job restore or complete Issue62 acceptance',
+    private_artifacts_retained: privateArtifactsRetained,
     screenshots: failure ? [] : screenshots.map(({ name }) => name),
   }, null, 2), { mode: 0o600 });
 }
