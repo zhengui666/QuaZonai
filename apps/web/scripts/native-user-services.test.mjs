@@ -2,10 +2,10 @@
 // The existing native browser workflow must still execute the actual shipped units.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { NativeUserServices } from './native-user-services.mjs';
+import { NativeUserServices, unitPath } from './native-user-services.mjs';
 
 async function fixture(t, { terminal = {}, stopError, groupError } = {}) {
   const root = await mkdtemp(resolve(tmpdir(), 'quazonai-unit-control-'));
@@ -98,4 +98,46 @@ test('lost stop acknowledgement cannot be reported as confirmed shutdown', async
   assert.equal(services.quiescent, false);
   assert.equal(services.evidence.cleanup_complete, false);
   assert.deepEqual(events, ['show-running', 'stop']);
+});
+
+test('single-path settings are not shell-quoted and escape only unit specifiers', () => {
+  assert.equal(unitPath('/tmp/native/release'), '/tmp/native/release');
+  assert.equal(unitPath('/tmp/native release/service.env'), '/tmp/native release/service.env');
+  assert.equal(unitPath('/tmp/native %n/release'), '/tmp/native %%n/release');
+  assert.equal(unitPath('/tmp/native "literal"/release'), '/tmp/native "literal"/release');
+  assert.equal(unitPath('/tmp/native\\literal/release'), '/tmp/native\\literal/release');
+});
+
+test('single-path settings reject relative or multiline configuration', () => {
+  for (const value of [undefined, '', 'relative', '"/tmp/release"', '/tmp/a\nb',
+    '/tmp/a\rb', '/tmp/a\0b', '/tmp/trailing ', '/tmp/trailing\\']) {
+    assert.throws(() => unitPath(value), /single-line absolute test unit path/);
+  }
+});
+
+test('loaded runtime link must resolve to the owned unit without changing policy', async t => {
+  const root = await mkdtemp(resolve(tmpdir(), 'quazonai-unit-path-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const unit = { kind: 'api', path: resolve(root, 'original.service'),
+    links: [resolve(root, 'loaded.service')], dropin: resolve(root, 'loaded.service.d') };
+  const release = resolve(root, 'release');
+  const services = new NativeUserServices({ release });
+  await writeFile(unit.path, '[Service]\nType=exec\n');
+  await symlink(unit.path, unit.links[0]);
+  const snapshot = {
+    UnitFileState: 'enabled-runtime', Type: 'exec', Restart: 'on-failure',
+    RestartUSec: '15s', TimeoutStopUSec: '5min', KillMode: 'mixed',
+    KillSignal: '15', UMask: '0077', StandardOutput: 'journal', StandardError: 'journal',
+    WorkingDirectory: release, DropInPaths: resolve(unit.dropin, 'override.conf'),
+    FragmentPath: unit.path,
+  };
+  await services.policy(unit, snapshot);
+  await services.policy(unit, { ...snapshot, FragmentPath: unit.links[0] });
+  await assert.rejects(services.policy(unit, { ...snapshot, Restart: 'always' }), /Native api Restart/);
+  const foreign = resolve(root, 'foreign.service');
+  await writeFile(foreign, '[Service]\nType=exec\n');
+  await assert.rejects(services.policy(unit, { ...snapshot, FragmentPath: foreign }), /Unexpected native unit load path/);
+  await rm(unit.links[0]);
+  await symlink(foreign, unit.links[0]);
+  await assert.rejects(services.policy(unit, { ...snapshot, FragmentPath: unit.links[0] }), /Native unit source differs/);
 });

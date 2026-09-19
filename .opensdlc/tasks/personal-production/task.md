@@ -63,13 +63,14 @@ supervision policy, scientific threshold, workflow concurrency or timeout change
    final cleanup requires both services to exit normally; a timeout or signal is a failure.
    An already failed/interrupted flow may retain its error Result, but still must prove
    stopped/empty before deletion. Never treat a missing observation as an empty cgroup.
-7. Keep the four real DDL lost-ACK/SIGTERM cleanup regressions unchanged. Five small
-   Node control-flow tests cover original-group capture, strict normal shutdown, failed-flow
-   cleanup ordering, populated-group refusal and lost stop acknowledgement. Their scripted
-   observations are not native systemd evidence; full live browser/service execution remains
-   required. The Web workflow runs these early with script syntax checks and reuses the
-   ordinary-user manager setup; full checks, source-unchanged assertion, existing artifact
-   upload and timeout stay unchanged. No extra workflow/job.
+7. Keep the four real DDL lost-ACK/SIGTERM cleanup regressions unchanged. Eight small
+   Node tests cover path formatting, real symlink targets, original-group capture,
+   strict normal shutdown, failed-flow cleanup ordering, populated-group refusal and
+   lost stop acknowledgement. Their scripted observations are not native systemd evidence;
+   full live browser/service execution remains required. The Web workflow runs these
+   early with script syntax checks and reuses the ordinary-user manager setup; full
+   checks, source-unchanged assertion, existing artifact upload and timeout stay unchanged.
+   No extra workflow/job.
 
 Native interfaces: Ubuntu24.04 [systemctl](https://manpages.ubuntu.com/manpages/noble/man1/systemctl.1.html)
 and [unit/drop-in paths](https://manpages.ubuntu.com/manpages/noble/man5/systemd.unit.5.html).
@@ -88,6 +89,19 @@ the complete native unit-file collection, requires command success, then rejects
 exact matching name; it does not ignore nonzero exits. See [the observed repair](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5741676926)
 and [shutdown refinement](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5741632213).
 The initial clean review5741617560 does not approve changed source or replace execution.
+
+Head `3eb5437366cfc17259d96017032644d2ed3e0b0b`, Web35441840209/artifact10584240998,
+failed unit installation validation: systemd255.4 treats the outer quotes in
+WorkingDirectory as literal path characters and retained the original installation path.
+API/Worker never started; native cleanup completed and retained no private state.
+The [single-path correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5741912794)
+uses the upstream v255.4 parser rules for both WorkingDirectory and EnvironmentFile:
+unquoted single-line absolute paths, with literal percent signs escaped as specifiers.
+ExecStart words and environment-file values keep their separate native quotation rules.
+FragmentPath may name the runtime load link or its source, but realpath must identify
+this fixture's original unit; the supervision policy is still checked exactly.
+The new Node regressions are not a live startup pass. Current-source results belong to
+[PR #95](https://github.com/zhengui666/QuaZonai/pull/95).
 
 Require new-Head native syntax, complete Web workflow, both browser phases, actual process/property snapshots,
 automatic Worker restart, graceful API stop and owned cleanup must all succeed

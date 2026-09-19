@@ -21,6 +21,15 @@ function quoted(value, specifiers = false) {
   const escaped = value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
   return `"${specifiers ? escaped.replaceAll('%', '%%') : escaped}"`;
 }
+// WorkingDirectory and EnvironmentFile consume one path, not shell words.
+// Their v255 parsers expand specifiers but do not remove surrounding quotes.
+export function unitPath(value) {
+  if (typeof value !== 'string' || !isAbsolute(value) || /[\0\r\n]/.test(value)
+    || value.trim() !== value || value.endsWith('\\')) {
+    throw new Error('Invalid single-line absolute test unit path');
+  }
+  return value.replaceAll('%', '%%');
+}
 async function absent(path) {
   try { await lstat(path); return false; }
   catch (error) { if (error.code === 'ENOENT') return true; throw error; }
@@ -97,8 +106,8 @@ export class NativeUserServices {
       // Only disposable installation paths change. In particular RestartSec,
       // KillMode, stop deadline, output destination and Type stay with the unit.
       await writeFile(resolve(dropin, 'override.conf'), `[Service]\n`
-        + `WorkingDirectory=${quoted(this.release, true)}\n`
-        + `EnvironmentFile=\nEnvironmentFile=${quoted(environmentFile, true)}\n`
+        + `WorkingDirectory=${unitPath(this.release)}\n`
+        + `EnvironmentFile=\nEnvironmentFile=${unitPath(environmentFile)}\n`
         + `ExecStart=\nExecStart=${quoted(this.binary, true)} ${command}\n`,
       { mode: 0o600, flag: 'wx' });
     }
@@ -109,7 +118,7 @@ export class NativeUserServices {
     for (const unit of this.units) {
       for (const link of unit.links) assert.equal(await realpath(link), unit.path);
       const current = await this.show(unit);
-      this.policy(unit, current);
+      await this.policy(unit, current);
       this.capture('installed', unit, current);
     }
   }
@@ -133,14 +142,18 @@ export class NativeUserServices {
     return result;
   }
 
-  policy(unit, current) {
+  async policy(unit, current) {
     for (const [key, value] of Object.entries({
       UnitFileState: 'enabled-runtime', Type: 'exec', Restart: 'on-failure',
       RestartUSec: '15s', TimeoutStopUSec: '5min', KillMode: 'mixed',
       KillSignal: '15', UMask: '0077', StandardOutput: 'journal', StandardError: 'journal',
-      WorkingDirectory: this.release, FragmentPath: unit.path,
+      WorkingDirectory: this.release,
       DropInPaths: resolve(unit.dropin, 'override.conf'),
     })) assert.equal(current[key], value, `Native ${unit.kind} ${key}`);
+    // systemd may name its loaded runtime symlink rather than the target file.
+    // Both spellings must still resolve to this fixture's original unit.
+    assert.ok([unit.path, unit.links[0]].includes(current.FragmentPath), 'Unexpected native unit load path');
+    assert.equal(await realpath(current.FragmentPath), await realpath(unit.path), 'Native unit source differs');
   }
 
   capture(phase, unit, current) {
@@ -149,7 +162,7 @@ export class NativeUserServices {
   }
 
   async process(unit, current) {
-    this.policy(unit, current);
+    await this.policy(unit, current);
     const pid = Number(current.MainPID);
     assert.ok(Number.isSafeInteger(pid) && pid > 1);
     assert.equal(current.ActiveState, 'active');
