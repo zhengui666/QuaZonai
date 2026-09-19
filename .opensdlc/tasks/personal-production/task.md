@@ -58,6 +58,15 @@ original CODE, PARAMETERS and trusted Validation context. Compare actual bytes a
 Evaluation/input/policy/metric/source/observation identities before emitting PASS or
 REJECT. Research conversation, raw Sealed data and credentials do not enter that input.
 
+The [review-correction plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5739920672)
+requires different researcher/reviewer Profile IDs and home bindings before Cycle freeze.
+The two independent-review scenarios create a second profile through the normal Store
+API and a new private native HOME/CODEX_HOME. They share only the test-created, credential-free
+Provider configuration, not auth files, sessions or research history. Assert actual Reviewer
+admission selects its frozen ID, not the Researcher ID, and compare the complete sorted
+credential scope set to EVIDENCE_READ, RESEARCH_READ and RUN_READ without deduplication.
+These are exact checks of existing routing/ownership, not new product permission rules.
+
 The accepted exec header/chunk parser moves unchanged into `codex_tool_output.rs` for
 both the original report-restart test and the new Reviewer fixture. Same-session chunks
 must be complete and actual process exit successful; do not rerun missing output.
@@ -84,7 +93,14 @@ clean review5739302356 and no unresolved threads. Downloaded evidence includes
 passes and17hosted browser phases. Its bound merge has no source diff; post-merge
 checks are recorded separately in that PR, not inferred from source equality.
 
-At authorship, the new independent PASS/REJECT and Sealed scenarios have not executed.
+Initial Head `ea61270192fad00efd5e1e46c293d7b6fb5bba77` failed Native Runtime35425512895,
+job105850636631, at rustfmt in three test helpers. No new scientific/Reviewer/Sealed
+scenario ran. Independent review4052432556/4052432557 identified the same-profile routing
+blind spot and incomplete scope assertion; both are addressed above. The exact formatter
+differences are applied without changing scientific expectations. Subsequent final-Head
+execution and independent review belong to [PR #94](https://github.com/zhengui666/QuaZonai/pull/94);
+a written correction or the initial Web/hosting successes do not validate this source.
+
 Require current-Head formatting/Clippy, complete tests, both native review branches,
 original raw scientific metrics and actual Sealed output before claiming acceptance.
 A positive-control assumption is not a measured PASS. If it fails, inspect the original

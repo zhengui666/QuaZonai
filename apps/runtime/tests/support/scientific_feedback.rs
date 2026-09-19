@@ -3,6 +3,8 @@
 use super::{actual_probe, mission_support, published, responses, scientific_catalog, support};
 use contracts::{
     artifacts::ResearchArtifactKind,
+    codex::{CodexConnectionCreateV1, CodexProfileCreateV1},
+    cycles::CodexProfileChoiceV1,
     evidence::Decision,
     execution::NativeTaskParametersV1,
     experiments::{ExperimentProposalV1, ExperimentSource},
@@ -21,7 +23,7 @@ use server::{
     AppState, WebPolicy,
 };
 use sqlx::PgPool;
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, os::unix::fs::DirBuilderExt, sync::Arc, time::Duration};
 use store::{authority::Actor, lifecycle::RunMessage, Store};
 use tokio::{net::TcpListener, task::JoinHandle};
 
@@ -161,7 +163,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
     let scientific_catalog::Prepared {
         store,
         actor,
-        data,
+        mut data,
         vault,
         targets,
         catalog,
@@ -173,6 +175,61 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         .codex_profile(&actor, data.researcher_profile.profile_id)
         .await
         .unwrap();
+    let mut bindings = vec![CodexDeploymentBinding {
+        reference: profile.home_binding.clone().unwrap(),
+        label: "Native scientific researcher fixture".into(),
+        profile_origin: profile.profile_origin,
+        home: home.clone(),
+        codex_home: home.clone(),
+        working_directory: home.clone(),
+        environment_names: vec![],
+    }];
+    if independent.is_some() {
+        let reviewer_home = root.join("native-reviewer");
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&reviewer_home)
+            .unwrap();
+        // Share only this fixture's credential-free Provider configuration.
+        // No auth, sessions, Threads or research history enter the separate home.
+        std::fs::copy(home.join("config.toml"), reviewer_home.join("config.toml")).unwrap();
+        let reviewer = store
+            .create_codex_profile(
+                &actor,
+                "native-independent-profile",
+                &CodexProfileCreateV1 {
+                    schema_version: SchemaV1,
+                    name: "Native account-waived independent Reviewer".into(),
+                    home_binding: format!("native-reviewer-{}", Id::new()),
+                    profile_origin: profile.profile_origin,
+                    connection: CodexConnectionCreateV1::System {},
+                    model_settings: profile.model_settings.clone(),
+                },
+                |binding| async move {
+                    domain::codex::settings::home_binding(&binding.home_binding)?;
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap()
+            .resource;
+        assert_ne!(reviewer.id, profile.id);
+        assert_ne!(reviewer.home_binding, profile.home_binding);
+        assert_ne!(reviewer_home, home);
+        data.reviewer_profile = CodexProfileChoiceV1 {
+            profile_id: reviewer.id,
+            expected_revision: reviewer.revision,
+        };
+        bindings.push(CodexDeploymentBinding {
+            reference: reviewer.home_binding.unwrap(),
+            label: "Native scientific independent Reviewer fixture".into(),
+            profile_origin: reviewer.profile_origin,
+            home: reviewer_home.clone(),
+            codex_home: reviewer_home.clone(),
+            working_directory: reviewer_home,
+            environment_names: vec![],
+        });
+    }
     let binary = std::env::var_os("QUAZONAI_NATIVE_SERVER_BIN")
         .expect("the built native server CLI is required");
     let deployment = CodexDeployment::new(CodexDeploymentConfig {
@@ -181,15 +238,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             .expect("the pinned official Codex binary is required")
             .into(),
         executable_path: std::env::var("PATH").unwrap(),
-        bindings: vec![CodexDeploymentBinding {
-            reference: profile.home_binding.unwrap(),
-            label: "Native scientific fixture".into(),
-            profile_origin: profile.profile_origin,
-            home: home.clone(),
-            codex_home: home.clone(),
-            working_directory: home,
-            environment_names: vec![],
-        }],
+        bindings,
     })
     .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -410,13 +459,14 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         let mut expected = BTreeMap::new();
         for series in observed.series {
             for (index, bar) in series.bars.iter().enumerate() {
-                let prediction = (index + 1 >= request.parameters.slow_period as usize).then(|| {
-                    if reciprocal {
-                        1.0 / bar.close.as_f64()
-                    } else {
-                        bar.close.as_f64() - series.bars[index - 1].close.as_f64()
-                    }
-                });
+                let prediction =
+                    (index + 1 >= request.parameters.slow_period as usize).then(|| {
+                        if reciprocal {
+                            1.0 / bar.close.as_f64()
+                        } else {
+                            bar.close.as_f64() - series.bars[index - 1].close.as_f64()
+                        }
+                    });
                 expected.insert(
                     (series.instrument.id().to_string(), index as u32),
                     (bar.ts_event.as_u64(), prediction),
@@ -660,13 +710,17 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         );
         let reviewer = &messages[0];
         assert_ne!(reviewer.run_id, mission.run_id);
-        let role: (String, String) = sqlx::query_as(
-            "SELECT role,profile_id::text FROM app.run_missions WHERE run_id=$1",
-        )
-        .bind(reviewer.run_id.as_uuid())
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let role: (String, String) =
+            sqlx::query_as("SELECT role,profile_id::text FROM app.run_missions WHERE run_id=$1")
+                .bind(reviewer.run_id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_ne!(
+            data.reviewer_profile.profile_id,
+            data.researcher_profile.profile_id
+        );
+        assert_ne!(role.1, data.researcher_profile.profile_id.to_string());
         assert_eq!(
             role,
             (
@@ -762,17 +816,19 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         let answer: serde_json::Value =
             serde_json::from_str(summary["text"].as_str().unwrap()).unwrap();
         assert_eq!(answer["alpha_version_id"], alpha.to_string());
-        assert_eq!(answer["decision"], serde_json::to_value(review_decision).unwrap());
-        let scopes: Vec<String> = sqlx::query_scalar(
+        assert_eq!(
+            answer["decision"],
+            serde_json::to_value(review_decision).unwrap()
+        );
+        let mut scopes: Vec<String> = sqlx::query_scalar(
             "SELECT c.scope_codes FROM app.machine_credentials c JOIN app.machine_principals p ON p.id=c.principal_id WHERE p.run_id=$1 ORDER BY c.issued_at DESC LIMIT 1",
         )
         .bind(reviewer.run_id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert!(!scopes
-            .iter()
-            .any(|scope| scope == "ARTIFACT_SUBMIT" || scope == "EXPERIMENT_SUBMIT"));
+        scopes.sort_unstable();
+        assert_eq!(scopes, ["EVIDENCE_READ", "RESEARCH_READ", "RUN_READ"]);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.qualifications")
                 .fetch_one(&pool)

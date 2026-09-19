@@ -27,7 +27,10 @@ pub struct Review {
 
 impl Review {
     pub fn new(original: OriginalScience) -> Self {
-        assert!(matches!(original.decision, Decision::Pass | Decision::Reject));
+        assert!(matches!(
+            original.decision,
+            Decision::Pass | Decision::Reject
+        ));
         Self {
             original,
             calls: 0,
@@ -92,7 +95,10 @@ impl Review {
                 let parameters: Value = serde_json::from_str(parameters).unwrap();
                 assert_eq!(parameters, self.original.parameter_document);
                 let context: Value = serde_json::from_str(context).unwrap();
-                assert_eq!(context["experiment_id"], self.original.experiment.to_string());
+                assert_eq!(
+                    context["experiment_id"],
+                    self.original.experiment.to_string()
+                );
                 assert_eq!(context["alpha_version_id"], self.original.alpha.to_string());
                 for (field, expected) in self.original.context_fields.as_object().unwrap() {
                     assert_eq!(
@@ -115,7 +121,13 @@ impl Review {
                         "original native metric field {field}"
                     );
                 }
-                for excluded in ["calibration", "points", "forecast", "conversation", "credentials"] {
+                for excluded in [
+                    "calibration",
+                    "points",
+                    "forecast",
+                    "conversation",
+                    "credentials",
+                ] {
                     assert!(context.get(excluded).is_none());
                 }
                 self.observed = Some(context);

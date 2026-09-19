@@ -19,10 +19,10 @@ use std::{
 };
 use tokio::{net::TcpListener, task::JoinHandle};
 
-#[path = "codex_tool_output.rs"]
-mod tool_output;
 #[path = "codex_scientific_review.rs"]
 pub mod scientific_review;
+#[path = "codex_tool_output.rs"]
+mod tool_output;
 
 pub const FIRST_PROMPT: &str = "QZ_NATIVE_FIRST_QUESTION: request a bounded research observation.";
 pub const SECOND_PROMPT: &str =
@@ -130,7 +130,9 @@ impl Provider {
     pub fn review_science(&self, original: scientific_review::OriginalScience) {
         assert_eq!(self.request_count(), 4);
         let mut science = self.seen.science.lock().unwrap();
-        let plan = science.as_mut().expect("original scientific feedback required");
+        let plan = science
+            .as_mut()
+            .expect("original scientific feedback required");
         assert!(plan.observation.is_some() && plan.review.is_none());
         assert_eq!(plan.experiment, Some(original.experiment));
         plan.review = Some(scientific_review::Review::new(original));
