@@ -23,7 +23,7 @@ nautilus-execution = { version = "=0.63.0", default-features = false }
 nautilus-portfolio = { version = "=0.63.0", default-features = false }
 nautilus-persistence = { version = "=0.63.0", default-features = false }
 nautilus-indicators = { version = "=0.63.0", default-features = false }
-rust_decimal = "=1.42.1"
+rust_decimal = "=1.43.0"
 nautilus-model = { version = "=0.63.0", default-features = false, features = ["test-support"] }
 nautilus-trading = { version = "=0.63.0", default-features = false, features = ["examples"] }
 anyhow = "=1.0.104"
