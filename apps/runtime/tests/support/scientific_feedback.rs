@@ -3,14 +3,20 @@
 use super::{actual_probe, mission_support, published, responses, scientific_catalog, support};
 use contracts::{
     artifacts::ResearchArtifactKind,
+    catalogs::RuntimeCatalogMetadataV1,
     codex::{CodexConnectionCreateV1, CodexProfileCreateV1},
+    control::ListQuery,
     cycles::CodexProfileChoiceV1,
     evidence::Decision,
     execution::NativeTaskParametersV1,
     experiments::{ExperimentProposalV1, ExperimentSource},
+    research::{ArtifactInputRole, DataPartition},
     runs::{RunSnapshotV1, RunState},
-    runtime_jobs::{JobSpecV1, ResultManifestV1},
-    science::{NativeAlphaSealedResultV1, NativeAlphaValidationResultV1, NativeForecastResultV1},
+    runtime_jobs::{JobSpecV1, ResultManifestV1, RuntimeInputV1},
+    science::{
+        NativeAlphaSealedRequestV1, NativeAlphaSealedResultV1, NativeAlphaValidationResultV1,
+        NativeForecastResultV1, NativeFrozenCalibrationV1,
+    },
     Id, SchemaV1,
 };
 use integrations::{
@@ -149,6 +155,65 @@ async fn scientific_run(pool: &PgPool, experiment: Id, stage: &str) -> Id {
             .unwrap(),
     )
     .unwrap()
+}
+
+// Read the exact immutable task named by its JobSpec, never a replacement request.
+fn task_parameters(objects: &ArtifactStore, spec: &JobSpecV1) -> NativeTaskParametersV1 {
+    let parameters: Vec<_> = spec
+        .inputs
+        .iter()
+        .filter_map(|input| match input {
+            RuntimeInputV1::Artifact {
+                artifact_id,
+                storage_version,
+                byte_count,
+                role: ArtifactInputRole::Parameters,
+            } => Some((*artifact_id, *byte_count, storage_version.as_str())),
+            _ => None,
+        })
+        .collect();
+    let [(id, size, version)] = parameters.as_slice() else {
+        panic!("exactly one native task parameter input required");
+    };
+    assert_eq!(*id, spec.parameters_artifact_id);
+    assert_eq!(*version, "1");
+    serde_json::from_slice(&objects.read(*id, *size).unwrap()).unwrap()
+}
+
+// Original native registration metadata, independent of the Sealed task under test.
+// These test-owned reads are never handed to the Reviewer model.
+async fn registered_metadata(
+    store: &Store,
+    actor: &Actor,
+    remote: &support::Fixture,
+    dataset: Id,
+) -> RuntimeCatalogMetadataV1 {
+    let revision = store.get_dataset_revision(actor, dataset).await.unwrap();
+    let source = store
+        .get_data_source(actor, revision.source_id)
+        .await
+        .unwrap();
+    let response = remote
+        .client
+        .get(remote.url(&["catalogs", &source.native_catalog_ref, "metadata"]))
+        .query(&[("storage_version", &revision.storage_version)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let metadata: RuntimeCatalogMetadataV1 = response.json().await.unwrap();
+    assert_eq!(metadata.registered_ref, source.native_catalog_ref);
+    assert_eq!(metadata.native_snapshot_ref, revision.native_snapshot_ref);
+    assert_eq!(metadata.storage_version, revision.storage_version);
+    assert_eq!(metadata.partition, revision.partition);
+    assert_eq!(metadata.origin, revision.origin);
+    assert_eq!(metadata.pit_status, revision.pit_status);
+    assert_eq!(metadata.row_count, revision.row_count);
+    assert_eq!(metadata.event_start, revision.event_start);
+    assert_eq!(metadata.event_end, revision.event_end);
+    assert_eq!(metadata.available_through, revision.available_through);
+    assert_eq!(metadata.quality.datasets.len(), 1);
+    metadata
 }
 
 // For the existing authored linear-price catalog, h-step return is h*step/close.
@@ -388,7 +453,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         shutdown.clone(),
     )
     .await;
-    let (_, model) = published(
+    let (model_id, module_bytes) = published(
         &pool,
         &data.objects,
         compiled.id,
@@ -396,7 +461,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         "qz.wasm_model",
     )
     .await;
-    let mut model = job::signals::WasmSignal::new(&model, 2, 100_000).unwrap();
+    let mut model = job::signals::WasmSignal::new(&module_bytes, 2, 100_000).unwrap();
     assert_eq!(
         model
             .predict([3.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -431,25 +496,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
     .await;
     let forecast: NativeForecastResultV1 = serde_json::from_slice(&prediction).unwrap();
     assert!(forecast.consumed_fuel.get() > 0);
-    let parameter_size = prediction_spec
-        .inputs
-        .iter()
-        .find_map(|input| match input {
-            contracts::runtime_jobs::RuntimeInputV1::Artifact {
-                artifact_id,
-                byte_count,
-                ..
-            } if *artifact_id == prediction_spec.parameters_artifact_id => Some(*byte_count),
-            _ => None,
-        })
-        .unwrap();
-    let task: NativeTaskParametersV1 = serde_json::from_slice(
-        &data
-            .objects
-            .read(prediction_spec.parameters_artifact_id, parameter_size)
-            .unwrap(),
-    )
-    .unwrap();
+    let task = task_parameters(&data.objects, &prediction_spec);
     let NativeTaskParametersV1::EvaluateAlpha { request, .. } = task else {
         panic!("native forecast task required");
     };
@@ -486,7 +533,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
     mission_tick(&worker, &mission, &shutdown, "record-alpha").await;
     mission_tick(&worker, &mission, &shutdown, "validation-admission").await;
     let validation = scientific_run(&pool, experiment, "validation").await;
-    let (validated, _) = execute(
+    let (validated, validation_spec) = execute(
         &pool,
         &store,
         &actor,
@@ -739,6 +786,102 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             .objects
             .read(parameters, parameter_locator.metadata.byte_count)
             .unwrap();
+        // Build the complete oracle from original records, not the materialized
+        // Reviewer file or the projector being exercised by this scenario.
+        let evaluation_view = store
+            .evaluation(&actor, Id::try_from(evaluation.clone()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(evaluation_view.run_id, validated.id);
+        assert_eq!(evaluation_view.policy_id, policy.id);
+        let parent_alpha: String =
+            sqlx::query_scalar("SELECT alpha_id::text FROM app.alpha_versions WHERE id=$1")
+                .bind(alpha.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let versions = store
+            .alpha_versions(
+                &actor,
+                Id::try_from(parent_alpha).unwrap(),
+                &ListQuery {
+                    cursor: None,
+                    limit: 100,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(versions.next_cursor.is_none());
+        let original_alpha = versions
+            .items
+            .iter()
+            .find(|item| Some(item.id) == evaluation_view.subject_alpha_version_id)
+            .unwrap();
+        let selected_alpha = versions
+            .items
+            .iter()
+            .find(|item| item.id == alpha)
+            .unwrap();
+        assert_eq!(original_alpha.experiment_id, experiment);
+        assert_eq!(selected_alpha.experiment_id, experiment);
+        assert_eq!(original_alpha.code_artifact_id, code);
+        assert_eq!(selected_alpha.code_artifact_id, code);
+        assert_eq!(original_alpha.model_artifact_id, Some(model_id));
+        assert_eq!(selected_alpha.model_artifact_id, Some(model_id));
+        let metric_page = store
+            .evaluation_metrics(
+                &actor,
+                evaluation_view.id,
+                &ListQuery {
+                    cursor: None,
+                    limit: 100,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            metric_page.next_cursor.is_none(),
+            "compare every native metric"
+        );
+        let mut context_metrics = metric_page.items;
+        assert_eq!(
+            context_metrics.len(),
+            measured
+                .folds
+                .iter()
+                .map(|fold| fold.metrics.len())
+                .sum::<usize>()
+        );
+        for value in &context_metrics {
+            assert_eq!(value.evaluation_id, evaluation_view.id);
+            assert_eq!(value.source_artifact_id.to_string(), source_report);
+        }
+        context_metrics.sort_by(|a, b| {
+            (&a.metric_code, &a.scope, &a.method_id)
+                .cmp(&(&b.metric_code, &b.scope, &b.method_id))
+        });
+        let review_policy = store
+            .evaluation_policy(&actor, selection.policy_id)
+            .await
+            .unwrap();
+        let context = serde_json::json!({
+            "schema_version":1,"experiment_id":experiment,"alpha_version_id":alpha,
+            "original_alpha_version_id":original_alpha.id,
+            "cycle_id":cycle,"source_cycle_id":authored.cycle_id,
+            "hypothesis":authored.hypothesis,
+            "expected_failure_modes":authored.expected_failure_modes,
+            "validation_evaluation_id":evaluation_view.id,
+            "policy_id":evaluation_view.policy_id,"input_set_id":evaluation_view.input_set_id,
+            "execution_status":evaluation_view.execution_status,
+            "evidence_status":evaluation_view.evidence_status,"decision":evaluation_view.decision,
+            "origin":evaluation_view.origin,
+            "signal_kind":selected_alpha.signal_kind,"horizon_kind":selected_alpha.horizon_kind,
+            "horizon_value":selected_alpha.horizon_value,"forecast_unit":selected_alpha.forecast_unit,
+            "runtime_image_ref":selected_alpha.runtime_image_ref,
+            "validation_policy":policy,"review_policy":review_policy,
+            "valid_until":evaluation_view.valid_until,"metrics":context_metrics,
+            "qualification":"NOT_GRANTED"
+        });
         provider.review_science(responses::scientific_review::OriginalScience {
             experiment,
             alpha,
@@ -746,19 +889,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             parameters,
             source: signal.into(),
             parameter_document: serde_json::from_slice(&parameter_bytes).unwrap(),
-            context_fields: serde_json::json!({
-                "schema_version":1,"validation_evaluation_id":evaluation,
-                "policy_id":data.brief.content.evaluation_policy_id,
-                "input_set_id":data.freeze.execution_context.validation_input_set_id,
-                "cycle_id":cycle,"source_cycle_id":cycle,
-                "execution_status":"SUCCEEDED","evidence_status":"VALID","decision":"PASS",
-                "origin":"FIXTURE","qualification":"NOT_GRANTED"
-            }),
-            metric_fields: serde_json::json!({
-                "evaluation_id":evaluation,"value":metric.value,"status":metric.status,
-                "source_artifact_id":source_report,"observation_count":selected.test_points.len().to_string(),
-                "method_id":"ndarray-stats.pearson_correlation","method_version":"0.7.0"
-            }),
+            context,
             decision: review_decision,
         });
         mission_tick(
@@ -805,11 +936,27 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             read_context
         );
         let summary_id = Id::try_from(reviewed.3).unwrap();
-        let locator = store.artifact_content(&actor, summary_id).await.unwrap();
+        // Reviewer summaries retain their existing EVALUATOR_ONLY access. The
+        // test reads the exact private publication, not a new browser permission.
+        assert!(matches!(
+            store.artifact_content(&actor, summary_id).await,
+            Err(store::StoreError::NotFound)
+        ));
+        let summary_bytes: i64 = sqlx::query_scalar(
+            "SELECT a.byte_count FROM app.artifacts a JOIN app.model_turn_summaries s ON s.artifact_id=a.id JOIN app.model_turn_reservations r ON r.id=s.reservation_id WHERE a.id=$1 AND r.run_id=$2 AND a.producer_run_id=$2 AND a.producer_attempt_id=r.attempt_id AND a.schema_name='qz.mission_summary' AND a.schema_version='1' AND a.access_class='EVALUATOR_ONLY' AND a.storage_backend='LOCAL' AND a.storage_version='1' AND a.storage_object_ref=a.id::text",
+        )
+        .bind(summary_id.as_uuid())
+        .bind(reviewer.run_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         let summary: serde_json::Value = serde_json::from_slice(
             &data
                 .objects
-                .read(summary_id, locator.metadata.byte_count)
+                .read(
+                    summary_id,
+                    support::count(u64::try_from(summary_bytes).unwrap()),
+                )
                 .unwrap(),
         )
         .unwrap();
@@ -873,6 +1020,124 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
                 contracts::runtime_jobs::RuntimeInputV1::Dataset {
                     revision_id, role: contracts::research::DataPartition::Sealed, ..
                 } if *revision_id == data.data.sealed)));
+            // Compare against original compilation/Validation and registration,
+            // not against claims made by the Sealed output itself.
+            let NativeTaskParametersV1::ValidateAlpha {
+                dataset_revision_id,
+                model_artifact_id,
+                request: original_validation,
+                ..
+            } = task_parameters(&data.objects, &validation_spec)
+            else {
+                panic!("original Validation task required");
+            };
+            assert_eq!(dataset_revision_id, data.data.validation);
+            assert_eq!(model_artifact_id, model_id);
+            let source_parameters: serde_json::Value =
+                serde_json::from_slice(&parameter_bytes).unwrap();
+            assert_eq!(
+                serde_json::to_value(&original_validation.forecast.parameters).unwrap(),
+                source_parameters["parameters"]
+            );
+            let calibration = store.alpha_calibration(&actor, alpha).await.unwrap();
+            assert_eq!(selected_alpha.calibration_id, Some(calibration.id));
+            assert_eq!(calibration.validation.id, evaluation_view.id);
+            assert_eq!(calibration.train_input_set_id, evaluation_view.input_set_id);
+            let (calibration_id, calibration_bytes) = published(
+                &pool,
+                &data.objects,
+                validated.id,
+                validated.active_attempt_id.unwrap(),
+                "qz.alpha_calibration",
+            )
+            .await;
+            assert_eq!(calibration.model_artifact_id, calibration_id);
+            let calibration_document: NativeFrozenCalibrationV1 =
+                serde_json::from_slice(&calibration_bytes).unwrap();
+            assert_eq!(
+                calibration_document.source_report_artifact_id.to_string(),
+                source_report
+            );
+            assert_eq!(
+                calibration_document.horizon_observations.get(),
+                u64::from(original_validation.forecast.parameters.label_horizon_observations)
+            );
+            let discovery_metadata =
+                registered_metadata(&store, &actor, &remote, data.data.discovery).await;
+            let validation_metadata =
+                registered_metadata(&store, &actor, &remote, data.data.validation).await;
+            let sealed_metadata =
+                registered_metadata(&store, &actor, &remote, data.data.sealed).await;
+            assert_eq!(sealed_metadata.partition, DataPartition::Sealed);
+            let original_input = store
+                .input_set(&actor, data.freeze.execution_context.sealed_input_set_id)
+                .await
+                .unwrap();
+            let cutoff = u64::try_from(
+                original_input
+                    .header
+                    .decision_cutoff
+                    .timestamp_nanos_opt()
+                    .unwrap(),
+            )
+            .unwrap();
+            let mut forecast = original_validation.forecast;
+            forecast.selection = sealed_metadata.quality.datasets[0].selection.clone();
+            forecast.selection.decision_cutoff_ns =
+                support::count(cutoff.min(forecast.selection.decision_cutoff_ns.get()));
+            let expected_task = NativeTaskParametersV1::EvaluateSealedAlpha {
+                schema_version: SchemaV1,
+                dataset_revision_id: data.data.sealed,
+                model_artifact_id: model_id,
+                calibration_artifact_id: Some(calibration_id),
+                request: Box::new(NativeAlphaSealedRequestV1 {
+                    schema_version: SchemaV1,
+                    forecast,
+                    target_kind: original_validation.target_kind,
+                    research_available_through_ns: discovery_metadata.quality.datasets[0]
+                        .available_through_ns
+                        .max(validation_metadata.quality.datasets[0].available_through_ns),
+                }),
+            };
+            assert_eq!(
+                serde_json::to_value(task_parameters(&data.objects, &sealed_spec)).unwrap(),
+                serde_json::to_value(expected_task).unwrap()
+            );
+            let parameter_size: i64 = sqlx::query_scalar(
+                "SELECT byte_count FROM app.artifacts WHERE id=$1 AND schema_name='qz.native_task' AND schema_version='1' AND access_class='EVALUATOR_ONLY'",
+            )
+            .bind(sealed_spec.parameters_artifact_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let expected_inputs = vec![
+                RuntimeInputV1::Dataset {
+                    revision_id: data.data.sealed,
+                    registered_ref: sealed_metadata.registered_ref,
+                    storage_version: sealed_metadata.storage_version,
+                    role: DataPartition::Sealed,
+                },
+                RuntimeInputV1::Artifact {
+                    artifact_id: model_id,
+                    storage_version: "1".into(),
+                    byte_count: support::count(module_bytes.len() as u64),
+                    role: ArtifactInputRole::Model,
+                },
+                RuntimeInputV1::Artifact {
+                    artifact_id: calibration_id,
+                    storage_version: "1".into(),
+                    byte_count: support::count(calibration_bytes.len() as u64),
+                    role: ArtifactInputRole::Model,
+                },
+                RuntimeInputV1::Artifact {
+                    artifact_id: sealed_spec.parameters_artifact_id,
+                    storage_version: "1".into(),
+                    byte_count: support::count(u64::try_from(parameter_size).unwrap()),
+                    role: ArtifactInputRole::Parameters,
+                },
+            ];
+            assert_eq!(sealed_spec.inputs, expected_inputs);
+            assert_eq!(sealed_spec.image_ref, selected_alpha.runtime_image_ref);
             let (_, bytes) = published(
                 &pool,
                 &data.objects,

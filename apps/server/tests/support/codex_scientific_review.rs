@@ -11,8 +11,7 @@ pub struct OriginalScience {
     pub parameters: Id,
     pub source: String,
     pub parameter_document: Value,
-    pub context_fields: Value,
-    pub metric_fields: Value,
+    pub context: Value,
     pub decision: Decision,
 }
 
@@ -100,27 +99,10 @@ impl Review {
                     self.original.experiment.to_string()
                 );
                 assert_eq!(context["alpha_version_id"], self.original.alpha.to_string());
-                for (field, expected) in self.original.context_fields.as_object().unwrap() {
-                    assert_eq!(
-                        &context[field], expected,
-                        "original review context field {field}"
-                    );
-                }
-                let metrics: Vec<_> = context["metrics"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter(|metric| {
-                        metric["metric_code"] == "PEARSON_IC" && metric["scope"] == "asset:0/fold:0"
-                    })
-                    .collect();
-                assert_eq!(metrics.len(), 1);
-                for (field, expected) in self.original.metric_fields.as_object().unwrap() {
-                    assert_eq!(
-                        &metrics[0][field], expected,
-                        "original native metric field {field}"
-                    );
-                }
+                assert_eq!(
+                    context, self.original.context,
+                    "native Reviewer must consume the complete original context and metrics"
+                );
                 for excluded in [
                     "calibration",
                     "points",
@@ -137,7 +119,7 @@ impl Review {
                     "decision":self.original.decision,
                     "reasons":[format!(
                         "Controlled independent decision after reading the original code, parameters and native Validation {}; this engineered fixture is not market evidence or qualification.",
-                        self.original.context_fields["validation_evaluation_id"].as_str().unwrap()
+                        self.original.context["validation_evaluation_id"].as_str().unwrap()
                     )]
                 });
                 json!({"type":"message","role":"assistant","id":"native-independent-review",
