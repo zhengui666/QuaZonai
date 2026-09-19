@@ -113,7 +113,9 @@ async fn mission_tick(
     worker: &Worker,
     message: &RunMessage,
     shutdown: &tokio::sync::watch::Receiver<bool>,
+    stage: &'static str,
 ) {
+    println!("native science Mission stage={stage}: begin");
     tokio::time::timeout(
         Duration::from_secs(110),
         worker.process_mission_message(
@@ -123,8 +125,9 @@ async fn mission_tick(
         ),
     )
     .await
-    .expect("bounded native Mission turn/tick")
-    .unwrap();
+    .unwrap_or_else(|_| panic!("native Mission stage={stage}: deadline"))
+    .unwrap_or_else(|error| panic!("native Mission stage={stage}: {error:?}"));
+    println!("native science Mission stage={stage}: passed");
 }
 
 async fn scientific_run(pool: &PgPool, experiment: Id, stage: &str) -> Id {
@@ -296,7 +299,7 @@ async fn scenario(pool: PgPool) {
         parameter_artifact_id: parameters,
         code_artifact_id: Some(code),
     });
-    mission_tick(&worker, &mission, &shutdown).await;
+    mission_tick(&worker, &mission, &shutdown, "proposal-and-compile").await;
     assert_eq!(provider.request_count(), 3);
     let experiment = provider.proposed_experiment();
     let authored = store.experiment(&actor, experiment).await.unwrap();
@@ -342,7 +345,7 @@ async fn scenario(pool: PgPool) {
             .unwrap(),
         -2.0
     );
-    mission_tick(&worker, &mission, &shutdown).await;
+    mission_tick(&worker, &mission, &shutdown, "forecast-admission").await;
     let forecast = scientific_run(&pool, experiment, "forecast").await;
     let (predicted, prediction_spec) = execute(
         &pool,
@@ -410,8 +413,8 @@ async fn scenario(pool: PgPool) {
         assert_eq!(point.event_ns.get(), expected.0);
         assert_eq!(point.forecast, expected.1);
     }
-    mission_tick(&worker, &mission, &shutdown).await; // Records the unqualified Alpha.
-    mission_tick(&worker, &mission, &shutdown).await; // Admits actual independent Validation.
+    mission_tick(&worker, &mission, &shutdown, "record-alpha").await;
+    mission_tick(&worker, &mission, &shutdown, "validation-admission").await;
     let validation = scientific_run(&pool, experiment, "validation").await;
     let (validated, _) = execute(
         &pool,
@@ -463,9 +466,9 @@ async fn scenario(pool: PgPool) {
         3,
         "science must run outside the native model tool loop"
     );
-    mission_tick(&worker, &mission, &shutdown).await; // Publishes original bounded feedback request.
+    mission_tick(&worker, &mission, &shutdown, "prepare-feedback").await;
     assert_eq!(provider.request_count(), 3);
-    mission_tick(&worker, &mission, &shutdown).await; // Reopens App Server and resumes original Thread.
+    mission_tick(&worker, &mission, &shutdown, "consume-feedback").await;
     assert_eq!(provider.request_count(), 4);
     assert!(provider.saw_previous_context());
     let observation = provider.scientific_observation();
@@ -557,6 +560,13 @@ async fn scenario(pool: PgPool) {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_mcp_science_returns_to_the_original_thread(pool: PgPool) {
+    // Only the Worker's existing sanitized StoreError Display is enabled.
+    // Never enable SQL, native messages, credentials or ambient RUST_LOG output.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("off,server::worker=warn")
+        .with_test_writer()
+        .with_ansi(false)
+        .try_init();
     tokio::time::timeout(Duration::from_secs(300), Box::pin(scenario(pool)))
         .await
         .expect("connected native research acceptance deadline");
