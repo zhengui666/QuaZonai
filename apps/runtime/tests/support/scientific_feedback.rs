@@ -1,13 +1,14 @@
-//! One connected, account-waived native research loop. The Provider scripts model
-//! responses only: all DATA_VALIDATE/compile/forecast/validation bytes come from OCI.
+//! Connected, account-waived native research and independent-review paths.
+//! Only Provider decisions are scripted; scientific bytes come from the real OCI jobs.
 use super::{actual_probe, mission_support, published, responses, scientific_catalog, support};
 use contracts::{
     artifacts::ResearchArtifactKind,
+    evidence::Decision,
     execution::NativeTaskParametersV1,
     experiments::{ExperimentProposalV1, ExperimentSource},
     runs::{RunSnapshotV1, RunState},
     runtime_jobs::{JobSpecV1, ResultManifestV1},
-    science::{NativeAlphaValidationResultV1, NativeForecastResultV1},
+    science::{NativeAlphaSealedResultV1, NativeAlphaValidationResultV1, NativeForecastResultV1},
     Id, SchemaV1,
 };
 use integrations::{
@@ -148,7 +149,14 @@ async fn scientific_run(pool: &PgPool, experiment: Id, stage: &str) -> Id {
     .unwrap()
 }
 
-async fn scenario(pool: PgPool) {
+// For the existing authored linear-price catalog, h-step return is h*step/close.
+// This causal positive control changes code only, never measured results or policy.
+const RECIPROCAL: &str = r#"#![no_std]
+#[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
+#[no_mangle] pub extern "C" fn predict(c:f64,_p:f64,_f:f64,_s:f64,_v:f64,_o:f64,_h:f64,_l:f64)->f64 { 1.0/c }
+"#;
+
+async fn scenario(pool: PgPool, independent: Option<Decision>) {
     let mut remote = support::Fixture::open().await;
     let scientific_catalog::Prepared {
         store,
@@ -265,6 +273,12 @@ async fn scenario(pool: PgPool) {
         Some(cycle)
     );
 
+    let reciprocal = independent.is_some();
+    let signal = if reciprocal {
+        RECIPROCAL
+    } else {
+        scientific_catalog::SOURCE
+    };
     let policy = store
         .evaluation_policy(&actor, data.brief.content.evaluation_policy_id)
         .await
@@ -275,14 +289,18 @@ async fn scenario(pool: PgPool) {
         &data.objects,
         data.data.project,
         ResearchArtifactKind::Code,
-        scientific_catalog::SOURCE.into(),
+        signal.into(),
     )
     .await;
     let parameters=scientific_catalog::upload(&store,&actor,&data.objects,data.data.project,ResearchArtifactKind::Parameters,
         serde_json::json!({"schema_version":1,"dataset_revision_id":data.data.discovery,
             "parameters":{"schema_version":1,"fast_period":2,"slow_period":5,"label_horizon_observations":5,"total_fuel":"1000000"}}).to_string()).await;
     let proposal_report=scientific_catalog::upload(&store,&actor,&data.objects,data.data.project,ResearchArtifactKind::Report,
-        r#"{"schema_version":1,"hypothesis":"Observe the exact close-minus-previous source on the native fixture; no market claim."}"#.into()).await;
+        serde_json::json!({"schema_version":1,"hypothesis":if reciprocal {
+            "Causal reciprocal-close positive control on the authored linear-price fixture, not market evidence."
+        } else {
+            "Observe the exact close-minus-previous source on the native fixture; no market claim."
+        }}).to_string()).await;
     provider.submit_experiment(ExperimentProposalV1 {
         schema_version: SchemaV1,
         cycle_id: cycle,
@@ -334,13 +352,13 @@ async fn scenario(pool: PgPool) {
         model
             .predict([3.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             .unwrap(),
-        2.0
+        if reciprocal { 1.0 / 3.0 } else { 2.0 }
     );
     assert_eq!(
         model
             .predict([1.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             .unwrap(),
-        -2.0
+        if reciprocal { 1.0 } else { -2.0 }
     );
     mission_tick(&worker, &mission, &shutdown, "forecast-admission").await;
     let forecast = scientific_run(&pool, experiment, "forecast").await;
@@ -392,8 +410,13 @@ async fn scenario(pool: PgPool) {
         let mut expected = BTreeMap::new();
         for series in observed.series {
             for (index, bar) in series.bars.iter().enumerate() {
-                let prediction = (index + 1 >= request.parameters.slow_period as usize)
-                    .then(|| bar.close.as_f64() - series.bars[index - 1].close.as_f64());
+                let prediction = (index + 1 >= request.parameters.slow_period as usize).then(|| {
+                    if reciprocal {
+                        1.0 / bar.close.as_f64()
+                    } else {
+                        bar.close.as_f64() - series.bars[index - 1].close.as_f64()
+                    }
+                });
                 expected.insert(
                     (series.instrument.id().to_string(), index as u32),
                     (bar.ts_event.as_u64(), prediction),
@@ -455,6 +478,12 @@ async fn scenario(pool: PgPool) {
     .fetch_one(&pool)
     .await
     .unwrap();
+    if independent.is_some() {
+        assert_eq!(
+            decision, "PASS",
+            "positive control must really pass the unchanged native policy"
+        );
+    }
     let source_report:String=sqlx::query_scalar(
         "SELECT a.id::text FROM app.run_native_outputs o JOIN app.artifacts a ON a.id=o.artifact_id WHERE o.attempt_id=$1 AND a.schema_name='qz.alpha_validation'",
     ).bind(validated.active_attempt_id.unwrap().as_uuid()).fetch_one(&pool).await.unwrap();
@@ -586,7 +615,7 @@ async fn scenario(pool: PgPool) {
     let facts:(i64,i64,i64,String)=sqlx::query_as(
         "SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT thread_id FROM app.codex_sessions WHERE run_id=$1)",
     ).bind(mission.run_id.as_uuid()).fetch_one(&pool).await.unwrap();
-    assert_eq!(facts, (2, 2, 1, thread));
+    assert_eq!(facts, (2, 2, 1, thread.clone()));
     let receipt_counts:(i64,i64,i64)=sqlx::query_as(
         "SELECT (SELECT count(*) FROM pgmq.q_runs WHERE msg_id=$1),(SELECT count(*) FROM pgmq.a_runs WHERE msg_id=$1),(SELECT count(*) FROM app.qualifications)",
     ).bind(mission.message_id).fetch_one(&pool).await.unwrap();
@@ -608,12 +637,296 @@ async fn scenario(pool: PgPool) {
     .unwrap();
     let text = summary["text"].as_str().unwrap();
     assert!(text.contains(&evaluation) && text.contains(&report) && text.contains(&decision));
+
+    if let Some(review_decision) = independent {
+        // A native scientific PASS must enter the normal selection/ACK path.
+        let selection = store.cycle_selection(&actor, cycle).await.unwrap();
+        assert_eq!(selection.selected_count.get(), 1);
+        let chosen: (String, String) = sqlx::query_as(
+            "SELECT review_alpha_version_id::text,evaluation_id::text FROM app.cycle_selection_trials WHERE cycle_id=$1 AND experiment_id=$2 AND selected",
+        )
+        .bind(cycle.as_uuid())
+        .bind(experiment.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(chosen.1, evaluation);
+        let alpha = Id::try_from(chosen.0).unwrap();
+        let messages = store.read_mission_messages(60, 100).await.unwrap();
+        assert_eq!(
+            messages.len(),
+            1,
+            "research ACK must admit exactly one independent Reviewer"
+        );
+        let reviewer = &messages[0];
+        assert_ne!(reviewer.run_id, mission.run_id);
+        let role: (String, String) = sqlx::query_as(
+            "SELECT role,profile_id::text FROM app.run_missions WHERE run_id=$1",
+        )
+        .bind(reviewer.run_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            role,
+            (
+                "INDEPENDENT_REVIEWER".into(),
+                data.reviewer_profile.profile_id.to_string()
+            )
+        );
+        let original_evaluation: serde_json::Value =
+            sqlx::query_scalar("SELECT to_jsonb(e) FROM app.evaluations e WHERE id=$1")
+                .bind(Id::try_from(evaluation.clone()).unwrap().as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let parameter_locator = store.artifact_content(&actor, parameters).await.unwrap();
+        let parameter_bytes = data
+            .objects
+            .read(parameters, parameter_locator.metadata.byte_count)
+            .unwrap();
+        provider.review_science(responses::scientific_review::OriginalScience {
+            experiment,
+            alpha,
+            code,
+            parameters,
+            source: signal.into(),
+            parameter_document: serde_json::from_slice(&parameter_bytes).unwrap(),
+            context_fields: serde_json::json!({
+                "schema_version":1,"validation_evaluation_id":evaluation,
+                "policy_id":data.brief.content.evaluation_policy_id,
+                "input_set_id":data.freeze.execution_context.validation_input_set_id,
+                "cycle_id":cycle,"source_cycle_id":cycle,
+                "execution_status":"SUCCEEDED","evidence_status":"VALID","decision":"PASS",
+                "origin":"FIXTURE","qualification":"NOT_GRANTED"
+            }),
+            metric_fields: serde_json::json!({
+                "evaluation_id":evaluation,"value":metric.value,"status":metric.status,
+                "source_artifact_id":source_report,"observation_count":selected.test_points.len().to_string(),
+                "method_id":"ndarray-stats.pearson_correlation","method_version":"0.7.0"
+            }),
+            decision: review_decision,
+        });
+        mission_tick(
+            &worker,
+            reviewer,
+            &shutdown,
+            "independent-review-original-science",
+        )
+        .await;
+        let reviewed_requests = provider.request_count();
+        assert!((6..=12).contains(&reviewed_requests));
+        let reviewed: (String, String, String, String) = sqlx::query_as(
+            "SELECT s.thread_id,r.decision,t.alpha_version_id::text,r.summary_artifact_id::text FROM app.mission_reviews r JOIN app.mission_review_turns t ON t.reservation_id=r.reservation_id JOIN app.codex_sessions s ON s.run_id=t.run_id WHERE t.run_id=$1",
+        )
+        .bind(reviewer.run_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_ne!(reviewed.0, thread);
+        assert_eq!(serde_json::to_value(review_decision).unwrap(), reviewed.1);
+        assert_eq!(reviewed.2, alpha.to_string());
+        let read_context = provider.reviewed_science();
+        let review_directory = data
+            .directory
+            .as_ref()
+            .unwrap()
+            .path()
+            .join("workspaces")
+            .join(reviewer.run_id.to_string())
+            .join(format!("review-{experiment}"));
+        assert_eq!(
+            std::fs::read(review_directory.join(code.to_string())).unwrap(),
+            signal.as_bytes()
+        );
+        assert_eq!(
+            std::fs::read(review_directory.join(parameters.to_string())).unwrap(),
+            parameter_bytes
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &std::fs::read(review_directory.join(alpha.to_string())).unwrap()
+            )
+            .unwrap(),
+            read_context
+        );
+        let summary_id = Id::try_from(reviewed.3).unwrap();
+        let locator = store.artifact_content(&actor, summary_id).await.unwrap();
+        let summary: serde_json::Value = serde_json::from_slice(
+            &data
+                .objects
+                .read(summary_id, locator.metadata.byte_count)
+                .unwrap(),
+        )
+        .unwrap();
+        let answer: serde_json::Value =
+            serde_json::from_str(summary["text"].as_str().unwrap()).unwrap();
+        assert_eq!(answer["alpha_version_id"], alpha.to_string());
+        assert_eq!(answer["decision"], serde_json::to_value(review_decision).unwrap());
+        let scopes: Vec<String> = sqlx::query_scalar(
+            "SELECT c.scope_codes FROM app.machine_credentials c JOIN app.machine_principals p ON p.id=c.principal_id WHERE p.run_id=$1 ORDER BY c.issued_at DESC LIMIT 1",
+        )
+        .bind(reviewer.run_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!scopes
+            .iter()
+            .any(|scope| scope == "ARTIFACT_SUBMIT" || scope == "EXPERIMENT_SUBMIT"));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.qualifications")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+
+        if review_decision == Decision::Pass {
+            assert!(!store
+                .get_run(&actor, reviewer.run_id)
+                .await
+                .unwrap()
+                .state
+                .is_terminal());
+            mission_tick(&worker, reviewer, &shutdown, "admit-original-sealed").await;
+            let held: (String, String, String) = sqlx::query_as(
+                "SELECT task.run_id::text,task.alpha_version_id::text,task.validation_evaluation_id::text FROM app.mission_sealed_evaluations held JOIN app.mission_review_turns review ON review.reservation_id=held.review_reservation_id JOIN app.sealed_evaluation_tasks task ON task.run_id=held.run_id WHERE review.run_id=$1",
+            )
+            .bind(reviewer.run_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(held.1, alpha.to_string());
+            assert_eq!(held.2, evaluation);
+            let sealed = Id::try_from(held.0).unwrap();
+            let (finished, sealed_spec) = execute(
+                &pool,
+                &store,
+                &actor,
+                &mut remote,
+                (&worker, &data.objects),
+                sealed,
+                shutdown.clone(),
+            )
+            .await;
+            assert_eq!(
+                finished.input_set_id,
+                data.freeze.execution_context.sealed_input_set_id
+            );
+            assert!(sealed_spec.inputs.iter().any(|input| matches!(input,
+                contracts::runtime_jobs::RuntimeInputV1::Dataset {
+                    revision_id, role: contracts::research::DataPartition::Sealed, ..
+                } if *revision_id == data.data.sealed)));
+            let (_, bytes) = published(
+                &pool,
+                &data.objects,
+                sealed,
+                finished.active_attempt_id.unwrap(),
+                "qz.alpha_sealed",
+            )
+            .await;
+            let sealed_result: NativeAlphaSealedResultV1 = serde_json::from_slice(&bytes).unwrap();
+            assert!(sealed_result.forecast.consumed_fuel.get() > 0);
+            assert!(!sealed_result.assets.is_empty());
+            assert_eq!(
+                sealed_result.calibration_source_report_artifact_id,
+                Some(Id::try_from(source_report.clone()).unwrap())
+            );
+            let sealed_evaluation: (String, String, String) = sqlx::query_as(
+                "SELECT decision,origin,evidence_status FROM app.evaluations WHERE run_id=$1 AND evaluation_kind='SEALED'",
+            )
+            .bind(sealed.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(sealed_evaluation.1, "FIXTURE");
+            assert_eq!(sealed_evaluation.2, "VALID");
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.sealed_opportunities")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap(),
+                1
+            );
+            println!(
+                "native independent review: real Sealed decision={}, fixture grants no qualification",
+                sealed_evaluation.0
+            );
+        } else {
+            assert_eq!(review_decision, Decision::Reject);
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.mission_sealed_evaluations")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.sealed_evaluation_tasks")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap(),
+                0
+            );
+        }
+
+        assert_eq!(
+            store.get_run(&actor, reviewer.run_id).await.unwrap().state,
+            RunState::Succeeded
+        );
+        let usage: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT sum(used_tokens)::bigint FROM app.model_turn_accounting WHERE cycle_id=$1),(SELECT sum(receipt.actual_tokens)::bigint FROM app.model_turn_reservations r JOIN app.model_turn_receipts receipt ON receipt.reservation_id=r.id WHERE r.cycle_id=$1)",
+        )
+        .bind(cycle.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(usage.0, usage.1);
+        assert_eq!(usage.0, reviewed_requests as i64 * 12);
+        let counts: (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM app.mission_review_turns WHERE run_id=$1),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT count(*) FROM pgmq.q_runs WHERE msg_id=$2),(SELECT count(*) FROM pgmq.a_runs WHERE msg_id=$2)",
+        )
+        .bind(reviewer.run_id.as_uuid())
+        .bind(reviewer.message_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(counts, (1, 1, 0, 1));
+        store.acknowledge_run(reviewer).await.unwrap();
+        assert_eq!(provider.request_count(), reviewed_requests);
+        let preserved: serde_json::Value =
+            sqlx::query_scalar("SELECT to_jsonb(e) FROM app.evaluations e WHERE id=$1")
+                .bind(Id::try_from(evaluation.clone()).unwrap().as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(preserved, original_evaluation);
+        let (_, unchanged) = published(
+            &pool,
+            &data.objects,
+            validated.id,
+            validated.active_attempt_id.unwrap(),
+            "qz.alpha_validation",
+        )
+        .await;
+        assert_eq!(unchanged, raw);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.qualifications")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+        println!("native independent review: decision={review_decision:?}, different Thread, exact native code/parameters/metrics, unique review and no qualification");
+    }
     remote.assert_private_logs();
     println!(
         "{}",
         serde_json::json!({
             "scope":"real native Parquet/MCP/compile/forecast/validation/Evaluation/original-Thread; controlled Provider, not account or market acceptance",
-            "scientific_runs":3,"native_provider_requests":provider.request_count(),
+            "scientific_runs":if independent == Some(Decision::Pass) {4} else {3},
+            "native_provider_requests":provider.request_count(),
+            "independent_review_decision":independent,
             "original_thread_preserved":true,"original_attempt_preserved":true,
             "lease_takeover_observed":true,"validation_observations":measured.unique_test_observations,
             "actual_evaluation_decision":decision,"qualification_granted":false,
@@ -630,7 +943,27 @@ async fn native_mcp_science_returns_to_the_original_thread(pool: PgPool) {
         .with_test_writer()
         .with_ansi(false)
         .try_init();
-    tokio::time::timeout(Duration::from_secs(300), Box::pin(scenario(pool)))
+    tokio::time::timeout(Duration::from_secs(300), Box::pin(scenario(pool, None)))
         .await
         .expect("connected native research acceptance deadline");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_review_pass_admits_original_sealed_science(pool: PgPool) {
+    tokio::time::timeout(
+        Duration::from_secs(300),
+        Box::pin(scenario(pool, Some(Decision::Pass))),
+    )
+    .await
+    .expect("native independent PASS and Sealed acceptance deadline");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_review_reject_preserves_scientific_pass_without_sealed(pool: PgPool) {
+    tokio::time::timeout(
+        Duration::from_secs(300),
+        Box::pin(scenario(pool, Some(Decision::Reject))),
+    )
+    .await
+    .expect("native independent REJECT acceptance deadline");
 }

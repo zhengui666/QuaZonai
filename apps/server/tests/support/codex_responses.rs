@@ -19,6 +19,11 @@ use std::{
 };
 use tokio::{net::TcpListener, task::JoinHandle};
 
+#[path = "codex_tool_output.rs"]
+mod tool_output;
+#[path = "codex_scientific_review.rs"]
+pub mod scientific_review;
+
 pub const FIRST_PROMPT: &str = "QZ_NATIVE_FIRST_QUESTION: request a bounded research observation.";
 pub const SECOND_PROMPT: &str =
     "QZ_NATIVE_SECOND_RESULT: the isolated experiment was rejected; revise the conclusion.";
@@ -42,6 +47,7 @@ struct SciencePlan {
     proposal: contracts::experiments::ExperimentProposalV1,
     experiment: Option<contracts::Id>,
     observation: Option<Value>,
+    review: Option<scientific_review::Review>,
 }
 
 pub struct Provider {
@@ -90,6 +96,7 @@ impl Provider {
                 proposal,
                 experiment: None,
                 observation: None,
+                review: None,
             })
             .is_none());
     }
@@ -117,6 +124,31 @@ impl Provider {
             .observation
             .clone()
             .expect("the original native Thread must actually receive scientific feedback")
+    }
+
+    #[allow(dead_code)] // Connected native science alone requests an independent review.
+    pub fn review_science(&self, original: scientific_review::OriginalScience) {
+        assert_eq!(self.request_count(), 4);
+        let mut science = self.seen.science.lock().unwrap();
+        let plan = science.as_mut().expect("original scientific feedback required");
+        assert!(plan.observation.is_some() && plan.review.is_none());
+        assert_eq!(plan.experiment, Some(original.experiment));
+        plan.review = Some(scientific_review::Review::new(original));
+    }
+
+    #[allow(dead_code)]
+    pub fn reviewed_science(&self) -> Value {
+        self.seen
+            .science
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .review
+            .as_ref()
+            .unwrap()
+            .observed()
+            .clone()
     }
 
     pub fn request_count(&self) -> usize {
@@ -180,7 +212,15 @@ async fn respond(
                 !input_text.contains("qz2."),
                 "MCP authority must not enter native model input"
             );
-            let item = science_item(&seen, plan, ordinal, &request, &input_text);
+            let item = if input_text.contains("QZ_MISSION_REVIEW_V1") {
+                assert!(ordinal >= 4, "research feedback must settle before review");
+                plan.review
+                    .as_mut()
+                    .expect("expected independent Reviewer")
+                    .next(&request, &input_text)
+            } else {
+                science_item(&seen, plan, ordinal, &request, &input_text)
+            };
             return stream_response(ordinal, item, false);
         }
     }
