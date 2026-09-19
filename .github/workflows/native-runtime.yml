@@ -125,7 +125,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/runtime-evidence"
           cp Cargo.lock "$RUNNER_TEMP/runtime-evidence/Cargo.lock"
           printf '%s\n' 'Native Runtime, quiescent recovery and connected scientific/Mission Thread fixtures. Actual phase results are required; controlled Responses are not account inference and FIXTURE data is not market qualification. Full T42/production acceptance remains separate.' > "$RUNNER_TEMP/runtime-evidence/SCOPE.txt"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: runtime-evidence-${{ env.EXPECTED_HEAD }}

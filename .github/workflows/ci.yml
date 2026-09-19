@@ -187,7 +187,7 @@ jobs:
           git archive --format=tar HEAD | gzip > /tmp/native-evidence/source.tar.gz
           cp Cargo.lock /tmp/native-evidence/Cargo.lock
           printf 'Native foundation only. This is not full W0-W8/T01-T42 acceptance.\n' > /tmp/native-evidence/SCOPE.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: native-evidence-${{ env.EXPECTED_HEAD }}
@@ -222,7 +222,7 @@ jobs:
           docker exec native-database pg_isready -h 127.0.0.1 -U postgres
           docker exec -i --env "PGPASSWORD=$database_password" native-database psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 < tests/native/pgmq_contract.sql | tee /tmp/database-evidence/contract.log
           docker image inspect --format '{{json .RepoDigests}}' "$PGMQ_IMAGE" > /tmp/database-evidence/image.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: database-evidence-${{ env.EXPECTED_HEAD }}
@@ -318,7 +318,7 @@ jobs:
           cp Cargo.lock /tmp/store-evidence/Cargo.lock
           cp migrations/*.sql /tmp/store-evidence/
           printf 'Native Store/HTTP/Codex fixture tests. Not full real-account, research-to-delivery, or production acceptance.\n' > /tmp/store-evidence/SCOPE.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: store-evidence-${{ env.EXPECTED_HEAD }}
