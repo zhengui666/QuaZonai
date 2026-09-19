@@ -54,6 +54,7 @@ jobs:
           rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv > "$RUNNER_TEMP/runtime-evidence/rustc.txt"
           rustup run "$RUSTUP_TOOLCHAIN" cargo fmt --all -- --check
           rustup run "$RUSTUP_TOOLCHAIN" cargo clippy --locked -p runtime --all-targets --features native-oci -- -D warnings
+          rustup run "$RUSTUP_TOOLCHAIN" cargo clippy --locked -p server --test native_science_thread --features native-science -- -D warnings
           rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p runtime -p job -p server --bin runtime --bin job --bin server
           rustup run "$RUSTUP_TOOLCHAIN" rustc --edition=2021 -D warnings -C opt-level=1 -C debuginfo=0 -C strip=symbols tests/native/oci_probe.rs -o "$RUNNER_TEMP/isolation-probe"
           git diff --exit-code
@@ -108,9 +109,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:native-runtime-ci-only@127.0.0.1:55435/postgres
           QUAZONAI_NATIVE_SERVER_BIN: ${{ github.workspace }}/target/debug/server
+          QUAZONAI_NATIVE_JOB_BIN: ${{ github.workspace }}/target/debug/job
         run: |
           set -euo pipefail
           rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p runtime --features native-oci --test native_research_loop -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/runtime-evidence/native-research-loop-tests.log"
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p server --features native-science --test native_science_thread -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/runtime-evidence/native-science-thread-tests.log"
           git diff --exit-code
       - name: Remove the job-only native Mission profile
         if: always()
