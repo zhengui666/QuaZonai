@@ -44,6 +44,7 @@ struct Seen {
     publications: usize,
     last_call: String,
     session: Option<u64>,
+    exec_output: String,
     requests_by_case: Vec<AllocationInputV1>,
     results: Vec<Value>,
     artifacts: Vec<String>,
@@ -84,6 +85,7 @@ impl Provider {
             publications: 0,
             last_call: String::new(),
             session: None,
+            exec_output: String::new(),
             requests_by_case: requests,
             results: Vec::new(),
             artifacts: Vec::new(),
@@ -112,11 +114,37 @@ fn output<'a>(request: &'a Value, kind: &str, call: &str) -> &'a Value {
         .expect("the exact native tool result must be consumed")["output"]
 }
 
+fn exec_part(text: &str) -> (Option<u64>, &str) {
+    // Pinned ExecCommandToolOutput::response_text owns this presentation format.
+    // Inspect only the header: JSON output is not process-state evidence.
+    let (header, body) = text
+        .split_once("\nOutput:\n")
+        .expect("pinned native exec Output header required");
+    let running: Vec<_> = header
+        .lines()
+        .filter_map(|line| line.strip_prefix("Process running with session ID "))
+        .collect();
+    let exits: Vec<_> = header
+        .lines()
+        .filter_map(|line| line.strip_prefix("Process exited with code "))
+        .collect();
+    match (running.as_slice(), exits.as_slice()) {
+        ([session], []) => (Some(session.parse().expect("native exec session ID")), body),
+        ([], ["0"]) => (None, body),
+        _ => panic!("native exec must be pending or have exactly one successful exit"),
+    }
+}
+
 fn mcp_document(value: &Value) -> Value {
-    // Pinned Codex serializes plain MCP content as a JSON array inside Text;
-    // it does not send the CallToolResult envelope to the Responses provider.
-    let content: Value =
-        serde_json::from_str(value.as_str().expect("native MCP text output")).unwrap();
+    // Pinned McpToolOutput adds a wall-time/Output presentation header to its
+    // serialized plain MCP content. Decode the original body, not that header.
+    let text = value.as_str().expect("native MCP text output");
+    let body = text
+        .strip_prefix("Wall time: ")
+        .and_then(|wrapped| wrapped.split_once(" seconds\nOutput:\n"))
+        .map(|(_, body)| body)
+        .expect("pinned native MCP Output header required");
+    let content: Value = serde_json::from_str(body).expect("original MCP content JSON");
     let items = content.as_array().expect("native MCP content array");
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["type"], "text");
@@ -157,6 +185,7 @@ async fn respond(
                 .unwrap()
                 .iter()
                 .any(|tool| tool["name"] == "exec_command"));
+            assert!(seen.exec_output.is_empty());
             seen.computations += 1;
             seen.phase = 1;
             json!({"type":"function_call","name":"exec_command","call_id":call,
@@ -169,20 +198,23 @@ async fn respond(
             let text = output(&request, "function_call_output", &seen.last_call)
                 .as_str()
                 .expect("native exec output");
-            if let Some(suffix) = text.split("Process running with session ID ").nth(1) {
-                let session: u64 = suffix.split_whitespace().next().unwrap().parse().unwrap();
+            let (session, fragment) = exec_part(text);
+            assert!(seen.exec_output.len() + fragment.len() <= 64 * 1024);
+            seen.exec_output.push_str(fragment);
+            if let Some(session) = session {
                 if let Some(original) = seen.session {
                     assert_eq!(session, original);
                 }
                 seen.session = Some(session);
-                // Poll the original native exec session; never execute the job twice.
+                // Retain every chunk from the same session; do not rerun Job or
+                // discard early output when its process has not exited yet.
                 json!({"type":"function_call","name":"write_stdin","call_id":call,
                     "arguments":json!({"session_id":session,"chars":"","yield_time_ms":1000,
                         "max_output_tokens":4000}).to_string()})
             } else {
-                assert!(text.contains("Process exited with code 0"));
-                let raw = text.split_once("Final output:\n").unwrap().1;
-                let actual: AllocationResultV1 = serde_json::from_str(raw).unwrap();
+                let raw: Value = serde_json::from_str(&seen.exec_output)
+                    .expect("complete original Job JSON output");
+                let actual: AllocationResultV1 = serde_json::from_value(raw.clone()).unwrap();
                 domain::portfolio::allocation_result(&seen.requests_by_case[case], &actual)
                     .unwrap();
                 if case == 0 {
@@ -198,7 +230,8 @@ async fn respond(
                     assert!(actual.targets.is_none() && actual.cash_weight.is_none());
                     assert!(actual.reason_code.is_some());
                 }
-                seen.results.push(serde_json::from_str(raw).unwrap());
+                seen.results.push(raw);
+                seen.exec_output.clear();
                 seen.phase = 2;
                 json!({"type":"tool_search_call","call_id":call,"execution":"client",
                     "arguments":{"query":"quazonai_mission artifact submit","limit":2}})
@@ -225,7 +258,7 @@ async fn respond(
                         .find(|tool| {
                             tool["name"]
                                 .as_str()
-                                .is_some_and(|name| name.ends_with("artifact.submit"))
+                                .is_some_and(|name| name.ends_with("artifact_submit"))
                         })
                         .map(|tool| (namespace, tool))
                 })
@@ -485,4 +518,37 @@ async fn native_science_outputs_are_published_and_consumed_in_one_resumable_thre
     .unwrap();
     assert_eq!(count, 2);
     println!("native science: two real Job results, two immutable HTTP publications, one resumed Thread; model decisions=CONTROLLED_FIXTURE, qualification=false");
+}
+
+#[test]
+fn native_exec_chunks_preserve_original_output() {
+    let (session, first) = exec_part(
+        "Chunk ID: a\nWall time: 1.0000 seconds\nProcess running with session ID 7\nOutput:\n{\"x\":",
+    );
+    assert_eq!(session, Some(7));
+    let (session, last) = exec_part(
+        "Chunk ID: b\nWall time: 0.0100 seconds\nProcess exited with code 0\nOutput:\n1}\n",
+    );
+    assert_eq!(session, None);
+    assert_eq!(serde_json::from_str::<Value>(&format!("{first}{last}")).unwrap(), json!({"x":1}));
+}
+
+#[test]
+#[should_panic(expected = "pinned native exec Output header required")]
+fn native_exec_rejects_the_incorrect_legacy_heading() {
+    exec_part("Wall time: 0.0100 seconds\nProcess exited with code 0\nFinal output:\n{}");
+}
+
+#[test]
+#[should_panic(expected = "native exec must be pending")]
+fn native_exec_does_not_accept_a_success_marker_inside_failed_stdout() {
+    exec_part("Wall time: 0.0100 seconds\nProcess exited with code 1\nOutput:\nProcess exited with code 0");
+}
+
+#[test]
+fn native_mcp_presentation_retains_the_original_receipt() {
+    let receipt = json!({"schema_version":1,"replayed":false,"resource":{"kind":"REPORT"}});
+    let content = json!([{"type":"text","text":receipt.to_string()}]);
+    let wrapped = json!(format!("Wall time: 0.0100 seconds\nOutput:\n{content}"));
+    assert_eq!(mcp_document(&wrapped), receipt);
 }

@@ -3,62 +3,120 @@
 <a id="task"></a>
 ## Task
 
-Task ID: `personal-production`. Deliver the owner's personal QuaZonai requirements against [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62), using [DESIGN](../../../DESIGN.md) and its [owner-authorized scope](../../../DESIGN.md#acceptance-scope). Code, architecture, documentation, deployment and UX remain in scope. PR discussions hold each turn's public actions and evidence, not hidden reasoning or duplicated product history.
+Task ID: `personal-production`. Deliver the owner's personal QuaZonai request against
+[Issue #62](https://github.com/zhengui666/QuaZonai/issues/62) and amended
+[DESIGN0.4](../../../DESIGN.md#acceptance-scope). The assistant authors through file
+tools; GitHub Actions performs native verification. No CodexPro is required.
+Dedicated-account checks remain **COMPLETED_BY_OWNER_WAIVER / NOT_RUN**, not passes.
 
 <a id="intent"></a>
 ## Intent
 
-Continue core business acceptance without CodexPro or a dedicated live account. The web assistant authors through GitHub file tools; existing Actions run native verification. Account-dependent acceptance remains `COMPLETED_BY_OWNER_WAIVER` / `NOT_RUN`, not a test pass. Do not reopen it or request credentials.
-
-Current work connects previously separate evidence: actual App Server tool execution, genuine numerical Job output, immutable Mission publication and result consumption after a same-Thread process restart. Controlled model responses must not replace computation, and a success result must not contaminate a later infeasible result.
+Preserve the merged production Worker/scientific feedback path and finish the existing
+report-consumption draft without a second science engine. Real output, immutable
+publication and persistent Thread state must determine the visible conclusion. Stale
+weights must not survive a later genuinely infeasible solve.
 
 <a id="spec"></a>
-## Scope and limits
+## Scope and ownership
 
-[PR #91](https://github.com/zhengui666/QuaZonai/pull/91) merged the owner amendment as `1368e1254b3b2ace4777709e07e9bf305291e096`. T07 and only dedicated-account portions of T03–T05/T08/T42 are closed by waiver. The original TOTP, data, science, independent Reviewer/Sealed, budget, persistence and business-flow requirements remain.
+[DESIGN](../../../DESIGN.md) owns the full product contract. The
+[acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance) routes
+remaining work; PR discussions own exact execution, failures, review and merge state.
+Reuse this English task and its existing anchors; do not duplicate history in manuals.
 
-The [native science/Thread plan](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5728884901) adds a bounded integration, not full T08 or T42 acceptance. Provider decisions and the parent research records are explicit fixtures. The production Job binary really computes both results; native App Server owns shell/MCP dispatch and persistence; the actual API and PostgreSQL/ArtifactStore own publication. No qualification or delivery authority is granted.
+Merged [PR #92](https://github.com/zhengui666/QuaZonai/pull/92), commit
+`fd05ff642038178b1bab578d90ca9f3a834048b8`, delivered real compilation, forecast,
+Validation, Evaluation and consumption in the original Thread using normal lease
+redelivery and per-tool native approval. Its actual Evaluation was REJECT; no research
+qualification was invented. Earlier hosting, account waiver, recovery and dependency
+work remain referenced by the acceptance index.
 
-<a id="plan"></a>
-## Implementation and reuse
+Current [PR #93](https://github.com/zhengui666/QuaZonai/pull/93) supplements that path:
+real Job allocation with Optimal and Infeasible outcomes, actual REPORT submission
+through native MCP/HTTP and a restarted App Server resuming one Thread. Direct Job
+execution in the native session is not the production portfolio pipeline or independent
+Reviewer acceptance. Provider decisions and parent research remain controlled fixtures;
+solver outputs, publications and persistence are real. No account material is supplied.
 
-Branch `codex/native-science-thread-20260918` starts from main1368e125. Reconcile actual Head before any write. Preserve the existing task and English language; `.opensdlc/config.json` is absent.
+<a id="implementation"></a>
+## Implementation
 
-`apps/server/tests/native_science_thread.rs` reuses the native Client/ThreadOptions, existing Mission MCP/HTTP fixture, allocation input and production `job allocate` CLI. Its explicit `native-science` test feature includes `native-codex`; the existing Native Runtime workflow builds the required Job and runs the target against its disposable PostgreSQL. No new dependency, lockfile, production API, permissions, model loop or numerical implementation.
+The [field-level continuation](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5739214306)
+reconciles the old draft with main through an explicit two-parent commit, preserving
+all #92 source, tests, generated contracts and locks. Only the five existing draft paths
+are changed relative to main: server test registration, native science Thread test,
+existing Runtime workflow, this task and the acceptance index. No new dependency,
+workflow, source-transfer machinery, timeout or concurrency change is introduced.
 
-The test copies the actually built Job executable into its private Mission workspace and uses native shell dispatch. The controlled provider receives the real tool output, validates it through the existing domain contract, discovers `artifact.submit` and submits the original output file through actual MCP/HTTP. Its public fixture conclusion must cite the returned Artifact ID and numerical status. The test checks the original bytes again through Store/ArtifactStore.
+`native_science_thread.rs` reads the pinned Codex0.144.4 exec `Output:` header and
+validates process state from header lines, not JSON content. It retains chunks from the
+same native session until successful exit, then validates the complete actual solver
+result. The first solve checks its two weights; changed bounds must yield Infeasible
+with no targets/cash rather than reuse old weights. MCP discovery supplies the real
+namespace and normalized `artifact_submit` name. The test removes only the native
+wall-time presentation header before decoding the original report receipt.
 
-After a real native process close, a new process resumes the same Thread. The first allocation is optimal; the second has valid but infeasible constraints, so it must produce no weights and cite its distinct new artifact while retaining the first reference in native context. Polling an unfinished exec session continues that session rather than launching a second command. Public-summary reads must not trigger model calls or return the newest answer for an older Turn. Controlled usage counters remain labeled as such.
+Both report byte streams, producer Run/Attempt, unique publication, cumulative native
+usage and public summaries are verified against actual state. After closing the first
+App Server, a new client resumes the same Thread and must retain the first summary and
+artifact reference. The second summary must cite its different report and retain no
+first-case targets. Only inputs, never result files, are prepared before native execution.
+Parsing controls exercise chunk boundaries and reject the incorrect old header/nonzero
+exit; they are not substituted for executing the real end-to-end test.
 
-Reuse the already locked Codex install and existing Ubuntu native sandbox prerequisite, with scoped cleanup. All original OCI/cold/joint, Store, Web, hosting and CodeQL checks remain. No real account invocation, increased test limit, ignored prerequisite or automatic retry to hide failure is introduced. No project shell/compiler is executed in the web sandbox.
+Upstream format owner:
+[ExecCommandToolOutput and McpToolOutput](https://github.com/openai/codex/blob/rust-v0.144.4/codex-rs/core/src/tools/context.rs).
+The existing Mission token and per-tool approval code from #92 remain unchanged; no
+blanket tool approval or test-specific product endpoint is added. The existing Runtime
+job retains all OCI, cold/ownership, joint-recovery and four research-loop cases, then
+runs the server test with the actual built Job and pinned App Server.
 
 <a id="verification"></a>
 ## Verification
 
-At authorship this new test has not executed. Test existence, source inspection and the earlier main's green checks are not a new pass. Read actual fmt/Clippy, native target and complete workflow outcomes for each candidate. On failure, repair the concrete source or fixture contract and preserve the failing evidence in the PR.
+PR #92 final `0a7273008d0a012c6f4744cda90b2591e0bda111` passed all applicable workflows,
+independent review5738526136 and four resolved threads before its expected-Head merge.
+Its original artifacts include688Store/Server,6native protocol tests,
+17OCI+2cold/ownership+1joint+4research, and both real hosted browser phases. These are
+historical evidence for that source, not approval of #93. Post-merge results are checked
+separately in the PR.
 
-Require two genuine Job results (optimal and infeasible), two original HTTP publications, exact producer Run/Attempt identity and bytes, one persisted Thread across two native processes, actual result consumption and no fabricated weights on the negative result. No private request bodies, credentials or canonical model-history files are uploaded.
+Old #93 Head `b2e80e928c4bf121daa0c70c5683fcc104af76ec` failed the new test in
+[Runtime35337746060](https://github.com/zhengui666/QuaZonai/actions/runs/35337746060),
+job105576413002: after native exit0 it tried the nonexistent `Final output:` heading,
+panicked at line184 and left the Turn failed. Existing17OCI+2cold/ownership+1joint passed;
+report publication and resumed consumption had not completed. The fixed format and
+current-main integration require their own full execution, not a guessed pass.
 
-This connection does not verify production Worker's full experiment/evaluation orchestration, independently qualified Alphas, real market provenance, owner legacy migration or complete Web/CLI research-to-delivery. The [acceptance index](../../../docs/architecture/issue-62-execution.md#acceptance) keeps these remaining requirements separate from the closed account scope.
+Read every applicable final-Head CI, native result and review in #93. Require actual
+Optimal/Infeasible reports, exactly two publications, original bytes and one resumed
+Thread, while retaining #92's connected Worker loop. Failed, absent, skipped, cancelled
+or old-Head results do not count as passing. Unknown market validity, full Reviewer,
+Web/CLI business, migration and deployment acceptance are not filled by this test.
 
 <a id="review"></a>
 ## Independent review
 
-Request explicit read-only `@codex review` for the final Head, address every actionable summary and inline finding, and revalidate changed source. Author inspection and older clean results do not replace independent current review.
+After each source change request read-only `@codex review` on the exact Head. Inspect
+both summary and inline findings. Resolve actionable feedback using source and actual
+execution. Author inspection or an older clean reply is not current independent approval.
 
 <a id="delivery"></a>
 ## Delivery boundary
 
-1. Publish the PR and complete its declared scope with committed source and no temporary transfer machinery.
-2. Require all applicable final-Head CI successes, all actionable findings resolved and explicit clean independent review for that Head.
-3. Only then mark ready and merge using expected-Head verification, inspect main and post-merge checks, and record the actual merge.
-4. **Never ask GitHub Codex to fix, implement, edit, commit or push.** It reviews only; the web assistant authors all changes.
-
-Issue #62's closed metadata alone is not acceptance. Do not broaden the account waiver or count it as a passed test; do not use this focused connection to declare the entire product delivered.
+1. Complete the declared PR scope with committed source and native inputs.
+2. Require all applicable final-Head CI success, all actionable findings resolved and an
+   explicit clean independent Codex result for that Head.
+3. Only then mark ready, merge with expected-Head verification and inspect actual main,
+   source identity and post-merge checks.
+4. **Never ask GitHub Codex to fix, implement, edit, commit or push.** It reviews only.
 
 <a id="handoff"></a>
 ## Continuation
 
-Read AGENTS, CONTRIBUTING (`DEVELOPMENT.md` is absent), relevant DESIGN and the current PR/CI state before continuing. Do not request a CodexPro connection or dedicated account. Use file tools for authorship and Actions for execution, protect concurrent changes and user data, and record public turn stages in the active PR.
-
-Complete the remaining non-account Thread/Worker, data/migration, runbook and full business entrypoint acceptance using existing native interfaces. Missing real data or owner snapshot evidence is not silently waived by the account decision.
+Keep public turn summaries in the active PR. Read AGENTS, CONTRIBUTING and relevant
+DESIGN/OpenSDLC entries; DEVELOPMENT.md is absent. Preserve concurrent changes, user
+data, licenses and the account waiver. Do not require CodexPro or reopen dedicated
+account acceptance. Continue the remaining amended contract through its original user
+interfaces; do not replace product acceptance with additional security/platform tooling.
