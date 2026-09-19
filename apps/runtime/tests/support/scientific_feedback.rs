@@ -453,7 +453,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         shutdown.clone(),
     )
     .await;
-    let (model_id, module_bytes) = published(
+    let model_output = published(
         &pool,
         &data.objects,
         compiled.id,
@@ -461,6 +461,8 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         "qz.wasm_model",
     )
     .await;
+    let model_id = model_output.artifact_id;
+    let module_bytes = model_output.bytes;
     let mut model = job::signals::WasmSignal::new(&module_bytes, 2, 100_000).unwrap();
     assert_eq!(
         model
@@ -486,7 +488,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         shutdown.clone(),
     )
     .await;
-    let (_, prediction) = published(
+    let forecast_output = published(
         &pool,
         &data.objects,
         predicted.id,
@@ -494,7 +496,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         "qz.native_forecast",
     )
     .await;
-    let forecast: NativeForecastResultV1 = serde_json::from_slice(&prediction).unwrap();
+    let forecast: NativeForecastResultV1 = serde_json::from_slice(&forecast_output.bytes).unwrap();
     assert!(forecast.consumed_fuel.get() > 0);
     let task = task_parameters(&data.objects, &prediction_spec);
     let NativeTaskParametersV1::EvaluateAlpha { request, .. } = task else {
@@ -543,7 +545,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         shutdown.clone(),
     )
     .await;
-    let (_, raw) = published(
+    let validation_output = published(
         &pool,
         &data.objects,
         validated.id,
@@ -551,6 +553,8 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
         "qz.alpha_validation",
     )
     .await;
+    let source_report_id = validation_output.artifact_id;
+    let raw = validation_output.bytes;
     let measured: NativeAlphaValidationResultV1 = serde_json::from_slice(&raw).unwrap();
     assert!(
         measured.consumed_fuel.get() > 0
@@ -584,6 +588,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
     let source_report:String=sqlx::query_scalar(
         "SELECT a.id::text FROM app.run_native_outputs o JOIN app.artifacts a ON a.id=o.artifact_id WHERE o.attempt_id=$1 AND a.schema_name='qz.alpha_validation'",
     ).bind(validated.active_attempt_id.unwrap().as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(source_report, source_report_id.to_string());
     assert_eq!(
         provider.request_count(),
         3,
@@ -1038,15 +1043,31 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             assert_eq!(selected_alpha.calibration_id, Some(calibration.id));
             assert_eq!(calibration.validation.id, evaluation_view.id);
             assert_eq!(calibration.train_input_set_id, evaluation_view.input_set_id);
-            let (calibration_id, calibration_bytes) = published(
-                &pool,
-                &data.objects,
-                validated.id,
-                validated.active_attempt_id.unwrap(),
-                "qz.alpha_calibration",
+            // Calibration is a local projection of the original Validation,
+            // not a remote Runtime output. Read its actual recorded identity.
+            let calibration_id = calibration.model_artifact_id;
+            assert!(matches!(
+                store.artifact_content(&actor, calibration_id).await,
+                Err(store::StoreError::NotFound)
+            ));
+            let calibration_size: i64 = sqlx::query_scalar(
+                "SELECT a.byte_count FROM app.artifacts a JOIN app.calibrations c ON c.model_artifact_id=a.id WHERE c.id=$1 AND c.validation_evaluation_id=$2 AND a.id=$3 AND a.producer_run_id=$4 AND a.producer_attempt_id=$5 AND a.kind='MODEL' AND a.schema_name='qz.alpha_calibration' AND a.schema_version='1' AND a.access_class='EVALUATOR_ONLY' AND a.origin='FIXTURE' AND a.storage_backend='LOCAL' AND a.storage_version='1' AND a.storage_object_ref=a.id::text AND NOT EXISTS(SELECT 1 FROM app.run_native_outputs o WHERE o.artifact_id=a.id)",
             )
-            .await;
-            assert_eq!(calibration.model_artifact_id, calibration_id);
+            .bind(calibration.id.as_uuid())
+            .bind(evaluation_view.id.as_uuid())
+            .bind(calibration_id.as_uuid())
+            .bind(validated.id.as_uuid())
+            .bind(validated.active_attempt_id.unwrap().as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let calibration_bytes = data
+                .objects
+                .read(
+                    calibration_id,
+                    support::count(u64::try_from(calibration_size).unwrap()),
+                )
+                .unwrap();
             let calibration_document: NativeFrozenCalibrationV1 =
                 serde_json::from_slice(&calibration_bytes).unwrap();
             assert_eq!(
@@ -1138,7 +1159,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             ];
             assert_eq!(sealed_spec.inputs, expected_inputs);
             assert_eq!(sealed_spec.image_ref, selected_alpha.runtime_image_ref);
-            let (_, bytes) = published(
+            let sealed_output = published(
                 &pool,
                 &data.objects,
                 sealed,
@@ -1146,7 +1167,8 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
                 "qz.alpha_sealed",
             )
             .await;
-            let sealed_result: NativeAlphaSealedResultV1 = serde_json::from_slice(&bytes).unwrap();
+            let sealed_result: NativeAlphaSealedResultV1 =
+                serde_json::from_slice(&sealed_output.bytes).unwrap();
             assert!(sealed_result.forecast.consumed_fuel.get() > 0);
             assert!(!sealed_result.assets.is_empty());
             assert_eq!(
@@ -1222,7 +1244,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
                 .await
                 .unwrap();
         assert_eq!(preserved, original_evaluation);
-        let (_, unchanged) = published(
+        let unchanged = published(
             &pool,
             &data.objects,
             validated.id,
@@ -1230,7 +1252,8 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             "qz.alpha_validation",
         )
         .await;
-        assert_eq!(unchanged, raw);
+        assert_eq!(unchanged.artifact_id, source_report_id);
+        assert_eq!(unchanged.bytes, raw);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.qualifications")
                 .fetch_one(&pool)

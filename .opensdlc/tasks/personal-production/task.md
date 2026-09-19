@@ -81,6 +81,14 @@ Compare the complete ordered input list including dataset version/role, model/ca
 IDs and sizes, and the unique native Parameters artifact. This is test-only observation
 of existing records; no new producer, recomputed result or overwritten frozen input.
 
+The [output-identity correction](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5740538863)
+keeps local `artifact_id` and remote `remote_storage_ref` separate in the existing private
+publication helper. The standalone compile checks still compare remote references with the
+native manifest; Alpha/Sealed checks use the original mapped local Artifact IDs and bytes.
+Calibration is a local projection of Validation, not a raw Runtime output: obtain its ID
+through the original Calibration view and check the actual Run/Attempt-bound private
+artifact. Do not invent a remote output mapping or alter production IDs to satisfy tests.
+
 The accepted exec header/chunk parser moves unchanged into `codex_tool_output.rs` for
 both the original report-restart test and the new Reviewer fixture. Same-session chunks
 must be complete and actual process exit successful; do not rerun missing output.
@@ -124,6 +132,15 @@ native Validation and independent Reviewer execution, then failed at Browser art
 for the EVALUATOR_ONLY summary; Sealed was not reached. The existing visibility rule was
 correct. The test now checks its private publication as described above; no permission
 was weakened. Subsequent exact-Head results remain in [PR #94](https://github.com/zhengui666/QuaZonai/pull/94).
+
+Head `1bcc6ef61b5b248dc13dbde0dfa83baf51acaec3` failed Runtime35428339943/job105858162866
+at three exact formatting differences, before native scenario execution. `14d2829` applies
+only those differences. Runtime35432000431/job105868157280, artifact10580984846, passed
+native build,17OCI+2cold/ownership+1joint and4research cases; both independent branches
+failed at the local Alpha model ID versus remote output ID comparison before Reviewer
+execution. Inspection also found the local Calibration incorrectly queried as a raw output.
+The output-identity corrections require fresh full execution; none of those failed or
+unreached stages counts as acceptance.
 
 Require current-Head formatting/Clippy, complete tests, both native review branches,
 original raw scientific metrics and actual Sealed output before claiming acceptance.
