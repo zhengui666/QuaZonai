@@ -530,7 +530,10 @@ fn native_exec_chunks_preserve_original_output() {
         "Chunk ID: b\nWall time: 0.0100 seconds\nProcess exited with code 0\nOutput:\n1}\n",
     );
     assert_eq!(session, None);
-    assert_eq!(serde_json::from_str::<Value>(&format!("{first}{last}")).unwrap(), json!({"x":1}));
+    assert_eq!(
+        serde_json::from_str::<Value>(&format!("{first}{last}")).unwrap(),
+        json!({"x":1})
+    );
 }
 
 #[test]
