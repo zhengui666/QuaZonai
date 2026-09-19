@@ -173,12 +173,12 @@ async function waitReady(baseUrl, initialized) {
   throw new Error('Real Rust application readiness timed out');
 }
 
-function cleanup() {
+function cleanup(graceful) {
   cleanupPromise ??= (async () => {
     let failure;
     let processesStopped = true;
     if (userServices) {
-      try { await userServices.cleanup(); }
+      try { await userServices.cleanup({ graceful }); }
       catch (error) { failure ??= error; }
       processesStopped = userServices.quiescent;
       try {
@@ -385,7 +385,7 @@ catch (error) { failure = error; }
 if (interruptedExitCode) failure ??= new Error('Native browser acceptance interrupted');
 try { await privateRedactions(); }
 catch (error) { failure ??= error; }
-try { await cleanup(); }
+try { await cleanup(!failure && !stopping); }
 catch (error) { failure ??= error; }
 if (adminEnv) {
   // Failed tests or cleanup never publish images from the private runtime.

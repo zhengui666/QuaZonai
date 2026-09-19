@@ -58,9 +58,18 @@ supervision policy, scientific threshold, workflow concurrency or timeout change
    bounded private logs, disables runtime links and removes owned drop-ins. Stop the gateway
    before deleting the disposable database/state. Unconfirmed shutdown retains private
    state and fails; report the actual retention flag and publish no failure screenshots.
-6. Keep the four real DDL lost-ACK/SIGTERM cleanup regressions unchanged. The Web workflow
-   checks script syntax and reuses the existing ordinary-user manager setup; full checks,
-   source-unchanged assertion and existing artifact upload remain. No extra workflow/job.
+6. Capture a unit's native ControlGroup at every show, before later process validation
+   can fail, and again before stop can clear that property. On a successful main flow,
+   final cleanup requires both services to exit normally; a timeout or signal is a failure.
+   An already failed/interrupted flow may retain its error Result, but still must prove
+   stopped/empty before deletion. Never treat a missing observation as an empty cgroup.
+7. Keep the four real DDL lost-ACK/SIGTERM cleanup regressions unchanged. Five small
+   Node control-flow tests cover original-group capture, strict normal shutdown, failed-flow
+   cleanup ordering, populated-group refusal and lost stop acknowledgement. Their scripted
+   observations are not native systemd evidence; full live browser/service execution remains
+   required. The Web workflow runs these early with script syntax checks and reuses the
+   ordinary-user manager setup; full checks, source-unchanged assertion, existing artifact
+   upload and timeout stay unchanged. No extra workflow/job.
 
 Native interfaces: Ubuntu24.04 [systemctl](https://manpages.ubuntu.com/manpages/noble/man1/systemctl.1.html)
 and [unit/drop-in paths](https://manpages.ubuntu.com/manpages/noble/man5/systemd.unit.5.html).
@@ -70,8 +79,17 @@ not implement a second recovery policy. Retain existing static installation/scop
 <a id="verification"></a>
 ## Verification
 
-At initial authorship the new user-unit scenario has not executed. Native syntax,
-complete Web workflow, both browser phases, actual process/property snapshots,
+Initial Head `0291b477bd7651209665a8b5a8434c1d823b4d01` passed script syntax, Rust/API,
+frontend tests/Demo and the three-viewport suite in Web35441017004, but the real
+service scenario failed before unit registration. Artifact10584152255 records
+`require-fresh-api-unit` exit1, then real database/role cleanup and no retained state.
+Upstream systemd255 returns ENOENT for an empty filtered list. The corrected check reads
+the complete native unit-file collection, requires command success, then rejects an
+exact matching name; it does not ignore nonzero exits. See [the observed repair](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5741676926)
+and [shutdown refinement](https://github.com/zhengui666/QuaZonai/issues/62#issuecomment-5741632213).
+The initial clean review5741617560 does not approve changed source or replace execution.
+
+Require new-Head native syntax, complete Web workflow, both browser phases, actual process/property snapshots,
 automatic Worker restart, graceful API stop and owned cleanup must all succeed
 on the final Head. A unit file, script or configured workflow is not execution evidence.
 

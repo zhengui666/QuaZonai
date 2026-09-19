@@ -55,6 +55,7 @@ jobs:
           node --check scripts/native-browser.mjs
           node --check scripts/native-user-services.mjs
           node --check scripts/native-cleanup.test.mjs
+          node --test scripts/native-user-services.test.mjs
       - name: Build real Rust API and verify native HTTP contract
         working-directory: .
         run: |

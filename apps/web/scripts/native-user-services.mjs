@@ -81,8 +81,10 @@ export class NativeUserServices {
         throw new Error('Refuse to replace an existing unit path');
       }
       const known = await this.control(`require-fresh-${kind}-unit`,
-        ['list-unit-files', '--no-legend', '--no-pager', name]);
-      if (known.trim()) throw new Error('Refuse to replace an existing native user unit');
+        ['list-unit-files', '--no-legend', '--full', '--plain']);
+      if (known.split('\n').some(line => line.trim().split(/\s+/)[0] === name)) {
+        throw new Error('Refuse to replace an existing native user unit');
+      }
       const unit = { kind, command, name, path, dropin, links, createdDropin: false, group: null };
       this.units.push(unit);
       const original = resolve(this.repo, 'deploy/systemd', `quazonai-${kind}.service`);
@@ -123,6 +125,11 @@ export class NativeUserServices {
     }));
     assert.equal(result.Id, unit.name);
     assert.equal(result.LoadState, 'loaded');
+    if (result.ControlGroup) {
+      assert.ok(result.ControlGroup.startsWith('/') && result.ControlGroup.endsWith(`/${unit.name}`));
+      // Retain the original group before later process/identity checks can fail.
+      unit.group = result.ControlGroup;
+    }
     return result;
   }
 
@@ -167,8 +174,8 @@ export class NativeUserServices {
       'OPENAI_API_KEY', 'CODEX_DEPLOYMENT', 'MISSION_API_ORIGIN', 'MISSION_WORKSPACES']) {
       if (actual[key]) throw new Error(`Unexpected ambient ${key} in test service`);
     }
-    assert.ok(current.ControlGroup.endsWith(`/${unit.name}`));
-    unit.group = current.ControlGroup;
+    assert.equal(unit.group, current.ControlGroup);
+    assert.ok(unit.group);
     return pid;
   }
 
@@ -231,6 +238,9 @@ export class NativeUserServices {
 
   async stop(kind, { cleanup = false, graceful = true } = {}) {
     const unit = this.unit(kind);
+    // A partially started service may never have reached process verification.
+    // Observe its original cgroup before native stop can remove that property.
+    await this.show(unit, cleanup);
     await this.control(`stop-native-${kind}`, ['stop', unit.name], { cleanup, timeout: 310_000 });
     const current = await this.show(unit, cleanup);
     assert.equal(current.MainPID, '0');
@@ -245,12 +255,12 @@ export class NativeUserServices {
     return current;
   }
 
-  async cleanup() {
+  async cleanup({ graceful = false } = {}) {
     let failure;
     if (this.registrationAttempted) {
       let stopped = true;
       for (const unit of [...this.units].reverse()) {
-        try { await this.stop(unit.kind, { cleanup: true, graceful: false }); }
+        try { await this.stop(unit.kind, { cleanup: true, graceful }); }
         catch (error) { stopped = false; failure ??= error; }
       }
       this.quiescent = stopped;
