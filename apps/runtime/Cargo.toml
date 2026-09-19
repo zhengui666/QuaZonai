@@ -54,7 +54,7 @@ utoipa = { version = "=5.4.0", features = ["chrono", "uuid"] }
 thiserror = "=2.0.20"
 rustix = { version = "=1.1.4", features = ["fs"] }
 tracing = "=0.1.44"
-tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
 
 [dev-dependencies]
 # Real control-plane checkpoint acceptance only; not a Runtime production dependency.
