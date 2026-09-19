@@ -34,7 +34,7 @@ bigdecimal = "=0.4.8"
 iso_currency = "=0.7.0"
 rustix = { version = "=1.1.4", features = ["fs"] }
 nalgebra = { version = "=0.35.0", default-features = false, features = ["std"] }
-ndarray = "=0.17.1"
+ndarray = "=0.17.2"
 ndarray-stats = "=0.7.0"
 linregress = "=0.5.4"
 # Explicit portable dispatch avoids relying on tail-call optimization in debug builds.
