@@ -116,13 +116,10 @@ async fn mission_tick(
     stage: &'static str,
 ) {
     println!("native science Mission stage={stage}: begin");
+    let owner = format!("connected-native-mission/{}", message.read_count);
     tokio::time::timeout(
         Duration::from_secs(110),
-        worker.process_mission_message(
-            message.clone(),
-            "connected-native-mission",
-            shutdown.clone(),
-        ),
+        worker.process_mission_message(message.clone(), &owner, shutdown.clone()),
     )
     .await
     .unwrap_or_else(|_| panic!("native Mission stage={stage}: deadline"))
@@ -468,7 +465,72 @@ async fn scenario(pool: PgPool) {
     );
     mission_tick(&worker, &mission, &shutdown, "prepare-feedback").await;
     assert_eq!(provider.request_count(), 3);
-    mission_tick(&worker, &mission, &shutdown, "consume-feedback").await;
+
+    // The first native process is closed. Reopening it must be a new delivery,
+    // not a second credential issuance under the original unexpired owner fence.
+    let before: (String, i32, i64) = sqlx::query_as(
+        "SELECT id::text,attempt_no::int4,owner_epoch FROM app.run_attempts WHERE run_id=$1",
+    )
+    .bind(mission.run_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let pending: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.run_id=$1),(SELECT count(*) FROM app.machine_credentials c JOIN app.machine_principals p ON p.id=c.principal_id WHERE p.run_id=$1)",
+    )
+    .bind(mission.run_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pending, (2, 1, 1));
+    tokio::time::timeout(
+        Duration::from_secs(75),
+        sqlx::query(
+            "SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM GREATEST(a.lease_expires_at,q.vt)-clock_timestamp()))+0.02) FROM app.run_attempts a JOIN pgmq.q_runs q ON q.msg_id=$2 WHERE a.id=$1",
+        )
+        .bind(Id::try_from(before.0.clone()).unwrap().as_uuid())
+        .bind(mission.message_id)
+        .execute(&pool),
+    )
+    .await
+    .expect("the original lease and queue visibility must expire without row edits")
+    .unwrap();
+    let eligible: bool = sqlx::query_scalar(
+        "SELECT a.lease_expires_at<=clock_timestamp() AND q.vt<=clock_timestamp() FROM app.run_attempts a JOIN pgmq.q_runs q ON q.msg_id=$2 WHERE a.id=$1",
+    )
+    .bind(Id::try_from(before.0.clone()).unwrap().as_uuid())
+    .bind(mission.message_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(eligible);
+    let redelivered = store
+        .read_mission_messages(60, 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|message| message.run_id == mission.run_id)
+        .expect("the same Mission must be redelivered by native PGMQ");
+    assert_eq!(redelivered.message_id, mission.message_id);
+    assert_eq!(redelivered.read_count, mission.read_count + 1);
+    mission_tick(&worker, &redelivered, &shutdown, "consume-feedback").await;
+    let after: (String, i32, i64) = sqlx::query_as(
+        "SELECT id::text,attempt_no::int4,owner_epoch FROM app.run_attempts WHERE run_id=$1",
+    )
+    .bind(mission.run_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((&after.0, after.1), (&before.0, before.1));
+    assert_eq!(after.2, before.2 + 1);
+    let credentials: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM app.machine_principals WHERE run_id=$1),(SELECT count(*) FROM app.machine_credentials c JOIN app.machine_principals p ON p.id=c.principal_id WHERE p.run_id=$1)",
+    )
+    .bind(mission.run_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(credentials, (1, 2));
     assert_eq!(provider.request_count(), 4);
     assert!(provider.saw_previous_context());
     let observation = provider.scientific_observation();
@@ -552,7 +614,8 @@ async fn scenario(pool: PgPool) {
         serde_json::json!({
             "scope":"real native Parquet/MCP/compile/forecast/validation/Evaluation/original-Thread; controlled Provider, not account or market acceptance",
             "scientific_runs":3,"native_provider_requests":provider.request_count(),
-            "original_thread_preserved":true,"validation_observations":measured.unique_test_observations,
+            "original_thread_preserved":true,"original_attempt_preserved":true,
+            "lease_takeover_observed":true,"validation_observations":measured.unique_test_observations,
             "actual_evaluation_decision":decision,"qualification_granted":false,
         })
     );
