@@ -817,11 +817,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             .iter()
             .find(|item| Some(item.id) == evaluation_view.subject_alpha_version_id)
             .unwrap();
-        let selected_alpha = versions
-            .items
-            .iter()
-            .find(|item| item.id == alpha)
-            .unwrap();
+        let selected_alpha = versions.items.iter().find(|item| item.id == alpha).unwrap();
         assert_eq!(original_alpha.experiment_id, experiment);
         assert_eq!(selected_alpha.experiment_id, experiment);
         assert_eq!(original_alpha.code_artifact_id, code);
@@ -857,8 +853,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             assert_eq!(value.source_artifact_id.to_string(), source_report);
         }
         context_metrics.sort_by(|a, b| {
-            (&a.metric_code, &a.scope, &a.method_id)
-                .cmp(&(&b.metric_code, &b.scope, &b.method_id))
+            (&a.metric_code, &a.scope, &a.method_id).cmp(&(&b.metric_code, &b.scope, &b.method_id))
         });
         let review_policy = store
             .evaluation_policy(&actor, selection.policy_id)
@@ -1060,7 +1055,12 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             );
             assert_eq!(
                 calibration_document.horizon_observations.get(),
-                u64::from(original_validation.forecast.parameters.label_horizon_observations)
+                u64::from(
+                    original_validation
+                        .forecast
+                        .parameters
+                        .label_horizon_observations
+                )
             );
             let discovery_metadata =
                 registered_metadata(&store, &actor, &remote, data.data.discovery).await;
