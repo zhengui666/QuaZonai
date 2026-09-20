@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as echarts from 'echarts/core';
 import EquityCurve from '../src/equity-curve';
 import type { Schema } from '../src/api';
+import 'antd/dist/reset.css';
+import '../src/styles.css';
 
 const id = (tail: number) => `01990000-0000-7000-8000-${tail.toString().padStart(12, '0')}`;
 const evaluation: Schema['EvaluationView'] = {
