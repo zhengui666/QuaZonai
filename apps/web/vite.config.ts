@@ -59,10 +59,13 @@ export default defineConfig({
   preview: { host: '127.0.0.1', strictPort: true, proxy },
   build: { target: ['es2022', 'safari16'], sourcemap: false,
     commonjsOptions: { include: [/node_modules/, /generated\/responses\.cjs$/] },
-    // Native Rollup splitting keeps stable third-party code separate from the
-    // changing Rust-contract validators. Both chunks remain in the PWA precache.
+    // Keep the lazy chart engine separate from initial UI dependencies. Native
+    // Rollup chunks remain static build assets in the existing PWA precache.
     rollupOptions: { output: {
-      manualChunks(id) { return id.includes('/node_modules/') ? 'vendor' : id.includes('/generated/responses.cjs') ? 'contracts' : undefined; },
+      manualChunks(id) {
+        if (/\/node_modules\/(echarts|zrender|echarts-for-react|size-sensor)\//.test(id)) return 'charts';
+        return id.includes('/node_modules/') ? 'vendor' : id.includes('/generated/responses.cjs') ? 'contracts' : undefined;
+      },
     } },
   },
   test: { include: ['src/**/*.test.ts'], environment: 'node', restoreMocks: true },
