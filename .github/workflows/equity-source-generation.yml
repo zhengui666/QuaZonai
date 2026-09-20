@@ -9,11 +9,14 @@ concurrency:
   cancel-in-progress: false
 env:
   TARGET_BRANCH: codex/issue-96-equity-curve
-  TARGET_HEAD: 92f501ee7b3d1999e4ed397bd4d5825310a6f330
+  TARGET_HEAD: fa8e27adcf783e0238ca13e3dafdec84f8be6388
+  RUSTUP_TOOLCHAIN: '1.98.1'
+  CARGO_BUILD_JOBS: '2'
+  CARGO_PROFILE_DEV_DEBUG: '0'
 jobs:
   prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -24,18 +27,42 @@ jobs:
         with:
           ref: ${{ env.TARGET_HEAD }}
           path: source
-      - name: Apply the exact authored documentation edit
+      - name: Apply exact web-authored source integrations
+        run: python3 authored/.opensdlc/equity-source-edits.py source
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Native toolchain and dependency lock
+        working-directory: source
         run: |
-          python3 authored/.opensdlc/equity-source-edits.py source
-          python3 -c 'from pathlib import Path; p=Path("source/DESIGN.md"); p.write_text(p.read_text().rstrip()+"\n")'
-      - name: Commit only to the expected implementation branch
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          npm --prefix apps/web install --save-exact echarts@6.1.0 echarts-for-react@3.0.6 --ignore-scripts --no-audit --no-fund
+      - name: Format and generate contracts with the original native tools
+        working-directory: source
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo run --locked -q -p contracts --example generate > contracts/generated/domain-v1.openapi.json
+          cargo run --locked -q -p server -- openapi > contracts/generated/api-v2.openapi.json
+          npm --prefix apps/web run generate
+          npm --prefix apps/web run typecheck
+          npm --prefix apps/web test
+          npm --prefix apps/web run build
+      - name: Real native equity and bounded projection tests
+        working-directory: source
+        run: |
+          set -euo pipefail
+          cargo test --locked -p domain equity_curve
+          cargo test --locked -p job --test equity_curve
+      - name: Publish only on the expected implementation Head
         working-directory: source
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$TARGET_HEAD"
           test "$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)" = "$TARGET_HEAD"
           git diff --check
-          git add DESIGN.md
-          git -c user.name='QuaZonai web author' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'docs: define native portfolio equity curve contract (#96)'
+          git add crates apps contracts docs OPERATIONS.md
+          git -c user.name='QuaZonai web author' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'feat: integrate native equity projection, generated contracts and chart dependencies (#96)'
           git push origin "HEAD:refs/heads/$TARGET_BRANCH"
           git rev-parse HEAD
