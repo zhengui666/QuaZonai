@@ -1,0 +1,39 @@
+name: Equity source preparation
+on:
+  push:
+    branches: [codex/issue-96-generation]
+permissions:
+  contents: write
+concurrency:
+  group: issue-96-source-preparation
+  cancel-in-progress: false
+env:
+  TARGET_BRANCH: codex/issue-96-equity-curve
+  TARGET_HEAD: 92f501ee7b3d1999e4ed397bd4d5825310a6f330
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          path: authored
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.TARGET_HEAD }}
+          path: source
+      - name: Apply the exact authored documentation edit
+        run: python3 authored/.opensdlc/equity-source-edits.py source
+      - name: Commit only to the expected implementation branch
+        working-directory: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_HEAD"
+          test "$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)" = "$TARGET_HEAD"
+          git diff --check
+          git add DESIGN.md
+          git -c user.name='QuaZonai web author' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'docs: define native portfolio equity curve contract (#96)'
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          git rev-parse HEAD
