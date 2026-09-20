@@ -374,7 +374,7 @@ async fn grant_expiry_after_native_work_rolls_back_configuration(pool: PgPool) {
     else {
         unreachable!()
     };
-    sqlx::query("INSERT INTO app.operator_command_grants(id,credential_id,operation,target_id,auth_epoch,authenticated_at,expires_at,normalized_nonsecret_request) VALUES($1,$2,'RUNTIME_CREATE',$3,1,clock_timestamp(),clock_timestamp()+interval '1 second',$4)")
+    sqlx::query("INSERT INTO app.operator_command_grants(id,credential_id,operation,target_id,auth_epoch,authenticated_at,expires_at,normalized_nonsecret_request) SELECT $1,$2,'RUNTIME_CREATE',$3,session_epoch,clock_timestamp(),clock_timestamp()+interval '1 second',$4 FROM app.operator_auth_state WHERE singleton")
         .bind(grant.as_uuid()).bind(credential_id.as_uuid()).bind(target.as_uuid()).bind(serde_json::to_value(&request).unwrap()).execute(&pool).await.unwrap();
     *operator_grant = Some(grant);
     let reached = Arc::new(AtomicUsize::new(0));

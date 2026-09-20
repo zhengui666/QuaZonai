@@ -80,6 +80,18 @@ export function projectEditor() {
     if (method === 'GET') {
       const runtimePage = path === '/api/v2/integrations/runtimes';
       const profilePage = path === '/api/v2/settings/codex';
+      if (path === '/api/v2/codex/models') {
+        const selected = query.get('profile_id');
+        if (!validId(selected) || query.getAll('profile_id').length !== 1
+          || [...query.keys()].some(name => name !== 'profile_id')) return invalid(method, path);
+        const profile = demoProfiles.find(item => item.id === selected);
+        if (!profile) return demoResponse('GET', path);
+        // This preview has never executed Codex; do not invent a catalog or readiness.
+        return { status: 200, value: {
+          schema_version: 1, profile_id: profile.id, profile_revision: profile.revision,
+          state: 'NEVER_PROBED', observation: null,
+        } satisfies Schema['CodexObservationV1'] };
+      }
       if (path === `/api/v2/integrations/runtimes/${demoRuntime.id}`) return { status: 200, value: demoRuntime };
       if (path === `/api/v2/integrations/runtimes/${demoRuntime.id}/readiness`) return { status: 200, value: {
         schema_version: 1, runtime_id: demoRuntime.id, integration_revision: demoRuntime.revision,

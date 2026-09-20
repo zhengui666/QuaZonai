@@ -79,7 +79,7 @@ result is claimed by this source update. Subsequent PR records must identify
 the actual tested Head and original artifacts.
 
 ## Delivery
-Not merged. This task does not certify unrelated Issue #62 acceptance.
+Delivery status and exact tested Head are recorded in [PR #99](https://github.com/zhengui666/QuaZonai/pull/99). All applicable same-Head CI, explicit clean independent review and actual merge are required. This task does not certify unrelated Issue #62 acceptance.
 
 ## Integration with the current main
 Native Git inspection35523462906/artifact10608198441 compared branchba393b87
@@ -119,3 +119,42 @@ test selection, concurrency limits, scientific rules and timeouts are unchanged.
 
 These are unverified corrections until the new Head's original workflows and
 independent read-only review complete. No owner account or machine was accessed.
+
+## Final integration regression corrections
+
+At e305899, Web35523836975 built the original Rust API and frontend, passed548
+unit tests,5PWA file tests,8service-helper tests and the separate Demo scenario.
+The full three-viewport suite passed468/471: all3 failures were the preview's
+incorrect Researcher-first assertion. The preview's model observation route
+also lacked a response; the correction returns only NEVER_PROBED/null for its
+two synthetic roles, never a fabricated native catalog, and explicitly exercises
+both role choices without assuming list order. Hosted-service acceptance was
+not reached and is not counted as passed.
+
+CI35523836841/artifact10609475872 ran all Store/Server binaries:681passed,6failed,
+0ignored/filtered. Correct the deleted verify call, local missing-record/security
+schema expectations and old-schema/epoch fixtures; retain original migration,
+expiry, cryptographic-slot, receipt and bad-Bearer checks. Native Rust contracts,
+scientific/protocol and NativeRuntime35523836792 passed at e305; source changes
+require fresh results, not reuse of those passes.
+
+Independent review5261136146 found three remaining defects: active model
+settings lacked Store-side catalog validation, and operations/reuse/dependency
+records still described removed capabilities. New active commands now reuse the
+existing native override/tier rules with the latest, unexpired, matching profile
+observation and shared-account invalidation; an older success never masks a new
+failure. Check after native-binding work and before mutation; native-default
+recovery and original receipt replay remain possible without a fresh catalog.
+Real PostgreSQL regressions cover absent/stale/expired/failed/unsupported data,
+account mutation, supported fast-only settings, and exact replay. Raw HTTP must
+not activate unobserved values or start a probe implicitly. No dependency, API
+schema, historical result or user database is changed by this correction.
+
+The first focused preparation35525522863/artifact10610195945 ran32Store
+cases successfully but rejected the new already-expired fixture at the original
+database insert guard. No application/HTTP/Web pass is inferred from skipped
+later steps. The corrected expiry case inserts a valid, short-lived relational
+fixture and observes its natural expiration on the database clock; it changes
+neither the production60s cache nor an immutable observation. The remaining
+Custom Provider sentence in DESIGN and obsolete CLI request guidance are also
+removed; historical backup provenance remains accurate.

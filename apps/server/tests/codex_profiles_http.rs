@@ -365,3 +365,29 @@ async fn account_routes_preserve_acceptance_and_observe_native_logout(pool: PgPo
     );
     assert!(!home.path().join("auth.json").exists());
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn raw_http_cannot_activate_unobserved_model_settings(pool: PgPool) {
+    let home = tempfile::tempdir().unwrap();
+    let (f, cookie) = configured(pool.clone(), home.path(), std::env::current_exe().unwrap()).await;
+    let profile = local_profile(&f, &cookie).await;
+    let id = profile["id"].as_str().unwrap();
+    let path = format!("/api/v2/settings/codex/{id}");
+    let mut settings = profile["model_settings"].clone();
+    settings["use_default_model_settings"] = json!(false);
+    settings["saved_model"] = json!("unobserved-model");
+    let request = json!({
+        "schema_version":1, "expected_revision":profile["revision"], "model_settings":settings
+    });
+    let denied = command(&f, &cookie, "unobserved", "PATCH", &path, request).await;
+    assert_eq!(denied.status, StatusCode::CONFLICT, "{}", denied.body);
+    assert_eq!(denied.body["code"], "DOMAIN_CONFLICT");
+    let current = support::call(&f, "GET", &path, Value::Null, Some(&cookie)).await;
+    assert_eq!(current.body, profile);
+    let observations: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app.codex_profile_observations")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(observations, 0, "saving must not execute a probe");
+}

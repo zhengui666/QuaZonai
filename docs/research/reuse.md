@@ -141,7 +141,7 @@ Nautilus示例复用保留原版权/LGPL声明；QZ原有AGPL/NOTICE不修改。
 |---|---|---|
 | HTTP/异步与HTTP客户端 | [Axum/Tokio](https://github.com/tokio-rs/axum)、[reqwest](https://github.com/seanmonstar/reqwest) | 产品路由、严格DTO、允许地址/权限/错误映射；不重建HTTP/TLS |
 | 持久化与投递 | [SQLx](https://github.com/launchbadge/sqlx)、[PostgreSQL](https://www.postgresql.org/docs/current/)、[PGMQ](https://github.com/pgmq/pgmq) | 同事务预算/领域/事件、Attempt租约及唯一结果采纳；PGMQ visibility不是业务authority，不能宣称外部exactly-once |
-| 认证 | [totp-rs](https://github.com/constantoine/totp-rs)、[tower-sessions](https://github.com/maxcountryman/tower-sessions)、RustCrypto AEAD | 首次本机bootstrap、TOTP防重放、会话撤销、CSRF、主体scope；不写密码学 |
+| 本机会话与机器凭据 | [tower-sessions](https://github.com/maxcountryman/tower-sessions)、RustCrypto Argon2/AEAD | 自动本机会话、撤销、Origin 与主体 scope；无验证码登录，不写密码学 |
 | MCP | [官方 Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk) | mission-scoped权限及业务桥接，不写MCP协议栈 |
 | 容器/隔离 | [Bollard](https://github.com/fussybeaver/bollard)、原生OCI/内核限制 | 固定JobSpec到容器映射/恢复及tombstone，非root/无网络/只读/资源约束；不把Prompt当隔离 |
 | Codex | [官方 App Server](https://developers.openai.com/codex/app-server)、[官方Harness架构](https://openai.com/index/unlocking-the-codex-harness/) | stdio客户端与任务/权限映射；模型工具循环、Thread历史、原生登录/刷新都交Codex |

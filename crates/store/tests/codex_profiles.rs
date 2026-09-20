@@ -401,10 +401,13 @@ async fn invalid_native_binding_rolls_back_creation_and_original_key_remains_ava
 #[sqlx::test(migrations = "../../migrations")]
 async fn model_updates_retain_native_binding_and_reject_stale_revision(pool: PgPool) {
     let (store, actor, profile) = setup(&pool).await;
+    let ticket = prepare(&store, &actor, &profile, "model-catalog").await;
+    let outcome = available(&profile, ticket.started_at);
+    store.complete_codex_probe(ticket, outcome).await.unwrap();
     let mut change = update(&profile);
     change.model_settings.use_default_model_settings = false;
     change.model_settings.saved_model = None;
-    change.model_settings.saved_reasoning_effort = Some("native-effort".into());
+    change.model_settings.saved_reasoning_effort = Some("fixture-effort".into());
     change.model_settings.saved_fast_mode = false;
     let updated = store
         .update_codex_profile(&actor, "model-only", profile.id, &change, verified)
@@ -600,8 +603,22 @@ async fn durable_probe_rows_are_immutable_and_unsupported_settings_never_overrid
     pool: PgPool,
 ) {
     let (store, actor, profile) = setup(&pool).await;
+    let catalog = prepare(&store, &actor, &profile, "explicit-catalog").await;
+    let mut outcome = available(&profile, catalog.started_at);
+    if let CodexProbeOutcomeV1::Available { models, .. } = &mut outcome {
+        models[0]
+            .capability
+            .supported_reasoning_efforts
+            .push(ReasoningEffortCapability {
+                reasoning_effort: "other-supported-effort".into(),
+                description: String::new(),
+            });
+    }
+    store.complete_codex_probe(catalog, outcome).await.unwrap();
     let mut change = update(&profile);
     change.model_settings.use_default_model_settings = false;
+    change.model_settings.saved_model = Some("fixture-model".into());
+    change.model_settings.saved_reasoning_effort = Some("other-supported-effort".into());
     change.model_settings.saved_fast_mode = false;
     let configured = store
         .update_codex_profile(&actor, "explicit", profile.id, &change, verified)
@@ -611,7 +628,7 @@ async fn durable_probe_rows_are_immutable_and_unsupported_settings_never_overrid
     let ticket = prepare(&store, &actor, &configured, "not-honored").await;
     let outcome = available(&configured, ticket.started_at);
     assert!(store.complete_codex_probe(ticket, outcome).await.is_err());
-    assert_eq!(observations(&pool).await, (0, 0));
+    assert_eq!(observations(&pool).await, (1, 1));
     let ticket = prepare(&store, &actor, &configured, "not-honored").await;
     let observed = store
         .complete_codex_probe(
@@ -638,7 +655,7 @@ async fn durable_probe_rows_are_immutable_and_unsupported_settings_never_overrid
             Some("23000")
         );
     }
-    assert_eq!(observations(&pool).await, (1, 1));
+    assert_eq!(observations(&pool).await, (2, 2));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -790,6 +807,25 @@ async fn local_roles_share_account_admission_and_invalidate_both_observations(po
             CodexObservationStateV1::Stale
         );
     }
+    let mut activation = update(&roles[1]);
+    activation.model_settings.use_default_model_settings = false;
+    activation.model_settings.saved_model = Some("fixture-model".into());
+    activation.model_settings.saved_reasoning_effort = Some("fixture-effort".into());
+    activation.model_settings.saved_fast_mode = false;
+    assert!(matches!(
+        store
+            .update_codex_profile(
+                &actor,
+                "after-shared-account-change",
+                roles[1].id,
+                &activation,
+                verified,
+            )
+            .await,
+        Err(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable(_)
+        ))
+    ));
     let observed = prepare(&store, &actor, &roles[0], "refresh-first-local-role").await;
     let outcome = available(&roles[0], observed.started_at);
     store.complete_codex_probe(observed, outcome).await.unwrap();
@@ -858,4 +894,227 @@ async fn native_account_database_guard_spans_the_two_local_roles(pool: PgPool) {
         rejected.as_database_error().unwrap().code().as_deref(),
         Some("23514")
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn new_model_overrides_require_native_support_without_blocking_defaults_or_receipt_replay(
+    pool: PgPool,
+) {
+    let (store, actor, profile) = setup(&pool).await;
+    let mut active = update(&profile);
+    active.model_settings = SavedModelSettingsV1 {
+        schema_version: SchemaV1,
+        use_default_model_settings: false,
+        saved_model: Some("fixture-model".into()),
+        saved_reasoning_effort: Some("fixture-effort".into()),
+        saved_fast_mode: false,
+    };
+    assert!(matches!(
+        store
+            .update_codex_profile(&actor, "activate", profile.id, &active, verified)
+            .await,
+        Err(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable(_)
+        ))
+    ));
+    let ticket = prepare(&store, &actor, &profile, "support").await;
+    let outcome = available(&profile, ticket.started_at);
+    store.complete_codex_probe(ticket, outcome).await.unwrap();
+    for (key, model, effort, fast) in [
+        (
+            "unknown-model",
+            Some("missing"),
+            Some("fixture-effort"),
+            false,
+        ),
+        ("unknown-effort", None, Some("missing"), false),
+        ("unknown-fast", None, None, true),
+    ] {
+        let mut invalid = active.clone();
+        invalid.model_settings.saved_model = model.map(str::to_owned);
+        invalid.model_settings.saved_reasoning_effort = effort.map(str::to_owned);
+        invalid.model_settings.saved_fast_mode = fast;
+        assert!(matches!(
+            store
+                .update_codex_profile(&actor, key, profile.id, &invalid, verified)
+                .await,
+            Err(StoreError::Domain(
+                domain::DomainError::CapabilityUnavailable(_)
+            ))
+        ));
+    }
+    let unchanged = store.codex_profile(&actor, profile.id).await.unwrap();
+    assert_eq!(unchanged.revision, profile.revision);
+    assert_eq!(unchanged.model_settings, profile.model_settings);
+    let dormant = store
+        .update_codex_profile(
+            &actor,
+            "keep-dormant",
+            profile.id,
+            &update(&profile),
+            verified,
+        )
+        .await
+        .unwrap()
+        .resource;
+    active.expected_revision = dormant.revision;
+    assert!(matches!(
+        store
+            .update_codex_profile(&actor, "activate", profile.id, &active, verified)
+            .await,
+        Err(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable(_)
+        ))
+    ));
+    let ticket = prepare(&store, &actor, &dormant, "refreshed-support").await;
+    let outcome = available(&dormant, ticket.started_at);
+    store.complete_codex_probe(ticket, outcome).await.unwrap();
+    let saved = store
+        .update_codex_profile(&actor, "activate", profile.id, &active, verified)
+        .await
+        .unwrap();
+    assert!(!saved.replayed);
+    assert_eq!(saved.resource.model_settings, active.model_settings);
+
+    let failed = prepare(&store, &actor, &saved.resource, "later-failure").await;
+    store
+        .complete_codex_probe(
+            failed,
+            CodexProbeOutcomeV1::Unavailable {
+                reason: CodexProbeFailureV1::NativeUnavailable,
+            },
+        )
+        .await
+        .unwrap();
+    let replay = store
+        .update_codex_profile(&actor, "activate", profile.id, &active, |_| async {
+            Err(StoreError::Invalid("replay_must_not_reverify"))
+        })
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(
+        serde_json::to_value(&replay.resource).unwrap(),
+        serde_json::to_value(&saved.resource).unwrap()
+    );
+    let mut fresh_command = active.clone();
+    fresh_command.expected_revision = saved.resource.revision;
+    assert!(matches!(
+        store
+            .update_codex_profile(
+                &actor,
+                "new-activation",
+                profile.id,
+                &fresh_command,
+                verified
+            )
+            .await,
+        Err(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable(_)
+        ))
+    ));
+    fresh_command.model_settings = profile.model_settings;
+    let recovered = store
+        .update_codex_profile(
+            &actor,
+            "restore-defaults",
+            profile.id,
+            &fresh_command,
+            verified,
+        )
+        .await
+        .unwrap();
+    assert!(recovered.resource.model_settings.use_default_model_settings);
+    assert_eq!(
+        recovered.resource.model_settings,
+        fresh_command.model_settings
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn expired_catalog_blocks_new_activation_without_rewriting_historical_observation(
+    pool: PgPool,
+) {
+    let (store, actor, profile) = setup(&pool).await;
+    // A short-lived relational fixture, not the production probe's 60s cache.
+    // Wait on the real database clock; never rewrite an immutable observation.
+    let observed: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let expires = observed + chrono::Duration::seconds(2);
+    let outcome = json!({"schema_version":1,"result":available(&profile, observed)});
+    let id: uuid::Uuid = sqlx::query_scalar("INSERT INTO app.codex_profile_observations(profile_id,profile_revision,observed_at,valid_until,outcome) VALUES($1,$2,$3,$4,$5) RETURNING id")
+        .bind(profile.id.as_uuid()).bind(profile.revision.get() as i64)
+        .bind(observed).bind(expires).bind(&outcome)
+        .fetch_one(&pool).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let expired: bool = sqlx::query_scalar("SELECT clock_timestamp() >= $1")
+                .bind(expires)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            if expired {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the original observation must actually expire");
+    let mut active = update(&profile);
+    active.model_settings.use_default_model_settings = false;
+    active.model_settings.saved_model = Some("fixture-model".into());
+    active.model_settings.saved_reasoning_effort = None;
+    active.model_settings.saved_fast_mode = false;
+    assert!(matches!(
+        store
+            .update_codex_profile(&actor, "expired", profile.id, &active, verified)
+            .await,
+        Err(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable(_)
+        ))
+    ));
+    let retained: serde_json::Value =
+        sqlx::query_scalar("SELECT outcome FROM app.codex_profile_observations WHERE id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(retained, outcome);
+    assert_eq!(
+        store
+            .codex_profile(&actor, profile.id)
+            .await
+            .unwrap()
+            .revision,
+        profile.revision
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn supported_native_fast_only_setting_uses_the_observed_model(pool: PgPool) {
+    let (store, actor, profile) = setup(&pool).await;
+    let ticket = prepare(&store, &actor, &profile, "native-tier").await;
+    let mut outcome = available(&profile, ticket.started_at);
+    if let CodexProbeOutcomeV1::Available { models, .. } = &mut outcome {
+        models[0].service_tiers.push(CodexServiceTierV1 {
+            id: "priority".into(),
+            name: "Native priority".into(),
+            description: String::new(),
+        });
+    }
+    store.complete_codex_probe(ticket, outcome).await.unwrap();
+    let mut active = update(&profile);
+    active.model_settings.use_default_model_settings = false;
+    active.model_settings.saved_model = None;
+    active.model_settings.saved_reasoning_effort = None;
+    active.model_settings.saved_fast_mode = true;
+    let saved = store
+        .update_codex_profile(&actor, "fast-only", profile.id, &active, verified)
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(saved.model_settings, active.model_settings);
 }

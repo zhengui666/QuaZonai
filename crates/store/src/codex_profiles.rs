@@ -15,6 +15,7 @@ use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 use std::future::Future;
 
 pub mod account;
+mod model_settings;
 
 type Tx<'a> = Transaction<'a, Postgres>;
 
@@ -287,6 +288,7 @@ impl Store {
         .await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         let settings = &request.model_settings;
+        model_settings::validate(&mut tx, &view(&old)?, settings).await?;
         let row = sqlx::query("UPDATE app.codex_profiles SET use_default_model_settings=$2,saved_model=$3,saved_reasoning_effort=$4,saved_fast_mode=$5 WHERE id=$1 RETURNING *")
             .bind(id.as_uuid()).bind(settings.use_default_model_settings)
             .bind(&settings.saved_model).bind(&settings.saved_reasoning_effort).bind(settings.saved_fast_mode).fetch_one(&mut *tx).await?;

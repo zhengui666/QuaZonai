@@ -138,7 +138,14 @@ test('synthetic preview renders native-contract records without a backend or wri
   await settingsCategory(page, 'Codex');
   await expect(page.getByRole('button', { name: '登记 Codex 配置', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '模型设置', exact: true })).toBeVisible();
-  await expect(page.getByText('SYNTHETIC · Demo Researcher', { exact: true }).first()).toBeVisible();
+  // Profiles use descending IDs, not a fixed Researcher-first ordering.
+  for (const name of ['SYNTHETIC · Demo Researcher', 'SYNTHETIC · Demo Reviewer']) {
+    await page.getByRole('combobox', { name: 'Codex 角色', exact: true }).click();
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content')
+      .filter({ hasText: name }).click();
+    await expect(page.locator('.ant-card-head-title').getByText(name, { exact: true })).toBeVisible();
+    await expect(page.getByText('未检测', { exact: true })).toBeVisible();
+  }
   const denied = await page.request.post('/api/v2/handoffs/arbitrary/claim', { data: {} });
   expect(denied.status()).toBe(403);
   expect((await denied.json()).detail).toContain('不执行');

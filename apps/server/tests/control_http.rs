@@ -657,7 +657,7 @@ async fn concurrent_issuance_materializes_only_one_verifier_and_database_failure
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn native_machine_failures_are_bounded_without_consuming_human_crypto_slots(pool: PgPool) {
+async fn native_machine_failures_are_bounded_without_blocking_local_sessions(pool: PgPool) {
     let mut f = fixture(pool.clone()).await;
     let state = server::AppState::new(
         f.store.clone(),
@@ -755,9 +755,9 @@ async fn native_machine_failures_are_bounded_without_consuming_human_crypto_slot
     assert_eq!(busy.body["code"], "CRYPTO_BUSY");
     let verified = call(
         &f,
-        "POST",
-        "/api/v2/auth/verify",
-        json!({"schema_version":1}),
+        "GET",
+        "/api/v2/auth/session",
+        Value::Null,
         Some(&cookie),
     )
     .await;

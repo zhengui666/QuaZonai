@@ -48,8 +48,8 @@ pub fn model_settings(value: &SavedModelSettingsV1) -> Result<(), DomainError> {
             }
         }
     }
-    // Availability is intentionally checked by the explicit native probe, not
-    // by saving a dormant value or selecting the "use native defaults" switch.
+    // This validates shape only. New active overrides additionally require a
+    // fresh native catalog in Store; dormant values and native defaults do not.
     Ok(())
 }
 

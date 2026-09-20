@@ -423,7 +423,7 @@ cargo run --locked -p server -- client evidence show EVALUATION_UUID
 cargo run --locked -p server -- client evidence metrics EVALUATION_UUID --limit 25
 ```
 
-写入仍按CLI全局选项携带同一幂等键和精确人工grant，不把TOTP或凭据写入请求文件。
+写入仍按CLI全局选项携带同一幂等键和精确人工grant，不把凭据写入请求文件。
 创建校验原生模型版本、有效Runtime探测、CONVEX_QP、执行镜像、政策项目及原执行
 假设，币种/资本/费用/流动性/参与率/日历须一致。无能力或引用不一致时不落版本。
 保存配置不是科学PASS、Alpha资格或Candidate/Release交付；浏览器“组合 / 组合配置”提供创建、原版本查看和构建请求。
