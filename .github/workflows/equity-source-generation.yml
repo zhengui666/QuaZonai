@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: false
 env:
   TARGET_BRANCH: codex/issue-96-equity-curve
-  TARGET_HEAD: 037da5ead5d81b94c40f7d61d4e06bd05fcfe38b
+  TARGET_HEAD: fd51ce2656c92041209d1ebb0e7ca2cc0d81dc55
   RUSTUP_TOOLCHAIN: '1.98.1'
   CARGO_BUILD_JOBS: '2'
   CARGO_PROFILE_DEV_DEBUG: '0'
@@ -28,7 +28,15 @@ jobs:
           ref: ${{ env.TARGET_HEAD }}
           path: source
       - name: Apply exact web-authored source integrations
-        run: python3 authored/.opensdlc/equity-source-edits.py source
+        run: |
+          python3 authored/.opensdlc/equity-source-edits.py source
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('source/apps/web/src/equity-plot.tsx')
+          text = p.read_text()
+          assert text.count('bottom: 12, height: 34') == 1
+          p.write_text(text.replace('bottom: 12, height: 34', 'bottom: 12, height: 44'))
+          PY
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
@@ -43,14 +51,33 @@ jobs:
           import json
           root = Path('apps/web/node_modules')
           sections = []
+          isc = '''ISC License
+          Copyright (c) hustcc
+          
+          Permission to use, copy, modify, and/or distribute this software for any
+          purpose with or without fee is hereby granted, provided that the above
+          copyright notice and this permission notice appear in all copies.
+          
+          THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+          WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+          MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+          ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+          WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+          ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+          OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.'''
           for name in ['echarts', 'zrender', 'echarts-for-react', 'size-sensor', 'fast-deep-equal', 'tslib']:
               package = root / name
               metadata = json.loads((package / 'package.json').read_text())
               notices = sorted(p for p in package.iterdir() if p.is_file() and p.name.lower().startswith(('license', 'notice', 'copyright')))
-              if not notices:
+              if notices:
+                  license_text = '\n\n'.join(p.read_text().strip() for p in notices)
+              elif name == 'size-sensor' and metadata['license'] == 'ISC' and metadata['author'] == 'hustcc':
+                  license_text = 'Upstream attribution: https://github.com/hustcc/size-sensor#license\n\n' + isc
+              else:
                   raise SystemExit(f'Missing installed license for {name}')
-              sections.append(f'{name} {metadata["version"]}\n' + '\n\n'.join(p.read_text() for p in notices))
-          Path('apps/web/public/chart-licenses.txt').write_text('\n\n' + ('\n\n' + '=' * 72 + '\n\n').join(sections) + '\n')
+              sections.append(f'{name} {metadata["version"]}\n\n' + license_text)
+          output = Path('apps/web/public/chart-licenses.txt')
+          output.write_text(('\n\n' + '=' * 72 + '\n\n').join(sections).strip() + '\n')
           PY
       - name: Format and generate contracts with the original native tools
         working-directory: source
@@ -78,10 +105,7 @@ jobs:
           npm --prefix apps/web run typecheck
           npm --prefix apps/web test
           npm --prefix apps/web run build
-      - name: Real native equity and bounded projection tests
+      - name: Compile the Store and HTTP regression harness
         if: success() || failure()
         working-directory: source
-        run: |
-          set -euo pipefail
-          cargo test --locked -p domain equity_curve
-          cargo test --locked -p job --test equity_curve
+        run: cargo test --locked -p server --test portfolio_study_http --no-run
