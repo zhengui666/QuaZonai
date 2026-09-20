@@ -148,7 +148,7 @@ pub(super) async fn verify(
                 )
                 .unwrap();
                 assert_eq!(series.points, expected.points);
-                let first = series.points[0].timestamp_ns;
+                let first = series.points[0].timestamp_ns.get();
                 let response: EquityCurveV1 = client
                     .get(format!("{}?start_ns={first}&end_ns={first}", url(id)))
                     .bearer_auth(token)
