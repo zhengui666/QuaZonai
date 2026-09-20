@@ -279,7 +279,7 @@ valid_until_ns、base_currency、cash_weight、weights。时间使用纳秒整�
 原生CLI复用统一写命令参数，但服务端按external_message_id重放，不按传输键另建消息：
 
 ```sh
-cargo run --locked -p server -- client --origin https://qz.example --credential-file downstream-token --idempotency-key original-message forward-weights < weights.json
+cargo run --locked -p server -- client --origin http://localhost:8081 --development-http --credential-file downstream-token --idempotency-key original-message forward-weights < weights.json
 ```
 
 返回201/CommandResult_DownstreamWeightsViewV1及不可变报告身份。同一项目、下游、
@@ -301,7 +301,7 @@ CLI需要目标为mandate_id、完整意图相同的PORTFOLIO_BUILD人工grant�
 返回202的原Run回执不代表Candidate已经生成或通过共享资金验证。
 
 ```sh
-cargo run --locked -p server -- client --origin https://qz.example --credential-file cli-token --idempotency-key build-original --operator-grant GRANT_UUID portfolio build < build.json
+cargo run --locked -p server -- client --origin http://localhost:8081 --development-http --credential-file cli-token --idempotency-key build-original --operator-grant GRANT_UUID portfolio build < build.json
 ```
 
 Store核对当前资格、独立Reviewer/原REAL报告、许可、原模型、Forward目录及下游

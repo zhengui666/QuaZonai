@@ -420,6 +420,7 @@ async fn inspect(
             rules::fast_tier(model).map_err(|_| CodexProbeFailureV1::ModelSettingsUnsupported)?,
         );
     }
+    let native_default_model = Some(default.model.clone());
     let effective = if options.model.is_some()
         || options.reasoning_effort.is_some()
         || options.service_tier.is_some()
@@ -441,6 +442,7 @@ async fn inspect(
                 reasoning_effort: effective.reasoning_effort,
                 service_tier: effective.service_tier,
             },
+            native_default_model,
             models,
         },
         options,

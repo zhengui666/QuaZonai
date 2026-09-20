@@ -86,6 +86,7 @@ fn available(profile: &CodexProfileViewV1, at: DateTime<Utc>) -> CodexProbeOutco
             reasoning_effort: Some("fixture-effort".into()),
             service_tier: None,
         },
+        native_default_model: Some("fixture-model".into()),
         models: vec![CodexAdvertisedModelV1 {
             capability: ModelCapabilityV1 {
                 schema_version: SchemaV1,
@@ -1117,4 +1118,198 @@ async fn supported_native_fast_only_setting_uses_the_observed_model(pool: PgPool
         .unwrap()
         .resource;
     assert_eq!(saved.model_settings, active.model_settings);
+}
+
+fn distinct_native_default(profile: &CodexProfileViewV1, at: DateTime<Utc>) -> CodexProbeOutcomeV1 {
+    let mut result = available(profile, at);
+    let CodexProbeOutcomeV1::Available {
+        effective,
+        native_default_model,
+        models,
+        ..
+    } = &mut result
+    else {
+        unreachable!()
+    };
+    let mut inherited = models[0].clone();
+    inherited.capability.id = "native-default-id".into();
+    inherited.capability.model = "native-default-model".into();
+    inherited.capability.default_reasoning_effort = "native-only".into();
+    inherited.capability.supported_reasoning_efforts = vec![ReasoningEffortCapability {
+        reasoning_effort: "native-only".into(),
+        description: String::new(),
+    }];
+    // Catalog recommendations deliberately point at A, not the configured B.
+    models[0].capability.is_default = true;
+    models[0].service_tiers.push(CodexServiceTierV1 {
+        id: "priority".into(),
+        name: "A-only priority".into(),
+        description: String::new(),
+    });
+    *native_default_model = Some(inherited.capability.model.clone());
+    if profile.model_settings.use_default_model_settings
+        || profile.model_settings.saved_model.is_none()
+    {
+        effective.model = inherited.capability.model.clone();
+        effective.reasoning_effort = Some("native-only".into());
+    }
+    models.push(inherited);
+    result
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn clearing_an_active_model_uses_the_original_native_default_capabilities(pool: PgPool) {
+    let (store, actor, profile) = setup(&pool).await;
+    let first = prepare(&store, &actor, &profile, "before-model-override").await;
+    let outcome = distinct_native_default(&profile, first.started_at);
+    store.complete_codex_probe(first, outcome).await.unwrap();
+    let mut activate = update(&profile);
+    activate.model_settings = SavedModelSettingsV1 {
+        schema_version: SchemaV1,
+        use_default_model_settings: false,
+        saved_model: Some("fixture-model".into()),
+        saved_reasoning_effort: Some("fixture-effort".into()),
+        saved_fast_mode: false,
+    };
+    let active = store
+        .update_codex_profile(&actor, "activate-A", profile.id, &activate, verified)
+        .await
+        .unwrap()
+        .resource;
+    let second = prepare(&store, &actor, &active, "observe-active-A").await;
+    let outcome = distinct_native_default(&active, second.started_at);
+    let publication = store
+        .complete_codex_probe(second, outcome)
+        .await
+        .unwrap()
+        .resource;
+    let original = serde_json::to_value(&publication).unwrap();
+    for (key, effort, fast) in [
+        ("A-effort-on-B", Some("fixture-effort"), false),
+        ("A-fast-on-B", None, true),
+    ] {
+        let mut invalid = update(&active);
+        invalid.model_settings.saved_model = None;
+        invalid.model_settings.saved_reasoning_effort = effort.map(str::to_owned);
+        invalid.model_settings.saved_fast_mode = fast;
+        assert!(matches!(
+            store
+                .update_codex_profile(&actor, key, active.id, &invalid, verified)
+                .await,
+            Err(StoreError::Domain(
+                domain::DomainError::CapabilityUnavailable(_)
+            ))
+        ));
+    }
+    assert_eq!(
+        store
+            .codex_profile(&actor, active.id)
+            .await
+            .unwrap()
+            .revision,
+        active.revision
+    );
+    let mut inherit = update(&active);
+    inherit.model_settings.saved_model = None;
+    inherit.model_settings.saved_reasoning_effort = Some("native-only".into());
+    let saved = store
+        .update_codex_profile(&actor, "inherit-B", active.id, &inherit, verified)
+        .await
+        .unwrap();
+    assert_eq!(saved.resource.model_settings, inherit.model_settings);
+    let replay = store
+        .update_codex_profile(&actor, "inherit-B", active.id, &inherit, |_| async {
+            Err(StoreError::Invalid("no_binding_work_on_replay"))
+        })
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(
+        serde_json::to_value(replay.resource).unwrap(),
+        serde_json::to_value(saved.resource).unwrap()
+    );
+    assert_eq!(observations(&pool).await, (2, 2));
+    let retained = store
+        .codex_observation(&actor, active.id)
+        .await
+        .unwrap()
+        .observation
+        .unwrap();
+    assert_eq!(serde_json::to_value(retained).unwrap(), original);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn historical_probe_without_native_default_is_readable_but_not_inherited_capability(
+    pool: PgPool,
+) {
+    let (store, actor, profile) = setup(&pool).await;
+    let at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // A relational fixture representing a pre-field immutable publication.
+    let mut result = serde_json::to_value(available(&profile, at)).unwrap();
+    result
+        .as_object_mut()
+        .unwrap()
+        .remove("native_default_model");
+    let document = json!({"schema_version":1,"result":result});
+    let id: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO app.codex_profile_observations(profile_id,profile_revision,observed_at,valid_until,outcome) VALUES($1,$2,$3,$4,$5) RETURNING id"
+    ).bind(profile.id.as_uuid()).bind(profile.revision.get() as i64).bind(at)
+        .bind(at + chrono::Duration::seconds(60)).bind(&document).fetch_one(&pool).await.unwrap();
+    let read = store
+        .codex_observation(&actor, profile.id)
+        .await
+        .unwrap()
+        .observation
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(read.outcome).unwrap(),
+        document["result"]
+    );
+    for (key, effort, fast) in [
+        ("historical-effort", Some("fixture-effort"), false),
+        ("historical-fast", None, true),
+    ] {
+        let mut inherit = update(&profile);
+        inherit.model_settings.use_default_model_settings = false;
+        inherit.model_settings.saved_model = None;
+        inherit.model_settings.saved_reasoning_effort = effort.map(str::to_owned);
+        inherit.model_settings.saved_fast_mode = fast;
+        assert!(matches!(
+            store
+                .update_codex_profile(&actor, key, profile.id, &inherit, verified)
+                .await,
+            Err(StoreError::Domain(
+                domain::DomainError::CapabilityUnavailable(_)
+            ))
+        ));
+    }
+    let mut explicit = update(&profile);
+    explicit.model_settings = SavedModelSettingsV1 {
+        schema_version: SchemaV1,
+        use_default_model_settings: false,
+        saved_model: Some("fixture-model".into()),
+        saved_reasoning_effort: Some("fixture-effort".into()),
+        saved_fast_mode: false,
+    };
+    let saved = store
+        .update_codex_profile(
+            &actor,
+            "explicit-historical-model",
+            profile.id,
+            &explicit,
+            verified,
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.resource.model_settings, explicit.model_settings);
+    let retained: serde_json::Value =
+        sqlx::query_scalar("SELECT outcome FROM app.codex_profile_observations WHERE id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(retained, document);
 }

@@ -61,6 +61,7 @@ fn available(at: chrono::DateTime<Utc>) -> CodexProbeOutcomeV1 {
             reasoning_effort: Some("native-default".into()),
             service_tier: None,
         },
+        native_default_model: Some("observed-model".into()),
         models: vec![model(at)],
     }
 }
@@ -165,6 +166,7 @@ fn incomplete_wrong_revision_stale_duplicate_or_unadvertised_catalogs_cannot_rep
             account,
             models,
             effective,
+            ..
         } = &mut invalid
         else {
             unreachable!()
@@ -234,6 +236,54 @@ fn fast_tier_requires_exact_native_advertisement_and_custom_cannot_fall_back_to_
     assert!(probe_outcome(
         &observation,
         &saved,
+        ConnectionMode::System,
+        Revision::INITIAL,
+        at,
+        at
+    )
+    .is_ok());
+}
+
+#[test]
+fn native_default_provenance_is_required_for_new_probes_but_old_records_remain_readable() {
+    let at = Utc::now();
+    let mut wire = serde_json::to_value(available(at)).unwrap();
+    wire.as_object_mut().unwrap().remove("native_default_model");
+    let historical: CodexProbeOutcomeV1 = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&historical).unwrap(), wire);
+    assert!(probe_outcome(
+        &historical,
+        &defaults(),
+        ConnectionMode::System,
+        Revision::INITIAL,
+        at,
+        at
+    )
+    .is_err());
+    for name in ["", " ", "not-the-inherited-model"] {
+        wire["native_default_model"] = serde_json::json!(name);
+        let invalid: CodexProbeOutcomeV1 = serde_json::from_value(wire.clone()).unwrap();
+        assert!(probe_outcome(
+            &invalid,
+            &defaults(),
+            ConnectionMode::System,
+            Revision::INITIAL,
+            at,
+            at
+        )
+        .is_err());
+    }
+    // A genuinely active model can differ from the native default. This does not
+    // grant the inherited model any capabilities or change the catalog marker.
+    let mut explicit = defaults();
+    explicit.use_default_model_settings = false;
+    explicit.saved_model = Some("observed-model".into());
+    explicit.saved_reasoning_effort = None;
+    explicit.saved_fast_mode = false;
+    let active: CodexProbeOutcomeV1 = serde_json::from_value(wire).unwrap();
+    assert!(probe_outcome(
+        &active,
+        &explicit,
         ConnectionMode::System,
         Revision::INITIAL,
         at,

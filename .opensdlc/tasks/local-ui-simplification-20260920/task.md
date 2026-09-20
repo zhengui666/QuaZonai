@@ -158,3 +158,28 @@ fixture and observes its natural expiration on the database clock; it changes
 neither the production60s cache nor an immutable observation. The remaining
 Custom Provider sentence in DESIGN and obsolete CLI request guidance are also
 removed; historical backup provenance remains accurate.
+
+## Native-default model provenance correction
+
+Review5261270900 on26a46a2 found that clearing an active model reused the
+post-override effective model to validate effort/Fast, and two CLI examples
+still used a public origin. Issue98 comment5753259522 owns the field-level plan.
+
+The adapter already observes an override-free Thread; retain its model as
+`native_default_model` separately from `effective.model`. New publications
+require this provenance. The optional wire shape only permits historical
+observations to remain readable without rewriting them; absent provenance
+does not authorize inherited effort/Fast. Store/UI use the native default when
+the model is cleared and retain original receipt replay and native recovery.
+No configuration parser, probe on save, dependency or database migration is
+introduced. Tests cover divergent model capabilities, misleading catalog
+defaults, historical records, both browser themes and actual native B→A→B
+Thread observations with zero Responses calls. CLI examples use the actual
+loopback origin and matching HTTP flag.
+
+All five original26a46a2 workflows completed successfully (CI35526549909,
+Web35526549879,Runtime35526549926,PersonalHosting35526549873,CodeQL35526549901).
+They do not approve this later source change. Native formatting/generation and
+focused regression preparation, fresh full PR CI and independent read-only
+review are required. No merge, private account, user-host operation or #62
+completion is claimed by this source record.
