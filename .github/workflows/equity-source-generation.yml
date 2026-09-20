@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: false
 env:
   TARGET_BRANCH: codex/issue-96-equity-curve
-  TARGET_HEAD: fa8e27adcf783e0238ca13e3dafdec84f8be6388
+  TARGET_HEAD: 037da5ead5d81b94c40f7d61d4e06bd05fcfe38b
   RUSTUP_TOOLCHAIN: '1.98.1'
   CARGO_BUILD_JOBS: '2'
   CARGO_PROFILE_DEV_DEBUG: '0'
@@ -38,6 +38,20 @@ jobs:
           set -euo pipefail
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
           npm --prefix apps/web install --save-exact echarts@6.1.0 echarts-for-react@3.0.6 --ignore-scripts --no-audit --no-fund
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          root = Path('apps/web/node_modules')
+          sections = []
+          for name in ['echarts', 'zrender', 'echarts-for-react', 'size-sensor', 'fast-deep-equal', 'tslib']:
+              package = root / name
+              metadata = json.loads((package / 'package.json').read_text())
+              notices = sorted(p for p in package.iterdir() if p.is_file() and p.name.lower().startswith(('license', 'notice', 'copyright')))
+              if not notices:
+                  raise SystemExit(f'Missing installed license for {name}')
+              sections.append(f'{name} {metadata["version"]}\n' + '\n\n'.join(p.read_text() for p in notices))
+          Path('apps/web/public/chart-licenses.txt').write_text('\n\n' + ('\n\n' + '=' * 72 + '\n\n').join(sections) + '\n')
+          PY
       - name: Format and generate contracts with the original native tools
         working-directory: source
         run: |
@@ -46,16 +60,7 @@ jobs:
           cargo run --locked -q -p contracts --example generate > contracts/generated/domain-v1.openapi.json
           cargo run --locked -q -p server -- openapi > contracts/generated/api-v2.openapi.json
           npm --prefix apps/web run generate
-          npm --prefix apps/web run typecheck
-          npm --prefix apps/web test
-          npm --prefix apps/web run build
-      - name: Real native equity and bounded projection tests
-        working-directory: source
-        run: |
-          set -euo pipefail
-          cargo test --locked -p domain equity_curve
-          cargo test --locked -p job --test equity_curve
-      - name: Publish only on the expected implementation Head
+      - name: Publish source and native-generated files to the implementation branch
         working-directory: source
         run: |
           set -euo pipefail
@@ -66,3 +71,17 @@ jobs:
           git -c user.name='QuaZonai web author' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'feat: integrate native equity projection, generated contracts and chart dependencies (#96)'
           git push origin "HEAD:refs/heads/$TARGET_BRANCH"
           git rev-parse HEAD
+      - name: Typecheck, unit tests and production build
+        working-directory: source
+        run: |
+          set -euo pipefail
+          npm --prefix apps/web run typecheck
+          npm --prefix apps/web test
+          npm --prefix apps/web run build
+      - name: Real native equity and bounded projection tests
+        if: success() || failure()
+        working-directory: source
+        run: |
+          set -euo pipefail
+          cargo test --locked -p domain equity_curve
+          cargo test --locked -p job --test equity_curve
