@@ -302,7 +302,7 @@ jobs:
           export QZ_TEST_UNSHARE=/tmp/store-evidence/unshare
           # Isolated native homes and synthetic Responses only, never real credentials.
           # Includes native account/HTTP and App Server -> stdio MCP -> HTTP -> PG.
-          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p store -p server --features server/native-codex -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked --no-fail-fast -p store -p server --features server/native-codex -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
           git diff --exit-code
       - name: Remove the job-only native sandbox profile
         if: always()
