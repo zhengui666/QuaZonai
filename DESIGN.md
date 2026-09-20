@@ -48,7 +48,8 @@
 | 验收范围 | 本次交付处理 | 保留义务 |
 |---|---|---|
 | T07 专用官方订阅账号登录、取消、注销及持久登录状态实测 | 已完成（所有者豁免，未执行） | 保留产品登录功能和现有无凭据原生协议/状态测试；不伪造登录成功或令牌清理结果 |
-| T03–T05、T08、T42 中必须由专用真实账号/Provider 凭据执行的在线账号及付费推理部分 | 仅该账号依赖部分已完成（所有者豁免，未执行） | 无凭据可执行的原生配置/模型目录、同 Thread 工具与结果消费、实际科学计算、独立评估及完整业务入口仍须验证；不得将整项 T08/T42 自动完成 |
+| T03、T04、T08、T42 中必须由专用真实原生账号执行的在线账号及付费推理部分 | 仅该账号依赖部分已完成（所有者豁免，未执行） | 无凭据可执行的原生配置/模型目录、同 Thread 工具与结果消费、实际科学计算、独立评估及完整业务入口仍须验证；不得将整项 T08/T42 自动完成 |
+| 第0.5节替代后的 T05 本机配置所有权及旧接口拒绝 | 不属于账号豁免 | 原生配置发现、不注入服务凭据、不读写认证文件及旧 Provider/目录注册拒绝均须验证；旧 T05 已被替代，不记为通过 |
 | 本机会话、数据真实性与许可、旧快照迁移、预算、Sealed/Reviewer、组合/交付、恢复及部署 | 未被账号豁免 | 按当前合同及实际结果验收；本机入口以第0.5节为准 |
 
 验收索引将这类范围关闭明确表示为 `COMPLETED_BY_OWNER_WAIVER`，执行事实为 `NOT_RUN`，证据为所有者授权；它不是 `PASSED`，不计入实际测试通过数，不生成虚假的命令、登录、推理、用量或测试报告。这些只是文档状态，不新增数据库字段、执行开关或合并平台。专用账号不再是本次交付的待办、阻塞或要求用户补充的输入；除非所有者另行恢复该项范围，不重复索取账号或重新打开它。
@@ -69,6 +70,9 @@
   不把旧会话复活。数据库迁移启用本地会话并提高认证 epoch，旧数据和历史密钥
   不删除。授权恢复仍废止旧机器能力、会话与一次性命令授权。
 - **本机边界**：API 仅接受 loopback 监听与 loopback 公共地址，包括 HTTPS；
+  `localhost` 或字面量 loopback IPv4/IPv6 使用同一规则贯穿 CLI、Worker、
+  原生 Thread 与 MCP；HTTP 必须显式启用，传递实际 PUBLIC_URL，不替换主机名。
+  独立 Runtime/Downstream 的字面量 loopback HTTP 端点规则不变。
   保留 Host、Origin 与机器 Bearer 的原生校验。错误 Bearer 不能回退成浏览器身份。
   CLI 的精确命令授权不再要求验证码，但仍只允许有效 CLI 能力、原始请求、
   原始目标及原有有效期；Agent、Mission、Automation 不获得 Operator 权限。
@@ -3252,7 +3256,7 @@ HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本
 
 ### B2.1 原生 HTTP CLI 与共同错误合同
 
-实际发行入口为同一 `server` 二进制的 `client` 子命令，不另外创建兼容别名目录或数据库CLI。CLI以固定命令映射复用Rust请求与响应DTO；`--origin`只接受显式HTTPS origin，`--credential-file`读取Unix私有文件中的现有qz2机器凭据，`--ca-certificate`可选择原生CA。仅同时明确 `--development-http` 与字面量loopback才允许HTTP；禁止关闭TLS校验、代理、重定向、隐式重试、任意URL、SQL或SecretVault读取。CLI操作数据库与读取生产Provider凭据不在此入口的能力中。
+实际发行入口为同一 `server` 二进制的 `client` 子命令，不另外创建兼容别名目录或数据库CLI。CLI以固定命令映射复用Rust请求与响应DTO；`--origin`只接受本机 `localhost` 或字面量 loopback IPv4/IPv6 的显式 origin，`--credential-file`读取Unix私有文件中的现有qz2机器凭据，`--ca-certificate`可选择原生CA。默认使用HTTPS；显式 `--development-http` 后允许这些本机地址使用HTTP，并与服务器 PUBLIC_URL 一致。该规则同样适用于 Worker/Mission/MCP 控制面入口，不改变 Runtime/Downstream 的独立字面量IP规则；禁止关闭TLS校验、代理、重定向、隐式重试、任意URL、SQL或SecretVault读取。CLI操作数据库与读取生产Provider凭据不在此入口的能力中。
 
 写入从stdin读取最多16MiB严格JSON，未知字段、错误UUID/十进制版本与不匹配父资源绑定拒绝。每次写入要求用户给定 `--idempotency-key`；受保护管理命令另需 `--operator-grant`，其值仅进入既有 `X-Operator-Grant` Header。`operator-grant`命令以完整OperatorGrantRequest向正式本机接口申请单次grant，不取得持久Operator权限，不自动续期。结果未知时只允许用户以原命令/key/正文显式重放，CLI不自动换key、重复发送或把失败写为成功。
 
@@ -3719,7 +3723,7 @@ GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重�
 
 ## B8. 完整自动化验收矩阵 T01–T42
 
-全部是本次交付项；共享基础fixture不等于空断言。每项输出CI日志、输入版本、产物/截图。真实收益不是预设必须出现的结果。
+以下是按第0.4/0.5节修订后的交付项；旧 T05 自定义Provider已被本机配置所有权替代，不继续要求不存在的路由，也不将删除旧场景当作通过。共享基础fixture不等于空断言。每项输出CI日志、输入版本、产物/截图。真实收益不是预设必须出现的结果。
 
 | ID | 场景 | 必须证明 |
 |---|---|---|
@@ -3727,7 +3731,7 @@ GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重�
 | T02 | 无凭据Demo | 一条文档命令完整UI演示；synthetic/fixture明显且不能生产领取 |
 | T03 | 原生Codex SYSTEM | 空QZ URL/key不覆盖native配置；真实stdio使用既有profile，无自动删/复制auth.json |
 | T04 | SYSTEM+effort | model=null、合法非空effort生效，来源不变，default开关保留保存值 |
-| T05 | 自定义Provider | 显式route/key，失败不偷用订阅，inactive凭据不注入 |
+| T05 | 本机 Codex 配置唯一所有权 | 自动发现同一 OS 用户的 PATH/HOME/CODEX_HOME；拒绝项目内 Provider/URL/key/目录注册，不注入环境中的服务凭据，不复制 auth.json 或改写 config.toml；两原生角色独立身份且共享账号操作正确协调；无凭据回归必执行，不属账号豁免 |
 | T06 | 动态模型目录 | 全分页，Slider marks来自supported efforts；未知报错不降档 |
 | T07 | 官方订阅原生登录 | 本次已完成（所有者豁免，未执行），见[第0.4节](#acceptance-scope)；保留原生账号功能及无凭据回归，token不进QZ DB/日志 |
 | T08 | Agent真闭环 | tool→真实job/evaluation→同thread消费结果→引用真实证据结论，不scripted UI假成功 |

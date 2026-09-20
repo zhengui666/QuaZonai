@@ -83,7 +83,8 @@ The [owner authorization](https://github.com/zhengui666/QuaZonai/issues/62#issue
 | Contract / portion | Delivery status and evidence boundary |
 |---|---|
 | T07 dedicated live subscription account | **Completed by owner waiver — NOT_RUN.** No actual login/logout/paid inference is claimed; product account functionality and credential-free protocol checks remain. |
-| Dedicated-account portions of T03–T05/T08/T42 | **Completed by owner waiver — NOT_RUN.** Not a waiver of whole T08/T42, SYSTEM/CUSTOM configuration, model directory or user workflow. |
+| Dedicated-account portions of T03/T04/T08/T42 | **Completed by owner waiver — NOT_RUN.** Not a waiver of whole T08/T42, native configuration discovery, model directory or user workflow. |
+| T05 native-only configuration ownership | **Mandatory credential-free regression.** DESIGN0.5 supersedes the former custom-Provider acceptance; its removal is neither a waiver nor a pass. Verify native discovery, absence of application-managed Provider/key/home registration or credential injection, and shared local-account coordination. |
 | T02 | Accepted scoped one-command Demo, history/non-delivery and three-viewport checks remain synthetic, not scientific/T42 acceptance. |
 | T08 non-account connected loop | **Declared Worker/scientific feedback accepted in PR #92, supplementary report/restart in PR #93 and connected independent Reviewer/Sealed in PR #94.** Controlled Provider and FIXTURE data remain unqualified; no account scope is reopened. |
 | T39 | **Remaining:** owner-selected legacy snapshot/artifacts, precision/relationships and old qualification handling. No snapshot waiver was given. |

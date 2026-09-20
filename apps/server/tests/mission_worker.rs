@@ -255,7 +255,7 @@ async fn fixture_with_trigger(
     sessions.migrate().await.unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let origin = format!("http://{address}");
+    let origin = format!("http://localhost:{}", address.port());
     let app = server::router(
         AppState::new(
             store.clone(),

@@ -150,7 +150,7 @@ pub async fn fixture(pool: &PgPool, scopes: &[&str]) -> Fixture {
     .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let origin = format!("http://{address}");
+    let origin = format!("http://localhost:{}", address.port());
     PostgresStore::new(pool.clone()).migrate().await.unwrap();
     let app = server::router(
         AppState::new(

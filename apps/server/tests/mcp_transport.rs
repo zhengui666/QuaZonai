@@ -148,7 +148,7 @@ async fn api() -> Api {
         let _: contracts::brief::BriefView = serde_json::from_value(values.brief.clone()).unwrap();
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let origin = format!("http://localhost:{}", listener.local_addr().unwrap().port());
     let router = Router::new().fallback(reply).with_state(state.clone());
     let task = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();

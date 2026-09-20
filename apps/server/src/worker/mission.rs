@@ -384,7 +384,7 @@ impl MissionLauncher {
         api_origin: String,
         development_http: bool,
     ) -> Result<Self, WorkerFailure> {
-        domain::settings::endpoint(&api_origin, development_http)
+        crate::WebPolicy::new(&api_origin, ([127, 0, 0, 1], 0).into(), development_http)
             .map_err(|_| WorkerFailure::Contract)?;
         if !workspace_root.is_absolute() || !server_binary.is_absolute() || !server_binary.is_file()
         {

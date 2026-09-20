@@ -17,31 +17,17 @@ use contracts::{
 use reqwest::{header, redirect::Policy, Client};
 use serde::{de::DeserializeOwned, Serialize};
 use std::time::Duration;
-use url::{Host, Url};
+use url::Url;
 
 pub(super) const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 pub(super) fn origin(value: &str, development_http: bool) -> Result<Url, Failure> {
-    let parsed = Url::parse(value).map_err(|_| Failure::Configuration)?;
-    if value.trim() != value
-        || parsed.host().is_none()
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
-        || parsed.path() != "/"
-    {
+    if value.trim() != value {
         return Err(Failure::Configuration);
     }
-    let loopback = match parsed.host() {
-        Some(Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(Host::Ipv6(ip)) => ip.is_loopback(),
-        _ => false,
-    };
-    if parsed.scheme() != "https" && !(parsed.scheme() == "http" && development_http && loopback) {
-        return Err(Failure::Configuration);
-    }
-    Ok(parsed)
+    crate::WebPolicy::new(value, ([127, 0, 0, 1], 0).into(), development_http)
+        .map_err(|_| Failure::Configuration)?;
+    Url::parse(value).map_err(|_| Failure::Configuration)
 }
 
 // Deliberately no Debug: the HTTP client contains a sensitive Authorization header.
@@ -322,9 +308,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn origin_never_accepts_ambient_or_nonlocal_http_authority() {
+    fn origin_matches_the_local_console_without_ambient_authority() {
         for url in [
-            "http://localhost",
+            "http://192.168.1.1",
             "http://research.example",
             "ftp://127.0.0.1",
             "https://user:secret@research.example",
@@ -333,12 +319,20 @@ mod tests {
             "https://research.example#token",
             " https://research.example",
             "https://research.example ",
+            " http://localhost",
+            "http://localhost ",
         ] {
             assert!(origin(url, true).is_err());
         }
         assert!(origin("http://127.0.0.1:8080", false).is_err());
         assert!(origin("http://127.0.0.1:8080", true).is_ok());
         assert!(origin("http://[::1]:8080", true).is_ok());
-        assert!(origin("https://research.example", false).is_ok());
+        assert!(origin("http://localhost:8081", false).is_err());
+        assert_eq!(
+            origin("http://localhost:8081", true).unwrap().as_str(),
+            "http://localhost:8081/"
+        );
+        assert!(origin("https://localhost", false).is_ok());
+        assert!(origin("https://research.example", false).is_err());
     }
 }

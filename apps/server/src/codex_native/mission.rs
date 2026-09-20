@@ -29,8 +29,12 @@ impl MissionOptions {
         {
             return Err(NativeFailure::Configuration);
         }
-        domain::settings::endpoint(&self.api_origin, self.development_http)
-            .map_err(|_| NativeFailure::Configuration)?;
+        crate::WebPolicy::new(
+            &self.api_origin,
+            ([127, 0, 0, 1], 0).into(),
+            self.development_http,
+        )
+        .map_err(|_| NativeFailure::Configuration)?;
         if let Some(token) = &self.token {
             integrations::authentication::machine_token(token)
                 .map_err(|_| NativeFailure::Configuration)?;
@@ -234,7 +238,7 @@ mod tests {
         let mut options = ThreadOptions::read_only(root.path().to_path_buf());
         options.mission = Some(MissionOptions {
             server_binary: std::env::current_exe().unwrap(),
-            api_origin: "http://127.0.0.1:8080".into(),
+            api_origin: "http://localhost:8081".into(),
             development_http: true,
             binding: MissionBinding {
                 project_id: Id::new(),
@@ -264,6 +268,13 @@ mod tests {
             assert!(server.get("default_tools_approval_mode").is_none());
             assert_eq!(server["enabled"], true);
             assert_eq!(server["required"], true);
+            let arguments = server["args"].as_array().unwrap();
+            let origin = arguments
+                .iter()
+                .position(|arg| arg == "--api-origin")
+                .unwrap();
+            assert_eq!(arguments[origin + 1], "http://localhost:8081");
+            assert!(arguments.iter().any(|arg| arg == "--development-http"));
             let permission = request["permissions"].as_str().unwrap();
             assert_eq!(
                 request["config"]["permissions"][permission]["network"]["enabled"],
@@ -282,6 +293,21 @@ mod tests {
             assert_eq!(server["required"], false);
             assert!(server.get("tools").is_none() && server.get("env").is_none());
             assert!(server.get("default_tools_approval_mode").is_none());
+        }
+        for (origin, development_http) in [
+            ("http://localhost:8081", false),
+            ("https://research.example", false),
+            ("http://192.168.1.1:8081", true),
+            ("http://localhost:8081/api", true),
+        ] {
+            let mission = options.mission.as_mut().unwrap();
+            mission.api_origin = origin.into();
+            mission.development_http = development_http;
+            assert!(options.start_params().is_err(), "{origin}");
+            assert!(
+                options.resume_params("original-thread").is_err(),
+                "{origin}"
+            );
         }
     }
 }
