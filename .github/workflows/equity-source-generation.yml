@@ -25,7 +25,9 @@ jobs:
           ref: ${{ env.TARGET_HEAD }}
           path: source
       - name: Apply the exact authored documentation edit
-        run: python3 authored/.opensdlc/equity-source-edits.py source
+        run: |
+          python3 authored/.opensdlc/equity-source-edits.py source
+          python3 -c 'from pathlib import Path; p=Path("source/DESIGN.md"); p.write_text(p.read_text().rstrip()+"\n")'
       - name: Commit only to the expected implementation branch
         working-directory: source
         run: |
