@@ -70,7 +70,7 @@ jobs:
           corrections=json.loads(pathlib.Path('.github/local-console-review-corrections.json').read_text())
           for correction in corrections:
               path=pathlib.Path(correction['path'])
-              assert str(path) in {'crates/store/tests/codex_profiles.rs','DESIGN.md','CLI.md','.opensdlc/tasks/local-ui-simplification-20260920/task.md'}
+              assert str(path) in {'crates/store/tests/codex_profiles.rs','DESIGN.md','CLI.md','apps/server/tests/codex_profiles_http.rs','.opensdlc/tasks/local-ui-simplification-20260920/task.md'}
               if str(path) not in prepared:
                   subprocess.run(['git','diff','--exit-code',os.environ['SOURCE_BASE'],'--',str(path)],check=True)
                   prepared[str(path)]=path.read_text()
