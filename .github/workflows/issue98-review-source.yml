@@ -65,7 +65,13 @@ jobs:
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt
           cargo fmt --all 2>&1 | tee /tmp/issue98-review-evidence/format.log
           cargo fmt --all -- --check
-      - name: Publish a separate candidate, without changing the PR branch
+      - name: Preserve the workflow edit for the authorized GitHub file tool
+        run: |
+          set -euo pipefail
+          cp .github/workflows/ci.yml /tmp/issue98-review-evidence/ci.authored.yml
+          git checkout "$SOURCE_BASE" -- .github/workflows/ci.yml
+          git diff --exit-code -- .github
+      - name: Publish source-only candidate without changing the PR branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -73,8 +79,12 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'fix: bind local Codex roles safely and complete no-login theme regressions'
+          git commit -m 'fix: bind local Codex roles and complete no-login theme regressions'
           test "$(git rev-parse HEAD^)" = "$SOURCE_BASE"
+          git rev-parse HEAD > /tmp/issue98-review-evidence/candidate-commit.txt
+          printf '%s\n' "$SOURCE_BASE" > /tmp/issue98-review-evidence/base-commit.txt
+          git archive HEAD | gzip > /tmp/issue98-review-evidence/source.tar.gz
+          printf 'Literal authored text and native formatting only. The one-line CI correction is separate ci.authored.yml, not in this candidate. No application tests, model execution, review or merge.\n' > /tmp/issue98-review-evidence/SCOPE.txt
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
           remote=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin refs/heads/codex/local-ui-simplification-20260920 | cut -f1)
@@ -83,9 +93,6 @@ jobs:
           test -z "$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin "$result")"
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:$result"
           git rev-parse HEAD > /tmp/issue98-review-evidence/published-commit.txt
-          printf '%s\n' "$SOURCE_BASE" > /tmp/issue98-review-evidence/base-commit.txt
-          git archive HEAD | gzip > /tmp/issue98-review-evidence/source.tar.gz
-          printf 'Literal authored text and native formatting only. No application tests or model execution. Candidate is not yet the PR Head, reviewed or merged.\n' > /tmp/issue98-review-evidence/SCOPE.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
