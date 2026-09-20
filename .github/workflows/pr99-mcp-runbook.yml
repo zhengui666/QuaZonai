@@ -1,0 +1,77 @@
+name: PR99 MCP runbook synchronization
+on:
+  push:
+    branches: [codex/pr99-mcp-doc-origin-20260921]
+permissions:
+  contents: read
+jobs:
+  materialize:
+    if: github.repository == 'zhengui666/QuaZonai' && github.ref == 'refs/heads/codex/pr99-mcp-doc-origin-20260921'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      EXPECTED_HEAD: ${{ github.sha }}
+      SOURCE_BASE: 663d95d2e065abcfbfd26e3dd762fa478f121b04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply the exact authored runbook paragraph
+        id: edit
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_BASE"
+          mkdir -p /tmp/pr99-mcp-runbook
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('CLI.md')
+          text = path.read_text()
+          old = '传入，不提供 token 命令行参数，也不要写入对话、Issue 或日志。生产必须 HTTPS origin，\n不能带 userinfo、额外路径、query 或 fragment；开发 HTTP 还须显式 `--development-http`\n并使用字面 loopback IP。禁止环境代理、Cookie、重定向和自动重试。'
+          new = '传入，不提供 token 命令行参数，也不要写入对话、Issue 或日志。控制面 origin 必须与\nPUBLIC_URL 一致，使用 localhost 或 loopback IPv4/IPv6；HTTPS 仍校验证书，HTTP 须\n显式 `--development-http`。不能带 userinfo、额外路径、query 或 fragment。\n此规则统一用于 Worker、原生 Thread start/resume 和 MCP，不改变 Runtime/Downstream\n开发端点的字面 IP 规则。禁止环境代理、Cookie、重定向和自动重试。'
+          assert text.count(old) == 1
+          path.write_text(text.replace(old,new))
+          PY
+          test "$(git diff --name-only)" = CLI.md
+          git diff --check
+          git diff -- CLI.md > /tmp/pr99-mcp-runbook/authored.diff
+      - name: Publish only the isolated documentation branch
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/pr99-mcp-runbook.yml
+          git add CLI.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: align the remaining MCP runbook with the local origin policy'
+          test "$(git diff "$SOURCE_BASE" --name-only)" = CLI.md
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          remote=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin refs/heads/codex/pr99-mcp-doc-origin-20260921 | cut -f1)
+          test "$remote" = "$EXPECTED_HEAD"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/codex/pr99-mcp-doc-origin-20260921
+          git rev-parse HEAD > /tmp/pr99-mcp-runbook/published-commit.txt
+      - name: Record source and exact outcomes
+        if: always()
+        env:
+          RESULTS: ${{ toJSON(steps) }}
+        run: |
+          mkdir -p /tmp/pr99-mcp-runbook
+          printf '%s\n' "$RESULTS" > /tmp/pr99-mcp-runbook/steps.json
+          printf '%s\n' "$EXPECTED_HEAD" > /tmp/pr99-mcp-runbook/input-commit.txt
+          git add -A
+          git archive "$(git write-tree)" | gzip > /tmp/pr99-mcp-runbook/source.tar.gz
+          printf 'Literal documentation synchronization only. This workflow executes no product tests. Full final-Head CI and independent read-only review remain required.\n' > /tmp/pr99-mcp-runbook/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: pr99-mcp-runbook-${{ github.run_id }}
+          path: /tmp/pr99-mcp-runbook
+          retention-days: 7
+          if-no-files-found: error
