@@ -17,6 +17,7 @@ uuid = { version = "=1.26.0", features = ["v7", "serde"] }
 chrono = { version = "=0.4.45", features = ["serde"] }
 bigdecimal = { version = "=0.4.8", features = ["serde"] }
 thiserror = "=2.0.20"
+tokio = { version = "=1.53.1", features = ["rt"] }
 
 [dev-dependencies]
 integrations = { path = "../integrations" }
