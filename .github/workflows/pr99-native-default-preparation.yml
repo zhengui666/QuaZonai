@@ -1,0 +1,144 @@
+name: PR99 native default preparation
+on:
+  push:
+    branches: [codex/pr99-native-default-20260921]
+permissions:
+  contents: read
+concurrency:
+  group: pr99-native-default-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.repository == 'zhengui666/QuaZonai' && github.ref == 'refs/heads/codex/pr99-native-default-20260921'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    services:
+      postgres:
+        image: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: disposable-native-default-test
+          POSTGRES_DB: postgres
+        ports:
+          - 127.0.0.1:55434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EXPECTED_HEAD: ${{ github.sha }}
+      SOURCE_BASE: 26a46a2d75c0a26b41d21eda4f5df817101ce23d
+      RUSTUP_TOOLCHAIN: '1.98.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      DATABASE_URL: postgresql://postgres:disposable-native-default-test@127.0.0.1:55434/postgres
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply exact assistant-authored source
+        id: apply
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pr99-native-default
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_BASE"
+          git apply --check .github/pr99-native-default-1.patch .github/pr99-native-default-2.patch
+          git apply .github/pr99-native-default-1.patch .github/pr99-native-default-2.patch
+          git diff --name-only > /tmp/pr99-native-default/authored-paths.txt
+          printf '%s\n' "$EXPECTED_HEAD" > /tmp/pr99-native-default/input-commit.txt
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Native formatter and locked dependencies
+        id: setup
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          cargo fmt --all
+          npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
+          npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
+          native="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          test "$("$native" --version)" = 'codex-cli 0.144.4'
+          echo "CODEX_NATIVE_BIN=$native" >> "$GITHUB_ENV"
+      - name: Domain publication and real Store regressions
+        id: store
+        run: |
+          set -euo pipefail
+          cargo test --locked -p domain --test codex_profiles 2>&1 | tee /tmp/pr99-native-default/domain.log
+          cargo test --locked --no-fail-fast -p store --test codex_profiles -- --test-threads=4 2>&1 | tee /tmp/pr99-native-default/store.log
+      - name: Actual native App Server and HTTP model transitions
+        id: native
+        run: |
+          set -euo pipefail
+          cargo test --locked --no-fail-fast -p server --features native-codex --test codex_profiles_http -- --test-threads=4 2>&1 | tee /tmp/pr99-native-default/native-http.log
+          cargo clippy --locked -p domain -p store --test codex_profiles -- -D warnings 2>&1 | tee /tmp/pr99-native-default/profile-clippy.log
+          cargo clippy --locked -p server --features native-codex --test codex_profiles_http -- -D warnings 2>&1 | tee /tmp/pr99-native-default/http-clippy.log
+      - name: Generate contracts from their actual Rust owners
+        id: generate
+        run: |
+          set -euo pipefail
+          cargo run --locked -q -p contracts --example generate > /tmp/pr99-native-default/domain-v1.openapi.json
+          mv /tmp/pr99-native-default/domain-v1.openapi.json contracts/generated/domain-v1.openapi.json
+          cargo run --locked -q -p server -- openapi > /tmp/pr99-native-default/api-v2.openapi.json
+          mv /tmp/pr99-native-default/api-v2.openapi.json contracts/generated/api-v2.openapi.json
+          npm --prefix apps/web run build 2>&1 | tee /tmp/pr99-native-default/web-build.log
+          npm --prefix apps/web test 2>&1 | tee /tmp/pr99-native-default/web-unit.log
+      - name: Three-viewport native-settings browser regressions
+        id: browser
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          npx --no-install playwright install --with-deps chromium
+          npm run test:e2e -- tests/codex-settings.spec.ts 2>&1 | tee /tmp/pr99-native-default/browser.log
+      - name: Remove preparation inputs and publish only the prepared branch
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code "$SOURCE_BASE" -- Cargo.lock apps/web/package-lock.json runtimes/codex/package-lock.json migrations .github/workflows/ci.yml .github/workflows/web.yml .github/workflows/native-runtime.yml .github/workflows/personal-hosting.yml .github/workflows/codeql.yml
+          python3 - <<'PY'
+          import subprocess
+          from pathlib import Path
+          authored = set(Path('/tmp/pr99-native-default/authored-paths.txt').read_text().splitlines())
+          changed = set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
+          assert all(path in authored or path.startswith(('contracts/generated/','apps/web/src/generated/')) for path in changed)
+          PY
+          git rm .github/pr99-native-default-1.patch .github/pr99-native-default-2.patch .github/workflows/pr99-native-default-preparation.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: retain native default model provenance when clearing overrides'
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          remote=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin refs/heads/codex/pr99-native-default-20260921 | cut -f1)
+          test "$remote" = "$EXPECTED_HEAD"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/codex/pr99-native-default-20260921
+          git rev-parse HEAD > /tmp/pr99-native-default/published-commit.txt
+      - name: Preserve original results and source
+        if: always()
+        env:
+          STEP_RESULTS: ${{ toJSON(steps) }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pr99-native-default
+          printf '%s\n' "$STEP_RESULTS" > /tmp/pr99-native-default/steps.json
+          printf '%s\n' "$EXPECTED_HEAD" > /tmp/pr99-native-default/input-commit.txt
+          git add -A
+          git archive "$(git write-tree)" | gzip > /tmp/pr99-native-default/source.tar.gz
+          git diff "$SOURCE_BASE" --stat > /tmp/pr99-native-default/diff-stat.txt
+          if test -d apps/web/test-results; then cp -R apps/web/test-results /tmp/pr99-native-default/browser-results; fi
+          printf 'Focused preparation only. Missing, failed and skipped checks are not passes. Original full final-Head PR CI and independent read-only review remain required. No real account or owner deployment.\n' > /tmp/pr99-native-default/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: pr99-native-default-${{ github.run_id }}
+          path: /tmp/pr99-native-default
+          if-no-files-found: error
+          retention-days: 7
