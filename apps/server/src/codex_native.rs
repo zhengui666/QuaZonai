@@ -14,7 +14,7 @@ pub use projection::{
     NativeModel, NativeServiceTier, Observation, PublicMessage, Sandbox, Thread, ThreadIdentity,
     TokenCounts, Turn, TurnStatus,
 };
-pub use requests::{CustomProvider, Launch, ThreadOptions};
+pub use requests::{Launch, ThreadOptions};
 pub use resources::MissionProcess;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};

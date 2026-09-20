@@ -122,7 +122,7 @@ async fn authorize(
 ) -> Result<Author, StoreError> {
     match actor {
         Actor::Browser { .. } => {
-            authority::browser(tx, actor, true, true).await?;
+            authority::browser(tx, actor, true).await?;
             sqlx::query("SELECT id FROM app.projects WHERE id=$1 FOR UPDATE")
                 .bind(project.as_uuid())
                 .fetch_optional(&mut **tx)

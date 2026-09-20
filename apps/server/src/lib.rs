@@ -81,6 +81,9 @@ impl WebPolicy {
             Some(Host::Domain(name)) => name == "localhost",
             None => false,
         };
+        if !bind.ip().is_loopback() || !loopback_host {
+            return Err("QuaZonai requires a loopback bind and local PUBLIC_URL");
+        }
         let secure = match url.scheme() {
             "https" => true,
             "http" if development_http && bind.ip().is_loopback() && loopback_host => false,
@@ -224,15 +227,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             get(migrations::mappings),
         )
         .route("/api/v2/migrations/reports/{id}", get(migrations::report))
-        .route("/api/v2/bootstrap/status", get(auth::bootstrap_status))
-        .route("/api/v2/bootstrap/start", post(auth::bootstrap_start))
-        .route("/api/v2/bootstrap/confirm", post(auth::bootstrap_confirm))
-        .route("/api/v2/auth/login", post(auth::login))
-        .route("/api/v2/auth/logout", post(auth::logout))
         .route("/api/v2/auth/session", get(auth::session_status))
-        .route("/api/v2/auth/verify", post(auth::verify))
-        .route("/api/v2/auth/devices", get(auth::devices))
-        .route("/api/v2/auth/devices/{id}", delete(auth::revoke_device))
         .route(
             "/api/v2/projects",
             get(control::projects).post(control::create_project),
@@ -296,15 +291,12 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/evaluations/{id}/metrics", get(evidence::metrics))
         .route(
             "/api/v2/settings/codex",
-            get(codex_profiles::profiles)
-                .post(codex_profiles::create)
-                .patch(codex_profiles::update_selected),
+            get(codex_profiles::profiles).patch(codex_profiles::update_selected),
         )
         .route(
             "/api/v2/settings/codex/{id}",
             get(codex_profiles::profile).patch(codex_profiles::update),
         )
-        .route("/api/v2/codex/homes", get(codex_profiles::homes))
         .route("/api/v2/codex/probe", post(codex_profiles::probe))
         .route("/api/v2/codex/models", get(codex_profiles::models))
         .route("/api/v2/codex/account", get(codex_profiles::account))
@@ -654,7 +646,7 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(migrations::artifact,migrations::artifact_summary,migrations::artifact_results,migrations::artifact_content,migrations::fields,migrations::field,migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::bootstrap_status,auth::bootstrap_start,auth::bootstrap_confirm,auth::login,auth::logout,auth::session_status,auth::verify,auth::devices,auth::revoke_device,
+#[openapi(paths(migrations::artifact,migrations::artifact_summary,migrations::artifact_results,migrations::artifact_content,migrations::fields,migrations::field,migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::session_status,
 control::projects,control::project,control::create_project,control::update_project,
 control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,
@@ -671,14 +663,14 @@ evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evid
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
 runtime::probe,runtime::readiness,downstream::probe,downstream::readiness,
-codex_profiles::profiles,codex_profiles::profile,codex_profiles::homes,codex_profiles::create,
+codex_profiles::profiles,codex_profiles::profile,
 codex_profiles::update,codex_profiles::update_selected,codex_profiles::probe,codex_profiles::models,codex_profiles::account,
 codex_profiles::account::login_start,codex_profiles::account::logout,codex_profiles::account::login_cancel,
 codex_profiles::account::login_operation,codex_profiles::account::latest_operation,
 data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
 data::revisions,data::revision,data::register,data::universes,data::universe,data::validate,
-artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Authentication",description="Native TOTP and revocable browser sessions")))]
+artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Local session",description="Automatic loopback browser sessions")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
     let mut document = HttpContracts::openapi();
@@ -696,11 +688,10 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
         ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityRequirement, SecurityScheme,
     };
     let components = document.components.get_or_insert_with(Default::default);
-    components.add_security_scheme("BrowserSession",SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::with_description("__Host-quazonai","Native private cookie; browser writes require exact same-origin Origin. Explicit loopback development uses quazonai-dev."))));
     components.add_security_scheme("MachineBearer",SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).bearer_format("qz2.UUIDv7.opaque-capability").description(Some("Opaque native capability; only project/run/downstream-scoped server records confer authority. Never combine with browser Cookie." )).build()));
-    components.add_security_scheme("OperatorCommandGrant",SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description("X-Operator-Grant","One-time TOTP-verified CLI grant bound to this credential, exact operation, target and full nonsecret request. No Agent/automation grant issuance."))));
+    components.add_security_scheme("OperatorCommandGrant",SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description("X-Operator-Grant","One-time local CLI grant bound to this credential, exact operation, target and full nonsecret request. No Agent/automation grant issuance."))));
     for (path, item) in &mut document.paths.paths {
-        let anonymous = path.starts_with("/api/v2/bootstrap/") || path == "/api/v2/auth/login";
+        let anonymous = path == "/api/v2/auth/session";
         let only_machine = matches!(
             path.as_str(),
             "/api/v2/auth/machine" | "/api/v2/auth/operator-command-grants"
@@ -736,7 +727,7 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                         );
                     }
                 }
-                let cookie = SecurityRequirement::new("BrowserSession", std::iter::empty::<&str>());
+                let local = SecurityRequirement::default();
                 let bearer = SecurityRequirement::new("MachineBearer", std::iter::empty::<&str>());
                 if !anonymous && !browser_auth {
                     operation.responses.responses.insert(
@@ -770,20 +761,20 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                 } else if only_machine {
                     vec![bearer]
                 } else if browser_auth || (!write && browser_read) {
-                    vec![cookie]
+                    vec![local]
                 } else if write
                     && (path == "/api/v2/artifacts"
                         || path == "/api/v2/experiments"
                         || (path.ends_with("/cancel") && path.starts_with("/api/v2/runs/")))
                 {
-                    vec![cookie, bearer]
+                    vec![local, bearer]
                 } else if write {
                     vec![
-                        cookie,
+                        local,
                         bearer.add("OperatorCommandGrant", std::iter::empty::<&str>()),
                     ]
                 } else {
-                    vec![cookie, bearer]
+                    vec![local, bearer]
                 });
             }
         }

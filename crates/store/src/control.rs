@@ -110,7 +110,7 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         let allowed = match actor {
             Actor::Browser { .. } => {
-                authority::browser(&mut tx, actor, false, false).await?;
+                authority::browser(&mut tx, actor, false).await?;
                 None
             }
             Actor::Machine { .. } => {
@@ -254,7 +254,7 @@ impl Store {
     ) -> Result<Page<PrincipalView>, StoreError> {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
-        authority::browser(&mut tx, actor, false, false).await?;
+        authority::browser(&mut tx, actor, false).await?;
         let rows=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {PRINCIPAL} FROM app.machine_principals WHERE ($1::uuid IS NULL OR id<$1) ORDER BY id DESC LIMIT $2")))
             .bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
@@ -352,7 +352,7 @@ impl Store {
     ) -> Result<Page<CredentialView>, StoreError> {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
-        authority::browser(&mut tx, actor, false, false).await?;
+        authority::browser(&mut tx, actor, false).await?;
         sqlx::query("SELECT id FROM app.machine_principals WHERE id=$1")
             .bind(principal_id.as_uuid())
             .fetch_optional(&mut *tx)
@@ -558,7 +558,7 @@ impl CredentialIssuance {
         // row locks preserve revocation/epoch; check time again before issuance.
         match &actor {
             Actor::Browser { login_id } => {
-                crate::auth::lock_login(&mut tx, *login_id, true).await?;
+                crate::auth::lock_login(&mut tx, *login_id).await?;
             }
             Actor::Machine { operator_grant, .. } => {
                 authority::machine(&mut tx, &actor, true).await?;

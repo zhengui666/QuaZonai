@@ -139,7 +139,7 @@ async fn read_authority(
 ) -> Result<Option<Id>, StoreError> {
     match actor {
         Actor::Browser { .. } => {
-            crate::authority::browser(tx, actor, false, false).await?;
+            crate::authority::browser(tx, actor, false).await?;
             Ok(None)
         }
         Actor::Machine { .. } => {

@@ -494,7 +494,7 @@ impl MissionLauncher {
         let workspace = self.workspace(run).await?;
         let (mut client, mut options) = self
             .deployment
-            .mission_connection(&job.profile, vault.clone(), &workspace, resources)
+            .mission_connection(&job.profile, &workspace, resources)
             .await
             .map_err(|_| {
                 WorkerFailure::Codex("PROFILE_CONNECTION", native::NativeFailure::Unavailable)

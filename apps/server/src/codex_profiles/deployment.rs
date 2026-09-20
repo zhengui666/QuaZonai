@@ -4,8 +4,6 @@ use crate::codex_native::{self as native, Account, Client, Launch, ThreadOptions
 use chrono::Utc;
 use contracts::{codex::*, SchemaV1};
 use domain::codex::{resolve_overrides, settings as rules, CatalogContext};
-use integrations::secrets::SecretVault;
-use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
@@ -21,8 +19,6 @@ use tokio::sync::Mutex;
 
 mod account;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CodexDeploymentConfig {
     pub schema_version: SchemaV1,
     pub binary: PathBuf,
@@ -30,8 +26,6 @@ pub struct CodexDeploymentConfig {
     pub bindings: Vec<CodexDeploymentBinding>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CodexDeploymentBinding {
     pub reference: String,
     pub label: String,
@@ -71,6 +65,98 @@ fn directory(path: &Path) -> Result<PathBuf, StoreError> {
 }
 
 impl CodexDeployment {
+    /// Discover the current OS user's native installation without reading or
+    /// copying native configuration/credentials into QZ. Missing Codex does not
+    /// stop the local console; a probe reports deployment unavailability.
+    pub fn discover() -> Self {
+        Self::discover_from(
+            std::env::var_os("PATH"),
+            std::env::var_os("HOME"),
+            std::env::var_os("CODEX_HOME"),
+            std::env::current_dir().ok(),
+        )
+        .unwrap_or_default()
+    }
+
+    fn discover_from(
+        executable_path: Option<OsString>,
+        home: Option<OsString>,
+        codex_home: Option<OsString>,
+        working_directory: Option<PathBuf>,
+    ) -> Option<Self> {
+        use std::os::unix::fs::PermissionsExt;
+        let executable_path = executable_path?;
+        let binary = std::env::split_paths(&executable_path)
+            .filter(|path| path.is_absolute())
+            .map(|path| path.join("codex"))
+            .find(|path| {
+                std::fs::metadata(path).is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                })
+            })?;
+        let binary = std::fs::canonicalize(binary).ok()?;
+        let home = directory(&PathBuf::from(home?)).ok()?;
+        let codex_home = directory(
+            &codex_home
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".codex")),
+        )
+        .ok()?;
+        let working_directory = directory(&working_directory?).ok()?;
+        let environment = [
+            "OPENAI_API_KEY",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "no_proxy",
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
+            "XDG_RUNTIME_DIR",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+            "LANG",
+            "LC_ALL",
+        ]
+        .into_iter()
+        .filter_map(|name| std::env::var_os(name).map(|value| (OsString::from(name), value)))
+        .collect::<BTreeMap<_, _>>();
+        let gate = Arc::new(Mutex::new(()));
+        let account = Arc::new(Mutex::new(None));
+        let mut bindings = BTreeMap::new();
+        for (reference, label) in [
+            ("local-researcher", "研究员"),
+            ("local-reviewer", "独立审阅员"),
+        ] {
+            bindings.insert(
+                reference.to_owned(),
+                Binding {
+                    public: CodexHomeBindingV1 {
+                        reference: reference.into(),
+                        label: label.into(),
+                        profile_origin: ProfileOrigin::OperatorMount,
+                    },
+                    home: home.clone(),
+                    codex_home: codex_home.clone(),
+                    working_directory: working_directory.clone(),
+                    environment: environment.clone(),
+                    gate: gate.clone(),
+                    account: account.clone(),
+                },
+            );
+        }
+        Some(Self {
+            binary,
+            executable_path,
+            bindings,
+        })
+    }
+
     pub fn new(configuration: CodexDeploymentConfig) -> Result<Self, StoreError> {
         if !configuration.binary.is_absolute()
             || !configuration.binary.is_file()
@@ -130,6 +216,10 @@ impl CodexDeployment {
         })
     }
 
+    pub fn available(&self) -> bool {
+        !self.bindings.is_empty()
+    }
+
     pub fn public_bindings(&self) -> Vec<CodexHomeBindingV1> {
         self.bindings
             .values()
@@ -146,7 +236,6 @@ impl CodexDeployment {
     pub(crate) async fn mission_connection(
         &self,
         snapshot: &CodexProfileSnapshot,
-        vault: Arc<SecretVault>,
         workspace: &Path,
         resources: native::MissionProcess,
     ) -> Result<(Client, ThreadOptions), CodexProbeFailureV1> {
@@ -165,7 +254,7 @@ impl CodexDeployment {
             return Err(CodexProbeFailureV1::DeploymentUnavailable);
         }
         let _gate = binding.gate.lock().await;
-        let launch = self.launch(snapshot, binding, &workspace, vault).await?;
+        let launch = self.launch(binding, &workspace);
         let mut client = Client::start_mission(launch, resources)
             .await
             .map_err(native_failure)?;
@@ -174,27 +263,8 @@ impl CodexDeployment {
         Ok((client, options))
     }
 
-    pub async fn verify(
-        &self,
-        request: CodexBindingCheck,
-        vault: Arc<SecretVault>,
-    ) -> Result<(), StoreError> {
+    pub async fn verify(&self, request: CodexBindingCheck) -> Result<(), StoreError> {
         self.binding(&request.home_binding, request.profile_origin)?;
-        if let Some(id) = request.credential_ref {
-            tokio::task::spawn_blocking(move || {
-                let bytes = vault
-                    .read(id, "CUSTOM_PROVIDER")
-                    .map_err(|_| config_error())?;
-                let value = std::str::from_utf8(&bytes).map_err(|_| config_error())?;
-                domain::settings::secret_value(
-                    contracts::settings::IntegrationSecretPurpose::CustomProvider,
-                    value,
-                )?;
-                Ok::<_, StoreError>(())
-            })
-            .await
-            .map_err(|_| StoreError::Integrity)??;
-        }
         Ok(())
     }
 
@@ -205,12 +275,8 @@ impl CodexDeployment {
             .ok_or(StoreError::IntegrationUnavailable)
     }
 
-    pub async fn probe(
-        &self,
-        snapshot: &CodexProfileSnapshot,
-        vault: Arc<SecretVault>,
-    ) -> CodexProbeOutcomeV1 {
-        match tokio::time::timeout(Duration::from_secs(110), self.observe(snapshot, vault)).await {
+    pub async fn probe(&self, snapshot: &CodexProfileSnapshot) -> CodexProbeOutcomeV1 {
+        match tokio::time::timeout(Duration::from_secs(110), self.observe(snapshot)).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(reason)) => CodexProbeOutcomeV1::Unavailable { reason },
             Err(_) => CodexProbeOutcomeV1::Unavailable {
@@ -222,7 +288,6 @@ impl CodexDeployment {
     async fn observe(
         &self,
         snapshot: &CodexProfileSnapshot,
-        vault: Arc<SecretVault>,
     ) -> Result<CodexProbeOutcomeV1, CodexProbeFailureV1> {
         let profile = &snapshot.profile;
         let binding = profile
@@ -231,9 +296,7 @@ impl CodexDeployment {
             .and_then(|label| self.binding(label, profile.profile_origin).ok())
             .ok_or(CodexProbeFailureV1::DeploymentUnavailable)?;
         let _gate = binding.gate.lock().await;
-        let launch = self
-            .launch(snapshot, binding, &binding.working_directory, vault)
-            .await?;
+        let launch = self.launch(binding, &binding.working_directory);
         let mut client = Client::start(launch).await.map_err(native_failure)?;
         let observed = inspect(&mut client, profile, &binding.working_directory).await;
         let closed = client.close().await.map_err(native_failure);
@@ -246,42 +309,15 @@ impl CodexDeployment {
         }
     }
 
-    async fn launch(
-        &self,
-        snapshot: &CodexProfileSnapshot,
-        binding: &Binding,
-        working_directory: &Path,
-        vault: Arc<SecretVault>,
-    ) -> Result<Launch, CodexProbeFailureV1> {
-        let profile = &snapshot.profile;
-        let custom_provider = if profile.connection_mode == ConnectionMode::CustomProvider {
-            let id = snapshot
-                .credential_ref
-                .ok_or(CodexProbeFailureV1::DeploymentUnavailable)?;
-            let api_key = tokio::task::spawn_blocking(move || vault.read(id, "CUSTOM_PROVIDER"))
-                .await
-                .map_err(|_| CodexProbeFailureV1::DeploymentUnavailable)?
-                .map_err(|_| CodexProbeFailureV1::DeploymentUnavailable)?;
-            Some(native::CustomProvider {
-                base_url: profile
-                    .custom_base_url
-                    .clone()
-                    .ok_or(CodexProbeFailureV1::DeploymentUnavailable)?,
-                api_key: String::from_utf8(api_key)
-                    .map_err(|_| CodexProbeFailureV1::DeploymentUnavailable)?,
-            })
-        } else {
-            None
-        };
-        Ok(Launch {
+    fn launch(&self, binding: &Binding, working_directory: &Path) -> Launch {
+        Launch {
             binary: self.binary.clone(),
             home: binding.home.clone(),
             codex_home: binding.codex_home.clone(),
             working_directory: working_directory.to_owned(),
             executable_path: self.executable_path.clone(),
             native_environment: binding.environment.clone(),
-            custom_provider,
-        })
+        }
     }
 }
 
@@ -351,9 +387,6 @@ async fn inspect(
         .collect();
     let mut options = ThreadOptions::read_only(working_directory.to_path_buf());
     options.ephemeral = true;
-    if profile.connection_mode == ConnectionMode::CustomProvider {
-        options.expected_provider = Some("quazonai_custom".into());
-    }
     let default = client
         .start_thread(&options)
         .await

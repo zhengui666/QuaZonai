@@ -318,7 +318,6 @@ fn launch(home: &Path, work: &Path) -> Launch {
         working_directory: work.into(),
         executable_path: std::env::var_os("PATH").unwrap(),
         native_environment: BTreeMap::new(),
-        custom_provider: None,
     }
 }
 

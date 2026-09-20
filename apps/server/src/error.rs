@@ -118,21 +118,6 @@ impl From<StoreError> for ApiError {
                 "AUTHENTICATION_FAILED",
                 "验证码或初始化凭据无效、过期或已使用。",
             ),
-            StoreError::SetupCompleted => Self::new(
-                StatusCode::CONFLICT,
-                "SETUP_ALREADY_COMPLETED",
-                "系统已经完成初始化，不能重新绑定验证器。",
-            ),
-            StoreError::TotpReplay => Self::new(
-                StatusCode::CONFLICT,
-                "TOTP_REPLAY",
-                "这个时间步的验证码已使用，请使用验证器生成的新验证码。",
-            ),
-            StoreError::RecentAuthenticationRequired => Self::new(
-                StatusCode::FORBIDDEN,
-                "RECENT_AUTH_REQUIRED",
-                "此敏感操作需要重新验证一次动态码。",
-            ),
             StoreError::AuthRateLimited {
                 retry_after_seconds,
             } => {

@@ -340,7 +340,6 @@ impl OperatorOperation {
 )]
 pub enum OperatorCommand {
     MigrationImport(crate::imports::HistoricalImportRequestV1),
-    CodexProfileCreate(crate::codex::CodexProfileCreateV1),
     CodexProfileUpdate(crate::codex::CodexProfileUpdateV1),
     CodexProbe(crate::codex::CodexProbeRequestV1),
     CodexLoginStart(crate::codex::CodexAccountRequestV1),
@@ -390,7 +389,6 @@ impl OperatorCommand {
     pub fn operation(&self) -> OperatorOperation {
         match self {
             Self::MigrationImport(_) => OperatorOperation::MigrationImport,
-            Self::CodexProfileCreate(_) => OperatorOperation::CodexProfileCreate,
             Self::CodexProfileUpdate(_) => OperatorOperation::CodexProfileUpdate,
             Self::CodexProbe(_) => OperatorOperation::CodexProbe,
             Self::CodexLoginStart(_) => OperatorOperation::CodexLoginStart,
@@ -440,7 +438,6 @@ impl OperatorCommand {
     pub fn normalized_request(&self) -> Result<serde_json::Value, serde_json::Error> {
         match self {
             Self::MigrationImport(v) => serde_json::to_value(v),
-            Self::CodexProfileCreate(v) => serde_json::to_value(v),
             Self::CodexProfileUpdate(v) => serde_json::to_value(v),
             Self::CodexProbe(v) => serde_json::to_value(v),
             Self::CodexLoginStart(v) => serde_json::to_value(v),
@@ -494,8 +491,6 @@ pub struct OperatorGrantRequest {
     pub schema_version: SchemaV1,
     pub command: OperatorCommand,
     pub target_id: Option<Id>,
-    #[schema(min_length = 6, max_length = 6, pattern = "^[0-9]{6}$")]
-    pub code: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

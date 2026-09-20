@@ -47,38 +47,6 @@ pub async fn profile(
     Ok(Json(state.store.codex_profile(&actor, path(id)?).await?))
 }
 
-#[utoipa::path(get,path="/api/v2/codex/homes",operation_id="listCodexHomeBindings",tag="Codex settings",responses((status=200,body=Vec<CodexHomeBindingV1>),(status=401,body=Problem),(status=403,body=Problem),(status=429,body=Problem)))]
-pub async fn homes(
-    State(state): State<AppState>,
-    Authority(actor): Authority,
-) -> Result<Json<Vec<CodexHomeBindingV1>>, ApiError> {
-    state.store.authorize_codex_settings_read(&actor).await?;
-    Ok(Json(state.codex_deployment.public_bindings()))
-}
-
-#[utoipa::path(post,path="/api/v2/settings/codex",operation_id="createCodexProfile",tag="Codex settings",request_body=CodexProfileCreateV1,params(("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<CodexProfileViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
-pub async fn create(
-    State(state): State<AppState>,
-    Authority(actor): Authority,
-    headers: HeaderMap,
-    body: Result<Json<CodexProfileCreateV1>, JsonRejection>,
-) -> Result<(StatusCode, Json<CommandResult<CodexProfileViewV1>>), ApiError> {
-    let request = json(body)?;
-    let key = idempotency_key(&headers)?.to_owned();
-    let store = state.store.clone();
-    let deployment = state.codex_deployment.clone();
-    let vault = state.vault.clone();
-    let result = crate::settings::command(&state, async move {
-        store
-            .create_codex_profile(&actor, &key, &request, move |binding| async move {
-                deployment.verify(binding, vault).await
-            })
-            .await
-    })
-    .await?;
-    Ok((StatusCode::CREATED, Json(result)))
-}
-
 async fn update_profile(
     state: &AppState,
     actor: store::authority::Actor,
@@ -88,11 +56,10 @@ async fn update_profile(
 ) -> Result<Json<CommandResult<CodexProfileViewV1>>, ApiError> {
     let store = state.store.clone();
     let deployment = state.codex_deployment.clone();
-    let vault = state.vault.clone();
     let result = crate::settings::command(state, async move {
         store
             .update_codex_profile(&actor, &key, id, &request, move |binding| async move {
-                deployment.verify(binding, vault).await
+                deployment.verify(binding).await
             })
             .await
     })
@@ -147,12 +114,11 @@ pub async fn probe(
     let key = idempotency_key(&headers)?.to_owned();
     let store = state.store.clone();
     let deployment = state.codex_deployment.clone();
-    let vault = state.vault.clone();
     let result = crate::settings::command(&state, async move {
         match store.prepare_codex_probe(&actor, &key, &request).await? {
             CodexProbePreparation::Replay(result) => Ok(*result),
             CodexProbePreparation::Execute(ticket) => {
-                let outcome = deployment.probe(&ticket.snapshot, vault).await;
+                let outcome = deployment.probe(&ticket.snapshot).await;
                 store.complete_codex_probe(*ticket, outcome).await
             }
         }

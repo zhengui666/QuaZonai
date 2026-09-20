@@ -53,7 +53,7 @@ async fn upload_authority(
 ) -> Result<UploadAuthority, StoreError> {
     match actor {
         Actor::Browser { .. } => {
-            authority::browser(tx, actor, true, true).await?;
+            authority::browser(tx, actor, true).await?;
             crate::research::project_for_write(tx, project).await?;
             Ok(UploadAuthority {
                 scope: "OPERATOR".into(),

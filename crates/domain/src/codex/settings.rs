@@ -53,38 +53,15 @@ pub fn model_settings(value: &SavedModelSettingsV1) -> Result<(), DomainError> {
     Ok(())
 }
 
-pub fn provider_url(value: &str) -> Result<(), DomainError> {
-    text(value, 1, 2048, false).map_err(|_| bad("connection.base_url"))?;
-    let url = url::Url::parse(value).map_err(|_| bad("connection.base_url"))?;
-    if value.trim() != value
-        || url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(bad("connection.base_url"));
-    }
-    Ok(())
-}
-
 pub fn profile_create(value: &CodexProfileCreateV1) -> Result<(), DomainError> {
     text(&value.name, 1, 120, false).map_err(|_| bad("name"))?;
     home_binding(&value.home_binding)?;
     model_settings(&value.model_settings)?;
-    if let CodexConnectionCreateV1::CustomProvider { base_url, .. } = &value.connection {
-        provider_url(base_url)?;
-    }
     Ok(())
 }
 
 pub fn profile_update(value: &CodexProfileUpdateV1) -> Result<(), DomainError> {
-    text(&value.name, 1, 120, false).map_err(|_| bad("name"))?;
     model_settings(&value.model_settings)?;
-    if let CodexConnectionUpdateV1::CustomProvider { base_url, .. } = &value.connection {
-        provider_url(base_url)?;
-    }
     Ok(())
 }
 
@@ -117,7 +94,10 @@ pub fn probe_outcome(
     else {
         return Ok(());
     };
-    if native_version != "0.144.4" || !(1..=4096).contains(&models.len()) {
+    if mode != ConnectionMode::System
+        || native_version != "0.144.4"
+        || !(1..=4096).contains(&models.len())
+    {
         return Err(bad("native_catalog"));
     }
     if account.requires_openai_auth && account.authentication_kind.is_none() {
@@ -195,7 +175,6 @@ pub fn probe_outcome(
         .service_tier
         .as_ref()
         .is_some_and(|value| !observed.service_tiers.iter().any(|tier| tier.id == *value))
-        || (mode == ConnectionMode::CustomProvider && effective.provider != "quazonai_custom")
     {
         return Err(bad("effective"));
     }

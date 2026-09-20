@@ -217,7 +217,6 @@ fn launch(home: &Path, work: &Path, canary: &str) -> Launch {
             canary.into(),
             "TEST_ONLY_NATIVE_ENV_CREDENTIAL".into(),
         )]),
-        custom_provider: None,
     }
 }
 async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts {

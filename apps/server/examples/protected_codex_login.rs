@@ -23,7 +23,6 @@ fn launch(binary: &std::path::Path, root: &std::path::Path) -> Launch {
         working_directory: root.to_path_buf(),
         executable_path: std::env::var_os("PATH").unwrap_or_default(),
         native_environment: BTreeMap::new(),
-        custom_provider: None,
     }
 }
 

@@ -3,8 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { "./response-contract": "./src/generated/responses.cjs" },
-  "engines": { "node": ">=22.12.0" },
+  "exports": {
+    "./response-contract": "./src/generated/responses.cjs"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "demo:preview": "vite --config vite.demo.config.ts",
@@ -36,7 +40,6 @@
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.4",
     "openapi-typescript": "^7.10.1",
-    "otpauth": "9.5.1",
     "typescript": "5.9.3",
     "vite": "7.3.3",
     "vite-plugin-pwa": "^1.0.3",
