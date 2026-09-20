@@ -770,9 +770,11 @@ CLI/MCP package。启动器必须已通过正常控制面取得有效 Mission �
 
 必填参数为 `--api-origin`、`--project-id`、`--cycle-id`、`--run-id`、`--attempt-id`、
 `--brief-id`；五个 ID 使用既有 UUIDv7 合同。凭据仅由启动器通过 `QUAZONAI_MCP_TOKEN`
-传入，不提供 token 命令行参数，也不要写入对话、Issue 或日志。生产必须 HTTPS origin，
-不能带 userinfo、额外路径、query 或 fragment；开发 HTTP 还须显式 `--development-http`
-并使用字面 loopback IP。禁止环境代理、Cookie、重定向和自动重试。
+传入，不提供 token 命令行参数，也不要写入对话、Issue 或日志。控制面 origin 必须与
+PUBLIC_URL 一致，使用 localhost 或 loopback IPv4/IPv6；HTTPS 仍校验证书，HTTP 须
+显式 `--development-http`。不能带 userinfo、额外路径、query 或 fragment。
+此规则统一用于 Worker、原生 Thread start/resume 和 MCP，不改变 Runtime/Downstream
+开发端点的字面 IP 规则。禁止环境代理、Cookie、重定向和自动重试。
 
 tools/list 的实际入口包含 `research.get_brief {brief_id}`、`run.get {run_id}`、
 `artifact.submit` 和 `experiment.propose`。前两个读取精确 FROZEN Brief/本 Mission Run；
