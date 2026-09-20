@@ -3,7 +3,7 @@ on:
   push:
     branches: [codex/local-ui-simplification-20260920]
     paths:
-      - '.github/local-console-edits-*.json'
+      - '.github/local-console-edits.json'
       - '.github/workflows/local-console-edit.yml'
 permissions:
   contents: read
@@ -19,7 +19,6 @@ jobs:
       contents: write
     env:
       EXPECTED_HEAD: ${{ github.sha }}
-      SOURCE_BASE: 92f501ee7b3d1999e4ed397bd4d5825310a6f330
       RUSTUP_TOOLCHAIN: '1.98.1'
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -36,30 +35,33 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           mkdir -p /tmp/local-console-evidence
           python3 - <<'PY'
-          import json, os, subprocess
+          import json, os, re, subprocess
           from pathlib import Path
+          plan = json.loads(Path('.github/local-console-edits.json').read_text())
+          source_base = plan['base']
+          assert re.fullmatch(r'[a-f0-9]{40}', source_base)
+          subprocess.run(['git', 'cat-file', '-e', source_base + '^{commit}'], check=True)
           prepared = {}
-          for number in range(1, 6):
-              entries = json.loads(Path(f'.github/local-console-edits-{number}.json').read_text())
-              for entry in entries:
-                  path = Path(entry['path'])
-                  assert not path.is_absolute() and '..' not in path.parts
-                  assert path.parts[0] in {'apps', 'crates', 'migrations', '.opensdlc', 'AGENTS.md', 'DESIGN.md'}
-                  assert str(path) not in prepared and not path.is_symlink()
-                  subprocess.run(['git', 'diff', '--exit-code', os.environ['SOURCE_BASE'], '--', str(path)], check=True)
-                  if entry.get('delete'):
-                      assert path.is_file()
-                      prepared[str(path)] = None
-                      continue
-                  lines = path.read_text().splitlines(keepends=True) if path.exists() else []
-                  previous = 0
-                  for start, end, text in entry['edits']:
-                      assert previous <= start <= end <= len(lines) and isinstance(text, str)
-                      previous = end
-                  for start, end, text in reversed(entry['edits']):
-                      lines[start:end] = text.splitlines(keepends=True)
-                  prepared[str(path)] = ''.join(lines)
-          assert len(prepared) == 60
+          for entry in plan['files']:
+              path = Path(entry['path'])
+              assert not path.is_absolute() and '..' not in path.parts
+              assert path.parts[0] in {'apps', 'crates', 'migrations', 'tests', 'docs', 'deploy', 'runtimes', '.opensdlc', 'AGENTS.md', 'DESIGN.md', 'README.md', 'Makefile', 'Cargo.toml'}
+              assert str(path) not in prepared and not path.is_symlink()
+              subprocess.run(['git', 'diff', '--exit-code', source_base, '--', str(path)], check=True)
+              if entry.get('delete'):
+                  assert path.is_file()
+                  prepared[str(path)] = None
+                  continue
+              lines = path.read_text().splitlines(keepends=True) if path.exists() else []
+              previous = 0
+              for start, end, text in entry['edits']:
+                  assert previous <= start <= end <= len(lines) and isinstance(text, str)
+                  previous = end
+              for start, end, text in reversed(entry['edits']):
+                  lines[start:end] = text.splitlines(keepends=True)
+              prepared[str(path)] = ''.join(lines)
+          with open(os.environ['GITHUB_ENV'], 'a') as environment:
+              environment.write('SOURCE_BASE=' + source_base + '\n')
           for name, content in prepared.items():
               path = Path(name)
               if content is None:
@@ -117,7 +119,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'feat: implement local console, native Codex preferences and color themes'
+          git commit -m 'refactor: apply authored local-console refinements and native generation'
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
           remote=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin refs/heads/codex/local-ui-simplification-20260920 | cut -f1)
@@ -135,7 +137,7 @@ jobs:
           printf '%s\n' "$EXPECTED_HEAD" > /tmp/local-console-evidence/input-commit.txt
           git add -A
           git archive "$(git write-tree)" | gzip > /tmp/local-console-evidence/source.tar.gz
-          git diff "$SOURCE_BASE" --stat > /tmp/local-console-evidence/diff-stat.txt
+          git diff "${SOURCE_BASE:-$EXPECTED_HEAD}" --stat > /tmp/local-console-evidence/diff-stat.txt
           printf 'Native development checkpoint only. Failed, skipped and baseline tests are not passes. Not reviewed or merged.\n' > /tmp/local-console-evidence/SCOPE.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
