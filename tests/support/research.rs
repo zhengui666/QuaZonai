@@ -8,26 +8,7 @@ use store::{authority::Actor, Store};
 
 pub async fn operator(pool: &PgPool) -> (Store, Actor) {
     let store = Store::from_pool(pool.clone());
-    let cap = store
-        .issue_bootstrap_capability("$argon2id$fixture-verified-in-http-tests")
-        .await
-        .unwrap();
-    let binding = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
-    let e = store
-        .start_enrollment(cap.id, &cap.verifier, Id::new(), binding)
-        .await
-        .unwrap();
-    let login = store
-        .confirm_enrollment(
-            e.id,
-            binding,
-            e.secret_ref,
-            e.database_now.timestamp() / 30,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
+    let login = store.local_browser().await.unwrap();
     (store, Actor::Browser { login_id: login.id })
 }
 pub struct ResearchFixture {

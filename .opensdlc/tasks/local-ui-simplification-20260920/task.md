@@ -24,7 +24,13 @@ Actions performs native generation and verification; Codex reviews only.
    when all applicable checks pass and findings are resolved.
 
 ## Verification
-Not yet executed for this change. Baseline results are not current evidence.
+Checkpoint 1: Actions run `35503066114` applied/ formatted the authored source,
+but native Rust and TypeScript checks failed. No pass is claimed.
+Checkpoint 2: Actions run `35503533622`, published source
+`61feeb87e403d2465957cc61ba0efb5dc206e139`, passed Rust library/binary check and
+native contract generation. TypeScript failed on removed-login tests, obsolete
+provider typing and unused imports. The next authored test/cleanup batch replaces
+those contracts; results are not yet available. Baseline passes are not new evidence.
 Dedicated-account acceptance remains COMPLETED_BY_OWNER_WAIVER / NOT_RUN.
 
 ## Delivery

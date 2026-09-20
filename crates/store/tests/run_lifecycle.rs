@@ -33,26 +33,7 @@ async fn setup_with_budget(
     let runtime = Id::new();
     sqlx::query("INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,allowed_capabilities,protocol_version,enabled) VALUES($1,'runtime fixture','https://runtime.example','SYSTEM_CA','fixture-credential',ARRAY['DATA_VALIDATE','ALPHA_EVALUATE'],'1',true)").bind(runtime.as_uuid()).execute(pool).await.unwrap();
     let store = Store::from_pool(pool.clone());
-    let cap = store
-        .issue_bootstrap_capability("$argon2id$fixture-native-verification")
-        .await
-        .unwrap();
-    let binding = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
-    let e = store
-        .start_enrollment(cap.id, &cap.verifier, Id::new(), binding)
-        .await
-        .unwrap();
-    let login = store
-        .confirm_enrollment(
-            e.id,
-            binding,
-            e.secret_ref,
-            e.database_now.timestamp() / 30,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
+    let login = store.local_browser().await.unwrap();
     let actor = Actor::Browser { login_id: login.id };
     runtime_observation::ready(pool, runtime).await;
     let request = RunSubmission {
@@ -1079,35 +1060,34 @@ async fn review_compatible_unknown_event_retains_its_envelope_and_cursor(pool: P
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn review_browser_cancel_requires_recent_authentication_but_reads_do_not(pool: PgPool) {
+async fn local_browser_cancellation_needs_no_recent_challenge(pool: PgPool) {
     let (store, _, request, _) = setup(&pool).await;
     let id = Id::new();
     sqlx::query("INSERT INTO app.browser_logins(id,auth_epoch,authenticated_at,expires_at) SELECT $1,session_epoch,clock_timestamp()-interval '10 minutes',clock_timestamp()+interval '1 hour' FROM app.operator_auth_state")
         .bind(id.as_uuid()).execute(&pool).await.unwrap();
-    let stale = Actor::Browser { login_id: id };
+    let local = Actor::Browser { login_id: id };
     let run = store
-        .enqueue_run("recent", &request)
+        .enqueue_run("local-cancel", &request)
         .await
         .unwrap()
         .resource;
-    assert!(store.get_run(&stale, run.id).await.is_ok());
-    assert!(matches!(
-        store
-            .cancel_run(
-                &stale,
-                "recent",
-                run.id,
-                &RunCancelV1 {
-                    schema_version: SchemaV1,
-                    expected_revision: run.revision
-                }
-            )
-            .await,
-        Err(StoreError::RecentAuthenticationRequired)
-    ));
+    assert!(store.get_run(&local, run.id).await.is_ok());
+    let cancelled = store
+        .cancel_run(
+            &local,
+            "local-cancel",
+            run.id,
+            &RunCancelV1 {
+                schema_version: SchemaV1,
+                expected_revision: run.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancelled.resource.state, RunState::Cancelled);
     assert_eq!(
-        store.get_run(&stale, run.id).await.unwrap().state,
-        RunState::Queued
+        store.get_run(&local, run.id).await.unwrap().state,
+        RunState::Cancelled
     );
 }
 

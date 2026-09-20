@@ -31,8 +31,7 @@ async fn recover(pool: &PgPool, id: Id) -> std::process::Output {
 #[sqlx::test(migrations = "../../migrations")]
 async fn offline_cutover_invalidates_retained_authority_and_replays_atomically(pool: PgPool) {
     let f = support::fixture(pool.clone()).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, true).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();
     let project=client::browser(&f,&cookie,"project","/api/v2/projects",json!({"schema_version":1,"name":"Retained project","description":"Recovery test","fork_from_project_id":null})).await;
@@ -67,7 +66,6 @@ async fn offline_cutover_invalidates_retained_authority_and_replays_atomically(p
     assert_eq!(done.stdout, repeat.stdout);
     let after = f.store.authentication_snapshot().await.unwrap();
     assert!(after.epoch > before.epoch);
-    assert_eq!(after.secret_ref, before.secret_ref);
     let old = support::call(
         &f,
         "GET",
@@ -76,27 +74,21 @@ async fn offline_cutover_invalidates_retained_authority_and_replays_atomically(p
         Some(&cookie),
     )
     .await;
-    assert_eq!(old.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(old.status, StatusCode::OK);
+    assert_ne!(old.cookie.as_deref(), Some(cookie.as_str()));
     let request = Request::builder()
         .uri("/api/v2/projects")
-        .header(header::HOST, "research.example")
+        .header(header::HOST, "localhost")
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .body(Body::empty())
         .unwrap();
     let denied = support::exchange(&f.app, request).await;
     assert_eq!(denied.status, StatusCode::UNAUTHORIZED);
-    let current = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
-    let relogin=support::call(&f,"POST","/api/v2/auth/login",json!({"schema_version":1,"code":totp.generate((current/30+1)*30),"trust_device":false,"device_label":null}),None).await;
+    let relogin = support::local_session(&f).await;
     assert_eq!(
         relogin.status,
         StatusCode::OK,
-        "retained verifier must permit a fresh login"
+        "local access needs no restored authenticator"
     );
     let projects = support::call(
         &f,
@@ -116,8 +108,7 @@ async fn offline_cutover_invalidates_retained_authority_and_replays_atomically(p
 #[sqlx::test(migrations = "../../migrations")]
 async fn ordinary_database_identity_cannot_invalidate_restored_access(pool: PgPool) {
     let f = support::fixture(pool.clone()).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let role = format!("recovery_test_{}", Id::new().to_string().replace('-', ""));
     let password = Id::new().to_string();
@@ -203,7 +194,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
             )
             .unwrap(),
             server::WebPolicy::new(
-                "https://research.example",
+                "https://localhost",
                 "127.0.0.1:8080".parse().unwrap(),
                 false,
             )
@@ -215,8 +206,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         ),
         cookie_key.clone(),
     );
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();
     let body = json!({"schema_version":1,"name":"Archived project","description":"Original receipt survives restore","fork_from_project_id":null});
@@ -241,7 +231,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     let machine_request = || {
         Request::builder()
             .uri("/api/v2/projects")
-            .header(header::HOST, "research.example")
+            .header(header::HOST, "localhost")
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap()
@@ -459,7 +449,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         before.epoch
     );
     let policy = server::WebPolicy::new(
-        "https://research.example",
+        "https://localhost",
         "127.0.0.1:8080".parse().unwrap(),
         false,
     )
@@ -517,16 +507,9 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         )
         .await
         .status,
-        StatusCode::UNAUTHORIZED
+        StatusCode::OK
     );
-    let now = restored
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
-    let login = support::call(&restored,"POST","/api/v2/auth/login",json!({"schema_version":1,"code":totp.generate((now/30+1)*30),"trust_device":false,"device_label":null}),None).await;
+    let login = support::local_session(&restored).await;
     assert_eq!(login.status, StatusCode::OK);
     let artifact_path = format!("/api/v2/artifacts/{artifact_id}/content");
     // A restored DB alone must not claim that absent object bytes are available.
@@ -600,7 +583,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     assert_eq!(metadata.body, artifact.body["resource"]);
     let request = Request::builder()
         .uri(&artifact_path)
-        .header(header::HOST, "research.example")
+        .header(header::HOST, "localhost")
         .header(header::COOKIE, login.cookie.as_deref().unwrap())
         .body(Body::empty())
         .unwrap();
@@ -668,7 +651,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         .args([
             "serve",
             "--public-url",
-            "https://research.example",
+            "https://localhost",
             "--bind",
             &address.to_string(),
         ])
@@ -698,7 +681,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
             );
             if let Ok(response) = http
                 .get(format!("http://{address}/health/live"))
-                .header(header::HOST, "research.example")
+                .header(header::HOST, "localhost")
                 .send()
                 .await
             {
@@ -712,7 +695,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     .expect("restored server must start within the test deadline");
     let stale = http
         .get(format!("http://{address}/api/v2/auth/session"))
-        .header(header::HOST, "research.example")
+        .header(header::HOST, "localhost")
         .header(header::COOKIE, &cookie)
         .send()
         .await
@@ -720,7 +703,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
     let machine = http
         .get(format!("http://{address}/api/v2/projects"))
-        .header(header::HOST, "research.example")
+        .header(header::HOST, "localhost")
         .bearer_auth(token)
         .send()
         .await
@@ -733,7 +716,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
 
     let current = http
         .get(format!("http://{address}/api/v2/projects"))
-        .header(header::HOST, "research.example")
+        .header(header::HOST, "localhost")
         .header(header::COOKIE, login.cookie.as_deref().unwrap())
         .send()
         .await
@@ -742,7 +725,7 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
     assert_eq!(current.json::<Value>().await.unwrap(), projects.body);
     let object = http
         .get(format!("http://{address}{artifact_path}"))
-        .header(header::HOST, "research.example")
+        .header(header::HOST, "localhost")
         .header(header::COOKIE, login.cookie.as_deref().unwrap())
         .send()
         .await

@@ -1,4 +1,4 @@
-//! Actual Operator TOTP -> HTTP -> native AEAD -> pinned TCP/TLS -> immutable
+//! Actual local Operator -> HTTP -> native AEAD -> pinned TCP/TLS -> immutable
 //! artifact/PostgreSQL observation. Remote capabilities remain protocol fixtures.
 #[path = "support/runtime_native.rs"]
 mod native;
@@ -29,8 +29,8 @@ async fn command(
     let request = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "research.example")
-        .header(header::ORIGIN, "https://research.example")
+        .header(header::HOST, "localhost")
+        .header(header::ORIGIN, "https://localhost")
         .header(header::COOKIE, cookie)
         .header(header::CONTENT_TYPE, "application/json")
         .header("idempotency-key", key)
@@ -60,8 +60,7 @@ async fn setup_with_tls(
         RuntimeTargets::default()
     };
     let f = fixture_with_runtime_targets(pool, Some(targets)).await;
-    let (enrollment, anonymous, totp) = start(&f).await;
-    let (login, _) = confirm(&f, &enrollment, &anonymous, &totp, true).await;
+    let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();
     let credential = command(&f, &cookie, "runtime-secret", "POST", "/api/v2/settings/credentials", json!({
@@ -86,8 +85,7 @@ async fn default_deployment_readiness_requires_auth_and_never_creates_an_observa
     let path = format!("/api/v2/integrations/runtimes/{}/readiness", Id::new());
     let anonymous = call(&f, "GET", &path, Value::Null, None).await;
     assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
-    let (enrollment, anonymous, totp) = start(&f).await;
-    let (login, _) = confirm(&f, &enrollment, &anonymous, &totp, true).await;
+    let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();
     let missing = call(&f, "GET", &path, Value::Null, Some(&cookie)).await;

@@ -20,8 +20,7 @@ async fn assumptions_http_missing_and_empty_are_not_fabricated_versions(pool: Pg
             .status,
         StatusCode::UNAUTHORIZED
     );
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, true).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap_or(initial);
     assert_eq!(
@@ -57,8 +56,8 @@ async fn send(
         Request::builder()
             .method(method)
             .uri(path)
-            .header(header::HOST, "research.example")
-            .header(header::ORIGIN, "https://research.example")
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, "https://localhost")
             .header(header::COOKIE, cookie)
             .header(header::CONTENT_TYPE, "application/json")
             .header("Idempotency-Key", "assumptions-http")
@@ -76,8 +75,7 @@ async fn send(
 async fn original_assumptions_http_creates_reads_replays_and_rejects_changed_intent(pool: PgPool) {
     let targets = server::runtime_transport::RuntimeTargets::new(vec![], false).unwrap();
     let f = support::fixture_with_runtime_targets(pool.clone(), Some(targets)).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, true).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap_or(initial);
     let login_id: uuid::Uuid =

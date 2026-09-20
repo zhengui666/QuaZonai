@@ -1,4 +1,4 @@
-import { Alert, Button, Descriptions, Space, Table, Tabs } from 'antd';
+import { Button, Descriptions, Space, Table, Tabs } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, dataOf, displayTime } from './api';

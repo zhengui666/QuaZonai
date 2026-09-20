@@ -105,7 +105,7 @@ test('synthetic preview renders native-contract records without a backend or wri
   await page.keyboard.press('Escape');
   await expect(run).toBeHidden();
   await navigate(page, '设置');
-  await settingsCategory(page, '数据与许可');
+  await settingsCategory(page, '数据');
   await expect(page.getByText('SYNTHETIC · 演示目录', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '查看许可与版本登记', exact: true }).click();
   await expect(page.getByText('SYNTHETIC · 未连接 Runtime', { exact: true })).toBeVisible();
@@ -135,7 +135,7 @@ test('synthetic preview renders native-contract records without a backend or wri
   await expect(page.getByText('尚未登记下游服务。没有有效下游、兼容探测、独立资格和相应审批，不会交付目标。', { exact: true })).toBeVisible();
   await settingsCategory(page, '历史迁移');
   await expect(page.getByText('尚无历史导入报告。', { exact: true })).toBeVisible();
-  await settingsCategory(page, 'Codex 模型与连接');
+  await settingsCategory(page, 'Codex');
   await page.getByRole('button', { name: '登记 Codex 配置', exact: true }).click();
   const codex = page.getByRole('dialog', { name: '登记 Codex 配置', exact: true });
   await expect(codex.getByText('部署尚未登记 Codex 账号目录。', { exact: true })).toBeVisible();

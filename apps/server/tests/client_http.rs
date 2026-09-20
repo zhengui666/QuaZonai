@@ -1,4 +1,4 @@
-//! Actual CLI -> TCP -> native Axum/Bearer/TOTP/PostgreSQL data administration.
+//! Actual CLI -> TCP -> native Axum/Bearer/local-session/PostgreSQL data administration.
 //! Every credential and service here is disposable.
 #[path = "../../../crates/store/tests/support/mod.rs"]
 mod candidate_fixture;
@@ -17,8 +17,7 @@ use std::{fs, os::unix::fs::PermissionsExt};
 #[sqlx::test(migrations = "../../migrations")]
 async fn candidate_cli_reads_original_snapshots_with_project_scope(pool: PgPool) {
     let f = support::fixture(pool.clone()).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (confirmed, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let confirmed = support::local_session(&f).await;
     assert_eq!(confirmed.status, StatusCode::OK);
     let cookie = confirmed.cookie.unwrap_or(initial);
     let data = candidate_fixture::fixture(&pool, candidate_fixture::budget()).await;
@@ -137,8 +136,7 @@ async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_re
     pool: PgPool,
 ) {
     let f = support::fixture(pool.clone()).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (confirmed, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let confirmed = support::local_session(&f).await;
     assert_eq!(confirmed.status, StatusCode::OK);
     let cookie = confirmed.cookie.unwrap_or(initial);
     let principal = browser(&f, &cookie, "cli-principal", "/api/v2/machine-principals", json!({
@@ -198,7 +196,7 @@ async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_re
         .database_now
         .timestamp() as u64;
     let human = invoke(&origin, &credential_file, &["--idempotency-key","source-human-grant","operator-grant"], json!({
-        "schema_version":1,"command":{"operation":"DATA_SOURCE_CREATE","request":body},"target_id":null,"code":totp.generate((now/30+1)*30)
+        "schema_version":1,"command":{"operation":"DATA_SOURCE_CREATE","request":body},"target_id":null
     })).await;
     assert!(human.status.success(), "native human grant failed");
     assert!(human.stderr.is_empty());
@@ -344,8 +342,7 @@ async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_re
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_mandate_cli_uses_original_human_grant_and_scoped_immutable_reads(pool: PgPool) {
     let f = support::fixture(pool.clone()).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (confirmed, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let confirmed = support::local_session(&f).await;
     assert_eq!(confirmed.status, StatusCode::OK);
     let cookie = confirmed.cookie.unwrap_or(initial);
     let login: uuid::Uuid =
@@ -394,7 +391,7 @@ async fn native_mandate_cli_uses_original_human_grant_and_scoped_immutable_reads
         .database_now
         .timestamp() as u64;
     let human = invoke(&origin, &file, &["--idempotency-key","mandate-human","operator-grant"], json!({
-        "schema_version":1,"command":{"operation":"MANDATE_CREATE","request":body},"target_id":null,"code":totp.generate((now/30+1)*30)
+        "schema_version":1,"command":{"operation":"MANDATE_CREATE","request":body},"target_id":null
     })).await;
     assert!(human.status.success(), "native Mandate grant failed");
     let grant: Value = serde_json::from_slice(&human.stdout).unwrap();

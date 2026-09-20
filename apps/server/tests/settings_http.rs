@@ -1,4 +1,4 @@
-//! Actual Axum/native private sessions, TOTP, AEAD and PostgreSQL. No fake auth.
+//! Actual Axum/native private sessions, AEAD and PostgreSQL. No fake auth.
 //! Failure diagnostics never print responses, decrypted bytes or tokens.
 mod support;
 use axum::{
@@ -15,8 +15,7 @@ use support::*;
 
 async fn authenticated(pool: PgPool) -> (Fixture, String) {
     let f = fixture(pool).await;
-    let (enrollment, anonymous, native) = start(&f).await;
-    let (reply, _) = confirm(&f, &enrollment, &anonymous, &native, true).await;
+    let reply = local_session(&f).await;
     assert_eq!(reply.status, StatusCode::OK);
     let cookie = reply.cookie.unwrap();
     (f, cookie)
@@ -31,7 +30,7 @@ async fn http(
     let mut request = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "research.example");
+        .header(header::HOST, "localhost");
     for (name, value) in headers {
         request = request.header(*name, *value);
     }
@@ -58,7 +57,7 @@ async fn browser(
         body,
         &[
             ("cookie", cookie),
-            ("origin", "https://research.example"),
+            ("origin", "https://localhost"),
             ("idempotency-key", key),
         ],
     )
@@ -286,7 +285,7 @@ async fn wrong_secret_purpose_invalid_ca_and_production_http_do_not_publish(pool
         "/api/v2/settings/credentials",
         json!({"intent":{"schema_version":1,"purpose":"RUNTIME","label":"test"},"value":"authorization-boundary-fixture-32-byte-minimum"}),
         &[
-            ("origin", "https://research.example"),
+            ("origin", "https://localhost"),
             ("idempotency-key", "anonymous"),
         ],
     )
@@ -412,7 +411,7 @@ async fn disconnected_request_preserves_the_single_admitted_secret_command(pool:
     let cookie_copy = cookie.clone();
     let task = tokio::spawn(async move {
         let request=Request::builder().method("POST").uri("/api/v2/settings/credentials")
-            .header(header::HOST,"research.example").header(header::ORIGIN,"https://research.example")
+            .header(header::HOST,"localhost").header(header::ORIGIN,"https://localhost")
             .header(header::COOKIE,cookie_copy).header(header::CONTENT_TYPE,"application/json")
             .header("idempotency-key","disconnected")
             .body(Body::from(json!({"intent":{"schema_version":1,"purpose":"RUNTIME","label":"Private integration credential"},"value":"survives-disconnection-fixture-32-byte-minimum"}).to_string())).unwrap();

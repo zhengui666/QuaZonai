@@ -10,15 +10,13 @@ use contracts::Id;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use support::*;
-use totp_rs::TOTP;
 
-async fn authenticated(pool: PgPool) -> (Fixture, String, TOTP) {
+async fn authenticated(pool: PgPool) -> (Fixture, String) {
     let f = fixture(pool).await;
-    let (enrollment, anonymous, native) = start(&f).await;
-    let (reply, _) = confirm(&f, &enrollment, &anonymous, &native, true).await;
+    let reply = local_session(&f).await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
     let cookie = reply.cookie.unwrap();
-    (f, cookie, native)
+    (f, cookie)
 }
 async fn command(
     f: &Fixture,
@@ -30,7 +28,7 @@ async fn command(
     let mut builder = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "research.example");
+        .header(header::HOST, "localhost");
     for (k, v) in headers {
         builder = builder.header(*k, *v)
     }
@@ -57,7 +55,7 @@ async fn browser(
         body,
         &[
             ("cookie", cookie),
-            ("origin", "https://research.example"),
+            ("origin", "https://localhost"),
             ("idempotency-key", key),
         ],
     )
@@ -97,7 +95,7 @@ async fn credential(
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn operator_project_commands_keep_original_receipts_cas_and_fork_lineage(pool: PgPool) {
-    let (f, cookie, _) = authenticated(pool.clone()).await;
+    let (f, cookie) = authenticated(pool.clone()).await;
     let p = create_project(&f, &cookie, "project-first").await;
     let id = p["id"].as_str().unwrap();
     let changed=browser(&f,&cookie,"patch1","PATCH",&format!("/api/v2/projects/{id}"),json!({"schema_version":1,"expected_revision":"1","name":"Edited","description":"Updated","state":"PAUSED"})).await;
@@ -174,7 +172,7 @@ async fn operator_project_commands_keep_original_receipts_cas_and_fork_lineage(p
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn bearer_is_real_native_possession_scoped_and_never_cookie_fallback(pool: PgPool) {
-    let (f, cookie, _) = authenticated(pool.clone()).await;
+    let (f, cookie) = authenticated(pool.clone()).await;
     let p = create_project(&f, &cookie, "allowed").await;
     let other = create_project(&f, &cookie, "other").await;
     let (_, token, _) = credential(&f, &cookie, Some(&p), "AUTOMATION").await;
@@ -309,7 +307,7 @@ async fn bearer_is_real_native_possession_scoped_and_never_cookie_fallback(pool:
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn disabling_reenabling_and_revoking_credentials_never_revives_old_tokens(pool: PgPool) {
-    let (f, cookie, _) = authenticated(pool).await;
+    let (f, cookie) = authenticated(pool).await;
     let p = create_project(&f, &cookie, "owner").await;
     let (_, token, principal) = credential(&f, &cookie, Some(&p), "CLI").await;
     let bearer = format!("Bearer {token}");
@@ -369,22 +367,14 @@ async fn disabling_reenabling_and_revoking_credentials_never_revives_old_tokens(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn real_cli_totp_grant_binds_full_request_once_and_retries_only_original_receipt(
+async fn real_cli_local_grant_binds_full_request_once_and_retries_only_original_receipt(
     pool: PgPool,
 ) {
-    let (f, cookie, native) = authenticated(pool.clone()).await;
+    let (f, cookie) = authenticated(pool.clone()).await;
     let (_, token, _) = credential(&f, &cookie, None, "CLI").await;
     let bearer = format!("Bearer {token}");
     let payload = json!({"schema_version":1,"name":"Human-approved CLI project","description":"exact intent","fork_from_project_id":null});
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
-    let code = native.generate((now / 30 + 1) * 30);
-    let request = json!({"schema_version":1,"command":{"operation":"PROJECT_CREATE","request":payload},"target_id":null,"code":code});
+    let request = json!({"schema_version":1,"command":{"operation":"PROJECT_CREATE","request":payload},"target_id":null});
     let grant = command(
         &f,
         "POST",
@@ -486,7 +476,7 @@ async fn real_cli_totp_grant_binds_full_request_once_and_retries_only_original_r
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn unknown_fields_missing_keys_and_unscoped_doctor_permissions_fail_closed(pool: PgPool) {
-    let (f, cookie, _) = authenticated(pool).await;
+    let (f, cookie) = authenticated(pool).await;
     let (_, token, _) = credential(&f, &cookie, None, "AUTOMATION").await;
     let bearer = format!("Bearer {token}");
     let no_project = command(
@@ -498,7 +488,7 @@ async fn unknown_fields_missing_keys_and_unscoped_doctor_permissions_fail_closed
     )
     .await;
     assert_eq!(no_project.status, StatusCode::FORBIDDEN);
-    let grant=command(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"PROJECT_CREATE","request":{"schema_version":1,"name":"no","description":"","fork_from_project_id":null}},"target_id":null,"code":"000000"}),&[("authorization",&bearer),("idempotency-key","not-human")]).await;
+    let grant=command(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"PROJECT_CREATE","request":{"schema_version":1,"name":"no","description":"","fork_from_project_id":null}},"target_id":null}),&[("authorization",&bearer),("idempotency-key","not-human")]).await;
     assert_eq!(grant.status, StatusCode::FORBIDDEN);
     let malformed = browser(
         &f,
@@ -515,26 +505,19 @@ async fn unknown_fields_missing_keys_and_unscoped_doctor_permissions_fail_closed
         "POST",
         "/api/v2/projects",
         json!({"schema_version":1,"name":"no","description":"","fork_from_project_id":null}),
-        &[("cookie", &cookie), ("origin", "https://research.example")],
+        &[("cookie", &cookie), ("origin", "https://localhost")],
     )
     .await;
     assert_eq!(missing.status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn grant_replay_precedes_fresh_totp_and_reauth_quota_but_not_current_authority(pool: PgPool) {
-    let (f, cookie, native) = authenticated(pool.clone()).await;
+async fn local_grant_replay_keeps_original_expiry_and_checks_current_authority(pool: PgPool) {
+    let (f, cookie) = authenticated(pool.clone()).await;
     let (_, token, _) = credential(&f, &cookie, None, "CLI").await;
     let bearer = format!("Bearer {token}");
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let payload = json!({"schema_version":1,"name":"already authorized","description":"","fork_from_project_id":null});
-    let mut request = json!({"schema_version":1,"command":{"operation":"PROJECT_CREATE","request":payload},"target_id":null,"code":native.generate((now/30+1)*30)});
+    let request = json!({"schema_version":1,"command":{"operation":"PROJECT_CREATE","request":payload},"target_id":null});
     let headers = [
         ("authorization", bearer.as_str()),
         ("idempotency-key", "lost-grant-response"),
@@ -548,13 +531,6 @@ async fn grant_replay_precedes_fresh_totp_and_reauth_quota_but_not_current_autho
     )
     .await;
     assert_eq!(first.status, StatusCode::CREATED, "{}", first.body);
-    // Saturate the real PostgreSQL REAUTH window; retries must not consume it.
-    for _ in 1..5 {
-        f.store
-            .reserve_auth_attempt(store::auth::AuthOperation::Reauth)
-            .await
-            .unwrap();
-    }
     let repeated = command(
         &f,
         "POST",
@@ -564,42 +540,11 @@ async fn grant_replay_precedes_fresh_totp_and_reauth_quota_but_not_current_autho
     )
     .await;
     assert_eq!(repeated.status, StatusCode::CREATED, "{}", repeated.body);
-    assert_eq!(repeated.body["resource"], first.body["resource"]);
-    assert_eq!(repeated.body["replayed"], true);
-    // Code is explicitly not part of the persisted, nonsecret idempotency body.
-    // Use a native authenticator output proven outside the acceptance window.
-    let mut stale = native.generate(now - 300);
-    if integrations::authentication::accepted_step(&native.secret, &stale, now as i64)
-        .unwrap()
-        .is_some()
-    {
-        stale = native.generate(now - 600);
-    }
-    assert!(
-        integrations::authentication::accepted_step(&native.secret, &stale, now as i64)
-            .unwrap()
-            .is_none()
-    );
-    request["code"] = json!(stale);
-    let reply = command(
-        &f,
-        "POST",
-        "/api/v2/auth/operator-command-grants",
-        request.clone(),
-        &headers,
-    )
-    .await;
-    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
     assert_eq!(
-        reply.body["resource"], first.body["resource"],
+        repeated.body["resource"], first.body["resource"],
         "replay must not extend expiry"
     );
-    let attempts: i32 =
-        sqlx::query_scalar("SELECT attempts FROM app.auth_rate_windows WHERE operation='REAUTH'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(attempts, 5);
+    assert_eq!(repeated.body["replayed"], true);
     let mut changed = request.clone();
     changed["command"]["request"]["name"] = json!("substituted");
     let conflict = command(
@@ -631,7 +576,7 @@ async fn grant_replay_precedes_fresh_totp_and_reauth_quota_but_not_current_autho
 async fn concurrent_issuance_materializes_only_one_verifier_and_database_failure_cleans_it(
     pool: PgPool,
 ) {
-    let (f, cookie, _) = authenticated(pool.clone()).await;
+    let (f, cookie) = authenticated(pool.clone()).await;
     let p = create_project(&f, &cookie, "verifier-owner").await;
     let created=browser(&f,&cookie,"verifier-principal","POST","/api/v2/machine-principals",json!({"schema_version":1,"name":"CLI","kind":"CLI","project_id":p["id"],"downstream_id":null,"enabled":true})).await;
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
@@ -693,7 +638,7 @@ async fn concurrent_issuance_materializes_only_one_verifier_and_database_failure
     let orphan = vault
         .put("MACHINE_VERIFIER", b"interrupted unpublished fixture")
         .unwrap();
-    let totp = vault.put("TOTP", b"must remain").unwrap();
+    let retained = vault.put("RUNTIME", b"must remain").unwrap();
     assert_eq!(
         server::secrets::prune_unpublished_verifiers(&f.store, vault.clone())
             .await
@@ -701,7 +646,7 @@ async fn concurrent_issuance_materializes_only_one_verifier_and_database_failure
         1
     );
     assert!(!directory.join(orphan.to_string()).exists());
-    assert!(directory.join(totp.to_string()).exists());
+    assert!(directory.join(retained.to_string()).exists());
     assert_eq!(std::fs::read_dir(&directory).unwrap().count(), before + 2);
     assert_eq!(
         server::secrets::prune_unpublished_verifiers(&f.store, vault)
@@ -722,7 +667,7 @@ async fn native_machine_failures_are_bounded_without_consuming_human_crypto_slot
         )
         .unwrap(),
         server::WebPolicy::new(
-            "https://research.example",
+            "https://localhost",
             "127.0.0.1:8080".parse().unwrap(),
             false,
         )
@@ -730,8 +675,7 @@ async fn native_machine_failures_are_bounded_without_consuming_human_crypto_slot
     );
     let machine_slots = state.machine_crypto_slots.clone();
     f.app = server::router(state, tower_sessions::cookie::Key::generate());
-    let (enrollment, anonymous, native) = start(&f).await;
-    let (confirmed, _) = confirm(&f, &enrollment, &anonymous, &native, true).await;
+    let confirmed = local_session(&f).await;
     assert_eq!(confirmed.status, StatusCode::OK);
     let cookie = confirmed.cookie.unwrap();
     let (issued, token, _) = credential(&f, &cookie, None, "CLI").await;
@@ -809,18 +753,11 @@ async fn native_machine_failures_are_bounded_without_consuming_human_crypto_slot
     .await;
     assert_eq!(busy.status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(busy.body["code"], "CRYPTO_BUSY");
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let verified = call(
         &f,
         "POST",
         "/api/v2/auth/verify",
-        json!({"schema_version":1,"code":native.generate((now/30+1)*30)}),
+        json!({"schema_version":1}),
         Some(&cookie),
     )
     .await;

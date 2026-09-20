@@ -59,28 +59,12 @@ async fn late_metric(pool: &PgPool, evaluation: Id, artifact: Id) {
         .bind(evaluation.as_uuid()).bind(artifact.as_uuid()).execute(pool).await.unwrap_err(),"23000");
 }
 async fn initialized(pool: &PgPool) -> Id {
-    let store = Store::from_pool(pool.clone());
-    let cap = store
-        .issue_bootstrap_capability("$argon2id$native-adapter-verified-fixture")
-        .await
-        .unwrap();
-    let binding = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
-    let e = store
-        .start_enrollment(cap.id, &cap.verifier, Id::new(), binding)
-        .await
-        .unwrap();
-    store
-        .confirm_enrollment(
-            e.id,
-            binding,
-            e.secret_ref,
-            e.database_now.timestamp() / 30,
-            true,
-            Some("fixture"),
-        )
-        .await
-        .unwrap()
-        .id
+    let id = Id::new();
+    sqlx::query("UPDATE app.operator_auth_state SET initialized=true,totp_secret_ref='historical-fixture-only',last_accepted_totp_step=1,setup_completed_at=clock_timestamp() WHERE singleton")
+        .execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO app.browser_logins(id,auth_epoch,authenticated_at,expires_at) SELECT $1,session_epoch,clock_timestamp(),clock_timestamp()+interval '1 hour' FROM app.operator_auth_state")
+        .bind(id.as_uuid()).execute(pool).await.unwrap();
+    id
 }
 
 #[sqlx::test(migrations = false)]
@@ -109,10 +93,7 @@ async fn native_runner_initializes_and_rechecks_without_changing_applied_checksu
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(
-        epoch, 1,
-        "an empty installation does not revoke a nonexistent user"
-    );
+    assert_eq!(epoch, 2, "local-console migration makes direct entry ready");
     no_locks(&pool, &name).await;
 }
 
@@ -219,7 +200,7 @@ async fn upgrade_invalidates_all_historical_browser_epochs_once_not_current_plus
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(epoch, 51);
+    assert_eq!(epoch, 52);
     assert!(matches!(
         store.browser_authority(old_login).await,
         Err(StoreError::AuthenticationRequired)
@@ -234,7 +215,7 @@ async fn upgrade_invalidates_all_historical_browser_epochs_once_not_current_plus
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(epoch_after, 51);
+    assert_eq!(epoch_after, 52);
 }
 
 #[sqlx::test(migrations = false)]

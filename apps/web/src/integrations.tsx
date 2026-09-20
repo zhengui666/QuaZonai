@@ -33,7 +33,7 @@ function useRefresh() {
  * The query/mutation caches and browser storage never receive the secret as state. */
 export function SecretReference({ value, onChange, purpose, configured, disabled, onBusy }: {
   value?: string | null; onChange?: (id: string | undefined) => void;
-  purpose: 'RUNTIME' | 'DOWNSTREAM' | 'CUSTOM_PROVIDER' | 'TLS_CA'; configured: boolean;
+  purpose: 'RUNTIME' | 'DOWNSTREAM' | 'TLS_CA'; configured: boolean;
   disabled: boolean; onBusy: (busy: boolean) => void;
 }) {
   const [secret, setSecret] = useState(''); const [pending, setPending] = useState(false); const [error, setError] = useState<unknown>();
@@ -48,7 +48,6 @@ export function SecretReference({ value, onChange, purpose, configured, disabled
     const body: Schema['IntegrationSecretCreate'] = purpose === 'RUNTIME'
       ? { intent: { ...common, purpose: 'RUNTIME' }, value: secret }
       : purpose === 'DOWNSTREAM' ? { intent: { ...common, purpose: 'DOWNSTREAM' }, value: secret }
-        : purpose === 'CUSTOM_PROVIDER' ? { intent: { ...common, purpose: 'CUSTOM_PROVIDER' }, value: secret }
           : { intent: { ...common, purpose: 'TLS_CA' }, value: secret };
     try {
       const result = dataOf(await api.POST('/api/v2/settings/credentials', {

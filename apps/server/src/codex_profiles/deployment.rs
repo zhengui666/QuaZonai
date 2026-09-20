@@ -456,3 +456,63 @@ fn account_view(account: native::AccountState) -> CodexAccountV1 {
         plan_type,
     }
 }
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn discovers_native_path_and_default_home_without_reading_credentials() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("bin");
+        let home = root.path().join("home");
+        let native = home.join(".codex");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&native).unwrap();
+        let executable = bin.join("codex");
+        std::fs::write(&executable, b"not executed by this discovery test").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let config = native.join("config.toml");
+        std::fs::write(&config, b"model = 'native-model'\n").unwrap();
+        let deployment = CodexDeployment::discover_from(
+            Some(bin.as_os_str().into()),
+            Some(home.as_os_str().into()),
+            None,
+            Some(root.path().into()),
+        )
+        .unwrap();
+        assert_eq!(deployment.binary, executable.canonicalize().unwrap());
+        let researcher = &deployment.bindings["local-researcher"];
+        let reviewer = &deployment.bindings["local-reviewer"];
+        assert_eq!(researcher.codex_home, native.canonicalize().unwrap());
+        assert_eq!(researcher.codex_home, reviewer.codex_home);
+        assert!(Arc::ptr_eq(&researcher.gate, &reviewer.gate));
+        assert!(Arc::ptr_eq(&researcher.account, &reviewer.account));
+        assert_eq!(std::fs::read(config).unwrap(), b"model = 'native-model'\n");
+        assert!(!native.join("auth.json").exists());
+
+        let override_home = root.path().join("native");
+        std::fs::create_dir(&override_home).unwrap();
+        let explicit = CodexDeployment::discover_from(
+            Some(bin.as_os_str().into()),
+            Some(home.as_os_str().into()),
+            Some(override_home.as_os_str().into()),
+            Some(root.path().into()),
+        )
+        .unwrap();
+        assert_eq!(
+            explicit.bindings["local-researcher"].codex_home,
+            override_home.canonicalize().unwrap()
+        );
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(CodexDeployment::discover_from(
+            Some(bin.as_os_str().into()),
+            Some(home.as_os_str().into()),
+            None,
+            Some(root.path().into())
+        )
+        .is_none());
+        assert!(CodexDeployment::discover_from(None, None, None, None).is_none());
+    }
+}

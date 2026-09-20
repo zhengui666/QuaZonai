@@ -14,8 +14,7 @@ async fn downstream_cli_publishes_original_weights_and_replays_without_replacing
     pool: PgPool,
 ) {
     let f = support::fixture(pool.clone()).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap_or(initial);
     let login_id: uuid::Uuid =

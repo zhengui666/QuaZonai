@@ -54,7 +54,7 @@ async fn send(
     let mut request = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "research.example");
+        .header(header::HOST, "localhost");
     for (name, value) in headers {
         request = request.header(*name, *value);
     }
@@ -96,8 +96,7 @@ async fn frozen_export_browser_and_cli_import_preserve_original_history_and_scop
     fs::write(file, "replaced CSV").unwrap();
     fs::write(directory.join("report.json"), "{}").unwrap();
     let f = support::fixture_with_deployment(pool.clone(), None, Some(exports)).await;
-    let (enrollment, initial, native) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &native, true).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap_or(initial);
     let request = json!({"schema_version":1,"export_ref":reference,"dry_run":true});
@@ -106,10 +105,7 @@ async fn frozen_export_browser_and_cli_import_preserve_original_history_and_scop
         "POST",
         "/api/v2/migrations/import",
         request.clone(),
-        &[
-            ("idempotency-key", "anon"),
-            ("origin", "https://research.example"),
-        ],
+        &[("idempotency-key", "anon"), ("origin", "https://localhost")],
     )
     .await;
     assert_eq!(denied.status, StatusCode::UNAUTHORIZED);
@@ -175,7 +171,7 @@ async fn frozen_export_browser_and_cli_import_preserve_original_history_and_scop
         .unwrap()
         .database_now
         .timestamp() as u64;
-    let grant = send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"MIGRATION_IMPORT","request":actual},"target_id":null,"code":native.generate((now/30+1)*30)}),&[("authorization",&bearer),("idempotency-key","grant")]).await;
+    let grant = send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"MIGRATION_IMPORT","request":actual},"target_id":null}),&[("authorization",&bearer),("idempotency-key","grant")]).await;
     assert_eq!(grant.status, StatusCode::CREATED, "{}", grant.body);
     let grant_id = grant.body["resource"]["id"].as_str().unwrap();
     let wrong = send(
@@ -466,13 +462,12 @@ async fn registered_public_artifacts_are_report_scoped_native_downloads(pool: Pg
     native.discard_unpublished(object).unwrap();
     fs::write(old.join("public.bin"), "replaced").unwrap();
     let f = support::fixture_with_deployment(pool.clone(), None, Some(exports)).await;
-    let (enrollment, initial, native) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &native, true).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap_or(initial);
     let headers = [
         ("cookie", cookie.as_str()),
-        ("origin", "https://research.example"),
+        ("origin", "https://localhost"),
         ("idempotency-key", "dry-artifacts"),
     ];
     let dry = send(
@@ -487,7 +482,7 @@ async fn registered_public_artifacts_are_report_scoped_native_downloads(pool: Pg
     let dry_id = dry.body["resource"]["id"].as_str().unwrap();
     let headers = [
         ("cookie", cookie.as_str()),
-        ("origin", "https://research.example"),
+        ("origin", "https://localhost"),
         ("idempotency-key", "actual-artifacts"),
     ];
     let actual = send(
@@ -530,7 +525,7 @@ async fn registered_public_artifacts_are_report_scoped_native_downloads(pool: Pg
         .uri(format!(
             "/api/v2/migrations/reports/{id}/artifacts/{record}/content"
         ))
-        .header(header::HOST, "research.example")
+        .header(header::HOST, "localhost")
         .header(header::COOKIE, &cookie)
         .body(Body::empty())
         .unwrap();
@@ -588,7 +583,7 @@ async fn registered_public_artifacts_are_report_scoped_native_downloads(pool: Pg
         .database_now
         .timestamp() as u64;
     let body = json!({"schema_version":1,"export_ref":reference,"dry_run":false});
-    let grant=send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"MIGRATION_IMPORT","request":body},"target_id":null,"code":native.generate((now/30+1)*30)}),&[("authorization",&bearer),("idempotency-key","copy-grant")]).await;
+    let grant=send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"MIGRATION_IMPORT","request":body},"target_id":null}),&[("authorization",&bearer),("idempotency-key","copy-grant")]).await;
     assert_eq!(grant.status, StatusCode::CREATED);
     let credential_file = root.path().join("credential");
     fs::write(&credential_file, token).unwrap();

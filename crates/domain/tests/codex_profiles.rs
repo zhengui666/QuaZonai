@@ -90,27 +90,31 @@ fn profile_references_are_labels_and_system_cannot_carry_a_custom_credential() {
 }
 
 #[test]
-fn custom_provider_requires_an_explicit_https_route_without_secret_url_components() {
-    for invalid in [
-        "http://provider.invalid/v1",
-        "https://user:secret@provider.invalid/v1",
-        "https://provider.invalid/v1?key=x",
-        "https://provider.invalid/v1#fragment",
-        " https://provider.invalid/v1",
-        "file:///tmp/provider",
-    ] {
-        assert!(provider_url(invalid).is_err());
-    }
-    assert!(provider_url("https://provider.invalid/v1").is_ok());
-    let mut request = profile();
-    request.connection = CodexConnectionCreateV1::CustomProvider {
-        base_url: "https://provider.invalid/v1".into(),
-        credential_ref: Id::new(),
+fn custom_provider_and_connection_updates_are_rejected_at_the_wire_boundary() {
+    let mut legacy = serde_json::to_value(profile()).unwrap();
+    legacy["connection"] = serde_json::json!({
+        "mode": "CUSTOM_PROVIDER", "base_url": "https://provider.invalid/v1", "credential_ref": Id::new()
+    });
+    assert!(serde_json::from_value::<CodexProfileCreateV1>(legacy).is_err());
+    let update = CodexProfileUpdateV1 {
+        schema_version: SchemaV1,
+        expected_revision: Revision::INITIAL,
+        model_settings: defaults(),
     };
-    assert!(profile_create(&request).is_ok());
+    assert!(profile_update(&update).is_ok());
+    for (key, value) in [
+        ("connection", serde_json::json!({"mode":"SYSTEM"})),
+        ("home_binding", serde_json::json!("other-home")),
+        ("name", serde_json::json!("other-name")),
+    ] {
+        let mut wire = serde_json::to_value(&update).unwrap();
+        wire[key] = value;
+        assert!(serde_json::from_value::<CodexProfileUpdateV1>(wire).is_err());
+    }
     for invalid in ["", " ", "small\n", "a\0b"] {
-        request.model_settings.saved_reasoning_effort = Some(invalid.into());
-        assert!(profile_create(&request).is_err());
+        let mut invalid_request = profile();
+        invalid_request.model_settings.saved_reasoning_effort = Some(invalid.into());
+        assert!(profile_create(&invalid_request).is_err());
     }
 }
 

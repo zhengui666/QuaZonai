@@ -46,8 +46,6 @@ fn update(profile: &CodexProfileViewV1) -> CodexProfileUpdateV1 {
     CodexProfileUpdateV1 {
         schema_version: SchemaV1,
         expected_revision: profile.revision,
-        name: profile.name.clone(),
-        connection: CodexConnectionUpdateV1::System {},
         model_settings: profile.model_settings.clone(),
     }
 }
@@ -334,7 +332,6 @@ async fn create_replay_and_home_uniqueness_preserve_saved_defaults_without_claim
     );
     assert_eq!(a.resource.model_settings, request.model_settings);
     assert_eq!(a.resource.connection_mode, ConnectionMode::System);
-    assert!(!a.resource.credential_configured);
     assert_eq!(
         store
             .codex_observation(&actor, a.resource.id)
@@ -361,7 +358,10 @@ async fn create_replay_and_home_uniqueness_preserve_saved_defaults_without_claim
         )
         .await
         .unwrap();
-    assert_eq!(listed.items[0].id, a.resource.id);
+    assert!(matches!(
+        listed.items[0].home_binding.as_deref(),
+        Some("local-researcher" | "local-reviewer")
+    ));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -380,7 +380,7 @@ async fn invalid_native_binding_rolls_back_creation_and_original_key_remains_ava
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(count, 0);
+    assert_eq!(count, 2);
     let result = store
         .create_codex_profile(&actor, "retryable-create", &request, verified)
         .await
@@ -396,87 +396,48 @@ async fn invalid_native_binding_rolls_back_creation_and_original_key_remains_ava
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn custom_route_needs_its_own_credential_and_switching_system_does_not_delete_old_secret(
-    pool: PgPool,
-) {
+async fn model_updates_retain_native_binding_and_reject_stale_revision(pool: PgPool) {
     let (store, actor, profile) = setup(&pool).await;
-    let mut request = update(&profile);
-    request.connection = CodexConnectionUpdateV1::CustomProvider {
-        base_url: "https://provider.invalid/v1".into(),
-        credential_ref: None,
-    };
-    assert!(matches!(
-        store
-            .update_codex_profile(&actor, "bad-route", profile.id, &request, verified)
-            .await,
-        Err(StoreError::Domain(_))
-    ));
-    let credential = Id::new();
-    request.connection = CodexConnectionUpdateV1::CustomProvider {
-        base_url: "https://provider.invalid/v1".into(),
-        credential_ref: Some(credential),
-    };
-    let custom = store
-        .update_codex_profile(
-            &actor,
-            "route",
-            profile.id,
-            &request,
-            move |check| async move {
-                assert_eq!(check.credential_ref, Some(credential));
-                verified(check).await
-            },
-        )
+    let mut change = update(&profile);
+    change.model_settings.use_default_model_settings = false;
+    change.model_settings.saved_model = None;
+    change.model_settings.saved_reasoning_effort = Some("native-effort".into());
+    change.model_settings.saved_fast_mode = false;
+    let updated = store
+        .update_codex_profile(&actor, "model-only", profile.id, &change, verified)
         .await
         .unwrap()
         .resource;
-    assert_eq!(custom.connection_mode, ConnectionMode::CustomProvider);
-    assert!(custom.credential_configured);
-    let public = serde_json::to_string(&custom).unwrap();
-    assert!(!public.contains(&credential.to_string()));
-    let mut retain = update(&custom);
-    retain.connection = CodexConnectionUpdateV1::CustomProvider {
-        base_url: "https://provider.invalid/v2".into(),
-        credential_ref: None,
-    };
-    let retained = store
-        .update_codex_profile(
-            &actor,
-            "retain",
-            profile.id,
-            &retain,
-            move |check| async move {
-                assert_eq!(check.credential_ref, Some(credential));
-                Ok(())
-            },
-        )
-        .await
-        .unwrap()
-        .resource;
-    let system = store
-        .update_codex_profile(
-            &actor,
-            "system",
-            profile.id,
-            &update(&retained),
-            move |check| async move {
-                assert!(check.credential_ref.is_none());
-                Ok(())
-            },
-        )
-        .await
-        .unwrap()
-        .resource;
-    assert_eq!(system.connection_mode, ConnectionMode::System);
-    assert!(!system.credential_configured);
-    assert!(system.custom_base_url.is_none());
-    assert_eq!(system.home_binding, profile.home_binding);
+    assert_eq!(updated.connection_mode, ConnectionMode::System);
+    assert_eq!(updated.home_binding, profile.home_binding);
+    assert_eq!(updated.name, profile.name);
+    assert_eq!(updated.profile_origin, profile.profile_origin);
+    assert_eq!(updated.model_settings, change.model_settings);
+    let public = serde_json::to_value(&updated).unwrap();
+    for key in ["credential_configured", "credential_ref", "custom_base_url"] {
+        assert!(public.get(key).is_none());
+    }
     assert!(matches!(
         store
             .update_codex_profile(&actor, "stale", profile.id, &update(&profile), verified)
             .await,
         Err(StoreError::RevisionConflict { .. })
     ));
+    let legacy = Id::new();
+    sqlx::query("INSERT INTO app.codex_profiles(id,name,connection_mode,profile_origin,codex_home_ref,use_default_model_settings,saved_fast_mode,custom_base_url,custom_api_key_ref) VALUES($1,'historical custom','CUSTOM_PROVIDER','OPERATOR_MOUNT','retired-custom',true,false,'https://provider.invalid/v1','historical-secret')")
+        .bind(legacy.as_uuid()).execute(&pool).await.unwrap();
+    assert!(matches!(
+        store.codex_profile(&actor, legacy).await,
+        Err(StoreError::NotFound)
+    ));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.codex_profiles WHERE id=$1")
+            .bind(legacy.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

@@ -44,8 +44,8 @@ impl Http {
         let request = self
             .client
             .request(method, format!("{}{}", self.url, path))
-            .header("host", "research.example")
-            .header("origin", "https://research.example");
+            .header("host", "localhost")
+            .header("origin", "https://localhost");
         match cookie {
             Some(cookie) => request.header("cookie", cookie),
             None => request,
@@ -60,8 +60,7 @@ impl Http {
 }
 async fn authenticated(pool: PgPool) -> (Fixture, String) {
     let f = fixture(pool).await;
-    let (enrollment, anonymous, native) = start(&f).await;
-    let (reply, _) = confirm(&f, &enrollment, &anonymous, &native, true).await;
+    let reply = local_session(&f).await;
     assert_eq!(reply.status, axum::http::StatusCode::OK, "{}", reply.body);
     (f, reply.cookie.unwrap())
 }

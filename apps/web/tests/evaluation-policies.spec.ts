@@ -87,7 +87,7 @@ for (const mode of ['none', 'thresholds', 'manual', 'scheduled'] as const) test(
   }
   expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual([]);
   await editor.getByRole('button', { name: '保存不可变评估政策', exact: true }).click();
-  await expect(editor.getByRole('alert').filter({ hasText: '连接中断，尚不能确定操作是否已提交。' })).toBeVisible();
+  await expect(editor.getByRole('alert').filter({ hasText: '连接中断，提交结果未知；请重试当前操作' })).toBeVisible();
   expect(calls).toBe(1); expect(original?.project_id).toBe(project.id);
   expect(original?.split_policy).toMatchObject({ schema_version: 1, train_size: '9007199254740993', interval_validation_required: true, step_size: portfolio ? null : '10', group_count: portfolio ? 4 : null, test_group_count: portfolio ? 1 : null });
   expect(original?.metric_requirements[0]).toMatchObject({ schema_version: 1, threshold_low: '0.123456789012345678', threshold_high: null, required: true });

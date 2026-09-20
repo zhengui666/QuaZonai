@@ -1,324 +1,215 @@
-//! Real HTTP/session/crypto/database authentication regression tests.
+//! Actual local Axum/TCP requests, PostgreSQL sessions and browser boundaries.
 mod support;
-use axum::http::{header, StatusCode};
-use contracts::Id;
-use integrations::{
-    authentication::{capability_verifier, random_capability},
-    secrets::SecretVault,
+use axum::{
+    body::Body,
+    http::{header, Request, StatusCode},
 };
+use contracts::Id;
+use integrations::secrets::SecretVault;
 use serde_json::{json, Value};
 use server::{AppState, WebPolicy};
 use sqlx::PgPool;
 use store::Store;
 use support::*;
-use totp_rs::TOTP;
 use tower_sessions::cookie::Key;
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn bootstrap_login_logout_and_replay_are_real_http_database_operations(pool: PgPool) {
-    let f = fixture(pool).await;
-    let status = call(&f, "GET", "/api/v2/bootstrap/status", Value::Null, None).await;
-    assert_eq!(status.body["initialized"], false);
-    assert_eq!(
-        call(&f, "GET", "/api/v2/auth/session", Value::Null, None)
-            .await
-            .status,
-        StatusCode::UNAUTHORIZED
-    );
-    let (enrollment, anonymous, native) = start(&f).await;
-    let (confirmed, code) = confirm(&f, &enrollment, &anonymous, &native, true).await;
-    assert_eq!(confirmed.status, StatusCode::OK, "{}", confirmed.body);
-    let cookie = confirmed.cookie.unwrap();
-    assert_ne!(cookie, anonymous);
-    assert_eq!(
-        call(
-            &f,
-            "GET",
-            "/api/v2/auth/session",
-            Value::Null,
-            Some(&cookie)
-        )
-        .await
-        .status,
-        StatusCode::OK
-    );
-    assert_eq!(
-        call(
-            &f,
-            "GET",
-            "/api/v2/auth/session",
-            Value::Null,
-            Some(&anonymous)
-        )
-        .await
-        .status,
-        StatusCode::UNAUTHORIZED
-    );
-    let devices = call(
+async fn first_browser_request_enters_without_enrollment_or_login(pool: PgPool) {
+    let f = fixture(pool.clone()).await;
+    let entered = call(&f, "GET", "/api/v2/projects", Value::Null, None).await;
+    assert_eq!(entered.status, StatusCode::OK, "{}", entered.body);
+    assert!(entered.cookie.is_some());
+    assert_eq!(entered.body["items"], json!([]));
+    let snapshot = f.store.authentication_snapshot().await.unwrap();
+    assert!(snapshot.initialized);
+    let absent: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM app.auth_enrollments) AND NOT EXISTS(SELECT 1 FROM app.bootstrap_capabilities) AND NOT EXISTS(SELECT 1 FROM app.trusted_devices) AND (SELECT totp_secret_ref IS NULL FROM app.operator_auth_state WHERE singleton)")
+        .fetch_one(&pool).await.unwrap();
+    assert!(absent);
+    let cookie = entered.cookie.unwrap();
+    let session = call(
         &f,
         "GET",
-        "/api/v2/auth/devices",
+        "/api/v2/auth/session",
         Value::Null,
         Some(&cookie),
     )
     .await;
-    assert_eq!(devices.status, StatusCode::OK);
-    assert_eq!(devices.body["items"].as_array().unwrap().len(), 1);
-    let serialized = devices.body.to_string();
-    assert!(!serialized.contains("verifier"));
-    assert!(!serialized.contains("secret"));
-    let replay = call(
-        &f,
-        "POST",
-        "/api/v2/auth/login",
-        json!({"schema_version":1,"code":code,"trust_device":false,"device_label":null}),
-        None,
-    )
-    .await;
-    assert_eq!(replay.status, StatusCode::CONFLICT);
-    assert_eq!(replay.body["code"], "TOTP_REPLAY");
-    assert_eq!(
-        call(
-            &f,
-            "POST",
-            "/api/v2/auth/logout",
-            Value::Null,
-            Some(&cookie)
-        )
-        .await
-        .status,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        call(
-            &f,
-            "GET",
-            "/api/v2/auth/session",
-            Value::Null,
-            Some(&cookie)
-        )
-        .await
-        .status,
-        StatusCode::UNAUTHORIZED
-    );
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
-    let new_code = native.generate((now / 30 + 1) * 30);
-    let login = call(
-        &f,
-        "POST",
-        "/api/v2/auth/login",
-        json!({"schema_version":1,"code":new_code,"trust_device":false,"device_label":null}),
-        None,
-    )
-    .await;
-    assert_eq!(login.status, StatusCode::OK, "{}", login.body);
-    assert!(login.cookie.is_some());
-    assert_eq!(
-        call(&f, "GET", "/api/v2/bootstrap/status", Value::Null, None)
-            .await
-            .body["initialized"],
-        true
+    assert_eq!(session.status, StatusCode::OK);
+    assert_eq!(session.body.as_object().unwrap().len(), 3);
+    let created = exchange(&f.app, Request::builder()
+        .method("POST").uri("/api/v2/projects")
+        .header(header::HOST, "localhost").header(header::ORIGIN, "https://localhost")
+        .header(header::CONTENT_TYPE, "application/json").header("idempotency-key", "direct-local")
+        .body(Body::from(json!({"schema_version":1,"name":"Local","description":"","fork_from_project_id":null}).to_string())).unwrap()).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    assert!(
+        created.cookie.is_some(),
+        "first write also establishes a local session"
     );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn csrf_and_host_checks_precede_mutations_and_native_session_loading(pool: PgPool) {
+async fn encrypted_local_session_is_reused_and_revocation_creates_a_new_identity(pool: PgPool) {
     let f = fixture(pool.clone()).await;
-    let payload = json!({"schema_version":1,"capability_id":Id::new(),"capability":"A".repeat(43)});
-    for origin in [
-        None,
-        Some("null"),
-        Some("https://evil.example"),
-        Some("http://research.example"),
-        Some("https://research.example.evil.invalid"),
-        Some("https://research.example:444"),
-    ] {
-        let response = request(
-            &f.app,
-            "POST",
-            "/api/v2/bootstrap/start",
-            payload.clone(),
-            None,
-            origin,
-            "research.example",
-        )
-        .await;
-        assert_eq!(response.status, StatusCode::FORBIDDEN);
-        assert_eq!(response.body["code"], "INVALID_ORIGIN");
-    }
-    let bad = request(
-        &f.app,
-        "GET",
-        "/api/v2/bootstrap/status",
-        Value::Null,
-        None,
-        None,
-        "evil.example",
-    )
-    .await;
-    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
-    let attempts: i64 = sqlx::query_scalar("SELECT count(*) FROM app.auth_rate_windows")
+    let first = local_session(&f).await;
+    let cookie = first.cookie.unwrap();
+    let original: String = sqlx::query_scalar("SELECT id::text FROM app.browser_logins LIMIT 1")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(attempts, 0);
-    let response = call(
+    let repeated = call(
         &f,
-        "POST",
-        "/api/v2/auth/login",
-        json!({"schema_version":1,"code":"000000","trust_device":false,"unknown":true}),
-        None,
-    )
-    .await;
-    assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(
-        response.headers[header::CONTENT_TYPE],
-        "application/problem+json"
-    );
-    assert_eq!(
-        response.body["request_id"].as_str().unwrap(),
-        response.headers["x-request-id"].to_str().unwrap()
-    );
-    assert!(!response.body.to_string().contains("SQL"));
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn confirmation_requires_the_original_private_browser_cookie(pool: PgPool) {
-    let f = fixture(pool).await;
-    let (enrollment, cookie, native) = start(&f).await;
-    let code = native.generate(
-        f.store
-            .authentication_snapshot()
-            .await
-            .unwrap()
-            .database_now
-            .timestamp() as u64,
-    );
-    let payload = json!({"schema_version":1,"enrollment_id":enrollment["enrollment_id"],"code":code,"trust_device":false,"device_label":null});
-    assert_eq!(
-        call(
-            &f,
-            "POST",
-            "/api/v2/bootstrap/confirm",
-            payload.clone(),
-            None
-        )
-        .await
-        .status,
-        StatusCode::UNAUTHORIZED
-    );
-    let damaged = format!("{}x", cookie);
-    assert_eq!(
-        call(
-            &f,
-            "POST",
-            "/api/v2/bootstrap/confirm",
-            payload.clone(),
-            Some(&damaged)
-        )
-        .await
-        .status,
-        StatusCode::UNAUTHORIZED
-    );
-    assert!(!f.store.authentication_snapshot().await.unwrap().initialized);
-    assert_eq!(
-        call(
-            &f,
-            "POST",
-            "/api/v2/bootstrap/confirm",
-            payload,
-            Some(&cookie)
-        )
-        .await
-        .status,
-        StatusCode::OK
-    );
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn native_device_revocation_blocks_existing_cookie_immediately(pool: PgPool) {
-    let f = fixture(pool).await;
-    let (enrollment, cookie, native) = start(&f).await;
-    let (confirmed, _) = confirm(&f, &enrollment, &cookie, &native, true).await;
-    assert_eq!(confirmed.status, StatusCode::OK);
-    let cookie = confirmed.cookie.unwrap();
-    let device = confirmed.body["trusted_device_id"].as_str().unwrap();
-    let revoked = call(
-        &f,
-        "DELETE",
-        &format!("/api/v2/auth/devices/{device}"),
+        "GET",
+        "/api/v2/auth/session",
         Value::Null,
         Some(&cookie),
     )
     .await;
-    assert_eq!(revoked.status, StatusCode::NO_CONTENT);
     assert_eq!(
-        call(
-            &f,
-            "GET",
-            "/api/v2/auth/devices",
-            Value::Null,
-            Some(&cookie)
-        )
-        .await
-        .status,
-        StatusCode::UNAUTHORIZED
+        repeated.body, first.body,
+        "reading does not extend the fixed session deadline"
     );
+    f.store
+        .logout_browser(original.clone().try_into().unwrap())
+        .await
+        .unwrap();
+    let renewed = call(
+        &f,
+        "GET",
+        "/api/v2/auth/session",
+        Value::Null,
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(renewed.status, StatusCode::OK);
+    assert_ne!(renewed.cookie.as_deref(), Some(cookie.as_str()));
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT revoked_at IS NOT NULL FROM app.browser_logins WHERE id=$1::uuid"
+    )
+    .bind(&original)
+    .fetch_one(&pool)
+    .await
+    .unwrap());
+    let (total, active): (i64, i64) = sqlx::query_as(
+        "SELECT count(*),count(*) FILTER(WHERE revoked_at IS NULL) FROM app.browser_logins",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((total, active), (2, 1));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn unknown_initialization_capabilities_and_rate_limits_do_not_grant_setup(pool: PgPool) {
+async fn local_access_still_rejects_cross_origin_host_and_bearer_substitution(pool: PgPool) {
+    let f = fixture(pool.clone()).await;
+    for (method, origin, host, expected) in [
+        (
+            "GET",
+            Some("https://evil.example"),
+            "localhost",
+            StatusCode::FORBIDDEN,
+        ),
+        ("POST", None, "localhost", StatusCode::FORBIDDEN),
+        ("POST", Some("null"), "localhost", StatusCode::FORBIDDEN),
+        ("GET", None, "evil.example", StatusCode::BAD_REQUEST),
+    ] {
+        let response = request(
+            &f.app,
+            method,
+            "/api/v2/projects",
+            Value::Null,
+            None,
+            origin,
+            host,
+        )
+        .await;
+        assert_eq!(response.status, expected, "{}", response.body);
+        assert!(response.cookie.is_none());
+    }
+    let response = exchange(
+        &f.app,
+        Request::builder()
+            .method("GET")
+            .uri("/api/v2/projects")
+            .header(header::HOST, "localhost")
+            .header(header::AUTHORIZATION, "Bearer invalid")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        response.status,
+        StatusCode::UNAUTHORIZED,
+        "{}",
+        response.body
+    );
+    assert!(response.cookie.is_none());
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.browser_logins")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn removed_challenge_and_custom_profile_routes_are_not_exposed(pool: PgPool) {
     let f = fixture(pool).await;
-    for _ in 0..5 {
-        let rejected = call(
+    for path in [
+        "/api/v2/auth/login",
+        "/api/v2/auth/verify",
+        "/api/v2/auth/logout",
+        "/api/v2/bootstrap/start",
+        "/api/v2/bootstrap/confirm",
+    ] {
+        let response = call(
             &f,
             "POST",
-            "/api/v2/bootstrap/start",
-            json!({"schema_version":1,"capability_id":Id::new(),"capability":"A".repeat(43)}),
+            path,
+            json!({"schema_version":1,"code":"123456"}),
             None,
         )
         .await;
-        assert_eq!(rejected.status, StatusCode::UNAUTHORIZED);
-        assert!(!rejected.body.to_string().contains("provisioning_uri"));
+        assert!(
+            matches!(
+                response.status,
+                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+            ),
+            "{path}: {}",
+            response.body
+        );
     }
-    let limited = call(
-        &f,
-        "POST",
-        "/api/v2/bootstrap/start",
-        json!({"schema_version":1,"capability_id":Id::new(),"capability":"A".repeat(43)}),
-        None,
-    )
-    .await;
-    assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
-    assert!(limited.headers.contains_key(header::RETRY_AFTER));
-    assert!(!f.store.authentication_snapshot().await.unwrap().initialized);
+    let api: Value = serde_json::from_str(&server::openapi_json().unwrap()).unwrap();
+    for path in [
+        "/api/v2/auth/login",
+        "/api/v2/auth/verify",
+        "/api/v2/auth/devices",
+        "/api/v2/bootstrap/status",
+        "/api/v2/codex/homes",
+    ] {
+        assert!(api["paths"].get(path).is_none(), "{path}");
+    }
+    assert!(api["paths"]["/api/v2/settings/codex"].get("post").is_none());
+    assert!(api["paths"]["/api/v2/auth/session"]["get"].is_object());
 }
 
 #[test]
-fn deployment_policy_never_enables_cleartext_public_authentication() {
+fn deployment_policy_requires_loopback_for_http_and_https() {
     let public = "0.0.0.0:8080".parse().unwrap();
     let local = "127.0.0.1:8080".parse().unwrap();
     for (url, bind, dev) in [
-        ("http://research.example", public, true),
+        ("https://localhost", public, false),
+        ("https://research.example", local, false),
         ("http://localhost:8080", public, true),
         ("http://localhost:8080", local, false),
-        ("https://u:p@research.example", local, false),
-        ("https://research.example/subpath", local, false),
-        ("https://research.example?secret=x", local, false),
+        ("https://u:p@localhost", local, false),
+        ("https://localhost/subpath", local, false),
+        ("https://localhost?secret=x", local, false),
     ] {
         assert!(WebPolicy::new(url, bind, dev).is_err(), "{url}");
     }
     assert!(WebPolicy::new("http://127.0.0.1:8080", local, true).is_ok());
-    assert!(WebPolicy::new("https://research.example", public, false).is_ok());
-    let schema: Value = serde_json::from_str(&server::openapi_json().unwrap()).unwrap();
-    assert!(schema["paths"]["/api/v2/auth/session"].is_object());
-    assert!(schema["paths"]["/api/v2/bootstrap/start"].is_object());
+    assert!(WebPolicy::new("https://localhost", local, false).is_ok());
+    assert!(WebPolicy::new("https://[::1]", "[::1]:8080".parse().unwrap(), false).is_ok());
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -375,47 +266,15 @@ async fn real_tcp_listener_uses_non_owner_database_role_and_native_private_cooki
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap();
-    let capability = random_capability();
-    let issued = store
-        .issue_bootstrap_capability(&capability_verifier(&capability).unwrap())
-        .await
-        .unwrap();
-    let enrollment = client
-        .post(format!("{origin}/api/v2/bootstrap/start"))
-        .header(header::ORIGIN, &origin)
-        .json(&json!({"schema_version":1,"capability_id":issued.id,"capability":capability}))
+    let entered = client
+        .get(format!("{origin}/api/v2/projects"))
         .send()
         .await
         .unwrap();
-    assert_eq!(enrollment.status(), StatusCode::CREATED);
-    let anonymous = enrollment.headers()[header::SET_COOKIE]
-        .to_str()
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_string();
-    let body: Value = enrollment.json().await.unwrap();
-    let native = TOTP::from_url(body["provisioning_uri"].as_str().unwrap()).unwrap();
-    let code = native.generate(
-        store
-            .authentication_snapshot()
-            .await
-            .unwrap()
-            .database_now
-            .timestamp() as u64,
-    );
-    let confirmed=client.post(format!("{origin}/api/v2/bootstrap/confirm")).header(header::ORIGIN,&origin).header(header::COOKIE,&anonymous)
-        .json(&json!({"schema_version":1,"enrollment_id":body["enrollment_id"],"code":code,"trust_device":false,"device_label":null})).send().await.unwrap();
-    assert_eq!(confirmed.status(), StatusCode::OK);
-    let cookie = confirmed.headers()[header::SET_COOKIE]
-        .to_str()
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_string();
-    assert_ne!(cookie, anonymous);
+    assert_eq!(entered.status(), StatusCode::OK);
+    let attributes = entered.headers()[header::SET_COOKIE].to_str().unwrap();
+    assert!(attributes.contains("HttpOnly") && attributes.contains("SameSite=Strict"));
+    let cookie = attributes.split(';').next().unwrap().to_string();
     let valid = client
         .get(format!("{origin}/api/v2/auth/session"))
         .header(header::COOKIE, &cookie)
@@ -423,21 +282,46 @@ async fn real_tcp_listener_uses_non_owner_database_role_and_native_private_cooki
         .await
         .unwrap();
     assert_eq!(valid.status(), StatusCode::OK);
-    let out = client
-        .post(format!("{origin}/api/v2/auth/logout"))
-        .header(header::ORIGIN, &origin)
-        .header(header::COOKIE, &cookie)
-        .send()
+    let id: String = sqlx::query_scalar("SELECT id::text FROM app.browser_logins LIMIT 1")
+        .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(out.status(), StatusCode::NO_CONTENT);
-    let invalid = client
+    store.logout_browser(id.try_into().unwrap()).await.unwrap();
+    let renewed = client
         .get(format!("{origin}/api/v2/auth/session"))
         .header(header::COOKIE, &cookie)
         .send()
         .await
         .unwrap();
-    assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(renewed.status(), StatusCode::OK);
+    assert_ne!(
+        renewed.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap(),
+        cookie
+    );
+    for path in [
+        "auth/login",
+        "auth/verify",
+        "auth/logout",
+        "bootstrap/start",
+        "bootstrap/confirm",
+    ] {
+        let removed = client
+            .post(format!("{origin}/api/v2/{path}"))
+            .header(header::ORIGIN, &origin)
+            .json(&json!({"schema_version":1,"code":"123456"}))
+            .send()
+            .await
+            .unwrap();
+        assert!(matches!(
+            removed.status(),
+            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+        ));
+    }
     serving.abort();
     let _ = serving.await;
     drop(store);

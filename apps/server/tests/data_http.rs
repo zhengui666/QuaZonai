@@ -1,4 +1,4 @@
-//! Real TOTP/Axum/PostgreSQL/ArtifactStore + actual TLS metadata transport.
+//! Real local-session/Axum/PostgreSQL/ArtifactStore + actual TLS metadata transport.
 //! The returned source document is explicitly FIXTURE and cannot create qualification.
 #[path = "../../../tests/support/catalog_metadata.rs"]
 mod metadata_fixture;
@@ -28,8 +28,8 @@ async fn command(
         Request::builder()
             .method(method)
             .uri(path)
-            .header(header::HOST, "research.example")
-            .header(header::ORIGIN, "https://research.example")
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, "https://localhost")
             .header(header::COOKIE, cookie)
             .header(header::CONTENT_TYPE, "application/json")
             .header("Idempotency-Key", key)
@@ -44,8 +44,7 @@ async fn a_fresh_authenticated_operator_can_distinguish_empty_management_from_un
     pool: PgPool,
 ) {
     let f = support::fixture(pool).await;
-    let (enrollment, initial_cookie, totp) = support::start(&f).await;
-    let (confirmation, _) = support::confirm(&f, &enrollment, &initial_cookie, &totp, false).await;
+    let confirmation = support::local_session(&f).await;
     assert_eq!(confirmation.status, StatusCode::OK);
     let cookie = confirmation.cookie.unwrap_or(initial_cookie);
     for path in [
@@ -86,8 +85,7 @@ async fn setup(
     )
     .unwrap();
     let f = support::fixture_with_runtime_targets(pool, Some(targets)).await;
-    let (enrollment, initial_cookie, totp) = support::start(&f).await;
-    let (confirmation, _) = support::confirm(&f, &enrollment, &initial_cookie, &totp, false).await;
+    let confirmation = support::local_session(&f).await;
     assert_eq!(confirmation.status, StatusCode::OK);
     let cookie = confirmation.cookie.unwrap_or(initial_cookie);
     let credential = command(&f, &cookie, "runtime-secret", "POST", "/api/v2/settings/credentials", json!({

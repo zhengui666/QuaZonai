@@ -15,8 +15,8 @@ async fn send(f: &Fixture, cookie: Option<&str>, method: &str, path: &str, body:
     let mut b = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "research.example")
-        .header(header::ORIGIN, "https://research.example")
+        .header(header::HOST, "localhost")
+        .header(header::ORIGIN, "https://localhost")
         .header("idempotency-key", "mandate-http");
     if let Some(cookie) = cookie {
         b = b.header(header::COOKIE, cookie);
@@ -33,8 +33,7 @@ async fn send(f: &Fixture, cookie: Option<&str>, method: &str, path: &str, body:
 #[sqlx::test(migrations = "../../migrations")]
 async fn actual_mandate_http_preserves_original_version_and_never_updates_it(pool: PgPool) {
     let f = fixture(pool.clone()).await;
-    let (e, c, native) = start(&f).await;
-    let (login, _) = confirm(&f, &e, &c, &native, true).await;
+    let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();
     let id: uuid::Uuid =

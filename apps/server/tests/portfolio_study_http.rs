@@ -142,8 +142,6 @@ async fn http(
             "study-http-grant",
             &OperatorCommand::PortfolioStudy(intent.clone()),
             Some(candidate),
-            &snapshot,
-            snapshot.database_now.timestamp() / 30 + 1,
         )
         .await
         .unwrap()

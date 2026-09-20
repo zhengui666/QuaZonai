@@ -94,7 +94,7 @@ async function setup(page: Page, options: { loseFirstSource?: boolean; malformed
 }
 async function openData(page: Page) {
   await page.goto('/'); await navigate(page, '设置');
-  await settingsCategory(page, '数据与许可');
+  await settingsCategory(page, '数据');
 }
 
 test('read-only revocation history has keyboard access to its horizontal table', async ({ page }) => {

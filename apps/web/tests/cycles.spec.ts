@@ -14,8 +14,8 @@ const runtime: Schema['RuntimeView'] = { id: id(20), revision, configuration: { 
   tls_policy: 'SYSTEM_CA', allowed_capabilities: ['DATA_VALIDATE'], enabled: true, development_http: false },
   protocol_version: 1, credential_configured: true, ca_configured: false, last_capability_snapshot_artifact_id: null, created_at: stamp, updated_at: stamp };
 const profiles: Schema['CodexProfileViewV1'][] = [30, 31].map((tail, index) => ({ id: id(tail), name: index ? '审阅配置' : '研究配置',
-  home_binding: `synthetic-${tail}`, profile_origin: 'OPERATOR_MOUNT', connection_mode: 'SYSTEM', custom_base_url: null,
-  credential_configured: false, model_settings: { schema_version: 1, use_default_model_settings: true,
+  home_binding: `synthetic-${tail}`, profile_origin: 'OPERATOR_MOUNT', connection_mode: 'SYSTEM',
+  model_settings: { schema_version: 1, use_default_model_settings: true,
     saved_model: null, saved_reasoning_effort: null, saved_fast_mode: false }, revision, created_at: stamp, updated_at: stamp }));
 const inputs: Schema['InputSetSummary'][] = (['DISCOVERY', 'VALIDATION', 'SEALED'] as const).map((purpose, index) => ({
   id: id(21 + index), project_id: project.id, purpose, revision, decision_cutoff: stamp, frozen_at: stamp, created_at: stamp,

@@ -2,11 +2,10 @@ import { test, expect } from '@playwright/test';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
-import * as OTPAuth from 'otpauth';
 import type { Schema } from '../src/api';
 
 type Fixture = {
-  baseUrl: string; capabilityId: string; capability: string; redactionsFile: string;
+  baseUrl: string; redactionsFile: string;
   phase: 'before-restart' | 'after-restart';
 };
 type Checkpoint = {
@@ -21,7 +20,6 @@ function fixture(): Fixture {
   if (typeof value !== 'object' || value === null) throw new Error('Invalid private fixture');
   const fields = value as Record<string, unknown>;
   if (typeof fields.baseUrl !== 'string' || fields.baseUrl !== process.env.QUAZONAI_WEB_E2E_ORIGIN
-    || typeof fields.capabilityId !== 'string' || typeof fields.capability !== 'string'
     || !['before-restart', 'after-restart'].includes(String(fields.phase))
     || fields.redactionsFile !== resolve(dirname(path), 'redactions.jsonl')) {
     throw new Error('Private fixture fields do not match the test-owned runtime');
@@ -42,8 +40,8 @@ const projectFile = resolve(dirname(config.redactionsFile), 'restart-project.jso
 test.use({ storageState: config.phase === 'after-restart' ? sessionFile : undefined });
 
 test(config.phase === 'before-restart'
-  ? 'packaged Caddy/Rust first TOTP, lost-ACK project retry, CSRF and three viewports'
-  : 'new Rust process retains the original session, project and receipt then revokes logout',
+  ? 'packaged local entry, lost-ACK project retry, CSRF and both themes in three viewports'
+  : 'new Rust process retains the original local session, project, receipt and theme',
 async ({ page, context }) => {
   // Only assert presence, never print any credential on assertion failure.
   expect(['QUAZONAI_WEB_TEST_ADMIN_URL', 'DATABASE_URL', 'PGPASSWORD', 'GH_TOKEN', 'GITHUB_TOKEN']
@@ -77,17 +75,13 @@ async ({ page, context }) => {
       await expect(page.getByRole('row').filter({ hasText: saved.receipt.resource.name })).toHaveCount(1);
     });
 
-    await test.step('revoke the retained session on confirmed logout and deny further writes', async () => {
-      await page.getByRole('button', { name: '退出登录', exact: true }).click();
-      await page.getByRole('button', { name: '确认退出', exact: true }).click();
-      await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible();
-      expect((await page.request.get('/api/v2/auth/session')).status()).toBe(401);
-      const denied = await page.request.post('/api/v2/projects', {
-        headers: { Origin: config.baseUrl, 'Idempotency-Key': randomUUID() },
-        data: { schema_version: 1, name: 'Must not exist after logout', description: '', fork_from_project_id: null },
-      });
-      expect(denied.status()).toBe(401);
-      await expect(page.getByText(saved.receipt.resource.name, { exact: true })).toHaveCount(0);
+    await test.step('retain the theme and expose no legacy login operations', async () => {
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+      await expect(page.getByRole('button', { name: '退出登录', exact: true })).toHaveCount(0);
+      for (const path of ['/api/v2/bootstrap/start', '/api/v2/auth/login', '/api/v2/auth/verify']) {
+        const response = await page.request.post(path, { headers: { Origin: config.baseUrl }, data: {} });
+        expect([404, 405]).toContain(response.status());
+      }
     });
     return;
   }
@@ -98,7 +92,7 @@ async ({ page, context }) => {
   let initialRequest: Schema['ProjectCreate'] | undefined;
   let checkpoint: Checkpoint | undefined;
 
-  await test.step('bind the first operator through the actual Rust API', async () => {
+  await test.step('enter the local workbench through the actual Rust API', async () => {
     const document = await page.goto('/');
     expect(document?.status()).toBe(200);
     expect(document?.headers()['content-security-policy']).toContain("default-src 'self'");
@@ -107,49 +101,8 @@ async ({ page, context }) => {
     const missingAsset = await page.request.get('/assets/does-not-exist.js', { headers: { Accept: 'text/html' } });
     expect(missingAsset.status()).toBe(404);
     expect(await missingAsset.text()).not.toContain('<html');
-    await expect(page.getByRole('heading', { name: '绑定你的验证器' })).toBeVisible();
-    await page.getByLabel('初始化凭据编号').fill(config.capabilityId);
-    await page.getByLabel('一次性初始化凭据').fill(config.capability);
-    const startPromise = page.waitForResponse((response) =>
-      new URL(response.url()).pathname === '/api/v2/bootstrap/start' && response.request().method() === 'POST');
-    await page.getByRole('button', { name: '显示绑定二维码', exact: true }).click();
-    const started = await startPromise;
-    expect(started.ok()).toBe(true);
-    const body: unknown = await started.json();
-    if (typeof body !== 'object' || body === null || !('provisioning_uri' in body)
-      || typeof body.provisioning_uri !== 'string') {
-      throw new Error('Bootstrap start did not return its documented provisioning URI');
-    }
-    rememberPrivateValue(config, body.provisioning_uri);
-    const totp = OTPAuth.URI.parse(body.provisioning_uri);
-    if (!(totp instanceof OTPAuth.TOTP)) throw new Error('Bootstrap did not issue a TOTP provisioning URI');
-    rememberPrivateValue(config, totp.secret.base32);
-    const code = totp.generate();
-    rememberPrivateValue(config, code);
-    await expect(page.getByLabel('动态验证码')).toHaveAttribute('aria-required', 'true');
-    await page.getByLabel('动态验证码').fill(code);
-    const finishPromise = page.waitForResponse((response) =>
-      new URL(response.url()).pathname === '/api/v2/bootstrap/confirm' && response.request().method() === 'POST');
-    await page.getByRole('button', { name: '确认绑定并登录', exact: true }).click();
-    const confirmed = await finishPromise;
-    const sent = confirmed.request().postDataJSON() as Record<string, unknown>;
-    expect({
-      schema: sent.schema_version === 1,
-      enrollment: typeof sent.enrollment_id === 'string',
-      code: typeof sent.code === 'string' && /^[0-9]{6}$/.test(sent.code),
-      trust: sent.trust_device === false,
-      label: sent.device_label === null || typeof sent.device_label === 'string',
-    }, 'Browser must send the complete native authentication contract').toEqual({
-      schema: true, enrollment: true, code: true, trust: true, label: true,
-    });
-    if (!confirmed.ok()) {
-      const rejected: unknown = await confirmed.json().catch(() => null);
-      const code = typeof rejected === 'object' && rejected !== null && 'code' in rejected
-        && typeof rejected.code === 'string' && /^[A-Z_]{1,80}$/.test(rejected.code)
-        ? rejected.code : 'UNEXPECTED_ERROR_CONTRACT';
-      // Never include request bodies, response payloads or provisioning data.
-      throw new Error(`Native enrollment confirmation: HTTP ${confirmed.status()}, ${code}`);
-    }
+    await expect(page.getByRole('heading', { name: '绑定你的验证器' })).toHaveCount(0);
+    await expect(page.getByLabel('动态验证码')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
     expect((await page.request.get('/api/v2/auth/session')).status()).toBe(200);
     const cookies = await context.cookies();
@@ -177,7 +130,7 @@ async ({ page, context }) => {
     await page.getByLabel('研究名称').fill(name);
     await page.getByLabel('研究说明', { exact: true }).fill('Native browser acceptance; research only, no qualification claims.');
     await page.getByRole('button', { name: '保存项目', exact: true }).click();
-    await expect(page.getByText(/连接中断，尚不能确定操作是否已提交/)).toBeVisible();
+    await expect(page.getByText(/连接中断，提交结果未知/)).toBeVisible();
     expect(committedStatus).toBeGreaterThanOrEqual(200);
     expect(committedStatus).toBeLessThan(300);
     expect(typeof initialKey).toBe('string');
@@ -226,8 +179,12 @@ async ({ page, context }) => {
     expect(listing.items.some((project) => project.id === projectId)).toBe(true);
   });
 
-  await test.step('keep authenticated native UI and its editor inside three viewports', async () => {
-    for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
+  await test.step('keep both themes and the local editor inside three viewports', async () => {
+    for (const mode of ['light', 'dark']) {
+      if (await page.locator('html').getAttribute('data-theme') !== mode) {
+        await page.getByRole('button', { name: mode === 'dark' ? '切换为深色主题' : '切换为浅色主题' }).click();
+      }
+      for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
       await page.setViewportSize(viewport);
       await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
@@ -240,9 +197,10 @@ async ({ page, context }) => {
       await expect(page.getByLabel('动态验证码')).toHaveCount(0);
       await expect(page.getByLabel('一次性初始化凭据')).toHaveCount(0);
       await page.locator('.console-layout').screenshot({
-        path: resolve(dirname(config.redactionsFile), `projects-${viewport.width}.png`),
+        path: resolve(dirname(config.redactionsFile), `projects-${mode}-${viewport.width}.png`),
         animations: 'disabled',
       });
+      }
     }
   });
 

@@ -33,7 +33,7 @@ async fn setup(pool: &PgPool) -> (Fixture, String, Id, Arc<Semaphore>) {
         f.store.clone(),
         SecretVault::open(&root.join("secrets"), &root.join("master.key")).unwrap(),
         WebPolicy::new(
-            "https://research.example",
+            "https://localhost",
             "127.0.0.1:8080".parse().unwrap(),
             false,
         )
@@ -42,8 +42,7 @@ async fn setup(pool: &PgPool) -> (Fixture, String, Id, Arc<Semaphore>) {
     .with_artifact_store(ArtifactStore::open(&root.join("artifacts")).unwrap());
     let slots = state.artifact_slots.clone();
     f.app = server::router(state, Key::generate());
-    let (e, cookie, native) = start(&f).await;
-    let (login, _) = confirm(&f, &e, &cookie, &native, true).await;
+    let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();
     let created = send(&f, "POST", "/api/v2/projects", "project", json!({"schema_version":1,"name":"artifacts","description":"native file checks","fork_from_project_id":null}), Some(&cookie), None).await;
@@ -67,12 +66,12 @@ fn request(
     let mut request = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "research.example")
+        .header(header::HOST, "localhost")
         .header("idempotency-key", key);
     if let Some(cookie) = cookie {
         request = request
             .header(header::COOKIE, cookie)
-            .header(header::ORIGIN, "https://research.example");
+            .header(header::ORIGIN, "https://localhost");
     }
     if let Some(bearer) = bearer {
         request = request.header(header::AUTHORIZATION, bearer);

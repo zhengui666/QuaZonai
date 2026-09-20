@@ -1,4 +1,4 @@
-import { Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Typography } from 'antd';
+import { App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Typography } from 'antd';
 import { ExecutionAssumptions } from './execution-assumptions';
 import { PortfolioBuild } from './portfolio-build';
 import { Candidates } from './portfolio-candidates';

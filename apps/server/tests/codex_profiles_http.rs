@@ -29,7 +29,7 @@ async fn configured(pool: PgPool, home: &Path, binary: PathBuf) -> (Fixture, Str
         binary,
         executable_path: std::env::var("PATH").unwrap(),
         bindings: vec![CodexDeploymentBinding {
-            reference: "native-test-home".into(),
+            reference: "local-researcher".into(),
             label: "Operator native home".into(),
             profile_origin: ProfileOrigin::OperatorMount,
             home: home.to_path_buf(),
@@ -48,7 +48,7 @@ async fn configured(pool: PgPool, home: &Path, binary: PathBuf) -> (Fixture, Str
             )
             .unwrap(),
             WebPolicy::new(
-                "https://research.example",
+                "https://localhost",
                 "127.0.0.1:8080".parse().unwrap(),
                 false,
             )
@@ -57,10 +57,8 @@ async fn configured(pool: PgPool, home: &Path, binary: PathBuf) -> (Fixture, Str
         .with_codex_deployment(deployment),
         Key::generate(),
     );
-    let (enrollment, cookie, native) = support::start(&fixture).await;
-    let (confirmed, _) = support::confirm(&fixture, &enrollment, &cookie, &native, false).await;
+    let confirmed = support::local_session(&fixture).await;
     assert_eq!(confirmed.status, StatusCode::OK);
-    // confirm's second value is the one-time TOTP code, not the rotated session.
     let cookie = confirmed
         .cookie
         .expect("native authenticated session cookie");
@@ -80,8 +78,8 @@ async fn command(
         Request::builder()
             .method(method)
             .uri(path)
-            .header(header::HOST, "research.example")
-            .header(header::ORIGIN, "https://research.example")
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, "https://localhost")
             .header(header::COOKIE, cookie)
             .header(header::CONTENT_TYPE, "application/json")
             .header("Idempotency-Key", key)
@@ -91,40 +89,46 @@ async fn command(
     .await
 }
 
-fn profile() -> Value {
-    json!({"schema_version":1,"name":"System Codex","home_binding":"native-test-home","profile_origin":"OPERATOR_MOUNT","connection":{"mode":"SYSTEM"},
-        "model_settings":{"schema_version":1,"use_default_model_settings":true,"saved_model":"dormant-value","saved_reasoning_effort":"dormant-effort","saved_fast_mode":false}})
+async fn local_profile(f: &Fixture, cookie: &str) -> Value {
+    let listed = support::call(
+        f,
+        "GET",
+        "/api/v2/settings/codex",
+        Value::Null,
+        Some(cookie),
+    )
+    .await;
+    assert_eq!(listed.status, StatusCode::OK);
+    let items = listed.body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    items
+        .iter()
+        .find(|view| view["home_binding"] == "local-researcher")
+        .unwrap()
+        .clone()
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn profiles_use_the_real_settings_boundary_and_public_views_expose_no_paths(pool: PgPool) {
+async fn local_roles_exist_without_registration_or_credentials_and_reads_do_not_probe(
+    pool: PgPool,
+) {
     let home = tempfile::tempdir().unwrap();
-    // Existence verifies deployment binding only; this test performs no native probe.
     let (f, cookie) = configured(pool.clone(), home.path(), std::env::current_exe().unwrap()).await;
-    let homes = support::call(&f, "GET", "/api/v2/codex/homes", Value::Null, Some(&cookie)).await;
-    assert_eq!(homes.status, StatusCode::OK);
-    assert_eq!(homes.body[0]["reference"], "native-test-home");
-    assert!(!homes
-        .body
-        .to_string()
-        .contains(home.path().to_str().unwrap()));
-    let anonymous = support::call(&f, "GET", "/api/v2/settings/codex", Value::Null, None).await;
-    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
-    let created = command(
-        &f,
-        &cookie,
-        "new-profile",
-        "POST",
-        "/api/v2/settings/codex",
-        profile(),
-    )
-    .await;
-    assert_eq!(created.status, StatusCode::CREATED);
-    let view = &created.body["resource"];
+    let view = local_profile(&f, &cookie).await;
     assert_eq!(view["connection_mode"], "SYSTEM");
-    assert_eq!(view["credential_configured"], false);
-    assert!(view.get("custom_api_key_ref").is_none());
-    assert_eq!(view["model_settings"], profile()["model_settings"]);
+    assert_eq!(view["model_settings"]["use_default_model_settings"], true);
+    for field in ["credential_configured", "credential_ref", "custom_base_url"] {
+        assert!(view.get(field).is_none());
+    }
+    assert!(!view.to_string().contains(home.path().to_str().unwrap()));
+    let anonymous = support::call(&f, "GET", "/api/v2/settings/codex", Value::Null, None).await;
+    assert_eq!(anonymous.status, StatusCode::OK);
+    assert!(anonymous.cookie.is_some());
+    let homes = support::call(&f, "GET", "/api/v2/codex/homes", Value::Null, Some(&cookie)).await;
+    assert_eq!(homes.status, StatusCode::NOT_FOUND);
+    let registration = command(&f, &cookie, "no-registration", "POST", "/api/v2/settings/codex",
+        json!({"schema_version":1,"home_binding":"elsewhere","connection":{"mode":"CUSTOM_PROVIDER"}})).await;
+    assert_eq!(registration.status, StatusCode::METHOD_NOT_ALLOWED);
     let id = view["id"].as_str().unwrap();
     for path in [
         format!("/api/v2/codex/models?profile_id={id}"),
@@ -133,121 +137,68 @@ async fn profiles_use_the_real_settings_boundary_and_public_views_expose_no_path
         let current = support::call(&f, "GET", &path, Value::Null, Some(&cookie)).await;
         assert_eq!(current.status, StatusCode::OK);
         assert_eq!(current.body["state"], "NEVER_PROBED");
-        assert_eq!(current.body["observation"], Value::Null);
+        assert!(current.body["observation"].is_null());
         assert_eq!(current.headers[header::CACHE_CONTROL], "no-store");
     }
-    let replay = command(
-        &f,
-        &cookie,
-        "new-profile",
-        "POST",
-        "/api/v2/settings/codex",
-        profile(),
-    )
-    .await;
-    assert_eq!(replay.status, StatusCode::CREATED);
-    assert_eq!(replay.body["replayed"], true);
-    assert_eq!(replay.body["resource"], created.body["resource"]);
-    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM app.codex_profile_observations")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(rows, 0);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.codex_profile_observations")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn unknown_home_provider_secret_and_stale_cas_cannot_mutate_the_current_profile(
-    pool: PgPool,
-) {
+async fn only_model_preferences_change_with_original_receipts_and_revision_checks(pool: PgPool) {
     let home = tempfile::tempdir().unwrap();
     let (f, cookie) = configured(pool.clone(), home.path(), std::env::current_exe().unwrap()).await;
-    let mut unknown = profile();
-    unknown["home_binding"] = json!("unregistered-home");
-    let denied = command(
-        &f,
-        &cookie,
-        "bad-home",
-        "POST",
-        "/api/v2/settings/codex",
-        unknown,
-    )
-    .await;
-    assert_eq!(denied.status, StatusCode::SERVICE_UNAVAILABLE);
-    let mut injected = profile();
-    injected["connection"]["base_url"] = json!("https://unused.invalid");
-    assert_eq!(
-        command(
-            &f,
-            &cookie,
-            "injected",
-            "POST",
-            "/api/v2/settings/codex",
-            injected,
-        )
-        .await
-        .status,
-        StatusCode::UNPROCESSABLE_ENTITY
-    );
-    let created = command(
-        &f,
-        &cookie,
-        "correct",
-        "POST",
-        "/api/v2/settings/codex",
-        profile(),
-    )
-    .await;
-    assert_eq!(created.status, StatusCode::CREATED);
-    let id = created.body["resource"]["id"].as_str().unwrap();
-    let mut update = json!({"schema_version":1,"expected_revision":created.body["resource"]["revision"],"name":"Native updated","connection":{"mode":"SYSTEM"},"model_settings":profile()["model_settings"]});
-    let changed = command(
-        &f,
-        &cookie,
-        "update",
-        "PATCH",
-        "/api/v2/settings/codex",
-        json!({"schema_version":1,"profile_id":id,"request":update}),
-    )
-    .await;
+    let view = local_profile(&f, &cookie).await;
+    let id = view["id"].as_str().unwrap();
+    let path = format!("/api/v2/settings/codex/{id}");
+    let mut settings = view["model_settings"].clone();
+    settings["saved_model"] = json!("dormant-native-model");
+    settings["saved_reasoning_effort"] = json!("dormant-native-effort");
+    let update =
+        json!({"schema_version":1,"expected_revision":view["revision"],"model_settings":settings});
+    let changed = command(&f, &cookie, "model-update", "PATCH", &path, update.clone()).await;
     assert_eq!(changed.status, StatusCode::OK);
+    assert_eq!(changed.body["resource"]["name"], view["name"]);
     assert_eq!(
-        command(
-            &f,
-            &cookie,
-            "stale",
-            "PATCH",
-            &format!("/api/v2/settings/codex/{id}"),
-            update.clone(),
-        )
-        .await
-        .status,
+        changed.body["resource"]["home_binding"],
+        view["home_binding"]
+    );
+    assert_eq!(changed.body["resource"]["model_settings"], settings);
+    let replay = command(&f, &cookie, "model-update", "PATCH", &path, update.clone()).await;
+    assert_eq!(replay.status, StatusCode::OK);
+    assert_eq!(replay.body["resource"], changed.body["resource"]);
+    assert_eq!(replay.body["replayed"], true);
+    assert_eq!(
+        command(&f, &cookie, "stale", "PATCH", &path, update.clone())
+            .await
+            .status,
         StatusCode::CONFLICT
     );
-    update["expected_revision"] = changed.body["resource"]["revision"].clone();
-    update["connection"] = json!({"mode":"CUSTOM_PROVIDER","base_url":"https://provider.invalid/v1","credential_ref":contracts::Id::new()});
-    let unknown_secret = command(
-        &f,
-        &cookie,
-        "unknown-secret",
-        "PATCH",
-        &format!("/api/v2/settings/codex/{id}"),
-        update,
-    )
-    .await;
-    assert_eq!(unknown_secret.status, StatusCode::UNPROCESSABLE_ENTITY);
-    let current = support::call(
-        &f,
-        "GET",
-        &format!("/api/v2/settings/codex/{id}"),
-        Value::Null,
-        Some(&cookie),
-    )
-    .await;
+    for (field, value) in [
+        (
+            "connection",
+            json!({"mode":"CUSTOM_PROVIDER","base_url":"https://provider.invalid/v1","credential_ref":contracts::Id::new()}),
+        ),
+        ("home_binding", json!("other")),
+        ("name", json!("replacement")),
+    ] {
+        let mut injected = update.clone();
+        injected["expected_revision"] = changed.body["resource"]["revision"].clone();
+        injected[field] = value;
+        assert_eq!(
+            command(&f, &cookie, field, "PATCH", &path, injected)
+                .await
+                .status,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let current = support::call(&f, "GET", &path, Value::Null, Some(&cookie)).await;
     assert_eq!(current.body, changed.body["resource"]);
-    assert!(!unknown_secret
-        .body
-        .to_string()
-        .contains(home.path().to_str().unwrap()));
 }
 
 #[cfg(feature = "native-codex")]
@@ -260,18 +211,9 @@ async fn explicit_probe_observes_actual_system_configuration_without_any_model_r
     let binary =
         PathBuf::from(std::env::var_os("CODEX_NATIVE_BIN").expect("pinned native binary required"));
     let (f, cookie) = configured(pool.clone(), home.path(), binary).await;
-    let created = command(
-        &f,
-        &cookie,
-        "native-profile",
-        "POST",
-        "/api/v2/settings/codex",
-        profile(),
-    )
-    .await;
-    assert_eq!(created.status, StatusCode::CREATED);
-    let id = created.body["resource"]["id"].as_str().unwrap();
-    let request = json!({"schema_version":1,"profile_id":id,"expected_revision":created.body["resource"]["revision"]});
+    let view = local_profile(&f, &cookie).await;
+    let id = view["id"].as_str().unwrap();
+    let request = json!({"schema_version":1,"profile_id":id,"expected_revision":view["revision"]});
     let checked = command(
         &f,
         &cookie,
@@ -339,22 +281,14 @@ async fn account_routes_preserve_acceptance_and_observe_native_logout(pool: PgPo
     let binary =
         PathBuf::from(std::env::var_os("CODEX_NATIVE_BIN").expect("pinned native binary required"));
     let (f, cookie) = configured(pool.clone(), home.path(), binary).await;
-    let created = command(
-        &f,
-        &cookie,
-        "account-profile",
-        "POST",
-        "/api/v2/settings/codex",
-        profile(),
-    )
-    .await;
-    assert_eq!(created.status, StatusCode::CREATED);
-    let profile_id = created.body["resource"]["id"].as_str().unwrap();
+    let view = local_profile(&f, &cookie).await;
+    let profile_id = view["id"].as_str().unwrap();
     let latest = format!("/api/v2/codex/login?profile_id={profile_id}");
     let empty = support::call(&f, "GET", &latest, Value::Null, Some(&cookie)).await;
     assert_eq!(empty.status, StatusCode::OK);
     assert_eq!(empty.body, Value::Null);
-    let request = json!({"schema_version":1,"profile_id":profile_id,"expected_revision":created.body["resource"]["revision"]});
+    let request =
+        json!({"schema_version":1,"profile_id":profile_id,"expected_revision":view["revision"]});
     for (path, key, expected_state, expected_reason) in [
         (
             "/api/v2/codex/login/start",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AUTH_CHANGED, makeClient } from './api';
+import { makeClient } from './api';
 
 const id = '01990000-0000-7000-8000-000000000001';
 const path = '/api/v2/artifacts/{id}/content' as const;
@@ -31,14 +31,10 @@ describe('native error status, media and Problem schema', () => {
   it('rejects a well-shaped but undeclared status', async () => {
     await expect(download(client({ ...problem, status: 418 }, 418))).rejects.toMatchObject({ code: 'HTTP_CONTRACT_ERROR' });
   });
-  it('does not emit authentication changes from malformed upstream data', async () => {
-    const events = new EventTarget(); const listener = vi.fn(); events.addEventListener(AUTH_CHANGED, listener);
-    vi.stubGlobal('window', events);
+  it('preserves valid authorization errors without opening a login flow', async () => {
     await expect(download(client({ ...problem, status: 401, code: 'AUTH_REQUIRED', request_id: 'invalid' }, 401)))
       .rejects.toMatchObject({ code: 'HTTP_CONTRACT_ERROR' });
-    expect(listener).not.toHaveBeenCalled();
     await expect(download(client({ ...problem, status: 401, code: 'AUTH_REQUIRED' }, 401)))
       .rejects.toMatchObject({ code: 'AUTH_REQUIRED' });
-    expect(listener).toHaveBeenCalledTimes(1);
   });
 });

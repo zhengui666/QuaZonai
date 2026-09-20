@@ -16,15 +16,9 @@ use support::*;
 async fn authenticated(
     pool: PgPool,
     allowed: DataUse,
-) -> (
-    Fixture,
-    String,
-    totp_rs::TOTP,
-    research_support::ResearchFixture,
-) {
+) -> (Fixture, String, research_support::ResearchFixture) {
     let f = fixture(pool.clone()).await;
-    let (e, c, native) = start(&f).await;
-    let (r, _) = confirm(&f, &e, &c, &native, true).await;
+    let r = local_session(&f).await;
     assert_eq!(r.status, StatusCode::OK);
     let login: String = sqlx::query_scalar(
         "SELECT id::text FROM app.browser_logins ORDER BY created_at DESC LIMIT 1",
@@ -41,7 +35,7 @@ async fn authenticated(
         allowed,
     )
     .await;
-    (f, r.cookie.unwrap(), native, data)
+    (f, r.cookie.unwrap(), data)
 }
 async fn send(
     f: &Fixture,
@@ -53,7 +47,7 @@ async fn send(
     let mut b = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "research.example");
+        .header(header::HOST, "localhost");
     for (k, v) in headers {
         b = b.header(*k, *v);
     }
@@ -80,7 +74,7 @@ async fn browser(
         body,
         &[
             ("cookie", cookie),
-            ("origin", "https://research.example"),
+            ("origin", "https://localhost"),
             ("idempotency-key", key),
         ],
     )
@@ -98,7 +92,7 @@ async fn credential(f: &Fixture, cookie: &str, project: Id, kind: &str) -> Strin
 async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_metadata(
     pool: PgPool,
 ) {
-    let (f, cookie, _, data) = authenticated(pool, DataUse::ResearchAndPaper).await;
+    let (f, cookie, data) = authenticated(pool, DataUse::ResearchAndPaper).await;
     let payload = serde_json::to_value(data.input(InputPurpose::Validation)).unwrap();
     let first = browser(
         &f,
@@ -240,7 +234,7 @@ async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_me
 async fn real_bearer_can_read_only_its_metadata_and_not_publish_or_change_sealed_access(
     pool: PgPool,
 ) {
-    let (f, cookie, _, data) = authenticated(pool.clone(), DataUse::Research).await;
+    let (f, cookie, data) = authenticated(pool.clone(), DataUse::Research).await;
     let p = browser(
         &f,
         &cookie,
@@ -305,7 +299,7 @@ async fn real_bearer_can_read_only_its_metadata_and_not_publish_or_change_sealed
 }
 #[sqlx::test(migrations = "../../migrations")]
 async fn research_field_errors_are_safe_bounded_and_native_auth_is_not_optional(pool: PgPool) {
-    let (f, cookie, _, data) = authenticated(pool.clone(), DataUse::Research).await;
+    let (f, cookie, data) = authenticated(pool.clone(), DataUse::Research).await;
     let mut request = serde_json::to_value(data.input(InputPurpose::Validation)).unwrap();
     request["items"][1]["role"] = json!("SIGNALS");
     let r = browser(
@@ -364,8 +358,8 @@ async fn research_field_errors_are_safe_bounded_and_native_auth_is_not_optional(
     assert_eq!(count, 0);
 }
 #[sqlx::test(migrations = "../../migrations")]
-async fn native_cli_totp_grant_can_publish_only_the_exact_research_request(pool: PgPool) {
-    let (f, cookie, native, data) = authenticated(pool.clone(), DataUse::Research).await;
+async fn native_cli_local_grant_can_publish_only_the_exact_research_request(pool: PgPool) {
+    let (f, cookie, data) = authenticated(pool.clone(), DataUse::Research).await;
     let bearer = credential(&f, &cookie, data.project, "CLI").await;
     let input = browser(
         &f,
@@ -403,7 +397,7 @@ async fn native_cli_totp_grant_can_publish_only_the_exact_research_request(pool:
         .unwrap()
         .database_now
         .timestamp() as u64;
-    let grant=send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"EVALUATION_POLICY_CREATE","request":request},"target_id":null,"code":native.generate((now/30+1)*30)}),&[("authorization",&bearer),("idempotency-key","grant")]).await;
+    let grant=send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"EVALUATION_POLICY_CREATE","request":request},"target_id":null}),&[("authorization",&bearer),("idempotency-key","grant")]).await;
     assert_eq!(grant.status, StatusCode::CREATED, "{}", grant.body);
     let g = grant.body["resource"]["id"].as_str().unwrap();
     let mut changed = request.clone();
@@ -471,7 +465,7 @@ async fn native_cli_totp_grant_can_publish_only_the_exact_research_request(pool:
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn research_request_size_and_missing_project_fail_without_creating_records(pool: PgPool) {
-    let (f, cookie, _, data) = authenticated(pool.clone(), DataUse::Research).await;
+    let (f, cookie, data) = authenticated(pool.clone(), DataUse::Research).await;
     let mut input = serde_json::to_value(data.input(InputPurpose::Validation)).unwrap();
     input["items"] = serde_json::Value::Array(vec![input["items"][0].clone(); 700]);
     assert!(serde_json::to_vec(&input).unwrap().len() > 64 * 1024);
@@ -507,7 +501,7 @@ async fn research_request_size_and_missing_project_fail_without_creating_records
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn review_errors_return_the_actual_license_and_threshold_fields(pool: PgPool) {
-    let (f, cookie, _, data) = authenticated(pool.clone(), DataUse::Research).await;
+    let (f, cookie, data) = authenticated(pool.clone(), DataUse::Research).await;
     let denied = browser(
         &f,
         &cookie,

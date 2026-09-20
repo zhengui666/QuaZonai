@@ -40,21 +40,24 @@ describe('same-origin strict API client', () => {
   it('rejects an offline mutation before network dispatch, with no queue', async () => {
     vi.stubGlobal('navigator', { onLine: false });
     const fetcher = vi.fn<typeof fetch>();
-    await expect(makeClient('https://example.test', fetcher).POST('/api/v2/auth/logout')).rejects.toMatchObject({ code: 'OFFLINE' });
+    await expect(makeClient('https://example.test', fetcher).POST('/api/v2/projects', { body: { schema_version: 1, name: 'Test', description: '', fork_from_project_id: null }, params: { header: { 'Idempotency-Key': 'test-key' } } })).rejects.toMatchObject({ code: 'OFFLINE' });
     expect(fetcher).not.toHaveBeenCalled();
     vi.stubGlobal('navigator', { onLine: true });
     expect(fetcher).not.toHaveBeenCalled();
   });
   it('distinguishes unknown network outcomes from rejected commands', async () => {
     const client = makeClient('https://example.test', async () => { throw new TypeError('secret-bearing transport message'); });
-    await expect(client.POST('/api/v2/auth/logout')).rejects.toMatchObject({ code: 'NETWORK_UNKNOWN' });
+    await expect(client.POST('/api/v2/projects', { body: { schema_version: 1, name: 'Test', description: '', fork_from_project_id: null }, params: { header: { 'Idempotency-Key': 'test-key' } } })).rejects.toMatchObject({ code: 'NETWORK_UNKNOWN' });
   });
-  it('requires exact bootstrap and session response schemas', () => {
-    expect(validateResponse('/api/v2/bootstrap/status', 'GET', 200, { schema_version: 1, initialized: false, setup_allowed: true })).toBe(true);
-    expect(validateResponse('/api/v2/bootstrap/status', 'GET', 200, { schema_version: 2, initialized: false, setup_allowed: true })).toBe(false);
-    expect(validateResponse('/api/v2/bootstrap/status', 'GET', 200, { schema_version: 1, initialized: false })).toBe(false);
-    expect(validateResponse('/api/v2/auth/logout', 'POST', 204, undefined)).toBe(true);
-    expect(validateResponse('/api/v2/auth/logout', 'POST', 200, {})).toBe(false);
+  it('validates the local session and exposes no interactive auth contracts', () => {
+    expect(validateResponse('/api/v2/auth/session', 'GET', 200, {
+      schema_version: 1, authenticated_at: '2026-09-20T00:00:00Z', expires_at: '2026-09-20T12:00:00Z',
+    })).toBe(true);
+    expect(validateResponse('/api/v2/auth/session', 'GET', 200, { schema_version: 1 })).toBe(false);
+    expect(validateResponse('/api/v2/bootstrap/status', 'GET', 200, {
+      schema_version: 1, initialized: false, setup_allowed: true,
+    })).toBe(false);
+    expect(validateResponse('/api/v2/auth/logout', 'POST', 204, undefined)).toBe(false);
   });
 });
 describe('canonical scalar and command identity', () => {

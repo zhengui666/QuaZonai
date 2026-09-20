@@ -83,8 +83,7 @@ async fn check_intent(pool: PgPool, command: &str) {
         _ => "PORTFOLIO_BUILD",
     };
     let f = support::fixture(pool.clone()).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap_or(initial);
     let login_id: uuid::Uuid =
@@ -166,7 +165,7 @@ async fn check_intent(pool: PgPool, command: &str) {
         .unwrap()
         .database_now
         .timestamp() as u64;
-    let human = invoke(&origin, &file, &["--idempotency-key","build-human","operator-grant"], json!({"schema_version":1,"command":{"operation":operation,"request":body},"target_id":mandate.id,"code":totp.generate((now/30+1)*30)})).await;
+    let human = invoke(&origin, &file, &["--idempotency-key","build-human","operator-grant"], json!({"schema_version":1,"command":{"operation":operation,"request":body},"target_id":mandate.id})).await;
     let diagnostic: Value = serde_json::from_slice(&human.stderr).unwrap_or(Value::Null);
     assert!(
         human.status.success(),
@@ -227,8 +226,7 @@ async fn check_intent(pool: PgPool, command: &str) {
 async fn automation_policy_cli_freezes_original_intent_and_revokes_history(pool: PgPool) {
     use contracts::{control::*, delivery::*, settings::*, Id, SchemaV1};
     let f = support::fixture(pool.clone()).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap_or(initial);
     let login_id: uuid::Uuid =
@@ -329,7 +327,7 @@ async fn automation_policy_cli_freezes_original_intent_and_revokes_history(pool:
         .unwrap()
         .database_now
         .timestamp() as u64;
-    let human=invoke(&origin,&file,&["--idempotency-key","policy-human","operator-grant"],json!({"schema_version":1,"command":{"operation":"POLICY_AUTHORIZE","request":request},"target_id":source.project_id,"code":totp.generate((now/30+1)*30)})).await;
+    let human=invoke(&origin,&file,&["--idempotency-key","policy-human","operator-grant"],json!({"schema_version":1,"command":{"operation":"POLICY_AUTHORIZE","request":request},"target_id":source.project_id})).await;
     assert!(human.status.success());
     let grant: Value = serde_json::from_slice(&human.stdout).unwrap();
     let args = [
@@ -445,7 +443,7 @@ async fn automation_policy_cli_freezes_original_intent_and_revokes_history(pool:
         .unwrap()
         .database_now
         .timestamp() as u64;
-    let human=invoke(&origin,&file,&["--idempotency-key","policy-revoke-human","operator-grant"],json!({"schema_version":1,"command":{"operation":"POLICY_REVOKE","request":revoke},"target_id":original.id,"code":totp.generate((revoke_now/30+1)*30)})).await;
+    let human=invoke(&origin,&file,&["--idempotency-key","policy-revoke-human","operator-grant"],json!({"schema_version":1,"command":{"operation":"POLICY_REVOKE","request":revoke},"target_id":original.id})).await;
     assert!(human.status.success());
     let grant: Value = serde_json::from_slice(&human.stdout).unwrap();
     for replayed in [false, true] {
