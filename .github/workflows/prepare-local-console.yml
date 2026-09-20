@@ -1,0 +1,62 @@
+name: Inspect local console integration
+on:
+  push:
+    branches: [codex/local-ui-simplification-20260920]
+    paths: ['.github/workflows/prepare-local-console.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      EXPECTED_HEAD: ${{ github.sha }}
+      MAIN: 2135def63ddde3e09d8e20ed4d2e31a6674d3c15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Inspect native Git integration without publishing
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git cat-file -e "$MAIN^{commit}"
+          mkdir -p /tmp/console-integration/conflicts
+          printf '%s\n' "$EXPECTED_HEAD" > /tmp/console-integration/input-commit.txt
+          printf '%s\n' "$MAIN" > /tmp/console-integration/main-commit.txt
+          git archive HEAD | gzip > /tmp/console-integration/source.tar.gz
+          git archive "$MAIN" | gzip > /tmp/console-integration/main.tar.gz
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          set +e
+          git merge --no-commit --no-ff --no-edit "$MAIN" > /tmp/console-integration/merge.log 2>&1
+          status=$?
+          set -e
+          printf '%s\n' "$status" > /tmp/console-integration/merge-exit.txt
+          python3 - <<'PY'
+          import json, pathlib, subprocess, tarfile
+          root=pathlib.Path('/tmp/console-integration')
+          paths=subprocess.check_output(['git','diff','--name-only','--diff-filter=U','-z']).decode().split('\0')
+          conflicts=[p for p in paths if p]
+          (root/'conflicts.json').write_text(json.dumps(conflicts,indent=2))
+          for path in conflicts:
+              for stage,label in [(1,'base'),(2,'ours'),(3,'theirs')]:
+                  result=subprocess.run(['git','show',f':{stage}:{path}'],capture_output=True)
+                  if result.returncode==0:
+                      out=root/'conflicts'/label/path
+                      out.parent.mkdir(parents=True,exist_ok=True)
+                      out.write_bytes(result.stdout)
+          with tarfile.open(root/'integrated-worktree.tar.gz','w:gz') as archive:
+              for path in sorted(set(subprocess.check_output(['git','ls-files','-z']).decode().split('\0'))):
+                  if path and pathlib.Path(path).is_file(): archive.add(path,arcname=path,recursive=False)
+          PY
+          printf 'Repository-only native Git inspection. No conflict resolution, commit, push, product test or account operation was executed. The author must resolve conflicts and remove this temporary workflow.\n' > /tmp/console-integration/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: console-integration-${{ github.run_id }}
+          path: /tmp/console-integration
+          retention-days: 7
+          if-no-files-found: error
