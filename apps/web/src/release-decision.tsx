@@ -55,7 +55,7 @@ export function ReleaseDecision({ release, close }: { release: Schema['ReleaseVi
   return <Modal open title="人工交付决定" width={760} maskClosable={false} closable={!mutation.isPending} onCancel={dismiss} onOk={submit} confirmLoading={mutation.isPending}
     okText={submitted ? '重试同一决定' : kind === 'REJECT' ? '确认拒绝' : '确认重新考虑'} cancelText="返回" okButtonProps={{ disabled: !online || (!submitted && !ready) }} footer={receipt ? <Button onClick={close}>返回原目标包</Button> : undefined}>
     <Space orientation="vertical" className="full-width">
-      <Alert showIcon type="info" title="重新考虑不恢复旧审批" description="决定绑定原候选、下游和环境，跨 Release 保留历史；人工拒绝限制未来交付，不撤单或平仓。" />
+      
       <QueryPanel pending={history.isPending} error={history.error} stale={!!history.data} reload={() => { void history.refetch(); }}>
         <Table<Schema['ReleaseDecisionViewV1']> rowKey="id" dataSource={history.data} size="small" pagination={{ pageSize: 5 }} scroll={{ x: 700 }} onHeaderRow={() => ({ tabIndex: 0 })} columns={[
           { title: '原决定', dataIndex: 'id' }, { title: '下游', dataIndex: 'downstream_id' }, { title: '环境', dataIndex: 'environment' }, { title: '决定', dataIndex: 'decision' }, { title: '序号', dataIndex: 'ordinal' }, { title: '时间', dataIndex: 'decided_at', render: displayTime },
@@ -73,8 +73,8 @@ export function ReleaseDecision({ release, close }: { release: Schema['ReleaseVi
       </Form>
       {kind === 'REOPEN' && latest?.decision !== 'REJECT' && <Alert showIcon type="warning" title="只能重新考虑当前最新的人工拒绝。" />}
       <ErrorNotice error={mutation.error} />
-      {submitted && mutation.isError && <Alert showIcon type="warning" title="结果尚未确认，重试保持原决定意图和幂等键。" />}
-      {receipt && <Alert showIcon type="success" title="原决定已追加。" description={`${receipt.id} / ${receipt.decision}，不授予审批或交付资格。`} />}
+      {submitted && mutation.isError && <Alert showIcon type="warning" title="提交结果未知，请重试当前操作" />}
+      {receipt && <Alert showIcon type="success" title="原决定已追加。" description={`${receipt.id} / ${receipt.decision}`} />}
     </Space>
   </Modal>;
 }

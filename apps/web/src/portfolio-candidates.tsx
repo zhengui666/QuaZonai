@@ -9,7 +9,6 @@ import { PortfolioStudy } from './portfolio-study';
 import { ReleaseCreate } from './release-create';
 
 type Candidate = Schema['CandidateViewV1'];
-const snapshotNotice = '这是原发布时的不可变记录。历史 VALID 和目标权重不表示当前资格或 Release 授权；不得当成真实账户仓位。';
 
 export function Candidates({ project }: { project: string }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
@@ -20,7 +19,7 @@ export function Candidates({ project }: { project: string }) {
     return page;
   } });
   return <Space orientation="vertical" size="middle" className="full-width">
-    <Alert showIcon type="info" title="候选快照不是交付授权" description={snapshotNotice} />
+    
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新候选</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Candidate> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 850 }} locale={{ emptyText: <NoData text="尚无已发布候选，不会生成示例目标。" /> }} columns={[
@@ -47,7 +46,7 @@ function Detail({ id, project, close }: { id: string; project: string; close: ()
   } });
   const header = query.data?.header;
   return <Drawer title="不可变候选快照" open onClose={() => { if (!study && !freezing) close(); }} closable={!study && !freezing} maskClosable={!study && !freezing} width={900}>
-    <Alert showIcon type="info" title="历史状态不授予当前资格" description={snapshotNotice} />
+    
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       {header && query.data && <>
         <Button disabled={!online || query.isError || query.isFetching || header.execution_status !== 'SUCCEEDED' || header.evidence_status !== 'VALID'} onClick={() => setStudy(true)}>请求组合 Study</Button>

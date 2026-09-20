@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, Intent } from './api';
 import type { Schema } from './api';
-import { uuidPattern } from './auth';
+import { uuidPattern } from './api';
 import { briefContent, initialBudget, initialStop } from './brief-fields';
 import { BudgetFields, counterRules } from './budget-fields';
 import { bindingAccessOptions } from './authoring-options';
@@ -24,8 +24,7 @@ export function Briefs({ projectId, projectState }: { projectId: string; project
   const editable = projectState !== undefined && projectState !== 'ARCHIVED';
   const query = useQuery({ queryKey: ['briefs', projectId, cursor], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}/briefs', { params: { path: { id: projectId }, query: { cursor, limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="middle">
-    <Alert showIcon type="info" title="Brief 是研究假设、数据边界和预算的版本化记录。"
-      description="先保存草稿，再绑定执行上下文并冻结；在项目状态中明确启用项目后，选择两角色的 Codex 配置启动。保存和排队均不代表研究完成、资格通过或可交付。" />
+    
     <Button type="primary" disabled={!online || !editable} onClick={() => setEditing('new')}>新建 Brief 草稿</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Brief> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 600 }} locale={{ emptyText: <NoData text="尚无 Brief。请先填写可检验假设和真实数据引用。" /> }} columns={[
@@ -71,7 +70,7 @@ function BriefEditor({ projectId, editable, brief, close }: { projectId: string;
   return <Drawer title={brief ? `Brief · 版本 ${brief.version}${fork ? ' 的新草稿' : ''}` : '新建 Brief 草稿'} open width={840} onClose={dismiss} closable={!mutation.isPending} maskClosable={!mutation.isPending}>
     <Space orientation="vertical" className="full-width" size="middle">
       {brief && <ResourceFacts id={brief.id} revision={brief.revision} updated={brief.updated_at} />}
-      {readOnly && <Alert showIcon type="info" title="冻结版本不可修改。" action={<Button disabled={!online || !editable} onClick={() => { setFork(true); setDirty(true); }}>以此创建新版本</Button>} />}
+      {readOnly && <Alert showIcon type="info" title="只读版本" action={<Button disabled={!online || !editable} onClick={() => { setFork(true); setDirty(true); }}>以此创建新版本</Button>} />}
       <ErrorNotice error={mutation.error} />
       {conflict && <Button onClick={() => { void client.invalidateQueries({ queryKey: ['briefs', projectId] }); dismiss(); }}>关闭并重载服务器版本</Button>}
       <ConfigProvider getPopupContainer={trigger => trigger?.parentElement ?? document.body}>
@@ -88,7 +87,7 @@ function BriefEditor({ projectId, editable, brief, close }: { projectId: string;
           {horizon !== 'VARIABLE_INTERVAL' && <Form.Item name={['content', 'horizon_value']} label="固定周期值（整数）" rules={counterRules}><Input inputMode="numeric" maxLength={19} /></Form.Item>}
         </div>
         <Typography.Title level={3}>真实记录引用</Typography.Title>
-        <Alert type="info" showIcon title="以下编号必须来自服务器已有记录。输入编号不代表数据许可、时间点正确性或评估能力已通过验证。" />
+        
         <div className="field-grid">
           {([['universe_version_id', '投资域版本'], ['evaluation_policy_id', '评估策略'], ['execution_assumptions_id', '执行假设']] as const).map(([field, label]) => <Form.Item key={field} name={['content', field]} label={label} rules={uuidRules}><Input /></Form.Item>)}
           <Form.Item name={['content', 'benchmark_ref']} label="基准引用（可选）" rules={[{ pattern: uuidPattern }]}><Input /></Form.Item>

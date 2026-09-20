@@ -3,7 +3,7 @@ import { ReloadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiFailure, AUTH_CHANGED, dataOf, displayTime, Intent, responseFailure, terminal } from './api';
+import { api, ApiFailure, dataOf, displayTime, Intent, responseFailure, terminal } from './api';
 import { responseKind } from '@quazonai/web/response-contract';
 import type { Schema } from './api';
 import { decodeRunEvent } from './run-events';
@@ -20,7 +20,7 @@ export function Runs({ projectId }: { projectId?: string }) {
   })), refetchInterval: 10_000 });
   return <Space orientation="vertical" className="full-width" size="middle">
     {!projectId && <Typography.Title level={1}>运行</Typography.Title>}
-    <Alert type="info" showIcon title="显示服务器持久化状态。离开页面或断开网络不会取消运行。" description="没有真实进度时不显示百分比；运行成功也不等于 Alpha 合格或已获批准。" />
+    
     <Space wrap>
       <Select<Schema['RunState']> aria-label="按运行状态筛选" allowClear placeholder="全部运行状态" className="state-select" value={state} onChange={value => { setState(value); setHistory([undefined]); }} options={(['QUEUED', 'DISPATCHING', 'RUNNING', 'RECONCILING', 'CANCEL_REQUESTED', 'SUCCEEDED', 'FAILED', 'CANCELLED'] as const).map(value => ({ value, label: <StateTag value={value} /> }))} />
       <Button icon={<ReloadOutlined aria-hidden />} aria-label="刷新运行" aria-busy={query.isFetching} loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新运行</Button>
@@ -72,7 +72,7 @@ export function RunDetail({ id, close }: { id: string; close: () => void }) {
           { content: `开始：${displayTime(query.data.started_at)}` },
           { content: `结束：${displayTime(query.data.finished_at)}` },
         ]} />
-        <Alert type="info" showIcon title="取消是请求，不是即时终止。只有服务器返回 CANCELLED 才表示已取消。" />
+        
         <Button danger disabled={!online || query.isError || cancel.isPending || terminal(query.data.state)} onClick={() => { cancel.reset(); setTarget(query.data); }}>请求取消运行</Button>
         {(query.data.kind === 'PORTFOLIO_BUILD' || query.data.kind === 'PORTFOLIO_SIMULATE') && <RunRebalance id={id} />}
         <RunEvents key={id} snapshot={query.data} />
@@ -82,7 +82,7 @@ export function RunDetail({ id, close }: { id: string; close: () => void }) {
       onOk={() => { if (target && !cancel.isPending && online) cancel.mutate(target); }} okText="确认请求取消" cancelText="返回" confirmLoading={cancel.isPending}
       okButtonProps={{ 'aria-label': '确认请求取消', 'aria-busy': cancel.isPending, danger: true, disabled: !online || (cancel.error instanceof ApiFailure && cancel.error.code === 'REVISION_CONFLICT') }} closable={!cancel.isPending} maskClosable={!cancel.isPending}>
       <Typography.Paragraph className="break-word">运行：{target?.id} · 确认版本：{target?.revision}</Typography.Paragraph>
-      <Typography.Paragraph>取消不会擦除已有证据；正在核对的结果仍需服务器确认。</Typography.Paragraph>
+      
       <ErrorNotice error={cancel.error} />
       {cancel.error instanceof ApiFailure && cancel.error.code === 'REVISION_CONFLICT' && <Button onClick={() => { setTarget(undefined); void query.refetch(); }}>关闭确认并重载最新版本</Button>}
     </Modal>
@@ -114,7 +114,6 @@ function RunEvents({ snapshot }: { snapshot: Run }) {
         if (controller.signal.aborted) return;
         if (!response.ok) {
           const failure = await responseFailure(response, '/api/v2/runs/{id}/events', 'GET');
-          if (failure.code === 'AUTH_REQUIRED') window.dispatchEvent(new Event(AUTH_CHANGED));
           throw failure;
         }
         if (responseKind('/api/v2/runs/{id}/events', 'GET', response.status, response.headers.get('content-type')) !== 'event-stream') {
@@ -150,9 +149,9 @@ function RunEvents({ snapshot }: { snapshot: Run }) {
     last.current = latest.last_event_seq; setEvents([]); setGeneration(value => value + 1);
   }
   return <Card title="实时事件" extra={<Button disabled={!online} onClick={() => { void reconnect().catch(setError); }}>重载快照并连接</Button>}>
-    <Typography.Paragraph type="secondary">{stopped ? '运行已终止' : online ? connection : '离线'}。仅显示本页订阅后的最近 100 项事件；完整状态以运行快照为准。</Typography.Paragraph>
+    <Typography.Paragraph type="secondary">{stopped ? '运行已终止' : online ? connection : '离线'}</Typography.Paragraph>
     <ErrorNotice error={error} />
-    {events.length === 0 ? <NoData text="本次订阅尚无新事件，不代表历史没有事件。" /> : <Timeline items={events.map(event => ({ key: event.seq, content: <><Typography.Text>{event.event_type} · #{event.seq}</Typography.Text><br /><Typography.Text type="secondary">{displayTime(event.occurred_at)}</Typography.Text></> }))} />}
+    {events.length === 0 ? <NoData text="暂无新事件" /> : <Timeline items={events.map(event => ({ key: event.seq, content: <><Typography.Text>{event.event_type} · #{event.seq}</Typography.Text><br /><Typography.Text type="secondary">{displayTime(event.occurred_at)}</Typography.Text></> }))} />}
   </Card>;
 }
 
@@ -162,7 +161,7 @@ function RunRebalance({ id }: { id: string }) {
   return <Card title="自动再平衡来源">
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       {origin ? <>
-        <Typography.Paragraph type="secondary">以下为原始关联，不代表政策当前有效或已获交付批准。</Typography.Paragraph>
+        
         <Descriptions column={1} items={[
           { key: 'policy', label: '原政策', children: origin.policy_id },
           { key: 'source', label: '来源 Candidate', children: origin.source_candidate_id },

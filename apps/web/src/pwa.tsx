@@ -80,14 +80,14 @@ export function PwaUpdate() {
   }
   return <>
     {(waiting || ready) && <Button onClick={() => setDismissed(false)}>有新版本</Button>}
-    {failure && <Typography.Text type="secondary">版本检查或更新暂不可用，请稍后重试</Typography.Text>}
+    {failure && <Typography.Text type="secondary">更新失败，请重试</Typography.Text>}
     <Modal open={!!(waiting || ready) && !dismissed} title="检测到新的前端版本" okText="确认更新" cancelText="稍后" onCancel={() => { if (!installing) setDismissed(true); }} onOk={update}
       okButtonProps={{ 'aria-label': '确认更新', 'aria-busy': installing, disabled: unavailable }} confirmLoading={installing} closable={!installing} maskClosable={!installing}>
       <Space orientation="vertical" className="full-width">
-        <Typography.Paragraph>确认后刷新本页，载入已准备好的静态版本。服务器上的运行不会因此停止。</Typography.Paragraph>
-        {(blocked || mutating > 0) && <Alert type="warning" showIcon title="请先保存表单或关闭操作确认窗口，再更新。未保存内容不会被自动清除。" />}
-        {!online && <Alert type="warning" showIcon title="当前离线，请恢复连接后更新。" />}
-        <Typography.Paragraph type="secondary">仅缓存静态文件；业务数据、认证、证据、审批和事件流不缓存，也不在恢复联网时自动补交操作。</Typography.Paragraph>
+        
+        {(blocked || mutating > 0) && <Alert type="warning" showIcon title="请先保存或取消当前编辑" />}
+        {!online && <Alert type="warning" showIcon title="离线，无法更新" />}
+        
       </Space>
     </Modal>
   </>;

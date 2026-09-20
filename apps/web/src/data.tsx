@@ -53,7 +53,7 @@ function EvidenceSelect({ value, onChange }: { value?: string; onChange?: (id: s
           disabled: item.kind !== 'REPORT' || item.created_by !== 'OPERATOR' || item.byte_count === '0',
         })), next_cursor: page.next_cursor };
       }} />
-    <Typography.Text type="secondary">证明必须是人工发布的非空 REPORT。研究模型的自述或密封评估产物不能代替数据许可。</Typography.Text>
+    
   </Space>;
 }
 
@@ -80,14 +80,14 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
     okButtonProps={{ disabled: !online, 'aria-label': source ? '保存修改' : '登记', 'aria-busy': mutation.isPending }} onOk={() => { if (online && !mutation.isPending) form.submit(); }}>
     <Form form={form} layout="vertical" initialValues={source ? { name: source.name, enabled: source.enabled } : { enabled: true }}
       disabled={mutation.isPending || !online} onFinish={values => mutation.mutate(values)}>
-      {source && <><ResourceFacts id={source.id} revision={source.revision} updated={source.updated_at} /><Alert type="info" showIcon title="Runtime、原生登记键与 Provider 身份不可修改。停用仅阻止新消费，不删除历史证据。" /></>}
+      {source && <><ResourceFacts id={source.id} revision={source.revision} updated={source.updated_at} /></>}
       <Form.Item name="name" label="数据源名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
       {!source && <>
         <Form.Item name="runtime_id" label="所属 Runtime" rules={[required]}><ResourceSelect label="选择已登记的 Runtime" queryKey={['data','runtime-options']}
           load={async (cursor, signal) => { const page = dataOf(await api.GET('/api/v2/integrations/runtimes', { params: { query: { cursor, limit: 50 } }, signal })); return { items: page.items.map(item => ({ value: item.id, label: item.configuration.name, disabled: !item.configuration.enabled })), next_cursor: page.next_cursor }; }} /></Form.Item>
         <Form.Item name="native_catalog_ref" label="Runtime 原生目录登记键" rules={[required, { validator: async (_, value: unknown) => {
           if (!validateNativeCatalogKey(value)) throw new Error('登记键不得包含 URL、空目录段、点路径、查询标记或首尾空白，最多 512 个字符。');
-        } }]} extra="填写 Runtime 配置中的精确登记键，不是 URL 或宿主文件路径。"><Input /></Form.Item>
+        } }]}><Input /></Form.Item>
       </>}
       <Form.Item name="enabled" label="允许新消费" valuePropName="checked"><Switch /></Form.Item>
       <ErrorNotice error={mutation.error} />
@@ -109,7 +109,7 @@ function GrantDialog({ source, close }: { source: Source; close: () => void }) {
   return <Modal open title={`授权数据用途：${source.name}`} maskClosable={false} closable={!mutation.isPending}
     onCancel={() => { if (!mutation.isPending) close(); }} onOk={() => { if (online && !mutation.isPending) form.submit(); }}
     okText="确认登记不可变授权" cancelText="返回" confirmLoading={mutation.isPending} okButtonProps={{ disabled: !online }}>
-    <Alert showIcon type="warning" title="登记授权不会证明历史 PIT 或计算可用性。" description="只允许选择已有许可真正覆盖的用途；授权不能在发行后扩大，撤销也不会抹掉已发生的读取。" />
+    
     <Form form={form} layout="vertical" initialValues={{ allowed_uses: 'RESEARCH' }} disabled={mutation.isPending || !online} onFinish={values => mutation.mutate(values)}>
       <Form.Item name="license_reference" label="许可出处或合同编号" rules={[required, { max: 2000, whitespace: true }]}><Input.TextArea rows={3} maxLength={2000} /></Form.Item>
       <Form.Item name="evidence_artifact_id" label="已发布的许可证明" rules={[required]}><EvidenceSelect /></Form.Item>
@@ -137,7 +137,7 @@ function RevokeDialog({ grant, close }: { grant: Grant; close: () => void }) {
     okText="确认追加撤销记录" cancelText="返回" okButtonProps={{ danger: true, disabled: !online }}
     onCancel={() => { if (!mutation.isPending) close(); }} onOk={() => { if (online && !mutation.isPending) form.submit(); }}>
     <Typography.Paragraph>授权版本 {grant.version} · {grant.license_reference}</Typography.Paragraph>
-    <Alert type="warning" showIcon title="生效后阻止新的数据消费和交付授权；不删除已发生的研究、数据暴露或下游交易事实。" />
+    <Alert type="warning" showIcon title="确认撤销数据授权？" />
     <Form form={form} layout="vertical" initialValues={{ reason_code: 'OPERATOR_REVOKED' }} disabled={mutation.isPending || !online} onFinish={values => mutation.mutate(values)}>
       <Form.Item name="reason_code" label="原因代码" rules={[required, { max: 120 }]}><Input maxLength={120} /></Form.Item>
       <Form.Item name="reason" label="撤销说明" rules={[required, { max: 2000, whitespace: true }]}><Input.TextArea rows={4} maxLength={2000} /></Form.Item>
@@ -160,7 +160,7 @@ function RegisterDialog({ source, runtimeRevision, close }: { source: Source; ru
   return <Modal open title={`读取并登记原生数据：${source.name}`} maskClosable={false} closable={!mutation.isPending}
     okText="读取真实元数据并登记" cancelText="返回" confirmLoading={mutation.isPending} okButtonProps={{ disabled: !online }}
     onCancel={() => { if (!mutation.isPending) close(); }} onOk={() => { if (online && !mutation.isPending) form.submit(); }}>
-    <Alert type="info" showIcon title="来源、PIT、样本数、Universe 和质量报告从 Runtime 原生接口读取，不由表单填写。" description={`本次绑定数据源版本 ${source.revision}、Runtime 版本 ${runtimeRevision}。冲突时请核对后重新打开表单；不会自动覆盖。`} />
+    
     <Form form={form} layout="vertical" disabled={mutation.isPending || !online} onFinish={values => mutation.mutate(values)}>
       <Form.Item name="grant_id" label="适用数据授权" rules={[required]}><ResourceSelect label="选择当前有效的授权" queryKey={['data','grant-options',source.id]}
         load={async (cursor, signal) => { const page = dataOf(await api.GET('/api/v2/data/sources/{id}/grants', { params: { path: { id: source.id }, query: { cursor, limit: 50 } }, signal })); return { items: page.items.map(item => ({ value: item.id, label: `版本 ${item.version} · ${item.license_reference} · ${licenseNames[item.license_state]}`, disabled: item.license_state !== 'ACTIVE' })), next_cursor: page.next_cursor }; }} /></Form.Item>
@@ -259,7 +259,7 @@ function DatasetDetails({ id, close }: { id: string; close: () => void }) {
   const item = query.data;
   return <Modal open title="原生数据版本与证据" width={760} onCancel={close} footer={<Button onClick={close}>关闭</Button>}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!item} reload={() => { void query.refetch(); }}>
-      {item && <><Alert type={item.origin === 'REAL' && item.pit_status === 'VERIFIED' ? 'info' : 'warning'} showIcon title={`${originNames[item.origin]} · PIT ${item.pit_status}`} description="元数据登记、时间排序或运行成功都不能代替独立科学评估。每次消费还会重新检查许可。" />
+      {item && <><Alert type={item.origin === 'REAL' && item.pit_status === 'VERIFIED' ? 'info' : 'warning'} showIcon title={`${originNames[item.origin]} · PIT ${item.pit_status}`} />
         <Descriptions column={1} items={[
           { key: 'id', label: '数据版本编号', children: <Identity value={item.id} /> },
           { key: 'native', label: '原生快照', children: item.native_snapshot_ref },
@@ -304,7 +304,7 @@ function Universes() {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const query = useQuery({ queryKey: ['data','universes',history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/data/universes', { params: { query: { cursor: history.at(-1), limit: 50 } }, signal })) });
   return <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-    <Alert type="info" showIcon title="原生登记与历史记录分开展示；不能覆盖已冻结的成员或资产定义。" description="有原生登记证据只表示版本来源可追溯，不等于真实市场数据、PIT 已验证或研究合格。历史记录未核验时不会补造证据。" />
+    
     <Table<Universe> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 960 }} locale={{ emptyText: <NoData text="尚无 Universe 版本。" /> }} columns={[
       { title: '名称', dataIndex: 'name' }, { title: '登记证据', key: 'registration', render: (_, item) => <Tag>{registrationNames[item.registration_state]}</Tag> },
       { title: '日历版本', key: 'calendar', render: (_, item) => `${item.calendar_ref} / ${item.calendar_version}` },
@@ -325,7 +325,7 @@ export function DataManagement() {
   const [tab, setTab] = useState('sources');
   return <Space orientation="vertical" className="full-width" size="large">
     <Typography.Title level={2}>数据、许可与 Universe</Typography.Title>
-    <Typography.Paragraph>先配置原生数据源，再登记用途许可和不可变版本。数据源配置、原生观测、独立评估是三个不同步骤。</Typography.Paragraph>
+    
     <Tabs activeKey={tab} onChange={setTab} items={[
       { key: 'sources', label: '数据源与许可' }, { key: 'revisions', label: '已登记数据版本' }, { key: 'universes', label: 'Universe 版本' },
     ]} />

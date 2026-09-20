@@ -68,10 +68,10 @@ export function PortfolioBuild({ mandate, close }: { mandate: Schema['MandateVie
     onOk={() => { if (!online || mutation.isPending || receipt) return; if (retry && submitted) mutation.mutate(submitted); else form.submit(); }}>
     <Space orientation="vertical" className="full-width" size="middle">
       <Typography.Paragraph className="break-word">原组合配置：{mandate.id}</Typography.Paragraph>
-      <Alert type="info" showIcon title="从原资格与冻结输入构建目标，不填写预测或资产持仓。" description="至少选择两个不同 Alpha，至少两个权重为正且合计为 1。资格窗口开放不代表当前可用，服务器重验政策、许可、生命周期和原证据。LAST_TARGET 仅为历史目标假设；202 不是候选、科学 PASS 或交付授权。" />
+      
       {[input.error, cycle.error, runtime.error, mutation.error].map((error, index) => <ErrorNotice key={index} error={error} />)}
-      {retry && <Alert type="warning" showIcon title="请求结果尚未确认。" description="重试保留原内容、Runtime 修订与幂等键，不重新选择研究来源。" />}
-      {receipt ? <><Alert type="success" showIcon title="Build Run 已登记。" description="202 不是科学通过、资格或交付批准。" />
+      {retry && <Alert type="warning" showIcon title="提交结果未知，请重试当前操作" />}
+      {receipt ? <><Alert type="success" showIcon title="构建已提交" />
         <Typography.Text className="break-word">Run {receipt.id} · {receipt.state}</Typography.Text><Button onClick={() => setShowRun(true)}>查看 Build 运行</Button></> :
       <Form form={form} layout="vertical" onFinish={submit} disabled={!online || mutation.isPending || submitted !== undefined}
         initialValues={{ environment: 'PAPER', source_kind: 'FORWARD_SNAPSHOT', members: [{}, {}], cpu_seconds: '10', wall_seconds: 60, memory_mib: 1024, output_bytes: '1048576' }}>
@@ -114,7 +114,7 @@ export function PortfolioBuild({ mandate, close }: { mandate: Schema['MandateVie
           </Card>)}
           <Form.ErrorList errors={errors} /><Button disabled={fields.length >= 256 || !online || submitted !== undefined || mutation.isPending} onClick={() => add({})}>添加组合成员</Button>
         </>}</Form.List>
-        {runtime.data && <Typography.Paragraph className="break-word">Runtime 修订：{runtime.data.revision}（提交后冻结）</Typography.Paragraph>}
+        {runtime.data && <Typography.Paragraph className="break-word">Runtime 修订：{runtime.data.revision}</Typography.Paragraph>}
         <div className="field-grid">
           <Form.Item name="cpu_seconds" label="CPU 秒数上限" rules={counterRules}><Input inputMode="numeric" maxLength={19} /></Form.Item>
           <Form.Item name="wall_seconds" label="墙钟秒数上限" rules={[{ required: true, type: 'integer', min: 1, max: 86400 }]}><InputNumber min={1} max={86400} precision={0} /></Form.Item>

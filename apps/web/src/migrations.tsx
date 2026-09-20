@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
-import { uuidPattern } from './auth';
+import { uuidPattern } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
 
 type Report = Schema['HistoricalImportReportV1'];
@@ -13,7 +13,7 @@ export function MigrationManagement() {
   const [creating, setCreating] = useState(false); const [selected, setSelected] = useState<string>();
   const query = useQuery({ queryKey: ['migration-reports', history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/migrations/reports', { params: { query: { cursor: history.at(-1), limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="large">
-    <Alert showIcon type="info" title="旧数据以只读历史保留" description="导入不会启动旧任务或继承旧资格、审批和凭据。缺表、排除项和未核验关系仍需处理。" />
+    
     <Button onClick={() => setCreating(true)}>导入历史投影</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Report> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="尚无历史导入报告。" /> }} columns={[
@@ -56,14 +56,14 @@ function ImportEditor({ close }: { close: () => void }) {
   return <Modal open title="导入历史投影" onCancel={dismiss} onOk={() => { void submit(); }} maskClosable={false} closable={!mutation.isPending} confirmLoading={mutation.isPending}
     okText={submitted ? '重试同一导入请求' : '提交导入请求'} cancelText="返回" okButtonProps={{ disabled: !online }} footer={receipt ? <Button onClick={close}>返回报告列表</Button> : undefined}>
     <Space orientation="vertical" className="full-width" size="middle">
-      <Alert showIcon type="info" title="先核对部署者登记的原导出编号" description="这里只接受已登记的原包编号。试运行保存报告，实际导入保存只读历史；两者均不授予新的资格。" />
+      
       <Form form={form} layout="vertical" disabled={!!submitted || !online} initialValues={{ dry_run: true }}>
         <Form.Item name="export_ref" label="已登记的导出编号" rules={[{ required: true, message: '请输入原导出编号。' }, { pattern: uuidPattern, message: '请输入完整 UUIDv7 编号。' }]}><Input autoComplete="off" /></Form.Item>
         <Form.Item name="dry_run" valuePropName="checked"><Checkbox>仅试运行，不创建历史记录</Checkbox></Form.Item>
       </Form>
       <ErrorNotice error={mutation.error} />
-      {submitted && mutation.isError && <Alert showIcon type="warning" title="结果尚未确认，重试保留原编号、方式和幂等键。" />}
-      {receipt && <><Alert showIcon type={receipt.manual_review_required ? 'warning' : 'info'} title={receipt.dry_run ? '试运行报告已保存' : '只读历史导入报告已保存'} description="报告已保存不代表整体迁移验收通过。" /><Typography.Text className="break-word">{receipt.id}</Typography.Text></>}
+      {submitted && mutation.isError && <Alert showIcon type="warning" title="提交结果未知，请重试当前操作" />}
+      {receipt && <><Alert showIcon type={receipt.manual_review_required ? 'warning' : 'info'} title={receipt.dry_run ? '试运行报告已保存' : '只读历史导入报告已保存'} /><Typography.Text className="break-word">{receipt.id}</Typography.Text></>}
     </Space>
   </Modal>;
 }
@@ -80,7 +80,7 @@ function ImportDetail({ id, close }: { id: string; close: () => void }) {
   return <Drawer open title="历史导入报告" width={1000} onClose={close}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       {value && <Space orientation="vertical" className="full-width" size="large">
-        <Alert showIcon type="warning" title={value.report.manual_review_required ? '需要人工复核' : '仍须核对完整迁移验收'} description="此处为原导出检查和身份映射。原字段内容、产物与密封沿袭不由这些计数证明。" />
+        <Alert showIcon type="warning" title={value.report.manual_review_required ? '需要人工复核' : '仍须核对完整迁移验收'} />
         <Descriptions column={1} className="break-word" items={[
           { key: 'id', label: '报告编号', children: id }, { key: 'export', label: '原导出编号', children: value.report.export_ref },
           { key: 'installation', label: '原安装编号', children: value.report.source_installation_id },
@@ -202,7 +202,7 @@ function HistoricalArtifacts({ report }: { report: Report }) {
           { key: 'coverage', label: '原附件 / 可映射 / 已选择', children: `${value.summary.source_records} / ${value.summary.projected_records} / ${value.summary.selected_records}` },
           { key: 'copies', label: '可读取 / 已存储', children: `${value.summary.readable_records} / ${value.summary.stored_records}` },
         ]} />
-        <Alert showIcon type="info" title={report.dry_run ? '试运行未保存副本，不能下载。' : '仅可下载本报告已保存的公开副本。'} description="未选择、密封及未确认公开的文件不提供下载。副本不继承科学资格，也不证明完整迁移验收通过。" />
+        <Alert showIcon type="info" title={report.dry_run ? '试运行未保存副本，不能下载。' : '仅可下载本报告已保存的公开副本。'} />
         <Table<HistoricalArtifact> rowKey="id" dataSource={value.results.items} pagination={false} scroll={{ x: 800 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="本报告没有可映射的历史附件。" /> }} columns={[
           { title: '原表 / 编号', key: 'identity', render: (_, row) => <span className="break-word">{row.identity.source_table} / {row.identity.source_id}</span> },
           { title: '结果', key: 'outcome', render: (_, row) => row.source_outcome ? artifactOutcome[row.source_outcome] : '未选择' },

@@ -68,7 +68,7 @@ function Revocation({ target, kind, close }: { target: { id: string; project_id:
   return <Modal open title={kind === 'approval' ? '撤销原审批' : '撤销原自动化政策'} width={760} maskClosable={false} closable={!mutation.isPending} onCancel={dismiss} onOk={submit} confirmLoading={mutation.isPending}
     okText={submitted ? '重试同一撤销' : '确认追加撤销'} cancelText="返回" okButtonProps={{ danger: true, disabled: !online || (!submitted && !ready) }} footer={receipt ? <Button onClick={close}>返回授权历史</Button> : undefined}>
     <Space orientation="vertical" className="full-width">
-      <Alert showIcon type="warning" title="撤销限制未来交付，不撤单或平仓" description="立即或预约撤销均追加原记录；最早生效时间不能推后，已领取和 ACK 事实保留。" />
+      <Alert showIcon type="warning" title="撤销限制未来交付，不撤单或平仓" />
       <QueryPanel pending={history.isPending} error={history.error} stale={!!history.data} reload={() => { void history.refetch(); }}>
         <Table<RevocationView> rowKey="id" dataSource={history.data} size="small" pagination={{ pageSize: 5 }} scroll={{ x: 600 }} onHeaderRow={() => ({ tabIndex: 0 })} columns={[
           { title: '原撤销', dataIndex: 'id' }, { title: '生效于', dataIndex: 'effective_at', render: displayTime }, { title: '原因', dataIndex: 'reason' },
@@ -81,7 +81,7 @@ function Revocation({ target, kind, close }: { target: { id: string; project_id:
         <Form.Item label="撤销原因"><Input.TextArea aria-label="撤销原因" value={reason} onChange={e => setReason(e.target.value)} /></Form.Item>
       </Form>
       <ErrorNotice error={mutation.error} />
-      {submitted && mutation.isError && <Alert showIcon type="warning" title="结果尚未确认，重试保留原撤销请求和幂等键。" />}
+      {submitted && mutation.isError && <Alert showIcon type="warning" title="提交结果未知，请重试当前操作" />}
       {receipt && <Alert showIcon type="success" title="原撤销已追加。" description={`${receipt.id}；生效于 ${displayTime(receipt.effective_at)}，已领取事实保留。`} />}
     </Space>
   </Modal>;

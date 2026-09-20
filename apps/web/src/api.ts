@@ -130,3 +130,5 @@ export function displayTime(value: string | null | undefined): string {
 export function terminal(state: Schema['RunState']): boolean {
   return state === 'SUCCEEDED' || state === 'FAILED' || state === 'CANCELLED';
 }
+
+export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

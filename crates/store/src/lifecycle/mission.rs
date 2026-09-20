@@ -225,7 +225,6 @@ impl Store {
         expire_sent_run(&mut tx, &mut locked, &a).await?;
         let profile = CodexProfileSnapshot {
             profile: frozen_profile(&m)?,
-            credential_ref: db::optional_id(&m, "credential_ref")?,
         };
         let native = sqlx::query("SELECT * FROM app.codex_sessions WHERE run_id=$1")
             .bind(run.as_uuid())
@@ -457,9 +456,9 @@ pub(super) async fn admit_role<'a>(
     .await;
     match admitted {
         Ok(admitted) => {
-            sqlx::query("INSERT INTO app.run_missions(run_id,project_id,cycle_id,role,profile_id,profile_revision,profile_snapshot,credential_ref) VALUES($1,$2,$3,$8,$4,$5,$6,$7)")
+            sqlx::query("INSERT INTO app.run_missions(run_id,project_id,cycle_id,role,profile_id,profile_revision,profile_snapshot) VALUES($1,$2,$3,$7,$4,$5,$6)")
                     .bind(admitted.resource.id.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(cycle.as_uuid()).bind(profile.as_uuid()).bind(revision.get() as i64)
-                    .bind(json!({"schema_version":1,"profile":selected.profile})).bind(selected.credential_ref.map(Id::as_uuid)).bind(role)
+                    .bind(json!({"schema_version":1,"profile":selected.profile})).bind(role)
                     .execute(&mut *tx).await?;
             sqlx::query("UPDATE app.research_cycles SET next_action=$2 WHERE id=$1")
                 .bind(cycle.as_uuid())

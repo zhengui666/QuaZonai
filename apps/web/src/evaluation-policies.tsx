@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api, dataOf, displayTime, Intent, isCounter, isDecimal } from './api';
 import type { Schema } from './api';
-import { uuidPattern } from './auth';
+import { uuidPattern } from './api';
 import { counterRules } from './budget-fields';
 import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
 
@@ -49,7 +49,7 @@ export function EvaluationPolicies({ project }: { project: string }) {
     return page;
   } });
   return <Space orientation="vertical" className="full-width" size="middle">
-    <Alert showIcon type="info" title="先冻结独立要求，再开展研究" description="新政策不修改历史版本，不自动启动实验或授予资格；方法能力仍须实际准入核查。" />
+    
     <Space wrap><Button type="primary" disabled={!online} onClick={() => setCreating(true)}>新建评估政策</Button><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新政策</Button></Space>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Policy> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="尚无评估政策，不填充默认合格阈值。" /> }} columns={[
@@ -73,7 +73,7 @@ function Detail({ id, project, close }: { id: string; project: string; close: ()
     return value;
   } });
   return <Drawer title="不可变评估政策" open width={850} onClose={close}>
-    <Alert showIcon type="info" title="原版本只读，修改要求需新建政策" description="null 保持未定义，不复制其他指标组，不改写原有效期。这里没有 Sealed 数据或报告字节。" />
+    
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       {query.data && <pre tabIndex={0} aria-label="原完整评估政策" className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(query.data, null, 2)}</pre>}
     </QueryPanel>
@@ -83,7 +83,7 @@ function Detail({ id, project, close }: { id: string; project: string; close: ()
 export function Requirements({ name, title }: { name: RequirementGroup; title: string }) {
   return <section aria-label={title}>
     <Typography.Title level={3}>{title}</Typography.Title>
-    <Typography.Paragraph>GT/GE 只填下端点，LT/LE 只填上端点，BETWEEN 填闭区间两端。至少一项必需指标；方法名称不代表已支持。</Typography.Paragraph>
+    
     <Form.List name={name}>{(fields, { add, remove }) => <>
       {fields.map(field => <Space key={field.key} orientation="vertical" className="full-width">
         <Form.Item name={[field.name, 'metric_code']} label={`${title} ${field.name + 1} 指标代码`} rules={textRules}><Input /></Form.Item>
@@ -119,7 +119,7 @@ function Editor({ project, close }: { project: string; close: () => void }) {
     modal.confirm({ title: '放弃未保存的评估政策？', content: '不会撤销已发送请求；结果未知时保留原输入重试。', okText: '放弃修改', cancelText: '继续编辑', onOk: close });
   }
   return <Drawer title="新建不可变评估政策" open width={900} onClose={dismiss} closable={!mutation.isPending} maskClosable={!mutation.isPending}>
-    <Alert showIcon type="info" title="三组阈值独立冻结，不从数据推断" description="所有编号必须指向已有同项目来源。保存不是科学 PASS；比较器关系、当前许可和原生能力仍由服务器检查。" />
+    
     <ErrorNotice error={mutation.error} />
     <Form form={form} layout="vertical" disabled={!online || mutation.isPending} onValuesChange={() => setDirty(true)} onFinish={values => mutation.mutate(values)} initialValues={{ metric_requirements: [{ required: true }], sealed_metric_requirements: [{ required: true }], portfolio_metric_requirements: [{ required: true }] }}>
       <Form.Item name="question" label="研究问题" rules={[required, { max: 8000, whitespace: true }]}><Input.TextArea rows={3} /></Form.Item>
@@ -138,15 +138,15 @@ function Editor({ project, close }: { project: string; close: () => void }) {
       {([['purge_observations', '清除观察数'], ['embargo_observations', '隔离观察数']] as const).map(([key, label]) => <Form.Item key={key} name={['split_policy', key]} label={label} rules={countRules}><Input inputMode="numeric" /></Form.Item>)}
       <Form.Item name={['split_policy', 'label_horizon_observations']} label="标签固定跨度（CPCV 必填）" rules={kind === 'CPCV_FIXED_HORIZON' ? counterRules : optionalCount}><Input inputMode="numeric" /></Form.Item>
       <Form.Item name={['split_policy', 'sealed_revision_id']} label="原 Sealed 数据版本编号" rules={ids}><Input /></Form.Item>
-      <Typography.Paragraph>始终要求实际区间校验，不在网页读取 Sealed 数据。</Typography.Paragraph>
+      
       <Requirements name="metric_requirements" title="Validation" />
       <Requirements name="sealed_metric_requirements" title="Sealed" />
       <Form.Item name="use_portfolio" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending}>定义独立组合要求</Checkbox></Form.Item>
-      {portfolio ? <Requirements name="portfolio_metric_requirements" title="组合" /> : <Alert showIcon type="info" title="组合要求为 null，不能授予组合 PASS" />}
+      {portfolio ? <Requirements name="portfolio_metric_requirements" title="组合" /> : null}
       {portfolio && <>
         <Form.Item name="use_study" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending}>冻结组合研究计划</Checkbox></Form.Item>
         {study && <section aria-label="组合研究计划">
-          <Typography.Paragraph>引用已冻结的 PORTFOLIO 输入；结束固定为原数据结束，不在运行后挑选窗口。时间使用带时区的 RFC3339，最多六位小数；保留原文本精度，由服务器校验。</Typography.Paragraph>
+          
           <Form.Item name={['portfolio_study_plan', 'input_set_id']} label="组合研究输入编号" rules={ids}><Input /></Form.Item>
           <Form.Item name={['portfolio_study_plan', 'evaluation_start']} label="组合研究起点" rules={[required]}><Input placeholder="2026-09-14T00:00:00.000001Z" /></Form.Item>
           <Form.Item name="use_manual_study" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending}>冻结手动调仓时点</Checkbox></Form.Item>
@@ -157,7 +157,7 @@ function Editor({ project, close }: { project: string; close: () => void }) {
             </Space>)}
             <Button disabled={fields.length >= 256} onClick={() => add('')}>添加研究时点</Button>
           </>}</Form.List>}
-          <Typography.Paragraph>手动时点必须从原起点开始且严格递增；非手动计划不携带该列表。保存不启动研究或授予 PASS。</Typography.Paragraph>
+          
         </section>}
       </>}
       <Typography.Title level={2}>共同证据限制</Typography.Title>

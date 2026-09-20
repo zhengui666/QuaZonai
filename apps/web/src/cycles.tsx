@@ -90,19 +90,18 @@ export function BriefExecution({ brief, close }: { brief: Brief; close: () => vo
         client.invalidateQueries({ queryKey: ['briefs', brief.project_id] }), client.invalidateQueries({ queryKey: ['project', brief.project_id] }),
         client.invalidateQueries({ queryKey: ['codex'] }), client.invalidateQueries({ queryKey: ['integrations'] }),
       ]).then(close); }}>关闭并重载最新记录</Button>}
-      {retry && <Alert type="warning" showIcon title="请求结果尚未确认。" description="原始内容、版本及幂等键已保留；重试不会重新选择配置或创建新的请求意图。" />}
+      {retry && <Alert type="warning" showIcon title="提交结果未知，请重试当前操作" />}
       {receipt ? 'cycle' in receipt ? <>
-        <Alert type="success" showIcon title="Cycle 与准备运行已由服务器登记。" description="排队不是研究完成、资格通过或交付。可在研究周期及运行记录中查看实际状态。" />
+        <Alert type="success" showIcon title="研究周期已创建" />
         <Descriptions column={1} items={[
           { key: 'cycle', label: 'Cycle', children: receipt.cycle.id },
           { key: 'run', label: '准备运行', children: receipt.run.id },
           { key: 'state', label: '当前回执状态', children: <StateTag value={receipt.run.state} /> },
         ]} />
-      </> : <Alert type="success" showIcon title="Brief 已冻结，尚未启动研究。" description="执行上下文已固定。返回后请在项目状态中明确启用项目，再选择研究者与独立 Reviewer 的 Codex 配置启动 Cycle；冻结不会自动启用项目。" /> : <>
-        <Alert type="info" showIcon title={freeze ? '冻结后不能修改本版本及执行上下文。' : '本次启动会创建真实任务并预约冻结预算。'}
-          description={freeze ? '请选择本项目三个不同用途的已冻结输入和已登记 Runtime；服务器会重新核对数据、许可及原生能力。' : '两角色必须明确选择。可使用同一账号配置，但各自使用独立 Thread；启动时冻结配置版本，不自动更换模型设置。'} />
+      </> : <Alert type="success" showIcon title="Brief 已冻结" /> : <>
+        
         <ErrorNotice error={project.error} /><ErrorNotice error={frozen.error} />
-        {!freeze && project.data && project.data.state !== 'ACTIVE' && <Alert type="warning" showIcon title="项目尚未启用，不能启动 Cycle。请返回修改项目状态。" />}
+        {!freeze && project.data && project.data.state !== 'ACTIVE' && <Alert type="warning" showIcon title="请先启用项目" />}
         {project.data && <Typography.Text>项目修订 {submitted?.kind === 'start' ? submitted.body.expected_revision : project.data.revision} · <StateTag value={project.data.state} /></Typography.Text>}
         <Form form={form} layout="vertical" disabled={!online || mutation.isPending || submitted !== undefined || unavailable || conflict} onFinish={submit}>
           {freeze ? <>
@@ -111,7 +110,7 @@ export function BriefExecution({ brief, close }: { brief: Brief; close: () => vo
               return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.configuration.name} · ${item.id}`, disabled: !item.configuration.enabled })) };
             }} /></Form.Item>
             <ErrorNotice error={runtime.error} />
-            {runtime.data && <Typography.Paragraph>Runtime 修订 {submitted?.kind === 'freeze' ? submitted.body.execution_context.runtime_revision : runtime.data.revision}；登记不等于当前已通过能力检查。</Typography.Paragraph>}
+            {runtime.data && <Typography.Paragraph>Runtime 修订 {submitted?.kind === 'freeze' ? submitted.body.execution_context.runtime_revision : runtime.data.revision}</Typography.Paragraph>}
             {(['DISCOVERY', 'VALIDATION', 'SEALED'] as const).map(purpose => <Form.Item key={purpose} name={`${purpose.toLowerCase()}_input_set_id`} label={`${purpose} 输入集`} rules={required}>
               <ResourceSelect label={`选择 ${purpose} 输入集`} queryKey={['startup', 'inputs', brief.project_id, purpose]} load={async (cursor, signal) => {
                 const page = dataOf(await api.GET('/api/v2/input-sets', { params: { query: { project_id: brief.project_id, cursor, limit: 50 } }, signal }));
@@ -129,7 +128,7 @@ export function BriefExecution({ brief, close }: { brief: Brief; close: () => vo
                 return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}`, disabled: !item.home_binding })) };
               }} /></Form.Item>
               <ErrorNotice error={profile.error} />
-              {profile.data && <Typography.Paragraph>{role}：{profile.data.name} · 配置修订 {submitted?.kind === 'start' ? submitted.body[field === 'researcher_id' ? 'researcher_profile' : 'reviewer_profile'].expected_revision : profile.data.revision} · {profile.data.model_settings.use_default_model_settings ? '原生默认设置（实际模型待连接确认）' : '使用已保存的显式设置，不回退其他模型'}</Typography.Paragraph>}
+              {profile.data && <Typography.Paragraph>{role}：{profile.data.name} · 配置修订 {submitted?.kind === 'start' ? submitted.body[field === 'researcher_id' ? 'researcher_profile' : 'reviewer_profile'].expected_revision : profile.data.revision} · {profile.data.model_settings.use_default_model_settings ? '本机默认' : '自定义模型'}</Typography.Paragraph>}
             </div>)}
           </>}
         </Form>
@@ -145,7 +144,7 @@ export function Cycles({ projectId }: { projectId: string }) {
   const query = useQuery({ queryKey: ['cycles', projectId, cursor], refetchInterval: 10_000,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}/cycles', { params: { path: { id: projectId }, query: { cursor, limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="middle">
-    <Alert type="info" showIcon title="研究周期只显示服务器持久化事实。" description="准备成功不代表模型、科学实验、独立评审或交付已经完成。" />
+    
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新研究周期</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['CycleViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="尚无研究周期。请先冻结 Brief，再明确选择两个角色的配置启动。" /> }} columns={[
@@ -173,7 +172,7 @@ function CycleSelection({ id, close }: { id: string; close: () => void }) {
   return <Drawer title="冻结试验选择" open width={1100} onClose={close}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!value} reload={() => { void query.refetch(); }}>
       {value && <Space orientation="vertical" size="middle" className="full-width break-word">
-        <Alert showIcon type="info" title="选择完成不是科学 PASS、Sealed 或可交付资格。" description="这是原 Mission 收尾时的完整历史快照。后续试验不会刷新旧排名；未执行、失败、取消、缺值和落选均保留。" />
+        
         <Descriptions column={1} items={[
           { key: 'cycle', label: '原 Cycle', children: value.cycle_id },
           { key: 'run', label: '原研究 Mission', children: value.research_run_id },

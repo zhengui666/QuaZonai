@@ -7,7 +7,7 @@ import { NoData, Pager, QueryPanel } from './ui';
 
 export function ForwardHistory({ project }: { project: string }) {
   return <Space orientation="vertical" className="full-width">
-    <Alert showIcon type="info" title="历史观察与唤醒记录" description="历史分类不是当前资格；CONSUMED 只表示已创建原周期，不代表该周期仍在运行。查看不会重新分类、消费 Wake 或触发交付。" />
+    
     <Tabs items={[{ key: 'observations', label: '劣化观察', children: <Observations project={project} /> }, { key: 'wakes', label: 'Wake 记录', children: <Wakes project={project} /> }]} />
   </Space>;
 }

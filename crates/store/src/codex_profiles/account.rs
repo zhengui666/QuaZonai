@@ -166,10 +166,7 @@ impl Store {
         Ok(CodexAccountPreparation::Start(Box::new(
             CodexAccountTicket {
                 acceptance,
-                snapshot: CodexProfileSnapshot {
-                    profile,
-                    credential_ref: None,
-                },
+                snapshot: CodexProfileSnapshot { profile },
                 actor: actor.clone(),
                 key: key.to_owned(),
                 request: request.clone(),

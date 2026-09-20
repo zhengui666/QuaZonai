@@ -19,7 +19,7 @@ export function AutomationPolicies({ project }: { project: string }) {
     return page;
   } });
   return <Space orientation="vertical" className="full-width">
-    <Alert showIcon type="info" title="自动化政策是有界授权，不是交付结果" description="新版本不改写旧审批或已领取事实。Auto HandOff 晋级仍要求完整 Paper 观察与原生资格；Agent 不能授权。" />
+    
     <Button onClick={() => setCreating(true)}>冻结自动化政策</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['AutomationPolicyViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }} onHeaderRow={() => ({ tabIndex: 0 })} columns={[
@@ -70,9 +70,9 @@ function PolicyEditor({ project, close }: { project: string; close: () => void }
     if (!receipt) modal.confirm({ title: '关闭未完成的政策？', content: submitted ? '关闭不会撤销可能已保存的授权。请先核对原政策历史。' : '关闭将放弃当前表单。', okText: '关闭', cancelText: '保留表单', onOk: close }); else close();
   }
   return <Drawer title="冻结自动化政策" open width={850} maskClosable={false} closable={!mutation.isPending} onClose={dismiss}>
-    <Alert showIcon type="warning" title="冻结政策授权后续有界自动化" description="明确设置全部限制，保存不代表 Worker 已运行或 Paper/Live 已交付。归档项目不能新增授权。" />
+    <Alert showIcon type="warning" title="冻结政策授权后续有界自动化" />
     <ErrorNotice error={current.error ?? error ?? mutation.error} />
-    {submitted && mutation.isError && <Alert showIcon type="warning" title="结果尚未确认，重试保留原项目版本和完整政策。" />}
+      {submitted && mutation.isError && <Alert showIcon type="warning" title="提交结果未知，请重试当前操作" />}
     {receipt ? <><Alert showIcon type="success" title="原自动化政策已冻结。" description={receipt.id} /><Button onClick={close}>返回政策历史</Button></> : <Form form={form} layout="vertical" disabled={!!submitted || !online} initialValues={{ enabled_for_new_rebalances: false, promotion_metric_requirements: [{ required: true }], degradation_metric_requirements: [{ required: true }] }}>
       <Form.Item name="mode" label="自动化模式" rules={[{ required: true }]}><Select options={['MANUAL', 'AUTO_PAPER', 'AUTO_HANDOFF'].map(value => ({ value, label: value }))} /></Form.Item>
       <Form.Item name="mandate_id" label="原组合配置" rules={[{ required: true }]}><ResourceSelect label="原组合配置" queryKey={['automation-mandates', project]} load={async (cursor, signal) => {

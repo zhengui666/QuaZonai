@@ -29,6 +29,7 @@ export function useColorTheme(): [ColorTheme, () => void] {
       preference.current = storedTheme();
       setTheme(resolveTheme(preference.current, media.matches));
     };
+    followSystem();
     media.addEventListener('change', followSystem);
     window.addEventListener('storage', synchronize);
     return () => { media.removeEventListener('change', followSystem); window.removeEventListener('storage', synchronize); };

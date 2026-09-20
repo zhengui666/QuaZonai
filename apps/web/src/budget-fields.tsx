@@ -35,7 +35,7 @@ export function BudgetFields() {
   }
   return <>
     <Typography.Title level={3}>预算上限</Typography.Title>
-    <Typography.Paragraph type="secondary">初始值仅是可修改的草稿建议，不代表实测资源、模型报价或获准运行。</Typography.Paragraph>
+    
     <div className="field-grid">
       {([
         ['max_experiments', '最大实验数', 1, 4294967295], ['max_parallel_runs', '最大并行运行', 1, 65535],
@@ -54,7 +54,6 @@ export function BudgetFields() {
         <Input maxLength={3} allowClear />
       </Form.Item>
       <Form.Item name={['content', 'budget', 'cost_enforcement']} label="费用约束方式"
-        extra="精确账单能力尚未接通。估算模式须填写正金额及受支持币种；切换为没有费用度量会清空这两项。"
         dependencies={costDependencies.filter(path => path[2] !== 'cost_enforcement')}
         rules={[{ required: true }, ...costRules('cost_enforcement')]}>
         <Select options={costOptions} onChange={value => {

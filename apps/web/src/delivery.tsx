@@ -18,7 +18,7 @@ export function Delivery() {
   const { blocked } = useContext(GuardContext);
   return <Space orientation="vertical" size="large" className="full-width">
     <Typography.Title level={1}>交付</Typography.Title>
-    <Alert showIcon type="info" title="目标包与交付授权分开" description="Release 保存不可变目标包。请从目标包详情查看审批、人工决定及原审批历史；登记 Offer 仍需独立审批，审批不代表下游领取或真实交易。" />
+    
     <ResourceSelect label="选择交付所属项目" value={project} onChange={setProject} disabled={blocked} queryKey={['delivery-projects']} load={async (cursor, signal) => {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
@@ -81,7 +81,7 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
     const anchor = document.createElement('a'); anchor.href = current.url; anchor.download = `${metadata.id}.bin`; anchor.click();
   } });
   return <Drawer title="原始目标包版本" open onClose={approving || offering || revoking || deciding ? undefined : close} closable={!approving && !offering && !revoking && !deciding} maskClosable={!approving && !offering && !revoking && !deciding} width={760}>
-    <Alert showIcon type="info" title="历史有效期不是当前审批资格" description="读取不会延长期限或重判数据、Alpha 资格与下游兼容性。REAL 是包来源，不代表已批准 Live。" />
+    
     <QueryPanel pending={query.isPending} error={query.error} stale={!!item} reload={() => { void query.refetch(); }}>
       {item && <Descriptions column={1} className="break-word" items={[
         { key: 'id', label: 'Release 编号', children: item.id }, { key: 'project', label: '项目', children: item.project_id },
@@ -115,7 +115,7 @@ function Handoffs({ project }: { project: string }) {
     return page;
   } });
   return <Space orientation="vertical" className="full-width">
-    <Alert showIcon type="info" title="下游领取与确认不代表真实成交" description="这里保留原 Offer、Claim 和 ACK 事实。读取不会续期，撤销不代表撤单或平仓。" />
+    
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新交付记录</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['HandoffViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="尚无交付记录。冻结目标包不会自动创建 Offer。" /> }} columns={[
@@ -162,7 +162,7 @@ function ReleaseApprovals({ release, offer, revoke }: { release: Schema['Release
     return page;
   } });
   return <Space orientation="vertical" className="full-width">
-    <Alert showIcon type="info" title="历史审批不代表当前可发送" description="这里保留原授权与证据引用。有效期、撤销、决定及下游配置仍须在实际交付时由服务端复核。" />
+    
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新审批历史</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['ApprovalViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 720 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="原目标包尚无审批记录。" /> }} columns={[

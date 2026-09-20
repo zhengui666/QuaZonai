@@ -22,8 +22,7 @@ export function Alphas() {
   const [project, setProject] = useState<string>();
   return <Space orientation="vertical" size="large" className="full-width">
     <Typography.Title level={1}>Alpha</Typography.Title>
-    <Alert type="info" showIcon title="研究登记、科学 PASS 和未过期都不等于可交付资格。"
-      description="查看版本和正式 Validation 不启动任务。封存评估需另行明确提交，并使用运行中 Cycle 的冻结政策和预算；不授审批或交付。" />
+    
     <ResourceSelect label="选择 Alpha 所属项目" value={project} onChange={setProject} queryKey={['alpha-projects']}
       load={async (cursor, signal) => {
         const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
@@ -185,13 +184,13 @@ function AlphaEvaluate({ version, close }: { version: Version; close: () => void
     <Space orientation="vertical" className="full-width" size="middle">
       <Typography.Paragraph className="break-word">原 Alpha 版本：{version.id}</Typography.Paragraph>
       <ErrorNotice error={mutation.error} />
-      {retry && <Alert type="warning" showIcon title="请求结果尚未确认。" description="保留原内容与幂等键；重试不会重新选择 Cycle、政策或资源限额。" />}
+      {retry && <Alert type="warning" showIcon title="提交结果未知，请重试当前操作" />}
       {receipt ? <>
-        <Alert type="success" showIcon title="封存评估 Run 已登记。" description="202 不是科学通过、Reviewer 结论或资格；首次读取仍需原 Attempt 的机会预约。" />
+        <Alert type="success" showIcon title="封存评估 Run 已登记。" />
         <Typography.Text className="break-word">Run {receipt.id} · {receipt.state}</Typography.Text>
         <Button onClick={() => setShowRun(true)}>查看评估运行</Button>
       </> : <>
-        <Alert type="info" showIcon title="复用原模型和校准，不重收原编译试验。" description="新的 Run 仍占 Cycle 资源和封存机会，失败或取消不退已授机会。默认限额只是可修改草稿，不是实测用量。" />
+        
         <Form form={form} layout="vertical" onFinish={submit} disabled={!online || mutation.isPending || submitted !== undefined}
           initialValues={{ cpu_seconds: '10', wall_seconds: 60, memory_mib: 1024, output_bytes: '1048576' }}>
           <Form.Item name="cycle_id" label="承担评估预算的 Cycle" rules={[{ required: true, message: '请选择本项目运行中的 Cycle。' }]}>
@@ -231,8 +230,7 @@ function Qualifications({ version, close }: { version: string; close: () => void
     } });
   return <Drawer title="原资格历史" open width={900} onClose={close}>
     <Space orientation="vertical" size="middle" className="full-width">
-      <Alert type="info" showIcon title="授予时间窗开放不等于当前可用于组合。"
-        description="只展示原授予、期限和最早撤销。当前政策、Alpha 生命周期、REAL/PIT 和许可证仍须在组合准入时检查；本页不读取 Sealed 报告或授予交付权限。状态截至服务端观察时间，之后可能变化。" />
+      
       <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新资格历史</Button>
       <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
         <Table<Schema['QualificationView']> rowKey="id" pagination={false} dataSource={query.data?.items ?? []}
@@ -263,8 +261,7 @@ function CalibrationDetail({ version, project, expectedId, close }: { version: s
   return <Drawer title="冻结校准来源" open width={800} onClose={close}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!value} reload={() => { void query.refetch(); }}>
       {value && <Space orientation="vertical" size="middle" className="full-width break-word">
-        <Alert showIcon type="info" title="新版本附加校准，不继承源版本评估或资格。"
-          description="原信号仍是 SCORE；只有应用冻结模型才得到预期收益。本页不读取模型字节、系数、标签或训练索引，也不重新拟合或延长原有效期。" />
+        
         <Descriptions column={1} items={[
           { key: 'id', label: '校准编号', children: value.id },
           { key: 'target', label: '附加到版本', children: value.alpha_version_id },
@@ -333,7 +330,7 @@ export function EvaluationDetail({ id, close, candidate, alpha }: { id: string; 
   return <Drawer title={candidate ? '候选研究评估' : '正式 Validation 评估'} open width={1000} onClose={close}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!value} reload={() => { void query.refetch(); }}>
       {value && <Space orientation="vertical" size="middle" className="full-width break-word">
-        <Alert showIcon type="info" title="这是历史科学证据，不是资格或交付批准。" description="缺值和过期不会被补齐；本页不读取报告字节、标签、训练索引或 Sealed 数据。" />
+        
         <Descriptions column={1} items={[
           { key: 'id', label: '评估编号', children: value.id },
           { key: 'kind', label: '评估类型', children: value.evaluation_kind },

@@ -1630,107 +1630,6 @@
         ],
         "type": "object"
       },
-      "BootstrapConfirm": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "maxLength": 6,
-            "minLength": 6,
-            "pattern": "^[0-9]{6}$",
-            "type": "string"
-          },
-          "device_label": {
-            "maxLength": 120,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "enrollment_id": {
-            "$ref": "#/components/schemas/Id"
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
-          },
-          "trust_device": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "schema_version",
-          "enrollment_id",
-          "code",
-          "trust_device"
-        ],
-        "type": "object"
-      },
-      "BootstrapEnrollment": {
-        "additionalProperties": false,
-        "properties": {
-          "enrollment_id": {
-            "$ref": "#/components/schemas/Id"
-          },
-          "expires_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "provisioning_uri": {
-            "type": "string"
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
-          }
-        },
-        "required": [
-          "schema_version",
-          "enrollment_id",
-          "expires_at",
-          "provisioning_uri"
-        ],
-        "type": "object"
-      },
-      "BootstrapStart": {
-        "additionalProperties": false,
-        "properties": {
-          "capability": {
-            "maxLength": 43,
-            "minLength": 43,
-            "type": "string"
-          },
-          "capability_id": {
-            "$ref": "#/components/schemas/Id"
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
-          }
-        },
-        "required": [
-          "schema_version",
-          "capability_id",
-          "capability"
-        ],
-        "type": "object"
-      },
-      "BootstrapStatus": {
-        "additionalProperties": false,
-        "properties": {
-          "initialized": {
-            "type": "boolean"
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
-          },
-          "setup_allowed": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "schema_version",
-          "initialized",
-          "setup_allowed"
-        ],
-        "type": "object"
-      },
       "BriefBindingV1": {
         "additionalProperties": false,
         "properties": {
@@ -5248,28 +5147,14 @@
             "format": "date-time",
             "type": "string"
           },
-          "recent_authentication_required": {
-            "type": "boolean"
-          },
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
-          },
-          "trusted_device_id": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/Id"
-              }
-            ]
           }
         },
         "required": [
           "schema_version",
           "authenticated_at",
-          "expires_at",
-          "recent_authentication_required"
+          "expires_at"
         ],
         "type": "object"
       },
@@ -6500,97 +6385,6 @@
         ],
         "type": "string"
       },
-      "CodexConnectionCreateV1": {
-        "oneOf": [
-          {
-            "properties": {
-              "mode": {
-                "enum": [
-                  "SYSTEM"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "mode"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "base_url": {
-                "maxLength": 2048,
-                "minLength": 1,
-                "type": "string"
-              },
-              "credential_ref": {
-                "$ref": "#/components/schemas/Id"
-              },
-              "mode": {
-                "enum": [
-                  "CUSTOM_PROVIDER"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "base_url",
-              "credential_ref",
-              "mode"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "CodexConnectionUpdateV1": {
-        "oneOf": [
-          {
-            "properties": {
-              "mode": {
-                "enum": [
-                  "SYSTEM"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "mode"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "base_url": {
-                "maxLength": 2048,
-                "minLength": 1,
-                "type": "string"
-              },
-              "credential_ref": {
-                "oneOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "$ref": "#/components/schemas/Id",
-                    "description": "Omitted/null retains an existing CUSTOM_PROVIDER reference only."
-                  }
-                ]
-              },
-              "mode": {
-                "enum": [
-                  "CUSTOM_PROVIDER"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "base_url",
-              "mode"
-            ],
-            "type": "object"
-          }
-        ]
-      },
       "CodexDeviceCodeV1": {
         "additionalProperties": false,
         "properties": {
@@ -6868,59 +6662,14 @@
         ],
         "type": "object"
       },
-      "CodexProfileCreateV1": {
-        "additionalProperties": false,
-        "properties": {
-          "connection": {
-            "$ref": "#/components/schemas/CodexConnectionCreateV1"
-          },
-          "home_binding": {
-            "maxLength": 64,
-            "minLength": 1,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])",
-            "type": "string"
-          },
-          "model_settings": {
-            "$ref": "#/components/schemas/SavedModelSettingsV1"
-          },
-          "name": {
-            "maxLength": 120,
-            "minLength": 1,
-            "type": "string"
-          },
-          "profile_origin": {
-            "$ref": "#/components/schemas/ProfileOrigin"
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
-          }
-        },
-        "required": [
-          "schema_version",
-          "name",
-          "home_binding",
-          "profile_origin",
-          "connection",
-          "model_settings"
-        ],
-        "type": "object"
-      },
       "CodexProfileUpdateV1": {
         "additionalProperties": false,
         "properties": {
-          "connection": {
-            "$ref": "#/components/schemas/CodexConnectionUpdateV1"
-          },
           "expected_revision": {
             "$ref": "#/components/schemas/Revision"
           },
           "model_settings": {
             "$ref": "#/components/schemas/SavedModelSettingsV1"
-          },
-          "name": {
-            "maxLength": 120,
-            "minLength": 1,
-            "type": "string"
           },
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
@@ -6929,8 +6678,6 @@
         "required": [
           "schema_version",
           "expected_revision",
-          "name",
-          "connection",
           "model_settings"
         ],
         "type": "object"
@@ -6944,15 +6691,6 @@
           "created_at": {
             "format": "date-time",
             "type": "string"
-          },
-          "credential_configured": {
-            "type": "boolean"
-          },
-          "custom_base_url": {
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "home_binding": {
             "description": "An opaque deployment label, never a path. None identifies a historical\nunregistered reference, which must not be exposed or guessed into a mount.",
@@ -6986,7 +6724,6 @@
           "name",
           "profile_origin",
           "connection_mode",
-          "credential_configured",
           "model_settings",
           "revision",
           "created_at",
@@ -8390,35 +8127,6 @@
           "INCONCLUSIVE"
         ],
         "type": "string"
-      },
-      "DeviceList": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/TrustedDevice"
-            },
-            "type": "array"
-          },
-          "next_cursor": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/Id"
-              }
-            ]
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
-          }
-        },
-        "required": [
-          "schema_version",
-          "items"
-        ],
-        "type": "object"
       },
       "DownstreamCapabilitiesV1": {
         "additionalProperties": false,
@@ -10875,65 +10583,6 @@
                     "type": "object"
                   },
                   "value": {
-                    "maxLength": 8192,
-                    "minLength": 1,
-                    "pattern": "^[\\u0021-\\u007E]+(?![\\s\\S])",
-                    "type": "string",
-                    "writeOnly": true
-                  }
-                },
-                "required": [
-                  "intent",
-                  "value"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "intent": {
-                    "properties": {
-                      "purpose": {
-                        "enum": [
-                          "CUSTOM_PROVIDER"
-                        ],
-                        "type": "string"
-                      }
-                    },
-                    "type": "object"
-                  }
-                },
-                "type": "object"
-              }
-            ]
-          },
-          {
-            "allOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "intent": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "label": {
-                        "maxLength": 120,
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "purpose": {
-                        "$ref": "#/components/schemas/IntegrationSecretPurpose"
-                      },
-                      "schema_version": {
-                        "$ref": "#/components/schemas/SchemaV1"
-                      }
-                    },
-                    "required": [
-                      "schema_version",
-                      "purpose",
-                      "label"
-                    ],
-                    "type": "object"
-                  },
-                  "value": {
                     "maxLength": 65536,
                     "minLength": 1,
                     "pattern": "^[\\u0000-\\u007F]+(?![\\s\\S])",
@@ -10993,7 +10642,6 @@
         "enum": [
           "RUNTIME",
           "DOWNSTREAM",
-          "CUSTOM_PROVIDER",
           "TLS_CA"
         ],
         "type": "string"
@@ -11193,36 +10841,6 @@
             "type": "integer"
           }
         },
-        "type": "object"
-      },
-      "LoginRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "maxLength": 6,
-            "minLength": 6,
-            "pattern": "^[0-9]{6}$",
-            "type": "string"
-          },
-          "device_label": {
-            "maxLength": 120,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
-          },
-          "trust_device": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "schema_version",
-          "code",
-          "trust_device"
-        ],
         "type": "object"
       },
       "MachineScope": {
@@ -14299,24 +13917,6 @@
             "properties": {
               "operation": {
                 "enum": [
-                  "CODEX_PROFILE_CREATE"
-                ],
-                "type": "string"
-              },
-              "request": {
-                "$ref": "#/components/schemas/CodexProfileCreateV1"
-              }
-            },
-            "required": [
-              "request",
-              "operation"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "operation": {
-                "enum": [
                   "CODEX_PROFILE_UPDATE"
                 ],
                 "type": "string"
@@ -15110,12 +14710,6 @@
       "OperatorGrantRequest": {
         "additionalProperties": false,
         "properties": {
-          "code": {
-            "maxLength": 6,
-            "minLength": 6,
-            "pattern": "^[0-9]{6}$",
-            "type": "string"
-          },
           "command": {
             "$ref": "#/components/schemas/OperatorCommand"
           },
@@ -15135,8 +14729,7 @@
         },
         "required": [
           "schema_version",
-          "command",
-          "code"
+          "command"
         ],
         "type": "object"
       },
@@ -19910,41 +19503,6 @@
         ],
         "type": "string"
       },
-      "TrustedDevice": {
-        "additionalProperties": false,
-        "properties": {
-          "expires_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "id": {
-            "$ref": "#/components/schemas/Id"
-          },
-          "label": {
-            "type": "string"
-          },
-          "last_used_at": {
-            "format": "date-time",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "revoked_at": {
-            "format": "date-time",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "id",
-          "label",
-          "expires_at"
-        ],
-        "type": "object"
-      },
       "UniverseRegistrationState": {
         "enum": [
           "NATIVE_METADATA",
@@ -20020,25 +19578,6 @@
           "coverage_start",
           "coverage_end",
           "created_at"
-        ],
-        "type": "object"
-      },
-      "VerifyRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "maxLength": 6,
-            "minLength": 6,
-            "pattern": "^[0-9]{6}$",
-            "type": "string"
-          },
-          "schema_version": {
-            "$ref": "#/components/schemas/SchemaV1"
-          }
-        },
-        "required": [
-          "schema_version",
-          "code"
         ],
         "type": "object"
       }

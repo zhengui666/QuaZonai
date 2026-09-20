@@ -42,11 +42,11 @@ export function ResourceSelect({ value, onChange, label, queryKey, load, disable
       showSearch={{ optionFilterProp: 'label' }} options={options} placeholder={label}
       notFoundContent={query.isPending ? '正在载入' : query.isError ? '读取失败，不视为空列表' : '当前已载入的记录中没有匹配项'} />
     {!disabled && <Space wrap>
-      <Typography.Text type="secondary">已载入 {options.length} 条；搜索只匹配已载入记录。</Typography.Text>
+      <Typography.Text type="secondary">已载入 {options.length} 条</Typography.Text>
       {query.hasNextPage && <Button size="small" disabled={locked || query.isFetching} onClick={() => { void query.fetchNextPage(); }}>载入更多选项</Button>}
       <Button size="small" disabled={locked || query.isFetching} onClick={() => { void query.refetch(); }}>刷新选项</Button>
     </Space>}
-    {missing && <Alert type="warning" showIcon title="当前引用尚未出现在已载入记录中。请载入更多或刷新后核对，不会擅自替换它。" />}
+    {missing && <Alert type="warning" showIcon title="未找到当前记录，请加载更多或刷新" />}
     <ErrorNotice error={query.error} />
   </Space>;
 }
