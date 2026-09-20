@@ -1,0 +1,147 @@
+name: PR99 local origin preparation
+on:
+  push:
+    branches: [codex/pr99-local-origin-20260921]
+permissions:
+  contents: read
+concurrency:
+  group: pr99-local-origin-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.repository == 'zhengui666/QuaZonai' && github.ref == 'refs/heads/codex/pr99-local-origin-20260921'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    services:
+      postgres:
+        image: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: disposable-local-origin-test
+          POSTGRES_DB: postgres
+        ports:
+          - 127.0.0.1:55434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EXPECTED_HEAD: ${{ github.sha }}
+      SOURCE_BASE: e5cb33f09a740e5ede7f156ee417fe05bee54134
+      RUSTUP_TOOLCHAIN: '1.98.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      DATABASE_URL: postgresql://postgres:disposable-local-origin-test@127.0.0.1:55434/postgres
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply exact assistant-authored source
+        id: apply
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pr99-local-origin
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_BASE"
+          git apply --check .github/pr99-local-origin.patch
+          git apply .github/pr99-local-origin.patch
+          git diff --name-only > /tmp/pr99-local-origin/authored-paths.txt
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Native formatter and pinned Codex
+        id: setup
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          cargo fmt --all
+          npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
+          export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.144.4'
+          echo "CODEX_NATIVE_BIN=$CODEX_NATIVE_BIN" >> "$GITHUB_ENV"
+          uid=$(id -u)
+          sudo loginctl enable-linger "$uid"
+          sudo systemctl start "user@$uid.service"
+          export XDG_RUNTIME_DIR="/run/user/$uid"
+          systemctl --user show --property=Version > /tmp/pr99-local-origin/systemd-version.txt
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          cat > /tmp/pr99-local-origin/codex.apparmor <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile quazonai-pr99-local-origin "$CODEX_NATIVE_BIN" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /tmp/pr99-local-origin/codex.apparmor
+      - name: Shared origin and native Thread parameter regressions
+        id: unit
+        run: |
+          set -euo pipefail
+          cargo test --locked -p server --features native-codex --lib 2>&1 | tee /tmp/pr99-local-origin/unit.log
+          cargo clippy --locked -p server --features native-codex --lib --test mcp_transport --test mcp_authoring --test mission_worker -- -D warnings 2>&1 | tee /tmp/pr99-local-origin/clippy.log
+      - name: Real localhost MCP HTTP and PostgreSQL transactions
+        id: mcp
+        run: |
+          set -euo pipefail
+          cargo test --locked --no-fail-fast -p server --features native-codex --test mcp_transport --test mcp_authoring -- --test-threads=4 2>&1 | tee /tmp/pr99-local-origin/mcp.log
+      - name: Real localhost native Mission startup and durable resume
+        id: mission
+        run: |
+          set -euo pipefail
+          cargo test --locked -p server --features native-codex --test mission_worker bootstrap_mints_one_credential_binds_before_turn_and_resumes_the_original_native_thread -- --exact --test-threads=1 2>&1 | tee /tmp/pr99-local-origin/native-resume.log
+          cargo test --locked -p server --features native-codex --test mission_worker worker_wake_starts_original_native_mission_and_resumes_it -- --exact --test-threads=1 2>&1 | tee /tmp/pr99-local-origin/native-wake.log
+      - name: Remove preparation inputs and publish only the prepared branch
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code "$SOURCE_BASE" -- Cargo.lock apps/web/package-lock.json runtimes/codex/package-lock.json migrations contracts/generated apps/web/src/generated .github/workflows/ci.yml .github/workflows/web.yml .github/workflows/native-runtime.yml .github/workflows/personal-hosting.yml .github/workflows/codeql.yml
+          python3 - <<'PY'
+          import subprocess
+          from pathlib import Path
+          authored = set(Path('/tmp/pr99-local-origin/authored-paths.txt').read_text().splitlines())
+          changed = set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
+          assert changed == authored
+          PY
+          git rm .github/pr99-local-origin.patch .github/workflows/pr99-local-origin-preparation.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: use the local origin policy throughout native Mission and MCP'
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          remote=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin refs/heads/codex/pr99-local-origin-20260921 | cut -f1)
+          test "$remote" = "$EXPECTED_HEAD"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/codex/pr99-local-origin-20260921
+          git rev-parse HEAD > /tmp/pr99-local-origin/published-commit.txt
+      - name: Remove this job's native sandbox profile
+        if: always()
+        run: |
+          profile=/tmp/pr99-local-origin/codex.apparmor
+          if test -f "$profile"; then sudo apparmor_parser -R "$profile"; fi
+      - name: Preserve original results and source
+        if: always()
+        env:
+          STEP_RESULTS: ${{ toJSON(steps) }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pr99-local-origin
+          printf '%s\n' "$STEP_RESULTS" > /tmp/pr99-local-origin/steps.json
+          printf '%s\n' "$EXPECTED_HEAD" > /tmp/pr99-local-origin/input-commit.txt
+          git add -A
+          git archive "$(git write-tree)" | gzip > /tmp/pr99-local-origin/source.tar.gz
+          git diff "$SOURCE_BASE" --stat > /tmp/pr99-local-origin/diff-stat.txt
+          printf 'Focused localhost Mission/MCP preparation. Two named native Mission cases are not the full suite. Runtime scientific fixtures require original Native Runtime CI. No real account or owner deployment. Original full same-Head CI and explicit independent review remain required.\n' > /tmp/pr99-local-origin/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: pr99-local-origin-${{ github.run_id }}
+          path: /tmp/pr99-local-origin
+          if-no-files-found: error
+          retention-days: 7
