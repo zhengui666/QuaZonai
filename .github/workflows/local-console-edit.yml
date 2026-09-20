@@ -28,7 +28,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Apply only the assistant-authored literal source edits
+      - name: Apply only assistant-authored literal source edits
         id: apply
         run: |
           set -euo pipefail
@@ -41,11 +41,15 @@ jobs:
           source_base = plan['base']
           assert re.fullmatch(r'[a-f0-9]{40}', source_base)
           subprocess.run(['git', 'cat-file', '-e', source_base + '^{commit}'], check=True)
+          entries = plan.get('files', [])
+          for part in plan.get('parts', []):
+              assert re.fullmatch(r'\.github/local-console-tests-[1-4]\.json', part)
+              entries.extend(json.loads(Path(part).read_text()))
           prepared = {}
-          for entry in plan['files']:
+          for entry in entries:
               path = Path(entry['path'])
               assert not path.is_absolute() and '..' not in path.parts
-              assert path.parts[0] in {'apps', 'crates', 'migrations', 'tests', 'docs', 'deploy', 'runtimes', '.opensdlc', 'AGENTS.md', 'DESIGN.md', 'README.md', 'Makefile', 'Cargo.toml'}
+              assert path.parts[0] in {'apps', 'crates', 'migrations', 'tests', 'docs', 'deploy', 'runtimes', '.opensdlc', 'AGENTS.md', 'DESIGN.md', 'README.md', 'OPERATIONS.md', 'CLI.md', 'Makefile', 'Cargo.toml'}
               assert str(path) not in prepared and not path.is_symlink()
               subprocess.run(['git', 'diff', '--exit-code', source_base, '--', str(path)], check=True)
               if entry.get('delete'):
@@ -60,6 +64,11 @@ jobs:
               for start, end, text in reversed(entry['edits']):
                   lines[start:end] = text.splitlines(keepends=True)
               prepared[str(path)] = ''.join(lines)
+          for correction in plan.get('replacements', []):
+              path, old, new = correction['path'], correction['old'], correction['new']
+              assert path in prepared and isinstance(prepared[path], str)
+              assert old and prepared[path].count(old) == 1
+              prepared[path] = prepared[path].replace(old, new)
           with open(os.environ['GITHUB_ENV'], 'a') as environment:
               environment.write('SOURCE_BASE=' + source_base + '\n')
           for name, content in prepared.items():
@@ -89,6 +98,12 @@ jobs:
         run: |
           set -euo pipefail
           cargo check --workspace --lib --bins 2>&1 | tee /tmp/local-console-evidence/rust-check.log
+      - name: Check all native tests and feature targets
+        id: targets
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cargo check --workspace --all-targets --features server/native-codex,runtime/native-oci 2>&1 | tee /tmp/local-console-evidence/all-targets.log
       - name: Generate real Rust contracts
         id: contracts
         if: steps.rust.outcome == 'success'
@@ -99,15 +114,29 @@ jobs:
           mv /tmp/local-console-evidence/domain-v1.openapi.json contracts/generated/domain-v1.openapi.json
           cargo run -q -p server -- openapi > /tmp/local-console-evidence/api-v2.openapi.json
           mv /tmp/local-console-evidence/api-v2.openapi.json contracts/generated/api-v2.openapi.json
-      - name: Update native npm lock and frontend contracts
+      - name: Native frontend generation and production build
         id: web
         continue-on-error: true
         run: |
           set -euo pipefail
           npm --prefix apps/web install --package-lock-only --ignore-scripts --no-audit --no-fund
           npm --prefix apps/web ci --ignore-scripts --no-audit --no-fund
-          npm --prefix apps/web run generate
-          npm --prefix apps/web run typecheck 2>&1 | tee /tmp/local-console-evidence/typecheck.log
+          npm --prefix apps/web run build 2>&1 | tee /tmp/local-console-evidence/web-build.log
+      - name: Frontend unit regressions
+        id: unit
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          npm --prefix apps/web test 2>&1 | tee /tmp/local-console-evidence/web-unit.log
+      - name: Local-console and both-theme browser regressions
+        id: browser
+        if: steps.web.outcome == 'success'
+        continue-on-error: true
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          npx --no-install playwright install --with-deps chromium
+          npm run test:e2e -- tests/theme.spec.ts tests/codex-settings.spec.ts tests/console.spec.ts 2>&1 | tee /tmp/local-console-evidence/browser.log
       - name: Publish source only to the task branch
         id: publish
         if: always() && steps.apply.outcome == 'success'
@@ -119,7 +148,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'refactor: apply authored local-console refinements and native generation'
+          git commit -m 'test: replace verification flows with local entry and native theme regressions'
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
           remote=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin refs/heads/codex/local-ui-simplification-20260920 | cut -f1)
@@ -138,7 +167,8 @@ jobs:
           git add -A
           git archive "$(git write-tree)" | gzip > /tmp/local-console-evidence/source.tar.gz
           git diff "${SOURCE_BASE:-$EXPECTED_HEAD}" --stat > /tmp/local-console-evidence/diff-stat.txt
-          printf 'Native development checkpoint only. Failed, skipped and baseline tests are not passes. Not reviewed or merged.\n' > /tmp/local-console-evidence/SCOPE.txt
+          if test -d apps/web/test-results; then cp -R apps/web/test-results /tmp/local-console-evidence/browser-results; fi
+          printf 'Development checkpoint only. Failed and skipped checks are not passes. Not full PostgreSQL or real-account acceptance. Not reviewed or merged.\n' > /tmp/local-console-evidence/SCOPE.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -149,16 +179,12 @@ jobs:
       - name: Fail on incomplete native verification
         if: always()
         env:
-          APPLY: ${{ steps.apply.outcome }}
-          FORMAT: ${{ steps.format.outcome }}
-          RUST: ${{ steps.rust.outcome }}
-          CONTRACTS: ${{ steps.contracts.outcome }}
-          WEB: ${{ steps.web.outcome }}
-          PUBLISH: ${{ steps.publish.outcome }}
+          RESULTS: ${{ toJSON(steps) }}
         run: |
-          test "$APPLY" = success
-          test "$FORMAT" = success
-          test "$RUST" = success
-          test "$CONTRACTS" = success
-          test "$WEB" = success
-          test "$PUBLISH" = success
+          python3 - <<'PY'
+          import json, os
+          steps = json.loads(os.environ['RESULTS'])
+          required = ['apply', 'format', 'rust', 'targets', 'contracts', 'web', 'unit', 'browser', 'publish']
+          failed = [name for name in required if steps.get(name, {}).get('outcome') != 'success']
+          assert not failed, 'Incomplete checks: ' + ', '.join(failed)
+          PY
