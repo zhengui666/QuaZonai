@@ -6,11 +6,17 @@ use crate::{
     AppState,
 };
 use axum::{
-    extract::{rejection::{PathRejection, QueryRejection}, Path, Query, State},
+    extract::{
+        rejection::{PathRejection, QueryRejection},
+        Path, Query, State,
+    },
     http::StatusCode,
     Json,
 };
-use contracts::{equity_curve::{EquityCurveQuery, EquityCurveV1}, Id};
+use contracts::{
+    equity_curve::{EquityCurveQuery, EquityCurveV1},
+    Id,
+};
 use store::StoreError;
 
 #[utoipa::path(
@@ -34,20 +40,30 @@ pub async fn get(
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     let Query(query) = query.map_err(|_| ApiError::validation())?;
     let objects = state.artifact_store.clone().ok_or_else(|| {
-        ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "ARTIFACT_STORAGE_UNAVAILABLE", "产物存储不可用。")
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "ARTIFACT_STORAGE_UNAVAILABLE",
+            "产物存储不可用。",
+        )
     })?;
     // Retain the existing capacity permit while non-abortable native reads or
     // JSON projection finish, even when the browser disconnects mid-request.
     let result = tokio::spawn(async move {
         let _capacity = capacity;
-        state.store.evaluation_equity_curve(&actor, id, &query, move |id, size| {
-            let objects = objects.clone();
-            async move {
-                tokio::task::spawn_blocking(move || objects.read(id, size))
-                    .await.map_err(|_| StoreError::Integrity)?
-                    .map_err(|_| StoreError::Integrity)
-            }
-        }).await
-    }).await.map_err(|_| ApiError::internal())??;
+        state
+            .store
+            .evaluation_equity_curve(&actor, id, &query, move |id, size| {
+                let objects = objects.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || objects.read(id, size))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                }
+            })
+            .await
+    })
+    .await
+    .map_err(|_| ApiError::internal())??;
     Ok(Json(result))
 }

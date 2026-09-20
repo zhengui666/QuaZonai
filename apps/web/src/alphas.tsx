@@ -1,12 +1,14 @@
-import { App, Alert, Button, Descriptions, Drawer, Form, Input, InputNumber, Modal, Space, Table, Typography } from 'antd';
+import { App, Alert, Button, Descriptions, Drawer, Form, Input, InputNumber, Modal, Skeleton, Space, Table, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { lazy, Suspense, useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent, isCounter } from './api';
 import type { Schema } from './api';
 import { ResourceSelect } from './resource-select';
 import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';
 import { counterRules } from './budget-fields';
 import { RunDetail } from './runs';
+
+const EquityCurve = lazy(() => import('./equity-curve'));
 
 type Alpha = Schema['AlphaView'];
 type Version = Schema['AlphaVersionView'];
@@ -333,6 +335,7 @@ export function EvaluationDetail({ id, close, candidate, alpha }: { id: string; 
   return <Drawer title={candidate ? '候选研究评估' : '正式 Validation 评估'} open width={1000} onClose={close}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!value} reload={() => { void query.refetch(); }}>
       {value && <Space orientation="vertical" size="middle" className="full-width break-word">
+        {candidate && !query.isError && value.evaluation_kind === 'PORTFOLIO' && <Suspense fallback={<Skeleton active />}><EquityCurve key={value.id} evaluation={value} /></Suspense>}
         <Alert showIcon type="info" title="这是历史科学证据，不是资格或交付批准。" description="缺值和过期不会被补齐；本页不读取报告字节、标签、训练索引或 Sealed 数据。" />
         <Descriptions column={1} items={[
           { key: 'id', label: '评估编号', children: value.id },

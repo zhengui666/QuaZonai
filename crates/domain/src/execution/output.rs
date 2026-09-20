@@ -18,7 +18,9 @@ pub use sealed::{
     binding as check_alpha_sealed, metrics as alpha_sealed_metrics, policy as alpha_sealed_policy,
     request as alpha_sealed_request,
 };
+mod equity_curve;
 mod simulation;
+pub use equity_curve::{equity_curve_query, portfolio_equity_curve};
 pub use simulation::metrics as portfolio_simulation_metrics;
 mod study;
 pub use study::binding as check_portfolio_study;

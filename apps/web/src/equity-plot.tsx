@@ -51,7 +51,7 @@ export default function EquityPlot({ series }: { series: EquitySeries }) {
     },
     dataZoom: [
       { type: 'inside', start: zoom.start, end: zoom.end, zoomOnMouseWheel: 'ctrl', moveOnMouseMove: false, moveOnMouseWheel: false, preventDefaultMouseMove: false, filterMode: 'none' },
-      { type: 'slider', start: zoom.start, end: zoom.end, bottom: 12, height: 34, showDetail: false, filterMode: 'none', borderColor: token.colorBorder, textStyle: { color: token.colorTextSecondary } },
+      { type: 'slider', start: zoom.start, end: zoom.end, bottom: 12, height: 44, showDetail: false, filterMode: 'none', borderColor: token.colorBorder, textStyle: { color: token.colorTextSecondary } },
     ],
     series: [{ id: 'equity', name: '组合价值', type: 'line', data, smooth: false, connectNulls: false,
       showSymbol: series.points.length === 1, symbolSize: 8, lineStyle: { width: 2, color: token.colorPrimary }, itemStyle: { color: token.colorPrimary } }],

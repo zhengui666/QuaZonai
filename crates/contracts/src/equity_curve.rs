@@ -62,7 +62,11 @@ pub enum EquityUnavailableReason {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "status", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+#[serde(
+    tag = "status",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
 pub enum EquityCurveDataV1 {
     Ready {
         source_artifact_id: Id,

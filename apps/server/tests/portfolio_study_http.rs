@@ -13,6 +13,8 @@ mod brief_support;
 mod client;
 #[path = "../../../tests/support/cycles.rs"]
 mod cycle_support;
+#[path = "support/equity_curve.rs"]
+mod equity_curve;
 #[path = "../../../tests/support/experiment_tasks.rs"]
 mod experiment_support;
 #[path = "support/forward_messages.rs"]
@@ -361,6 +363,14 @@ async fn http(
         evaluation.decision,
         contracts::evidence::Decision::Inconclusive
     );
+    Box::pin(equity_curve::verify(
+        (pool, store, actor, f),
+        (&client, &origin, &token),
+        build,
+        candidate,
+        evaluation.id,
+    ))
+    .await;
     listener.abort_all();
     while listener.join_next().await.is_some() {}
 }

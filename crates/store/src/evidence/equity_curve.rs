@@ -43,26 +43,40 @@ impl Store {
         let mut view = EquityCurveV1 {
             schema_version: SchemaV1,
             project_id: evaluation.project_id,
-            candidate_id: evaluation.subject_candidate_id.ok_or(StoreError::Integrity)?,
+            candidate_id: evaluation
+                .subject_candidate_id
+                .ok_or(StoreError::Integrity)?,
             evaluation_id: evaluation.id,
             run_id: evaluation.run_id,
             origin: evaluation.origin,
-            curve: EquityCurveDataV1::Unavailable { reason_code: EquityUnavailableReason::NoSimulation },
+            curve: EquityCurveDataV1::Unavailable {
+                reason_code: EquityUnavailableReason::NoSimulation,
+            },
         };
         if evaluation.execution_status != RuntimeResultState::Succeeded {
-            view.curve = EquityCurveDataV1::Unavailable { reason_code: EquityUnavailableReason::SimulationFailed };
+            view.curve = EquityCurveDataV1::Unavailable {
+                reason_code: EquityUnavailableReason::SimulationFailed,
+            };
             tx.commit().await?;
             return Ok(view);
         }
-        if matches!(evaluation.evidence_status, EvidenceStatus::Invalid | EvidenceStatus::Unsupported) {
-            view.curve = EquityCurveDataV1::Unavailable { reason_code: EquityUnavailableReason::InvalidEvidence };
+        if matches!(
+            evaluation.evidence_status,
+            EvidenceStatus::Invalid | EvidenceStatus::Unsupported
+        ) {
+            view.curve = EquityCurveDataV1::Unavailable {
+                reason_code: EquityUnavailableReason::InvalidEvidence,
+            };
             tx.commit().await?;
             return Ok(view);
         }
         // read_evaluation already binds the publication to this project's terminal
         // Run and frozen PORTFOLIO input. Neither eligibility nor PASS is required.
-        let report_size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1")
-            .bind(evaluation.report_artifact_id.as_uuid()).fetch_one(&mut *tx).await?;
+        let report_size: i64 =
+            sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1")
+                .bind(evaluation.report_artifact_id.as_uuid())
+                .fetch_one(&mut *tx)
+                .await?;
         let report_size = count(report_size)?;
         if report_size.get() == 0 || report_size.get() > 8 * 1024 * 1024 {
             return Err(StoreError::Integrity);
@@ -73,32 +87,58 @@ impl Store {
         if sources.len() > 1 {
             return Err(StoreError::Integrity);
         }
-        let source = sources.first().map(|row| {
-            Ok::<_, StoreError>((db::id(row.try_get("id")?)?, count(row.try_get("byte_count")?)?))
-        }).transpose()?;
+        let source = sources
+            .first()
+            .map(|row| {
+                Ok::<_, StoreError>((
+                    db::id(row.try_get("id")?)?,
+                    count(row.try_get("byte_count")?)?,
+                ))
+            })
+            .transpose()?;
         tx.commit().await?;
         let report = read(evaluation.report_artifact_id, report_size).await?;
         if report.len() as u64 != report_size.get() {
             return Err(StoreError::Integrity);
         }
-        let expected = (view.evaluation_id, view.candidate_id, view.run_id, evaluation.input_set_id);
+        let expected = (
+            view.evaluation_id,
+            view.candidate_id,
+            view.run_id,
+            evaluation.input_set_id,
+        );
         let referenced = tokio::task::spawn_blocking(move || {
-            let document: Publication = serde_json::from_slice(&report).map_err(|_| StoreError::Integrity)?;
+            let document: Publication =
+                serde_json::from_slice(&report).map_err(|_| StoreError::Integrity)?;
             let _schema = document.schema_version;
-            if (document.evaluation_id, document.candidate_id, document.run_id, document.input_set_id) != expected
+            if (
+                document.evaluation_id,
+                document.candidate_id,
+                document.run_id,
+                document.input_set_id,
+            ) != expected
                 || document.evaluation_kind != EvaluationKind::Portfolio
             {
                 return Err(StoreError::Integrity);
             }
-            let mut studies = document.native_reports.into_iter().filter(|(name, _)| name == "qz.portfolio_study");
+            let mut studies = document
+                .native_reports
+                .into_iter()
+                .filter(|(name, _)| name == "qz.portfolio_study");
             let first = studies.next().map(|(_, id)| id);
-            if studies.next().is_some() { return Err(StoreError::Integrity); }
+            if studies.next().is_some() {
+                return Err(StoreError::Integrity);
+            }
             Ok(first)
-        }).await.map_err(|_| StoreError::Integrity)??;
+        })
+        .await
+        .map_err(|_| StoreError::Integrity)??;
         let (source_id, source_size) = match (source, referenced) {
             (Some((id, size)), Some(reference)) if id == reference => (id, size),
             (None, None) => {
-                view.curve = EquityCurveDataV1::Unavailable { reason_code: EquityUnavailableReason::LegacySnapshotsUnavailable };
+                view.curve = EquityCurveDataV1::Unavailable {
+                    reason_code: EquityUnavailableReason::LegacySnapshotsUnavailable,
+                };
                 return Ok(view);
             }
             _ => return Err(StoreError::Integrity),
@@ -112,21 +152,34 @@ impl Store {
         }
         let query = query.clone();
         view.curve = tokio::task::spawn_blocking(move || {
-            let result: NativePortfolioStudyResultV1 = serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
+            let result: NativePortfolioStudyResultV1 =
+                serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
             match (result.simulation_request, result.simulation) {
-                (None, None) => Ok(EquityCurveDataV1::Unavailable { reason_code: EquityUnavailableReason::NoSimulation }),
+                (None, None) => Ok(EquityCurveDataV1::Unavailable {
+                    reason_code: EquityUnavailableReason::NoSimulation,
+                }),
                 (Some(request), Some(result)) => {
                     if result.canonical_result.get("portfolio_snapshots").is_none()
-                        || result.canonical_result["portfolio_snapshots"].as_array().is_some_and(Vec::is_empty)
+                        || result.canonical_result["portfolio_snapshots"]
+                            .as_array()
+                            .is_some_and(Vec::is_empty)
                     {
-                        return Ok(EquityCurveDataV1::Unavailable { reason_code: EquityUnavailableReason::LegacySnapshotsUnavailable });
+                        return Ok(EquityCurveDataV1::Unavailable {
+                            reason_code: EquityUnavailableReason::LegacySnapshotsUnavailable,
+                        });
                     }
-                    let series = domain::execution::portfolio_equity_curve(&request, &result, &query)?;
-                    Ok(EquityCurveDataV1::Ready { source_artifact_id: source_id, series })
+                    let series =
+                        domain::execution::portfolio_equity_curve(&request, &result, &query)?;
+                    Ok(EquityCurveDataV1::Ready {
+                        source_artifact_id: source_id,
+                        series,
+                    })
                 }
                 _ => Err(StoreError::Integrity),
             }
-        }).await.map_err(|_| StoreError::Integrity)??;
+        })
+        .await
+        .map_err(|_| StoreError::Integrity)??;
         Ok(view)
     }
 }

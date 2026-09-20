@@ -11391,6 +11391,186 @@
         ],
         "type": "object"
       },
+      "EquityCurveDataV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "series": {
+                "$ref": "#/components/schemas/EquitySeriesV1"
+              },
+              "source_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "status": {
+                "enum": [
+                  "READY"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_artifact_id",
+              "series",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason_code": {
+                "$ref": "#/components/schemas/EquityUnavailableReason"
+              },
+              "status": {
+                "enum": [
+                  "UNAVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason_code",
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "EquityCurveV1": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "curve": {
+            "$ref": "#/components/schemas/EquityCurveDataV1"
+          },
+          "evaluation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "candidate_id",
+          "evaluation_id",
+          "run_id",
+          "origin",
+          "curve"
+        ],
+        "type": "object"
+      },
+      "EquityPointV1": {
+        "additionalProperties": false,
+        "properties": {
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          }
+        },
+        "required": [
+          "timestamp_ns"
+        ],
+        "type": "object"
+      },
+      "EquityResolution": {
+        "enum": [
+          "AUTO",
+          "NATIVE",
+          "DAY",
+          "WEEK",
+          "MONTH"
+        ],
+        "type": "string"
+      },
+      "EquitySeriesV1": {
+        "additionalProperties": false,
+        "properties": {
+          "base_currency": {
+            "type": "string"
+          },
+          "native_version": {
+            "type": "string"
+          },
+          "period_end_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "period_start_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/EquityPointV1"
+            },
+            "maxItems": 10000,
+            "type": "array"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/EquityResolution",
+            "description": "Actual resolution, never AUTO. Bucket ends retain their native timestamp."
+          },
+          "sampled": {
+            "type": "boolean"
+          },
+          "source_point_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "starting_capital": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "window_point_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "native_version",
+          "base_currency",
+          "starting_capital",
+          "period_start_ns",
+          "period_end_ns",
+          "source_point_count",
+          "window_point_count",
+          "resolution",
+          "sampled",
+          "points"
+        ],
+        "type": "object"
+      },
+      "EquityUnavailableReason": {
+        "enum": [
+          "SIMULATION_FAILED",
+          "INVALID_EVIDENCE",
+          "NO_SIMULATION",
+          "LEGACY_SNAPSHOTS_UNAVAILABLE"
+        ],
+        "type": "string"
+      },
       "EvaluationKind": {
         "enum": [
           "DISCOVERY",
@@ -30018,6 +30198,135 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EvaluationView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          },
+          {
+            "MachineBearer": []
+          }
+        ],
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
+    "/api/v2/evaluations/{id}/equity-curve": {
+      "get": {
+        "operationId": "get_evaluation_equity_curve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start_ns",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DbCounter"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end_ns",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DbCounter"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolution",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/EquityResolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EquityCurveV1"
                 }
               }
             },

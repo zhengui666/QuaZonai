@@ -3,7 +3,9 @@ use super::{bad, simulation};
 use crate::{research::invalid, DomainError};
 use chrono::Datelike;
 use contracts::{
-    equity_curve::{EquityCurveQuery, EquityPointV1, EquityResolution, EquitySeriesV1, MAX_EQUITY_POINTS},
+    equity_curve::{
+        EquityCurveQuery, EquityPointV1, EquityResolution, EquitySeriesV1, MAX_EQUITY_POINTS,
+    },
     science::{NativeSimulationRequestV1, NativeSimulationResultV1},
     DbCounter, DecimalValue,
 };
@@ -65,8 +67,12 @@ pub fn portfolio_equity_curve(
     equity_curve_query(query)?;
     simulation::binding(request, result)?;
     let canonical = &result.canonical_result;
-    let start = count(simulation::native_count(&canonical["run"]["backtest_start_ns"])?)?;
-    let end = count(simulation::native_count(&canonical["run"]["backtest_end_ns"])?)?;
+    let start = count(simulation::native_count(
+        &canonical["run"]["backtest_start_ns"],
+    )?)?;
+    let end = count(simulation::native_count(
+        &canonical["run"]["backtest_end_ns"],
+    )?)?;
     let source = canonical["portfolio_snapshots"]
         .as_array()
         .ok_or_else(|| bad("equity_curve.snapshots"))?;
@@ -80,7 +86,11 @@ pub fn portfolio_equity_curve(
         .to_plain_string()
         .parse()
         .map_err(|_| bad("equity_curve.money_range"))?;
-        points.push(EquityPointV1 { timestamp_ns, value: Some(value), reason_code: None });
+        points.push(EquityPointV1 {
+            timestamp_ns,
+            value: Some(value),
+            reason_code: None,
+        });
     }
     points.sort_unstable_by_key(|point| point.timestamp_ns);
     for pair in points.windows(2) {
@@ -90,12 +100,19 @@ pub fn portfolio_equity_curve(
     }
     points.dedup_by(|a, b| a.timestamp_ns == b.timestamp_ns);
     points.retain(|point| {
-        query.start_ns.is_none_or(|start| point.timestamp_ns >= start)
+        query
+            .start_ns
+            .is_none_or(|start| point.timestamp_ns >= start)
             && query.end_ns.is_none_or(|end| point.timestamp_ns <= end)
     });
     let window_point_count = count(points.len() as u64)?;
     let choices: &[EquityResolution] = if query.resolution == EquityResolution::Auto {
-        &[EquityResolution::Native, EquityResolution::Day, EquityResolution::Week, EquityResolution::Month]
+        &[
+            EquityResolution::Native,
+            EquityResolution::Day,
+            EquityResolution::Week,
+            EquityResolution::Month,
+        ]
     } else {
         std::slice::from_ref(&query.resolution)
     };
@@ -104,7 +121,10 @@ pub fn portfolio_equity_curve(
         .find_map(|&resolution| indices(&points, resolution).map(|selected| (resolution, selected)))
         .ok_or_else(|| invalid("equity_curve.resolution", "EQUITY_CURVE_TOO_MANY_POINTS"))?;
     let sampled = selected.len() < points.len();
-    let points = selected.into_iter().map(|index| points[index].clone()).collect();
+    let points = selected
+        .into_iter()
+        .map(|index| points[index].clone())
+        .collect();
     Ok(EquitySeriesV1 {
         native_version: result.native_version.clone(),
         base_currency: request.settings.base_currency.clone(),
@@ -124,12 +144,21 @@ mod tests {
     use super::*;
 
     fn point(time: u64) -> EquityPointV1 {
-        EquityPointV1 { timestamp_ns: count(time).unwrap(), value: Some("1".parse().unwrap()), reason_code: None }
+        EquityPointV1 {
+            timestamp_ns: count(time).unwrap(),
+            value: Some("1".parse().unwrap()),
+            reason_code: None,
+        }
     }
 
     #[test]
     fn buckets_preserve_real_endpoints_and_iso_week_year_boundaries() {
-        let ns = |text: &str| chrono::DateTime::parse_from_rfc3339(text).unwrap().timestamp_nanos_opt().unwrap() as u64;
+        let ns = |text: &str| {
+            chrono::DateTime::parse_from_rfc3339(text)
+                .unwrap()
+                .timestamp_nanos_opt()
+                .unwrap() as u64
+        };
         let points = vec![
             point(ns("2025-12-28T01:00:00Z")),
             point(ns("2025-12-28T23:00:00Z")),
@@ -137,10 +166,22 @@ mod tests {
             point(ns("2025-12-31T23:59:59Z")),
             point(ns("2026-01-01T01:00:00Z")),
         ];
-        assert_eq!(indices(&points, EquityResolution::Day).unwrap(), vec![0, 1, 2, 3, 4]);
-        assert_eq!(indices(&points, EquityResolution::Week).unwrap(), vec![0, 1, 4]);
-        assert_eq!(indices(&points, EquityResolution::Month).unwrap(), vec![0, 3, 4]);
-        assert_eq!(indices(&points[..1], EquityResolution::Month).unwrap(), vec![0]);
+        assert_eq!(
+            indices(&points, EquityResolution::Day).unwrap(),
+            vec![0, 1, 2, 3, 4]
+        );
+        assert_eq!(
+            indices(&points, EquityResolution::Week).unwrap(),
+            vec![0, 1, 4]
+        );
+        assert_eq!(
+            indices(&points, EquityResolution::Month).unwrap(),
+            vec![0, 3, 4]
+        );
+        assert_eq!(
+            indices(&points[..1], EquityResolution::Month).unwrap(),
+            vec![0]
+        );
         assert!(indices(&[], EquityResolution::Native).unwrap().is_empty());
     }
 
@@ -158,10 +199,17 @@ mod tests {
 
     #[test]
     fn inclusive_query_rejects_only_inverted_bounds() {
-        let mut query = EquityCurveQuery { start_ns: Some(count(2).unwrap()), end_ns: Some(count(1).unwrap()), resolution: EquityResolution::Auto };
+        let mut query = EquityCurveQuery {
+            start_ns: Some(count(2).unwrap()),
+            end_ns: Some(count(1).unwrap()),
+            resolution: EquityResolution::Auto,
+        };
         assert!(equity_curve_query(&query).is_err());
         query.end_ns = query.start_ns;
         assert!(equity_curve_query(&query).is_ok());
-        assert!(serde_json::from_str::<EquityCurveQuery>(r#"{"resolution":"AUTO","unknown":1}"#).is_err());
+        assert!(
+            serde_json::from_str::<EquityCurveQuery>(r#"{"resolution":"AUTO","unknown":1}"#)
+                .is_err()
+        );
     }
 }
