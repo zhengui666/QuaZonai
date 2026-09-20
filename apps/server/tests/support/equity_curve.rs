@@ -15,7 +15,7 @@ pub(super) async fn verify(
     candidate: Id,
     cancelled: Id,
 ) {
-    let (pool, store, actor, f) = context;
+    let (pool, _, _, f) = context;
     let (client, origin, token) = transport;
     let url = |id: Id| format!("{origin}/api/v2/evaluations/{id}/equity-curve");
     assert_eq!(
@@ -191,5 +191,4 @@ pub(super) async fn verify(
             "viewing equity creates no work or account state"
         );
     }
-    let _ = actor;
 }
