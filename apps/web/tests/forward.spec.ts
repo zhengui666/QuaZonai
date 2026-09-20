@@ -35,7 +35,7 @@ test('Forward preserves correction evidence and rejects another stream window', 
   await page.getByRole('button', { name: 'Forward 00000600', exact: true }).click();
   const detail = page.getByRole('dialog', { name: 'Forward 原消息与当前窗口', exact: true });
   await expect(detail.getByText(message.supersedes_message_id!, { exact: true })).toBeVisible();
-  await expect(detail.getByText('请求未完成，请重试并检查服务状态。', { exact: true })).toBeVisible();
+  await expect(detail.getByText('请求失败，请重试', { exact: true })).toBeVisible();
   await expect(detail.getByText('SEQUENCE_GAP · PARTIAL', { exact: true })).toBeHidden();
   wrongStream = false;
   await detail.getByRole('button', { name: '刷新连续窗口', exact: true }).click();
@@ -44,9 +44,9 @@ test('Forward preserves correction evidence and rejects another stream window', 
   await expect(detail.getByText('未提供', { exact: true })).toBeVisible();
   wrongStream = true;
   await detail.getByRole('button', { name: '刷新连续窗口', exact: true }).click();
-  await expect(detail.getByText('以下是上次成功读取的数据，当前无法确认其最新状态。', { exact: true })).toBeVisible();
+  await expect(detail.getByText('数据未更新', { exact: true })).toBeVisible();
   await expect(detail.getByText('SEQUENCE_GAP · PARTIAL', { exact: true })).toBeVisible();
-  await expect(detail.getByText('请求未完成，请重试并检查服务状态。', { exact: true })).toBeVisible();
+  await expect(detail.getByText('请求失败，请重试', { exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(detail).toBeHidden();
 });

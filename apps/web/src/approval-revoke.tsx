@@ -82,7 +82,7 @@ function Revocation({ target, kind, close }: { target: { id: string; project_id:
       </Form>
       <ErrorNotice error={mutation.error} />
       {submitted && mutation.isError && <Alert showIcon type="warning" title="提交结果未知，请重试当前操作" />}
-      {receipt && <Alert showIcon type="success" title="原撤销已追加。" description={`${receipt.id}；生效于 ${displayTime(receipt.effective_at)}，已领取事实保留。`} />}
+      {receipt && <Alert showIcon type="success" title="原撤销已追加。" description={`${receipt.id}；生效于 ${displayTime(receipt.effective_at)}`} />}
     </Space>
   </Modal>;
 }

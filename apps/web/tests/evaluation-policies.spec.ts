@@ -126,5 +126,5 @@ test('policy list can return after failed pagination', async ({ page }) => {
   await panel.getByRole('button', { name: '下一页', exact: true }).click();
   await expect(panel.getByRole('button', { name: '上一页', exact: true })).toBeEnabled();
   await panel.getByRole('button', { name: '上一页', exact: true }).click();
-  await expect(panel.getByText('尚无评估政策，不填充默认合格阈值。', { exact: true })).toBeVisible();
+  await expect(panel.getByText('暂无评估政策', { exact: true })).toBeVisible();
 });

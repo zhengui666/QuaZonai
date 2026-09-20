@@ -149,13 +149,6 @@ async fn human_cli_grant_binds_full_intent_and_path_project(pool: PgPool) {
     )
     .await;
     assert_eq!(denied.status, StatusCode::FORBIDDEN);
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let grant=send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"BRIEF_CREATE","request":request},"target_id":null}),&[("authorization",&bearer),("idempotency-key","grant")]).await;
     assert_eq!(grant.status, StatusCode::CREATED, "{}", grant.body);
     let id = grant.body["resource"]["id"].as_str().unwrap();
@@ -253,7 +246,9 @@ async fn authoring_rejects_unknown_fields_permission_laundering_and_bad_referenc
     assert_eq!(count, 0);
 }
 #[sqlx::test(migrations = "../../migrations")]
-async fn stale_browser_is_read_only_and_cross_origin_cannot_author_brief(pool: PgPool) {
+async fn local_browser_needs_no_recent_challenge_but_cross_origin_cannot_author_brief(
+    pool: PgPool,
+) {
     let (f, cookie, data, request) = setup(&pool).await;
     let path = format!("/api/v2/projects/{}/briefs", data.project);
     let body = serde_json::to_value(&request.request).unwrap();
@@ -296,12 +291,5 @@ async fn stale_browser_is_read_only_and_cross_origin_cannot_author_brief(pool: P
     let read = browser(&f, &cookie, "unused", "GET", &path, Value::Null).await;
     assert_eq!(read.status, StatusCode::OK);
     let stale = browser(&f, &cookie, "stale", "POST", &path, body).await;
-    assert!(
-        matches!(
-            stale.status,
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
-        ),
-        "{}",
-        stale.body
-    );
+    assert_eq!(stale.status, StatusCode::CREATED, "{}", stale.body);
 }

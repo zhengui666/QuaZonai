@@ -27,7 +27,7 @@ export function Briefs({ projectId, projectState }: { projectId: string; project
     
     <Button type="primary" disabled={!online || !editable} onClick={() => setEditing('new')}>新建 Brief 草稿</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Brief> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 600 }} locale={{ emptyText: <NoData text="尚无 Brief。请先填写可检验假设和真实数据引用。" /> }} columns={[
+      <Table<Brief> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 600 }} locale={{ emptyText: <NoData text="暂无 Brief" /> }} columns={[
         { title: '版本', dataIndex: 'version' }, { title: '假设', key: 'hypothesis', render: (_, item) => <Typography.Paragraph ellipsis={{ rows: 2, expandable: true }}>{item.content.hypothesis}</Typography.Paragraph> },
         { title: '状态', key: 'state', render: (_, item) => <StateTag value={item.state} /> },
         { title: '操作', key: 'open', render: (_, item) => <Space wrap><Button disabled={query.isError} onClick={() => setEditing(item)}>{item.state === 'DRAFT' ? '查看 / 编辑' : '查看冻结版本'}</Button><Button disabled={!online || query.isError || !projectState || (item.state === 'DRAFT' ? projectState === 'ARCHIVED' : projectState !== 'ACTIVE')} onClick={() => setExecuting(item)}>{item.state === 'DRAFT' ? '冻结执行上下文' : '启动新 Cycle'}</Button></Space> },

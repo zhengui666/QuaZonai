@@ -31,7 +31,7 @@ export function Projects() {
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Card extra={<Button icon={<ReloadOutlined aria-hidden />} aria-label="刷新" aria-busy={query.isFetching} loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新</Button>}>
         <Table<Project> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 760 }}
-          locale={{ emptyText: <NoData text="尚无研究项目。新建项目后填写 Brief，不能把空列表视为已完成研究。" /> }}
+          locale={{ emptyText: <NoData text="暂无研究项目" /> }}
           columns={[
             { title: '研究项目', dataIndex: 'name', key: 'name', render: (_, project) => <Button type="link" className="table-title" onClick={() => setSelected(project)}>{project.name}</Button> },
             { title: '状态', key: 'state', render: (_, project) => <StateTag value={project.state} /> },

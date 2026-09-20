@@ -31,6 +31,14 @@ Checkpoint 2: Actions run `35503533622`, published source
 native contract generation. TypeScript failed on removed-login tests, obsolete
 provider typing and unused imports. The next authored test/cleanup batch replaces
 those contracts; results are not yet available. Baseline passes are not new evidence.
+Checkpoint 3: Actions run `35504620791`, published source
+`c848a41e81d8cd7a2b757cb4ddf09026100f8f46`, passed the Rust library/binary check,
+native contract generation and the production frontend build. All-targets check
+failed on obsolete cookie fallback variables; 540 unit tests passed and three
+failed on removed demo/provider contracts. Browser execution was blocked by an
+obsolete demo response. These failures remain failures; the next patch updates
+the fixtures, adds explicit bad-Bearer regressions and shortens remaining empty
+states. No full database/browser or final review pass is claimed.
 Dedicated-account acceptance remains COMPLETED_BY_OWNER_WAIVER / NOT_RUN.
 
 ## Delivery

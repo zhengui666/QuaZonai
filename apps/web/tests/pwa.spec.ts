@@ -43,7 +43,7 @@ test('native service-worker activation preserves another tab draft and never cac
     };
   });
   await other.getByRole('button', { name: '确认更新', exact: true }).click();
-  await expect(other.getByText('版本检查或更新暂不可用，请稍后重试')).toBeVisible({ timeout: 15_000 });
+  await expect(other.getByText('更新失败，请重试')).toBeVisible({ timeout: 15_000 });
   expect(await other.evaluate(() => performance.timeOrigin)).toBe(otherInitial);
   await other.getByRole('button', { name: '稍后', exact: true }).click();
   await other.getByRole('button', { name: '有新版本', exact: true }).click();

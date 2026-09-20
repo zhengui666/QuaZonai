@@ -147,7 +147,7 @@ export function Cycles({ projectId }: { projectId: string }) {
     
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新研究周期</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['CycleViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="尚无研究周期。请先冻结 Brief，再明确选择两个角色的配置启动。" /> }} columns={[
+      <Table<Schema['CycleViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="暂无研究周期" /> }} columns={[
         { title: '周期', key: 'id', render: (_, cycle) => <Typography.Text className="break-word" copyable>{cycle.id}</Typography.Text> },
         { title: '状态', key: 'state', render: (_, cycle) => <StateTag value={cycle.state} /> },
         { title: '实际结果 / 下一步', key: 'outcome', render: (_, cycle) => <>{cycle.outcome ?? '尚无周期结论'}<br />{cycle.next_action ?? '尚无下一步记录'}</> },
@@ -188,7 +188,7 @@ function CycleSelection({ id, close }: { id: string; close: () => void }) {
         ]} />
         <QueryPanel pending={trials.isPending} error={trials.error} stale={!!trials.data} reload={() => { void trials.refetch(); }}>
           <Table<Schema['CycleSelectionTrialV1']> rowKey="experiment_id" dataSource={trials.data?.items} pagination={false} scroll={{ x: 950 }} onHeaderRow={() => ({ tabIndex: 0 })}
-            locale={{ emptyText: <NoData text="本快照没有登记试验，不代表存在合格候选。" /> }} columns={[
+            locale={{ emptyText: <NoData text="暂无试验" /> }} columns={[
               { title: '原试验', dataIndex: 'experiment_id' },
               { title: '形成时执行状态', key: 'state', render: (_, item) => item.execution_state ?? '未执行' },
               { title: '比较 / 排除理由', dataIndex: 'reason' },

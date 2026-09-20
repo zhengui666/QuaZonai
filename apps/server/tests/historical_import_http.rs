@@ -98,14 +98,18 @@ async fn frozen_export_browser_and_cli_import_preserve_original_history_and_scop
     let f = support::fixture_with_deployment(pool.clone(), None, Some(exports)).await;
     let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
-    let cookie = login.cookie.unwrap_or(initial);
+    let cookie = login.cookie.unwrap();
     let request = json!({"schema_version":1,"export_ref":reference,"dry_run":true});
     let denied = send(
         &f,
         "POST",
         "/api/v2/migrations/import",
         request.clone(),
-        &[("idempotency-key", "anon"), ("origin", "https://localhost")],
+        &[
+            ("idempotency-key", "anon"),
+            ("authorization", "Bearer invalid"),
+            ("origin", "https://localhost"),
+        ],
     )
     .await;
     assert_eq!(denied.status, StatusCode::UNAUTHORIZED);
@@ -164,13 +168,6 @@ async fn frozen_export_browser_and_cli_import_preserve_original_history_and_scop
     )
     .await;
     assert_eq!(no_grant.status, StatusCode::FORBIDDEN);
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let grant = send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"MIGRATION_IMPORT","request":actual},"target_id":null}),&[("authorization",&bearer),("idempotency-key","grant")]).await;
     assert_eq!(grant.status, StatusCode::CREATED, "{}", grant.body);
     let grant_id = grant.body["resource"]["id"].as_str().unwrap();
@@ -464,7 +461,7 @@ async fn registered_public_artifacts_are_report_scoped_native_downloads(pool: Pg
     let f = support::fixture_with_deployment(pool.clone(), None, Some(exports)).await;
     let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
-    let cookie = login.cookie.unwrap_or(initial);
+    let cookie = login.cookie.unwrap();
     let headers = [
         ("cookie", cookie.as_str()),
         ("origin", "https://localhost"),
@@ -575,13 +572,6 @@ async fn registered_public_artifacts_are_report_scoped_native_downloads(pool: Pg
     assert_eq!(credential.status, StatusCode::CREATED);
     let token = credential.body["token"].as_str().unwrap();
     let bearer = format!("Bearer {token}");
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let body = json!({"schema_version":1,"export_ref":reference,"dry_run":false});
     let grant=send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"MIGRATION_IMPORT","request":body},"target_id":null}),&[("authorization",&bearer),("idempotency-key","copy-grant")]).await;
     assert_eq!(grant.status, StatusCode::CREATED);

@@ -19,7 +19,7 @@ async fn candidate_cli_reads_original_snapshots_with_project_scope(pool: PgPool)
     let f = support::fixture(pool.clone()).await;
     let confirmed = support::local_session(&f).await;
     assert_eq!(confirmed.status, StatusCode::OK);
-    let cookie = confirmed.cookie.unwrap_or(initial);
+    let cookie = confirmed.cookie.unwrap();
     let data = candidate_fixture::fixture(&pool, candidate_fixture::budget()).await;
     let (_, candidate, _) = candidate_fixture::portfolio(&pool, &data).await;
     let principal = browser(&f,&cookie,"candidate-reader","/api/v2/machine-principals",json!({"schema_version":1,"name":"Candidate reader","kind":"CLI","project_id":data.project,"downstream_id":null,"enabled":true})).await;
@@ -138,7 +138,7 @@ async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_re
     let f = support::fixture(pool.clone()).await;
     let confirmed = support::local_session(&f).await;
     assert_eq!(confirmed.status, StatusCode::OK);
-    let cookie = confirmed.cookie.unwrap_or(initial);
+    let cookie = confirmed.cookie.unwrap();
     let principal = browser(&f, &cookie, "cli-principal", "/api/v2/machine-principals", json!({
         "schema_version":1,"name":"Native CLI acceptance","kind":"CLI","project_id":null,"downstream_id":null,"enabled":true
     })).await;
@@ -188,13 +188,6 @@ async fn native_cli_human_grant_source_creation_replay_and_intent_binding_are_re
     .await;
     assert!(!denied.status.success());
     assert!(denied.stdout.is_empty());
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let human = invoke(&origin, &credential_file, &["--idempotency-key","source-human-grant","operator-grant"], json!({
         "schema_version":1,"command":{"operation":"DATA_SOURCE_CREATE","request":body},"target_id":null
     })).await;
@@ -344,7 +337,7 @@ async fn native_mandate_cli_uses_original_human_grant_and_scoped_immutable_reads
     let f = support::fixture(pool.clone()).await;
     let confirmed = support::local_session(&f).await;
     assert_eq!(confirmed.status, StatusCode::OK);
-    let cookie = confirmed.cookie.unwrap_or(initial);
+    let cookie = confirmed.cookie.unwrap();
     let login: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM app.browser_logins ORDER BY created_at DESC LIMIT 1")
             .fetch_one(&pool)
@@ -383,13 +376,6 @@ async fn native_mandate_cli_uses_original_human_grant_and_scoped_immutable_reads
     .await;
     assert!(!denied.status.success());
     assert!(denied.stdout.is_empty());
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let human = invoke(&origin, &file, &["--idempotency-key","mandate-human","operator-grant"], json!({
         "schema_version":1,"command":{"operation":"MANDATE_CREATE","request":body},"target_id":null
     })).await;

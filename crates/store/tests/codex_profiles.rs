@@ -347,7 +347,7 @@ async fn create_replay_and_home_uniqueness_preserve_saved_defaults_without_claim
         Err(StoreError::Conflict)
     ));
     let records:(i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.codex_profiles),(SELECT count(*) FROM app.command_receipts WHERE operation='CODEX_PROFILE_CREATE')").fetch_one(&pool).await.unwrap();
-    assert_eq!(records, (1, 1));
+    assert_eq!(records, (3, 1));
     let listed = store
         .codex_profiles(
             &actor,

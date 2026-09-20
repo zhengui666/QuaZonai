@@ -22,7 +22,7 @@ async fn assumptions_http_missing_and_empty_are_not_fabricated_versions(pool: Pg
     );
     let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
-    let cookie = login.cookie.unwrap_or(initial);
+    let cookie = login.cookie.unwrap();
     assert_eq!(
         send(&f, &cookie, "GET", &missing, Value::Null).await.status,
         StatusCode::NOT_FOUND
@@ -77,7 +77,7 @@ async fn original_assumptions_http_creates_reads_replays_and_rejects_changed_int
     let f = support::fixture_with_runtime_targets(pool.clone(), Some(targets)).await;
     let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
-    let cookie = login.cookie.unwrap_or(initial);
+    let cookie = login.cookie.unwrap();
     let login_id: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM app.browser_logins ORDER BY created_at DESC LIMIT 1")
             .fetch_one(&pool)

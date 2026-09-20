@@ -176,7 +176,7 @@ function Runtimes() {
   return <Space orientation="vertical" className="full-width" size="large">
     <Button type="primary" disabled={!online} onClick={() => setCreating(true)}>登记 Runtime</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Runtime> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="尚无 Runtime。先按运行文档启动远端原生网关，再登记其地址、凭据与任务范围。" /> }} columns={[
+      <Table<Runtime> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="暂无 Runtime" /> }} columns={[
         { title: '名称', key: 'name', render: (_, item) => item.configuration.name },
         { title: '服务地址', key: 'endpoint', render: (_, item) => item.configuration.endpoint },
         { title: '版本', dataIndex: 'revision' }, { title: '新任务', key: 'enabled', render: (_, item) => item.configuration.enabled ? '允许' : '停用' },
@@ -230,7 +230,7 @@ function Downstreams() {
   return <Space orientation="vertical" className="full-width">
     <Button type="primary" disabled={!online} onClick={() => setEditing({})}>登记目标交付下游</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Downstream> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="尚未登记下游服务。没有有效下游、兼容探测、独立资格和相应审批，不会交付目标。" /> }} columns={[
+      <Table<Downstream> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="暂无下游服务" /> }} columns={[
         { title: '名称', key: 'name', render: (_, item) => item.configuration.name }, { title: '服务地址', key: 'endpoint', render: (_, item) => item.configuration.endpoint },
         { title: '环境', key: 'environment', render: (_, item) => item.configuration.environments }, { title: '版本', dataIndex: 'revision' },
         { title: '状态', key: 'enabled', render: (_, item) => item.configuration.enabled ? '允许未来交付' : '已停用' },

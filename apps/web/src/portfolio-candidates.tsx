@@ -22,7 +22,7 @@ export function Candidates({ project }: { project: string }) {
     
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新候选</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Candidate> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 850 }} locale={{ emptyText: <NoData text="尚无已发布候选，不会生成示例目标。" /> }} columns={[
+      <Table<Candidate> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 850 }} locale={{ emptyText: <NoData text="暂无候选" /> }} columns={[
         { title: '候选编号', dataIndex: 'id', render: (id: string) => <Button type="link" disabled={query.isError} onClick={() => setSelected(id)}>{id}</Button> },
         { title: '执行状态', dataIndex: 'execution_status' }, { title: '求解状态', dataIndex: 'solver_status' },
         { title: '原证据状态', dataIndex: 'evidence_status' }, { title: '来源', dataIndex: 'origin' },
@@ -58,7 +58,7 @@ function Detail({ id, project, close }: { id: string; project: string; close: ()
           { title: '覆盖比例', dataIndex: 'coverage_fraction' }, { title: '原校准', dataIndex: 'calibration_id', render: (value: string | null) => value ?? '无' },
         ]} />
         <Typography.Title level={2}>原始目标快照</Typography.Title>
-        <Table rowKey="instrument_id" dataSource={query.data.targets} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 700 }} locale={{ emptyText: <NoData text="无目标，不补造权重或现金。" /> }} columns={[
+        <Table rowKey="instrument_id" dataSource={query.data.targets} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 700 }} locale={{ emptyText: <NoData text="暂无目标" /> }} columns={[
           { title: '资产', dataIndex: 'instrument_id' }, { title: '目标权重', dataIndex: 'target_weight' }, { title: '币种', dataIndex: 'currency' },
           { title: '起始', dataIndex: 'asof', render: displayTime }, { title: '截止', dataIndex: 'valid_until', render: displayTime },
         ]} />
@@ -84,7 +84,7 @@ function CandidateEvaluations({ id, project, freeze, canFreeze }: { id: string; 
     <Typography.Title level={2}>已发表的候选研究评估</Typography.Title>
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新候选评估</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['EvaluationView']> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 850 }} locale={{ emptyText: <NoData text="尚无已发表的候选评估；不代表通过，也不会自动运行模拟。" /> }} columns={[
+      <Table<Schema['EvaluationView']> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 850 }} locale={{ emptyText: <NoData text="暂无候选评估" /> }} columns={[
         { title: '评估', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>评估 {item.id.slice(-8)}</Button> },
         { title: '评估类型', dataIndex: 'evaluation_kind' },
         { title: '目标包', key: 'release', render: (_, item) => <Button disabled={!online || !canFreeze || query.isError || query.isFetching || item.evaluation_kind !== 'PORTFOLIO' || item.execution_status !== 'SUCCEEDED' || item.evidence_status !== 'VALID' || item.decision !== 'PASS' || item.origin !== 'REAL' || !item.unexpired_at_read} onClick={() => freeze(item)}>冻结目标包</Button> },

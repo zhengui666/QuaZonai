@@ -33,7 +33,7 @@ test('synthetic two-Alpha history keeps expired qualification and original portf
     await expect(evaluation.getByText('SUCCEEDED / VALID / PASS', { exact: true })).toBeVisible();
     await expect(evaluation.getByText('FIXTURE', { exact: true })).toBeVisible();
     await expect(evaluation.getByText(/当时没有未过期有效期/)).toBeVisible();
-    await expect(evaluation.getByText('本评估没有发表指标；不能把缺失解释成0或通过。', { exact: true })).toBeVisible();
+  await expect(evaluation.getByText('暂无指标', { exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(evaluation).toBeHidden();
     await expect(page.getByRole('button', { name: `评估 0000049${n - 1}`, exact: true })).toHaveCount(0);
@@ -89,13 +89,13 @@ test('new synthetic draft can be created, edited and opened without inheriting r
   await page.getByRole('button', { name, exact: true }).click();
   await expect(page.getByText('修改后的临时说明', { exact: true })).toBeVisible();
   await page.getByRole('tab', { name: '研究周期', exact: true }).click();
-  await expect(page.getByText('尚无研究周期。请先冻结 Brief，再明确选择两个角色的配置启动。', { exact: true })).toBeVisible();
+  await expect(page.getByText('暂无研究周期', { exact: true })).toBeVisible();
   await navigate(page, '交付');
   await page.getByRole('combobox', { name: '选择交付所属项目', exact: true }).click();
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: name }).click();
   await expect(page.getByRole('button', { name: 'Release 00000510', exact: true })).toBeHidden();
   await page.getByRole('tab', { name: '交付记录', exact: true }).click();
-  await expect(page.getByText('尚无交付记录。冻结目标包不会自动创建 Offer。', { exact: true })).toBeVisible();
+  await expect(page.getByText('暂无交付记录', { exact: true })).toBeVisible();
   await navigate(page, '研究');
   for (const state of ['暂停', '归档']) {
     const row = page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
@@ -139,7 +139,7 @@ test('synthetic Brief fork and edit preserve the frozen version', async ({ page 
   await page.getByRole('button', { name: '查看冻结版本', exact: true }).click();
   const frozen = page.getByRole('dialog', { name: 'Brief · 版本 1', exact: true });
   await expect(frozen.getByLabel('可检验的假设', { exact: true })).toHaveValue('SYNTHETIC：比较两种合成信号。');
-  await expect(frozen.getByText('冻结版本不可修改。', { exact: true })).toBeVisible();
+  await expect(frozen.getByText('只读版本', { exact: true })).toBeVisible();
   const denied = await page.request.post(`/api/v2/briefs/${resource.id}/freeze`, { data: {} });
   expect(denied.status()).toBe(422);
 });

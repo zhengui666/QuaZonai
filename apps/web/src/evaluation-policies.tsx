@@ -52,7 +52,7 @@ export function EvaluationPolicies({ project }: { project: string }) {
     
     <Space wrap><Button type="primary" disabled={!online} onClick={() => setCreating(true)}>新建评估政策</Button><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新政策</Button></Space>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Policy> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="尚无评估政策，不填充默认合格阈值。" /> }} columns={[
+      <Table<Policy> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="暂无评估政策" /> }} columns={[
         { title: '版本', key: 'version', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>政策 v{item.version}</Button> },
         { title: '研究问题', dataIndex: 'question' }, { title: '选择评估', key: 'kind', render: (_, item) => item.selection_rule.evaluation_kind },
         { title: '组合要求', key: 'portfolio', render: (_, item) => item.portfolio_metric_requirements === null ? '未定义，不能授予组合 PASS' : `${item.portfolio_metric_requirements.length} 项独立要求` },

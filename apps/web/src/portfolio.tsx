@@ -47,7 +47,7 @@ export function Portfolios() {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
     }} />
-    {project ? <Tabs key={project} items={[{ key: 'mandates', label: '组合配置', children: <Mandates project={project} /> }, { key: 'assumptions', label: '执行假设', children: <ExecutionAssumptions project={project} /> }, { key: 'candidates', label: '候选快照', children: <Candidates project={project} /> }, { key: 'policies', label: '评估政策', children: <EvaluationPolicies project={project} /> }]} /> : <NoData text="请选择项目后查看配置，不会自动创建或启动组合。" />}
+    {project ? <Tabs key={project} items={[{ key: 'mandates', label: '组合配置', children: <Mandates project={project} /> }, { key: 'assumptions', label: '执行假设', children: <ExecutionAssumptions project={project} /> }, { key: 'candidates', label: '候选快照', children: <Candidates project={project} /> }, { key: 'policies', label: '评估政策', children: <EvaluationPolicies project={project} /> }]} /> : <NoData text="请选择项目" />}
   </Space>;
 }
 
@@ -58,7 +58,7 @@ function Mandates({ project }: { project: string }) {
   return <Space orientation="vertical" size="middle" className="full-width">
     <Space wrap><Button type="primary" disabled={!online} onClick={() => setCreating(true)}>新建组合配置</Button><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新配置</Button></Space>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Mandate> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="本项目尚无组合配置。这不表示组合评估已完成。" /> }} columns={[
+      <Table<Mandate> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="暂无组合配置" /> }} columns={[
         { title: '版本', key: 'version', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>配置 v{item.version}</Button> },
         { title: '目标', key: 'objective', render: (_, item) => item.content.objective },
         { title: '资本假设', key: 'capital', render: (_, item) => `${item.content.capital_assumption} ${item.content.base_currency}` },

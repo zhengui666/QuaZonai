@@ -48,7 +48,7 @@ async fn actual_mandate_http_preserves_original_version_and_never_updates_it(poo
     let body = serde_json::to_value(&request).unwrap();
     let path = "/api/v2/portfolio-mandates";
     assert_eq!(
-        send(&f, None, "POST", path, body.clone()).await.status,
+        invalid_bearer(&f, "POST", path, body.clone()).await.status,
         StatusCode::UNAUTHORIZED
     );
     let created = send(&f, Some(&cookie), "POST", path, body.clone()).await;

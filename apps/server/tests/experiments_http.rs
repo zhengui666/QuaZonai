@@ -670,7 +670,11 @@ async fn machine_requires_scoped_submission_without_acquiring_operator_grant(poo
             "POST",
             "/api/v2/experiments",
             body.clone(),
-            &[("origin", "https://localhost"), ("idempotency-key", "anon"),]
+            &[
+                ("origin", "https://localhost"),
+                ("idempotency-key", "invalid-machine"),
+                ("authorization", "Bearer invalid")
+            ]
         )
         .await
         .status,

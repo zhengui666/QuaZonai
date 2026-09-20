@@ -16,7 +16,7 @@ async fn downstream_cli_publishes_original_weights_and_replays_without_replacing
     let f = support::fixture(pool.clone()).await;
     let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
-    let cookie = login.cookie.unwrap_or(initial);
+    let cookie = login.cookie.unwrap();
     let login_id: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM app.browser_logins ORDER BY created_at DESC LIMIT 1")
             .fetch_one(&pool)

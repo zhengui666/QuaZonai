@@ -66,7 +66,7 @@ export function HandoffOffer({ release, approval, close }: { release: Schema['Re
       <ErrorNotice error={source.error ?? mutation.error} />
       {source.data?.duplicate && <Alert showIcon type="warning" title="原版本已登记 Offer 或原候选已领取，不能重复交付。" />}
       {submitted && mutation.isError && <Alert showIcon type="warning" title="提交结果未知，请重试当前操作" />}
-      {receipt && <Alert showIcon type="success" title="原 Offer 已登记。" description={`${receipt.id}；原回执状态：${receipt.state}。下游实际状态请查看交付记录。`} />}
+      {receipt && <Alert showIcon type="success" title="原 Offer 已登记。" description={`${receipt.id}；原回执状态：${receipt.state}`} />}
     </Space>
   </Modal>;
 }

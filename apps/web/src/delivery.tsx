@@ -23,7 +23,7 @@ export function Delivery() {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
     }} />
-    {project ? <Tabs key={project} items={[{ key: 'releases', label: '目标包', children: <Releases project={project} /> }, { key: 'handoffs', label: '交付记录', children: <Handoffs project={project} /> }, { key: 'forward', label: 'Forward 证据', children: <Forward project={project} /> }, { key: 'history', label: '观察与唤醒', children: <ForwardHistory project={project} /> }, { key: 'policies', label: '自动化政策', children: <AutomationPolicies project={project} /> }]} /> : <NoData text="请选择项目查看已冻结的目标包。" />}
+    {project ? <Tabs key={project} items={[{ key: 'releases', label: '目标包', children: <Releases project={project} /> }, { key: 'handoffs', label: '交付记录', children: <Handoffs project={project} /> }, { key: 'forward', label: 'Forward 证据', children: <Forward project={project} /> }, { key: 'history', label: '观察与唤醒', children: <ForwardHistory project={project} /> }, { key: 'policies', label: '自动化政策', children: <AutomationPolicies project={project} /> }]} /> : <NoData text="请选择项目" />}
   </Space>;
 }
 
@@ -38,7 +38,7 @@ function Releases({ project }: { project: string }) {
   return <Space orientation="vertical" className="full-width">
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新目标包</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['ReleaseViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="尚无冻结目标包。可从组合候选的独立评估请求冻结，不会自动批准或交付。" /> }} columns={[
+      <Table<Schema['ReleaseViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="暂无目标包" /> }} columns={[
         { title: '目标包版本', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>Release {item.id.slice(-8)}</Button> },
         { title: '候选', dataIndex: 'candidate_id' }, { title: '来源（非交付环境）', dataIndex: 'environment' },
         { title: '目标时点', dataIndex: 'asof', render: displayTime }, { title: '原有效期', dataIndex: 'valid_until', render: displayTime },
@@ -118,7 +118,7 @@ function Handoffs({ project }: { project: string }) {
     
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新交付记录</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['HandoffViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="尚无交付记录。冻结目标包不会自动创建 Offer。" /> }} columns={[
+      <Table<Schema['HandoffViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="暂无交付记录" /> }} columns={[
         { title: '交付编号', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>Handoff {item.id.slice(-8)}</Button> },
         { title: '下游', dataIndex: 'downstream_id' }, { title: '环境', dataIndex: 'environment' }, { title: '原状态', dataIndex: 'state' },
         { title: '序号', dataIndex: 'delivery_sequence' }, { title: '原期限', dataIndex: 'expires_at', render: displayTime },

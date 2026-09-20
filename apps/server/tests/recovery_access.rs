@@ -163,7 +163,7 @@ async fn ordinary_database_identity_cannot_invalidate_restored_access(pool: PgPo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool) {
+async fn native_archive_restores_original_receipt_and_native_encryption(pool: PgPool) {
     use integrations::secrets::SecretVault;
     use std::process::Stdio;
     use tokio::io::AsyncWriteExt;
@@ -700,7 +700,16 @@ async fn native_archive_restores_original_receipt_and_retained_totp(pool: PgPool
         .send()
         .await
         .unwrap();
-    assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(stale.status(), StatusCode::OK);
+    assert_ne!(
+        stale.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap(),
+        cookie
+    );
     let machine = http
         .get(format!("http://{address}/api/v2/projects"))
         .header(header::HOST, "localhost")

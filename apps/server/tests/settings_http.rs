@@ -286,7 +286,8 @@ async fn wrong_secret_purpose_invalid_ca_and_production_http_do_not_publish(pool
         json!({"intent":{"schema_version":1,"purpose":"RUNTIME","label":"test"},"value":"authorization-boundary-fixture-32-byte-minimum"}),
         &[
             ("origin", "https://localhost"),
-            ("idempotency-key", "anonymous"),
+            ("idempotency-key", "invalid-machine"),
+            ("authorization", "Bearer invalid"),
         ],
     )
     .await;

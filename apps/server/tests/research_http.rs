@@ -328,7 +328,8 @@ async fn research_field_errors_are_safe_bounded_and_native_auth_is_not_optional(
             &[],
         )
         .await;
-        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(r.cookie.is_some());
         for tail in ["&limit=0", "&limit=101", "&limit=65536", "&unknown=1"] {
             let r = browser(
                 &f,
@@ -390,13 +391,6 @@ async fn native_cli_local_grant_can_publish_only_the_exact_research_request(pool
             .push(m);
     }
     assert!(serde_json::to_vec(&request).unwrap().len() > 16 * 1024);
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let grant=send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"EVALUATION_POLICY_CREATE","request":request},"target_id":null}),&[("authorization",&bearer),("idempotency-key","grant")]).await;
     assert_eq!(grant.status, StatusCode::CREATED, "{}", grant.body);
     let g = grant.body["resource"]["id"].as_str().unwrap();

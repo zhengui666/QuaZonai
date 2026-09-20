@@ -175,7 +175,7 @@ function RunRebalance({ id }: { id: string }) {
           { key: 'runtime', label: '原 Runtime / 版本', children: `${origin.request.runtime_id} / ${origin.request.expected_runtime_revision}` },
         ]} />
         <details><summary>原 Build 请求（成员、权重来源与限额）</summary><pre className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(origin.request, null, 2)}</pre></details>
-      </> : query.data && <NoData text="此运行没有自动再平衡关联；不据此推断人工或其他来源。" />}
+      </> : query.data && <NoData text="无自动再平衡关联" />}
     </QueryPanel>
   </Card>;
 }

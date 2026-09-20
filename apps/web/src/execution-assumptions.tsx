@@ -29,7 +29,7 @@ export function ExecutionAssumptions({ project }: { project: string }) {
     
     <Space wrap><Button type="primary" disabled={!online} onClick={() => setCreating(true)}>新建执行假设</Button><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新执行假设</Button></Space>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<View> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="尚无原生来源绑定的执行假设；不代表评估完成。" /> }} columns={[
+      <Table<View> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="暂无执行假设" /> }} columns={[
         { title: '假设编号', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>查看假设 {item.id}</Button> },
         { title: '资本假设', key: 'capital', render: (_, item) => `${item.settings.starting_capital} ${item.settings.base_currency}` },
         { title: '创建于', key: 'created', render: (_, item) => displayTime(item.created_at) },

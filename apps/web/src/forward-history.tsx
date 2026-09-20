@@ -22,7 +22,7 @@ function Observations({ project }: { project: string }) {
   return <Space orientation="vertical" className="full-width">
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新观察</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['ForwardObservationViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="尚无原始观察，不能推断健康。" /> }} columns={[
+      <Table<Schema['ForwardObservationViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="暂无观察记录" /> }} columns={[
         { title: '原观察', dataIndex: 'id' }, { title: '原分类', dataIndex: 'classification' },
         { title: '原原因', key: 'reasons', render: (_, item) => item.reason_codes.join(' · ') || '无原因记录' },
         { title: '观察时间', dataIndex: 'observed_at', render: displayTime },

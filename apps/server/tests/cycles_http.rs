@@ -270,7 +270,7 @@ async fn authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn startup_rejects_forged_success_stale_revision_and_unauthenticated_mutation(pool: PgPool) {
+async fn startup_rejects_forged_success_stale_revision_and_invalid_machine_mutation(pool: PgPool) {
     let (f, cookie, data) = setup(&pool).await;
     let path = format!("/api/v2/briefs/{}/freeze", data.brief.id);
     let mut forged = serde_json::to_value(&data.freeze).unwrap();
@@ -281,12 +281,10 @@ async fn startup_rejects_forged_success_stale_revision_and_unauthenticated_mutat
     stale["expected_revision"] = json!("99");
     let rejected = browser(&f, &cookie, "POST", &path, "stale", stale).await;
     assert_eq!(rejected.status, StatusCode::CONFLICT);
-    let rejected = browser(
+    let rejected = invalid_bearer(
         &f,
-        "",
         "POST",
         &path,
-        "anonymous",
         serde_json::to_value(&data.freeze).unwrap(),
     )
     .await;

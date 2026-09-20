@@ -95,11 +95,11 @@ const firstVersion: Schema['AlphaVersionView'] = { id: id(42), project_id: proje
   await context.setOffline(false);
   await dialog.getByLabel('CPU 秒数上限', { exact: true }).fill('9007199254740993');
   await submit.click();
-  await expect(dialog.getByText('请求结果尚未确认。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('提交结果未知，请重试当前操作', { exact: true })).toBeVisible();
   await expect(dialog.getByLabel('CPU 秒数上限', { exact: true })).toBeDisabled();
   runtime.revision = '9007199254740994';
   await dialog.getByRole('button', { name: '重试同一请求', exact: true }).click();
-  await expect(dialog.getByText('Build Run 已登记。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('构建已提交', { exact: true })).toBeVisible();
   expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0]); expect(writes[0]?.key).toBeTruthy();
   expect(writes[0]?.body).toEqual({ schema_version: 1, mandate_id: mandate.id, cycle_id: cycle.id, runtime_id: runtime.id, input_set_id: input.id, environment: 'PAPER', expected_runtime_revision: '9007199254740993', current_weights_source: source === 'LAST_TARGET' ? { kind: source, candidate_id: header.id } : { kind: source, snapshot_id: weights.id }, members: qualifications.map((q, i) => ({ qualification_id: q.id, ensemble_weight: i === 0 ? '0.200000000000000001' : '0.799999999999999999' })), limits: { schema_version: 1, experiments: 0, cpu_seconds: '9007199254740993', wall_seconds: 60, memory_mib: 1024, output_bytes: '1048576' } });
 });

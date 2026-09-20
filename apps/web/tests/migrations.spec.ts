@@ -26,7 +26,7 @@ async function setup(page: Page, options: { lose?: boolean; rejectRetry?: boolea
     if (url.pathname.endsWith(report.id)) return reply(route, report);
     return reply(route, { schema_version: 1, items: [report], next_cursor: null });
   });
-  await page.goto('/'); await navigate(page, '设置'); await settingsCategory(page, '历史迁移');
+  await page.goto('/'); await navigate(page, '设置'); await settingsCategory(page, '迁移');
   return writes;
 }
 test('historical source counts exclusions and original keys stay exact across mapping pages', async ({ page }) => {
@@ -51,7 +51,7 @@ for (const rejectRetry of [false,true]) test(`unknown import preserves original 
   await dialog.getByLabel('已登记的导出编号').fill(report.export_ref);
   await expect(dialog.getByRole('checkbox')).toBeChecked();
   await dialog.getByRole('button', { name: '提交导入请求', exact: true }).click();
-  await expect(dialog.getByText('结果尚未确认，重试保留原编号、方式和幂等键。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('提交结果未知，请重试当前操作', { exact: true })).toBeVisible();
   await expect(dialog.getByLabel('已登记的导出编号')).toBeDisabled();
   await expect(dialog.getByRole('checkbox')).toBeDisabled();
   await dialog.getByRole('button', { name: '重试同一导入请求', exact: true }).click();

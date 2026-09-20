@@ -80,11 +80,12 @@ async fn setup_with_tls(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn default_deployment_readiness_requires_auth_and_never_creates_an_observation(pool: PgPool) {
+async fn local_deployment_readiness_never_creates_an_observation(pool: PgPool) {
     let f = fixture(pool.clone()).await;
     let path = format!("/api/v2/integrations/runtimes/{}/readiness", Id::new());
     let anonymous = call(&f, "GET", &path, Value::Null, None).await;
-    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(anonymous.status, StatusCode::NOT_FOUND);
+    assert!(anonymous.cookie.is_some());
     let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();
@@ -296,12 +297,11 @@ async fn stale_revision_and_injected_success_never_reach_the_native_transport(po
     .await;
     assert_eq!(stale.status, StatusCode::CONFLICT);
     assert_eq!(tls.server.requests.load(Ordering::SeqCst), 0);
-    let anonymous = call(
+    let anonymous = invalid_bearer(
         &f,
         "POST",
         &path,
         json!({"schema_version":1,"expected_revision":"1"}),
-        None,
     )
     .await;
     assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);

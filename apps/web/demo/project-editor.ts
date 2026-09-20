@@ -33,8 +33,8 @@ const demoRuntime: Schema['RuntimeView'] = {
 };
 const demoProfiles: Schema['CodexProfileViewV1'][] = [2981, 2982].map((tail, index) => ({
   id: id(tail), name: index === 0 ? 'SYNTHETIC · Demo Researcher' : 'SYNTHETIC · Demo Reviewer',
-  home_binding: `synthetic-demo-${tail}`, profile_origin: 'OPERATOR_MOUNT', connection_mode: 'SYSTEM', custom_base_url: null,
-  credential_configured: false, model_settings: {
+  home_binding: `synthetic-demo-${tail}`, profile_origin: 'OPERATOR_MOUNT', connection_mode: 'SYSTEM',
+  model_settings: {
     schema_version: 1, use_default_model_settings: true, saved_model: null, saved_reasoning_effort: null, saved_fast_mode: false,
   },
   revision: '1', created_at: stamp, updated_at: stamp,

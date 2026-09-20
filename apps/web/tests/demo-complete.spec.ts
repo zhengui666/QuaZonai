@@ -65,7 +65,7 @@ test('credential-free Demo freezes context, starts a synthetic Cycle and opens s
   const frozenRead = await page.request.get(`/api/v2/briefs/${frozen.resource.brief.id}`);
   expect(frozenRead.status()).toBe(200);
   expect(await frozenRead.json()).toEqual(frozen.resource.brief);
-  await expect(page.getByText('Brief 已冻结，尚未启动研究。', { exact: true })).toBeVisible();
+  await expect(page.getByText('Brief 已冻结', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '返回查看记录', exact: true }).click();
 
   const project = page.getByText('SYNTHETIC · 双 Alpha 研究示例', { exact: true }).first();
@@ -96,7 +96,7 @@ test('credential-free Demo freezes context, starts a synthetic Cycle and opens s
   expect(started.resource.cycle.brief_id).toBe(frozen.resource.brief.id);
   expect(started.resource.cycle.project_id).toBe(frozen.resource.brief.project_id);
   expect(started.resource.run.cycle_id).toBe(started.resource.cycle.id);
-  await expect(page.getByText('Cycle 与准备运行已由服务器登记。', { exact: true })).toBeVisible();
+  await expect(page.getByText('研究周期已创建', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '返回查看记录', exact: true }).click();
   await page.getByRole('tab', { name: '研究周期', exact: true }).click();
   const cycleRow = page.getByRole('row').filter({ hasText: started.resource.cycle.id });

@@ -17,7 +17,7 @@ export function Forward({ project }: { project: string }) {
     
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新 Forward 消息</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['ForwardMessageViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 850 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="尚无下游 Forward 消息。没有观测不代表健康。" /> }} columns={[
+      <Table<Schema['ForwardMessageViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 850 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="暂无 Forward 消息" /> }} columns={[
         { title: '消息', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError || query.isFetching} onClick={() => setSelected(item)}>Forward {item.id.slice(-8)}</Button> },
         { title: '流', dataIndex: 'stream_id' }, { title: '序号', dataIndex: 'sequence' }, { title: '消息修订', dataIndex: 'message_revision' },
         { title: '覆盖', dataIndex: 'coverage_status' }, { title: '原观测数', dataIndex: 'observation_count' },

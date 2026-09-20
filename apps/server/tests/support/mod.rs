@@ -172,3 +172,19 @@ pub async fn local_session(f: &Fixture) -> Reply {
     assert!(response.body.get("provisioning_uri").is_none());
     response
 }
+
+pub async fn invalid_bearer(f: &Fixture, method: &str, path: &str, body: Value) -> Reply {
+    exchange(
+        &f.app,
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, "localhost")
+            .header(header::AUTHORIZATION, "Bearer invalid")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", "invalid-machine")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap(),
+    )
+    .await
+}

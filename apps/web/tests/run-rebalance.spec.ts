@@ -25,6 +25,6 @@ for (const present of [false, true]) test(`Run shows original rebalance facts or
     await page.getByText('原 Build 请求（成员、权重来源与限额）', { exact: true }).click();
     await expect(page.locator('pre').filter({ hasText: 'FORWARD_SNAPSHOT' })).toContainText(id(71));
   } else {
-    await expect(page.getByText('此运行没有自动再平衡关联；不据此推断人工或其他来源。')).toBeVisible();
+    await expect(page.getByText('无自动再平衡关联')).toBeVisible();
   }
 });

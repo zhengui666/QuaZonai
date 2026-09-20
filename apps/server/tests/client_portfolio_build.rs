@@ -85,7 +85,7 @@ async fn check_intent(pool: PgPool, command: &str) {
     let f = support::fixture(pool.clone()).await;
     let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
-    let cookie = login.cookie.unwrap_or(initial);
+    let cookie = login.cookie.unwrap();
     let login_id: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM app.browser_logins ORDER BY created_at DESC LIMIT 1")
             .fetch_one(&pool)
@@ -158,13 +158,6 @@ async fn check_intent(pool: PgPool, command: &str) {
     let denied = invoke(&origin, &file, &denied_arguments, body.clone()).await;
     assert!(!denied.status.success());
     assert!(denied.stdout.is_empty());
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let human = invoke(&origin, &file, &["--idempotency-key","build-human","operator-grant"], json!({"schema_version":1,"command":{"operation":operation,"request":body},"target_id":mandate.id})).await;
     let diagnostic: Value = serde_json::from_slice(&human.stderr).unwrap_or(Value::Null);
     assert!(
@@ -228,7 +221,7 @@ async fn automation_policy_cli_freezes_original_intent_and_revokes_history(pool:
     let f = support::fixture(pool.clone()).await;
     let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
-    let cookie = login.cookie.unwrap_or(initial);
+    let cookie = login.cookie.unwrap();
     let login_id: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM app.browser_logins ORDER BY created_at DESC LIMIT 1")
             .fetch_one(&pool)
@@ -320,13 +313,6 @@ async fn automation_policy_cli_freezes_original_intent_and_revokes_history(pool:
     )
     .await;
     assert!(!denied.status.success());
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let human=invoke(&origin,&file,&["--idempotency-key","policy-human","operator-grant"],json!({"schema_version":1,"command":{"operation":"POLICY_AUTHORIZE","request":request},"target_id":source.project_id})).await;
     assert!(human.status.success());
     let grant: Value = serde_json::from_slice(&human.stdout).unwrap();
@@ -425,24 +411,6 @@ async fn automation_policy_cli_freezes_original_intent_and_revokes_history(pool:
         effective_at: None,
         reason: "Withdraw future policy authority".into(),
     };
-    let current = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
-    let next_window = (now / 30 + 1) * 30;
-    if current < next_window {
-        tokio::time::sleep(std::time::Duration::from_secs(next_window - current + 1)).await;
-    }
-    let revoke_now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
     let human=invoke(&origin,&file,&["--idempotency-key","policy-revoke-human","operator-grant"],json!({"schema_version":1,"command":{"operation":"POLICY_REVOKE","request":revoke},"target_id":original.id})).await;
     assert!(human.status.success());
     let grant: Value = serde_json::from_slice(&human.stdout).unwrap();

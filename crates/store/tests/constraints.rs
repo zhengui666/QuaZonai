@@ -249,8 +249,8 @@ async fn new_database_migrations_are_repeatable_without_legacy_side_effects(pool
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn operator_grant_consumption_is_once_and_bound_to_its_command_target(pool: PgPool) {
-    // Only relational authority is tested here. A real authenticator must issue
-    // grants after TOTP; constructing a test row is not authentication evidence.
+    // Only relational authority is tested here. Real local CLI grants are
+    // covered by the HTTP tests; a fixture row is not request-level evidence.
     let f = fixture(&pool, budget()).await;
     let principal = Id::new();
     let credential = Id::new();
@@ -258,9 +258,8 @@ async fn operator_grant_consumption_is_once_and_bound_to_its_command_target(pool
         .bind(principal.as_uuid()).bind(f.project.as_uuid()).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO app.machine_credentials(id,principal_id,public_token_id,verifier_ref,principal_epoch,scope_codes,issued_at,expires_at,issued_by) VALUES($1,$2,'fixture-public-id','fixture-verifier',1,'{RESEARCH_READ}',now(),now()+interval '1 hour','OPERATOR')")
         .bind(credential.as_uuid()).bind(principal.as_uuid()).execute(&pool).await.unwrap();
-    sqlx::query("UPDATE app.operator_auth_state SET initialized=true,totp_secret_ref='fixture',setup_completed_at=now() WHERE singleton").execute(&pool).await.unwrap();
     let grant = Id::new();
-    sqlx::query("INSERT INTO app.operator_command_grants(id,credential_id,operation,target_id,auth_epoch,authenticated_at,expires_at,normalized_nonsecret_request) VALUES($1,$2,'RELEASE_APPROVE',$3,1,now(),now()+interval '5 minutes','{\"schema_version\":1}')")
+    sqlx::query("INSERT INTO app.operator_command_grants(id,credential_id,operation,target_id,auth_epoch,authenticated_at,expires_at,normalized_nonsecret_request) SELECT $1,$2,'RELEASE_APPROVE',$3,session_epoch,now(),now()+interval '5 minutes','{\"schema_version\":1}' FROM app.operator_auth_state WHERE singleton")
         .bind(grant.as_uuid()).bind(credential.as_uuid()).bind(f.run.as_uuid()).execute(&pool).await.unwrap();
     let receipt = Id::new();
     let other_receipt = Id::new();

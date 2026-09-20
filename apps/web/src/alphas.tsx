@@ -28,7 +28,7 @@ export function Alphas() {
         const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
         return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
       }} />
-    {project ? <AlphaList key={project} project={project} /> : <NoData text="请选择项目后查看已有 Alpha，不会自动选择或创建研究。" />}
+    {project ? <AlphaList key={project} project={project} /> : <NoData text="请选择项目" />}
   </Space>;
 }
 
@@ -51,7 +51,7 @@ function AlphaList({ project }: { project: string }) {
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新 Alpha</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Alpha> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }}
-        locale={{ emptyText: <NoData text="本项目还没有 Alpha 登记；这不是无有效 Alpha 的科学结论。" /> }} columns={[
+        locale={{ emptyText: <NoData text="暂无 Alpha" /> }} columns={[
           { title: 'Alpha', key: 'name', render: (_, item) => <Button type="link" disabled={query.isError || query.isFetching} onClick={() => setSelected(item)}>{item.name}</Button> },
           { title: '登记状态（非当前资格）', key: 'state', render: (_, item) => <StateTag value={item.lifecycle} /> },
           { title: '活动版本', key: 'version', render: (_, item) => item.active_version ?? '未指定' },
@@ -297,7 +297,7 @@ function Evaluations({ version, project }: { version: string; project: string })
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新评估</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Evaluation> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 850 }}
-        locale={{ emptyText: <NoData text="还没有可披露的正式 Validation 评估；不包含 Sealed，也不代表验证通过。" /> }} columns={[
+        locale={{ emptyText: <NoData text="暂无 Validation 评估" /> }} columns={[
           { title: '评估', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError || query.isFetching} onClick={() => setSelected(item.id)}>评估 {item.id.slice(-8)}</Button> },
           { title: '执行状态', key: 'execution', render: (_, item) => <StateTag value={item.execution_status} /> },
           { title: '证据状态', key: 'evidence', render: (_, item) => <StateTag value={item.evidence_status} /> },
@@ -348,7 +348,7 @@ export function EvaluationDetail({ id, close, candidate, alpha }: { id: string; 
         ]} />
         <QueryPanel pending={metrics.isPending} error={metrics.error} stale={!!metrics.data} reload={() => { void metrics.refetch(); }}>
           <Table<Metric> rowKey={item => `${item.evaluation_id}/${item.metric_code}/${item.scope}`} dataSource={metrics.data?.items} pagination={false} scroll={{ x: 1500 }} onHeaderRow={() => ({ tabIndex: 0 })}
-            locale={{ emptyText: <NoData text="本评估没有发表指标；不能把缺失解释成0或通过。" /> }} columns={[
+            locale={{ emptyText: <NoData text="暂无指标" /> }} columns={[
               { title: '指标 / Scope', key: 'name', render: (_, item) => `${item.metric_code} / ${item.scope}` },
               { title: '原始数值', key: 'value', render: (_, item) => item.value === null ? `缺值：${item.reason_code ?? item.status}` : String(item.value) },
               { title: '状态', dataIndex: 'status' }, { title: '单位', dataIndex: 'unit' }, { title: '频率', dataIndex: 'frequency' },

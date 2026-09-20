@@ -206,7 +206,7 @@ function SourceDetails({ sourceId }: { sourceId: string }) {
     </QueryPanel>
     <Typography.Title level={4}>许可与用途</Typography.Title>
     <QueryPanel pending={grants.isPending} error={grants.error} stale={!!grants.data} reload={() => { void grants.refetch(); }}>
-      <Table<Grant> rowKey="id" dataSource={grants.data?.items} pagination={false} scroll={{ x: 760 }} locale={{ emptyText: <NoData text="尚未登记数据授权。没有授权的数据不能进入研究。" /> }} columns={[
+      <Table<Grant> rowKey="id" dataSource={grants.data?.items} pagination={false} scroll={{ x: 760 }} locale={{ emptyText: <NoData text="暂无数据授权" /> }} columns={[
         { title: '版本', dataIndex: 'version' }, { title: '许可', dataIndex: 'license_reference' },
         { title: '用途', key: 'use', render: (_, item) => uses.find(option => option.value === item.allowed_uses)?.label ?? item.allowed_uses },
         { title: '读取时状态', key: 'state', render: (_, item) => <LicenseTag value={item.license_state} /> },
@@ -228,7 +228,7 @@ function RevocationHistory({ grant, close }: { grant: Grant; close: () => void }
   const query = useQuery({ queryKey: ['data','revocations',grant.id,history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/data/grants/{id}/revocations', { params: { path: { id: grant.id }, query: { cursor: history.at(-1), limit: 50 } }, signal })) });
   return <Modal open title={`授权 ${grant.version} 的撤销历史`} onCancel={close} footer={<Button onClick={close}>关闭</Button>}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['DataGrantRevocationView']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 500 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="没有撤销记录。许可仍可能尚未生效或已经到期。" /> }} columns={[
+      <Table<Schema['DataGrantRevocationView']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 500 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="暂无撤销记录" /> }} columns={[
         { title: '生效时间', key: 'time', render: (_, item) => displayTime(item.effective_at) }, { title: '原因代码', dataIndex: 'reason_code' }, { title: '说明', dataIndex: 'reason' },
       ]} />
       <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
@@ -242,7 +242,7 @@ function Sources() {
   return <Space orientation="vertical" className="full-width" size="large">
     <Button type="primary" disabled={!online} onClick={() => setCreating(true)}>登记数据源</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Source> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 680 }} locale={{ emptyText: <NoData text="还没有数据源。先在集成设置登记 Runtime，再使用其目录登记键创建数据源。" /> }} columns={[
+      <Table<Source> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 680 }} locale={{ emptyText: <NoData text="暂无数据源" /> }} columns={[
         { title: '名称', dataIndex: 'name' }, { title: '原生登记键', dataIndex: 'native_catalog_ref' }, { title: '版本', dataIndex: 'revision' },
         { title: '状态', key: 'state', render: (_, source) => source.enabled ? '允许新消费' : '已停用' },
         { title: '操作', key: 'show', render: (_, source) => <Button onClick={() => setSelected(source.id)}>查看许可与版本登记</Button> },
@@ -288,7 +288,7 @@ function Datasets() {
       options={['DISCOVERY','VALIDATION','SEALED','FORWARD'].map(value => ({ value, label: value }))}
       onChange={value => { setPartition(value); setHistory([undefined]); }} />
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Dataset> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 900 }} locale={{ emptyText: <NoData text="没有符合筛选条件的已登记版本。在数据源详情中读取真实 Runtime 元数据后登记。" /> }} columns={[
+      <Table<Dataset> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 900 }} locale={{ emptyText: <NoData text="暂无匹配版本" /> }} columns={[
         { title: '原生快照', dataIndex: 'native_snapshot_ref' }, { title: '原生版本', dataIndex: 'storage_version' }, { title: '分区', dataIndex: 'partition' },
         { title: '来源', key: 'origin', render: (_, item) => originNames[item.origin] }, { title: 'PIT', dataIndex: 'pit_status' },
         { title: '行数', dataIndex: 'row_count' }, { title: '当前许可', key: 'license', render: (_, item) => <LicenseTag value={item.license_state} /> },
