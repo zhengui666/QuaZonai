@@ -14,6 +14,7 @@ pub mod control;
 pub mod cycles;
 pub mod data;
 pub mod delivery;
+pub mod equity_curve;
 pub mod evidence;
 pub mod execution;
 pub mod execution_assumptions;
@@ -39,6 +40,8 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(components(schemas(
     http::Problem,
+    equity_curve::EquityCurveQuery,
+    equity_curve::EquityCurveV1,
     delivery::TargetPackageV1,
     delivery::DownstreamCapabilitiesV1,
     delivery::DownstreamProbeRequestV1,

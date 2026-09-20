@@ -9055,6 +9055,216 @@
         ],
         "type": "object"
       },
+      "EquityCurveDataV1": {
+        "oneOf": [
+          {
+            "properties": {
+              "series": {
+                "$ref": "#/components/schemas/EquitySeriesV1"
+              },
+              "source_artifact_id": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "status": {
+                "enum": [
+                  "READY"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_artifact_id",
+              "series",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason_code": {
+                "$ref": "#/components/schemas/EquityUnavailableReason"
+              },
+              "status": {
+                "enum": [
+                  "UNAVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason_code",
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "EquityCurveQuery": {
+        "additionalProperties": false,
+        "description": "Inclusive UTC nanosecond bounds; absent bounds select the complete native run.",
+        "properties": {
+          "end_ns": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/EquityResolution"
+          },
+          "start_ns": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DbCounter"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "EquityCurveV1": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "curve": {
+            "$ref": "#/components/schemas/EquityCurveDataV1"
+          },
+          "evaluation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DataOrigin"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "project_id",
+          "candidate_id",
+          "evaluation_id",
+          "run_id",
+          "origin",
+          "curve"
+        ],
+        "type": "object"
+      },
+      "EquityPointV1": {
+        "additionalProperties": false,
+        "properties": {
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecimalValue"
+              }
+            ]
+          }
+        },
+        "required": [
+          "timestamp_ns"
+        ],
+        "type": "object"
+      },
+      "EquityResolution": {
+        "enum": [
+          "AUTO",
+          "NATIVE",
+          "DAY",
+          "WEEK",
+          "MONTH"
+        ],
+        "type": "string"
+      },
+      "EquitySeriesV1": {
+        "additionalProperties": false,
+        "properties": {
+          "base_currency": {
+            "type": "string"
+          },
+          "native_version": {
+            "type": "string"
+          },
+          "period_end_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "period_start_ns": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/EquityPointV1"
+            },
+            "maxItems": 10000,
+            "type": "array"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/EquityResolution",
+            "description": "Actual resolution, never AUTO. Bucket ends retain their native timestamp."
+          },
+          "sampled": {
+            "type": "boolean"
+          },
+          "source_point_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "starting_capital": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "window_point_count": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "native_version",
+          "base_currency",
+          "starting_capital",
+          "period_start_ns",
+          "period_end_ns",
+          "source_point_count",
+          "window_point_count",
+          "resolution",
+          "sampled",
+          "points"
+        ],
+        "type": "object"
+      },
+      "EquityUnavailableReason": {
+        "enum": [
+          "SIMULATION_FAILED",
+          "INVALID_EVIDENCE",
+          "NO_SIMULATION",
+          "LEGACY_SNAPSHOTS_UNAVAILABLE"
+        ],
+        "type": "string"
+      },
       "EvaluationKind": {
         "enum": [
           "DISCOVERY",

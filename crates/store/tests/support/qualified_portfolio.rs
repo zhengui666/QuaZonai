@@ -4,6 +4,9 @@ use super::*;
 use contracts::{experiments::ExperimentProposalV1, research::DataOrigin};
 use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
 
+#[path = "equity_curve_checks.rs"]
+pub(super) mod equity_curve_checks;
+
 #[path = "approval_checks.rs"]
 mod approvals;
 
@@ -1971,6 +1974,15 @@ async fn study_admission(
             )
         );
         let view = store.evaluation(actor, left.resource).await.unwrap();
+        Box::pin(equity_curve_checks::check_projection(
+            store,
+            actor,
+            f,
+            left.resource,
+            candidate,
+            infeasible,
+        ))
+        .await;
         let releases: i64 = sqlx::query_scalar("SELECT count(*) FROM app.releases")
             .fetch_one(pool)
             .await
