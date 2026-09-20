@@ -90,12 +90,12 @@ GET /api/v2/projects/{id}/releases，按原ID倒序分页，limit为1–100；�
 
 ## 面向用户的原生 HTTP CLI
 
-发行二进制 `server` 与开发入口 `cargo run --locked -p server --` 使用相同命令。`client` 不读取数据库连接或应用 SecretVault。先通过已初始化系统的正式机器身份管理 HTTP 接口创建 CLI 主体并发行适当的受限凭据，将首次显示的凭据保存为本机仅本人可读的文件；不要把令牌、TOTP 或新的服务凭据放在命令参数、Issue、日志或 shell history 中。
+发行二进制 `server` 与开发入口 `cargo run --locked -p server --` 使用相同命令。`client` 不读取数据库连接或应用 SecretVault。先通过已初始化系统的正式机器身份管理 HTTP 接口创建 CLI 主体并发行适当的受限凭据，将首次显示的凭据保存为本机仅本人可读的文件；不要把令牌或新的服务凭据放在命令参数、Issue、日志或 shell history 中。
 
 ```sh
 cargo run --locked -p server -- client --help
-server client --origin https://research.example --credential-file /private/cli.token data source list --limit 50
-server client --origin https://research.example --credential-file /private/cli.token runtime list
+server client --origin https://localhost --credential-file /private/cli.token data source list --limit 50
+server client --origin https://localhost --credential-file /private/cli.token runtime list
 ```
 
 上例 origin 和路径须替换为本人部署及凭据文件。Unix 凭据文件权限不得授予 group/other；末尾允许一个换行。私有CA部署使用 `--ca-certificate /absolute/ca-bundle.pem`，不存在忽略证书的选项。开发环境只有字面量127.0.0.1或::1且显式 `--development-http` 才可HTTP；服务器也须同意该入口。连接默认3秒、普通请求20秒，失败不自动重试、不使用环境代理、不跟随重定向。
@@ -149,9 +149,9 @@ CLI的登录响应可能包含一次性设备码，仅在私人终端使用，�
 普通机器scope不授予持久Operator身份。Source、许可、政策、配置等管理写入需近期人工grant。先准备完整 `OperatorGrantRequest`（无需验证码），以stdin申请；随后使用返回 `resource.id` 作为 `--operator-grant`，请求应与grant所绑定的DTO及target完全相同。创建类target使用返回 `resource.target_id`，不能自造另一个UUID。
 
 ```sh
-server client --origin https://research.example --credential-file /private/cli.token \
+server client --origin https://localhost --credential-file /private/cli.token \
   --idempotency-key "my-source-grant-1" operator-grant < /private/operator-grant-request.json
-server client --origin https://research.example --credential-file /private/cli.token \
+server client --origin https://localhost --credential-file /private/cli.token \
   --idempotency-key "my-source-create-1" --operator-grant "$GRANT_ID" \
   data source create < /private/source-create.json
 ```
@@ -161,9 +161,9 @@ server client --origin https://research.example --credential-file /private/cli.t
 ### 有界运行观察与产物导出
 
 ```sh
-server client --origin https://research.example --credential-file /private/cli.token \
+server client --origin https://localhost --credential-file /private/cli.token \
   run watch "$RUN_ID" --after "$LAST_EVENT_ID" --max-seconds 300 --max-events 1000
-server client --origin https://research.example --credential-file /private/cli.token \
+server client --origin https://localhost --credential-file /private/cli.token \
   artifact export "$ARTIFACT_ID" > /private/exported-artifact
 ```
 
@@ -178,7 +178,7 @@ watch以NDJSON输出 `schema_version/event_id/event`，最后输出 `watch_ended
 ```sh
 server worker --help
 server worker --state-dir /private/quazonai --parallelism 2
-server client --origin https://research.example --credential-file /private/cli.token \
+server client --origin https://localhost --credential-file /private/cli.token \
   --idempotency-key "validate-input-1" --operator-grant "$GRANT_ID" \
   data validate < /private/data-validation.json
 ```
@@ -194,8 +194,9 @@ bar-notional/1镜像的原生质量报告新增last_bar_notionals：逐资产最
 自动授予DATA_BACKED、参与率准入或组合资格；原生来源消费链仍须独立核验。
 
 原生 Mission 自动发现服务进程 PATH 中的 Codex，并沿用 HOME/CODEX_HOME。
-`MISSION_API_ORIGIN` 必须与 API 的 `PUBLIC_URL` 一致；可选 `MISSION_WORKSPACES`
-缺省为 `STATE_DIR/missions`。工作目录须为私有目录，不得指向源码、用户 HOME
+Worker 优先复用 `PUBLIC_URL`。独立 Worker 可用 `MISSION_API_ORIGIN` 提供相同
+的本机 Origin；二者同时设置必须完全一致。发现本机 Codex 后如果没有有效 Origin，
+启动直接报错，不猜测另一个端口。可选 `MISSION_WORKSPACES` 缺省为 `STATE_DIR/missions`。工作目录须为私有目录，不得指向源码、用户 HOME
 或 Codex 认证目录。未发现可用本机 Codex 时不会伪造研究就绪。
 
 ## 原生科学任务入口
@@ -560,7 +561,7 @@ cargo run --locked -p server -- migrate --application-role quazonai_app
 
 # PUBLIC_URL 必须是实际同源 HTTPS 入口。API 不在启动时执行 DDL。
 cargo run --locked -p server -- serve --state-dir ./var \
-  --bind 127.0.0.1:8080 --public-url https://research.example
+  --bind 127.0.0.1:8080 --public-url https://localhost
 ```
 
 `DATABASE_URL` 支持环境变量；不要把真实密码写到命令行、Git 或日志。默认启动拒绝具有 schema CREATE、表 TRUNCATE 或超级用户权限的应用角色。master key 必须独立于数据库和加密对象备份。
@@ -578,10 +579,10 @@ cargo run --locked -p server -- serve --state-dir ./var \
 ## 集成配置与只写凭据 HTTP
 
 `POST /api/v2/settings/credentials` 接收 `{intent:{schema_version:1,purpose,label},value}`。
-purpose 仅 RUNTIME、DOWNSTREAM、CUSTOM_PROVIDER、TLS_CA；value 只写，不返回、记日志或
+purpose 仅 RUNTIME、DOWNSTREAM、TLS_CA；value 只写，不返回、记日志或
 写入 SQL/幂等回执。返回的 id 是原生不可变加密对象引用；同 key、同 intent、同原始值才重放，
 不同值409。凭据轮换创建新对象，不能覆盖旧值。TLS_CA 须为1–65536字节ASCII、原生TLS实现可接受的非空PEM
-证书集合；RUNTIME须为32–8192个可打印非空白ASCII字节，DOWNSTREAM / CUSTOM_PROVIDER为1–8192字节。
+证书集合；RUNTIME须为32–8192个可打印非空白ASCII字节，DOWNSTREAM 为1–8192字节。
 最小长度不是熵保证；旧短Runtime凭据须在真实运行端轮换，并通过正式凭据登记和Runtime更新入口绑定后重新探测。
 不要把真实值放在CLI参数、Issue或Git，也不得补字符或手工改SQL绕过验证。
 
@@ -869,15 +870,16 @@ session 表不兼容或任一授权失败时，不保留半次升级及 epoch �
 | `GET /api/v2/runs/{id}/events` | `text/event-stream`；`Last-Event-ID: <run UUID>:<decimal seq>`；不存在 cursor 时从0开始 |
 | `POST /api/v2/runs/{id}/cancel` | body为 `{"schema_version":1,"expected_revision":"当前版本"}`，另带 Idempotency-Key；接受后202，版本过期409 |
 
-浏览器使用现有同源私有会话；取消是写操作，无需验证码，
-超时先重新认证，读取不受该近期窗口限制。机器需要该项目的 RUN_READ 或 RUN_CANCEL；Mission
+浏览器使用自动建立的同源私有会话；取消是写操作，无需验证码。
+会话过期后下次请求自动建立新会话；结果未知时仍用原始请求和幂等键重试，不改变原命令。
+机器需要该项目的 RUN_READ 或 RUN_CANCEL；Mission
 只读自身 Run，不能扩大到其他项目或取得操作员授权。取消仅停止计算，不表示下游
 交易停止。尚未 dispatch 的任务可以直接 CANCELLED；已涉及远端的任务先显示
 CANCEL_REQUESTED，须确认远端终止后才能终结，真实失败保留 FAILED。
 
 SSE 每条 id 与 data.seq 对应。按最后收到的 id 重连，客户端对序列去重；过期或超前
 cursor 在开始流之前410，错误 UUID/数字形状422。认证撤销、版本不兼容等发生在
-已建立的流中时发送不带新 cursor 的 reset-required，客户端应重新认证/读快照。
+已建立的流中时发送不带新 cursor 的 reset-required；浏览器重新连接并读取快照，机器检查自身凭据。
 兼容的 schema-v1 新事件保留事件名和公开 JSON envelope，推进游标但不更新未知的
 状态投影；已知状态事件仍严格解析。未知主版本不是可跳过事件，应升级客户端。
 每个 API 进程最多32条流，连接满额429；连接60秒后重连以更新认证。关闭浏览器不会

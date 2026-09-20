@@ -100,7 +100,7 @@ test('synthetic preview renders native-contract records without a backend or wri
   const run = page.getByRole('dialog', { name: '运行详情', exact: true });
   await expect(run.getByText('无自动再平衡关联', { exact: true })).toBeVisible();
   await expect(run.getByRole('button', { name: '请求取消运行', exact: true })).toBeDisabled();
-  await expect(run.getByText(/运行已终止。/)).toBeVisible();
+  await expect(run.getByText(/运行已终止/)).toBeVisible();
   expect(eventRequests).toEqual([]);
   await page.keyboard.press('Escape');
   await expect(run).toBeHidden();

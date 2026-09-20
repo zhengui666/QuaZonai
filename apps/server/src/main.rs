@@ -154,13 +154,12 @@ enum Command {
         development_http: bool,
         #[arg(long, env = "WORKER_PARALLELISM", default_value_t = 2)]
         parallelism: usize,
-        /// API address reachable by the trusted per-Mission MCP subprocess.
-        #[arg(
-            long,
-            env = "MISSION_API_ORIGIN",
-            default_value = "http://127.0.0.1:8080"
-        )]
-        mission_api_origin: String,
+        /// The same browser/API origin used by serve and its local proxy.
+        #[arg(long, env = "PUBLIC_URL")]
+        public_url: Option<String>,
+        /// Explicit API origin for a separately launched Worker; must match PUBLIC_URL when set.
+        #[arg(long, env = "MISSION_API_ORIGIN")]
+        mission_api_origin: Option<String>,
         /// Existing absolute private directory for dedicated Mission workspaces.
         #[arg(long, env = "MISSION_WORKSPACES")]
         mission_workspaces: Option<PathBuf>,
@@ -196,6 +195,21 @@ fn parse_integration_targets(
         .map_err(|_| "invalid integration targets deployment configuration")?;
     server::runtime_transport::RuntimeTargets::new(targets, development_http)
         .map_err(|_| "integration targets contain an unsafe or inconsistent endpoint")
+}
+
+fn mission_origin(public: Option<&str>, explicit: Option<&str>) -> Result<String, &'static str> {
+    if matches!((public, explicit), (Some(a), Some(b)) if a != b) {
+        return Err("MISSION_API_ORIGIN must exactly match PUBLIC_URL");
+    }
+    let origin = public
+        .or(explicit)
+        .ok_or("native Codex requires PUBLIC_URL or MISSION_API_ORIGIN")?;
+    WebPolicy::new(
+        origin,
+        "127.0.0.1:0".parse().expect("literal loopback"),
+        origin.starts_with("http://"),
+    )?;
+    Ok(origin.to_owned())
 }
 
 async fn shutdown_signal() {
@@ -403,14 +417,22 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             downstream_targets,
             development_http,
             parallelism,
+            public_url,
             mission_api_origin,
             mission_workspaces,
         } => {
             let targets = parse_integration_targets(&runtime_targets, development_http)?;
             let downstream_targets =
                 parse_integration_targets(&downstream_targets, development_http)?;
-            let codex = server::codex_profiles::CodexDeployment::discover();
+            let store = Store::connect(&database.database_url).await?;
+            store.verify_runtime_role().await?;
+            store.authentication_snapshot().await?;
+            let codex = server::codex_profiles::CodexDeployment::discover(
+                store.local_codex_bindings().await?,
+            );
             let missions = if codex.available() {
+                let mission_api_origin =
+                    mission_origin(public_url.as_deref(), mission_api_origin.as_deref())?;
                 let workspace_root =
                     mission_workspaces.unwrap_or_else(|| state_dir.join("missions"));
                 match fs::symlink_metadata(&workspace_root) {
@@ -433,9 +455,6 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 None
             };
-            let store = Store::connect(&database.database_url).await?;
-            store.verify_runtime_role().await?;
-            store.authentication_snapshot().await?;
             let vault =
                 SecretVault::open(&state_dir.join("secrets"), &state_dir.join("master.key"))?;
             let objects = ArtifactStore::open(&state_dir.join("artifacts"))?;
@@ -467,7 +486,6 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             runtime_targets,
             downstream_targets,
         } => {
-            let codex = server::codex_profiles::CodexDeployment::discover();
             if historical_exports.len() > 65536 {
                 return Err("historical export registrations exceed limit".into());
             }
@@ -482,6 +500,9 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let store = Store::connect(&database.database_url).await?;
             store.verify_runtime_role().await?;
             store.authentication_snapshot().await?;
+            let codex = server::codex_profiles::CodexDeployment::discover(
+                store.local_codex_bindings().await?,
+            );
             let cleanup = PostgresStore::new(store.native_pool());
             let cleanup_task = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
@@ -515,4 +536,21 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod local_origin_tests {
+    use super::*;
+
+    #[test]
+    fn native_missions_use_the_authoritative_local_api_origin() {
+        let origin = "http://localhost:8081";
+        assert_eq!(mission_origin(Some(origin), None).unwrap(), origin);
+        assert_eq!(mission_origin(None, Some(origin)).unwrap(), origin);
+        assert_eq!(mission_origin(Some(origin), Some(origin)).unwrap(), origin);
+        assert!(mission_origin(None, None).is_err());
+        assert!(mission_origin(Some(origin), Some("http://127.0.0.1:8080")).is_err());
+        assert!(mission_origin(Some("https://remote.example"), None).is_err());
+        assert!(mission_origin(Some(""), None).is_err());
+    }
 }

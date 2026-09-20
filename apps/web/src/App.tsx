@@ -78,6 +78,14 @@ export default function App() {
   return <ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{
     algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
     cssVar: { key: 'quazonai' },
+    components: {
+      Tabs: {
+        itemSelectedColor: dark ? '#83b2ff' : '#2857b4',
+        itemHoverColor: dark ? '#b0ccff' : '#1f4796',
+        itemActiveColor: dark ? '#83b2ff' : '#183b80',
+        inkBarColor: dark ? '#83b2ff' : '#2857b4',
+      },
+    },
     token: {
       colorPrimary: '#2857b4',
       colorLink: dark ? '#83b2ff' : '#2857b4',

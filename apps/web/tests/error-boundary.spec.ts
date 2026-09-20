@@ -68,7 +68,11 @@ for (const mode of ['light', 'dark'] as const) for (const target of ['applicatio
     failing = false;
     await reload.click();
     await page.getByRole('button', { name: '确认重新加载', exact: true }).click();
-    await expect(page.getByText('页面已恢复', { exact: true })).toBeVisible();
+    // Nested content shares main with the skip link. Test the rendered content,
+    // not whether a parent's entire text is exactly one React text node.
+    const recovered = target === 'application root' ? page.locator('body') : page.locator('#main-content');
+    await expect(recovered).toContainText('页面已恢复');
+    await expect(heading).toHaveCount(0);
     expect(moduleRequests).toBeGreaterThan(requestsBeforeCancel);
     expect(mutations).toEqual([]);
     expect(diagnostics.join('\n')).not.toContain('private-render-fixture-detail');

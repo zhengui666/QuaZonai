@@ -24,12 +24,21 @@ use tower_sessions::cookie::Key;
 
 async fn configured(pool: PgPool, home: &Path, binary: PathBuf) -> (Fixture, String) {
     let mut fixture = support::fixture(pool).await;
+    let native_reference = fixture
+        .store
+        .local_codex_bindings()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|binding| binding.label == "研究员")
+        .unwrap()
+        .reference;
     let deployment = CodexDeployment::new(CodexDeploymentConfig {
         schema_version: SchemaV1,
         binary,
         executable_path: std::env::var("PATH").unwrap(),
         bindings: vec![CodexDeploymentBinding {
-            reference: "local-researcher".into(),
+            reference: native_reference,
             label: "Operator native home".into(),
             profile_origin: ProfileOrigin::OperatorMount,
             home: home.to_path_buf(),
@@ -103,7 +112,7 @@ async fn local_profile(f: &Fixture, cookie: &str) -> Value {
     assert_eq!(items.len(), 2);
     items
         .iter()
-        .find(|view| view["home_binding"] == "local-researcher")
+        .find(|view| view["name"] == "研究员")
         .unwrap()
         .clone()
 }

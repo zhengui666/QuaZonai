@@ -64,16 +64,46 @@ fn directory(path: &Path) -> Result<PathBuf, StoreError> {
     std::fs::canonicalize(path).map_err(|_| config_error())
 }
 
+// Rebuild only native process infrastructure. Credentials in the service's
+// environment must not override the OS user's native Codex authentication.
+fn native_environment(
+    mut read: impl FnMut(&str) -> Option<OsString>,
+) -> BTreeMap<OsString, OsString> {
+    [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "XDG_RUNTIME_DIR",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
+        "LANG",
+        "LC_ALL",
+    ]
+    .into_iter()
+    .filter_map(|name| read(name).map(|value| (OsString::from(name), value)))
+    .collect()
+}
+
 impl CodexDeployment {
     /// Discover the current OS user's native installation without reading or
     /// copying native configuration/credentials into QZ. Missing Codex does not
     /// stop the local console; a probe reports deployment unavailability.
-    pub fn discover() -> Self {
+    pub fn discover(native_bindings: Vec<CodexHomeBindingV1>) -> Self {
         Self::discover_from(
             std::env::var_os("PATH"),
             std::env::var_os("HOME"),
             std::env::var_os("CODEX_HOME"),
             std::env::current_dir().ok(),
+            native_bindings,
         )
         .unwrap_or_default()
     }
@@ -83,6 +113,7 @@ impl CodexDeployment {
         home: Option<OsString>,
         codex_home: Option<OsString>,
         working_directory: Option<PathBuf>,
+        native_bindings: Vec<CodexHomeBindingV1>,
     ) -> Option<Self> {
         use std::os::unix::fs::PermissionsExt;
         let executable_path = executable_path?;
@@ -103,44 +134,19 @@ impl CodexDeployment {
         )
         .ok()?;
         let working_directory = directory(&working_directory?).ok()?;
-        let environment = [
-            "OPENAI_API_KEY",
-            "HTTP_PROXY",
-            "HTTPS_PROXY",
-            "ALL_PROXY",
-            "NO_PROXY",
-            "http_proxy",
-            "https_proxy",
-            "all_proxy",
-            "no_proxy",
-            "SSL_CERT_FILE",
-            "SSL_CERT_DIR",
-            "XDG_RUNTIME_DIR",
-            "DBUS_SESSION_BUS_ADDRESS",
-            "XDG_CONFIG_HOME",
-            "XDG_DATA_HOME",
-            "XDG_CACHE_HOME",
-            "LANG",
-            "LC_ALL",
-        ]
-        .into_iter()
-        .filter_map(|name| std::env::var_os(name).map(|value| (OsString::from(name), value)))
-        .collect::<BTreeMap<_, _>>();
+        let environment = native_environment(|name| std::env::var_os(name));
         let gate = Arc::new(Mutex::new(()));
         let account = Arc::new(Mutex::new(None));
         let mut bindings = BTreeMap::new();
-        for (reference, label) in [
-            ("local-researcher", "研究员"),
-            ("local-reviewer", "独立审阅员"),
-        ] {
+        for public in native_bindings {
+            rules::home_binding(&public.reference).ok()?;
+            if bindings.contains_key(&public.reference) {
+                return None;
+            }
             bindings.insert(
-                reference.to_owned(),
+                public.reference.clone(),
                 Binding {
-                    public: CodexHomeBindingV1 {
-                        reference: reference.into(),
-                        label: label.into(),
-                        profile_origin: ProfileOrigin::OperatorMount,
-                    },
+                    public,
                     home: home.clone(),
                     codex_home: codex_home.clone(),
                     working_directory: working_directory.clone(),
@@ -462,6 +468,43 @@ mod discovery_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    fn roles() -> Vec<CodexHomeBindingV1> {
+        [
+            ("local-researcher-new", "研究员"),
+            ("local-reviewer-new", "独立审阅员"),
+        ]
+        .into_iter()
+        .map(|(reference, label)| CodexHomeBindingV1 {
+            reference: reference.into(),
+            label: label.into(),
+            profile_origin: ProfileOrigin::OperatorMount,
+        })
+        .collect()
+    }
+
+    #[test]
+    fn service_credentials_are_not_requested_or_forwarded() {
+        let mut requested = Vec::new();
+        let values = native_environment(|name| {
+            requested.push(name.to_owned());
+            Some(OsString::from(if name == "HTTPS_PROXY" {
+                "http://127.0.0.1:9999"
+            } else {
+                "fixture-value"
+            }))
+        });
+        assert!(values.contains_key(&OsString::from("HTTPS_PROXY")));
+        for name in [
+            "OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
+            "CODEX_API_KEY",
+            "ANTHROPIC_API_KEY",
+        ] {
+            assert!(!requested.iter().any(|key| key == name));
+            assert!(!values.contains_key(&OsString::from(name)));
+        }
+    }
+
     #[test]
     fn discovers_native_path_and_default_home_without_reading_credentials() {
         let root = tempfile::tempdir().unwrap();
@@ -480,17 +523,20 @@ mod discovery_tests {
             Some(home.as_os_str().into()),
             None,
             Some(root.path().into()),
+            roles(),
         )
         .unwrap();
         assert_eq!(deployment.binary, executable.canonicalize().unwrap());
-        let researcher = &deployment.bindings["local-researcher"];
-        let reviewer = &deployment.bindings["local-reviewer"];
+        let researcher = &deployment.bindings["local-researcher-new"];
+        let reviewer = &deployment.bindings["local-reviewer-new"];
         assert_eq!(researcher.codex_home, native.canonicalize().unwrap());
         assert_eq!(researcher.codex_home, reviewer.codex_home);
         assert!(Arc::ptr_eq(&researcher.gate, &reviewer.gate));
         assert!(Arc::ptr_eq(&researcher.account, &reviewer.account));
         assert_eq!(std::fs::read(config).unwrap(), b"model = 'native-model'\n");
         assert!(!native.join("auth.json").exists());
+        assert!(!deployment.bindings.contains_key("local-researcher"));
+        assert!(!deployment.bindings.contains_key("local-reviewer"));
 
         let override_home = root.path().join("native");
         std::fs::create_dir(&override_home).unwrap();
@@ -499,10 +545,11 @@ mod discovery_tests {
             Some(home.as_os_str().into()),
             Some(override_home.as_os_str().into()),
             Some(root.path().into()),
+            roles(),
         )
         .unwrap();
         assert_eq!(
-            explicit.bindings["local-researcher"].codex_home,
+            explicit.bindings["local-researcher-new"].codex_home,
             override_home.canonicalize().unwrap()
         );
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -510,9 +557,10 @@ mod discovery_tests {
             Some(bin.as_os_str().into()),
             Some(home.as_os_str().into()),
             None,
-            Some(root.path().into())
+            Some(root.path().into()),
+            roles()
         )
         .is_none());
-        assert!(CodexDeployment::discover_from(None, None, None, None).is_none());
+        assert!(CodexDeployment::discover_from(None, None, None, None, roles()).is_none());
     }
 }

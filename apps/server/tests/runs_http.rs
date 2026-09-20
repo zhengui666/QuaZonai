@@ -383,18 +383,20 @@ async fn live_sse_readers_poll_new_commits_and_resume_the_same_cursor(pool: PgPo
 #[sqlx::test(migrations = "../../migrations")]
 async fn sse_notices_revoked_authority_without_leaking_future_events(pool: PgPool) {
     let (f, cookie) = authenticated(pool.clone()).await;
+    let login: String = sqlx::query_scalar("SELECT id::text FROM app.browser_logins")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     let run = admitted(&pool, &f, "revocation").await;
     let http = Http::start(f.app.clone()).await;
     let mut stream = http
         .get(&format!("/api/v2/runs/{}/events", run.id), Some(&cookie))
         .await;
     assert_eq!(frame_ids(&one_event(&mut stream).await), vec![1]);
-    let response = http
-        .request(reqwest::Method::POST, "/api/v2/auth/logout", Some(&cookie))
-        .send()
+    f.store
+        .logout_browser(login.try_into().unwrap())
         .await
         .unwrap();
-    assert!(response.status().is_success());
     let text = one_event(&mut stream).await;
     assert!(text.contains("reset-required"));
     assert!(frame_ids(&text).is_empty());

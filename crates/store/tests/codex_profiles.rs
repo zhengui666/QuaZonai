@@ -358,10 +358,13 @@ async fn create_replay_and_home_uniqueness_preserve_saved_defaults_without_claim
         )
         .await
         .unwrap();
-    assert!(matches!(
-        listed.items[0].home_binding.as_deref(),
-        Some("local-researcher" | "local-reviewer")
-    ));
+    let bindings = store.local_codex_bindings().await.unwrap();
+    assert!(
+        bindings
+            .iter()
+            .any(|binding| Some(binding.reference.as_str())
+                == listed.items[0].home_binding.as_deref())
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -636,4 +639,223 @@ async fn durable_probe_rows_are_immutable_and_unsupported_settings_never_overrid
         );
     }
     assert_eq!(observations(&pool).await, (1, 1));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn local_roles_share_account_admission_and_invalidate_both_observations(pool: PgPool) {
+    use store::codex_profiles::account::{
+        CodexAccountCompletion as Completion, CodexAccountPreparation as Prepared,
+    };
+    let (store, actor, independent) = setup(&pool).await;
+    let roles = store
+        .codex_profiles(
+            &actor,
+            &ListQuery {
+                limit: 100,
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap()
+        .items;
+    assert_eq!(roles.len(), 2);
+    for (index, profile) in roles.iter().enumerate() {
+        let ticket = prepare(&store, &actor, profile, &format!("before-shared-{index}")).await;
+        let outcome = available(profile, ticket.started_at);
+        store.complete_codex_probe(ticket, outcome).await.unwrap();
+    }
+    let in_flight = prepare(&store, &actor, &roles[1], "shared-probe-in-flight").await;
+    let in_flight_outcome = available(&roles[1], in_flight.started_at);
+    let request = |profile: &CodexProfileViewV1| CodexAccountRequestV1 {
+        schema_version: SchemaV1,
+        profile_id: profile.id,
+        expected_revision: profile.revision,
+    };
+    let left = request(&roles[0]);
+    let right = request(&roles[1]);
+    let (left_result, right_result) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(
+                store.prepare_codex_account(
+                    &actor,
+                    "local-account-left",
+                    &left,
+                    CodexAccountActionV1::Logout
+                ),
+                store.prepare_codex_account(
+                    &actor,
+                    "local-account-right",
+                    &right,
+                    CodexAccountActionV1::Logout
+                )
+            )
+        })
+        .await
+        .expect("shared role admission must serialize without deadlocking");
+    let (ticket, rejected) = match (left_result, right_result) {
+        (Ok(Prepared::Start(ticket)), Err(error)) | (Err(error), Ok(Prepared::Start(ticket))) => {
+            (ticket, error)
+        }
+        _ => panic!("exactly one role must obtain the native account send permit"),
+    };
+    assert!(matches!(rejected, StoreError::Conflict));
+    for role in &roles {
+        assert_eq!(
+            store
+                .codex_observation(&actor, role.id)
+                .await
+                .unwrap()
+                .state,
+            CodexObservationStateV1::Stale
+        );
+        assert_eq!(
+            store
+                .latest_codex_account_operation(&actor, role.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .operation
+                .id,
+            ticket.acceptance.resource.id
+        );
+        assert!(matches!(
+            store
+                .update_codex_profile(
+                    &actor,
+                    &format!("blocked-{}", role.id),
+                    role.id,
+                    &update(role),
+                    verified
+                )
+                .await,
+            Err(StoreError::Conflict)
+        ));
+    }
+    assert!(matches!(
+        store
+            .complete_codex_probe(in_flight, in_flight_outcome)
+            .await,
+        Err(StoreError::Conflict)
+    ));
+
+    // A historical/test-only independent home must not be accidentally merged
+    // into the one local account group.
+    let Prepared::Start(separate) = store
+        .prepare_codex_account(
+            &actor,
+            "independent-account",
+            &request(&independent),
+            CodexAccountActionV1::Logout,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("independent binding should keep its own lifecycle")
+    };
+    assert_ne!(
+        separate.acceptance.resource.id,
+        ticket.acceptance.resource.id
+    );
+    assert_eq!(
+        store
+            .latest_codex_account_operation(&actor, independent.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .operation
+            .id,
+        separate.acceptance.resource.id
+    );
+
+    assert!(store.begin_codex_account(&ticket).await.unwrap());
+    assert!(!store.begin_codex_account(&ticket).await.unwrap());
+    store
+        .complete_codex_account(
+            &ticket,
+            Completion::LoggedOut(CodexAccountV1 {
+                requires_openai_auth: true,
+                authentication_kind: None,
+                plan_type: None,
+            }),
+        )
+        .await
+        .unwrap();
+    for role in &roles {
+        assert_eq!(
+            store
+                .codex_observation(&actor, role.id)
+                .await
+                .unwrap()
+                .state,
+            CodexObservationStateV1::Stale
+        );
+    }
+    let observed = prepare(&store, &actor, &roles[0], "refresh-first-local-role").await;
+    let outcome = available(&roles[0], observed.started_at);
+    store.complete_codex_probe(observed, outcome).await.unwrap();
+    assert_eq!(
+        store
+            .codex_observation(&actor, roles[0].id)
+            .await
+            .unwrap()
+            .state,
+        CodexObservationStateV1::Available
+    );
+    assert_eq!(
+        store
+            .codex_observation(&actor, roles[1].id)
+            .await
+            .unwrap()
+            .state,
+        CodexObservationStateV1::Stale
+    );
+    let refreshed = prepare(&store, &actor, &roles[1], "refresh-second-local-role").await;
+    let outcome = available(&roles[1], refreshed.started_at);
+    store
+        .complete_codex_probe(refreshed, outcome)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .codex_observation(&actor, roles[1].id)
+            .await
+            .unwrap()
+            .state,
+        CodexObservationStateV1::Available
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_account_database_guard_spans_the_two_local_roles(pool: PgPool) {
+    let (store, actor, _) = setup(&pool).await;
+    let roles = store
+        .codex_profiles(
+            &actor,
+            &ListQuery {
+                limit: 100,
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap()
+        .items;
+    assert_eq!(roles.len(), 2);
+    // Relational negative control only, not a native RPC or HTTP acceptance.
+    sqlx::query("INSERT INTO app.codex_account_operations(profile_id,profile_revision,action,state,deadline_at) VALUES($1,$2,'LOGIN','REQUESTED',clock_timestamp()+interval '1 minute')")
+        .bind(roles[0].id.as_uuid()).bind(roles[0].revision.get() as i64).execute(&pool).await.unwrap();
+    let rejected=sqlx::query("INSERT INTO app.codex_account_operations(profile_id,profile_revision,action,state,deadline_at) VALUES($1,$2,'LOGOUT','REQUESTED',clock_timestamp()+interval '1 minute')")
+        .bind(roles[1].id.as_uuid()).bind(roles[1].revision.get() as i64).execute(&pool).await.unwrap_err();
+    assert_eq!(
+        rejected.as_database_error().unwrap().code().as_deref(),
+        Some("23514")
+    );
+    let rejected = sqlx::query("UPDATE app.codex_profiles SET saved_model='different' WHERE id=$1")
+        .bind(roles[1].id.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        rejected.as_database_error().unwrap().code().as_deref(),
+        Some("23514")
+    );
 }

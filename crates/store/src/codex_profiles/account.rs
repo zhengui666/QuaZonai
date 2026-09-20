@@ -92,12 +92,23 @@ async fn locked_operation(
         .map_err(Into::into)
 }
 
+// Only the two migrated local roles share a native home. Historical/internal
+// independent bindings retain their own account lifecycle. Membership is immutable.
+async fn account_profiles(
+    tx: &mut Transaction<'_, Postgres>,
+    profile: Id,
+) -> Result<Vec<uuid::Uuid>, StoreError> {
+    sqlx::query_scalar("SELECT id FROM app.codex_profiles WHERE id=$1 OR (local_role IS NOT NULL AND EXISTS(SELECT 1 FROM app.codex_profiles WHERE id=$1 AND local_role IS NOT NULL)) ORDER BY id")
+        .bind(profile.as_uuid()).fetch_all(&mut **tx).await.map_err(Into::into)
+}
+
 pub(super) async fn no_active_account_operation(
     tx: &mut Transaction<'_, Postgres>,
     profile: Id,
 ) -> Result<(), StoreError> {
-    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.codex_account_operations WHERE profile_id=$1 AND state IN ('REQUESTED','WAITING','CANCEL_REQUESTED'))")
-        .bind(profile.as_uuid()).fetch_one(&mut **tx).await?;
+    let profiles = account_profiles(tx, profile).await?;
+    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.codex_account_operations WHERE profile_id=ANY($1) AND state IN ('REQUESTED','WAITING','CANCEL_REQUESTED'))")
+        .bind(profiles).fetch_one(&mut **tx).await?;
     if active {
         return Err(StoreError::Conflict);
     }
@@ -109,8 +120,9 @@ pub(super) async fn observation_after_account_operations(
     profile: Id,
     began: DateTime<Utc>,
 ) -> Result<bool, StoreError> {
-    sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM app.codex_account_operations WHERE profile_id=$1 AND (state IN ('REQUESTED','WAITING','CANCEL_REQUESTED') OR created_at >= $2 OR finished_at >= $2))")
-        .bind(profile.as_uuid()).bind(began).fetch_one(&mut **tx).await.map_err(Into::into)
+    let profiles = account_profiles(tx, profile).await?;
+    sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM app.codex_account_operations WHERE profile_id=ANY($1) AND (state IN ('REQUESTED','WAITING','CANCEL_REQUESTED') OR created_at >= $2 OR finished_at >= $2))")
+        .bind(profiles).bind(began).fetch_one(&mut **tx).await.map_err(Into::into)
 }
 
 impl Store {
@@ -145,9 +157,12 @@ impl Store {
         if profile.connection_mode != ConnectionMode::System || profile.home_binding.is_none() {
             return Err(StoreError::Invalid("native_system_profile_required"));
         }
-        // A fresh human command may retire an expired owner, never resend its RPC.
-        sqlx::query("UPDATE app.codex_account_operations SET state=CASE WHEN dispatch_started_at IS NULL THEN 'FAILED' ELSE 'UNKNOWN' END,reason_code='WAIT_WINDOW_ENDED',finished_at=clock_timestamp() WHERE profile_id=$1 AND state IN ('REQUESTED','WAITING','CANCEL_REQUESTED') AND deadline_at<=clock_timestamp()")
-            .bind(profile.id.as_uuid()).execute(&mut *tx).await?;
+        // Operator admission already holds the shared auth-state write lock,
+        // so concurrent commands for the two local roles cannot both be accepted.
+        // A fresh command retires an expired owner, never resends its RPC.
+        let profiles = account_profiles(&mut tx, profile.id).await?;
+        sqlx::query("UPDATE app.codex_account_operations SET state=CASE WHEN dispatch_started_at IS NULL THEN 'FAILED' ELSE 'UNKNOWN' END,reason_code='WAIT_WINDOW_ENDED',finished_at=clock_timestamp() WHERE profile_id=ANY($1) AND state IN ('REQUESTED','WAITING','CANCEL_REQUESTED') AND deadline_at<=clock_timestamp()")
+            .bind(profiles).execute(&mut *tx).await?;
         no_active_account_operation(&mut tx, profile.id).await?;
         let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(&mut *tx)
@@ -199,8 +214,9 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         read_authority(&mut tx, actor).await?;
         super::row(&mut tx, profile, false).await?;
-        let row = sqlx::query("SELECT * FROM app.codex_account_operations WHERE profile_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1")
-            .bind(profile.as_uuid()).fetch_optional(&mut *tx).await?;
+        let profiles = account_profiles(&mut tx, profile).await?;
+        let row = sqlx::query("SELECT * FROM app.codex_account_operations WHERE profile_id=ANY($1) ORDER BY created_at DESC,id DESC LIMIT 1")
+            .bind(profiles).fetch_optional(&mut *tx).await?;
         let result = row.as_ref().map(operation_view).transpose()?;
         tx.commit().await?;
         Ok(result)

@@ -24,6 +24,16 @@ function fresh(observation: Observation | undefined, profile: Profile | undefine
     && observation.profile_revision === profile.revision && observation.observation?.profile_revision === profile.revision
     && observation.observation.outcome.status === 'AVAILABLE' && Date.parse(observation.observation.valid_until) > now;
 }
+function canSaveSettings(values: Values, observation: Observation | undefined, profile: Profile, now: number): boolean {
+  if (values.use_default_model_settings) return true;
+  if (!fresh(observation, profile, now)) return false;
+  const native = observation?.observation?.outcome;
+  if (native?.status !== 'AVAILABLE') return false;
+  const model = native.models.find(item => item.capability.model === (values.saved_model || native.effective.model));
+  return !!model
+    && (!values.saved_reasoning_effort || model.capability.supported_reasoning_efforts.some(item => item.reasoning_effort === values.saved_reasoning_effort))
+    && (!values.saved_fast_mode || model.service_tiers.some(tier => tier.id === 'priority' || tier.id === 'fast'));
+}
 function useRefresh() {
   const client = useQueryClient();
   return async () => { await client.invalidateQueries({ queryKey: ['codex'] }); };
@@ -74,9 +84,15 @@ function ModelControls({ form, observation, profile, disabled }: {
 function ModelDialog({ original, observation, close }: { original: Profile; observation?: Observation; close: () => void }) {
   const [form] = Form.useForm<Values>();
   const online = useOnline(); const { modal } = App.useApp(); const refresh = useRefresh();
+  const now = useClock();
+  const watched = Form.useWatch(values => values, form) as Values | undefined;
+  const valid = canSaveSettings(watched ?? original.model_settings, observation, original, now);
   const intent = useRef(new Intent()); const sent = useRef<Schema['CodexProfileUpdateV1'] | undefined>(undefined);
   const hadUnknown = useRef(false); const [saveValues, setSaveValues] = useState<Values>();
   const mutation = useMutation({ mutationFn: async (values: Values) => {
+    if (!sent.current && !canSaveSettings(values, observation, original, Date.now())) {
+      throw new ApiFailure('MODEL_SETTINGS_UNAVAILABLE', '请刷新模型目录或使用本机默认');
+    }
     const body = sent.current ?? {
       schema_version: 1 as const, expected_revision: original.revision,
       model_settings: {
@@ -104,11 +120,15 @@ function ModelDialog({ original, observation, close }: { original: Profile; obse
     else close();
   }
   return <Modal open title="模型设置" width={680} maskClosable={false} closable={!pending} onCancel={cancel}
-    onOk={() => { if (online && !pending) { if (unknown && saveValues) mutation.mutate(saveValues); else form.submit(); } }}
-    okText={unknown ? '重试保存' : '保存'} cancelText="取消" confirmLoading={pending} okButtonProps={{ disabled: !online }}>
+    onOk={() => { if (online && !pending) { if (unknown && saveValues) mutation.mutate(saveValues); else if (valid) form.submit(); } }}
+    okText={unknown ? '重试保存' : '保存'} cancelText="取消" confirmLoading={pending} okButtonProps={{ disabled: !online || (!unknown && !valid) }}>
     {unknown && <Alert type="warning" showIcon title="保存结果未知，请重试当前操作" />}
+    {!unknown && !valid && <Alert type="warning" showIcon title="请刷新模型目录或使用本机默认" />}
     <Form form={form} layout="vertical" disabled={!online || pending || unknown} initialValues={original.model_settings}
-      onFinish={values => { const request = structuredClone(values); setSaveValues(request); mutation.mutate(request); }}>
+      onFinish={values => {
+        if (!online || pending || unknown || !canSaveSettings(values, observation, original, Date.now())) return;
+        const request = structuredClone(values); setSaveValues(request); mutation.mutate(request);
+      }}>
       <ModelControls form={form} observation={observation} profile={original} disabled={!online || pending || unknown} />
       <ErrorNotice error={mutation.error} />
     </Form>

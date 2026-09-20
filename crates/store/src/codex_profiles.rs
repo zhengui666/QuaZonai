@@ -84,16 +84,24 @@ fn observation(row: &PgRow) -> Result<CodexProbeViewV1, StoreError> {
 }
 
 async fn row(tx: &mut Tx<'_>, id: Id, write: bool) -> Result<PgRow, StoreError> {
+    // The local roles share native account state. Always lock their immutable
+    // membership in UUID order before an account-operation row, including reads
+    // and completion, so cross-role expiry/recovery cannot invert lock order.
     let query = if write {
-        "SELECT * FROM app.codex_profiles WHERE id=$1 AND connection_mode='SYSTEM' FOR UPDATE"
+        "SELECT * FROM app.codex_profiles WHERE connection_mode='SYSTEM' AND (id=$1 OR (local_role IS NOT NULL AND EXISTS(SELECT 1 FROM app.codex_profiles WHERE id=$1 AND local_role IS NOT NULL))) ORDER BY id FOR UPDATE"
     } else {
-        "SELECT * FROM app.codex_profiles WHERE id=$1 AND connection_mode='SYSTEM' FOR SHARE"
+        "SELECT * FROM app.codex_profiles WHERE connection_mode='SYSTEM' AND (id=$1 OR (local_role IS NOT NULL AND EXISTS(SELECT 1 FROM app.codex_profiles WHERE id=$1 AND local_role IS NOT NULL))) ORDER BY id FOR SHARE"
     };
-    sqlx::query(query)
+    for row in sqlx::query(query)
         .bind(id.as_uuid())
-        .fetch_optional(&mut **tx)
+        .fetch_all(&mut **tx)
         .await?
-        .ok_or(StoreError::NotFound)
+    {
+        if row.try_get::<uuid::Uuid, _>("id")? == id.as_uuid() {
+            return Ok(row);
+        }
+    }
+    Err(StoreError::NotFound)
 }
 
 /// Lock the selected version; probes and Cycle admission share the same checks.
@@ -123,6 +131,32 @@ pub(crate) async fn snapshot(
 }
 
 impl Store {
+    /// Trusted process startup only. Role references are created by the local
+    /// migration, never inferred from a user-controlled historical home label.
+    pub async fn local_codex_bindings(&self) -> Result<Vec<CodexHomeBindingV1>, StoreError> {
+        let rows = sqlx::query("SELECT codex_home_ref,local_role FROM app.codex_profiles WHERE local_role IS NOT NULL ORDER BY local_role")
+            .fetch_all(&self.pool).await?;
+        if rows.len() != 2 {
+            return Err(StoreError::Integrity);
+        }
+        rows.iter()
+            .map(|row| {
+                let reference: String = row.try_get("codex_home_ref")?;
+                rules::home_binding(&reference).map_err(|_| StoreError::Integrity)?;
+                let label = match row.try_get::<String, _>("local_role")?.as_str() {
+                    "RESEARCHER" => "研究员",
+                    "REVIEWER" => "独立审阅员",
+                    _ => return Err(StoreError::Integrity),
+                };
+                Ok(CodexHomeBindingV1 {
+                    reference,
+                    label: label.into(),
+                    profile_origin: ProfileOrigin::OperatorMount,
+                })
+            })
+            .collect()
+    }
+
     pub async fn authorize_codex_settings_read(&self, actor: &Actor) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
         read_authority(&mut tx, actor).await?;
@@ -138,7 +172,7 @@ impl Store {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
         read_authority(&mut tx, actor).await?;
-        let rows = sqlx::query("SELECT * FROM app.codex_profiles WHERE connection_mode='SYSTEM' AND codex_home_ref IN ('local-researcher','local-reviewer') AND ($1::uuid IS NULL OR id<$1) ORDER BY id DESC LIMIT $2")
+        let rows = sqlx::query("SELECT * FROM app.codex_profiles WHERE connection_mode='SYSTEM' AND local_role IS NOT NULL AND ($1::uuid IS NULL OR id<$1) ORDER BY id DESC LIMIT $2")
             .bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(view).collect::<Result<Vec<_>, _>>()?,

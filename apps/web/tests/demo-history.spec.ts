@@ -32,7 +32,7 @@ test('synthetic two-Alpha history keeps expired qualification and original portf
     const evaluation = page.getByRole('dialog', { name: '正式 Validation 评估', exact: true });
     await expect(evaluation.getByText('SUCCEEDED / VALID / PASS', { exact: true })).toBeVisible();
     await expect(evaluation.getByText('FIXTURE', { exact: true })).toBeVisible();
-    await expect(evaluation.getByText(/当时没有未过期有效期/)).toBeVisible();
+    await expect(evaluation.getByText(/无有效期/)).toBeVisible();
   await expect(evaluation.getByText('暂无指标', { exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(evaluation).toBeHidden();
@@ -53,7 +53,7 @@ test('synthetic two-Alpha history keeps expired qualification and original portf
   await expect(evaluation.getByText('PORTFOLIO', { exact: true })).toBeVisible();
   await expect(evaluation.getByText('FIXTURE', { exact: true })).toBeVisible();
   await expect(evaluation.getByText('01990000-0000-7000-8000-000000000500', { exact: true })).toBeVisible();
-  await expect(evaluation.getByText(/当时没有未过期有效期/)).toBeVisible();
+  await expect(evaluation.getByText(/无有效期/)).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(evaluation).toBeHidden();
   await expect(candidate.getByRole('button', { name: '冻结目标包', exact: true })).toBeDisabled();

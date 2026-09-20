@@ -23,12 +23,13 @@ const observed = { schema_version: 1, id: id(92), profile_id: profile.id, profil
     models: [nativeModel] } };
 type Write = { method: string; key: string | undefined; body: Record<string, unknown> };
 
-async function setup(page: Page, options: { empty?: boolean; stale?: boolean; loseAck?: boolean; rejectRetry?: boolean; oldOverrides?: boolean; malformed?: boolean } = {}) {
+async function setup(page: Page, options: { empty?: boolean; stale?: boolean; loseAck?: boolean; rejectRetry?: boolean; oldOverrides?: boolean; malformed?: boolean; validUntil?: string; overrides?: { saved_model?: string | null; saved_reasoning_effort?: string | null; saved_fast_mode?: boolean; use_default_model_settings?: boolean } } = {}) {
   await fixture(page);
   const writes: Write[] = [];
   let current: Record<string, unknown> | undefined = options.empty ? undefined : structuredClone(profile);
   if (current && options.oldOverrides) current.model_settings = { ...saved, use_default_model_settings: false,
     saved_model: 'retired-native-model', saved_reasoning_effort: 'retired-native-effort', saved_fast_mode: true };
+  if (current && options.overrides) current.model_settings = { ...saved, ...options.overrides };
   await page.route('**/api/v2/settings/codex**', async route => {
     const method = route.request().method();
     const path = new URL(route.request().url()).pathname;
@@ -51,7 +52,7 @@ async function setup(page: Page, options: { empty?: boolean; stale?: boolean; lo
     if (path.endsWith('/models') || path.endsWith('/account')) return reply(route, {
       schema_version: 1, profile_id: profile.id, profile_revision: revision,
       state: options.stale ? 'STALE' : 'AVAILABLE', observation: options.stale
-        ? { ...observed, valid_until: stamp } : observed,
+        ? { ...observed, valid_until: stamp } : { ...observed, valid_until: options.validUntil ?? observed.valid_until },
     });
     return reply(route, problem('NOT_FOUND', 404, '不存在的展示测试入口'), 404);
   });
@@ -103,6 +104,8 @@ test('stale catalogue cannot enable unsupported model, effort or acceleration', 
   await expect(dialog.getByRole('slider')).toHaveCount(0);
   await expect(dialog.getByRole('switch', { name: '加速', exact: true })).toBeDisabled();
   await expect(dialog.getByText('模型目录未就绪')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+  await dialog.locator('form').dispatchEvent('submit');
   expect(writes).toHaveLength(0);
 });
 
@@ -130,8 +133,17 @@ for (const rejectRetry of [false, true]) {
 
 test('native defaults preserve saved overrides without inventing a replacement model', async ({ page }) => {
   const writes = await setup(page, { stale: true, oldOverrides: true }); const dialog = await edit(page);
-  await dialog.getByRole('switch', { name: '本机默认', exact: true }).click();
-  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  const defaults = dialog.getByRole('switch', { name: '本机默认', exact: true });
+  const save = dialog.getByRole('button', { name: '保存', exact: true });
+  await expect(save).toBeDisabled();
+  await defaults.click();
+  await expect(save).toBeEnabled();
+  await defaults.click();
+  await expect(save).toBeDisabled();
+  await dialog.locator('form').dispatchEvent('submit');
+  expect(writes).toHaveLength(0);
+  await defaults.click();
+  await save.click();
   await expect(dialog).toBeHidden();
   expect(writes[0]?.body).toEqual({ schema_version: 1, expected_revision: revision, model_settings: {
     ...saved, saved_model: 'retired-native-model', saved_reasoning_effort: 'retired-native-effort', saved_fast_mode: true } });
@@ -152,3 +164,47 @@ for (const mode of ['light', 'dark']) {
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
   });
 }
+
+for (const overrides of [
+  { saved_model: 'retired-native-model' },
+  { saved_reasoning_effort: 'retired-native-effort' },
+]) {
+  test(`fresh catalogue cannot activate unsupported saved settings ${JSON.stringify(overrides)}`, async ({ page }) => {
+    const writes = await setup(page, { overrides });
+    const dialog = await edit(page);
+    await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeEnabled();
+    await dialog.getByRole('switch', { name: '本机默认', exact: true }).click();
+    await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+    await dialog.locator('form').dispatchEvent('submit');
+    expect(writes).toHaveLength(0);
+  });
+}
+
+test('catalogue expiry blocks a new save but cannot change an unknown original replay', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-09-20T12:00:00Z') });
+  const writes = await setup(page, { loseAck: true, validUntil: '2026-09-20T12:01:00Z' });
+  const dialog = await edit(page);
+  await dialog.getByRole('switch', { name: '本机默认', exact: true }).click();
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  const retry = dialog.getByRole('button', { name: '重试保存', exact: true });
+  await expect(retry).toBeVisible();
+  await page.clock.fastForward('02:00');
+  await expect(retry).toBeEnabled();
+  await retry.click();
+  await expect(dialog).toBeHidden();
+  expect(writes).toHaveLength(2);
+  expect(writes[1]).toEqual(writes[0]);
+});
+
+test('an already open editor cannot submit a catalogue after its deadline', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-09-20T12:00:00Z') });
+  const writes = await setup(page, { validUntil: '2026-09-20T12:01:00Z' });
+  const dialog = await edit(page);
+  await dialog.getByRole('switch', { name: '本机默认', exact: true }).click();
+  const save = dialog.getByRole('button', { name: '保存', exact: true });
+  await expect(save).toBeEnabled();
+  await page.clock.fastForward('02:00');
+  await expect(save).toBeDisabled();
+  await dialog.locator('form').dispatchEvent('submit');
+  expect(writes).toHaveLength(0);
+});

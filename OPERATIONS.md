@@ -178,8 +178,10 @@ QZ 不读取／复制 `auth.json`，不改写 `config.toml`，认证由原生 `c
 模型目录、强度和可选加速来自原生检测，不猜测或静默替换。
 缺少安装、认证或兼容版本会显示真实不可用状态。普通连接检测不发送推理请求。
 
-Worker 的 `MISSION_API_ORIGIN` 必须与 API 的 `PUBLIC_URL` 完全一致，
-包含代理端口；`MISSION_WORKSPACES` 可省略，缺省使用 `STATE_DIR/missions`。
+Worker 复用 `PUBLIC_URL`，包含代理端口。独立 Worker 可显式提供
+`MISSION_API_ORIGIN`；二者同时配置必须完全一致。发现本机 Codex 后缺少有效
+Origin 会在启动时明确报错，不猜测 API 地址。`MISSION_WORKSPACES` 可省略，
+缺省使用 `STATE_DIR/missions`。
 研究沙箱、独立审阅、预算和下游授权不因本机免验证码而取消。
 原生个人指令与研究隔离限制仍按实际 Mission 检查；不能将模型可用视为研究完成。
 
@@ -190,7 +192,7 @@ Worker 的 `MISSION_API_ORIGIN` 必须与 API 的 `PUBLIC_URL` 完全一致，
 
 依赖固定 Rust 工具链及 PostgreSQL18 + PGMQ1.10.0，使用独立的新数据库。由原生 PostgreSQL 管理工具创建不带超级用户、创建数据库、创建角色权限的应用登录角色，密码通过交互或受保护配置输入；迁移身份与应用身份分开。
 
-CLI.md 中 `init-state → migrate → serve` 是实际可执行入口。`migrate --application-role NAME` 通过 SQLx 和 tower-sessions 原生迁移创建域表及会话存储，授权应用 DML；`serve` 不执行迁移，并拒绝高权限/owner 数据库连接。升级前暂停 HTTP/CLI/MCP 写命令和 Worker，并等待旧事务结束；只用 `cargo run --locked -p server -- migrate`，不要在活跃库上直接执行 SQLx CLI 或单条迁移 SQL。该命令先用原生迁移锁和应用表写冲突锁保护整个待应用批次，失败全部回滚；锁超时应排查旧事务后重试，不杀事务或放宽锁跳过验证。0006 安全升级会撤销已初始化实例的全部历史浏览器/设备和一次性 Operator 授权，本机迁移后自动建立新会话，旧审计记录保留。API 和网页代理仅监听 loopback；HTTPS 也不例外。默认地址为 http://localhost:8081，不对外提供免登录服务。
+CLI.md 中 `init-state → migrate → serve` 是实际可执行入口。`migrate --application-role NAME` 通过 SQLx 和 tower-sessions 原生迁移创建域表及会话存储，授权应用 DML；`serve` 不执行迁移，并拒绝高权限/owner 数据库连接。升级前暂停 HTTP/CLI/MCP 写命令和 Worker，并等待旧事务结束；只用 `cargo run --locked -p server -- migrate`，不要在活跃库上直接执行 SQLx CLI 或单条迁移 SQL。该命令先用原生迁移锁和应用表写冲突锁保护整个待应用批次，失败全部回滚；锁超时应排查旧事务后重试，不杀事务或放宽锁跳过验证。0006 安全升级会撤销已初始化实例的全部历史浏览器/设备和一次性 Operator 授权，本机迁移后自动建立新会话，旧审计记录保留。API 和网页代理仅监听 loopback；HTTPS 也不例外。默认地址为 `http://localhost:8081`，不对外提供免登录服务。
 
 浏览器直接进入工作台。首次本机请求自动建立不透明会话，业务数据不需要初始化验证码。旧 bootstrap、验证码登录、重新验证、信任设备和注销入口不再提供。
 
@@ -427,7 +429,7 @@ created_at 仍不可变，revision 仍必须递增且不得溢出。升级使用
 `init-state` 创建私有 `artifacts` 子目录；`serve` 必须能够打开它，旧状态目录升级时只会
 创建此前不存在的空目录。已有目录必须是非符号链接的私有目录；不会替操作者放宽或
 修复权限。产物保存为原始字节，不属于 SecretVault 加密对象；宿主卷和备份必须限制
-访问，不将此目录挂进研究 Agent 或任意 job。Secret/TOTP/model token仍不得作为研究
+访问，不将此目录挂进研究 Agent 或任意 job。Secret/model token仍不得作为研究
 产物上传。状态卷的容量告警和空间预算不能省略。
 
 本地对象在完整写入、只读同步和原子发布后，才在数据库提交元数据/原始命令回执。
@@ -460,7 +462,7 @@ issuer_attempt_id；新 Mission 签发由数据库锁住并绑定精确当前 At
 cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var
 ```
 
-此命令仅删除可用当前密钥认证、用途精确为 MACHINE_VERIFIER 且没有历史凭据引用的对象；已撤销/到期凭据的 verifier、TOTP、Session key、其他用途、符号链接和损坏文件均保留。失败应先恢复主库/状态目录可用性后重试，不手工批量删除 secrets。输出只含回收数量，不含密钥或文件内容。
+此命令仅删除可用当前密钥认证、用途精确为 MACHINE_VERIFIER 且没有历史凭据引用的对象；已撤销/到期凭据的 verifier、历史认证密文、Session key、其他用途、符号链接和损坏文件均保留。失败应先恢复主库/状态目录可用性后重试，不手工批量删除 secrets。输出只含回收数量，不含密钥或文件内容。
 
 源码删除不授权删除运行中的旧库、用户 artifacts、备份或 Codex profile。不得将新 schema 直接应用到旧库；实际产品切换仍须完成只读导入、备份恢复和回滚演练。当前没有声称达到 RPO/RTO。
 

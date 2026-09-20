@@ -13,6 +13,16 @@ async fn status(f: &Fixture, path: &str, bearer: &str) -> StatusCode {
         .status()
 }
 
+async fn initialized_historical_operator(pool: &PgPool) {
+    // This fixture represents an already initialized pre-upgrade database.
+    // No old authenticator is executed and no current migration is bypassed.
+    // Keep the historical fields populated so the real migration must retain them.
+    sqlx::query("UPDATE app.operator_auth_state SET initialized=true,totp_secret_ref='historical-operator-fixture',last_accepted_totp_step=1,setup_completed_at=clock_timestamp() WHERE singleton")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn read_only_mission_cannot_keep_identity_run_or_artifact_access_after_takeover(
     pool: PgPool,
@@ -262,6 +272,7 @@ async fn attempt_bound_legacy_credential_cannot_borrow_the_current_owner_on_upgr
         .run(&pool)
         .await
         .unwrap();
+    initialized_historical_operator(&pool).await;
     let (f, cookie, project, _) = setup(&pool).await;
     let (cli_token, cli_id) = bearer(&f, &cookie, project, READ_SCOPES, "pre-owner-cli").await;
     let mut cli_before: Value =
@@ -348,6 +359,7 @@ async fn legacy_unbound_mission_is_preserved_but_requires_new_issuance_after_upg
         .run(&pool)
         .await
         .unwrap();
+    initialized_historical_operator(&pool).await;
     let (f, _, _, _) = setup(&pool).await;
     // Construct an exact pre-018 relational fixture, not a new service against
     // an intentionally old schema. Current admission correctly requires all

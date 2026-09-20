@@ -80,3 +80,31 @@ the actual tested Head and original artifacts.
 
 ## Delivery
 Not merged. This task does not certify unrelated Issue #62 acceptance.
+
+## PR99 review corrections in progress
+
+Issue98 comment5750675699 records the field-level correction plan for the nine
+independent findings on Head2da592747987393dd3f9676ab6b491e938a5b1c8. No thread is
+resolved on the strength of authored text alone.
+
+That exact Head's Native Runtime35518292496 passed: original artifacts contain
+17 OCI,2 cold/ownership,1 joint restore,6 research-loop and5 science-thread passes.
+Personal hosting35518292499 and CodeQL35518292526 passed. CI35518292491 failed
+documentation link checking and two old-schema fixtures in the first HTTP test
+binary; later Store/HTTP targets were not executed by the original fail-fast
+Cargo command. Web35518292523 passed build/type/unit(544+5) and separate Demo,
+then failed17 of426 browser cases(409passed). Actual packaged-service browser
+acceptance was skipped and is not a pass.
+
+The next authored source removes inherited Provider credentials, creates
+collision-free database-native local roles, serializes their shared account
+lifecycle and invalidates both observations, derives Mission Origin from the
+actual local API, guards new model overrides without breaking unknown replay,
+and fixes direct-session SSE revocation tests. Regression tests use actual
+PostgreSQL migration/admission plus declared frontend fixtures and both themes.
+Current docs no longer advertise removed TOTP/custom Provider/remote login.
+The existing CI uses native --no-fail-fast to expose all test-binary failures;
+test selection, concurrency limits, scientific rules and timeouts are unchanged.
+
+These are unverified corrections until the new Head's original workflows and
+independent read-only review complete. No owner account or machine was accessed.
