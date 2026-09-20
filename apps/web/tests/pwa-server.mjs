@@ -48,14 +48,13 @@ export async function readStaticAsset(directory, pathname) {
 let release = 1;
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
-const session = { schema_version: 1, authenticated_at: '2026-09-08T00:00:00Z', expires_at: '2030-09-09T00:00:00Z', trusted_device_id: null, recent_authentication_required: false };
+const session = { schema_version: 1, authenticated_at: '2026-09-08T00:00:00Z', expires_at: '2030-09-09T00:00:00Z' };
 const server = createServer(async (request, response) => {
   const json = (value, status = 200) => { response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(value)); };
   try {
     const path = new URL(request.url, 'http://127.0.0.1:4180').pathname;
     if (path === '/__fixture__/health') return json({ fixture: 'SYNTHETIC', ready: true });
     if (path === '/__fixture__/release' && request.method === 'POST') return json({ release: ++release });
-    if (path === '/api/v2/bootstrap/status') return json({ schema_version: 1, initialized: true, setup_allowed: false });
     if (path === '/api/v2/auth/session') return json(session);
     if (path === '/api/v2/projects') return json({ schema_version: 1, items: [], next_cursor: null });
     if (path === '/api/fixture-private') return json({ fixture: 'SYNTHETIC-PRIVATE-CACHE-MARKER' });

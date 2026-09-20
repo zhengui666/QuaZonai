@@ -46,7 +46,7 @@ async fn a_fresh_authenticated_operator_can_distinguish_empty_management_from_un
     let f = support::fixture(pool).await;
     let confirmation = support::local_session(&f).await;
     assert_eq!(confirmation.status, StatusCode::OK);
-    let cookie = confirmation.cookie.unwrap_or(initial_cookie);
+    let cookie = confirmation.cookie.unwrap();
     for path in [
         "/api/v2/data/sources",
         "/api/v2/data/revisions",
@@ -88,7 +88,7 @@ async fn setup(
     let f = support::fixture_with_runtime_targets(pool, Some(targets)).await;
     let confirmation = support::local_session(&f).await;
     assert_eq!(confirmation.status, StatusCode::OK);
-    let cookie = confirmation.cookie.unwrap_or(initial_cookie);
+    let cookie = confirmation.cookie.unwrap();
     let credential = command(&f, &cookie, "runtime-secret", "POST", "/api/v2/settings/credentials", json!({
         "intent":{"schema_version":1,"purpose":"RUNTIME","label":"Controlled Runtime credential"},"value":native::SECRET
     })).await;

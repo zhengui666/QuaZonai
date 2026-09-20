@@ -147,7 +147,7 @@ for (const draft of [true, false]) test(`${draft ? 'freeze' : 'start'} lost ACK 
   await expect(retry).toBeEnabled();
   for (const field of await page.getByRole('dialog').getByRole('combobox').all()) await expect(field).toBeDisabled();
   await retry.click();
-  await expect(page.getByText(/错误：REVISION_CONFLICT/)).toBeVisible();
+  await expect(page.getByText(/REVISION_CONFLICT/)).toBeVisible();
   await expect(page.getByRole('button', { name: '关闭并重载最新记录', exact: true })).toHaveCount(0);
   state.stale = false;
   await expect(retry).toBeEnabled(); await retry.click();
@@ -159,7 +159,7 @@ for (const draft of [true, false]) test(`${draft ? 'freeze' : 'start'} lost ACK 
 test('known revision rejection does not overwrite and requires reloading the record', async ({ page }) => {
   const state = await setup(page, { conflict: true }); await startForm(page);
   await page.getByRole('button', { name: '确认启动 Cycle', exact: true }).click();
-  await expect(page.getByText(/错误：REVISION_CONFLICT/)).toBeVisible();
+  await expect(page.getByText(/REVISION_CONFLICT/)).toBeVisible();
   await expect(page.getByRole('button', { name: '确认启动 Cycle', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '关闭并重载最新记录', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden(); expect(state.writes).toHaveLength(1);
@@ -274,7 +274,7 @@ test('unformed or failed selection is not shown as an empty completed comparison
   await page.getByRole('button', { name: '刷新研究周期', exact: true }).click();
   await page.getByRole('button', { name: '查看试验选择', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '冻结试验选择', exact: true });
-  await expect(dialog.getByText(/错误：NOT_FOUND/)).toBeVisible();
+  await expect(dialog.getByText(/NOT_FOUND/)).toBeVisible();
   await expect(dialog.getByText('暂无试验', { exact: true })).toHaveCount(0);
   formed = true;
   await dialog.getByRole('button', { name: '重新载入', exact: true }).click();

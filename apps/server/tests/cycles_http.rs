@@ -17,7 +17,7 @@ use axum::{
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use store::authority::Actor;
-use support::{confirm, exchange, fixture, start, Fixture, Reply};
+use support::{exchange, fixture, invalid_bearer, local_session, Fixture, Reply};
 
 async fn browser(
     f: &Fixture,

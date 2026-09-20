@@ -73,7 +73,7 @@ test('invalid success data is a contract error, never an empty project list', as
   await page.route(url => url.pathname === '/api/v2/projects', route => reply(route, {}));
   await page.goto('/');
   await expect(page.getByText('响应数据不兼容')).toBeVisible();
-  await expect(page.getByText('尚无研究项目。', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('暂无研究项目', { exact: true })).toHaveCount(0);
 });
 
 test('local cancellation retains confirmation and uses no verification challenge', async ({ page }) => {

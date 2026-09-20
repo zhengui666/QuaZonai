@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 use server::{AppState, WebPolicy};
 use sqlx::{PgPool, Row};
 use store::authority::Actor;
-use support::{confirm, exchange, fixture, start, Fixture, Reply};
+use support::{exchange, fixture, local_session, Fixture, Reply};
 use tower_sessions::cookie::Key;
 
 #[sqlx::test(migrations = "../../migrations")]

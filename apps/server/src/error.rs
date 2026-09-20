@@ -44,7 +44,7 @@ impl ApiError {
         Self::new(
             StatusCode::UNAUTHORIZED,
             "AUTH_REQUIRED",
-            "请使用验证器重新登录。",
+            "本机会话已失效，请刷新页面。",
         )
     }
 }
@@ -67,7 +67,7 @@ impl IntoResponse for ApiError {
             current_revision: self.current_revision,
             field_errors: self.field_errors,
             safe_next_actions: match self.code {
-                "AUTH_REQUIRED" | "RECENT_AUTH_REQUIRED" => vec!["AUTHENTICATE".into()],
+                "AUTH_REQUIRED" => vec!["RELOAD".into()],
                 "AUTH_RATE_LIMITED" => vec!["RETRY_AFTER".into()],
                 "REVISION_CONFLICT" => vec!["RELOAD".into()],
                 _ => Vec::new(),
@@ -116,7 +116,7 @@ impl From<StoreError> for ApiError {
             StoreError::InvalidCredentials => Self::new(
                 StatusCode::UNAUTHORIZED,
                 "AUTHENTICATION_FAILED",
-                "验证码或初始化凭据无效、过期或已使用。",
+                "机器凭据无效或已失效。",
             ),
             StoreError::AuthRateLimited {
                 retry_after_seconds,
@@ -124,7 +124,7 @@ impl From<StoreError> for ApiError {
                 let mut error = Self::new(
                     StatusCode::TOO_MANY_REQUESTS,
                     "AUTH_RATE_LIMITED",
-                    "验证尝试过于频繁，请依据 Retry-After 重新尝试。",
+                    "请求过于频繁，请稍后重试。",
                 );
                 error.retry_after = Some(retry_after_seconds);
                 error

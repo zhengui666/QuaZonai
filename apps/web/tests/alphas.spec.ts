@@ -254,7 +254,7 @@ test('original Alpha, formal evidence and paged metrics retain zero, null, prove
 test('failed read is not an empty Alpha result and recovery does not create a record', async ({ page }) => {
   const { state, base } = await setup(page); state.fail = true;
   await chooseProject(page);
-  await expect(page.getByText(/未将它当成空列表或成功结果|错误：UNAVAILABLE/).first()).toBeVisible();
+  await expect(page.getByText(/UNAVAILABLE/).first()).toBeVisible();
   await expect(page.getByText('暂无 Alpha', { exact: true })).toHaveCount(0);
   state.fail = false;
   await page.getByRole('button', { name: '刷新 Alpha', exact: true }).click();
@@ -271,7 +271,7 @@ test('calibrated version exposes only its original metadata and does not inherit
   expect(state.paths.some(path => path.endsWith('/calibration'))).toBe(false);
   await page.getByRole('button', { name: '查看冻结校准来源', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '冻结校准来源', exact: true });
-  await expect(dialog.getByText(/错误：UNAVAILABLE/)).toBeVisible();
+  await expect(dialog.getByText(/UNAVAILABLE/)).toBeVisible();
   await expect(dialog.getByText('新版本附加校准，不继承源版本评估或资格。', { exact: true })).toHaveCount(0);
   state.calibrationFailed = false;
   await dialog.getByRole('button', { name: '重新载入', exact: true }).click();

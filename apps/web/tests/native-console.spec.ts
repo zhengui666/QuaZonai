@@ -185,21 +185,21 @@ async ({ page, context }) => {
         await page.getByRole('button', { name: mode === 'dark' ? '切换为深色主题' : '切换为浅色主题' }).click();
       }
       for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
-      await page.setViewportSize(viewport);
-      await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
-      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
-      await page.getByRole('button', { name: '新建研究', exact: true }).click();
-      await expect(page.getByLabel('研究名称')).toBeVisible();
-      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
-      await page.getByRole('button', { name: '取消', exact: true }).click();
-      await expect(page.getByLabel('研究名称')).toHaveCount(0);
-      // Capture only the authenticated project surface, never enrollment/OTP UI.
-      await expect(page.getByLabel('动态验证码')).toHaveCount(0);
-      await expect(page.getByLabel('一次性初始化凭据')).toHaveCount(0);
-      await page.locator('.console-layout').screenshot({
-        path: resolve(dirname(config.redactionsFile), `projects-${mode}-${viewport.width}.png`),
-        animations: 'disabled',
-      });
+        await page.setViewportSize(viewport);
+        await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
+        await page.getByRole('button', { name: '新建研究', exact: true }).click();
+        await expect(page.getByLabel('研究名称')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
+        await page.getByRole('button', { name: '取消', exact: true }).click();
+        await expect(page.getByLabel('研究名称')).toHaveCount(0);
+        // Capture only the project surface, never browser session material.
+        await expect(page.getByLabel('动态验证码')).toHaveCount(0);
+        await expect(page.getByLabel('一次性初始化凭据')).toHaveCount(0);
+        await page.locator('.console-layout').screenshot({
+          path: resolve(dirname(config.redactionsFile), `projects-${mode}-${viewport.width}.png`),
+          animations: 'disabled',
+        });
       }
     }
   });

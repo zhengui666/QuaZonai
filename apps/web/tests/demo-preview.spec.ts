@@ -64,7 +64,7 @@ test('synthetic preview renders native-contract records without a backend or wri
   await page.getByRole('tab', { name: '执行假设', exact: true }).click();
   await page.getByRole('button', { name: /^查看假设 / }).click();
   const assumptions = page.getByRole('dialog', { name: '不可变执行假设', exact: true });
-  await expect(assumptions.getByText('CONSERVATIVE_ASSUMPTION · 保守假设，不是数据支持成本证明', { exact: true })).toBeVisible();
+  await expect(assumptions.getByText('CONSERVATIVE_ASSUMPTION', { exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(assumptions).toBeHidden();
   await page.getByRole('tab', { name: '评估政策', exact: true }).click();

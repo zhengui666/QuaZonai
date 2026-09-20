@@ -139,7 +139,7 @@ for (const kind of ['FORWARD', 'PORTFOLIO'] as const) for (const wrongSubject of
     await expect(detail.getByRole('cell', { name: '0', exact: true })).toBeVisible();
     await expect(detail.getByRole('cell', { name: '252', exact: true }).first()).toBeVisible();
     await expect(detail.getByText('nautilus-analysis.SharpeRatio / 0.63.0', { exact: true }).first()).toBeVisible();
-    await expect(detail.getByText(/当时没有未过期有效期/)).toHaveCount(0);
+    await expect(detail.getByText(/无有效期/)).toBeVisible();
     await expect(detail.getByRole('button', { name: /审批|交付|模拟/ })).toHaveCount(0);
     expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual([]);
   }

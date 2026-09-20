@@ -17,6 +17,8 @@ use tower_sessions_sqlx_store::PostgresStore;
 
 pub struct Fixture {
     pub app: Router,
+    // Each integration target compiles this shared fixture independently.
+    #[allow(dead_code)]
     pub store: Store,
     pub _state: tempfile::TempDir,
 }
@@ -173,6 +175,8 @@ pub async fn local_session(f: &Fixture) -> Reply {
     response
 }
 
+// Only machine-boundary targets need this shared request helper.
+#[allow(dead_code)]
 pub async fn invalid_bearer(f: &Fixture, method: &str, path: &str, body: Value) -> Reply {
     exchange(
         &f.app,

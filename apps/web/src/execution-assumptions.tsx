@@ -49,6 +49,7 @@ function Detail({ id, close }: { id: string; close: () => void }) {
         ['id', '假设编号'], ['input_set_id', '冻结输入'], ['dataset_revision_id', '数据版本'], ['runtime_id', 'Runtime'],
         ['capability_snapshot_artifact_id', '能力探测证据'], ['fee_schedule_artifact_id', '原配置产物'], ['engine_image_ref', '原生镜像'],
         ['venue_capability_ref', '市场'], ['calendar_version', '日历版本'], ['settlement_rule_ref', '结算规则'],
+        ['cost_assumption_status', '成本假设'],
       ] as const).map(([key, label]) => ({ key, label, children: <Typography.Text className="break-word" copyable>{query.data![key]}</Typography.Text> }))} />
       
       {query.data.bar_liquidity && <Descriptions column={1} items={[

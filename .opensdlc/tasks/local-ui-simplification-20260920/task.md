@@ -41,5 +41,42 @@ the fixtures, adds explicit bad-Bearer regressions and shortens remaining empty
 states. No full database/browser or final review pass is claimed.
 Dedicated-account acceptance remains COMPLETED_BY_OWNER_WAIVER / NOT_RUN.
 
+## Repair and validation checkpoint
+
+Tracked by [Issue #98](https://github.com/zhengui666/QuaZonai/issues/98).
+Baseline: `d7062806d9308939a035dc9a67d2e2c118f0889a`. Downloaded run
+`35505410187`, artifact `10603638919`; inspect original outcomes, not green
+step conclusions produced by continue-on-error.
+
+| Check at that checkpoint | Actual result |
+| --- | --- |
+| Rust format, library/binary check and native contract generation | Passed |
+| Frontend production build | Passed |
+| Frontend unit suite | 544 passed; separate 5 PWA file tests passed |
+| All-targets Clippy | Failed: removed login imports/fallback variables, shared-fixture unused items and a single-element loop |
+| Browser suite | 103 passed, 12 failed, 1 interrupted, 304 not run |
+| Focused Store and HTTP suites | Not executed: unsupported cargo test --keep-going argument |
+| Full final-Head CI and independent review | Not obtained |
+
+The authored repair removes stale imports/fallback names, replaces obsolete
+authenticator instructions, preserves failure/replay assertions, restores the
+actual cost-assumption field without its explanatory paragraph, corrects Menu
+and primary-button theme tokens, and makes render recovery inherit the theme.
+The removed nested-login crash test becomes a real nested-project crash in
+both themes. PWA and hosted-service scope no longer advertise removed login.
+
+All temporary local-console transfer files and their materialization workflow
+are removed. The existing CI, Web, Native Runtime, Personal hosting and CodeQL
+PR workflows own verification. Their original supported database commands,
+test thresholds and permissions are unchanged. Text transfer and native
+formatting are not application validation.
+
+The repair was first prepared while connector calls failed. Access was later
+restored and Issue #98 created. Transfer35518044736 failed decoding the authored
+JSON before touching source; that transfer syntax is corrected, not a product
+test pass. No new application-test, independent-review, merge or owner-deployment
+result is claimed by this source update. Subsequent PR records must identify
+the actual tested Head and original artifacts.
+
 ## Delivery
 Not merged. This task does not certify unrelated Issue #62 acceptance.

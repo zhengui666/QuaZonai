@@ -37,7 +37,7 @@ function Console({ colorTheme, toggleTheme }: { colorTheme: ColorTheme; toggleTh
     if (blocked && key !== active) modal.confirm({ title: '放弃未保存的更改？', okText: '放弃更改', cancelText: '继续编辑', onOk: change });
     else change();
   }
-  const menu = <Menu aria-label="主导航" mode="inline" selectedKeys={[active]} items={navigation} onClick={({ key }) => navigate(key)} />;
+  const menu = <Menu aria-label="主导航" theme={colorTheme} mode="inline" selectedKeys={[active]} items={navigation} onClick={({ key }) => navigate(key)} />;
   let content: ReactNode;
   switch (active) {
     case 'alpha': content = <Alphas />; break;
@@ -79,7 +79,7 @@ export default function App() {
     algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
     cssVar: { key: 'quazonai' },
     token: {
-      colorPrimary: dark ? '#83b2ff' : '#2857b4',
+      colorPrimary: '#2857b4',
       colorLink: dark ? '#83b2ff' : '#2857b4',
       colorLinkHover: dark ? '#b0ccff' : '#1f4796',
       colorLinkActive: dark ? '#5f9cff' : '#183b80',

@@ -342,7 +342,7 @@ export function EvaluationDetail({ id, close, candidate, alpha }: { id: string; 
           { key: 'origin', label: '数据来源', children: value.origin },
           { key: 'concluded', label: '原完成时间', children: displayTime(value.concluded_at) },
           { key: 'valid', label: '原有效期', children: value.valid_until ? displayTime(value.valid_until) : '未授予有效期' },
-          { key: 'checked', label: '服务器检查时间', children: `${displayTime(value.checked_at)} · ${value.unexpired_at_read ? '当时未过期' : '当时没有未过期有效期'}` },
+          { key: 'checked', label: '服务器检查时间', children: `${displayTime(value.checked_at)} · ${value.unexpired_at_read ? '当时未过期' : '无有效期'}` },
           { key: 'report', label: '完成报告引用（不下载）', children: value.report_artifact_id },
           { key: 'methods', label: '方法版本报告引用', children: value.method_versions_artifact_id },
         ]} />

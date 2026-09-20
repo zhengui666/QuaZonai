@@ -114,7 +114,8 @@ fn secret_intent_excludes_plaintext_and_value_validation_is_purpose_bounded() {
     ] {
         assert!(secret_value(intent.purpose, good).is_ok());
     }
-    for purpose in [IntegrationSecretPurpose::Downstream] {
+    {
+        let purpose = IntegrationSecretPurpose::Downstream;
         assert!(secret_value(purpose, "a").is_ok());
         assert!(secret_value(purpose, &"x".repeat(8192)).is_ok());
         assert!(secret_value(purpose, &"x".repeat(8193)).is_err());

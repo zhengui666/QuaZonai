@@ -386,7 +386,7 @@ if (adminEnv) {
   await writeFile(resolve(report, 'result.json'), JSON.stringify({ schema_version: 1,
     status: failure ? 'FAILED' : 'PASSED', stages,
     error: failure ? redact(failure.message) : null,
-    acceptance_scope: 'shipped systemd user units with real packaged API/Worker and production Caddy routes; idle Worker native automatic restart, real TOTP, retained session/project/receipt after normal API stop/start, CSRF, mobile layout and logout; no public TLS, host boot, active-job restore or complete Issue62 acceptance',
+    acceptance_scope: 'shipped systemd user units with real packaged API/Worker and production Caddy routes; idle Worker native automatic restart, direct local entry, retained session/project/receipt/theme after normal API stop/start, CSRF, both themes in three viewports and absent legacy login routes; no public TLS, host boot, active-job restore or complete Issue62 acceptance',
     private_artifacts_retained: privateArtifactsRetained,
     screenshots: failure ? [] : screenshots.map(({ name }) => name),
   }, null, 2), { mode: 0o600 });
