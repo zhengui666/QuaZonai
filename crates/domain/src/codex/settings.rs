@@ -89,6 +89,7 @@ pub fn probe_outcome(
         native_version,
         account,
         effective,
+        native_default_model,
         models,
     } = value
     else {
@@ -106,6 +107,20 @@ pub fn probe_outcome(
         ));
     }
     account_snapshot(account)?;
+    let native_default = native_default_model
+        .as_deref()
+        .ok_or_else(|| bad("native_default_model"))?;
+    text(native_default, 1, 200, false).map_err(|_| bad("native_default_model"))?;
+    if native_default.trim() != native_default {
+        return Err(bad("native_default_model"));
+    }
+    if (settings.use_default_model_settings || settings.saved_model.is_none())
+        && effective.model != native_default
+    {
+        return Err(DomainError::CapabilityUnavailable(
+            "codex_settings_not_honored",
+        ));
+    }
     let mut ids = BTreeSet::new();
     let mut names = BTreeSet::new();
     for item in models {

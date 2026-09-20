@@ -29,7 +29,8 @@ function canSaveSettings(values: Values, observation: Observation | undefined, p
   if (!fresh(observation, profile, now)) return false;
   const native = observation?.observation?.outcome;
   if (native?.status !== 'AVAILABLE') return false;
-  const model = native.models.find(item => item.capability.model === (values.saved_model || native.effective.model));
+  if (!values.saved_model && !values.saved_reasoning_effort && !values.saved_fast_mode) return true;
+  const model = native.models.find(item => item.capability.model === (values.saved_model || native.native_default_model));
   return !!model
     && (!values.saved_reasoning_effort || model.capability.supported_reasoning_efforts.some(item => item.reasoning_effort === values.saved_reasoning_effort))
     && (!values.saved_fast_mode || model.service_tiers.some(tier => tier.id === 'priority' || tier.id === 'fast'));
@@ -50,7 +51,7 @@ function ModelControls({ form, observation, profile, disabled }: {
   const valid = fresh(observation, profile, now);
   const native = observation?.observation?.outcome.status === 'AVAILABLE' ? observation.observation.outcome : undefined;
   const models = valid ? native?.models ?? [] : [];
-  const selectedModel = models.find(item => item.capability.model === (selected || native?.effective.model));
+  const selectedModel = models.find(item => item.capability.model === (selected || native?.native_default_model));
   const efforts = selectedModel?.capability.supported_reasoning_efforts ?? [];
   const index = effort ? efforts.findIndex(item => item.reasoning_effort === effort) : -1;
   const fastSupported = selectedModel?.service_tiers.some(tier => tier.id === 'priority' || tier.id === 'fast') ?? false;
@@ -61,7 +62,7 @@ function ModelControls({ form, observation, profile, disabled }: {
     {!valid && <Alert type="warning" showIcon title="模型目录未就绪" />}
     <Form.Item name="saved_model" label="模型">
       <Select allowClear showSearch optionFilterProp="label" options={options} disabled={disabled || defaults || !valid}
-        placeholder={native?.effective.model ?? '本机默认'} onChange={() => setEffort(null)} />
+        placeholder={native?.native_default_model ?? '本机默认'} onChange={() => setEffort(null)} />
     </Form.Item>
     <Form.Item name="saved_reasoning_effort" hidden><Input /></Form.Item>
     <Form.Item label="推理强度">

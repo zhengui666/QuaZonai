@@ -26,7 +26,7 @@ pub async fn listen_with_downstream_targets(
 ) -> (String, Listener) {
     let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = socket.local_addr().unwrap();
-    let origin = format!("http://{address}");
+    let origin = format!("http://localhost:{}", address.port());
     let state = server::AppState::new(
         f.store.clone(),
         SecretVault::open(

@@ -152,6 +152,11 @@ pub enum CodexProbeOutcomeV1 {
         native_version: String,
         account: CodexAccountV1,
         effective: CodexEffectiveSettingsV1,
+        /// Model from the override-free native Thread. Absent only in historical
+        /// observations; never infer it from the post-override effective model.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(min_length = 1, max_length = 200)]
+        native_default_model: Option<String>,
         #[schema(min_items = 1, max_items = 4096)]
         models: Vec<CodexAdvertisedModelV1>,
     },

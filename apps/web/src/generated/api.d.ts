@@ -2599,6 +2599,11 @@ export interface components {
             account: components["schemas"]["CodexAccountV1"];
             effective: components["schemas"]["CodexEffectiveSettingsV1"];
             models: components["schemas"]["CodexAdvertisedModelV1"][];
+            /**
+             * @description Model from the override-free native Thread. Absent only in historical
+             *     observations; never infer it from the post-override effective model.
+             */
+            native_default_model?: string | null;
             native_version: string;
             /** @enum {string} */
             status: "AVAILABLE";

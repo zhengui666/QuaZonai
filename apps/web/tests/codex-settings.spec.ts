@@ -20,10 +20,10 @@ const observed = { schema_version: 1, id: id(92), profile_id: profile.id, profil
   observed_at: stamp, valid_until: '2099-01-01T00:00:00Z', outcome: { status: 'AVAILABLE', native_version: '0.144.4',
     account: { requires_openai_auth: false, authentication_kind: null, plan_type: null },
     effective: { model: 'native-model', provider: 'configured-native-provider', reasoning_effort: 'balanced', service_tier: null },
-    models: [nativeModel] } };
+    native_default_model: 'native-model', models: [nativeModel] } };
 type Write = { method: string; key: string | undefined; body: Record<string, unknown> };
 
-async function setup(page: Page, options: { empty?: boolean; stale?: boolean; loseAck?: boolean; rejectRetry?: boolean; oldOverrides?: boolean; malformed?: boolean; validUntil?: string; overrides?: { saved_model?: string | null; saved_reasoning_effort?: string | null; saved_fast_mode?: boolean; use_default_model_settings?: boolean } } = {}) {
+async function setup(page: Page, options: { nativeDefault?: 'different' | 'missing'; empty?: boolean; stale?: boolean; loseAck?: boolean; rejectRetry?: boolean; oldOverrides?: boolean; malformed?: boolean; validUntil?: string; overrides?: { saved_model?: string | null; saved_reasoning_effort?: string | null; saved_fast_mode?: boolean; use_default_model_settings?: boolean } } = {}) {
   await fixture(page);
   const writes: Write[] = [];
   let current: Record<string, unknown> | undefined = options.empty ? undefined : structuredClone(profile);
@@ -47,12 +47,23 @@ async function setup(page: Page, options: { empty?: boolean; stale?: boolean; lo
     current = { ...profile, model_settings: body.model_settings };
     return reply(route, { schema_version: 1, resource: current, replayed: writes.length > 1 }, method === 'POST' ? 201 : 200);
   });
+  const outcome = { ...structuredClone(observed.outcome),
+    native_default_model: options.nativeDefault === 'missing' ? undefined
+      : options.nativeDefault === 'different' ? 'inherited-model' : observed.outcome.native_default_model };
+  if (options.nativeDefault === 'different') {
+    outcome.models[0]!.capability.is_default = true;
+    outcome.models.push({ ...structuredClone(nativeModel), capability: { ...nativeModel.capability,
+      id: 'inherited-id', model: 'inherited-model', display_name: '本机继承模型',
+      default_reasoning_effort: 'native-only',
+      supported_reasoning_efforts: [{ reasoning_effort: 'native-only', description: '' }] },
+      service_tiers: [] });
+  }
   await page.route('**/api/v2/codex/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/models') || path.endsWith('/account')) return reply(route, {
       schema_version: 1, profile_id: profile.id, profile_revision: revision,
       state: options.stale ? 'STALE' : 'AVAILABLE', observation: options.stale
-        ? { ...observed, valid_until: stamp } : { ...observed, valid_until: options.validUntil ?? observed.valid_until },
+        ? { ...observed, outcome, valid_until: stamp } : { ...observed, outcome, valid_until: options.validUntil ?? observed.valid_until },
     });
     return reply(route, problem('NOT_FOUND', 404, '不存在的展示测试入口'), 404);
   });
@@ -207,4 +218,50 @@ test('an already open editor cannot submit a catalogue after its deadline', asyn
   await expect(save).toBeDisabled();
   await dialog.locator('form').dispatchEvent('submit');
   expect(writes).toHaveLength(0);
+});
+
+for (const mode of ['light', 'dark']) {
+  test(`clearing an overridden model selects native-default effort and Fast capability (${mode})`, async ({ page }) => {
+    await page.addInitScript(value => localStorage.setItem('quazonai.theme', value), mode);
+    const writes = await setup(page, { nativeDefault: 'different', overrides: {
+      use_default_model_settings: false, saved_model: 'native-model',
+      saved_reasoning_effort: 'exhaustive', saved_fast_mode: true,
+    } });
+    const dialog = await edit(page);
+    await expect(dialog.getByRole('slider')).toHaveAttribute('aria-valuemax', '2');
+    await dialog.locator('.ant-select').hover();
+    await dialog.locator('.ant-select-clear').click();
+    await expect(dialog.getByText('inherited-model', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('slider')).toHaveAttribute('aria-valuemax', '1');
+    await expect(dialog.getByText('native-only', { exact: true })).toBeVisible();
+    const fast = dialog.getByRole('switch', { name: '加速', exact: true });
+    await expect(fast).toBeChecked();
+    await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+    await fast.click();
+    await expect(fast).not.toBeChecked();
+    await expect(fast).toBeDisabled();
+    const slider = dialog.getByRole('slider');
+    await slider.focus(); await slider.press('End');
+    await dialog.getByRole('button', { name: '保存', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.body).toEqual({ schema_version: 1, expected_revision: revision, model_settings: {
+      ...saved, use_default_model_settings: false, saved_model: null,
+      saved_reasoning_effort: 'native-only', saved_fast_mode: false,
+    } });
+  });
+}
+
+test('historical effective model is not treated as native-default provenance', async ({ page }) => {
+  const writes = await setup(page, { nativeDefault: 'missing', overrides: {
+    use_default_model_settings: false, saved_model: null, saved_reasoning_effort: 'balanced',
+  } });
+  const dialog = await edit(page);
+  await expect(dialog.getByRole('slider')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+  await dialog.getByRole('switch', { name: '本机默认', exact: true }).click();
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(writes[0]?.body).toEqual({ schema_version: 1, expected_revision: revision,
+    model_settings: { ...saved, saved_reasoning_effort: 'balanced' } });
 });

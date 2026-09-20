@@ -6549,6 +6549,15 @@
                 "minItems": 1,
                 "type": "array"
               },
+              "native_default_model": {
+                "description": "Model from the override-free native Thread. Absent only in historical\nobservations; never infer it from the post-override effective model.",
+                "maxLength": 200,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "native_version": {
                 "type": "string"
               },

@@ -391,3 +391,88 @@ async fn raw_http_cannot_activate_unobserved_model_settings(pool: PgPool) {
             .unwrap();
     assert_eq!(observations, 0, "saving must not execute a probe");
 }
+
+#[cfg(feature = "native-codex")]
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_probe_preserves_the_unoverridden_model_across_model_clear(pool: PgPool) {
+    let home = tempfile::tempdir().unwrap();
+    let provider = responses::Provider::start(home.path()).await;
+    let original_config = std::fs::read(home.path().join("config.toml")).unwrap();
+    let binary =
+        PathBuf::from(std::env::var_os("CODEX_NATIVE_BIN").expect("pinned native binary required"));
+    let (f, cookie) = configured(pool.clone(), home.path(), binary).await;
+    let mut profile = local_profile(&f, &cookie).await;
+    let id = profile["id"].as_str().unwrap().to_owned();
+    let path = format!("/api/v2/settings/codex/{id}");
+    let mut alternative = String::new();
+    let mut native_effort = String::new();
+    for stage in 0..3 {
+        let observation = command(
+            &f,
+            &cookie,
+            &format!("native-transition-probe-{stage}"),
+            "POST",
+            "/api/v2/codex/probe",
+            json!({"schema_version":1,"profile_id":id,"expected_revision":profile["revision"]}),
+        )
+        .await;
+        assert_eq!(observation.status, StatusCode::OK, "{}", observation.body);
+        let outcome = &observation.body["resource"]["outcome"];
+        assert_eq!(outcome["native_default_model"], "gpt-5.4");
+        if stage == 1 {
+            assert_eq!(outcome["effective"]["model"], alternative);
+        } else {
+            assert_eq!(outcome["effective"]["model"], "gpt-5.4");
+        }
+        if stage == 0 {
+            let models = outcome["models"].as_array().unwrap();
+            alternative = models
+                .iter()
+                .find_map(|model| {
+                    model["capability"]["model"]
+                        .as_str()
+                        .filter(|model| *model != "gpt-5.4")
+                })
+                .expect("the pinned native catalog includes another model")
+                .to_owned();
+            native_effort = models
+                .iter()
+                .find(|model| model["capability"]["model"] == "gpt-5.4")
+                .unwrap()["capability"]["default_reasoning_effort"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+        }
+        if stage == 2 {
+            assert_eq!(outcome["effective"]["reasoning_effort"], native_effort);
+            break;
+        }
+        let settings = json!({
+            "schema_version":1,"use_default_model_settings":false,
+            "saved_model":if stage == 0 { json!(alternative) } else { Value::Null },
+            "saved_reasoning_effort":if stage == 0 { Value::Null } else { json!(native_effort) },
+            "saved_fast_mode":false
+        });
+        let updated = command(
+            &f, &cookie, &format!("native-transition-update-{stage}"), "PATCH", &path,
+            json!({"schema_version":1,"expected_revision":profile["revision"],"model_settings":settings})
+        ).await;
+        assert_eq!(updated.status, StatusCode::OK, "{}", updated.body);
+        profile = updated.body["resource"].clone();
+    }
+    assert_eq!(
+        provider.request_count(),
+        0,
+        "model discovery does not call Responses"
+    );
+    assert_eq!(
+        std::fs::read(home.path().join("config.toml")).unwrap(),
+        original_config
+    );
+    assert!(!home.path().join("auth.json").exists());
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.codex_profile_observations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+}

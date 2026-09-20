@@ -34,7 +34,9 @@ pub(super) async fn validate(
         return Err(DomainError::CapabilityUnavailable("stale_model_catalog").into());
     }
     let CodexProbeOutcomeV1::Available {
-        effective, models, ..
+        native_default_model,
+        models,
+        ..
     } = &native.outcome
     else {
         return Err(DomainError::CapabilityUnavailable("native_model_catalog_unavailable").into());
@@ -52,11 +54,19 @@ pub(super) async fn validate(
             // Stored probes already enforce a 120s execution deadline and 5s
             // upstream clock tolerance; their separate 60s cache expiry is above.
             valid_after: native.observed_at - Duration::seconds(125),
-            observed_effective_model: Some(&effective.model),
+            // Clearing an active model inherits the original override-free
+            // native model, not the previous post-override effective model.
+            observed_effective_model: native_default_model.as_deref(),
         },
     )?;
     if overrides.fast_mode == Some(true) {
-        let selected = overrides.model.as_deref().unwrap_or(&effective.model);
+        let selected = overrides
+            .model
+            .as_deref()
+            .or(native_default_model.as_deref())
+            .ok_or(DomainError::CapabilityUnavailable(
+                "effective_system_model_unknown",
+            ))?;
         let model = models
             .iter()
             .find(|model| model.capability.model == selected)

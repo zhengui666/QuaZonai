@@ -24,7 +24,7 @@ pub struct Arguments {
     /// Optional native CA bundle. There is no unverified-TLS mode.
     #[arg(long)]
     pub ca_certificate: Option<PathBuf>,
-    /// Explicit literal-loopback development only; the server must also permit it.
+    /// Explicit local-console HTTP only; the server must also permit it.
     #[arg(long)]
     pub development_http: bool,
     /// Required for writes. Keep the same key and input after an unknown result.
@@ -108,8 +108,12 @@ fn read_file(path: &PathBuf, maximum: usize, private: bool) -> Result<Vec<u8>> {
 
 impl Connection {
     fn open(args: &Arguments) -> Result<Self> {
-        domain::settings::endpoint(&args.origin, args.development_http)
-            .map_err(|_| Failure::Configuration)?;
+        crate::WebPolicy::new(
+            &args.origin,
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+            args.development_http,
+        )
+        .map_err(|_| Failure::Configuration)?;
         let origin = Url::parse(&args.origin).map_err(|_| Failure::Configuration)?;
         let bytes = read_file(&args.credential_file, 256, true)?;
         let bytes = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
@@ -453,5 +457,47 @@ pub fn report(error: &Failure) {
         let mut stderr = std::io::stderr().lock();
         let _ = serde_json::to_writer(&mut stderr, &value);
         let _ = writeln!(stderr);
+    }
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn cli_accepts_the_same_local_origin_as_the_browser() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("disposable-cli-token");
+        let secret = integrations::authentication::random_capability();
+        let token = integrations::authentication::format_machine_token(Id::new(), &secret).unwrap();
+        std::fs::write(&file, token).unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        for (origin, development_http, accepted) in [
+            ("http://localhost:8081", true, true),
+            ("http://127.0.0.1:8080", true, true),
+            ("http://[::1]:8081", true, true),
+            ("https://localhost", false, true),
+            ("https://127.0.0.1", false, true),
+            ("http://localhost:8081", false, false),
+            ("https://qz.example", false, false),
+            ("http://192.168.1.1:8081", true, false),
+            ("http://localhost:8081/path", true, false),
+            ("http://user:pass@localhost:8081", true, false),
+        ] {
+            let arguments = Arguments {
+                origin: origin.into(),
+                credential_file: file.clone(),
+                ca_certificate: None,
+                development_http,
+                idempotency_key: None,
+                operator_grant: None,
+                command: commands::Command::Project(commands::Project::List(commands::List {
+                    cursor: None,
+                    limit: 1,
+                })),
+            };
+            assert_eq!(Connection::open(&arguments).is_ok(), accepted, "{origin}");
+        }
     }
 }
