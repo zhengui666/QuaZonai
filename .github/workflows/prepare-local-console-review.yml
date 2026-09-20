@@ -67,6 +67,17 @@ jobs:
                   lines[start:end]=content.splitlines(keepends=True)
               prepared[str(path)]=''.join(lines)
           assert len(prepared)==17
+          corrections=json.loads(pathlib.Path('.github/local-console-review-corrections.json').read_text())
+          for correction in corrections:
+              path=pathlib.Path(correction['path'])
+              assert str(path) in {'crates/store/tests/codex_profiles.rs','DESIGN.md','CLI.md','.opensdlc/tasks/local-ui-simplification-20260920/task.md'}
+              if str(path) not in prepared:
+                  subprocess.run(['git','diff','--exit-code',os.environ['SOURCE_BASE'],'--',str(path)],check=True)
+                  prepared[str(path)]=path.read_text()
+              old,new=correction['old'],correction['new']
+              assert old and prepared[str(path)].count(old)==1,str(path)
+              prepared[str(path)]=prepared[str(path)].replace(old,new)
+          assert len(prepared)==19
           for name,content in prepared.items():
               path=pathlib.Path(name)
               path.parent.mkdir(parents=True,exist_ok=True)
@@ -95,7 +106,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git rm .github/local-console-review-1.json .github/local-console-review-2.json .github/workflows/prepare-local-console-review.yml
+          git rm .github/local-console-review-1.json .github/local-console-review-2.json .github/local-console-review-corrections.json .github/workflows/prepare-local-console-review.yml
           git add -A
           git diff --cached --check
           git config user.name 'github-actions[bot]'
