@@ -183,3 +183,24 @@ They do not approve this later source change. Native formatting/generation and
 focused regression preparation, fresh full PR CI and independent read-only
 review are required. No merge, private account, user-host operation or #62
 completion is claimed by this source record.
+
+
+## Local origin end-to-end and current T05 contract
+
+Independent e5cb33f review4058433404/406/409 found residual literal-only
+Mission/MCP validation and obsolete CLI/T05 documentation. Issue98
+comment5753524650 records the correction. Reuse WebPolicy through launcher,
+native Thread start/resume and MCP; preserve the exact configured localhost
+origin and explicit HTTP flag. Runtime/Downstream endpoint rules remain
+unchanged. Original native Mission/HTTP/PostgreSQL and scientific-feedback
+fixtures now exercise localhost for the control plane, not only an outer
+configuration check. No scientific, scope, resource or timing rule is relaxed.
+
+The old custom-Provider T05 is superseded by mandatory credential-free native
+configuration-ownership and rejected-registration coverage, not marked waived
+or passed. The account-only waiver excludes this replacement; all other
+non-account obligations remain.
+
+Fresh focused native tests, all original final-Head workflows and independent
+read-only review are required. The previous e5 Web pass is not approval of this
+later source. No user-host installation, real account or #62 completion claimed.

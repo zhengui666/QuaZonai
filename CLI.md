@@ -98,7 +98,7 @@ server client --origin https://localhost --credential-file /private/cli.token da
 server client --origin https://localhost --credential-file /private/cli.token runtime list
 ```
 
-上例 origin 和路径须替换为本人部署及凭据文件。Unix 凭据文件权限不得授予 group/other；末尾允许一个换行。私有CA部署使用 `--ca-certificate /absolute/ca-bundle.pem`，不存在忽略证书的选项。开发环境只有字面量127.0.0.1或::1且显式 `--development-http` 才可HTTP；服务器也须同意该入口。连接默认3秒、普通请求20秒，失败不自动重试、不使用环境代理、不跟随重定向。
+上例 origin 和路径须替换为本人部署及凭据文件。Unix 凭据文件权限不得授予 group/other；末尾允许一个换行。私有CA部署使用 `--ca-certificate /absolute/ca-bundle.pem`，不存在忽略证书的选项。本机控制面 origin 只接受 `localhost` 或字面量 loopback IPv4/IPv6；使用HTTP还须显式 `--development-http`，并与服务器 PUBLIC_URL 完全一致。默认代理为 `http://localhost:8081`。这是 CLI/Mission/MCP 的本机入口规则，不改变独立 Runtime/Downstream 的字面量 loopback HTTP 规则。连接默认3秒、普通请求20秒，失败不自动重试、不使用环境代理、不跟随重定向。
 
 ### 当前命令与严格正文
 
