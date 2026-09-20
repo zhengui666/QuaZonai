@@ -1,0 +1,127 @@
+name: Prepare reviewed local console source
+on:
+  push:
+    branches: [codex/local-ui-simplification-20260920]
+    paths: ['.github/workflows/prepare-local-console-review.yml']
+permissions:
+  contents: read
+concurrency:
+  group: local-console-review-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.repository == 'zhengui666/QuaZonai' && github.ref == 'refs/heads/codex/local-ui-simplification-20260920'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    services:
+      postgres:
+        image: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+        env:
+          POSTGRES_PASSWORD: isolated-review-test
+        ports:
+          - 127.0.0.1:55434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EXPECTED_HEAD: ${{ github.sha }}
+      SOURCE_BASE: e305899320f4de28918c410c131f1f023441ef35
+      RUSTUP_TOOLCHAIN: '1.98.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      DATABASE_URL: postgresql://postgres:isolated-review-test@127.0.0.1:55434/postgres
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply the exact assistant-authored edits
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          mkdir -p /tmp/review-preparation
+          printf '%s\n' "$EXPECTED_HEAD" > /tmp/review-preparation/input-commit.txt
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          edits=[]
+          for number in [1,2]:
+              edits.extend(json.loads(pathlib.Path(f'.github/local-console-review-{number}.json').read_text()))
+          prepared={}
+          for entry in edits:
+              path=pathlib.Path(entry['path'])
+              assert not path.is_absolute() and '..' not in path.parts and not path.is_symlink()
+              assert path.parts[0] in {'apps','crates','docs','.opensdlc','OPERATIONS.md','THIRD_PARTY_NOTICES.md'}
+              assert str(path) not in prepared
+              subprocess.run(['git','diff','--exit-code',os.environ['SOURCE_BASE'],'--',str(path)],check=True)
+              lines=path.read_text().splitlines(keepends=True) if path.exists() else []
+              previous=0
+              for start,end,content in entry['edits']:
+                  assert previous<=start<=end<=len(lines)
+                  previous=end
+              for start,end,content in reversed(entry['edits']):
+                  lines[start:end]=content.splitlines(keepends=True)
+              prepared[str(path)]=''.join(lines)
+          assert len(prepared)==17
+          for name,content in prepared.items():
+              path=pathlib.Path(name)
+              path.parent.mkdir(parents=True,exist_ok=True)
+              path.write_text(content)
+          pathlib.Path('/tmp/review-preparation/paths.json').write_text(json.dumps(sorted(prepared),indent=2))
+          PY
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Native Rust formatting and focused database regressions
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt
+          cargo fmt --all 2>&1 | tee /tmp/review-preparation/format.log
+          cargo test --locked --no-fail-fast -p store --test codex_profiles --test research_review --test settings -- --test-threads=4 2>&1 | tee /tmp/review-preparation/store.log
+          cargo test --locked --no-fail-fast -p server --test codex_profiles_http --test control_http --test execution_assumptions_http --test experiments_http -- --test-threads=4 2>&1 | tee /tmp/review-preparation/http.log
+      - name: Original frontend production build and unit suite
+        run: |
+          set -euo pipefail
+          npm --prefix apps/web ci --ignore-scripts --no-audit --no-fund
+          npm --prefix apps/web run build 2>&1 | tee /tmp/review-preparation/web-build.log
+          npm --prefix apps/web test 2>&1 | tee /tmp/review-preparation/web-unit.log
+          git diff --exit-code -- contracts/generated apps/web/src/generated Cargo.lock apps/web/package-lock.json
+      - name: Remove temporary inputs and publish to the task branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git rm .github/local-console-review-1.json .github/local-console-review-2.json .github/workflows/prepare-local-console-review.yml
+          git add -A
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: validate active native model settings and complete local-console regressions'
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          remote=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin refs/heads/codex/local-ui-simplification-20260920 | cut -f1)
+          test "$remote" = "$EXPECTED_HEAD"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/codex/local-ui-simplification-20260920
+          git rev-parse HEAD > /tmp/review-preparation/published-commit.txt
+      - name: Preserve original outcomes and source
+        if: always()
+        env:
+          RESULTS: ${{ toJSON(steps) }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/review-preparation
+          printf '%s\n' "$RESULTS" > /tmp/review-preparation/steps.json
+          git add -A
+          git archive "$(git write-tree)" | gzip > /tmp/review-preparation/source.tar.gz
+          printf 'Focused native verification only; not full same-Head CI, browser, hosted services or independent review. No native model coding, private account or user-machine operation.\n' > /tmp/review-preparation/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: local-console-review-${{ github.run_id }}
+          path: /tmp/review-preparation
+          retention-days: 7
+          if-no-files-found: error
