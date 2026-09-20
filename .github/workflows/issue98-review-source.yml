@@ -1,0 +1,95 @@
+name: Issue98 authored review correction
+on:
+  push:
+    branches: [codex/issue98-review-preparation]
+    paths:
+      - '.github/issue98-review-*.json'
+      - '.github/workflows/issue98-review-source.yml'
+permissions:
+  contents: read
+concurrency:
+  group: issue98-review-source
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.repository == 'zhengui666/QuaZonai' && github.ref == 'refs/heads/codex/issue98-review-preparation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      SOURCE_BASE: 2da592747987393dd3f9676ab6b491e938a5b1c8
+      RUSTUP_TOOLCHAIN: '1.98.1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply only original assistant-authored text to its exact source base
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/issue98-review-input /tmp/issue98-review-evidence
+          for part in {0..8}; do cp ".github/issue98-review-$part.json" /tmp/issue98-review-input/; done
+          git checkout --detach "$SOURCE_BASE"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          grouped = {}
+          for part in range(9):
+              for entry in json.loads(Path(f'/tmp/issue98-review-input/issue98-review-{part}.json').read_text()):
+                  path = Path(entry['path'])
+                  assert not path.is_absolute() and '..' not in path.parts and path.is_file() and not path.is_symlink()
+                  assert path.parts[0] in {'apps','crates','migrations','docs','deploy','.opensdlc','CLI.md','DESIGN.md','OPERATIONS.md'} or str(path) == '.github/workflows/ci.yml'
+                  grouped.setdefault(str(path), []).extend(entry['edits'])
+          assert len(grouped) == 28
+          prepared = {}
+          for name, edits in grouped.items():
+              lines = Path(name).read_text().splitlines(keepends=True)
+              previous = 0
+              for start, end, text in edits:
+                  assert previous <= start <= end <= len(lines) and isinstance(text, str)
+                  previous = end
+              for start, end, text in reversed(edits):
+                  lines[start:end] = text.splitlines(keepends=True)
+              prepared[name] = ''.join(lines)
+          for name, text in prepared.items():
+              Path(name).write_text(text)
+          assert not list(Path('.github').glob('issue98-review-*'))
+          assert not Path('.github/workflows/issue98-review-source.yml').exists()
+          Path('/tmp/issue98-review-evidence/authored-files.json').write_text(json.dumps(sorted(prepared), indent=2))
+          PY
+      - name: Native Rust formatting only
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt
+          cargo fmt --all 2>&1 | tee /tmp/issue98-review-evidence/format.log
+          cargo fmt --all -- --check
+      - name: Publish a separate candidate, without changing the PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: bind local Codex roles safely and complete no-login theme regressions'
+          test "$(git rev-parse HEAD^)" = "$SOURCE_BASE"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          remote=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin refs/heads/codex/local-ui-simplification-20260920 | cut -f1)
+          test "$remote" = "$SOURCE_BASE"
+          result="refs/heads/codex/issue98-review-result-$GITHUB_RUN_ID"
+          test -z "$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin "$result")"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:$result"
+          git rev-parse HEAD > /tmp/issue98-review-evidence/published-commit.txt
+          printf '%s\n' "$SOURCE_BASE" > /tmp/issue98-review-evidence/base-commit.txt
+          git archive HEAD | gzip > /tmp/issue98-review-evidence/source.tar.gz
+          printf 'Literal authored text and native formatting only. No application tests or model execution. Candidate is not yet the PR Head, reviewed or merged.\n' > /tmp/issue98-review-evidence/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: issue98-review-${{ github.run_id }}
+          path: /tmp/issue98-review-evidence
+          retention-days: 7
+          if-no-files-found: error
