@@ -14,14 +14,29 @@ jobs:
   materialize:
     if: github.repository == 'zhengui666/QuaZonai' && github.ref == 'refs/heads/codex/local-ui-simplification-20260920'
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     permissions:
       contents: write
+    services:
+      postgres:
+        image: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-local-console-test
+          POSTGRES_DB: postgres
+        ports:
+          - 127.0.0.1:55434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       EXPECTED_HEAD: ${{ github.sha }}
       RUSTUP_TOOLCHAIN: '1.98.1'
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
+      DATABASE_URL: postgresql://postgres:isolated-local-console-test@127.0.0.1:55434/postgres
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -98,12 +113,12 @@ jobs:
         run: |
           set -euo pipefail
           cargo check --workspace --lib --bins 2>&1 | tee /tmp/local-console-evidence/rust-check.log
-      - name: Check all native tests and feature targets
+      - name: Lint every native test and feature target
         id: targets
         continue-on-error: true
         run: |
           set -euo pipefail
-          cargo check --workspace --all-targets --features server/native-codex,runtime/native-oci 2>&1 | tee /tmp/local-console-evidence/all-targets.log
+          cargo clippy --keep-going --workspace --all-targets --features server/native-codex,runtime/native-oci -- -D warnings 2>&1 | tee /tmp/local-console-evidence/all-targets.log
       - name: Generate real Rust contracts
         id: contracts
         if: steps.rust.outcome == 'success'
@@ -128,7 +143,7 @@ jobs:
         run: |
           set -euo pipefail
           npm --prefix apps/web test 2>&1 | tee /tmp/local-console-evidence/web-unit.log
-      - name: Local-console and both-theme browser regressions
+      - name: Browser regressions with bounded failure collection
         id: browser
         if: steps.web.outcome == 'success'
         continue-on-error: true
@@ -136,7 +151,19 @@ jobs:
         run: |
           set -euo pipefail
           npx --no-install playwright install --with-deps chromium
-          npm run test:e2e -- tests/theme.spec.ts tests/codex-settings.spec.ts tests/console.spec.ts 2>&1 | tee /tmp/local-console-evidence/browser.log
+          npm run test:e2e -- --max-failures=12 2>&1 | tee /tmp/local-console-evidence/browser.log
+      - name: Actual PostgreSQL local authority and model persistence
+        id: database_store
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cargo test --locked --keep-going -p store --test auth --test browser_epoch --test codex_profiles --test control --test constraints -- --test-threads=4 2>&1 | tee /tmp/local-console-evidence/store-tests.log
+      - name: Actual HTTP and migration regressions
+        id: database_http
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cargo test --locked --keep-going -p server --test auth_http --test codex_profiles_http --test control_http --test migration_command --test data_http --test brief_http --test cycles_http --test mandate_http --test runs_http --test settings_http --test runtime_http -- --test-threads=4 2>&1 | tee /tmp/local-console-evidence/http-tests.log
       - name: Publish source only to the task branch
         id: publish
         if: always() && steps.apply.outcome == 'success'
@@ -148,7 +175,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'test: replace verification flows with local entry and native theme regressions'
+          git commit -m 'test: verify direct local access and concise native-only settings'
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
           remote=$(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote origin refs/heads/codex/local-ui-simplification-20260920 | cut -f1)
@@ -168,7 +195,7 @@ jobs:
           git archive "$(git write-tree)" | gzip > /tmp/local-console-evidence/source.tar.gz
           git diff "${SOURCE_BASE:-$EXPECTED_HEAD}" --stat > /tmp/local-console-evidence/diff-stat.txt
           if test -d apps/web/test-results; then cp -R apps/web/test-results /tmp/local-console-evidence/browser-results; fi
-          printf 'Development checkpoint only. Failed and skipped checks are not passes. Not full PostgreSQL or real-account acceptance. Not reviewed or merged.\n' > /tmp/local-console-evidence/SCOPE.txt
+          printf 'Development checkpoint only. Failed and skipped checks are not passes. Focused database tests and browser suite with 12-failure stop; not full PostgreSQL, packaged-service or real-account acceptance. Not reviewed or merged.\n' > /tmp/local-console-evidence/SCOPE.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -184,7 +211,7 @@ jobs:
           python3 - <<'PY'
           import json, os
           steps = json.loads(os.environ['RESULTS'])
-          required = ['apply', 'format', 'rust', 'targets', 'contracts', 'web', 'unit', 'browser', 'publish']
+          required = ['apply', 'format', 'rust', 'targets', 'contracts', 'web', 'unit', 'browser', 'database_store', 'database_http', 'publish']
           failed = [name for name in required if steps.get(name, {}).get('outcome') != 'success']
           assert not failed, 'Incomplete checks: ' + ', '.join(failed)
           PY
