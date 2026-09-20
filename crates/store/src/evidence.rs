@@ -12,6 +12,7 @@ use contracts::{
     DbCounter, Id, Revision, SchemaV1,
 };
 use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
+mod equity_curve;
 type Tx<'a> = Transaction<'a, Postgres>;
 
 // Native bindings carry dataset provenance. Generated CODE is not market data.

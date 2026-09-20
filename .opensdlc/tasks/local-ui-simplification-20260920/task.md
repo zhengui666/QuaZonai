@@ -81,6 +81,17 @@ the actual tested Head and original artifacts.
 ## Delivery
 Not merged. This task does not certify unrelated Issue #62 acceptance.
 
+## Integration with the current main
+Native Git inspection35523462906/artifact10608198441 compared branchba393b87
+with main2135def63. Two conflicts were observed: the historical evaluation UI and
+generated response validators. The author preserves the new portfolio equity
+curve, removes its neighboring explanatory copy, and regenerates all contracts
+using the original Rust/npm generators. The new equity HTTP check covers direct
+local reads and explicit bad-Bearer denial; the actual chart browser test runs
+in both themes at all existing viewports. No scientific output is rewritten.
+The temporary inspection/preparation files must be absent from the delivered
+tree. Inspection success is not an application, CI or independent-review pass.
+
 ## PR99 review corrections in progress
 
 Issue98 comment5750675699 records the field-level correction plan for the nine

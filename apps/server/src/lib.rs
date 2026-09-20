@@ -13,6 +13,7 @@ pub mod control;
 pub mod cycles;
 pub mod data;
 pub mod downstream;
+pub mod equity_curve;
 pub mod error;
 pub mod evidence;
 pub mod execution_assumptions;
@@ -289,6 +290,10 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             get(evidence::qualifications),
         )
         .route("/api/v2/evaluations/{id}/metrics", get(evidence::metrics))
+        .route(
+            "/api/v2/evaluations/{id}/equity-curve",
+            get(equity_curve::get),
+        )
         .route(
             "/api/v2/settings/codex",
             get(codex_profiles::profiles).patch(codex_profiles::update_selected),
@@ -659,7 +664,7 @@ execution_assumptions::list,execution_assumptions::get,execution_assumptions::cr
 forward::weight_snapshots,forward::weights,forward::message,forward::list,forward::window,forward::observations,forward::wakes,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
 experiments::propose,experiments::list,experiments::get,
-evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::qualifications,evidence::evaluations,evidence::candidate_evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,
+evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::qualifications,evidence::evaluations,evidence::candidate_evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,equity_curve::get,
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
 runtime::probe,runtime::readiness,downstream::probe,downstream::readiness,

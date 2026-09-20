@@ -99,7 +99,7 @@ pub fn metrics(
     Ok((records, capabilities))
 }
 
-fn native_count(value: &Value) -> Result<u64, DomainError> {
+pub(super) fn native_count(value: &Value) -> Result<u64, DomainError> {
     let value = value
         .as_str()
         .ok_or_else(|| bad("native_output.canonical_counter"))?;
@@ -111,7 +111,7 @@ fn native_count(value: &Value) -> Result<u64, DomainError> {
     }
     Ok(count)
 }
-fn money(value: &Value, currency: &str) -> Result<BigDecimal, DomainError> {
+pub(super) fn money(value: &Value, currency: &str) -> Result<BigDecimal, DomainError> {
     // Only associate the native Money serialization with the selected currency.
     // BigDecimal owns exact numerical parsing/comparison; no float conversion.
     let amount = value

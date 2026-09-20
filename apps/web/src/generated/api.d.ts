@@ -740,6 +740,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/evaluations/{id}/equity-curve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_evaluation_equity_curve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/evaluations/{id}/metrics": {
         parameters: {
             query?: never;
@@ -3772,6 +3788,47 @@ export interface components {
             received_at: string;
             report_artifact_id: components["schemas"]["Id"];
         };
+        EquityCurveDataV1: {
+            series: components["schemas"]["EquitySeriesV1"];
+            source_artifact_id: components["schemas"]["Id"];
+            /** @enum {string} */
+            status: "READY";
+        } | {
+            reason_code: components["schemas"]["EquityUnavailableReason"];
+            /** @enum {string} */
+            status: "UNAVAILABLE";
+        };
+        EquityCurveV1: {
+            candidate_id: components["schemas"]["Id"];
+            curve: components["schemas"]["EquityCurveDataV1"];
+            evaluation_id: components["schemas"]["Id"];
+            origin: components["schemas"]["DataOrigin"];
+            project_id: components["schemas"]["Id"];
+            run_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        EquityPointV1: {
+            reason_code?: string | null;
+            timestamp_ns: components["schemas"]["DbCounter"];
+            value?: null | components["schemas"]["DecimalValue"];
+        };
+        /** @enum {string} */
+        EquityResolution: "AUTO" | "NATIVE" | "DAY" | "WEEK" | "MONTH";
+        EquitySeriesV1: {
+            base_currency: string;
+            native_version: string;
+            period_end_ns: components["schemas"]["DbCounter"];
+            period_start_ns: components["schemas"]["DbCounter"];
+            points: components["schemas"]["EquityPointV1"][];
+            /** @description Actual resolution, never AUTO. Bucket ends retain their native timestamp. */
+            resolution: components["schemas"]["EquityResolution"];
+            sampled: boolean;
+            source_point_count: components["schemas"]["DbCounter"];
+            starting_capital: components["schemas"]["DecimalValue"];
+            window_point_count: components["schemas"]["DbCounter"];
+        };
+        /** @enum {string} */
+        EquityUnavailableReason: "SIMULATION_FAILED" | "INVALID_EVIDENCE" | "NO_SIMULATION" | "LEGACY_SNAPSHOTS_UNAVAILABLE";
         /** @enum {string} */
         EvaluationKind: "DISCOVERY" | "WALK_FORWARD" | "SEALED" | "PORTFOLIO" | "FORWARD";
         EvaluationPolicyCreate: {
@@ -10217,6 +10274,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvaluationView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_evaluation_equity_curve: {
+        parameters: {
+            query?: {
+                start_ns?: components["schemas"]["DbCounter"];
+                end_ns?: components["schemas"]["DbCounter"];
+                resolution?: components["schemas"]["EquityResolution"];
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquityCurveV1"];
                 };
             };
             401: {

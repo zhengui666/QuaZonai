@@ -464,3 +464,9 @@ https://docs.rs/ndarray-stats/0.7.0/ndarray_stats/trait.DeviationExt.html
 `apps/job/tests/catalog.rs` 以原生写入的目录验证截断页脚、超长元数据及损坏压缩页均返回
 错误且保留输入字节，恢复原文件后仍能读取原行情。压缩膨胀行数上限另有真实 SNAPPY
 回归。这些检查不替代 T35 的容器内压缩炸弹资源限制及安全错误回传验收。
+
+## Historical portfolio equity
+
+The equity view reuses Apache ECharts (Apache-2.0), `echarts-for-react/lib/core` (MIT), native Nautilus total-equity snapshots and Ant Design controls. Exact versions are in `apps/web/package-lock.json`. Only Line, Grid, Tooltip, DataZoom, Aria and Canvas are registered; no competing chart engine or first-party renderer is added. View bucketing selects existing native observations and is never used for financial metrics. Rendering compatibility and performance are verified by repository tests, not inferred from upstream peer ranges or benchmark claims.
+
+Upstream references: [ECharts](https://github.com/apache/echarts), [React adapter](https://github.com/hustcc/echarts-for-react), [modular imports](https://echarts.apache.org/handbook/en/basics/import/).
