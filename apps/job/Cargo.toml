@@ -1,11 +1,21 @@
 [package]
 name = "job"
+default-run = "job"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
 publish = false
+
+[features]
+# Operator data preparation only; default scientific job images remain offline.
+polymarket-history = ["dep:nautilus-polymarket", "dep:tokio"]
+
+[[bin]]
+name = "polymarket-history"
+path = "src/bin/polymarket-history.rs"
+required-features = ["polymarket-history"]
 
 [dependencies]
 serde.workspace = true
@@ -23,6 +33,8 @@ nautilus-execution = { version = "=0.63.0", default-features = false }
 nautilus-portfolio = { version = "=0.63.0", default-features = false }
 nautilus-persistence = { version = "=0.63.0", default-features = false }
 nautilus-indicators = { version = "=0.63.0", default-features = false }
+nautilus-polymarket = { version = "=0.63.0", default-features = false, optional = true }
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"], optional = true }
 rust_decimal = "=1.42.1"
 nautilus-model = { version = "=0.63.0", default-features = false, features = ["test-support"] }
 nautilus-trading = { version = "=0.63.0", default-features = false, features = ["examples"] }
