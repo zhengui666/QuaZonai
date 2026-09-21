@@ -70222,7 +70222,7 @@ return errors === 0;
 validate1610.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 exports.response918 = validate1622;
-const schema314 = {"additionalProperties":false,"properties":{"replayed":{"type":"boolean"},"resource":{"additionalProperties":false,"properties":{"connection_mode":{"$ref":"#/components/schemas/ConnectionMode"},"created_at":{"format":"date-time","type":"string"},"home_binding":{"description":"An opaque deployment label, never a path. None identifies a historical\nunregistered reference, which must not be exposed or guessed into a mount.","type":["string","null"]},"id":{"$ref":"#/components/schemas/Id"},"model_settings":{"$ref":"#/components/schemas/SavedModelSettingsV1"},"name":{"type":"string"},"profile_origin":{"$ref":"#/components/schemas/ProfileOrigin"},"revision":{"$ref":"#/components/schemas/Revision"},"updated_at":{"format":"date-time","type":"string"}},"required":["id","name","profile_origin","connection_mode","model_settings","revision","created_at","updated_at"],"type":"object"},"schema_version":{"$ref":"#/components/schemas/SchemaV1"}},"required":["schema_version","replayed","resource"],"type":"object"};
+const schema314 = {"additionalProperties":false,"properties":{"connection_mode":{"$ref":"#/components/schemas/ConnectionMode"},"created_at":{"format":"date-time","type":"string"},"home_binding":{"description":"An opaque deployment label, never a path. None identifies a historical\nunregistered reference, which must not be exposed or guessed into a mount.","type":["string","null"]},"id":{"$ref":"#/components/schemas/Id"},"model_settings":{"$ref":"#/components/schemas/SavedModelSettingsV1"},"name":{"type":"string"},"profile_origin":{"$ref":"#/components/schemas/ProfileOrigin"},"revision":{"$ref":"#/components/schemas/Revision"},"updated_at":{"format":"date-time","type":"string"}},"required":["id","name","profile_origin","connection_mode","model_settings","revision","created_at","updated_at"],"type":"object"};
 
 function validate1622(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
@@ -70237,255 +70237,15 @@ evaluated0.items = undefined;
 if(errors === 0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
-if((((data.schema_version === undefined) && (missing0 = "schema_version")) || ((data.replayed === undefined) && (missing0 = "replayed"))) || ((data.resource === undefined) && (missing0 = "resource"))){
+if(((((((((data.id === undefined) && (missing0 = "id")) || ((data.name === undefined) && (missing0 = "name"))) || ((data.profile_origin === undefined) && (missing0 = "profile_origin"))) || ((data.connection_mode === undefined) && (missing0 = "connection_mode"))) || ((data.model_settings === undefined) && (missing0 = "model_settings"))) || ((data.revision === undefined) && (missing0 = "revision"))) || ((data.created_at === undefined) && (missing0 = "created_at"))) || ((data.updated_at === undefined) && (missing0 = "updated_at"))){
 validate1622.errors = [{instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(((key0 === "replayed") || (key0 === "resource")) || (key0 === "schema_version"))){
+if(!(func1.call(schema314.properties, key0))){
 validate1622.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
-return false;
-break;
-}
-}
-if(_errs1 === errors){
-if(data.replayed !== undefined){
-const _errs2 = errors;
-if(typeof data.replayed !== "boolean"){
-validate1622.errors = [{instancePath:instancePath+"/replayed",schemaPath:"#/properties/replayed/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"}];
-return false;
-}
-var valid0 = _errs2 === errors;
-}
-else {
-var valid0 = true;
-}
-if(valid0){
-if(data.resource !== undefined){
-let data1 = data.resource;
-const _errs4 = errors;
-if(errors === _errs4){
-if(data1 && typeof data1 == "object" && !Array.isArray(data1)){
-let missing1;
-if(((((((((data1.id === undefined) && (missing1 = "id")) || ((data1.name === undefined) && (missing1 = "name"))) || ((data1.profile_origin === undefined) && (missing1 = "profile_origin"))) || ((data1.connection_mode === undefined) && (missing1 = "connection_mode"))) || ((data1.model_settings === undefined) && (missing1 = "model_settings"))) || ((data1.revision === undefined) && (missing1 = "revision"))) || ((data1.created_at === undefined) && (missing1 = "created_at"))) || ((data1.updated_at === undefined) && (missing1 = "updated_at"))){
-validate1622.errors = [{instancePath:instancePath+"/resource",schemaPath:"#/properties/resource/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"}];
-return false;
-}
-else {
-const _errs6 = errors;
-for(const key1 in data1){
-if(!(func1.call(schema314.properties.resource.properties, key1))){
-validate1622.errors = [{instancePath:instancePath+"/resource",schemaPath:"#/properties/resource/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"}];
-return false;
-break;
-}
-}
-if(_errs6 === errors){
-if(data1.connection_mode !== undefined){
-const _errs7 = errors;
-if(!(validate1611(data1.connection_mode, {instancePath:instancePath+"/resource/connection_mode",parentData:data1,parentDataProperty:"connection_mode",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate1611.errors : vErrors.concat(validate1611.errors);
-errors = vErrors.length;
-}
-var valid1 = _errs7 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data1.created_at !== undefined){
-let data3 = data1.created_at;
-const _errs8 = errors;
-if(errors === _errs8){
-if(errors === _errs8){
-if(typeof data3 === "string"){
-if(!(formats2.validate(data3))){
-validate1622.errors = [{instancePath:instancePath+"/resource/created_at",schemaPath:"#/properties/resource/properties/created_at/format",keyword:"format",params:{format: "date-time"},message:"must match format \""+"date-time"+"\""}];
-return false;
-}
-}
-else {
-validate1622.errors = [{instancePath:instancePath+"/resource/created_at",schemaPath:"#/properties/resource/properties/created_at/type",keyword:"type",params:{type: "string"},message:"must be string"}];
-return false;
-}
-}
-}
-var valid1 = _errs8 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data1.home_binding !== undefined){
-let data4 = data1.home_binding;
-const _errs10 = errors;
-if((typeof data4 !== "string") && (data4 !== null)){
-validate1622.errors = [{instancePath:instancePath+"/resource/home_binding",schemaPath:"#/properties/resource/properties/home_binding/type",keyword:"type",params:{type: schema314.properties.resource.properties.home_binding.type},message:"must be string,null"}];
-return false;
-}
-var valid1 = _errs10 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data1.id !== undefined){
-const _errs12 = errors;
-if(!(validate54(data1.id, {instancePath:instancePath+"/resource/id",parentData:data1,parentDataProperty:"id",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate54.errors : vErrors.concat(validate54.errors);
-errors = vErrors.length;
-}
-var valid1 = _errs12 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data1.model_settings !== undefined){
-const _errs13 = errors;
-if(!(validate1614(data1.model_settings, {instancePath:instancePath+"/resource/model_settings",parentData:data1,parentDataProperty:"model_settings",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate1614.errors : vErrors.concat(validate1614.errors);
-errors = vErrors.length;
-}
-var valid1 = _errs13 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data1.name !== undefined){
-const _errs14 = errors;
-if(typeof data1.name !== "string"){
-validate1622.errors = [{instancePath:instancePath+"/resource/name",schemaPath:"#/properties/resource/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
-return false;
-}
-var valid1 = _errs14 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data1.profile_origin !== undefined){
-const _errs16 = errors;
-if(!(validate1617(data1.profile_origin, {instancePath:instancePath+"/resource/profile_origin",parentData:data1,parentDataProperty:"profile_origin",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate1617.errors : vErrors.concat(validate1617.errors);
-errors = vErrors.length;
-}
-var valid1 = _errs16 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data1.revision !== undefined){
-const _errs17 = errors;
-if(!(validate87(data1.revision, {instancePath:instancePath+"/resource/revision",parentData:data1,parentDataProperty:"revision",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate87.errors : vErrors.concat(validate87.errors);
-errors = vErrors.length;
-}
-var valid1 = _errs17 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data1.updated_at !== undefined){
-let data10 = data1.updated_at;
-const _errs18 = errors;
-if(errors === _errs18){
-if(errors === _errs18){
-if(typeof data10 === "string"){
-if(!(formats2.validate(data10))){
-validate1622.errors = [{instancePath:instancePath+"/resource/updated_at",schemaPath:"#/properties/resource/properties/updated_at/format",keyword:"format",params:{format: "date-time"},message:"must match format \""+"date-time"+"\""}];
-return false;
-}
-}
-else {
-validate1622.errors = [{instancePath:instancePath+"/resource/updated_at",schemaPath:"#/properties/resource/properties/updated_at/type",keyword:"type",params:{type: "string"},message:"must be string"}];
-return false;
-}
-}
-}
-var valid1 = _errs18 === errors;
-}
-else {
-var valid1 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-validate1622.errors = [{instancePath:instancePath+"/resource",schemaPath:"#/properties/resource/type",keyword:"type",params:{type: "object"},message:"must be object"}];
-return false;
-}
-}
-var valid0 = _errs4 === errors;
-}
-else {
-var valid0 = true;
-}
-if(valid0){
-if(data.schema_version !== undefined){
-const _errs20 = errors;
-if(!(validate108(data.schema_version, {instancePath:instancePath+"/schema_version",parentData:data,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
-errors = vErrors.length;
-}
-var valid0 = _errs20 === errors;
-}
-else {
-var valid0 = true;
-}
-}
-}
-}
-}
-}
-else {
-validate1622.errors = [{instancePath,schemaPath:"#/type",keyword:"type",params:{type: "object"},message:"must be object"}];
-return false;
-}
-}
-validate1622.errors = vErrors;
-return errors === 0;
-}
-validate1622.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
-
-exports.response926 = validate1629;
-const schema315 = {"additionalProperties":false,"properties":{"connection_mode":{"$ref":"#/components/schemas/ConnectionMode"},"created_at":{"format":"date-time","type":"string"},"home_binding":{"description":"An opaque deployment label, never a path. None identifies a historical\nunregistered reference, which must not be exposed or guessed into a mount.","type":["string","null"]},"id":{"$ref":"#/components/schemas/Id"},"model_settings":{"$ref":"#/components/schemas/SavedModelSettingsV1"},"name":{"type":"string"},"profile_origin":{"$ref":"#/components/schemas/ProfileOrigin"},"revision":{"$ref":"#/components/schemas/Revision"},"updated_at":{"format":"date-time","type":"string"}},"required":["id","name","profile_origin","connection_mode","model_settings","revision","created_at","updated_at"],"type":"object"};
-
-function validate1629(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
-let vErrors = null;
-let errors = 0;
-const evaluated0 = validate1629.evaluated;
-if(evaluated0.dynamicProps){
-evaluated0.props = undefined;
-}
-if(evaluated0.dynamicItems){
-evaluated0.items = undefined;
-}
-if(errors === 0){
-if(data && typeof data == "object" && !Array.isArray(data)){
-let missing0;
-if(((((((((data.id === undefined) && (missing0 = "id")) || ((data.name === undefined) && (missing0 = "name"))) || ((data.profile_origin === undefined) && (missing0 = "profile_origin"))) || ((data.connection_mode === undefined) && (missing0 = "connection_mode"))) || ((data.model_settings === undefined) && (missing0 = "model_settings"))) || ((data.revision === undefined) && (missing0 = "revision"))) || ((data.created_at === undefined) && (missing0 = "created_at"))) || ((data.updated_at === undefined) && (missing0 = "updated_at"))){
-validate1629.errors = [{instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
-return false;
-}
-else {
-const _errs1 = errors;
-for(const key0 in data){
-if(!(func1.call(schema315.properties, key0))){
-validate1629.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -70510,12 +70270,12 @@ if(errors === _errs3){
 if(errors === _errs3){
 if(typeof data1 === "string"){
 if(!(formats2.validate(data1))){
-validate1629.errors = [{instancePath:instancePath+"/created_at",schemaPath:"#/properties/created_at/format",keyword:"format",params:{format: "date-time"},message:"must match format \""+"date-time"+"\""}];
+validate1622.errors = [{instancePath:instancePath+"/created_at",schemaPath:"#/properties/created_at/format",keyword:"format",params:{format: "date-time"},message:"must match format \""+"date-time"+"\""}];
 return false;
 }
 }
 else {
-validate1629.errors = [{instancePath:instancePath+"/created_at",schemaPath:"#/properties/created_at/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate1622.errors = [{instancePath:instancePath+"/created_at",schemaPath:"#/properties/created_at/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -70530,7 +70290,7 @@ if(data.home_binding !== undefined){
 let data2 = data.home_binding;
 const _errs5 = errors;
 if((typeof data2 !== "string") && (data2 !== null)){
-validate1629.errors = [{instancePath:instancePath+"/home_binding",schemaPath:"#/properties/home_binding/type",keyword:"type",params:{type: schema315.properties.home_binding.type},message:"must be string,null"}];
+validate1622.errors = [{instancePath:instancePath+"/home_binding",schemaPath:"#/properties/home_binding/type",keyword:"type",params:{type: schema314.properties.home_binding.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs5 === errors;
@@ -70566,7 +70326,7 @@ if(valid0){
 if(data.name !== undefined){
 const _errs9 = errors;
 if(typeof data.name !== "string"){
-validate1629.errors = [{instancePath:instancePath+"/name",schemaPath:"#/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate1622.errors = [{instancePath:instancePath+"/name",schemaPath:"#/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 var valid0 = _errs9 === errors;
@@ -70606,12 +70366,12 @@ if(errors === _errs13){
 if(errors === _errs13){
 if(typeof data8 === "string"){
 if(!(formats2.validate(data8))){
-validate1629.errors = [{instancePath:instancePath+"/updated_at",schemaPath:"#/properties/updated_at/format",keyword:"format",params:{format: "date-time"},message:"must match format \""+"date-time"+"\""}];
+validate1622.errors = [{instancePath:instancePath+"/updated_at",schemaPath:"#/properties/updated_at/format",keyword:"format",params:{format: "date-time"},message:"must match format \""+"date-time"+"\""}];
 return false;
 }
 }
 else {
-validate1629.errors = [{instancePath:instancePath+"/updated_at",schemaPath:"#/properties/updated_at/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate1622.errors = [{instancePath:instancePath+"/updated_at",schemaPath:"#/properties/updated_at/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -70633,16 +70393,256 @@ var valid0 = true;
 }
 }
 else {
-validate1629.errors = [{instancePath,schemaPath:"#/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate1622.errors = [{instancePath,schemaPath:"#/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-validate1629.errors = vErrors;
+validate1622.errors = vErrors;
 return errors === 0;
 }
-validate1629.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+validate1622.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-exports.response940 = validate1635;
+exports.response924 = validate1628;
+const schema315 = {"additionalProperties":false,"properties":{"replayed":{"type":"boolean"},"resource":{"additionalProperties":false,"properties":{"connection_mode":{"$ref":"#/components/schemas/ConnectionMode"},"created_at":{"format":"date-time","type":"string"},"home_binding":{"description":"An opaque deployment label, never a path. None identifies a historical\nunregistered reference, which must not be exposed or guessed into a mount.","type":["string","null"]},"id":{"$ref":"#/components/schemas/Id"},"model_settings":{"$ref":"#/components/schemas/SavedModelSettingsV1"},"name":{"type":"string"},"profile_origin":{"$ref":"#/components/schemas/ProfileOrigin"},"revision":{"$ref":"#/components/schemas/Revision"},"updated_at":{"format":"date-time","type":"string"}},"required":["id","name","profile_origin","connection_mode","model_settings","revision","created_at","updated_at"],"type":"object"},"schema_version":{"$ref":"#/components/schemas/SchemaV1"}},"required":["schema_version","replayed","resource"],"type":"object"};
+
+function validate1628(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate1628.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+if(errors === 0){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing0;
+if((((data.schema_version === undefined) && (missing0 = "schema_version")) || ((data.replayed === undefined) && (missing0 = "replayed"))) || ((data.resource === undefined) && (missing0 = "resource"))){
+validate1628.errors = [{instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+return false;
+}
+else {
+const _errs1 = errors;
+for(const key0 in data){
+if(!(((key0 === "replayed") || (key0 === "resource")) || (key0 === "schema_version"))){
+validate1628.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+return false;
+break;
+}
+}
+if(_errs1 === errors){
+if(data.replayed !== undefined){
+const _errs2 = errors;
+if(typeof data.replayed !== "boolean"){
+validate1628.errors = [{instancePath:instancePath+"/replayed",schemaPath:"#/properties/replayed/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"}];
+return false;
+}
+var valid0 = _errs2 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.resource !== undefined){
+let data1 = data.resource;
+const _errs4 = errors;
+if(errors === _errs4){
+if(data1 && typeof data1 == "object" && !Array.isArray(data1)){
+let missing1;
+if(((((((((data1.id === undefined) && (missing1 = "id")) || ((data1.name === undefined) && (missing1 = "name"))) || ((data1.profile_origin === undefined) && (missing1 = "profile_origin"))) || ((data1.connection_mode === undefined) && (missing1 = "connection_mode"))) || ((data1.model_settings === undefined) && (missing1 = "model_settings"))) || ((data1.revision === undefined) && (missing1 = "revision"))) || ((data1.created_at === undefined) && (missing1 = "created_at"))) || ((data1.updated_at === undefined) && (missing1 = "updated_at"))){
+validate1628.errors = [{instancePath:instancePath+"/resource",schemaPath:"#/properties/resource/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"}];
+return false;
+}
+else {
+const _errs6 = errors;
+for(const key1 in data1){
+if(!(func1.call(schema315.properties.resource.properties, key1))){
+validate1628.errors = [{instancePath:instancePath+"/resource",schemaPath:"#/properties/resource/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"}];
+return false;
+break;
+}
+}
+if(_errs6 === errors){
+if(data1.connection_mode !== undefined){
+const _errs7 = errors;
+if(!(validate1611(data1.connection_mode, {instancePath:instancePath+"/resource/connection_mode",parentData:data1,parentDataProperty:"connection_mode",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate1611.errors : vErrors.concat(validate1611.errors);
+errors = vErrors.length;
+}
+var valid1 = _errs7 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data1.created_at !== undefined){
+let data3 = data1.created_at;
+const _errs8 = errors;
+if(errors === _errs8){
+if(errors === _errs8){
+if(typeof data3 === "string"){
+if(!(formats2.validate(data3))){
+validate1628.errors = [{instancePath:instancePath+"/resource/created_at",schemaPath:"#/properties/resource/properties/created_at/format",keyword:"format",params:{format: "date-time"},message:"must match format \""+"date-time"+"\""}];
+return false;
+}
+}
+else {
+validate1628.errors = [{instancePath:instancePath+"/resource/created_at",schemaPath:"#/properties/resource/properties/created_at/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+}
+var valid1 = _errs8 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data1.home_binding !== undefined){
+let data4 = data1.home_binding;
+const _errs10 = errors;
+if((typeof data4 !== "string") && (data4 !== null)){
+validate1628.errors = [{instancePath:instancePath+"/resource/home_binding",schemaPath:"#/properties/resource/properties/home_binding/type",keyword:"type",params:{type: schema315.properties.resource.properties.home_binding.type},message:"must be string,null"}];
+return false;
+}
+var valid1 = _errs10 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data1.id !== undefined){
+const _errs12 = errors;
+if(!(validate54(data1.id, {instancePath:instancePath+"/resource/id",parentData:data1,parentDataProperty:"id",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate54.errors : vErrors.concat(validate54.errors);
+errors = vErrors.length;
+}
+var valid1 = _errs12 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data1.model_settings !== undefined){
+const _errs13 = errors;
+if(!(validate1614(data1.model_settings, {instancePath:instancePath+"/resource/model_settings",parentData:data1,parentDataProperty:"model_settings",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate1614.errors : vErrors.concat(validate1614.errors);
+errors = vErrors.length;
+}
+var valid1 = _errs13 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data1.name !== undefined){
+const _errs14 = errors;
+if(typeof data1.name !== "string"){
+validate1628.errors = [{instancePath:instancePath+"/resource/name",schemaPath:"#/properties/resource/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+var valid1 = _errs14 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data1.profile_origin !== undefined){
+const _errs16 = errors;
+if(!(validate1617(data1.profile_origin, {instancePath:instancePath+"/resource/profile_origin",parentData:data1,parentDataProperty:"profile_origin",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate1617.errors : vErrors.concat(validate1617.errors);
+errors = vErrors.length;
+}
+var valid1 = _errs16 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data1.revision !== undefined){
+const _errs17 = errors;
+if(!(validate87(data1.revision, {instancePath:instancePath+"/resource/revision",parentData:data1,parentDataProperty:"revision",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate87.errors : vErrors.concat(validate87.errors);
+errors = vErrors.length;
+}
+var valid1 = _errs17 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data1.updated_at !== undefined){
+let data10 = data1.updated_at;
+const _errs18 = errors;
+if(errors === _errs18){
+if(errors === _errs18){
+if(typeof data10 === "string"){
+if(!(formats2.validate(data10))){
+validate1628.errors = [{instancePath:instancePath+"/resource/updated_at",schemaPath:"#/properties/resource/properties/updated_at/format",keyword:"format",params:{format: "date-time"},message:"must match format \""+"date-time"+"\""}];
+return false;
+}
+}
+else {
+validate1628.errors = [{instancePath:instancePath+"/resource/updated_at",schemaPath:"#/properties/resource/properties/updated_at/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+}
+var valid1 = _errs18 === errors;
+}
+else {
+var valid1 = true;
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+validate1628.errors = [{instancePath:instancePath+"/resource",schemaPath:"#/properties/resource/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+return false;
+}
+}
+var valid0 = _errs4 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.schema_version !== undefined){
+const _errs20 = errors;
+if(!(validate108(data.schema_version, {instancePath:instancePath+"/schema_version",parentData:data,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
+errors = vErrors.length;
+}
+var valid0 = _errs20 === errors;
+}
+else {
+var valid0 = true;
+}
+}
+}
+}
+}
+}
+else {
+validate1628.errors = [{instancePath,schemaPath:"#/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+return false;
+}
+}
+validate1628.errors = vErrors;
+return errors === 0;
+}
+validate1628.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+
+exports.response932 = validate1635;
 const schema316 = {"additionalProperties":false,"properties":{"replayed":{"type":"boolean"},"resource":{"additionalProperties":false,"properties":{"created_at":{"format":"date-time","type":"string"},"id":{"$ref":"#/components/schemas/Id","description":"Native immutable SecretVault object identity; never a path or a plaintext read capability."},"label":{"type":"string"},"purpose":{"$ref":"#/components/schemas/IntegrationSecretPurpose"}},"required":["id","purpose","label","created_at"],"type":"object"},"schema_version":{"$ref":"#/components/schemas/SchemaV1"}},"required":["schema_version","replayed","resource"],"type":"object"};
 const schema317 = {"enum":["RUNTIME","DOWNSTREAM","TLS_CA"],"type":"string"};
 
@@ -71935,27 +71935,19 @@ exports["response920"] = exports["response1"];
 exports["response921"] = exports["response1"];
 exports["response922"] = exports["response1"];
 exports["response923"] = exports["response1"];
-exports["response924"] = exports["response1"];
 exports["response925"] = exports["response1"];
+exports["response926"] = exports["response1"];
 exports["response927"] = exports["response1"];
 exports["response928"] = exports["response1"];
 exports["response929"] = exports["response1"];
 exports["response930"] = exports["response1"];
 exports["response931"] = exports["response1"];
-exports["response932"] = exports["response918"];
 exports["response933"] = exports["response1"];
 exports["response934"] = exports["response1"];
 exports["response935"] = exports["response1"];
 exports["response936"] = exports["response1"];
 exports["response937"] = exports["response1"];
 exports["response938"] = exports["response1"];
-exports["response939"] = exports["response1"];
-exports["response941"] = exports["response1"];
-exports["response942"] = exports["response1"];
-exports["response943"] = exports["response1"];
-exports["response944"] = exports["response1"];
-exports["response945"] = exports["response1"];
-exports["response946"] = exports["response1"];
 exports["nativeProblem"] = exports["response1"];
 
 const responseRegistry = {
@@ -80245,7 +80237,7 @@ const responseRegistry = {
       }
     }
   },
-  "PATCH /api/v2/settings/codex 200": {
+  "GET /api/v2/settings/codex/{id} 200": {
     "empty": false,
     "media": {
       "application/json": {
@@ -80254,7 +80246,7 @@ const responseRegistry = {
       }
     }
   },
-  "PATCH /api/v2/settings/codex 401": {
+  "GET /api/v2/settings/codex/{id} 401": {
     "empty": false,
     "media": {
       "application/problem+json": {
@@ -80263,7 +80255,7 @@ const responseRegistry = {
       }
     }
   },
-  "PATCH /api/v2/settings/codex 403": {
+  "GET /api/v2/settings/codex/{id} 403": {
     "empty": false,
     "media": {
       "application/problem+json": {
@@ -80272,7 +80264,7 @@ const responseRegistry = {
       }
     }
   },
-  "PATCH /api/v2/settings/codex 404": {
+  "GET /api/v2/settings/codex/{id} 404": {
     "empty": false,
     "media": {
       "application/problem+json": {
@@ -80281,7 +80273,7 @@ const responseRegistry = {
       }
     }
   },
-  "PATCH /api/v2/settings/codex 409": {
+  "GET /api/v2/settings/codex/{id} 422": {
     "empty": false,
     "media": {
       "application/problem+json": {
@@ -80290,7 +80282,7 @@ const responseRegistry = {
       }
     }
   },
-  "PATCH /api/v2/settings/codex 422": {
+  "GET /api/v2/settings/codex/{id} 429": {
     "empty": false,
     "media": {
       "application/problem+json": {
@@ -80299,84 +80291,12 @@ const responseRegistry = {
       }
     }
   },
-  "PATCH /api/v2/settings/codex 429": {
-    "empty": false,
-    "media": {
-      "application/problem+json": {
-        "kind": "json",
-        "validator": "response924"
-      }
-    }
-  },
-  "PATCH /api/v2/settings/codex 503": {
-    "empty": false,
-    "media": {
-      "application/problem+json": {
-        "kind": "json",
-        "validator": "response925"
-      }
-    }
-  },
-  "GET /api/v2/settings/codex/{id} 200": {
-    "empty": false,
-    "media": {
-      "application/json": {
-        "kind": "json",
-        "validator": "response926"
-      }
-    }
-  },
-  "GET /api/v2/settings/codex/{id} 401": {
-    "empty": false,
-    "media": {
-      "application/problem+json": {
-        "kind": "json",
-        "validator": "response927"
-      }
-    }
-  },
-  "GET /api/v2/settings/codex/{id} 403": {
-    "empty": false,
-    "media": {
-      "application/problem+json": {
-        "kind": "json",
-        "validator": "response928"
-      }
-    }
-  },
-  "GET /api/v2/settings/codex/{id} 404": {
-    "empty": false,
-    "media": {
-      "application/problem+json": {
-        "kind": "json",
-        "validator": "response929"
-      }
-    }
-  },
-  "GET /api/v2/settings/codex/{id} 422": {
-    "empty": false,
-    "media": {
-      "application/problem+json": {
-        "kind": "json",
-        "validator": "response930"
-      }
-    }
-  },
-  "GET /api/v2/settings/codex/{id} 429": {
-    "empty": false,
-    "media": {
-      "application/problem+json": {
-        "kind": "json",
-        "validator": "response931"
-      }
-    }
-  },
   "PATCH /api/v2/settings/codex/{id} 200": {
     "empty": false,
     "media": {
       "application/json": {
         "kind": "json",
-        "validator": "response932"
+        "validator": "response924"
       }
     }
   },
@@ -80385,7 +80305,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response933"
+        "validator": "response925"
       }
     }
   },
@@ -80394,7 +80314,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response934"
+        "validator": "response926"
       }
     }
   },
@@ -80403,7 +80323,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response935"
+        "validator": "response927"
       }
     }
   },
@@ -80412,7 +80332,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response936"
+        "validator": "response928"
       }
     }
   },
@@ -80421,7 +80341,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response937"
+        "validator": "response929"
       }
     }
   },
@@ -80430,7 +80350,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response938"
+        "validator": "response930"
       }
     }
   },
@@ -80439,7 +80359,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response939"
+        "validator": "response931"
       }
     }
   },
@@ -80448,7 +80368,7 @@ const responseRegistry = {
     "media": {
       "application/json": {
         "kind": "json",
-        "validator": "response940"
+        "validator": "response932"
       }
     }
   },
@@ -80457,7 +80377,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response941"
+        "validator": "response933"
       }
     }
   },
@@ -80466,7 +80386,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response942"
+        "validator": "response934"
       }
     }
   },
@@ -80475,7 +80395,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response943"
+        "validator": "response935"
       }
     }
   },
@@ -80484,7 +80404,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response944"
+        "validator": "response936"
       }
     }
   },
@@ -80493,7 +80413,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response945"
+        "validator": "response937"
       }
     }
   },
@@ -80502,7 +80422,7 @@ const responseRegistry = {
     "media": {
       "application/problem+json": {
         "kind": "json",
-        "validator": "response946"
+        "validator": "response938"
       }
     }
   }

@@ -476,3 +476,80 @@ async fn native_probe_preserves_the_unoverridden_model_across_model_clear(pool: 
         .unwrap();
     assert_eq!(count, 3);
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn collection_patch_is_unavailable_without_changing_the_native_profile(pool: PgPool) {
+    let home = tempfile::tempdir().unwrap();
+    let (f, cookie) = configured(pool, home.path(), std::env::current_exe().unwrap()).await;
+    let original = local_profile(&f, &cookie).await;
+    let path = format!(
+        "/api/v2/settings/codex/{}",
+        original["id"].as_str().unwrap()
+    );
+    let mut settings = original["model_settings"].clone();
+    settings["saved_model"] = json!("dormant-local-model");
+    let update = json!({
+        "schema_version":1, "expected_revision":original["revision"], "model_settings":settings
+    });
+    let legacy = json!({"schema_version":1,"profile_id":original["id"],"request":update});
+    let rejected = command(
+        &f,
+        &cookie,
+        "removed-collection-update",
+        "PATCH",
+        "/api/v2/settings/codex",
+        legacy,
+    )
+    .await;
+    assert_eq!(
+        rejected.status,
+        StatusCode::METHOD_NOT_ALLOWED,
+        "legacy collection PATCH must be unavailable; response={}",
+        rejected.body
+    );
+    let retained = support::call(&f, "GET", &path, Value::Null, Some(&cookie)).await;
+    assert_eq!(retained.status, StatusCode::OK);
+    assert_eq!(
+        retained.body, original,
+        "the rejected route cannot mutate profile state"
+    );
+    let changed = command(
+        &f,
+        &cookie,
+        "canonical-model-update",
+        "PATCH",
+        &path,
+        update.clone(),
+    )
+    .await;
+    assert_eq!(changed.status, StatusCode::OK, "{}", changed.body);
+    assert_eq!(changed.body["resource"]["model_settings"], settings);
+    let replay = command(
+        &f,
+        &cookie,
+        "canonical-model-update",
+        "PATCH",
+        &path,
+        update,
+    )
+    .await;
+    assert_eq!(replay.status, StatusCode::OK);
+    assert_eq!(replay.body["resource"], changed.body["resource"]);
+    assert_eq!(replay.body["replayed"], true);
+}
+
+#[test]
+fn codex_openapi_exposes_only_collection_reads_and_item_model_updates() {
+    let api: Value = serde_json::from_str(&server::openapi_json().unwrap()).unwrap();
+    let collection = &api["paths"]["/api/v2/settings/codex"];
+    assert!(collection["get"].is_object());
+    assert!(collection.get("post").is_none());
+    assert!(collection.get("patch").is_none());
+    let item = &api["paths"]["/api/v2/settings/codex/{id}"];
+    assert!(item["get"].is_object());
+    assert_eq!(item["patch"]["operationId"], "updateCodexProfile");
+    assert!(api["components"]["schemas"]
+        .get("CodexSettingsUpdateV1")
+        .is_none());
+    assert!(api["components"]["schemas"]["CodexProfileUpdateV1"].is_object());
+}

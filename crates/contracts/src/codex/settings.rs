@@ -39,14 +39,6 @@ pub struct CodexProfileUpdateV1 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct CodexSettingsUpdateV1 {
-    pub schema_version: SchemaV1,
-    pub profile_id: Id,
-    pub request: CodexProfileUpdateV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
 pub struct CodexProfileViewV1 {
     pub id: Id,
     pub name: String,

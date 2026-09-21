@@ -294,10 +294,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/evaluations/{id}/equity-curve",
             get(equity_curve::get),
         )
-        .route(
-            "/api/v2/settings/codex",
-            get(codex_profiles::profiles).patch(codex_profiles::update_selected),
-        )
+        .route("/api/v2/settings/codex", get(codex_profiles::profiles))
         .route(
             "/api/v2/settings/codex/{id}",
             get(codex_profiles::profile).patch(codex_profiles::update),
@@ -669,7 +666,7 @@ settings::register_secret,settings::runtimes,settings::runtime,settings::create_
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
 runtime::probe,runtime::readiness,downstream::probe,downstream::readiness,
 codex_profiles::profiles,codex_profiles::profile,
-codex_profiles::update,codex_profiles::update_selected,codex_profiles::probe,codex_profiles::models,codex_profiles::account,
+codex_profiles::update,codex_profiles::probe,codex_profiles::models,codex_profiles::account,
 codex_profiles::account::login_start,codex_profiles::account::logout,codex_profiles::account::login_cancel,
 codex_profiles::account::login_operation,codex_profiles::account::latest_operation,
 data::sources,data::source,data::create_source,data::update_source,
