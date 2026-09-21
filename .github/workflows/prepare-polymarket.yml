@@ -69,6 +69,7 @@ jobs:
           cargo clippy --locked -p job --features polymarket-history --all-targets -- -D warnings
           cargo test --locked -p contracts -p domain --lib
           cargo test --locked -p job --features polymarket-history --bin polymarket-history
+          cargo test --locked -p job --test polymarket -- --nocapture
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- --help
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
