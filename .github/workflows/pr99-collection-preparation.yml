@@ -47,7 +47,8 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/pr99-collection
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          test "$(git rev-parse HEAD^)" = "$SOURCE_BASE"
+          git merge-base --is-ancestor "$SOURCE_BASE" HEAD
+          git diff --exit-code "$SOURCE_BASE" -- . ':!.github'
           git apply --check .github/pr99-collection-tests.patch
           git apply .github/pr99-collection-tests.patch
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
