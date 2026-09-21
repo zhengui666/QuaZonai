@@ -1,6 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export type ColorTheme = 'light' | 'dark';
+type ColorThemeState = [ColorTheme, () => void];
+export const ColorThemeContext = createContext<ColorThemeState | undefined>(undefined);
 export const themeStorageKey = 'quazonai.theme';
 const query = '(prefers-color-scheme: dark)';
 
@@ -13,7 +15,8 @@ function storedTheme(): ColorTheme | undefined {
     return value === 'light' || value === 'dark' ? value : undefined;
   } catch { return undefined; }
 }
-export function useColorTheme(): [ColorTheme, () => void] {
+/** Called once by the stable root, outside the application error boundary. */
+export function useColorThemeState(): ColorThemeState {
   const preference = useRef(storedTheme());
   const [theme, setTheme] = useState<ColorTheme>(() => resolveTheme(preference.current, window.matchMedia(query).matches));
   useLayoutEffect(() => {
@@ -41,4 +44,10 @@ export function useColorTheme(): [ColorTheme, () => void] {
     try { localStorage.setItem(themeStorageKey, next); } catch { /* Session-only preference when storage is unavailable. */ }
   }
   return [theme, toggle];
+}
+
+export function useColorTheme(): ColorThemeState {
+  const state = useContext(ColorThemeContext);
+  if (!state) throw new Error('Theme provider is missing');
+  return state;
 }

@@ -197,7 +197,11 @@ fn parse_integration_targets(
         .map_err(|_| "integration targets contain an unsafe or inconsistent endpoint")
 }
 
-fn mission_origin(public: Option<&str>, explicit: Option<&str>) -> Result<String, &'static str> {
+fn mission_origin(
+    public: Option<&str>,
+    explicit: Option<&str>,
+    development_http: bool,
+) -> Result<String, &'static str> {
     if matches!((public, explicit), (Some(a), Some(b)) if a != b) {
         return Err("MISSION_API_ORIGIN must exactly match PUBLIC_URL");
     }
@@ -207,7 +211,7 @@ fn mission_origin(public: Option<&str>, explicit: Option<&str>) -> Result<String
     WebPolicy::new(
         origin,
         "127.0.0.1:0".parse().expect("literal loopback"),
-        origin.starts_with("http://"),
+        development_http,
     )?;
     Ok(origin.to_owned())
 }
@@ -431,8 +435,11 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 store.local_codex_bindings().await?,
             );
             let missions = if codex.available() {
-                let mission_api_origin =
-                    mission_origin(public_url.as_deref(), mission_api_origin.as_deref())?;
+                let mission_api_origin = mission_origin(
+                    public_url.as_deref(),
+                    mission_api_origin.as_deref(),
+                    development_http,
+                )?;
                 let workspace_root =
                     mission_workspaces.unwrap_or_else(|| state_dir.join("missions"));
                 match fs::symlink_metadata(&workspace_root) {
@@ -442,15 +449,12 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(error) => return Err(error.into()),
                 }
-                let mission_http = mission_api_origin.starts_with("http://");
-                // The API is local-only, including when fronted by an HTTPS proxy.
-                WebPolicy::new(&mission_api_origin, "127.0.0.1:0".parse()?, mission_http)?;
                 Some(server::worker::mission::MissionLauncher::new(
                     codex,
                     fs::canonicalize(workspace_root)?,
                     std::env::current_exe()?,
                     mission_api_origin,
-                    mission_http,
+                    development_http,
                 )?)
             } else {
                 None
@@ -544,13 +548,36 @@ mod local_origin_tests {
 
     #[test]
     fn native_missions_use_the_authoritative_local_api_origin() {
-        let origin = "http://localhost:8081";
-        assert_eq!(mission_origin(Some(origin), None).unwrap(), origin);
-        assert_eq!(mission_origin(None, Some(origin)).unwrap(), origin);
-        assert_eq!(mission_origin(Some(origin), Some(origin)).unwrap(), origin);
-        assert!(mission_origin(None, None).is_err());
-        assert!(mission_origin(Some(origin), Some("http://127.0.0.1:8080")).is_err());
-        assert!(mission_origin(Some("https://remote.example"), None).is_err());
-        assert!(mission_origin(Some(""), None).is_err());
+        for origin in [
+            "http://localhost:8081",
+            "http://127.0.0.1:8080",
+            "http://[::1]:8081",
+        ] {
+            for (public, explicit) in [
+                (Some(origin), None),
+                (None, Some(origin)),
+                (Some(origin), Some(origin)),
+            ] {
+                assert_eq!(mission_origin(public, explicit, true).unwrap(), origin);
+                assert!(mission_origin(public, explicit, false).is_err(), "{origin}");
+            }
+        }
+        for development_http in [false, true] {
+            assert_eq!(
+                mission_origin(Some("https://localhost"), None, development_http).unwrap(),
+                "https://localhost"
+            );
+            assert!(mission_origin(None, None, development_http).is_err());
+            assert!(mission_origin(
+                Some("http://localhost:8081"),
+                Some("http://127.0.0.1:8080"),
+                development_http
+            )
+            .is_err());
+            assert!(
+                mission_origin(Some("https://remote.example"), None, development_http).is_err()
+            );
+            assert!(mission_origin(Some(""), None, development_http).is_err());
+        }
     }
 }
