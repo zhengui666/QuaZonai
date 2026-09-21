@@ -11,7 +11,8 @@
 
 # Serve only the built web directory, never the checkout or private state.
 # The site name must match the API's PUBLIC_URL origin.
-{$QUAZONAI_SITE:quazonai.example.com} {
+{$QUAZONAI_SITE:http://localhost:8081} {
+	bind 127.0.0.1 [::1]
 	root * "{$QUAZONAI_WEB_ROOT:/opt/quazonai/current/web}"
 
 	route {

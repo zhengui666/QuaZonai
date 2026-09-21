@@ -19,7 +19,7 @@ for (const status of [418, 500, 401]) {
     });
     await page.goto('/'); await navigate(page, '运行');
     await page.getByRole('button', { name: 'IMPORT · 00000003', exact: true }).click();
-    await expect(page.getByText(`服务返回了无法识别的响应（HTTP ${status}）。未将它当成空列表或成功结果。`, { exact: true })).toBeVisible();
+    await expect(page.getByText(`响应无效（HTTP ${status}）`, { exact: true })).toBeVisible();
     await expect(page.getByText('UNTRUSTED_SSE_PROBLEM', { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.dataset.authEvents ?? '0')).toBe('0');
     expect(requests).toBe(1);
@@ -38,8 +38,8 @@ for (const [status, media] of [[201, 'text/event-stream'], [200, 'text/event-str
   });
 }
 
-test('SSE emits authentication expiry only after validating the declared Problem', async ({ page }) => {
-  await fixture(page);
+test('SSE displays a validated authorization failure without a login event or mutation', async ({ page }) => {
+  const state = await fixture(page);
   await page.addInitScript(() => {
     window.addEventListener('quazonai-auth-changed', () => {
       document.documentElement.dataset.authEvents = String(Number(document.documentElement.dataset.authEvents ?? '0') + 1);
@@ -50,5 +50,8 @@ test('SSE emits authentication expiry only after validating the declared Problem
   }));
   await page.goto('/'); await navigate(page, '运行');
   await page.getByRole('button', { name: 'IMPORT · 00000003', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.authEvents ?? '0')).toBe('1');
+  await expect(page.getByText(/AUTH_REQUIRED/)).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.dataset.authEvents ?? '0')).toBe('0');
+  await expect(page.getByLabel('动态验证码')).toHaveCount(0);
+  expect(state.commands).toHaveLength(0);
 });

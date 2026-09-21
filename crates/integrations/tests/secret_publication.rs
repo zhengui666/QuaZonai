@@ -10,13 +10,15 @@ fn published_secret_is_read_only_and_readable_after_reopening_the_vault() {
     let key = base.path().join("master.key");
     SecretVault::initialize_key(&key).unwrap();
     let vault = SecretVault::open(&root, &key).unwrap();
-    let id = vault.put("TOTP", b"disposable-reopen-fixture").unwrap();
+    let id = vault
+        .put("MACHINE_VERIFIER", b"disposable-reopen-fixture")
+        .unwrap();
     drop(vault);
     let metadata = fs::metadata(root.join(id.to_string())).unwrap();
     assert_eq!(metadata.permissions().mode() & 0o777, 0o400);
     let reopened = SecretVault::open(&root, &key).unwrap();
     assert_eq!(
-        reopened.read(id, "TOTP").unwrap(),
+        reopened.read(id, "MACHINE_VERIFIER").unwrap(),
         b"disposable-reopen-fixture"
     );
 }
@@ -35,7 +37,7 @@ fn verifier_cleanup_cannot_remove_other_purposes_symlinks_or_unauthenticated_fil
     let verifier = vault
         .put("MACHINE_VERIFIER", b"unpublished fixture")
         .unwrap();
-    let totp = vault.put("TOTP", b"authentication secret").unwrap();
+    let runtime = vault.put("RUNTIME", b"runtime secret").unwrap();
     let session = vault.put("SESSION_KEY", b"native cookie key").unwrap();
     let arbitrary = Id::new();
     fs::write(
@@ -46,13 +48,13 @@ fn verifier_cleanup_cannot_remove_other_purposes_symlinks_or_unauthenticated_fil
     let link = Id::new();
     symlink(root.join(verifier.to_string()), root.join(link.to_string())).unwrap();
     assert_eq!(vault.machine_verifier_ids().unwrap(), vec![verifier]);
-    for id in [totp, session, arbitrary, link] {
+    for id in [runtime, session, arbitrary, link] {
         assert!(vault.remove_unpublished_verifier(id).is_err());
         assert!(root.join(id.to_string()).symlink_metadata().is_ok());
     }
     vault.remove_unpublished_verifier(verifier).unwrap();
     vault.remove_unpublished_verifier(verifier).unwrap();
     assert!(!root.join(verifier.to_string()).exists());
-    assert_eq!(vault.read(totp, "TOTP").unwrap(), b"authentication secret");
+    assert_eq!(vault.read(runtime, "RUNTIME").unwrap(), b"runtime secret");
     assert!(vault.put("UNSUPPORTED", b"not valid").is_err());
 }

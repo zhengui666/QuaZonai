@@ -92,7 +92,6 @@ impl Store {
 pub(crate) async fn browser(
     tx: &mut Transaction<'_, Postgres>,
     actor: &Actor,
-    recent: bool,
     write: bool,
 ) -> Result<(), StoreError> {
     let Actor::Browser { login_id } = actor else {
@@ -106,7 +105,7 @@ pub(crate) async fn browser(
     if sqlx::query(sql).fetch_optional(&mut **tx).await?.is_none() {
         return Err(StoreError::AuthenticationRequired);
     }
-    auth::lock_login(tx, *login_id, recent).await?;
+    auth::lock_login(tx, *login_id).await?;
     Ok(())
 }
 
@@ -245,7 +244,7 @@ pub(crate) async fn read_project(
     scope: MachineScope,
 ) -> Result<(), StoreError> {
     match actor {
-        Actor::Browser { .. } => browser(tx, actor, false, false).await,
+        Actor::Browser { .. } => browser(tx, actor, false).await,
         Actor::Machine { .. } => {
             let authority = machine(tx, actor, false).await?;
             authority.requires(scope)?;

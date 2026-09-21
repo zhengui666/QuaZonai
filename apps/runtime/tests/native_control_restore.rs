@@ -601,7 +601,6 @@ async fn checkpoint(
     );
     let current_auth = restored_store.authentication_snapshot().await.unwrap();
     assert!(current_auth.epoch > checkpoint_auth.epoch);
-    assert_eq!(current_auth.secret_ref, checkpoint_auth.secret_ref);
     let Actor::Browser { login_id } = &f.data.actor else {
         panic!("controlled operator fixture expected");
     };
@@ -756,18 +755,7 @@ async fn checkpoint(
         .await;
     }
 
-    // Use the existing trusted Store authentication fixture's verified-step input,
-    // not another TOTP enrollment or a claim of actual account authentication.
-    let snapshot = restored_store.authentication_snapshot().await.unwrap();
-    let login = restored_store
-        .login_with_verified_step(
-            &snapshot,
-            snapshot.database_now.timestamp() / 30 + 1,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
+    let login = restored_store.local_browser().await.unwrap();
     let actor = Actor::Browser { login_id: login.id };
     // Historical adoption above uses the original frozen identity. A new task
     // still needs a fresh native capability observation after the recovery delay.

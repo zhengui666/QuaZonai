@@ -30,7 +30,7 @@ fn caller_allocated_native_id_is_immutable_and_authenticated_by_purpose() {
     );
     assert_eq!(vault.read(id, "RUNTIME").unwrap(), b"first-native-secret");
     assert!(vault.read(id, "DOWNSTREAM").is_err());
-    assert!(vault.read(id, "TOTP").is_err());
+    assert!(vault.read(id, "MACHINE_VERIFIER").is_err());
     assert!(!original
         .windows(b"first-native-secret".len())
         .any(|bytes| bytes == b"first-native-secret"));
@@ -45,7 +45,7 @@ fn ca_reference_does_not_grant_session_or_provider_secret_authority() {
         b"native-ca-fixture-bytes"
     );
     for purpose in [
-        "TOTP",
+        "MACHINE_VERIFIER",
         "RUNTIME",
         "DOWNSTREAM",
         "CUSTOM_PROVIDER",

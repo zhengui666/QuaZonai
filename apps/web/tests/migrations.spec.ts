@@ -18,7 +18,7 @@ async function setup(page: Page, options: { lose?: boolean; rejectRetry?: boolea
       const body = route.request().postDataJSON() as Record<string, unknown>;
       writes.push({ body, key: route.request().headers()['idempotency-key'] });
       if (options.lose && writes.length === 1) return route.abort('failed');
-      if (options.rejectRetry && writes.length === 2) return reply(route, problem('RECENT_AUTH_REQUIRED', 403), 403);
+      if (options.rejectRetry && writes.length === 2) return reply(route, problem('FORBIDDEN', 403), 403);
       return reply(route, { schema_version: 1, replayed: writes.length > 1, resource: { ...report, export_ref: body.export_ref, dry_run: body.dry_run } }, 202);
     }
     if (url.pathname.endsWith('/source')) return reply(route, options.mismatch ? { ...source, source_installation_id: id(299) } : source);
@@ -26,7 +26,7 @@ async function setup(page: Page, options: { lose?: boolean; rejectRetry?: boolea
     if (url.pathname.endsWith(report.id)) return reply(route, report);
     return reply(route, { schema_version: 1, items: [report], next_cursor: null });
   });
-  await page.goto('/'); await navigate(page, '设置'); await settingsCategory(page, '历史迁移');
+  await page.goto('/'); await navigate(page, '设置'); await settingsCategory(page, '迁移');
   return writes;
 }
 test('historical source counts exclusions and original keys stay exact across mapping pages', async ({ page }) => {
@@ -51,17 +51,14 @@ for (const rejectRetry of [false,true]) test(`unknown import preserves original 
   await dialog.getByLabel('已登记的导出编号').fill(report.export_ref);
   await expect(dialog.getByRole('checkbox')).toBeChecked();
   await dialog.getByRole('button', { name: '提交导入请求', exact: true }).click();
-  await expect(dialog.getByText('结果尚未确认，重试保留原编号、方式和幂等键。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('提交结果未知，请重试当前操作', { exact: true })).toBeVisible();
   await expect(dialog.getByLabel('已登记的导出编号')).toBeDisabled();
   await expect(dialog.getByRole('checkbox')).toBeDisabled();
   await dialog.getByRole('button', { name: '重试同一导入请求', exact: true }).click();
   if (rejectRetry) {
-    await expect(dialog.getByText(/RECENT_AUTH_REQUIRED/)).toBeVisible();
-    const verify = page.getByRole('dialog', { name: '重新验证敏感操作' });
-    await expect(verify).toBeVisible();
-    await verify.getByLabel('动态验证码').fill('123456');
-    await verify.getByRole('button', { name: '确认验证', exact: true }).click();
-    await expect(verify).toBeHidden();
+    await expect(dialog.getByText(/FORBIDDEN/)).toBeVisible();
+    await expect(page.getByRole('dialog', { name: '重新验证敏感操作' })).toHaveCount(0);
+    await expect(page.getByLabel('动态验证码')).toHaveCount(0);
     await expect(dialog.getByLabel('已登记的导出编号')).toBeDisabled();
     await dialog.getByRole('button', { name: '重试同一导入请求', exact: true }).click();
   }

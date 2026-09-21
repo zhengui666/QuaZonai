@@ -53,7 +53,7 @@ pub(super) async fn read_authority(
 ) -> Result<Option<Id>, StoreError> {
     Ok(match actor {
         Actor::Browser { .. } => {
-            authority::browser(tx, actor, false, false).await?;
+            authority::browser(tx, actor, false).await?;
             None
         }
         Actor::Machine { .. } => {

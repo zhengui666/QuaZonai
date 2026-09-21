@@ -14,8 +14,8 @@ const runtime: Schema['RuntimeView'] = { id: id(20), revision, configuration: { 
   tls_policy: 'SYSTEM_CA', allowed_capabilities: ['DATA_VALIDATE'], enabled: true, development_http: false },
   protocol_version: 1, credential_configured: true, ca_configured: false, last_capability_snapshot_artifact_id: null, created_at: stamp, updated_at: stamp };
 const profiles: Schema['CodexProfileViewV1'][] = [30, 31].map((tail, index) => ({ id: id(tail), name: index ? '审阅配置' : '研究配置',
-  home_binding: `synthetic-${tail}`, profile_origin: 'OPERATOR_MOUNT', connection_mode: 'SYSTEM', custom_base_url: null,
-  credential_configured: false, model_settings: { schema_version: 1, use_default_model_settings: true,
+  home_binding: `synthetic-${tail}`, profile_origin: 'OPERATOR_MOUNT', connection_mode: 'SYSTEM',
+  model_settings: { schema_version: 1, use_default_model_settings: true,
     saved_model: null, saved_reasoning_effort: null, saved_fast_mode: false }, revision, created_at: stamp, updated_at: stamp }));
 const inputs: Schema['InputSetSummary'][] = (['DISCOVERY', 'VALIDATION', 'SEALED'] as const).map((purpose, index) => ({
   id: id(21 + index), project_id: project.id, purpose, revision, decision_cutoff: stamp, frozen_at: stamp, created_at: stamp,
@@ -104,7 +104,7 @@ test('draft project freezes exact versions, explicitly activates, starts and vie
   const state = await setup(page, { draft: true });
   await freezeForm(page);
   await page.getByRole('button', { name: '确认冻结 Brief', exact: true }).click();
-  await expect(page.getByText('Brief 已冻结，尚未启动研究。', { exact: true })).toBeVisible();
+  await expect(page.getByText('Brief 已冻结', { exact: true })).toBeVisible();
   expect(state.writes[0]?.body).toEqual({ schema_version: 1, expected_revision: revision, execution_context: context });
   expect(state.project.state).toBe('DRAFT');
   await page.getByRole('button', { name: '返回查看记录', exact: true }).click();
@@ -116,7 +116,7 @@ test('draft project freezes exact versions, explicitly activates, starts and vie
   expect(state.writes[1]?.body).toMatchObject({ expected_revision: revision, state: 'ACTIVE' });
   await startForm(page);
   await page.getByRole('button', { name: '确认启动 Cycle', exact: true }).click();
-  await expect(page.getByText('Cycle 与准备运行已由服务器登记。', { exact: true })).toBeVisible();
+  await expect(page.getByText('研究周期已创建', { exact: true })).toBeVisible();
   expect(state.writes[2]?.body).toEqual({ schema_version: 1, brief_id: id(10), expected_revision: '9007199254740994',
     researcher_profile: { profile_id: id(30), expected_revision: revision }, reviewer_profile: { profile_id: id(31), expected_revision: revision } });
   expect(state.writes.every(item => !!item.key)).toBe(true);
@@ -136,22 +136,22 @@ for (const draft of [true, false]) test(`${draft ? 'freeze' : 'start'} lost ACK 
   await page.getByRole('button', { name: draft ? '确认冻结 Brief' : '确认启动 Cycle', exact: true }).click();
   const retry = page.getByRole('button', { name: '重试同一请求', exact: true });
   await expect(retry).toBeVisible();
-  await expect(page.getByText('请求结果尚未确认。', { exact: true })).toBeVisible();
+  await expect(page.getByText('提交结果未知，请重试当前操作', { exact: true })).toBeVisible();
   state.stale = true;
   await browser.setOffline(true); await expect(retry).toBeDisabled();
   await browser.setOffline(false);
   // The app intentionally uses networkMode=always (no reconnect refetch).
   // Returning to the visible tab is its configured background refresh trigger.
   await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
-  await expect(page.getByText('服务返回了无法识别的响应（HTTP 503）。未将它当成空列表或成功结果。').first()).toBeVisible();
+  await expect(page.getByText('响应无效（HTTP 503）').first()).toBeVisible();
   await expect(retry).toBeEnabled();
   for (const field of await page.getByRole('dialog').getByRole('combobox').all()) await expect(field).toBeDisabled();
   await retry.click();
-  await expect(page.getByText(/错误：REVISION_CONFLICT/)).toBeVisible();
+  await expect(page.getByText(/REVISION_CONFLICT/)).toBeVisible();
   await expect(page.getByRole('button', { name: '关闭并重载最新记录', exact: true })).toHaveCount(0);
   state.stale = false;
   await expect(retry).toBeEnabled(); await retry.click();
-  await expect(page.getByText(draft ? 'Brief 已冻结，尚未启动研究。' : 'Cycle 与准备运行已由服务器登记。', { exact: true })).toBeVisible();
+  await expect(page.getByText(draft ? 'Brief 已冻结' : '研究周期已创建', { exact: true })).toBeVisible();
   expect(state.writes).toHaveLength(3);
   expect(state.writes[1]).toEqual(state.writes[0]); expect(state.writes[2]).toEqual(state.writes[0]);
 });
@@ -159,7 +159,7 @@ for (const draft of [true, false]) test(`${draft ? 'freeze' : 'start'} lost ACK 
 test('known revision rejection does not overwrite and requires reloading the record', async ({ page }) => {
   const state = await setup(page, { conflict: true }); await startForm(page);
   await page.getByRole('button', { name: '确认启动 Cycle', exact: true }).click();
-  await expect(page.getByText(/错误：REVISION_CONFLICT/)).toBeVisible();
+  await expect(page.getByText(/REVISION_CONFLICT/)).toBeVisible();
   await expect(page.getByRole('button', { name: '确认启动 Cycle', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '关闭并重载最新记录', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden(); expect(state.writes).toHaveLength(1);
@@ -174,7 +174,7 @@ test('offline and failed project reread block spending without hiding the form',
   await page.getByRole('button', { name: '返回', exact: true }).click();
   state.stale = true;
   await page.getByRole('button', { name: '启动新 Cycle', exact: true }).click();
-  await expect(page.getByText('服务返回了无法识别的响应（HTTP 503）。未将它当成空列表或成功结果。').first()).toBeVisible();
+  await expect(page.getByText('响应无效（HTTP 503）').first()).toBeVisible();
   await expect(page.getByRole('button', { name: '确认启动 Cycle', exact: true })).toBeDisabled();
   expect(state.writes).toHaveLength(0);
 });
@@ -227,7 +227,7 @@ test('frozen selection preserves history, original metric zero and exact counts 
   await page.getByRole('tab', { name: '研究周期', exact: true }).click();
   await page.getByRole('button', { name: '查看试验选择', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '冻结试验选择', exact: true });
-  await expect(dialog.getByText('选择完成不是科学 PASS、Sealed 或可交付资格。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('选择完成不是科学 PASS、Sealed 或可交付资格。', { exact: true })).toHaveCount(0);
   await expect(dialog.getByText('9007199254740993 / 1 / 1 / 1', { exact: true })).toBeVisible();
   await expect(dialog.getByRole('cell', { name: '0', exact: true })).toBeVisible();
   await dialog.locator('.ant-table-row-expand-icon').click();
@@ -254,8 +254,8 @@ test('frozen selection preserves history, original metric zero and exact counts 
   await page.getByRole('button', { name: '刷新研究周期', exact: true }).click();
   await expect(page.getByText(id(73), { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '查看试验选择', exact: true }).click();
-  await expect(dialog.getByText('本快照没有登记试验，不代表存在合格候选。', { exact: true })).toBeVisible();
-  await expect(dialog.getByText('第 1 页（游标分页）', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('暂无试验', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('第 1 页', { exact: true })).toBeVisible();
   expect((await new AxeBuilder({ page }).include('[role="dialog"][aria-modal="true"]').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(requested.some(path => path.includes(`cursor=${selectedTrial.experiment_id}`))).toBe(true);
@@ -274,8 +274,8 @@ test('unformed or failed selection is not shown as an empty completed comparison
   await page.getByRole('button', { name: '刷新研究周期', exact: true }).click();
   await page.getByRole('button', { name: '查看试验选择', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '冻结试验选择', exact: true });
-  await expect(dialog.getByText(/错误：NOT_FOUND/)).toBeVisible();
-  await expect(dialog.getByText('本快照没有登记试验，不代表存在合格候选。', { exact: true })).toHaveCount(0);
+  await expect(dialog.getByText(/NOT_FOUND/)).toBeVisible();
+  await expect(dialog.getByText('暂无试验', { exact: true })).toHaveCount(0);
   formed = true;
   await dialog.getByRole('button', { name: '重新载入', exact: true }).click();
   await expect(dialog.getByRole('cell', { name: 'UNFINISHED', exact: true })).toBeVisible();

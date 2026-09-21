@@ -5,9 +5,9 @@ use contracts::{
     artifacts::{ArtifactCreate, ArtifactView},
     brief::{BriefCreate, BriefUpdate, BriefView},
     codex::{
-        CodexAccountOperationV1, CodexAccountRequestV1, CodexAccountStartV1, CodexHomeBindingV1,
-        CodexLoginCancelV1, CodexObservationV1, CodexProbeRequestV1, CodexProbeViewV1,
-        CodexProfileCreateV1, CodexProfileUpdateV1, CodexProfileViewV1,
+        CodexAccountOperationV1, CodexAccountRequestV1, CodexAccountStartV1, CodexLoginCancelV1,
+        CodexObservationV1, CodexProbeRequestV1, CodexProbeViewV1, CodexProfileUpdateV1,
+        CodexProfileViewV1,
     },
     control::{
         CommandResult, OperatorGrantRequest, OperatorGrantView, Page, ProjectCreate, ProjectUpdate,
@@ -100,7 +100,7 @@ pub enum Command {
     Artifact(Artifact),
     #[command(subcommand)]
     Run(Run),
-    /// Read a strict OperatorGrantRequest including current TOTP from stdin.
+    /// Read the exact local CLI command grant request from stdin.
     /// This does not give the CLI lasting Operator authority.
     OperatorGrant,
     /// Write-only IntegrationSecretCreate from stdin; prints only its native reference.
@@ -445,8 +445,6 @@ pub enum Codex {
     Show {
         id: String,
     },
-    /// Read CodexProfileCreateV1 on stdin and register a deployment label.
-    Create,
     /// Read CodexProfileUpdateV1 on stdin; requires CAS and an Operator grant.
     Update {
         id: String,
@@ -463,8 +461,6 @@ pub enum Codex {
     Account {
         id: String,
     },
-    /// List deployment labels, never native paths or environment values.
-    Homes,
     /// Start native device login; read CodexAccountRequestV1 on stdin.
     Login,
     /// Sign out through native Codex; read CodexAccountRequestV1 on stdin.
@@ -1292,10 +1288,6 @@ impl Command {
                 Codex::Show { id } => {
                     Request::get::<CodexProfileViewV1>(item("/api/v2/settings/codex", id)?)
                 }
-                Codex::Create => Request::write::<
-                    CodexProfileCreateV1,
-                    CommandResult<CodexProfileViewV1>,
-                >(POST, "/api/v2/settings/codex", 201, true)?,
                 Codex::Update { id } => Request::write::<
                     CodexProfileUpdateV1,
                     CommandResult<CodexProfileViewV1>,
@@ -1330,7 +1322,6 @@ impl Command {
                         .push(("profile_id".into(), id(selected)?.to_string()));
                     request
                 }
-                Codex::Homes => Request::get::<Vec<CodexHomeBindingV1>>("/api/v2/codex/homes"),
                 Codex::Login => Request::write::<CodexAccountRequestV1, CodexAccountStartV1>(
                     POST,
                     "/api/v2/codex/login/start",

@@ -18,10 +18,17 @@ pub(super) async fn verify(
     let (pool, _, _, f) = context;
     let (client, origin, token) = transport;
     let url = |id: Id| format!("{origin}/api/v2/evaluations/{id}/equity-curve");
-    assert_eq!(
-        client.get(url(cancelled)).send().await.unwrap().status(),
-        reqwest::StatusCode::UNAUTHORIZED
-    );
+    let local = client.get(url(cancelled)).send().await.unwrap();
+    assert_eq!(local.status(), reqwest::StatusCode::OK);
+    assert!(local.headers().contains_key(reqwest::header::SET_COOKIE));
+    let denied = client
+        .get(url(cancelled))
+        .bearer_auth("invalid")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert!(!denied.headers().contains_key(reqwest::header::SET_COOKIE));
     let response = client
         .get(url(cancelled))
         .bearer_auth(token)

@@ -22,13 +22,6 @@ pub struct Launch {
     pub working_directory: PathBuf,
     pub executable_path: OsString,
     pub native_environment: BTreeMap<OsString, OsString>,
-    pub custom_provider: Option<CustomProvider>,
-}
-
-/// Vault resolution occurs in the calling trusted service, not in an Agent tool.
-pub struct CustomProvider {
-    pub base_url: String,
-    pub api_key: String,
 }
 
 fn directory(path: &Path) -> Result<()> {
@@ -60,41 +53,6 @@ impl Launch {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        if let Some(provider) = self.custom_provider {
-            domain::settings::secret_value(
-                contracts::settings::IntegrationSecretPurpose::CustomProvider,
-                &provider.api_key,
-            )
-            .map_err(|_| NativeFailure::Configuration)?;
-            projection::text(&provider.base_url, 2048)?;
-            let url =
-                url::Url::parse(&provider.base_url).map_err(|_| NativeFailure::Configuration)?;
-            if url.scheme() != "https"
-                || url.host_str().is_none()
-                || !url.username().is_empty()
-                || url.password().is_some()
-                || url.query().is_some()
-                || url.fragment().is_some()
-            {
-                return Err(NativeFailure::Configuration);
-            }
-            // The string is a TOML basic string encoded by the native JSON
-            // serializer; control-free HTTPS URLs use their common escape subset.
-            let base = serde_json::to_string(&provider.base_url)
-                .map_err(|_| NativeFailure::Configuration)?;
-            for option in [
-                "model_provider=\"quazonai_custom\"".to_owned(),
-                "model_providers.quazonai_custom.name=\"QuaZonai Custom Provider\"".to_owned(),
-                format!("model_providers.quazonai_custom.base_url={base}"),
-                "model_providers.quazonai_custom.env_key=\"QUAZONAI_CUSTOM_PROVIDER_KEY\""
-                    .to_owned(),
-                "model_providers.quazonai_custom.wire_api=\"responses\"".to_owned(),
-                "model_providers.quazonai_custom.requires_openai_auth=false".to_owned(),
-            ] {
-                command.arg("--config").arg(option);
-            }
-            command.env("QUAZONAI_CUSTOM_PROVIDER_KEY", provider.api_key);
-        }
         if let Some(resources) = resources {
             command = resources.wrap(command)?;
             command
@@ -159,8 +117,8 @@ impl ThreadOptions {
         if let Some(tier) = &self.service_tier {
             request["serviceTier"] = json!(tier);
         }
-        // expected_provider only verifies the native observed binding. SYSTEM
-        // doesn't override it, and CUSTOM_PROVIDER is configured on its process.
+        // expected_provider verifies an observed native binding; it never
+        // overrides the owner's configured provider.
         if let Some(mission) = &self.mission {
             mission.configure(&mut request, self)?;
         }

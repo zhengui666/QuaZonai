@@ -47,7 +47,7 @@ export function ReleaseCreate({ project, candidate, evaluation, close }: {
     footer={receipt ? <Button onClick={close}>返回候选</Button> : undefined} cancelText="返回" okText={retry ? '重试同一冻结请求' : '确认冻结 Release'}
     confirmLoading={mutation.isPending} okButtonProps={{ disabled: !online || (!retry && !eligible) }} onOk={submit}>
     <Space orientation="vertical" className="full-width" size="middle">
-      <Alert showIcon type="info" title="冻结不会批准 Paper/Live，也不会发送目标给下游。" description="服务器重验原候选、独立评估、Alpha 资格、数据许可及有效期；权重、来源与截止时间不能在此改写。" />
+      
       <Descriptions column={1} className="break-word" items={[
         { key: 'candidate', label: '原候选', children: candidate }, { key: 'evaluation', label: '原独立评估', children: evaluation.id },
         { key: 'state', label: '读取时评估', children: `${evaluation.execution_status} / ${evaluation.evidence_status} / ${evaluation.decision}` },
@@ -55,8 +55,8 @@ export function ReleaseCreate({ project, candidate, evaluation, close }: {
       ]} />
       <ErrorNotice error={mutation.error} />
       {!eligible && <Alert showIcon type="warning" title="原评估不满足冻结前提，请重新核对候选与独立评估。" />}
-      {retry && <Alert showIcon type="warning" title="冻结结果尚未确认，重试保留原候选、评估与幂等键。" />}
-      {receipt && <><Alert showIcon type="success" title="原目标包已冻结。" description="这不是交付审批或下游领取结果。" />
+      {retry && <Alert showIcon type="warning" title="提交结果未知，请重试当前操作" />}
+      {receipt && <><Alert showIcon type="success" title="原目标包已冻结。" />
         <Typography.Text className="break-word">Release {receipt.id}</Typography.Text>
         <Button onClick={() => setDetail(true)}>查看原目标包</Button></>}
     </Space>

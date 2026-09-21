@@ -255,7 +255,7 @@ async fn fixture_with_trigger(
     sessions.migrate().await.unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let origin = format!("http://{address}");
+    let origin = format!("http://localhost:{}", address.port());
     let app = server::router(
         AppState::new(
             store.clone(),
@@ -1464,27 +1464,35 @@ async fn daemon_renews_pending_mission_without_starving_science_and_shutdown_kee
 }
 
 #[test]
-fn worker_cli_requires_complete_mission_configuration_before_connecting() {
+fn worker_cli_discovers_codex_without_a_deployment_file() {
     for arguments in [
-        vec!["--codex-deployment", "/missing/deployment.json"],
+        vec![],
         vec!["--mission-api-origin", "https://localhost"],
-        vec!["--mission-workspaces", "/missing/workspaces"],
+        vec!["--mission-workspaces", "/private/missions"],
     ] {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_server"))
             .env_clear()
-            .args([
-                "worker",
-                "--database-url",
-                "postgresql://localhost/not-used",
-            ])
+            .arg("worker")
             .args(arguments)
+            .arg("--help")
             .output()
             .unwrap();
-        assert_eq!(output.status.code(), Some(2));
-        assert!(String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("required arguments"));
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let help = String::from_utf8(output.stdout).unwrap();
+        assert!(help.contains("--mission-api-origin"));
+        assert!(help.contains("--mission-workspaces"));
+        assert!(!help.contains("--codex-deployment"));
     }
+    let removed = std::process::Command::new(env!("CARGO_BIN_EXE_server"))
+        .env_clear()
+        .args(["worker", "--codex-deployment", "/missing/deployment.json"])
+        .output()
+        .unwrap();
+    assert_eq!(removed.status.code(), Some(2));
+    assert!(String::from_utf8(removed.stderr)
+        .unwrap()
+        .contains("unexpected argument '--codex-deployment'"));
 }
 
 async fn prepare(

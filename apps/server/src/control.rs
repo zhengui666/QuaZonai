@@ -15,10 +15,8 @@ use axum::{
     Json,
 };
 use contracts::{control::*, Id, SchemaV1};
-use integrations::authentication::{
-    accepted_step, capability_verifier, format_machine_token, random_capability,
-};
-use store::{auth::AuthOperation, authority::Actor};
+use integrations::authentication::{capability_verifier, format_machine_token, random_capability};
+use store::authority::Actor;
 
 fn path(value: Result<Path<Id>, PathRejection>) -> Result<Id, ApiError> {
     value.map(|Path(v)| v).map_err(|_| ApiError::validation())
@@ -243,37 +241,12 @@ pub async fn issue_grant(
     {
         return Ok((StatusCode::CREATED, Json(replay)));
     }
-    state
-        .store
-        .reserve_auth_attempt(AuthOperation::Reauth)
-        .await?;
-    let snapshot = state.store.authentication_snapshot().await?;
-    let reference = snapshot.secret_ref.ok_or_else(ApiError::authentication)?;
-    let now = snapshot.database_now.timestamp();
-    let vault = state.vault.clone();
-    let code = request.code;
-    let step = crypto(&state, move || {
-        let secret = vault
-            .read(reference, "TOTP")
-            .map_err(|_| ApiError::internal())?;
-        accepted_step(&secret, &code, now)
-            .map_err(|_| ApiError::internal())?
-            .ok_or_else(ApiError::authentication)
-    })
-    .await?;
     Ok((
         StatusCode::CREATED,
         Json(
             state
                 .store
-                .issue_operator_grant(
-                    &actor,
-                    key,
-                    &request.command,
-                    request.target_id,
-                    &snapshot,
-                    step,
-                )
+                .issue_operator_grant(&actor, key, &request.command, request.target_id)
                 .await?,
         ),
     ))

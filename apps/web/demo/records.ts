@@ -33,10 +33,8 @@ const run: Schema['RunSnapshotV1'] = {
   last_event_seq: '0', deadline_at: '2026-09-15T00:00:20Z', cancellation_requested_at: null, terminal_reason_code: null,
   queued_at: at, started_at: at, finished_at: at, revision: '1',
 };
-record('/api/v2/bootstrap/status', '/api/v2/bootstrap/status', { schema_version: 1, initialized: true, setup_allowed: false });
 record('/api/v2/auth/session', '/api/v2/auth/session', {
   schema_version: 1, authenticated_at: at, expires_at: '2099-01-01T00:00:00Z',
-  trusted_device_id: null, recent_authentication_required: true,
 } satisfies Schema['BrowserSession']);
 record('/api/v2/projects', '/api/v2/projects', page([project]));
 record(`/api/v2/projects/${project.id}`, '/api/v2/projects/{id}', project);
@@ -349,10 +347,9 @@ record('/api/v2/artifacts', '/api/v2/artifacts', page([...records.values()].filt
 for (const suffix of ['handoffs', 'automation-policies', 'forward', 'forward-observations', 'forward-weight-snapshots', 'wakes']) {
   record(`/api/v2/projects/${project.id}/${suffix}`, `/api/v2/projects/{id}/${suffix}`, page([]));
 }
-for (const path of ['/api/v2/auth/devices', '/api/v2/settings/codex', '/api/v2/integrations/downstreams', '/api/v2/migrations/reports']) {
+for (const path of ['/api/v2/settings/codex', '/api/v2/integrations/downstreams', '/api/v2/migrations/reports']) {
   record(path, path, page([]));
 }
-record('/api/v2/codex/homes', '/api/v2/codex/homes', []);
 
 export function demoResponse(method: string, pathname: string, partition: string | null = null) {
   if (method === 'GET' && pathname === `/api/v2/artifacts/${id(511)}/content`) return { status: 200, value: packageBytes, binary: true };

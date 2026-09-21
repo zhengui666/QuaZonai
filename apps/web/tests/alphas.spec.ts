@@ -109,7 +109,7 @@ test('qualification history is version-scoped and preserves revocation, observat
   expect(seen).toEqual([]);
   await page.getByRole('button', { name: '查看原资格历史', exact: true }).click();
   const drawer = page.getByRole('dialog', { name: '原资格历史', exact: true });
-  await expect(drawer.getByText('授予时间窗开放不等于当前可用于组合。', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('授予时间窗开放不等于当前可用于组合。', { exact: true })).toHaveCount(0);
   await expect(drawer.getByText('SCHEDULED_WITHDRAWAL', { exact: false })).toBeVisible();
   await expect(drawer.getByRole('columnheader', { name: '服务端观察时间', exact: true })).toBeVisible();
   await drawer.getByRole('button', { name: '下一页', exact: true }).click();
@@ -192,7 +192,7 @@ test('Sealed admission requires an explicit Cycle and retries the identical froz
   await page.locator('.ant-select-dropdown:visible .ant-select-item-option-content').filter({ hasText: cycle.id }).click();
   await dialog.getByLabel('CPU 秒数上限', { exact: true }).fill('9007199254740993');
   await dialog.getByRole('button', { name: '确认请求评估', exact: true }).click();
-  await expect(dialog.getByText('请求结果尚未确认。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('提交结果未知，请重试当前操作', { exact: true })).toBeVisible();
   await expect(dialog.getByLabel('CPU 秒数上限', { exact: true })).toBeDisabled();
   await dialog.getByRole('button', { name: '重试同一请求', exact: true }).click();
   await expect(dialog.getByText('封存评估 Run 已登记。', { exact: true })).toBeVisible();
@@ -207,7 +207,7 @@ test('Sealed admission requires an explicit Cycle and retries the identical froz
 
 test('original Alpha, formal evidence and paged metrics retain zero, null, provenance and exact counts', async ({ page }) => {
   const { state, base } = await setup(page);
-  await expect(page.getByText('请选择项目后查看已有 Alpha，不会自动选择或创建研究。', { exact: true })).toBeVisible();
+  await expect(page.getByText('请选择项目', { exact: true })).toBeVisible();
   expect(state.paths.some(path => path.startsWith('/api/v2/alphas?'))).toBe(false);
   await chooseProject(page);
   await page.getByRole('button', { name: alpha.name, exact: true }).click();
@@ -217,7 +217,7 @@ test('original Alpha, formal evidence and paged metrics retain zero, null, prove
   await page.getByRole('button', { name: `评估 ${evaluation.id.slice(-8)}`, exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '正式 Validation 评估', exact: true });
   await expect(dialog.getByText('SUCCEEDED / VALID / PASS', { exact: true })).toBeVisible();
-  await expect(dialog.getByText('这是历史科学证据，不是资格或交付批准。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('这是历史科学证据，不是资格或交付批准。', { exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('cell', { name: '0', exact: true })).toBeVisible();
   await expect(dialog.getByRole('cell', { name: '9007199254740993', exact: true })).toBeVisible();
   await expect(dialog.getByRole('cell', { name: 'native-method / 0.7.3', exact: true })).toBeVisible();
@@ -235,16 +235,16 @@ test('original Alpha, formal evidence and paged metrics retain zero, null, prove
   await expect.poll(() => scroller.evaluate(element => element.scrollLeft)).toBeGreaterThan(before);
   await dialog.getByRole('button', { name: '下一页', exact: true }).click();
   await expect(dialog.getByRole('cell', { name: '缺值：TOO_FEW_ORIGINAL_ROWS', exact: true })).toBeVisible();
-  await expect(dialog.getByText('第 2 页（游标分页）', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('第 2 页', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: `评估 ${cancelled.id.slice(-8)}`, exact: true }).click();
   await expect(dialog.getByText('CANCELLED / INCOMPLETE / INCONCLUSIVE', { exact: true })).toBeVisible();
-  await expect(dialog.getByText('本评估没有发表指标；不能把缺失解释成0或通过。', { exact: true })).toBeVisible();
-  await expect(dialog.getByText('第 1 页（游标分页）', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('暂无指标', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('第 1 页', { exact: true })).toBeVisible();
   expect((await new AxeBuilder({ page }).include('[role="dialog"]').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await chooseProject(page, '另一个项目');
-  await expect(page.getByText('本项目还没有 Alpha 登记；这不是无有效 Alpha 的科学结论。', { exact: true })).toBeVisible();
+  await expect(page.getByText('暂无 Alpha', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: `Alpha 版本 ${version.version}`, exact: true })).toHaveCount(0);
   expect(state.paths).toContain(`/api/v2/alphas/${alpha.id}/versions/${version.version}`);
   expect(state.paths.some(path => path.startsWith('/api/v2/artifacts/'))).toBe(false);
@@ -254,8 +254,8 @@ test('original Alpha, formal evidence and paged metrics retain zero, null, prove
 test('failed read is not an empty Alpha result and recovery does not create a record', async ({ page }) => {
   const { state, base } = await setup(page); state.fail = true;
   await chooseProject(page);
-  await expect(page.getByText(/未将它当成空列表或成功结果|错误：UNAVAILABLE/).first()).toBeVisible();
-  await expect(page.getByText('本项目还没有 Alpha 登记；这不是无有效 Alpha 的科学结论。', { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/UNAVAILABLE/).first()).toBeVisible();
+  await expect(page.getByText('暂无 Alpha', { exact: true })).toHaveCount(0);
   state.fail = false;
   await page.getByRole('button', { name: '刷新 Alpha', exact: true }).click();
   await expect(page.getByRole('button', { name: alpha.name, exact: true })).toBeVisible();
@@ -267,15 +267,15 @@ test('calibrated version exposes only its original metadata and does not inherit
   await chooseProject(page);
   await page.getByRole('button', { name: alpha.name, exact: true }).click();
   await page.getByRole('button', { name: `版本 ${version.version}`, exact: true }).click();
-  await expect(page.getByText('还没有可披露的正式 Validation 评估；不包含 Sealed，也不代表验证通过。', { exact: true })).toBeVisible();
+  await expect(page.getByText('暂无 Validation 评估', { exact: true })).toBeVisible();
   expect(state.paths.some(path => path.endsWith('/calibration'))).toBe(false);
   await page.getByRole('button', { name: '查看冻结校准来源', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '冻结校准来源', exact: true });
-  await expect(dialog.getByText(/错误：UNAVAILABLE/)).toBeVisible();
+  await expect(dialog.getByText(/UNAVAILABLE/)).toBeVisible();
   await expect(dialog.getByText('新版本附加校准，不继承源版本评估或资格。', { exact: true })).toHaveCount(0);
   state.calibrationFailed = false;
   await dialog.getByRole('button', { name: '重新载入', exact: true }).click();
-  await expect(dialog.getByText('新版本附加校准，不继承源版本评估或资格。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('新版本附加校准，不继承源版本评估或资格。', { exact: true })).toHaveCount(0);
   await expect(dialog.getByText(calibration.fit_end_available_at, { exact: true })).toBeVisible();
   await expect(dialog.getByText('FIXED_BARS · 9007199254740993 · RETURN_PER_HORIZON', { exact: true })).toBeVisible();
   await expect(dialog.getByText('SUCCEEDED / VALID / REJECT', { exact: true })).toBeVisible();

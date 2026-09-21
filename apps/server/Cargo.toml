@@ -44,7 +44,6 @@ uuid = "=1.26.0"
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "macros", "migrate", "uuid", "chrono"] }
 tower = { version = "=0.5.2", features = ["util"] }
 tempfile = "=3.27.0"
-totp-rs = { version = "=5.7.0", features = ["gen_secret", "otpauth"] }
 rmcp = { version = "=3.2.0", default-features = false, features = ["client"] }
 
 [[test]]

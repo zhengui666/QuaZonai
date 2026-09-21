@@ -90,15 +90,15 @@ GET /api/v2/projects/{id}/releases，按原ID倒序分页，limit为1–100；�
 
 ## 面向用户的原生 HTTP CLI
 
-发行二进制 `server` 与开发入口 `cargo run --locked -p server --` 使用相同命令。`client` 不读取数据库连接或应用 SecretVault。先通过已初始化系统的正式机器身份管理 HTTP 接口创建 CLI 主体并发行适当的受限凭据，将首次显示的凭据保存为本机仅本人可读的文件；不要把令牌、TOTP 或新的服务凭据放在命令参数、Issue、日志或 shell history 中。
+发行二进制 `server` 与开发入口 `cargo run --locked -p server --` 使用相同命令。`client` 不读取数据库连接或应用 SecretVault。先通过已初始化系统的正式机器身份管理 HTTP 接口创建 CLI 主体并发行适当的受限凭据，将首次显示的凭据保存为本机仅本人可读的文件；不要把令牌或新的服务凭据放在命令参数、Issue、日志或 shell history 中。
 
 ```sh
 cargo run --locked -p server -- client --help
-server client --origin https://research.example --credential-file /private/cli.token data source list --limit 50
-server client --origin https://research.example --credential-file /private/cli.token runtime list
+server client --origin https://localhost --credential-file /private/cli.token data source list --limit 50
+server client --origin https://localhost --credential-file /private/cli.token runtime list
 ```
 
-上例 origin 和路径须替换为本人部署及凭据文件。Unix 凭据文件权限不得授予 group/other；末尾允许一个换行。私有CA部署使用 `--ca-certificate /absolute/ca-bundle.pem`，不存在忽略证书的选项。开发环境只有字面量127.0.0.1或::1且显式 `--development-http` 才可HTTP；服务器也须同意该入口。连接默认3秒、普通请求20秒，失败不自动重试、不使用环境代理、不跟随重定向。
+上例 origin 和路径须替换为本人部署及凭据文件。Unix 凭据文件权限不得授予 group/other；末尾允许一个换行。私有CA部署使用 `--ca-certificate /absolute/ca-bundle.pem`，不存在忽略证书的选项。本机控制面 origin 只接受 `localhost` 或字面量 loopback IPv4/IPv6；使用HTTP还须显式 `--development-http`，并与服务器 PUBLIC_URL 完全一致。默认代理为 `http://localhost:8081`。这是 CLI/Mission/MCP 的本机入口规则，不改变独立 Runtime/Downstream 的字面量 loopback HTTP 规则。连接默认3秒、普通请求20秒，失败不自动重试、不使用环境代理、不跟随重定向。
 
 ### 当前命令与严格正文
 
@@ -116,7 +116,7 @@ server client --origin https://research.example --credential-file /private/cli.t
 | `data universe list/show <id>` | Universe元数据及 `NATIVE_METADATA/LEGACY_UNVERIFIED` 登记证据状态；历史记录不被冒充为原生登记 |
 | `data validate` | DataValidateRequest；202仅返回唯一排队Run，人工grant目标为已有InputSet，不是新的RunID |
 | `runtime list/show <id>/create/update <id>/probe <id>/readiness <id>` | RuntimeCreate/RuntimeUpdate/RuntimeProbeRequestV1；配置与真实探测分离 |
-| `codex list/show <id>/create/update <id>/homes` | CodexProfileCreateV1/CodexProfileUpdateV1；只选择部署登记的非秘密目录标签，不输入宿主路径 |
+| `codex list/show <id>/update <id>` | CodexProfileUpdateV1；仅模型偏好，自动使用本机 Codex，不注册目录或 Provider |
 | `codex probe <id>` | CodexProbeRequestV1；正文profile_id必须等于命令ID，原生探测不执行付费推理 |
 | `codex models <id>/account <id>` | CodexObservationV1；只读当前版本观测，STALE/UNPROBED不触发后台模型调用或登录刷新 |
 | `codex login/logout` | stdin CodexAccountRequestV1；SYSTEM Profile 的原生账号命令，202为接受，不是认证成功 |
@@ -130,7 +130,7 @@ server client --origin https://research.example --credential-file /private/cli.t
 | `evidence show <id>/metrics <id>` | 三层评估状态、来源/期限及分页MetricValueV1；不下载受限报告、不披露Sealed |
 | `artifact list --project-id <id>/show <id>/submit/export <id>` | ArtifactCreate；export先核对元数据、media和字节数，再向stdout写原始字节 |
 | `run list/show <id>/rebalance <id>/cancel <id>/watch <id>` | RunCancelV1；list可选 `--project-id/--state`，watch只观察 |
-| `operator-grant` | OperatorGrantRequest含完整command、target_id与新TOTP；201为单次人工授权 |
+| `operator-grant` | OperatorGrantRequest含完整command与target_id，无需验证码；201为单次人工授权 |
 | `credential-register` | IntegrationSecretCreate；仅返回用途/原生引用，不显示或存储请求明文 |
 
 列表统一支持 `--limit 1..100` 和 `--cursor UUIDv7`；服务端返回的bigint/Revision保持十进制字符串。每次只读取一页，不暗中跨项目遍历。输入文件采用仓库原生导出的OpenAPI中同名DTO，不依据上表摘要猜字段。未知字段、本地错误ID/枚举/正文与未提供幂等键会在发送前拒绝；实际授权、最新revision与不变性仍由服务器裁决。
@@ -146,24 +146,24 @@ CLI的登录响应可能包含一次性设备码，仅在私人终端使用，�
 `login-status`不返回设备码；原生令牌只由Codex保存，CLI不读取auth.json。
 `UNKNOWN`、本地等待截止或进程退出都不代表注销/取消成功，须核对实际账号状态并重新探测。
 
-普通机器scope不授予持久Operator身份。Source、许可、政策、配置等管理写入需近期人工grant。先准备完整 `OperatorGrantRequest`（含当前TOTP），以stdin申请；随后使用返回 `resource.id` 作为 `--operator-grant`，请求应与grant所绑定的DTO及target完全相同。创建类target使用返回 `resource.target_id`，不能自造另一个UUID。
+普通机器scope不授予持久Operator身份。Source、许可、政策、配置等管理写入需近期人工grant。先准备完整 `OperatorGrantRequest`（无需验证码），以stdin申请；随后使用返回 `resource.id` 作为 `--operator-grant`，请求应与grant所绑定的DTO及target完全相同。创建类target使用返回 `resource.target_id`，不能自造另一个UUID。
 
 ```sh
-server client --origin https://research.example --credential-file /private/cli.token \
+server client --origin https://localhost --credential-file /private/cli.token \
   --idempotency-key "my-source-grant-1" operator-grant < /private/operator-grant-request.json
-server client --origin https://research.example --credential-file /private/cli.token \
+server client --origin https://localhost --credential-file /private/cli.token \
   --idempotency-key "my-source-create-1" --operator-grant "$GRANT_ID" \
   data source create < /private/source-create.json
 ```
 
-`$GRANT_ID` 是上一条成功响应的真实引用。CLI不自动读取TOTP种子或申请新的grant。结果未知时保存同一key、原始输入和grant，先查当前记录，必要时显式重放；同key不同正文返回409，禁止自动换key规避。过期/撤销的授权须按服务端错误处理，不宣称原操作已回滚。成功JSON为stdout，失败时退出1并向stderr输出一个已验证Problem或封闭本地错误；`CLI_SERVER_UNAVAILABLE_OR_RESULT_UNKNOWN` 尤其不表示服务端操作未提交。
+`$GRANT_ID` 是上一条成功响应的真实引用。CLI不自动申请新的grant。结果未知时保存同一key、原始输入和grant，先查当前记录，必要时显式重放；同key不同正文返回409，禁止自动换key规避。过期/撤销的授权须按服务端错误处理，不宣称原操作已回滚。成功JSON为stdout，失败时退出1并向stderr输出一个已验证Problem或封闭本地错误；`CLI_SERVER_UNAVAILABLE_OR_RESULT_UNKNOWN` 尤其不表示服务端操作未提交。
 
 ### 有界运行观察与产物导出
 
 ```sh
-server client --origin https://research.example --credential-file /private/cli.token \
+server client --origin https://localhost --credential-file /private/cli.token \
   run watch "$RUN_ID" --after "$LAST_EVENT_ID" --max-seconds 300 --max-events 1000
-server client --origin https://research.example --credential-file /private/cli.token \
+server client --origin https://localhost --credential-file /private/cli.token \
   artifact export "$ARTIFACT_ID" > /private/exported-artifact
 ```
 
@@ -178,7 +178,7 @@ watch以NDJSON输出 `schema_version/event_id/event`，最后输出 `watch_ended
 ```sh
 server worker --help
 server worker --state-dir /private/quazonai --parallelism 2
-server client --origin https://research.example --credential-file /private/cli.token \
+server client --origin https://localhost --credential-file /private/cli.token \
   --idempotency-key "validate-input-1" --operator-grant "$GRANT_ID" \
   data validate < /private/data-validation.json
 ```
@@ -193,48 +193,11 @@ bar-notional/1镜像的原生质量报告新增last_bar_notionals：逐资产最
 未测量；SEALED不输出这些明细。它不是真实逐笔成交额或未来流动性保证，也不会
 自动授予DATA_BACKED、参与率准入或组合资格；原生来源消费链仍须独立核验。
 
-启用原生Mission还须同时提供`--codex-deployment` / `CODEX_DEPLOYMENT`、
-`--mission-api-origin` / `MISSION_API_ORIGIN`、`--mission-workspaces` /
-`MISSION_WORKSPACES`。前者复用API的部署绑定文件；API origin须可由可信MCP进程
-访问，本地HTTP仍须明确`--development-http`。工作区根必须已存在、绝对路径且权限
-0700，不得指向源仓库、个人HOME或Codex认证目录。缺配置不消费Mission消息。
-科学任务与Mission各自最多parallelism个在途驱动；不新增Agent工具循环。
-当前自动入口已接首轮准备和原生轮账本，单独结算一轮不等于研究流程收束。
-实验在编译首阶段预约一次trial，编译失败/取消仍留账，原预测不再重复计数；
-这不改变每个阶段的CPU/输出/墙钟预算，也不改变既有历史账目。
-已采纳的原编译/Discovery失败通过同一Thread的预算Turn回送。预测成功后自动登记
-RESEARCH Alpha并进入正式Validation，不为中间抽样另开Turn；评估发表后回送精确
-元数据和冻结选择指标，不读取受限报告字节。每个结果最多一次，保留origin及有效期，
-不构成资格或排名。修复新提案必须引用原parent_experiment_id，不覆盖已执行输入。
-成功结算的原生Turn另保留最多64KiB公开回答REPORT（qz.mission_summary），原生
-summary视图来源、原Turn/item/phase如实记录；失败重投只补摘要，不重新调用模型。
-它不是新Agent工具，也不从回答文字推断研究通过或Mission已完成。
-原请求和总结按不可变Mission角色保存：研究者RESEARCH、Reviewer EVALUATOR_ONLY；
-Reviewer只能发送本Run/Attempt的可信Turn请求，不获得任意封存产物读取权限。
-两种Mission角色共用Runtime能力刷新检查；配置版本变化不能因Reviewer角色被跳过。
-研究者成功收束且冻结选择COMPLETE、有原审阅目标时，ACK事务使用冻结Reviewer
-Profile准入独立Mission；账号暂不可用保留原消息。Reviewer使用不同Thread和工作区，
-仅接原CODE、原PARAMETERS及有界Validation上下文，不接研究对话或Sealed原始数据。
-每目标一条原生Turn，公开JSON回答绑定原版本/预约/总结；无效回答记INCONCLUSIVE，
-不另开付费修复轮。Reviewer无ARTIFACT_SUBMIT/EXPERIMENT_SUBMIT；其PASS不是
-Operator审批、Sealed通过或资格。全部目标审阅完成后，可信Worker每次消费为一个
-原PASS目标准入Sealed任务，不调用额外模型、不借用人工alpha evaluate授权。
-成功收束/ACK等待原审阅到Sealed Run的关联齐全；取消不补做，预算不足或输入
-需处理如实记录Cycle状态。真正Sealed计算/发表由科学Worker完成；原独立审阅关联
-的封存ACK按DESIGN A4.14裁决精确版本资格，单独科学PASS或人工202均不授资格。
-资格没有手填/强制发证命令；当前真实数据正向授予与完整资格操作面尚未验收。
-当前没有新增人工命令或审阅结果公开接口。
-全部Turn/科学任务结算、反馈回答及提案处理齐全后，可信Worker才提交Mission执行
-终态并归档PGMQ；ACK失败重放原事务，不重开模型。SUCCEEDED不是Cycle完成、实验
-裁决或资格；只有公开限制说明且无实验的会话也不构成“无有效Alpha”的科学证据。
-取消/到期收束不会新开验证或反馈Turn；已有科学任务须有真实终态，缺最终模型
-用量仍保持未知。只有原账本证明无发送意图才记NOT_SENT，不能手填零费用清账；
-取消无公开回答时保存null，不创建假总结。原Validation发布队列继续独立恢复。
-取消恢复仅重连已登记Thread，不签发Mission凭据或启用MCP，不准备新Turn；
-清理窗口至多110秒且保留原资源上限。未知最终用量仍保留原队列和预约。
-成功Discovery预测还会由可信Worker登记一次RESEARCH Alpha首版本，固定原CODE/
-MODEL、预测镜像、根血缘和Brief的单位/horizon；没有校准则保留null。该元数据步骤
-不调用模型、不请求Runtime、不把PENDING改为SUPPORTED，也不是新增Agent审批工具。
+原生 Mission 自动发现服务进程 PATH 中的 Codex，并沿用 HOME/CODEX_HOME。
+Worker 优先复用 `PUBLIC_URL`。独立 Worker 可用 `MISSION_API_ORIGIN` 提供相同
+的本机 Origin；二者同时设置必须完全一致。发现本机 Codex 后如果没有有效 Origin，
+启动直接报错，不猜测另一个端口。可选 `MISSION_WORKSPACES` 缺省为 `STATE_DIR/missions`。工作目录须为私有目录，不得指向源码、用户 HOME
+或 Codex 认证目录。未发现可用本机 Codex 时不会伪造研究就绪。
 
 ## 原生科学任务入口
 
@@ -316,7 +279,7 @@ valid_until_ns、base_currency、cash_weight、weights。时间使用纳秒整�
 原生CLI复用统一写命令参数，但服务端按external_message_id重放，不按传输键另建消息：
 
 ```sh
-cargo run --locked -p server -- client --origin https://qz.example --credential-file downstream-token --idempotency-key original-message forward-weights < weights.json
+cargo run --locked -p server -- client --origin http://localhost:8081 --development-http --credential-file downstream-token --idempotency-key original-message forward-weights < weights.json
 ```
 
 返回201/CommandResult_DownstreamWeightsViewV1及不可变报告身份。同一项目、下游、
@@ -338,7 +301,7 @@ CLI需要目标为mandate_id、完整意图相同的PORTFOLIO_BUILD人工grant�
 返回202的原Run回执不代表Candidate已经生成或通过共享资金验证。
 
 ```sh
-cargo run --locked -p server -- client --origin https://qz.example --credential-file cli-token --idempotency-key build-original --operator-grant GRANT_UUID portfolio build < build.json
+cargo run --locked -p server -- client --origin http://localhost:8081 --development-http --credential-file cli-token --idempotency-key build-original --operator-grant GRANT_UUID portfolio build < build.json
 ```
 
 Store核对当前资格、独立Reviewer/原REAL报告、许可、原模型、Forward目录及下游
@@ -460,7 +423,7 @@ cargo run --locked -p server -- client evidence show EVALUATION_UUID
 cargo run --locked -p server -- client evidence metrics EVALUATION_UUID --limit 25
 ```
 
-写入仍按CLI全局选项携带同一幂等键和精确人工grant，不把TOTP或凭据写入请求文件。
+写入仍按CLI全局选项携带同一幂等键和精确人工grant，不把凭据写入请求文件。
 创建校验原生模型版本、有效Runtime探测、CONVEX_QP、执行镜像、政策项目及原执行
 假设，币种/资本/费用/流动性/参与率/日历须一致。无能力或引用不一致时不落版本。
 保存配置不是科学PASS、Alpha资格或Candidate/Release交付；浏览器“组合 / 组合配置”提供创建、原版本查看和构建请求。
@@ -595,16 +558,15 @@ cargo run --locked -p server -- migrate --application-role quazonai_app
 
 # 将 DATABASE_URL 切换为非 owner、非 superuser 的应用身份。
 # 此本机命令显示一次15分钟有效的初始化 capability；没有远程发证接口。
-cargo run --locked -p server -- bootstrap
 
 # PUBLIC_URL 必须是实际同源 HTTPS 入口。API 不在启动时执行 DDL。
 cargo run --locked -p server -- serve --state-dir ./var \
-  --bind 127.0.0.1:8080 --public-url https://research.example
+  --bind 127.0.0.1:8080 --public-url https://localhost
 ```
 
 `DATABASE_URL` 支持环境变量；不要把真实密码写到命令行、Git 或日志。默认启动拒绝具有 schema CREATE、表 TRUNCATE 或超级用户权限的应用角色。master key 必须独立于数据库和加密对象备份。
 
-本地开发可显式使用 `--development-http --public-url http://127.0.0.1:8080`，同时监听地址必须为 loopback。此选项只调整本地传输和 cookie 的 Secure 属性，不跳过初始化、TOTP、会话撤销、Origin 或数据库角色校验。
+本地开发可显式使用 `--development-http --public-url http://127.0.0.1:8080`，同时监听地址必须为 loopback。此选项只调整本地传输和 cookie 的 Secure 属性，不跳过会话撤销、Origin 或数据库角色校验。
 
 本机维护：`cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var` 在数据库发布锁下，只回收无任何历史凭据引用、原生用途认证为 MACHINE_VERIFIER 的孤儿。数据库错误时不删除；不提供远程/Agent删除密钥接口。详见 OPERATIONS。
 
@@ -612,15 +574,15 @@ cargo run --locked -p server -- serve --state-dir ./var \
 
 `server openapi` 包含实际 Project 与机器身份路由，不是手写路径清单或待实现占位。项目命令的 HTTP/CLI/MCP 统一以服务端事务为准，不提供 SQL 业务后门。远程 `server client` 使用HTTP与原授权；MCP仅暴露Mission允许的受限工具，不能把本机管理命令或CLI权限转给Agent。完整流程验收仍见README。
 
-真实浏览器：原生 TOTP 登录后使用同源私有 cookie，写操作携带 Origin、Idempotency-Key 和 DTO 的 expected_revision。机器：只使用独立 Bearer token，不复制浏览器 cookie；`GET /api/v2/auth/machine` 显示自身公开归属/权限/到期，`GET /api/v2/projects` 只返回授权项目。项目和凭据管理要求 Operator 浏览器的最近认证，或专属 CLI 身份提交原生 TOTP 后获得一次性精确命令 grant；Agent、自动化和下游不能取得该人工授权。
+真实浏览器：直接进入本机工作台后使用同源私有 cookie，写操作携带 Origin、Idempotency-Key 和 DTO 的 expected_revision。机器：只使用独立 Bearer token，不复制浏览器 cookie；`GET /api/v2/auth/machine` 显示自身公开归属/权限/到期，`GET /api/v2/projects` 只返回授权项目。项目和凭据管理要求本机 Operator 浏览器，或专属 CLI 身份获得一次性精确命令 grant；Agent、自动化和下游不能取得该人工授权。
 
 ## 集成配置与只写凭据 HTTP
 
 `POST /api/v2/settings/credentials` 接收 `{intent:{schema_version:1,purpose,label},value}`。
-purpose 仅 RUNTIME、DOWNSTREAM、CUSTOM_PROVIDER、TLS_CA；value 只写，不返回、记日志或
+purpose 仅 RUNTIME、DOWNSTREAM、TLS_CA；value 只写，不返回、记日志或
 写入 SQL/幂等回执。返回的 id 是原生不可变加密对象引用；同 key、同 intent、同原始值才重放，
 不同值409。凭据轮换创建新对象，不能覆盖旧值。TLS_CA 须为1–65536字节ASCII、原生TLS实现可接受的非空PEM
-证书集合；RUNTIME须为32–8192个可打印非空白ASCII字节，DOWNSTREAM / CUSTOM_PROVIDER为1–8192字节。
+证书集合；RUNTIME须为32–8192个可打印非空白ASCII字节，DOWNSTREAM 为1–8192字节。
 最小长度不是熵保证；旧短Runtime凭据须在真实运行端轮换，并通过正式凭据登记和Runtime更新入口绑定后重新探测。
 不要把真实值放在CLI参数、Issue或Git，也不得补字符或手工改SQL绕过验证。
 
@@ -739,7 +701,7 @@ VALIDATION comparison 且不得包含 sealed_revision；SEALED selection 使用
 包含精确 sealed_revision 的 SEALED comparison。策略、输入和成员创建后不能
 原地追加或改写；相同幂等请求只返回首次冻结的元数据。
 
-写操作仍要求近期 Operator 浏览器认证，或 CLI 的一次性 TOTP grant：
+写操作仍要求本机 Operator 浏览器，或 CLI 的一次性本机 grant：
 `INPUT_SET_CREATE` / `EVALUATION_POLICY_CREATE` 的 target 为 null，授权绑定
 完整非秘密请求。RESEARCH_READ 的机器只能读精确授权项目，不因此得到发布
 或验证权限。输入/政策 POST 与完整人工授权请求上限64KiB，超过直接拒绝；
@@ -761,7 +723,7 @@ Brief 冻结、任务准入与独立评估必须另行核验实际原生能力�
 `BRIEF_CREATE` 人工 CLI grant 的 request 为
 `{schema_version:1,project_id,request:BriefCreate}`，target_id=null；项目绑定不可替换。
 `BRIEF_UPDATE` 的 request 为完整 BriefUpdate、target_id为精确Brief。
-这些命令仍只允许近期 Operator 浏览器或经真实 TOTP 的单次人类 CLI 授权；
+这些命令仍只允许本机 Operator 浏览器或单次人类 CLI 授权；
 RESEARCH_READ 仅可读自身项目的内容/元数据，不取得 Sealed 原始数据。
 草稿保存验证范围、预算、引用、角色及币种，但不是冻结、原生能力或正式研究资格。
 本批不提供假成功 freeze 或绕过API的手工SQL。部署迁移为草稿成员单表授予受触发器
@@ -808,9 +770,11 @@ CLI/MCP package。启动器必须已通过正常控制面取得有效 Mission �
 
 必填参数为 `--api-origin`、`--project-id`、`--cycle-id`、`--run-id`、`--attempt-id`、
 `--brief-id`；五个 ID 使用既有 UUIDv7 合同。凭据仅由启动器通过 `QUAZONAI_MCP_TOKEN`
-传入，不提供 token 命令行参数，也不要写入对话、Issue 或日志。生产必须 HTTPS origin，
-不能带 userinfo、额外路径、query 或 fragment；开发 HTTP 还须显式 `--development-http`
-并使用字面 loopback IP。禁止环境代理、Cookie、重定向和自动重试。
+传入，不提供 token 命令行参数，也不要写入对话、Issue 或日志。控制面 origin 必须与
+PUBLIC_URL 一致，使用 localhost 或 loopback IPv4/IPv6；HTTPS 仍校验证书，HTTP 须
+显式 `--development-http`。不能带 userinfo、额外路径、query 或 fragment。
+此规则统一用于 Worker、原生 Thread start/resume 和 MCP，不改变 Runtime/Downstream
+开发端点的字面 IP 规则。禁止环境代理、Cookie、重定向和自动重试。
 
 tools/list 的实际入口包含 `research.get_brief {brief_id}`、`run.get {run_id}`、
 `artifact.submit` 和 `experiment.propose`。前两个读取精确 FROZEN Brief/本 Mission Run；
@@ -869,7 +833,7 @@ DATABASE_URL=postgres://TEST_USER:TEST_PASSWORD@127.0.0.1:55432/postgres \
   cargo test --locked -p store -p server
 ```
 
-SQLx 创建独立测试数据库并执行提交的迁移；不要使用生产 DATABASE_URL。HTTP 测试运行真实 Axum、Argon2、TOTP、AEAD、PostgreSQL Session Store，并另测非 owner 角色与 loopback TCP。它们不是完整研究/组合/交付的验收结果。
+SQLx 创建独立测试数据库并执行提交的迁移；不要使用生产 DATABASE_URL。HTTP 测试运行真实 Axum、Argon2、AEAD、PostgreSQL Session Store，并另测非 owner 角色与 loopback TCP。它们不是完整研究/组合/交付的验收结果。
 
 ### Cycle/Run 事务组合与 HTTP 合同回归
 
@@ -908,15 +872,16 @@ session 表不兼容或任一授权失败时，不保留半次升级及 epoch �
 | `GET /api/v2/runs/{id}/events` | `text/event-stream`；`Last-Event-ID: <run UUID>:<decimal seq>`；不存在 cursor 时从0开始 |
 | `POST /api/v2/runs/{id}/cancel` | body为 `{"schema_version":1,"expected_revision":"当前版本"}`，另带 Idempotency-Key；接受后202，版本过期409 |
 
-浏览器使用现有同源私有会话；取消是写操作，必须在最近五分钟内完成 TOTP 认证，
-超时先重新认证，读取不受该近期窗口限制。机器需要该项目的 RUN_READ 或 RUN_CANCEL；Mission
+浏览器使用自动建立的同源私有会话；取消是写操作，无需验证码。
+会话过期后下次请求自动建立新会话；结果未知时仍用原始请求和幂等键重试，不改变原命令。
+机器需要该项目的 RUN_READ 或 RUN_CANCEL；Mission
 只读自身 Run，不能扩大到其他项目或取得操作员授权。取消仅停止计算，不表示下游
 交易停止。尚未 dispatch 的任务可以直接 CANCELLED；已涉及远端的任务先显示
 CANCEL_REQUESTED，须确认远端终止后才能终结，真实失败保留 FAILED。
 
 SSE 每条 id 与 data.seq 对应。按最后收到的 id 重连，客户端对序列去重；过期或超前
 cursor 在开始流之前410，错误 UUID/数字形状422。认证撤销、版本不兼容等发生在
-已建立的流中时发送不带新 cursor 的 reset-required，客户端应重新认证/读快照。
+已建立的流中时发送不带新 cursor 的 reset-required；浏览器重新连接并读取快照，机器检查自身凭据。
 兼容的 schema-v1 新事件保留事件名和公开 JSON envelope，推进游标但不更新未知的
 状态投影；已知状态事件仍严格解析。未知主版本不是可跳过事件，应升级客户端。
 每个 API 进程最多32条流，连接满额429；连接60秒后重连以更新认证。关闭浏览器不会
@@ -1058,7 +1023,7 @@ DSN、源报告或自报 PASS。CLI 使用已有 `client` 连接参数、凭据�
 精确绑定 `dry_run:false` 的 `MIGRATION_IMPORT` 授权。请求体由这些参数生成，不读stdin。
 授权申请沿用 `operator-grant` 的共享合同，command 为
 `{"operation":"MIGRATION_IMPORT","request":{"schema_version":1,"export_ref":"UUID","dry_run":false}}`，
-新建报告的 target_id 为 null。TOTP 只通过现有私有输入，不写命令日志。
+新建报告的 target_id 为 null。授权和令牌不写命令日志。
 
 202 回应含原报告和重放标记；dry-run 只写报告/回执，实际导入只创建不可变历史投影，
 不创建活动 Job/资格。未知结果用相同授权、幂等键和参数重放。
@@ -1121,7 +1086,7 @@ cargo run --locked -p server -- recover-access --recovery-id "$RECOVERY_ID"
 保留原编号；另一次恢复必须用新编号，避免命中备份中的旧回执。命令同事务提高会话授权
 epoch、追加机器凭据撤销和非秘密回执；所有者检查或任一步失败均回滚。浏览器、受信设备、
 旧单次grant和旧机器token失效。TOTP密文、凭据原记录、项目及研究历史保留；已消费或当前
-TOTP步不能重放，等待下一步重新登录，再按需要重新发放机器凭据。它没有HTTP/MCP入口。
+旧会话不会恢复；重新进入本机工作台，再按需要重新发放机器凭据。它没有HTTP/MCP入口。
 返回 schema_version、recovery_id、previous_epoch、new_epoch、revoked_machine_credentials；
 计数以十进制字符串表示。保存回执，核对原编号及两次epoch，不将调用失败当作成功切换。
 实际完整备份、产物恢复、远端任务核对、防重复交付及RPO/RTO演练仍需完成。

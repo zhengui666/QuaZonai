@@ -14,7 +14,6 @@ pub const RUNTIME_CREDENTIAL_MIN_LENGTH: usize = 32;
 pub enum IntegrationSecretPurpose {
     Runtime,
     Downstream,
-    CustomProvider,
     TlsCa,
 }
 impl IntegrationSecretPurpose {
@@ -22,7 +21,6 @@ impl IntegrationSecretPurpose {
         match self {
             Self::Runtime => "RUNTIME",
             Self::Downstream => "DOWNSTREAM",
-            Self::CustomProvider => "CUSTOM_PROVIDER",
             Self::TlsCa => "TLS_CA",
         }
     }

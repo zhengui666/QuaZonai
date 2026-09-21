@@ -88,11 +88,11 @@ for (const hasPlan of [false, true]) test(`Study requires a frozen plan and retr
   await context.setOffline(false);
   await dialog.getByLabel('CPU 秒数上限', { exact: true }).fill('9007199254740993');
   await submit.click();
-  await expect(dialog.getByText('请求结果尚未确认。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('提交结果未知，请重试当前操作', { exact: true })).toBeVisible();
   await expect(dialog.getByLabel('CPU 秒数上限', { exact: true })).toBeDisabled();
   runtime.revision = '9007199254740994';
   await dialog.getByRole('button', { name: '重试同一请求', exact: true }).click();
-  await expect(dialog.getByText('Study Run 已登记。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('研究已提交', { exact: true })).toBeVisible();
   expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0]); expect(writes[0]?.key).toBeTruthy();
   expect(writes[0]?.body).toEqual({ schema_version: 1, candidate_id: header.id, cycle_id: cycle.id, runtime_id: runtime.id, expected_runtime_revision: '9007199254740993', limits: { schema_version: 1, experiments: 0, cpu_seconds: '9007199254740993', wall_seconds: 60, memory_mib: 1024, output_bytes: '1048576' } });
   expect((await new AxeBuilder({ page }).include('.ant-modal').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
@@ -131,7 +131,7 @@ for (const kind of ['FORWARD', 'PORTFOLIO'] as const) for (const wrongSubject of
   await candidate.getByRole('button', { name: `评估 ${evaluation.id.slice(-8)}`, exact: true }).click();
   const detail = page.getByRole('dialog', { name: '候选研究评估', exact: true });
   if (wrongSubject) {
-    await expect(detail.getByText('请求未完成，请重试并检查服务状态。', { exact: true })).toBeVisible();
+    await expect(detail.getByText('请求失败，请重试', { exact: true })).toBeVisible();
     await expect(detail.getByRole('table')).toHaveCount(0);
   } else {
     await expect(detail.getByText(kind, { exact: true })).toBeVisible();
@@ -139,7 +139,7 @@ for (const kind of ['FORWARD', 'PORTFOLIO'] as const) for (const wrongSubject of
     await expect(detail.getByRole('cell', { name: '0', exact: true })).toBeVisible();
     await expect(detail.getByRole('cell', { name: '252', exact: true }).first()).toBeVisible();
     await expect(detail.getByText('nautilus-analysis.SharpeRatio / 0.63.0', { exact: true }).first()).toBeVisible();
-    await expect(detail.getByText(/当时没有未过期有效期/)).toBeVisible();
+    await expect(detail.getByText(/无有效期/)).toBeVisible();
     await expect(detail.getByRole('button', { name: /审批|交付|模拟/ })).toHaveCount(0);
     expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual([]);
   }
@@ -188,10 +188,10 @@ for (const empty of [false, true]) test(`candidate snapshot preserves original f
   await page.getByRole('tab', { name: '候选快照', exact: true }).click();
   await page.getByRole('button', { name: header.id, exact: true }).click();
   const detail = page.getByRole('dialog', { name: '不可变候选快照', exact: true });
-  await expect(detail.getByText('历史状态不授予当前资格', { exact: true })).toBeVisible();
+  await expect(detail.getByText('历史状态不授予当前资格', { exact: true })).toHaveCount(0);
   await expect(detail.getByText('OPTIMAL', { exact: true })).toBeVisible();
   await expect(detail.getByText('0.123456789012345678', { exact: true }).first()).toBeVisible();
-  if (empty) await expect(detail.getByText('无目标，不补造权重或现金。', { exact: true })).toBeVisible();
+  if (empty) await expect(detail.getByText('暂无目标', { exact: true })).toBeVisible();
   else await expect(detail.getByText('CONTROLLED.EXAMPLE', { exact: true })).toBeVisible();
   await expect(detail.getByRole('button', { name: /审批|交付/ })).toHaveCount(0);
   expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual([]);
@@ -228,7 +228,7 @@ for (const kind of ['PORTFOLIO', 'FORWARD'] as const) test(`Release freezes exac
   const submit = dialog.getByRole('button', { name: '确认冻结 Release', exact: true });
   await context.setOffline(true); await expect(submit).toBeDisabled();
   await context.setOffline(false); await submit.click();
-  await expect(dialog.getByText('冻结结果尚未确认，重试保留原候选、评估与幂等键。', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('提交结果未知，请重试当前操作', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: '重试同一冻结请求', exact: true }).click();
   await expect(dialog.getByText('原目标包已冻结。', { exact: true })).toBeVisible();
   expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0]); expect(writes[0]?.key).toBeTruthy();

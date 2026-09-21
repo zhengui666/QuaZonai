@@ -39,7 +39,7 @@ test('DEMO package remains readable but cannot open approval or Offer even with 
   await expect(detail.getByText('DEMO 目标包不能用于 Paper 或 Live 审批及交付。', { exact: true })).toBeVisible();
   await expect(detail.getByText(demo.package_artifact_id, { exact: true })).toBeVisible();
   await detail.getByRole('button', { name: '下载原始目标包', exact: true }).click();
-  await expect(detail.getByText('请求未完成，请重试并检查服务状态。', { exact: true })).toBeVisible();
+  await expect(detail.getByText('请求失败，请重试', { exact: true })).toBeVisible();
   expect(contentReads).toBe(0);
   wrongArtifactProject = false;
   const downloaded = page.waitForEvent('download');
@@ -81,7 +81,7 @@ for (const wrong of [false, true]) test(`Release project pagination and exact hi
     await expect(detail.getByRole('button', { name: '重新载入', exact: true })).toBeVisible();
   } else {
     await expect(detail.getByText(release.package_artifact_id, { exact: true })).toBeVisible();
-    await expect(detail.getByText('历史有效期不是当前审批资格', { exact: true })).toBeVisible();
+    await expect(detail.getByText('历史有效期不是当前审批资格', { exact: true })).toHaveCount(0);
     expect((await new AxeBuilder({ page }).include('.ant-drawer').withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
   }
   expect(cursors).toContain(release.id);
@@ -208,7 +208,7 @@ test('Approval reads all decisions and retries the exact original intent', async
   await expect(modal.getByRole('button', { name: '确认审批', exact: true })).toBeEnabled();
   await modal.getByRole('button', { name: '确认审批', exact: true }).click();
   await modal.getByRole('button', { name: '重试同一审批', exact: true }).click();
-  await expect(modal.getByText('结果尚未确认，重试保留原请求及幂等键。', { exact: true })).toBeVisible();
+  await expect(modal.getByText('提交结果未知，请重试当前操作', { exact: true })).toBeVisible();
   await expect(modal.getByText('原审批已保存，尚未发送 Offer。', { exact: true })).toHaveCount(0);
   await modal.getByRole('button', { name: '重试同一审批', exact: true }).click();
   await expect(modal.getByText('原审批已保存，尚未发送 Offer。', { exact: true })).toBeVisible();

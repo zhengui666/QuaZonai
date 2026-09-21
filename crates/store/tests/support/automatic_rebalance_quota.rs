@@ -117,17 +117,42 @@ async fn check(
         .fetch_one(pool)
         .await
         .unwrap();
-    for _ in 0..2 {
+    // Contention is intentionally a no-op, not proof of an unused quota.
+    // Exercise the real SKIP LOCKED branch separately from the quota assertions.
+    let mut holder = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM app.projects WHERE id=$1 FOR UPDATE")
+        .bind(seed.project_id.as_uuid())
+        .fetch_one(&mut *holder)
+        .await
+        .unwrap();
+    let skipped = Box::pin(store.automate_rebalance_build(
+        seed.project_id,
+        |id, size| f.read(id, size),
+        |_| async { panic!("a locked project cannot publish another task") },
+    ))
+    .await;
+    assert!(matches!(skipped, Ok(None)), "{skipped:?}");
+    holder.rollback().await.unwrap();
+    for attempt in 0..2 {
+        // A rejected call drops its transaction. Await native lock release
+        // before asserting the next uncontended call's exact quota error.
+        let mut settled = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM app.projects WHERE id=$1 FOR UPDATE")
+            .bind(seed.project_id.as_uuid())
+            .fetch_one(&mut *settled)
+            .await
+            .unwrap();
+        settled.commit().await.unwrap();
         let result = Box::pin(store.automate_rebalance_build(
             seed.project_id,
             |id, size| f.read(id, size),
             |_| async { panic!("daily quota cannot publish another task") },
         ))
         .await;
-        assert!(matches!(
-            result,
-            Err(StoreError::Invalid("automation_daily_quota"))
-        ));
+        assert!(
+            matches!(result, Err(StoreError::Invalid("automation_daily_quota"))),
+            "uncontended quota check {attempt}: {result:?}"
+        );
     }
     let after: i64 = sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE project_id=$1")
         .bind(seed.project_id.as_uuid())

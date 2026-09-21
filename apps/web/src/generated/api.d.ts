@@ -196,70 +196,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/auth/devices": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["devices"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/auth/devices/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete: operations["revoke_device"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/auth/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["login"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/auth/logout": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["logout"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v2/auth/machine": {
         parameters: {
             query?: never;
@@ -308,22 +244,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/auth/verify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["verify"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v2/automation-policies/{id}": {
         parameters: {
             query?: never;
@@ -366,54 +286,6 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["revoke_automation"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/bootstrap/confirm": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["bootstrap_confirm"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/bootstrap/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["bootstrap_start"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/bootstrap/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["bootstrap_status"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -492,22 +364,6 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getCodexAccountObservation"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/homes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listCodexHomeBindings"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1997,11 +1853,11 @@ export interface paths {
         };
         get: operations["listCodexProfiles"];
         put?: never;
-        post: operations["createCodexProfile"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
-        patch: operations["updateCodexSettings"];
+        patch?: never;
         trace?: never;
     };
     "/api/v2/settings/codex/{id}": {
@@ -2234,30 +2090,6 @@ export interface components {
             participation_limit: components["schemas"]["DecimalValue"];
             report_artifact_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
-        };
-        BootstrapConfirm: {
-            code: string;
-            device_label?: string | null;
-            enrollment_id: components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-            trust_device: boolean;
-        };
-        BootstrapEnrollment: {
-            enrollment_id: components["schemas"]["Id"];
-            /** Format: date-time */
-            expires_at: string;
-            provisioning_uri: string;
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        BootstrapStart: {
-            capability: string;
-            capability_id: components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        BootstrapStatus: {
-            initialized: boolean;
-            schema_version: components["schemas"]["SchemaV1"];
-            setup_allowed: boolean;
         };
         BriefBindingV1: {
             access_policy: components["schemas"]["DataAccess"];
@@ -2534,9 +2366,7 @@ export interface components {
             authenticated_at: string;
             /** Format: date-time */
             expires_at: string;
-            recent_authentication_required: boolean;
             schema_version: components["schemas"]["SchemaV1"];
-            trusted_device_id?: null | components["schemas"]["Id"];
         };
         BudgetV1: {
             cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
@@ -2739,24 +2569,6 @@ export interface components {
         };
         /** @enum {string} */
         CodexAuthenticationKind: "API_KEY" | "CHATGPT" | "AMAZON_BEDROCK";
-        CodexConnectionCreateV1: {
-            /** @enum {string} */
-            mode: "SYSTEM";
-        } | {
-            base_url: string;
-            credential_ref: components["schemas"]["Id"];
-            /** @enum {string} */
-            mode: "CUSTOM_PROVIDER";
-        };
-        CodexConnectionUpdateV1: {
-            /** @enum {string} */
-            mode: "SYSTEM";
-        } | {
-            base_url: string;
-            credential_ref?: null | components["schemas"]["Id"];
-            /** @enum {string} */
-            mode: "CUSTOM_PROVIDER";
-        };
         CodexDeviceCodeV1: {
             user_code: string;
             verification_url: string;
@@ -2766,11 +2578,6 @@ export interface components {
             provider: string;
             reasoning_effort?: string | null;
             service_tier?: string | null;
-        };
-        CodexHomeBindingV1: {
-            label: string;
-            profile_origin: components["schemas"]["ProfileOrigin"];
-            reference: string;
         };
         CodexLoginCancelV1: {
             expected_revision: components["schemas"]["Revision"];
@@ -2792,6 +2599,11 @@ export interface components {
             account: components["schemas"]["CodexAccountV1"];
             effective: components["schemas"]["CodexEffectiveSettingsV1"];
             models: components["schemas"]["CodexAdvertisedModelV1"][];
+            /**
+             * @description Model from the override-free native Thread. Absent only in historical
+             *     observations; never infer it from the post-override effective model.
+             */
+            native_default_model?: string | null;
             native_version: string;
             /** @enum {string} */
             status: "AVAILABLE";
@@ -2820,27 +2632,15 @@ export interface components {
             expected_revision: components["schemas"]["Revision"];
             profile_id: components["schemas"]["Id"];
         };
-        CodexProfileCreateV1: {
-            connection: components["schemas"]["CodexConnectionCreateV1"];
-            home_binding: string;
-            model_settings: components["schemas"]["SavedModelSettingsV1"];
-            name: string;
-            profile_origin: components["schemas"]["ProfileOrigin"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
         CodexProfileUpdateV1: {
-            connection: components["schemas"]["CodexConnectionUpdateV1"];
             expected_revision: components["schemas"]["Revision"];
             model_settings: components["schemas"]["SavedModelSettingsV1"];
-            name: string;
             schema_version: components["schemas"]["SchemaV1"];
         };
         CodexProfileViewV1: {
             connection_mode: components["schemas"]["ConnectionMode"];
             /** Format: date-time */
             created_at: string;
-            credential_configured: boolean;
-            custom_base_url?: string | null;
             /**
              * @description An opaque deployment label, never a path. None identifies a historical
              *     unregistered reference, which must not be exposed or guessed into a mount.
@@ -2858,11 +2658,6 @@ export interface components {
             description: string;
             id: string;
             name: string;
-        };
-        CodexSettingsUpdateV1: {
-            profile_id: components["schemas"]["Id"];
-            request: components["schemas"]["CodexProfileUpdateV1"];
-            schema_version: components["schemas"]["SchemaV1"];
         };
         CommandResult_ApprovalRevocationViewV1: {
             replayed: boolean;
@@ -3012,8 +2807,6 @@ export interface components {
                 connection_mode: components["schemas"]["ConnectionMode"];
                 /** Format: date-time */
                 created_at: string;
-                credential_configured: boolean;
-                custom_base_url?: string | null;
                 /**
                  * @description An opaque deployment label, never a path. None identifies a historical
                  *     unregistered reference, which must not be exposed or guessed into a mount.
@@ -3891,11 +3684,6 @@ export interface components {
         DecimalValue: string;
         /** @enum {string} */
         Decision: "PASS" | "REJECT" | "INCONCLUSIVE";
-        DeviceList: {
-            items: components["schemas"]["TrustedDevice"][];
-            next_cursor?: null | components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
         /** @description Native observation only. This does not authorize approval or delivery. */
         DownstreamCapabilitiesV1: {
             accepted_package_versions: components["schemas"]["PackageSchemaVersion"][];
@@ -4583,18 +4371,6 @@ export interface components {
         } & {
             intent?: {
                 /** @enum {string} */
-                purpose?: "CUSTOM_PROVIDER";
-            };
-        }) | ({
-            intent: {
-                label: string;
-                purpose: components["schemas"]["IntegrationSecretPurpose"];
-                schema_version: components["schemas"]["SchemaV1"];
-            };
-            value: string;
-        } & {
-            intent?: {
-                /** @enum {string} */
                 purpose?: "TLS_CA";
             };
         });
@@ -4604,7 +4380,7 @@ export interface components {
             schema_version: components["schemas"]["SchemaV1"];
         };
         /** @enum {string} */
-        IntegrationSecretPurpose: "RUNTIME" | "DOWNSTREAM" | "CUSTOM_PROVIDER" | "TLS_CA";
+        IntegrationSecretPurpose: "RUNTIME" | "DOWNSTREAM" | "TLS_CA";
         IntegrationSecretView: {
             /** Format: date-time */
             created_at: string;
@@ -4619,12 +4395,6 @@ export interface components {
             fixed_bars: boolean;
             fixed_duration: boolean;
             variable_interval: boolean;
-        };
-        LoginRequest: {
-            code: string;
-            device_label?: string | null;
-            schema_version: components["schemas"]["SchemaV1"];
-            trust_device: boolean;
         };
         /** @enum {string} */
         MachineScope: "RESEARCH_READ" | "EXPERIMENT_SUBMIT" | "ARTIFACT_SUBMIT" | "EVIDENCE_READ" | "RUN_READ" | "RUN_CANCEL" | "DOWNSTREAM_CLAIM" | "DOWNSTREAM_ACK" | "FORWARD_SUBMIT" | "DOCTOR_READ";
@@ -4846,10 +4616,6 @@ export interface components {
             request: components["schemas"]["HistoricalImportRequestV1"];
         } | {
             /** @enum {string} */
-            operation: "CODEX_PROFILE_CREATE";
-            request: components["schemas"]["CodexProfileCreateV1"];
-        } | {
-            /** @enum {string} */
             operation: "CODEX_PROFILE_UPDATE";
             request: components["schemas"]["CodexProfileUpdateV1"];
         } | {
@@ -5026,7 +4792,6 @@ export interface components {
             request: components["schemas"]["EvaluationPolicyCreate"];
         };
         OperatorGrantRequest: {
-            code: string;
             command: components["schemas"]["OperatorCommand"];
             schema_version: components["schemas"]["SchemaV1"];
             target_id?: null | components["schemas"]["Id"];
@@ -5220,8 +4985,6 @@ export interface components {
                 connection_mode: components["schemas"]["ConnectionMode"];
                 /** Format: date-time */
                 created_at: string;
-                credential_configured: boolean;
-                custom_base_url?: string | null;
                 /**
                  * @description An opaque deployment label, never a path. None identifies a historical
                  *     unregistered reference, which must not be exposed or guessed into a mount.
@@ -6631,16 +6394,6 @@ export interface components {
         TlsPolicy: "SYSTEM_CA" | "PINNED_CA";
         /** @enum {string} */
         TrialSelectionReason: "ELIGIBLE" | "INCOMPARABLE_INPUT" | "UNFINISHED" | "NOT_EXECUTED" | "EXECUTION_FAILED" | "EXECUTION_CANCELLED" | "NO_FORMAL_EVALUATION" | "INVALID_EVIDENCE" | "REQUIRED_METRIC_MISSING" | "SELECTION_METRIC_MISSING";
-        TrustedDevice: {
-            /** Format: date-time */
-            expires_at: string;
-            id: components["schemas"]["Id"];
-            label: string;
-            /** Format: date-time */
-            last_used_at?: string | null;
-            /** Format: date-time */
-            revoked_at?: string | null;
-        };
         /** @enum {string} */
         UniverseRegistrationState: "NATIVE_METADATA" | "LEGACY_UNVERIFIED";
         UniverseView: {
@@ -6665,10 +6418,6 @@ export interface components {
             registration_state: components["schemas"]["UniverseRegistrationState"];
             /** Format: date-time */
             selection_asof: string;
-        };
-        VerifyRequest: {
-            code: string;
-            schema_version: components["schemas"]["SchemaV1"];
         };
         /** @enum {string} */
         WakeStateV1: "PENDING" | "SUPPRESSED" | "CONSUMED" | "CANCELLED";
@@ -7706,152 +7455,6 @@ export interface operations {
             };
         };
     };
-    devices: {
-        parameters: {
-            query?: {
-                /** @description Opaque previous-page cursor */
-                cursor?: components["schemas"]["Id"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceList"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    revoke_device: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Trusted device identity */
-                id: components["schemas"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    login: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LoginRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BrowserSession"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    logout: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
     machine_session: {
         parameters: {
             query?: never;
@@ -7982,54 +7585,7 @@ export interface operations {
                     "application/json": components["schemas"]["BrowserSession"];
                 };
             };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    verify: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VerifyRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BrowserSession"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            429: {
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8238,127 +7794,6 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    bootstrap_confirm: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BootstrapConfirm"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BrowserSession"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    bootstrap_start: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BootstrapStart"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BootstrapEnrollment"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    bootstrap_status: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BootstrapStatus"];
-                };
-            };
-            503: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -8793,51 +8228,6 @@ export interface operations {
                 };
             };
             422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    listCodexHomeBindings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexHomeBindingV1"][];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16908,166 +16298,6 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    createCodexProfile: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexProfileCreateV1"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandResult_CodexProfileViewV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    updateCodexSettings: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexSettingsUpdateV1"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandResult_CodexProfileViewV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {

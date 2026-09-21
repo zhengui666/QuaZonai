@@ -350,3 +350,26 @@ test('daily Cycle quotas count the project across keys and Briefs, replay old re
     vi.useRealTimers();
   }
 });
+
+test('synthetic Codex roles return unobserved metadata and never fabricate native results', () => {
+  const edit = projectEditor();
+  const profiles = (edit('GET', '/api/v2/settings/codex')!.value as { items: Schema['CodexProfileViewV1'][] }).items;
+  for (const profile of profiles) {
+    const query = new URLSearchParams({ profile_id: profile.id });
+    const before = edit('GET', '/api/v2/codex/models', undefined, undefined, query)!;
+    expect(before).toEqual({ status: 200, value: {
+      schema_version: 1, profile_id: profile.id, profile_revision: profile.revision,
+      state: 'NEVER_PROBED', observation: null,
+    } });
+    expect(validateResponse('/api/v2/codex/models', 'get', 200, before.value, 'application/json')).toBe(true);
+    const probe = edit('POST', '/api/v2/codex/probe', {
+      schema_version: 1, profile_id: profile.id, expected_revision: profile.revision,
+    }, `probe-${profile.id}`) ?? demoResponse('POST', '/api/v2/codex/probe');
+    expect(probe.status).toBe(403);
+    expect(edit('GET', '/api/v2/codex/models', undefined, undefined, query)).toEqual(before);
+  }
+  for (const query of ['', 'profile_id=bad', `profile_id=${id(2981)}&profile_id=${id(2982)}`, `profile_id=${id(2981)}&unknown=1`]) {
+    expect(edit('GET', '/api/v2/codex/models', undefined, undefined, new URLSearchParams(query))?.status).toBe(422);
+  }
+  expect(edit('GET', '/api/v2/codex/models', undefined, undefined, new URLSearchParams({ profile_id: id(9000) }))?.status).toBe(404);
+});

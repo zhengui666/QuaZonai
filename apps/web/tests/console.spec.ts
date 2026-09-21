@@ -15,16 +15,16 @@ test('real browser renders the synthetic contract without page overflow or acces
   await page.screenshot({ path: info.outputPath('synthetic-console.png'), fullPage: true });
 });
 
-test('401 returns a stable six-digit authenticator login, not a reload loop', async ({ page }) => {
-  const state = await fixture(page, { authenticated: false }); await page.goto('/');
-  await expect(page.getByRole('heading', { name: '使用验证器登录' })).toBeVisible();
-  await expect(page.getByLabel('动态验证码')).toBeVisible();
-  await page.getByLabel('动态验证码').fill('123456');
-  await page.getByRole('button', { name: '登录', exact: true }).click();
+test('local workbench has no enrollment, login or device-management flow', async ({ page }) => {
+  const state = await fixture(page); const paths: string[] = [];
+  page.on('request', request => paths.push(new URL(request.url()).pathname));
+  await page.goto('/');
   await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
-  expect(state.commands.filter(item => item.path === '/api/v2/auth/login')).toHaveLength(1);
-  const storage = await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage) }));
-  expect(storage).toEqual({ local: [], session: [] });
+  await expect(page.getByLabel('动态验证码')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '登录', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '退出登录', exact: true })).toHaveCount(0);
+  expect(paths.filter(path => path.startsWith('/api/v2/bootstrap') || path.startsWith('/api/v2/auth/'))).toEqual([]);
+  expect(state.commands).toHaveLength(0);
 });
 
 test('a lost create response retries the same body and idempotency key', async ({ page }) => {
@@ -33,7 +33,7 @@ test('a lost create response retries the same body and idempotency key', async (
   await page.getByLabel('研究名称').fill('重试不重复创建');
   await page.getByLabel('研究说明', { exact: true }).fill('合成界面测试。');
   await page.getByRole('button', { name: '保存项目', exact: true }).click();
-  await expect(page.getByText('连接中断，尚不能确定操作是否已提交。', { exact: false })).toBeVisible();
+  await expect(page.getByText('连接中断，提交结果未知；请重试当前操作', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: '保存项目', exact: true }).click();
   await expect(page.getByRole('button', { name: '重试不重复创建', exact: true })).toBeVisible();
   const creates = state.commands.filter(item => item.path === '/api/v2/projects' && item.method === 'POST');
@@ -49,7 +49,7 @@ test('409 retains the local form, shows the exact revision, and blocks overwrite
   await page.getByRole('button', { name: '编辑', exact: true }).click();
   await page.getByLabel('研究名称').fill('尚未保存的本地修改');
   await page.getByRole('button', { name: '保存项目', exact: true }).click();
-  await expect(page.getByText('服务器当前版本：9007199254740994。请先重载；不会覆盖新版本。')).toBeVisible();
+  await expect(page.getByText('当前版本：9007199254740994，请重新载入')).toBeVisible();
   await expect(page.getByLabel('研究名称')).toHaveValue('尚未保存的本地修改');
   await expect(page.getByRole('button', { name: '保存项目', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: '保存项目', exact: true })).toHaveAttribute('aria-busy', 'false');
@@ -72,29 +72,21 @@ test('invalid success data is a contract error, never an empty project list', as
   await fixture(page);
   await page.route(url => url.pathname === '/api/v2/projects', route => reply(route, {}));
   await page.goto('/');
-  await expect(page.getByText('响应字段或合同版本不兼容。未将它当成空列表或成功操作。')).toBeVisible();
-  await expect(page.getByText('尚无研究项目。', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('响应数据不兼容')).toBeVisible();
+  await expect(page.getByText('暂无研究项目', { exact: true })).toHaveCount(0);
 });
 
-test('recent verification preserves the cancel intent and requires an explicit resubmit', async ({ page }) => {
-  const state = await fixture(page, { requireVerify: true }); await page.goto('/');
+test('local cancellation retains confirmation and uses no verification challenge', async ({ page }) => {
+  const state = await fixture(page); await page.goto('/');
   await navigate(page, '运行');
   await page.getByRole('button', { name: 'IMPORT · 00000003', exact: true }).click();
   await page.getByRole('button', { name: '请求取消运行', exact: true }).click();
   await page.getByRole('button', { name: '确认请求取消', exact: true }).click();
-  const verify = page.getByRole('dialog', { name: '重新验证敏感操作' });
-  await expect(verify).toBeVisible();
-  await verify.getByLabel('动态验证码').fill('123456');
-  await verify.getByRole('button', { name: '确认验证', exact: true }).click();
-  await expect(verify).not.toBeVisible();
-  const cancels = () => state.commands.filter(item => item.path.endsWith('/cancel'));
-  expect(cancels()).toHaveLength(1);
-  await page.getByRole('button', { name: '确认请求取消', exact: true }).click();
   await expect(page.getByText('已请求取消', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('已取消', { exact: true })).toHaveCount(0);
-  expect(cancels()).toHaveLength(2);
-  expect(cancels()[0]?.key).toBe(cancels()[1]?.key);
-  expect(cancels()[0]?.body).toEqual(cancels()[1]?.body);
+  await expect(page.getByLabel('动态验证码')).toHaveCount(0);
+  expect(state.commands.filter(item => item.path.endsWith('/cancel'))).toHaveLength(1);
+  expect(state.commands.filter(item => item.path.startsWith('/api/v2/auth/'))).toHaveLength(0);
 });
 
 test('SSE reconnect carries one exact advanced cursor, including unknown compatible events', async ({ page }) => {
@@ -116,30 +108,6 @@ test('SSE reconnect carries one exact advanced cursor, including unknown compati
   expect(state.run.state).toBe('QUEUED');
 });
 
-test('logout removes private project content and never claims to cancel runs', async ({ page }) => {
-  const state = await fixture(page); await page.goto('/');
-  await page.getByRole('button', { name: '退出登录', exact: true }).click();
-  await page.getByRole('button', { name: '确认退出', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '使用验证器登录' })).toBeVisible();
-  await expect(page.getByRole('button', { name: project.name, exact: true })).toHaveCount(0);
-  expect(state.commands.filter(item => item.path.endsWith('/cancel'))).toHaveLength(0);
-});
-
-for (const keepTrust of [true, false]) {
-  test(`device trust requires a name and normalizes an unchecked label (${keepTrust})`, async ({ page }) => {
-    const state = await fixture(page, { authenticated: false }); await page.goto('/');
-    await page.getByLabel('动态验证码').fill('123456');
-    await page.getByRole('checkbox', { name: '信任这台私人设备（最长 30 天）' }).check();
-    await page.getByRole('button', { name: '登录', exact: true }).click();
-    await expect(page.getByText('请输入这台私人设备的名称。')).toBeVisible();
-    expect(state.commands.filter(item => item.path === '/api/v2/auth/login')).toHaveLength(0);
-    await page.getByLabel('设备名称').fill('私人笔记本');
-    if (!keepTrust) await page.getByRole('checkbox', { name: '信任这台私人设备（最长 30 天）' }).uncheck();
-    await page.getByRole('button', { name: '登录', exact: true }).click();
-    await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
-    expect(state.commands.find(item => item.path === '/api/v2/auth/login')?.body).toMatchObject({ trust_device: keepTrust, device_label: keepTrust ? '私人笔记本' : null });
-  });
-}
 for (const terminalState of ['SUCCEEDED', 'FAILED', 'CANCELLED'] as const) {
   test(`terminal run cannot request cancellation (${terminalState})`, async ({ page }) => {
     const state = await fixture(page); state.run.state = terminalState;

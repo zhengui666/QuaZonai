@@ -19,13 +19,11 @@ async fn setup(
 ) -> (
     Fixture,
     String,
-    totp_rs::TOTP,
     research_support::ResearchFixture,
     BriefCreateIntent,
 ) {
     let f = fixture(pool.clone()).await;
-    let (e, c, native) = start(&f).await;
-    let (r, _) = confirm(&f, &e, &c, &native, true).await;
+    let r = local_session(&f).await;
     assert_eq!(r.status, StatusCode::OK);
     let login: String = sqlx::query_scalar(
         "SELECT id::text FROM app.browser_logins ORDER BY created_at DESC LIMIT 1",
@@ -38,7 +36,7 @@ async fn setup(
     };
     let data = research_support::setup(pool, &f.store, &actor).await;
     let request = brief_support::request(&f.store, &actor, &data).await;
-    (f, r.cookie.unwrap(), native, data, request)
+    (f, r.cookie.unwrap(), data, request)
 }
 async fn send(
     f: &Fixture,
@@ -50,7 +48,7 @@ async fn send(
     let mut b = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "research.example");
+        .header(header::HOST, "localhost");
     for (k, v) in headers {
         b = b.header(*k, *v);
     }
@@ -77,7 +75,7 @@ async fn browser(
         body,
         &[
             ("cookie", cookie),
-            ("origin", "https://research.example"),
+            ("origin", "https://localhost"),
             ("idempotency-key", key),
         ],
     )
@@ -93,7 +91,7 @@ async fn token(f: &Fixture, cookie: &str, project: Id) -> String {
 }
 #[sqlx::test(migrations = "../../migrations")]
 async fn browser_saves_edits_and_reads_a_real_draft_with_original_retries(pool: PgPool) {
-    let (f, cookie, _, data, request) = setup(&pool).await;
+    let (f, cookie, data, request) = setup(&pool).await;
     let path = format!("/api/v2/projects/{}/briefs", data.project);
     let body = serde_json::to_value(&request.request).unwrap();
     let created = browser(&f, &cookie, "create", "POST", &path, body.clone()).await;
@@ -138,7 +136,7 @@ async fn browser_saves_edits_and_reads_a_real_draft_with_original_retries(pool: 
 }
 #[sqlx::test(migrations = "../../migrations")]
 async fn human_cli_grant_binds_full_intent_and_path_project(pool: PgPool) {
-    let (f, cookie, native, data, request) = setup(&pool).await;
+    let (f, cookie, data, request) = setup(&pool).await;
     let bearer = token(&f, &cookie, data.project).await;
     let path = format!("/api/v2/projects/{}/briefs", data.project);
     let body = serde_json::to_value(&request.request).unwrap();
@@ -151,14 +149,7 @@ async fn human_cli_grant_binds_full_intent_and_path_project(pool: PgPool) {
     )
     .await;
     assert_eq!(denied.status, StatusCode::FORBIDDEN);
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
-    let grant=send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"BRIEF_CREATE","request":request},"target_id":null,"code":native.generate((now/30+1)*30)}),&[("authorization",&bearer),("idempotency-key","grant")]).await;
+    let grant=send(&f,"POST","/api/v2/auth/operator-command-grants",json!({"schema_version":1,"command":{"operation":"BRIEF_CREATE","request":request},"target_id":null}),&[("authorization",&bearer),("idempotency-key","grant")]).await;
     assert_eq!(grant.status, StatusCode::CREATED, "{}", grant.body);
     let id = grant.body["resource"]["id"].as_str().unwrap();
     let headers = [
@@ -211,7 +202,7 @@ async fn human_cli_grant_binds_full_intent_and_path_project(pool: PgPool) {
 }
 #[sqlx::test(migrations = "../../migrations")]
 async fn authoring_rejects_unknown_fields_permission_laundering_and_bad_references(pool: PgPool) {
-    let (f, cookie, _, data, request) = setup(&pool).await;
+    let (f, cookie, data, request) = setup(&pool).await;
     let path = format!("/api/v2/projects/{}/briefs", data.project);
     let valid = serde_json::to_value(&request.request).unwrap();
     for (pointer, value) in [
@@ -255,8 +246,10 @@ async fn authoring_rejects_unknown_fields_permission_laundering_and_bad_referenc
     assert_eq!(count, 0);
 }
 #[sqlx::test(migrations = "../../migrations")]
-async fn stale_browser_is_read_only_and_cross_origin_cannot_author_brief(pool: PgPool) {
-    let (f, cookie, _, data, request) = setup(&pool).await;
+async fn local_browser_needs_no_recent_challenge_but_cross_origin_cannot_author_brief(
+    pool: PgPool,
+) {
+    let (f, cookie, data, request) = setup(&pool).await;
     let path = format!("/api/v2/projects/{}/briefs", data.project);
     let body = serde_json::to_value(&request.request).unwrap();
     let csrf = send(
@@ -298,12 +291,5 @@ async fn stale_browser_is_read_only_and_cross_origin_cannot_author_brief(pool: P
     let read = browser(&f, &cookie, "unused", "GET", &path, Value::Null).await;
     assert_eq!(read.status, StatusCode::OK);
     let stale = browser(&f, &cookie, "stale", "POST", &path, body).await;
-    assert!(
-        matches!(
-            stale.status,
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
-        ),
-        "{}",
-        stale.body
-    );
+    assert_eq!(stale.status, StatusCode::CREATED, "{}", stale.body);
 }

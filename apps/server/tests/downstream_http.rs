@@ -23,7 +23,7 @@ use std::{
 };
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn runtime_allowlist_never_authorizes_downstream_network_and_anonymous_cannot_probe(
+async fn runtime_allowlist_never_authorizes_downstream_network_and_invalid_bearer_cannot_probe(
     pool: PgPool,
 ) {
     let targets = RuntimeTargets::new(
@@ -35,10 +35,9 @@ async fn runtime_allowlist_never_authorizes_downstream_network_and_anonymous_can
     )
     .unwrap();
     let f = support::fixture_with_runtime_targets(pool.clone(), Some(targets)).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (confirmed, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let confirmed = support::local_session(&f).await;
     assert_eq!(confirmed.status, StatusCode::OK);
-    let cookie = confirmed.cookie.unwrap_or(initial);
+    let cookie = confirmed.cookie.unwrap();
     let secret=browser(&f,&cookie,"secret","/api/v2/settings/credentials",json!({"intent":{"schema_version":1,"purpose":"DOWNSTREAM","label":"Unavailable native fixture"},"value":"disposable-downstream-credential"})).await;
     assert_eq!(secret.status, StatusCode::CREATED);
     let downstream=browser(&f,&cookie,"config","/api/v2/integrations/downstreams",json!({"schema_version":1,"credential_ref":secret.body["resource"]["id"],"configuration":{"name":"Denied downstream","endpoint":"https://downstream.example","accepted_package_versions":["1"],"environments":"BOTH","enabled":true,"development_http":false}})).await;
@@ -49,7 +48,7 @@ async fn runtime_allowlist_never_authorizes_downstream_network_and_anonymous_can
     );
     let intent =
         json!({"schema_version":1,"expected_revision":downstream.body["resource"]["revision"]});
-    let denied = support::call(&f, "POST", &path, intent.clone(), None).await;
+    let denied = support::invalid_bearer(&f, "POST", &path, intent.clone()).await;
     assert_eq!(denied.status, StatusCode::UNAUTHORIZED);
     let result = browser(&f, &cookie, "probe", &path, intent).await;
     assert_eq!(result.status, StatusCode::OK);
@@ -81,13 +80,12 @@ async fn native_cli_probe_uses_exact_grant_and_rolls_back_failed_artifact_public
     }));
     let remote = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
     let f = support::fixture(pool.clone()).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (confirmed, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let confirmed = support::local_session(&f).await;
     assert_eq!(confirmed.status, StatusCode::OK);
-    let cookie = confirmed.cookie.unwrap_or(initial);
+    let cookie = confirmed.cookie.unwrap();
     let secret=browser(&f,&cookie,"secret","/api/v2/settings/credentials",json!({"intent":{"schema_version":1,"purpose":"DOWNSTREAM","label":"Disposable downstream"},"value":SECRET})).await;
     assert_eq!(secret.status, StatusCode::CREATED);
-    // Read the identity created by real native TOTP; do not fabricate a login row.
+    // Read the identity created by the native local session; do not fabricate a login row.
     let login:uuid::Uuid=sqlx::query_scalar("SELECT id FROM app.browser_logins WHERE revoked_at IS NULL ORDER BY authenticated_at DESC LIMIT 1").fetch_one(&pool).await.unwrap();
     let actor = store::authority::Actor::Browser {
         login_id: login.to_string().try_into().unwrap(),
@@ -152,14 +150,7 @@ async fn native_cli_probe_uses_exact_grant_and_rolls_back_failed_artifact_public
     .await;
     assert!(!denied.status.success());
     assert_eq!(requests.load(Ordering::SeqCst), 0);
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
-    let human=invoke(&origin,&file,&["--idempotency-key","human","operator-grant"],json!({"schema_version":1,"command":{"operation":"DOWNSTREAM_PROBE","request":intent},"target_id":downstream.id,"code":totp.generate((now/30+1)*30)})).await;
+    let human=invoke(&origin,&file,&["--idempotency-key","human","operator-grant"],json!({"schema_version":1,"command":{"operation":"DOWNSTREAM_PROBE","request":intent},"target_id":downstream.id})).await;
     assert!(human.status.success(), "native grant failed");
     let grant: Value = serde_json::from_slice(&human.stdout).unwrap();
     let args = [

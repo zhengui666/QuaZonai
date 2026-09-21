@@ -124,9 +124,11 @@ fn matrix() {
     let key = base.path().join("test-master.key");
     SecretVault::initialize_key(&key).unwrap();
     let vault = SecretVault::open(&vault_root, &key).unwrap();
-    let secret = vault.put("TOTP", b"disposable-test-value").unwrap();
+    let secret = vault
+        .put("MACHINE_VERIFIER", b"disposable-test-value")
+        .unwrap();
     assert_eq!(
-        vault.read(secret, "TOTP").unwrap(),
+        vault.read(secret, "MACHINE_VERIFIER").unwrap(),
         b"disposable-test-value"
     );
     assert!(vault.read(secret, "SESSION_KEY").is_err());

@@ -10,23 +10,6 @@ use utoipa::ToSchema;
 #[serde(tag = "mode", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum CodexConnectionCreateV1 {
     System {},
-    CustomProvider {
-        #[schema(min_length = 1, max_length = 2048)]
-        base_url: String,
-        credential_ref: Id,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "mode", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
-pub enum CodexConnectionUpdateV1 {
-    System {},
-    CustomProvider {
-        #[schema(min_length = 1, max_length = 2048)]
-        base_url: String,
-        /// Omitted/null retains an existing CUSTOM_PROVIDER reference only.
-        credential_ref: Option<Id>,
-    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -51,18 +34,7 @@ pub struct CodexProfileCreateV1 {
 pub struct CodexProfileUpdateV1 {
     pub schema_version: SchemaV1,
     pub expected_revision: Revision,
-    #[schema(min_length = 1, max_length = 120)]
-    pub name: String,
-    pub connection: CodexConnectionUpdateV1,
     pub model_settings: SavedModelSettingsV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodexSettingsUpdateV1 {
-    pub schema_version: SchemaV1,
-    pub profile_id: Id,
-    pub request: CodexProfileUpdateV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -75,8 +47,6 @@ pub struct CodexProfileViewV1 {
     pub home_binding: Option<String>,
     pub profile_origin: ProfileOrigin,
     pub connection_mode: ConnectionMode,
-    pub custom_base_url: Option<String>,
-    pub credential_configured: bool,
     pub model_settings: SavedModelSettingsV1,
     pub revision: Revision,
     pub created_at: DateTime<Utc>,
@@ -174,6 +144,11 @@ pub enum CodexProbeOutcomeV1 {
         native_version: String,
         account: CodexAccountV1,
         effective: CodexEffectiveSettingsV1,
+        /// Model from the override-free native Thread. Absent only in historical
+        /// observations; never infer it from the post-override effective model.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(min_length = 1, max_length = 200)]
+        native_default_model: Option<String>,
         #[schema(min_items = 1, max_items = 4096)]
         models: Vec<CodexAdvertisedModelV1>,
     },

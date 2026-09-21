@@ -216,6 +216,10 @@ async fn old_schema(pool: &PgPool) {
 }
 // Raw historical facts for upgrade tests, not a production writer or license bypass.
 async fn old_pair(pool: &PgPool, wrong: bool) -> Id {
+    // Only this pre-local-schema fixture needs the historical initialization row.
+    // No verifier is generated or executed; the production upgrade remains unchanged.
+    sqlx::query("UPDATE app.operator_auth_state SET initialized=true,totp_secret_ref='historical-fixture-only',last_accepted_totp_step=1,setup_completed_at=clock_timestamp() WHERE singleton")
+        .execute(pool).await.unwrap();
     let (store, actor) = operator(pool).await;
     let f = setup(pool, &store, &actor).await;
     let root: uuid::Uuid =

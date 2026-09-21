@@ -36,14 +36,19 @@ describe('native purpose-dependent secret request schema', () => {
       expect(accepts('IntegrationSecretCreate', secret('RUNTIME', 'x'.repeat(32) + suffix))).toBe(false);
     }
   });
-  it('preserves upstream-compatible Downstream and Custom Provider credential bounds', () => {
-    for (const purpose of ['DOWNSTREAM', 'CUSTOM_PROVIDER']) {
+  it('preserves upstream-compatible Downstream credential bounds', () => {
+    for (const purpose of ['DOWNSTREAM']) {
       for (const length of [1, 8192]) {
         expect(accepts('IntegrationSecretCreate', secret(purpose, 'x'.repeat(length)))).toBe(true);
       }
       for (const value of ['', 'x'.repeat(8193), 'a b', 'a\n', 'a\0', '中文']) {
         expect(accepts('IntegrationSecretCreate', secret(purpose, value))).toBe(false);
       }
+    }
+  });
+  it('rejects removed Codex provider credential registration', () => {
+    for (const value of ['x', 'x'.repeat(32), 'x'.repeat(8192)]) {
+      expect(accepts('IntegrationSecretCreate', secret('CUSTOM_PROVIDER', value))).toBe(false);
     }
   });
   it('bounds ASCII CA material without pretending JSON Schema can verify a certificate', () => {

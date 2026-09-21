@@ -1,4 +1,4 @@
-//! Native TOTP/opaque-capability primitives. Database state owns replay, expiry
+//! Native opaque-capability primitives. Database state owns replay, expiry
 //! and authority; a successful cryptographic check alone grants no permission.
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -7,7 +7,6 @@ use argon2::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chacha20poly1305::aead::{rand_core::RngCore, OsRng};
 use thiserror::Error;
-use totp_rs::{Algorithm, Secret, TOTP};
 
 #[derive(Debug, Error)]
 pub enum AuthenticationError {
@@ -49,51 +48,6 @@ pub fn verify_capability(secret: &str, verifier: &str) -> bool {
             .verify_password(secret.as_bytes(), &hash)
             .is_ok()
     })
-}
-
-pub fn new_totp_secret() -> Result<Vec<u8>, AuthenticationError> {
-    Secret::generate_secret()
-        .to_bytes()
-        .map_err(|_| AuthenticationError::Primitive)
-}
-
-fn native_totp(secret: &[u8]) -> Result<TOTP, AuthenticationError> {
-    // skew=0: identify the exact accepted step using the upstream check; the
-    // caller's durable state, not this object, applies the ±1 policy and replay.
-    TOTP::new(
-        Algorithm::SHA1,
-        6,
-        0,
-        30,
-        secret.to_vec(),
-        Some("QuaZonai".into()),
-        "operator".into(),
-    )
-    .map_err(|_| AuthenticationError::Invalid)
-}
-
-pub fn provisioning_uri(secret: &[u8]) -> Result<String, AuthenticationError> {
-    Ok(native_totp(secret)?.get_url())
-}
-
-pub fn accepted_step(
-    secret: &[u8],
-    code: &str,
-    unix_seconds: i64,
-) -> Result<Option<i64>, AuthenticationError> {
-    if code.len() != 6 || !code.bytes().all(|b| b.is_ascii_digit()) || unix_seconds < 30 {
-        return Ok(None);
-    }
-    let totp = native_totp(secret)?;
-    let step = unix_seconds / 30;
-    // Prefer the newest matching step in the rare event of a collision so an
-    // accepted code cannot be replayed at a second step inside the same window.
-    for candidate in (step - 1..=step + 1).rev() {
-        if totp.check(code, candidate as u64 * 30) {
-            return Ok(Some(candidate));
-        }
-    }
-    Ok(None)
 }
 
 /// A bounded routing identifier plus an opaque secret. This is not a JWT and

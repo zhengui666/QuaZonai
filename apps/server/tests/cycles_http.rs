@@ -1,4 +1,4 @@
-//! Actual TOTP/cookie authentication, Axum commands and PostgreSQL/PGMQ startup.
+//! Actual local cookie sessions, Axum commands and PostgreSQL/PGMQ startup.
 //! Parent data/capability records are explicit fixtures, not production T42 evidence.
 #[path = "../../../tests/support/cycles.rs"]
 mod cycle_support;
@@ -17,7 +17,7 @@ use axum::{
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use store::authority::Actor;
-use support::{confirm, exchange, fixture, start, Fixture, Reply};
+use support::{exchange, fixture, invalid_bearer, local_session, Fixture, Reply};
 
 async fn browser(
     f: &Fixture,
@@ -30,8 +30,8 @@ async fn browser(
     let request = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "research.example")
-        .header(header::ORIGIN, "https://research.example")
+        .header(header::HOST, "localhost")
+        .header(header::ORIGIN, "https://localhost")
         .header(header::COOKIE, cookie)
         .header(header::CONTENT_TYPE, "application/json")
         .header("idempotency-key", key)
@@ -50,8 +50,7 @@ async fn setup(pool: &PgPool) -> (Fixture, String, cycle_support::Fixture) {
         Some(server::runtime_transport::RuntimeTargets::default()),
     )
     .await;
-    let (enrollment, anonymous, native) = start(&f).await;
-    let (login, _) = confirm(&f, &enrollment, &anonymous, &native, true).await;
+    let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();
     let login_id: String = sqlx::query_scalar(
@@ -271,7 +270,7 @@ async fn authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn startup_rejects_forged_success_stale_revision_and_unauthenticated_mutation(pool: PgPool) {
+async fn startup_rejects_forged_success_stale_revision_and_invalid_machine_mutation(pool: PgPool) {
     let (f, cookie, data) = setup(&pool).await;
     let path = format!("/api/v2/briefs/{}/freeze", data.brief.id);
     let mut forged = serde_json::to_value(&data.freeze).unwrap();
@@ -282,12 +281,10 @@ async fn startup_rejects_forged_success_stale_revision_and_unauthenticated_mutat
     stale["expected_revision"] = json!("99");
     let rejected = browser(&f, &cookie, "POST", &path, "stale", stale).await;
     assert_eq!(rejected.status, StatusCode::CONFLICT);
-    let rejected = browser(
+    let rejected = invalid_bearer(
         &f,
-        "",
         "POST",
         &path,
-        "anonymous",
         serde_json::to_value(&data.freeze).unwrap(),
     )
     .await;
@@ -307,8 +304,7 @@ async fn startup_rejects_forged_success_stale_revision_and_unauthenticated_mutat
 #[sqlx::test(migrations = "../../migrations")]
 async fn missing_artifact_deployment_is_unavailable_not_a_user_validation_failure(pool: PgPool) {
     let f = fixture(pool.clone()).await;
-    let (enrollment, anonymous, native) = start(&f).await;
-    let (login, _) = confirm(&f, &enrollment, &anonymous, &native, false).await;
+    let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();
     let response = browser(

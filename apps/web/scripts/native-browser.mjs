@@ -154,19 +154,15 @@ async function freePort() {
   return address.port;
 }
 
-async function waitReady(baseUrl, initialized) {
+async function waitReady(baseUrl) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline && !stopping) {
     if (services.some((service) => service.exited && !service.retired)) throw new Error('A test-owned service exited before readiness');
     try {
-      const response = await fetch(`${baseUrl}/api/v2/bootstrap/status`, { signal: AbortSignal.timeout(2_000) });
-      if (response.ok) {
-        const body = await response.json();
-        if (body.schema_version === 1 && body.initialized === initialized && body.setup_allowed === !initialized) return;
-        throw new Error('Application initialization state does not match the current acceptance phase');
-      }
+      const response = await fetch(`${baseUrl}/health/live`, { signal: AbortSignal.timeout(2_000) });
+      if (response.status === 204) return;
     } catch (error) {
-      if (error.message?.startsWith('Application initialization')) throw error;
+      if (error.message?.startsWith('Application health')) throw error;
     }
     await new Promise((fulfil) => setTimeout(fulfil, 250));
   }
@@ -271,12 +267,6 @@ async function main() {
   await run('migrations', binary, ['migrate', '--application-role', role], { env: ownerEnv });
   const state = resolve(privateDir, 'state');
   await run('init-state', binary, ['init-state', '--state-dir', state], { env: applicationEnv });
-  const bootstrap = JSON.parse(await run('bootstrap', binary, ['bootstrap'], { env: applicationEnv, privateOutput: true }));
-  if (bootstrap.schema_version !== 1 || typeof bootstrap.capability_id !== 'string'
-    || typeof bootstrap.capability !== 'string' || bootstrap.capability.length !== 43) {
-    throw new Error('Native bootstrap command returned an invalid contract');
-  }
-  privateValues.add(bootstrap.capability); privateValues.add(bootstrap.capability_id);
   const backendPort = await freePort();
   let frontendPort = await freePort();
   while (frontendPort === backendPort) frontendPort = await freePort();
@@ -319,13 +309,12 @@ async function main() {
   const firstWorker = await userServices.start('worker');
   const gateway = launch(caddy, ['run', '--config', gatewayConfig, '--adapter', 'caddyfile'], { env: gatewayEnv, cwd: release });
   gateway.name = 'caddy'; services.push(gateway);
-  await waitReady(baseUrl, false);
+  await waitReady(baseUrl);
   stages.push({ name: 'real-api-ready', exit_code: 0 });
 
   const fixture = resolve(privateDir, 'fixture.json');
   const browser = async (phase) => {
-    await writeFile(fixture, JSON.stringify({ baseUrl, phase, capabilityId: bootstrap.capability_id,
-      capability: bootstrap.capability, redactionsFile }), { mode: 0o600 });
+    await writeFile(fixture, JSON.stringify({ baseUrl, phase, redactionsFile }), { mode: 0o600 });
     await run(`browser-${phase}`, process.execPath, [resolve(web, 'node_modules/@playwright/test/cli.js'),
       'test', '--config', 'playwright.native.config.ts'], {
       cwd: web, timeout: 240_000,
@@ -346,7 +335,7 @@ async function main() {
   // unit stops and starts; systemd must observe a normal exit, not a forced kill.
   const oldPid = first.pid;
   await userServices.stop('api');
-  const unavailable = await fetch(`${baseUrl}/api/v2/bootstrap/status`, { signal: AbortSignal.timeout(5_000) });
+  const unavailable = await fetch(`${baseUrl}/health/live`, { signal: AbortSignal.timeout(5_000) });
   if (unavailable.status !== 502 || (await unavailable.text()).includes('<html')) {
     throw new Error('A stopped API must remain a gateway error, not the SPA shell');
   }
@@ -356,14 +345,16 @@ async function main() {
 
   const restarted = await userServices.start('api');
   if (restarted.pid === oldPid || restarted.invocation === first.invocation) throw new Error('API restart did not create a new invocation');
-  await waitReady(baseUrl, true);
+  await waitReady(baseUrl);
   stages.push({ name: 'restarted-api-ready', exit_code: 0, previous_pid: oldPid, current_pid: restarted.pid });
   await browser('after-restart');
   await userServices.assertRunning('api', restarted);
   await userServices.assertRunning('worker', restartedWorker);
-  for (const width of [1440, 768, 390]) {
-    const name = `projects-${width}.png`;
-    screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
+  for (const mode of ['light', 'dark']) {
+    for (const width of [1440, 768, 390]) {
+      const name = `projects-${mode}-${width}.png`;
+      screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
+    }
   }
 }
 
@@ -395,7 +386,7 @@ if (adminEnv) {
   await writeFile(resolve(report, 'result.json'), JSON.stringify({ schema_version: 1,
     status: failure ? 'FAILED' : 'PASSED', stages,
     error: failure ? redact(failure.message) : null,
-    acceptance_scope: 'shipped systemd user units with real packaged API/Worker and production Caddy routes; idle Worker native automatic restart, real TOTP, retained session/project/receipt after normal API stop/start, CSRF, mobile layout and logout; no public TLS, host boot, active-job restore or complete Issue62 acceptance',
+    acceptance_scope: 'shipped systemd user units with real packaged API/Worker and production Caddy routes; idle Worker native automatic restart, direct local entry, retained session/project/receipt/theme after normal API stop/start, CSRF, both themes in three viewports and absent legacy login routes; no public TLS, host boot, active-job restore or complete Issue62 acceptance',
     private_artifacts_retained: privateArtifactsRetained,
     screenshots: failure ? [] : screenshots.map(({ name }) => name),
   }, null, 2), { mode: 0o600 });

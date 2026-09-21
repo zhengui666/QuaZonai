@@ -59,28 +59,12 @@ async fn late_metric(pool: &PgPool, evaluation: Id, artifact: Id) {
         .bind(evaluation.as_uuid()).bind(artifact.as_uuid()).execute(pool).await.unwrap_err(),"23000");
 }
 async fn initialized(pool: &PgPool) -> Id {
-    let store = Store::from_pool(pool.clone());
-    let cap = store
-        .issue_bootstrap_capability("$argon2id$native-adapter-verified-fixture")
-        .await
-        .unwrap();
-    let binding = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
-    let e = store
-        .start_enrollment(cap.id, &cap.verifier, Id::new(), binding)
-        .await
-        .unwrap();
-    store
-        .confirm_enrollment(
-            e.id,
-            binding,
-            e.secret_ref,
-            e.database_now.timestamp() / 30,
-            true,
-            Some("fixture"),
-        )
-        .await
-        .unwrap()
-        .id
+    let id = Id::new();
+    sqlx::query("UPDATE app.operator_auth_state SET initialized=true,totp_secret_ref='historical-fixture-only',last_accepted_totp_step=1,setup_completed_at=clock_timestamp() WHERE singleton")
+        .execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO app.browser_logins(id,auth_epoch,authenticated_at,expires_at) SELECT $1,session_epoch,clock_timestamp(),clock_timestamp()+interval '1 hour' FROM app.operator_auth_state")
+        .bind(id.as_uuid()).execute(pool).await.unwrap();
+    id
 }
 
 #[sqlx::test(migrations = false)]
@@ -109,10 +93,7 @@ async fn native_runner_initializes_and_rechecks_without_changing_applied_checksu
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(
-        epoch, 1,
-        "an empty installation does not revoke a nonexistent user"
-    );
+    assert_eq!(epoch, 2, "local-console migration makes direct entry ready");
     no_locks(&pool, &name).await;
 }
 
@@ -219,7 +200,7 @@ async fn upgrade_invalidates_all_historical_browser_epochs_once_not_current_plus
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(epoch, 51);
+    assert_eq!(epoch, 52);
     assert!(matches!(
         store.browser_authority(old_login).await,
         Err(StoreError::AuthenticationRequired)
@@ -234,7 +215,7 @@ async fn upgrade_invalidates_all_historical_browser_epochs_once_not_current_plus
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(epoch_after, 51);
+    assert_eq!(epoch_after, 52);
 }
 
 #[sqlx::test(migrations = false)]
@@ -343,4 +324,119 @@ async fn incompatible_observation_committing_before_validation_aborts_the_entire
             .unwrap();
     assert!(!markers);
     no_locks(&pool, &name).await;
+}
+
+#[sqlx::test(migrations = false)]
+async fn local_role_migration_never_reuses_legacy_system_or_provider_labels(pool: PgPool) {
+    use contracts::control::ListQuery;
+    use serde_json::Value;
+    use store::authority::Actor;
+
+    migrate_before(&pool, 202609200001).await;
+    let old_system = Id::new();
+    let old_provider = Id::new();
+    sqlx::query("INSERT INTO app.codex_profiles(id,name,connection_mode,profile_origin,codex_home_ref,use_default_model_settings,saved_fast_mode) VALUES($1,'old system owner label','SYSTEM','OPERATOR_MOUNT','local-researcher',true,false)")
+        .bind(old_system.as_uuid()).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO app.codex_profiles(id,name,connection_mode,profile_origin,codex_home_ref,use_default_model_settings,saved_fast_mode,custom_base_url,custom_api_key_ref) VALUES($1,'old provider owner label','CUSTOM_PROVIDER','OPERATOR_MOUNT','local-reviewer',true,false,'https://provider.invalid/v1','historical-not-a-credential')")
+        .bind(old_provider.as_uuid()).execute(&pool).await.unwrap();
+    let original: Vec<Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(p) FROM app.codex_profiles p WHERE id=ANY($1) ORDER BY id",
+    )
+    .bind(vec![old_system.as_uuid(), old_provider.as_uuid()])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let store = Store::from_pool(pool.clone());
+    store.migrate().await.unwrap();
+    let retained: Vec<Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(p)-'local_role' FROM app.codex_profiles p WHERE id=ANY($1) ORDER BY id",
+    )
+    .bind(vec![old_system.as_uuid(), old_provider.as_uuid()])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        retained, original,
+        "no legacy binding, secret reference or revision is repurposed"
+    );
+    let roles: Vec<(uuid::Uuid,String,String)> = sqlx::query_as("SELECT id,local_role,codex_home_ref FROM app.codex_profiles WHERE local_role IS NOT NULL ORDER BY local_role")
+        .fetch_all(&pool).await.unwrap();
+    assert_eq!(roles.len(), 2);
+    assert_eq!(roles[0].1, "RESEARCHER");
+    assert_eq!(roles[1].1, "REVIEWER");
+    for (id, role, reference) in &roles {
+        assert!(![old_system.as_uuid(), old_provider.as_uuid()].contains(id));
+        assert_eq!(*reference, format!("local-{}-{id}", role.to_lowercase()));
+        domain::codex::settings::home_binding(reference).unwrap();
+    }
+    let bindings = store.local_codex_bindings().await.unwrap();
+    assert_eq!(bindings.len(), 2);
+    for (_, _, reference) in &roles {
+        assert!(bindings
+            .iter()
+            .any(|binding| &binding.reference == reference));
+    }
+    assert!(!bindings.iter().any(
+        |binding| ["local-researcher", "local-reviewer"].contains(&binding.reference.as_str())
+    ));
+    let login = store.local_browser().await.unwrap();
+    let actor = Actor::Browser { login_id: login.id };
+    let listing = store
+        .codex_profiles(
+            &actor,
+            &ListQuery {
+                limit: 100,
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(listing.items.len(), 2);
+    assert!(listing
+        .items
+        .iter()
+        .all(|profile| roles.iter().any(|(id, _, _)| *id == profile.id.as_uuid())));
+    assert_eq!(
+        store
+            .codex_profile(&actor, old_system)
+            .await
+            .unwrap()
+            .home_binding
+            .as_deref(),
+        Some("local-researcher")
+    );
+    assert!(matches!(
+        store.codex_profile(&actor, old_provider).await,
+        Err(StoreError::NotFound)
+    ));
+
+    // The supported runner is idempotent; it cannot create another pair or
+    // reinterpret either old row on an ordinary restart/upgrade check.
+    store.migrate().await.unwrap();
+    assert_eq!(store.local_codex_bindings().await.unwrap().len(), 2);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.codex_profiles")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        4
+    );
+    sqlstate(
+        sqlx::query(
+            "UPDATE app.codex_profiles SET codex_home_ref='different-local-home' WHERE id=$1",
+        )
+        .bind(roles[0].0)
+        .execute(&pool)
+        .await
+        .unwrap_err(),
+        "23514",
+    );
+    sqlstate(
+        sqlx::query("UPDATE app.codex_profiles SET local_role=NULL WHERE id=$1")
+            .bind(roles[0].0)
+            .execute(&pool)
+            .await
+            .unwrap_err(),
+        "23514",
+    );
 }

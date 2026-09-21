@@ -1,12 +1,9 @@
-import { App as AntApp, Alert, Button, ConfigProvider, Drawer, Grid, Layout, Menu, Space, Typography } from 'antd';
+import { App as AntApp, Alert, Button, ConfigProvider, Drawer, Grid, Layout, Menu, Space, Typography, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
-import { ApartmentOutlined, ExperimentOutlined, ExportOutlined, FundOutlined, MenuOutlined, PlayCircleOutlined, SettingOutlined } from '@ant-design/icons';
-import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ApartmentOutlined, ExperimentOutlined, ExportOutlined, FundOutlined, MenuOutlined, MoonOutlined, PlayCircleOutlined, SettingOutlined, SunOutlined } from '@ant-design/icons';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useContext, useLayoutEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { api, AUTH_CHANGED, REAUTH_REQUIRED } from './api';
-import type { Schema } from './api';
-import { AuthBoundary, VerifyDialog } from './auth';
 import { Projects } from './projects';
 import { Alphas } from './alphas';
 import { Portfolios } from './portfolio';
@@ -14,35 +11,14 @@ import { Delivery } from './delivery';
 import { Runs } from './runs';
 import { Settings } from './settings';
 import { PwaUpdate } from './pwa';
-import { ErrorNotice, GuardContext, GuardProvider, useGuard, useOnline, useReducedMotion } from './ui';
+import { GuardContext, GuardProvider, useOnline, useReducedMotion } from './ui';
+import { useColorTheme } from './theme';
+import type { ColorTheme } from './theme';
 
 const queries = new QueryClient({ defaultOptions: {
   queries: { retry: false, staleTime: 15_000, gcTime: 60_000, networkMode: 'always', refetchOnWindowFocus: true },
   mutations: { retry: false, gcTime: 0, networkMode: 'always' },
 } });
-function AuthenticationRoot() {
-  const client = useQueryClient();
-  const [epoch, setEpoch] = useState(0);
-  const channel = useRef<BroadcastChannel | undefined>(undefined);
-  useEffect(() => {
-    function reset() { client.clear(); setEpoch(value => value + 1); }
-    window.addEventListener(AUTH_CHANGED, reset);
-    if ('BroadcastChannel' in window) {
-      const broadcast = new BroadcastChannel('quazonai-session');
-      channel.current = broadcast;
-      broadcast.onmessage = event => { if (event.data === 'SIGNED_OUT') reset(); };
-    }
-    return () => { window.removeEventListener(AUTH_CHANGED, reset); channel.current?.close(); channel.current = undefined; };
-  }, [client]);
-  function signedOut() {
-    channel.current?.postMessage('SIGNED_OUT');
-    client.clear(); setEpoch(value => value + 1);
-  }
-  return <>
-    <section className="update-bar" aria-label="应用版本"><PwaUpdate /></section>
-    <AuthBoundary key={epoch}>{session => <Console session={session} signedOut={signedOut} />}</AuthBoundary>
-  </>;
-}
 const navigation = [
   { key: 'research', label: '研究', icon: <ExperimentOutlined aria-hidden /> },
   { key: 'alpha', label: 'Alpha', icon: <FundOutlined aria-hidden /> },
@@ -51,78 +27,80 @@ const navigation = [
   { key: 'runs', label: '运行', icon: <PlayCircleOutlined aria-hidden /> },
   { key: 'settings', label: '设置', icon: <SettingOutlined aria-hidden /> },
 ];
-function Console({ session, signedOut }: { session: Schema['BrowserSession']; signedOut: () => void }) {
+function Console({ colorTheme, toggleTheme }: { colorTheme: ColorTheme; toggleTheme: () => void }) {
   const [active, setActive] = useState('research');
   const [menuOpen, setMenuOpen] = useState(false);
-  const [verify, setVerify] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
-  const [logoutError, setLogoutError] = useState<unknown>();
   const online = useOnline(); const screens = Grid.useBreakpoint(); const { blocked } = useContext(GuardContext);
   const { modal } = AntApp.useApp();
-  useGuard(loggingOut);
-  useEffect(() => {
-    const requireVerification = () => setVerify(true);
-    window.addEventListener(REAUTH_REQUIRED, requireVerification);
-    return () => window.removeEventListener(REAUTH_REQUIRED, requireVerification);
-  }, []);
   function navigate(key: string) {
-    if (loggingOut) return;
     const change = () => { setActive(key); setMenuOpen(false); };
-    if (blocked && key !== active) modal.confirm({ title: '离开尚未完成的操作？', content: '未保存内容会丢失，已发送的请求不会被撤销。', okText: '确认离开', cancelText: '继续操作', onOk: change });
+    if (blocked && key !== active) modal.confirm({ title: '放弃未保存的更改？', okText: '放弃更改', cancelText: '继续编辑', onOk: change });
     else change();
   }
-  async function logout() {
-    if (!online || loggingOut) return;
-    setLoggingOut(true); setLogoutError(undefined);
-    try { await api.POST('/api/v2/auth/logout'); signedOut(); }
-    catch (error) { setLogoutError(error); }
-    finally { setLoggingOut(false); }
-  }
-  function requestLogout() {
-    modal.confirm({ title: '退出当前登录？', content: blocked ? '未保存内容会丢失。服务器运行不会因为退出而取消。' : '服务器运行不会因为退出而取消。', okText: '确认退出', cancelText: '返回', onOk: logout });
-  }
-  const menu = <Menu aria-label="主导航" mode="inline" selectedKeys={[active]} items={navigation} onClick={({ key }) => navigate(key)} />;
+  const menu = <Menu aria-label="主导航" theme={colorTheme} mode="inline" selectedKeys={[active]} items={navigation} onClick={({ key }) => navigate(key)} />;
   let content: ReactNode;
   switch (active) {
     case 'alpha': content = <Alphas />; break;
     case 'portfolio': content = <Portfolios />; break;
     case 'delivery': content = <Delivery />; break;
     case 'runs': content = <Runs />; break;
-    case 'settings': content = <Settings session={session} verify={() => setVerify(true)} />; break;
+    case 'settings': content = <Settings />; break;
     default: content = <Projects />;
   }
-  return <Layout className="console-layout">
-    {screens.lg && <Layout.Sider width={216} theme="light" className="console-sidebar"><Typography.Title level={3} className="brand">QuaZonai</Typography.Title>{menu}</Layout.Sider>}
-    <Layout>
-      <Layout.Header className="console-header">
-        <Space>{!screens.lg && <Button icon={<MenuOutlined aria-hidden />} aria-label="打开主导航" onClick={() => setMenuOpen(true)} />}<Typography.Text strong>有证据的研究，受约束的运行</Typography.Text></Space>
-        <Button aria-label="退出登录" aria-busy={loggingOut} disabled={!online || loggingOut} loading={loggingOut} onClick={requestLogout}>退出登录</Button>
-      </Layout.Header>
-      <Layout.Content className="console-content" id="main-content" tabIndex={-1}>
-        <a className="skip-link" href="#main-content">跳至主要内容</a>
-        {!online && <Alert className="global-notice" showIcon type="warning" title="当前离线：显示的数据可能过期，禁止提交操作。" description="恢复连接不会自动补交任何操作。" />}
-        <ErrorNotice error={logoutError} />
-        {content}
-      </Layout.Content>
-      <Layout.Footer className="console-footer">QuaZonai · 开发版本，完整生产验收尚未完成。仅交付目标组合，不执行券商订单。</Layout.Footer>
+  const themeLabel = colorTheme === 'light' ? '切换为深色主题' : '切换为浅色主题';
+  return <>
+    <section className="update-bar" aria-label="应用版本"><PwaUpdate /></section>
+    <Layout className="console-layout">
+      {screens.lg && <Layout.Sider width={216} theme={colorTheme} className="console-sidebar"><Typography.Title level={3} className="brand">QuaZonai</Typography.Title>{menu}</Layout.Sider>}
+      <Layout>
+        <Layout.Header className="console-header">
+          <Space>{!screens.lg && <Button icon={<MenuOutlined aria-hidden />} aria-label="打开主导航" onClick={() => setMenuOpen(true)} />}<Typography.Text strong>QuaZonai</Typography.Text></Space>
+          <Button icon={colorTheme === 'light' ? <MoonOutlined aria-hidden /> : <SunOutlined aria-hidden />} aria-label={themeLabel} title={themeLabel} onClick={toggleTheme} />
+        </Layout.Header>
+        <Layout.Content className="console-content" id="main-content" tabIndex={-1}>
+          <a className="skip-link" href="#main-content">跳至主要内容</a>
+          {!online && <Alert className="global-notice" showIcon type="warning" title="离线，无法提交操作" />}
+          {content}
+        </Layout.Content>
+      </Layout>
+      <Drawer title="主导航" placement="left" open={menuOpen && !screens.lg} onClose={() => setMenuOpen(false)} width={280}>{menu}</Drawer>
     </Layout>
-    <Drawer title="主导航" placement="left" open={menuOpen && !screens.lg} onClose={() => setMenuOpen(false)} width={280}>{menu}</Drawer>
-    <VerifyDialog open={verify} close={() => setVerify(false)} />
-  </Layout>;
+  </>;
 }
 export default function App() {
   const reducedMotion = useReducedMotion();
-  // Ant Design 6.1.4 inserts its native MotionProvider on the first false token
-  // and then retains that wrapper. Establish it on mount, before the first paint,
-  // so a later OS preference change cannot remount the console or discard a form.
+  const [colorTheme, toggleTheme] = useColorTheme();
+  // Establish Ant Design's MotionProvider before the first paint. A preference
+  // change must not remount a form or discard unsaved work.
   const [motionProviderReady, setMotionProviderReady] = useState(false);
   useLayoutEffect(() => { setMotionProviderReady(true); }, []);
-  return <ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{ token: {
-    colorPrimary: '#2857b4', colorLink: '#2857b4', colorLinkHover: '#1f4796', colorLinkActive: '#183b80',
-    colorError: '#b42318', colorErrorHover: '#8f1c13', colorErrorActive: '#72160f',
-    colorTextSecondary: '#596273', colorTextTertiary: '#596273', colorTextDescription: '#596273', colorTextPlaceholder: '#596273',
-    borderRadius: 8, controlHeight: 44, fontSize: 15, motion: motionProviderReady && !reducedMotion,
-  } }}>
-    <AntApp><QueryClientProvider client={queries}><GuardProvider><AuthenticationRoot /></GuardProvider></QueryClientProvider></AntApp>
+  const dark = colorTheme === 'dark';
+  return <ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{
+    algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+    cssVar: { key: 'quazonai' },
+    components: {
+      Tabs: {
+        itemSelectedColor: dark ? '#83b2ff' : '#2857b4',
+        itemHoverColor: dark ? '#b0ccff' : '#1f4796',
+        itemActiveColor: dark ? '#83b2ff' : '#183b80',
+        inkBarColor: dark ? '#83b2ff' : '#2857b4',
+      },
+    },
+    token: {
+      colorPrimary: '#2857b4',
+      colorLink: dark ? '#83b2ff' : '#2857b4',
+      colorLinkHover: dark ? '#b0ccff' : '#1f4796',
+      colorLinkActive: dark ? '#5f9cff' : '#183b80',
+      colorError: dark ? '#ff8b83' : '#b42318',
+      colorErrorHover: dark ? '#ffb1a9' : '#8f1c13',
+      colorErrorActive: dark ? '#f47068' : '#72160f',
+      colorTextSecondary: dark ? '#c1c7d0' : '#596273',
+      colorTextTertiary: dark ? '#c1c7d0' : '#596273',
+      colorTextDescription: dark ? '#c1c7d0' : '#596273',
+      colorTextPlaceholder: dark ? '#c1c7d0' : '#596273',
+      borderRadius: 8, controlHeight: 44, fontSize: 15, motion: motionProviderReady && !reducedMotion,
+    },
+  }}>
+    <AntApp><QueryClientProvider client={queries}><GuardProvider><Console colorTheme={colorTheme} toggleTheme={toggleTheme} /></GuardProvider></QueryClientProvider></AntApp>
   </ConfigProvider>;
 }

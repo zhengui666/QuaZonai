@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 use server::{AppState, WebPolicy};
 use sqlx::{PgPool, Row};
 use store::authority::Actor;
-use support::{confirm, exchange, fixture, start, Fixture, Reply};
+use support::{exchange, fixture, local_session, Fixture, Reply};
 use tower_sessions::cookie::Key;
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -282,7 +282,7 @@ async fn send(
     let mut builder = Request::builder()
         .method(method)
         .uri(path)
-        .header(header::HOST, "research.example");
+        .header(header::HOST, "localhost");
     for (key, value) in headers {
         builder = builder.header(*key, *value);
     }
@@ -309,7 +309,7 @@ async fn browser(
         value,
         &[
             ("cookie", cookie),
-            ("origin", "https://research.example"),
+            ("origin", "https://localhost"),
             ("idempotency-key", key),
         ],
     )
@@ -323,7 +323,7 @@ async fn setup(pool: &PgPool) -> (Fixture, String, experiment_support::Fixture) 
         f.store.clone(),
         SecretVault::open(&root.join("secrets"), &root.join("master.key")).unwrap(),
         WebPolicy::new(
-            "https://research.example",
+            "https://localhost",
             "127.0.0.1:8080".parse().unwrap(),
             false,
         )
@@ -331,8 +331,7 @@ async fn setup(pool: &PgPool) -> (Fixture, String, experiment_support::Fixture) 
     )
     .with_artifact_store(ArtifactStore::open(&root.join("artifacts")).unwrap());
     f.app = server::router(state, Key::generate());
-    let (enrollment, cookie, totp) = start(&f).await;
-    let (login, _) = confirm(&f, &enrollment, &cookie, &totp, true).await;
+    let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();
     let login_id: String = sqlx::query_scalar(
@@ -672,8 +671,9 @@ async fn machine_requires_scoped_submission_without_acquiring_operator_grant(poo
             "/api/v2/experiments",
             body.clone(),
             &[
-                ("origin", "https://research.example"),
-                ("idempotency-key", "anon"),
+                ("origin", "https://localhost"),
+                ("idempotency-key", "invalid-machine"),
+                ("authorization", "Bearer invalid")
             ]
         )
         .await
@@ -730,10 +730,7 @@ fn the_actual_http_contract_declares_proposal_capability_without_a_human_grant()
     let document: Value = serde_json::from_str(&server::openapi_json().unwrap()).unwrap();
     let path = &document["paths"]["/api/v2/experiments"]["post"];
     assert_eq!(path["operationId"], "propose_experiment");
-    assert_eq!(
-        path["security"],
-        json!([{"BrowserSession":[]},{"MachineBearer":[]}])
-    );
+    assert_eq!(path["security"], json!([{},{"MachineBearer":[]}]));
     assert!(path["responses"]["201"]["content"]["application/json"].is_object());
     assert!(path["responses"]["429"]["content"]["application/problem+json"].is_object());
     let schema = &document["components"]["schemas"]["ExperimentProposalV1"];

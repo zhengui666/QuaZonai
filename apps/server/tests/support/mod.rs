@@ -1,26 +1,24 @@
-//! Real Axum middleware, native Argon2/TOTP/AEAD and PostgreSQL session storage.
-//! No fake authentication extractor, memory session store, or skip-auth switch.
+//! Real local Axum entry, opaque encrypted cookies and PostgreSQL sessions.
+//! No fake authority extractor, memory session store, or skip-auth switch.
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
     Router,
 };
-use integrations::{
-    authentication::{capability_verifier, random_capability},
-    secrets::SecretVault,
-};
+use integrations::secrets::SecretVault;
 use serde_json::{json, Value};
 use server::{AppState, WebPolicy};
 use sqlx::PgPool;
 use std::{fs, os::unix::fs::PermissionsExt};
 use store::Store;
-use totp_rs::TOTP;
 use tower::ServiceExt;
 use tower_sessions::cookie::Key;
 use tower_sessions_sqlx_store::PostgresStore;
 
 pub struct Fixture {
     pub app: Router,
+    // Each integration target compiles this shared fixture independently.
+    #[allow(dead_code)]
     pub store: Store,
     pub _state: tempfile::TempDir,
 }
@@ -55,7 +53,7 @@ pub async fn fixture_with_key(
     SecretVault::initialize_key(&key).unwrap();
     let store = Store::from_pool(pool);
     let policy = WebPolicy::new(
-        "https://research.example",
+        "https://localhost",
         "127.0.0.1:8080".parse().unwrap(),
         false,
     )
@@ -157,48 +155,40 @@ pub async fn call(
         path,
         body,
         cookie,
-        Some("https://research.example"),
-        "research.example",
+        Some("https://localhost"),
+        "localhost",
     )
     .await
 }
-pub async fn start(f: &Fixture) -> (Value, String, TOTP) {
-    let capability = random_capability();
-    let verifier = capability_verifier(&capability).unwrap();
-    let issued = f.store.issue_bootstrap_capability(&verifier).await.unwrap();
-    let response = call(
-        f,
-        "POST",
-        "/api/v2/bootstrap/start",
-        json!({"schema_version":1,"capability_id":issued.id,"capability":capability}),
-        None,
-    )
-    .await;
-    assert_eq!(response.status, StatusCode::CREATED, "{}", response.body);
+pub async fn local_session(f: &Fixture) -> Reply {
+    let response = call(f, "GET", "/api/v2/auth/session", Value::Null, None).await;
+    assert_eq!(response.status, StatusCode::OK, "{}", response.body);
     assert_eq!(response.headers[header::CACHE_CONTROL], "no-store");
-    let cookie_attributes = response.headers[header::SET_COOKIE].to_str().unwrap();
+    let attributes = response.headers[header::SET_COOKIE].to_str().unwrap();
     for expected in ["HttpOnly", "SameSite=Strict", "Secure", "Path=/"] {
-        assert!(cookie_attributes.contains(expected));
+        assert!(attributes.contains(expected), "{attributes}");
     }
-    assert!(!cookie_attributes.contains("Domain="));
-    let native = TOTP::from_url(response.body["provisioning_uri"].as_str().unwrap()).unwrap();
-    (response.body, response.cookie.unwrap(), native)
+    assert!(!attributes.contains("Domain="));
+    assert!(response.cookie.is_some());
+    assert_eq!(response.body["schema_version"], 1);
+    assert!(response.body.get("provisioning_uri").is_none());
+    response
 }
-pub async fn confirm(
-    f: &Fixture,
-    enrollment: &Value,
-    cookie: &str,
-    native: &TOTP,
-    trust: bool,
-) -> (Reply, String) {
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
-    let code = native.generate(now);
-    let response=call(f,"POST","/api/v2/bootstrap/confirm",json!({"schema_version":1,"enrollment_id":enrollment["enrollment_id"],"code":code,"trust_device":trust,"device_label":if trust{json!("Browser fixture")}else{Value::Null}}),Some(cookie)).await;
-    (response, code)
+
+// Only machine-boundary targets need this shared request helper.
+#[allow(dead_code)]
+pub async fn invalid_bearer(f: &Fixture, method: &str, path: &str, body: Value) -> Reply {
+    exchange(
+        &f.app,
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, "localhost")
+            .header(header::AUTHORIZATION, "Bearer invalid")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", "invalid-machine")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap(),
+    )
+    .await
 }

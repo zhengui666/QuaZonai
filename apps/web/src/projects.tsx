@@ -1,4 +1,4 @@
-import { App, Alert, Button, Card, Drawer, Form, Input, Select, Space, Table, Tabs, Typography } from 'antd';
+import { App, Button, Card, Drawer, Form, Input, Select, Space, Table, Tabs, Typography } from 'antd';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
@@ -26,12 +26,12 @@ export function Projects() {
     <ProjectDetail id={selected.id} />
   </Space>;
   return <Space orientation="vertical" size="large" className="full-width">
-    <div className="page-heading"><div><Typography.Title level={1}>研究</Typography.Title><Typography.Paragraph type="secondary">从可检验的研究假设开始。保存草稿不会启动实验或消耗模型预算。</Typography.Paragraph></div>
+    <div className="page-heading"><div><Typography.Title level={1}>研究</Typography.Title></div>
       <Button icon={<PlusOutlined aria-hidden />} type="primary" disabled={!online} onClick={() => setEditing('new')}>新建研究</Button></div>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Card extra={<Button icon={<ReloadOutlined aria-hidden />} aria-label="刷新" aria-busy={query.isFetching} loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新</Button>}>
         <Table<Project> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 760 }}
-          locale={{ emptyText: <NoData text="尚无研究项目。新建项目后填写 Brief，不能把空列表视为已完成研究。" /> }}
+          locale={{ emptyText: <NoData text="暂无研究项目" /> }}
           columns={[
             { title: '研究项目', dataIndex: 'name', key: 'name', render: (_, project) => <Button type="link" className="table-title" onClick={() => setSelected(project)}>{project.name}</Button> },
             { title: '状态', key: 'state', render: (_, project) => <StateTag value={project.state} /> },
@@ -50,7 +50,7 @@ function ProjectDetail({ id }: { id: string }) {
   const query = useQuery({ queryKey: ['project', id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}', { params: { path: { id } }, signal })) });
   return <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
     {query.data && <><Typography.Title level={1}>{query.data.name}</Typography.Title>
-      <Space wrap><StateTag value={query.data.state} /><Typography.Text type="secondary">{query.data.description || '尚无研究说明'}</Typography.Text></Space>
+      <Space wrap><StateTag value={query.data.state} /><Typography.Text type="secondary">{query.data.description || ''}</Typography.Text></Space>
       <ResourceFacts id={id} revision={query.data.revision} updated={query.data.updated_at} />
       <Button disabled={!online || query.isError || query.isFetching} onClick={() => setEditing(query.data)}>修改项目状态</Button>
       <Tabs destroyOnHidden items={[
@@ -105,7 +105,7 @@ function ProjectEditor({ project, close }: { project?: Project; close: () => voi
   }
   return <Drawer title={project ? '编辑研究项目' : '新建研究项目'} open onClose={dismiss} maskClosable={!mutation.isPending} closable={!mutation.isPending} width={600}>
     <Space orientation="vertical" className="full-width" size="middle">
-      <Alert showIcon type="info" title="保存项目仅修改研究组织信息，不会启动 Cycle 或冻结 Brief。" />
+      
       {project && <ResourceFacts id={project.id} revision={project.revision} updated={project.updated_at} />}
       <ErrorNotice error={mutation.error} />
       {conflict && <Button onClick={() => { void Promise.all([client.invalidateQueries({ queryKey: ['projects'] }), client.invalidateQueries({ queryKey: ['project', project?.id] })]); dismiss(); }}>关闭编辑并重新载入当前版本</Button>}
@@ -114,8 +114,6 @@ function ProjectEditor({ project, close }: { project?: Project; close: () => voi
         <Form.Item name="name" label="研究名称" rules={[{ required: true, whitespace: true, max: 120 }]}><Input maxLength={120} /></Form.Item>
         <Form.Item name="description" label="研究说明" rules={[{ max: 8000 }]}><Input.TextArea autoSize={{ minRows: 4, maxRows: 12 }} maxLength={8000} showCount /></Form.Item>
         {project && <Form.Item name="state" label="项目状态"
-          extra={project.state === 'ARCHIVED' ? '归档状态不可退出，仍可编辑名称和说明。'
-            : '启用须核实当前冻结 Brief；最终状态、权限和活动运行仍由服务器在提交时检查。'}
           rules={[{ required: true }, { validator: (_, value: unknown) => states.some(option => option.value === value)
             ? Promise.resolve() : Promise.reject(new Error('当前项目或 Brief 状态不允许此选择，请重新选择。')) }]}>
           <Select options={states} loading={!!currentBriefId && currentBrief.isFetching} />

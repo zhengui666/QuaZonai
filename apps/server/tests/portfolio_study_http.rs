@@ -137,15 +137,12 @@ async fn http(
         expected_runtime_revision: build.expected_runtime_revision,
         limits: build.limits.clone(),
     };
-    let snapshot = store.authentication_snapshot().await.unwrap();
     let grant = store
         .issue_operator_grant(
             &cli,
             "study-http-grant",
             &OperatorCommand::PortfolioStudy(intent.clone()),
             Some(candidate),
-            &snapshot,
-            snapshot.database_now.timestamp() / 30 + 1,
         )
         .await
         .unwrap()
@@ -187,7 +184,7 @@ async fn http(
     let release_url = format!("{origin}/api/v2/projects/{}/releases", f.data.project);
     assert_eq!(
         client.get(&release_url).send().await.unwrap().status(),
-        reqwest::StatusCode::UNAUTHORIZED
+        reqwest::StatusCode::OK
     );
     let empty = client
         .get(&release_url)
@@ -270,7 +267,7 @@ async fn http(
     let provenance_url = format!("{origin}/api/v2/runs/{}/rebalance", run.id);
     assert_eq!(
         client.get(&provenance_url).send().await.unwrap().status(),
-        reqwest::StatusCode::UNAUTHORIZED
+        reqwest::StatusCode::OK
     );
     let provenance = client
         .get(&provenance_url)
@@ -765,7 +762,7 @@ async fn claim_http(
     let approvals_url = format!("{origin}/api/v2/releases/{}/approvals", release.id);
     assert_eq!(
         http.get(&approvals_url).send().await.unwrap().status(),
-        reqwest::StatusCode::UNAUTHORIZED
+        reqwest::StatusCode::OK
     );
     assert_eq!(
         http.get(&approvals_url)

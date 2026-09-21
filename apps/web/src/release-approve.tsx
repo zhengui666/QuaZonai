@@ -61,7 +61,7 @@ export function ReleaseApprove({ release, close }: { release: Schema['ReleaseVie
   return <Modal open title="审批原目标包" width={720} maskClosable={false} closable={!mutation.isPending} onCancel={dismiss} onOk={submit}
     confirmLoading={mutation.isPending} okText={submitted ? '重试同一审批' : '确认审批'} cancelText="返回" okButtonProps={{ disabled: !online || (!submitted && !ready) }} footer={receipt ? <Button onClick={close}>返回原审批历史</Button> : undefined}>
     <Space orientation="vertical" className="full-width">
-      <Alert type="info" showIcon title="审批不会发送 Offer 或代表下游领取" description="服务端重验原数据许可、资格、决定、下游新鲜探测与期限。Paper 审批不能用于 Live。" />
+      
       <Typography.Text className="break-word">原 Release：{release.id}；最迟期限：{displayTime(release.valid_until)}</Typography.Text>
       <Form layout="vertical" disabled={!!submitted || !!receipt}>
         <Form.Item label="选择审批下游"><ResourceSelect label="选择审批下游" value={downstream} onChange={setDownstream} queryKey={['approval-downstreams']} load={async (cursor, signal) => {
@@ -74,7 +74,7 @@ export function ReleaseApprove({ release, close }: { release: Schema['ReleaseVie
       <ErrorNotice error={source.error ?? mutation.error} />
       {source.data && <Typography.Text>原下游版本：{source.data.down.revision}；原决定：{source.data.latest ? `${source.data.latest.decision} / ${source.data.latest.id}` : '无历史决定'}</Typography.Text>}
       {source.data?.latest?.decision === 'REJECT' && <Alert type="warning" showIcon title="原候选已被人工拒绝，不能审批。" />}
-      {submitted && mutation.isError && <Alert type="warning" showIcon title="结果尚未确认，重试保留原请求及幂等键。" />}
+      {submitted && mutation.isError && <Alert type="warning" showIcon title="提交结果未知，请重试当前操作" />}
       {receipt && <Alert type="success" showIcon title="原审批已保存，尚未发送 Offer。" description={receipt.id} />}
     </Space>
   </Modal>;

@@ -49,7 +49,7 @@ supervision policy, scientific threshold, workflow concurrency or timeout change
    loopback origin and empty Runtime/Downstream bindings. No admin/provider credentials
    enter their environment. Observe actual native properties and `/proc` executable,
    subcommand, user, directory and the test's configuration, without publishing environment values.
-4. After the first real TOTP/session/project/receipt phase, verify no research Run exists.
+4. After the first real local-session/project/receipt phase, verify no research Run exists.
    Send one unit-targeted SIGKILL to the idle Worker. Only systemd restarts it: require a
    different PID/invocation and exactly one NRestarts increment. Then stop the API normally,
    retain real gateway502/static availability, start that same unit and complete the original

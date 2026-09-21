@@ -1,4 +1,4 @@
-import { Alert, Button, Descriptions, Space, Table, Tabs } from 'antd';
+import { Button, Descriptions, Space, Table, Tabs } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, dataOf, displayTime } from './api';
@@ -7,7 +7,7 @@ import { NoData, Pager, QueryPanel } from './ui';
 
 export function ForwardHistory({ project }: { project: string }) {
   return <Space orientation="vertical" className="full-width">
-    <Alert showIcon type="info" title="历史观察与唤醒记录" description="历史分类不是当前资格；CONSUMED 只表示已创建原周期，不代表该周期仍在运行。查看不会重新分类、消费 Wake 或触发交付。" />
+    
     <Tabs items={[{ key: 'observations', label: '劣化观察', children: <Observations project={project} /> }, { key: 'wakes', label: 'Wake 记录', children: <Wakes project={project} /> }]} />
   </Space>;
 }
@@ -22,7 +22,7 @@ function Observations({ project }: { project: string }) {
   return <Space orientation="vertical" className="full-width">
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新观察</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['ForwardObservationViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="尚无原始观察，不能推断健康。" /> }} columns={[
+      <Table<Schema['ForwardObservationViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="暂无观察记录" /> }} columns={[
         { title: '原观察', dataIndex: 'id' }, { title: '原分类', dataIndex: 'classification' },
         { title: '原原因', key: 'reasons', render: (_, item) => item.reason_codes.join(' · ') || '无原因记录' },
         { title: '观察时间', dataIndex: 'observed_at', render: displayTime },

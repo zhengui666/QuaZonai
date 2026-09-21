@@ -33,7 +33,7 @@ function useRefresh() {
  * The query/mutation caches and browser storage never receive the secret as state. */
 export function SecretReference({ value, onChange, purpose, configured, disabled, onBusy }: {
   value?: string | null; onChange?: (id: string | undefined) => void;
-  purpose: 'RUNTIME' | 'DOWNSTREAM' | 'CUSTOM_PROVIDER' | 'TLS_CA'; configured: boolean;
+  purpose: 'RUNTIME' | 'DOWNSTREAM' | 'TLS_CA'; configured: boolean;
   disabled: boolean; onBusy: (busy: boolean) => void;
 }) {
   const [secret, setSecret] = useState(''); const [pending, setPending] = useState(false); const [error, setError] = useState<unknown>();
@@ -48,7 +48,6 @@ export function SecretReference({ value, onChange, purpose, configured, disabled
     const body: Schema['IntegrationSecretCreate'] = purpose === 'RUNTIME'
       ? { intent: { ...common, purpose: 'RUNTIME' }, value: secret }
       : purpose === 'DOWNSTREAM' ? { intent: { ...common, purpose: 'DOWNSTREAM' }, value: secret }
-        : purpose === 'CUSTOM_PROVIDER' ? { intent: { ...common, purpose: 'CUSTOM_PROVIDER' }, value: secret }
           : { intent: { ...common, purpose: 'TLS_CA' }, value: secret };
     try {
       const result = dataOf(await api.POST('/api/v2/settings/credentials', {
@@ -59,11 +58,10 @@ export function SecretReference({ value, onChange, purpose, configured, disabled
     finally { active.current = false; setPending(false); onBusy(false); }
   }
   return <Space orientation="vertical" className="full-width">
-    {configured && !value && <Typography.Text type="secondary">保留已有的原生凭据；界面不会读取或回显其值。</Typography.Text>}
-    {value && <Alert type="success" showIcon title="新凭据已登记，提交配置后才会绑定。" description={<Space wrap><Typography.Text copyable>{value}</Typography.Text><Button size="small" disabled={disabled || pending} onClick={() => onChange?.(undefined)}>放弃本次绑定</Button></Space>} />}
+    {configured && !value && <Typography.Text type="secondary">已配置</Typography.Text>}
+    {value && <Alert type="success" showIcon title="凭据已登记" description={<Space wrap><Typography.Text copyable>{value}</Typography.Text><Button size="small" disabled={disabled || pending} onClick={() => onChange?.(undefined)}>放弃本次绑定</Button></Space>} />}
     {isCa ? <Input.TextArea aria-label="新的 CA PEM 证书" value={secret} onChange={event => setSecret(event.target.value)} rows={5} maxLength={65536} disabled={disabled || pending || !online} autoComplete="off" />
       : <Input.Password aria-label={`新的 ${purpose} 凭据`} value={secret} onChange={event => setSecret(event.target.value)} maxLength={8192} disabled={disabled || pending || !online} autoComplete="new-password" />}
-    <Typography.Text type="secondary">{isCa ? '最多 65536 个 ASCII 字节；证书还必须通过服务器原生 PEM 解析。' : `${purpose === 'RUNTIME' ? '32' : '1'}–8192 个无空白可打印 ASCII 字节。仅输入目标服务已设置的凭据，不要填写券商密码或钱包私钥。`}</Typography.Text>
     <Button onClick={() => { void register(); }} loading={pending} disabled={!online || !valid || disabled}>登记{isCa ? '证书' : '凭据'}</Button>
     <ErrorNotice error={error} />
   </Space>;
@@ -100,11 +98,11 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
   return <Modal open width={760} title={original ? '修改 Runtime 配置' : '登记 Runtime'} maskClosable={false} closable={!pending}
     onCancel={cancel} onOk={() => { if (online && !pending) form.submit(); }} confirmLoading={mutation.isPending}
     okText="保存配置" cancelText="返回" okButtonProps={{ disabled: !online || secretBusy }}>
-    <Alert type="info" showIcon title="保存配置不代表真实可用。保存后须执行原生探测；配置变更会使旧探测失效。" />
+    
     {original && <ResourceFacts id={original.id} revision={original.revision} updated={original.updated_at} />}
     <Form form={form} layout="vertical" initialValues={original ? original.configuration : { tls_policy: 'SYSTEM_CA', enabled: true, development_http: false, allowed_capabilities: ['DATA_VALIDATE'] }} disabled={pending || !online} onFinish={values => mutation.mutate(values)}>
       <Form.Item name="name" label="名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
-      <Form.Item name="endpoint" label="Runtime HTTPS origin" rules={[required, { max: 2048 }]} extra="只填协议、主机和端口；不填 /runtime/v1 路径、用户名、查询参数或片段。实际连接还受部署允许列表限制。"><Input maxLength={2048} placeholder="https://runtime.example" /></Form.Item>
+      <Form.Item name="endpoint" label="Runtime HTTPS origin" rules={[required, { max: 2048 }]}><Input maxLength={2048} placeholder="https://runtime.example" /></Form.Item>
       <Form.Item name="tls_policy" label="TLS 信任方式" rules={[required]}><Select onChange={() => form.setFieldValue('development_http', false)} options={[
         { value: 'SYSTEM_CA', label: '系统可信 CA' }, { value: 'PINNED_CA', label: '指定 CA 证书' },
       ]} /></Form.Item>
@@ -115,9 +113,9 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
         rules={original?.configuration.tls_policy === 'PINNED_CA' && original.ca_configured ? [] : [required]}>
         <SecretReference purpose="TLS_CA" configured={original?.configuration.tls_policy === 'PINNED_CA' && original.ca_configured} disabled={pending || !online} onBusy={setSecretBusy} />
       </Form.Item>}
-      <Form.Item name="allowed_capabilities" label="允许的任务类型" rules={[required]} extra="这是人工意图；实际可执行类型必须同时出现在新鲜原生探测中。"><Select mode="multiple" options={jobs} /></Form.Item>
+      <Form.Item name="allowed_capabilities" label="允许的任务类型" rules={[required]}><Select mode="multiple" options={jobs} /></Form.Item>
       <Form.Item name="enabled" label="允许新任务" valuePropName="checked"><Switch /></Form.Item>
-      <Form.Item name="development_http" label="显式本机 HTTP 开发模式" valuePropName="checked" extra="仅 SYSTEM_CA 与字面量 loopback 地址可用；部署也必须显式允许。"><Switch disabled={tls === 'PINNED_CA' || pending || !online} /></Form.Item>
+      <Form.Item name="development_http" label="显式本机 HTTP 开发模式" valuePropName="checked"><Switch disabled={tls === 'PINNED_CA' || pending || !online} /></Form.Item>
       <ErrorNotice error={mutation.error} />
     </Form>
   </Modal>;
@@ -178,7 +176,7 @@ function Runtimes() {
   return <Space orientation="vertical" className="full-width" size="large">
     <Button type="primary" disabled={!online} onClick={() => setCreating(true)}>登记 Runtime</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Runtime> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="尚无 Runtime。先按运行文档启动远端原生网关，再登记其地址、凭据与任务范围。" /> }} columns={[
+      <Table<Runtime> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="暂无 Runtime" /> }} columns={[
         { title: '名称', key: 'name', render: (_, item) => item.configuration.name },
         { title: '服务地址', key: 'endpoint', render: (_, item) => item.configuration.endpoint },
         { title: '版本', dataIndex: 'revision' }, { title: '新任务', key: 'enabled', render: (_, item) => item.configuration.enabled ? '允许' : '停用' },
@@ -207,7 +205,7 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
   return <Modal open title={original ? '修改目标交付下游' : '登记目标交付下游'} width={760} maskClosable={false} closable={!pending}
     onCancel={() => { if (!pending) close(); }} onOk={() => { if (online && !pending) form.submit(); }} confirmLoading={mutation.isPending}
     okText="保存下游配置" cancelText="返回" okButtonProps={{ disabled: !online || secretBusy }}>
-    <Alert type="warning" showIcon title="这里只登记 target-only 目标包接收服务。" description="不保存券商账户、钱包私钥、真实订单或仓位。停用只阻止未来交付，不会撤单、平仓或停止已经领取目标的交易。" />
+    
     {original && <ResourceFacts id={original.id} revision={original.revision} updated={original.updated_at} />}
     <Form form={form} layout="vertical" disabled={pending || !online} initialValues={original?.configuration ?? { environments: 'PAPER', enabled: true, development_http: false }} onFinish={values => mutation.mutate(values)}>
       <Form.Item name="name" label="下游名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
@@ -218,7 +216,7 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
       <Form.Item name="credential_ref" label={original ? '轮换下游服务凭据（可保留）' : '下游服务凭据'} rules={original ? [] : [required]}>
         <SecretReference purpose="DOWNSTREAM" configured={original?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
       </Form.Item>
-      <Typography.Paragraph>本系统原生目标包版本为 1；保存配置并不证明接收端兼容或已经执行。</Typography.Paragraph>
+      
       <Form.Item name="enabled" label="允许未来目标交付" valuePropName="checked"><Switch /></Form.Item>
       <Form.Item name="development_http" label="显式本机 HTTP 开发模式" valuePropName="checked"><Switch /></Form.Item>
       <ErrorNotice error={mutation.error} />
@@ -232,7 +230,7 @@ function Downstreams() {
   return <Space orientation="vertical" className="full-width">
     <Button type="primary" disabled={!online} onClick={() => setEditing({})}>登记目标交付下游</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Downstream> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="尚未登记下游服务。没有有效下游、兼容探测、独立资格和相应审批，不会交付目标。" /> }} columns={[
+      <Table<Downstream> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="暂无下游服务" /> }} columns={[
         { title: '名称', key: 'name', render: (_, item) => item.configuration.name }, { title: '服务地址', key: 'endpoint', render: (_, item) => item.configuration.endpoint },
         { title: '环境', key: 'environment', render: (_, item) => item.configuration.environments }, { title: '版本', dataIndex: 'revision' },
         { title: '状态', key: 'enabled', render: (_, item) => item.configuration.enabled ? '允许未来交付' : '已停用' },

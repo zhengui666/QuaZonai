@@ -15,10 +15,9 @@ async fn native_assumptions_cli_preserves_operator_intent_sources_and_original_r
     pool: PgPool,
 ) {
     let f = support::fixture(pool.clone()).await;
-    let (enrollment, initial, totp) = support::start(&f).await;
-    let (login, _) = support::confirm(&f, &enrollment, &initial, &totp, false).await;
+    let login = support::local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
-    let cookie = login.cookie.unwrap_or(initial);
+    let cookie = login.cookie.unwrap();
     let login_id: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM app.browser_logins ORDER BY created_at DESC LIMIT 1")
             .fetch_one(&pool)
@@ -70,14 +69,7 @@ async fn native_assumptions_cli_preserves_operator_intent_sources_and_original_r
     .await;
     assert!(!denied.status.success());
     assert!(denied.stdout.is_empty());
-    let now = f
-        .store
-        .authentication_snapshot()
-        .await
-        .unwrap()
-        .database_now
-        .timestamp() as u64;
-    let human = invoke(&origin, &file, &["--idempotency-key","assumptions-human","operator-grant"], json!({"schema_version":1,"command":{"operation":"EXECUTION_ASSUMPTIONS_CREATE","request":body},"target_id":null,"code":totp.generate((now/30+1)*30)})).await;
+    let human = invoke(&origin, &file, &["--idempotency-key","assumptions-human","operator-grant"], json!({"schema_version":1,"command":{"operation":"EXECUTION_ASSUMPTIONS_CREATE","request":body},"target_id":null})).await;
     assert!(human.status.success(), "native assumptions grant failed");
     let grant: Value = serde_json::from_slice(&human.stdout).unwrap();
     let arguments = [

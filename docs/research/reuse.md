@@ -141,7 +141,7 @@ Nautilus示例复用保留原版权/LGPL声明；QZ原有AGPL/NOTICE不修改。
 |---|---|---|
 | HTTP/异步与HTTP客户端 | [Axum/Tokio](https://github.com/tokio-rs/axum)、[reqwest](https://github.com/seanmonstar/reqwest) | 产品路由、严格DTO、允许地址/权限/错误映射；不重建HTTP/TLS |
 | 持久化与投递 | [SQLx](https://github.com/launchbadge/sqlx)、[PostgreSQL](https://www.postgresql.org/docs/current/)、[PGMQ](https://github.com/pgmq/pgmq) | 同事务预算/领域/事件、Attempt租约及唯一结果采纳；PGMQ visibility不是业务authority，不能宣称外部exactly-once |
-| 认证 | [totp-rs](https://github.com/constantoine/totp-rs)、[tower-sessions](https://github.com/maxcountryman/tower-sessions)、RustCrypto AEAD | 首次本机bootstrap、TOTP防重放、会话撤销、CSRF、主体scope；不写密码学 |
+| 本机会话与机器凭据 | [tower-sessions](https://github.com/maxcountryman/tower-sessions)、RustCrypto Argon2/AEAD | 自动本机会话、撤销、Origin 与主体 scope；无验证码登录，不写密码学 |
 | MCP | [官方 Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk) | mission-scoped权限及业务桥接，不写MCP协议栈 |
 | 容器/隔离 | [Bollard](https://github.com/fussybeaver/bollard)、原生OCI/内核限制 | 固定JobSpec到容器映射/恢复及tombstone，非root/无网络/只读/资源约束；不把Prompt当隔离 |
 | Codex | [官方 App Server](https://developers.openai.com/codex/app-server)、[官方Harness架构](https://openai.com/index/unlocking-the-codex-harness/) | stdio客户端与任务/权限映射；模型工具循环、Thread历史、原生登录/刷新都交Codex |
@@ -193,17 +193,17 @@ QZ 独有的部分仅为字段关系、许可/资格引用、不可变发布、�
 
 初始 DDL 只实现记录和关系约束，严格 JSON 参数、身份认证、资格授权、Sealed sandbox 与完整模型闭环仍须由相应服务实现并验收；不能把60张表或 fixture 关系的存在作为产品完成证据。
 
-## 浏览器认证与机密存储（2026-09-06）
+## 本机会话与机密存储
 
 采用 [tower-sessions 0.15.0](https://docs.rs/tower-sessions/0.15.0/tower_sessions/)
 和 [官方 SQLx Store 修订 d18c9bf](https://github.com/maxcountryman/tower-sessions-stores/blob/d18c9bf76f1d4fb73130dbe5aa643197f14b5d2d/sqlx-store/src/postgres_store.rs)
 的 opaque cookie/session 与 PostgreSQL 持久化。该适配器是固定上游 Git 修订，虽仍标注 0.15.0，不能当作已发布的 SQLx0.9 兼容 crate；Time 固定为0.3.47。上游明确警告并发 session 更新可能
-丢失；因此 QZ 的注销/设备撤销/epoch 存在独立数据库授权记录，任何 middleware
+丢失；因此 QZ 的会话撤销/epoch 存在独立数据库授权记录，任何 middleware
 并发回写都不能恢复权限，不自建另一套 session 算法。
 
-TOTP 使用 [totp-rs 5.7.0](https://docs.rs/totp-rs/5.7.0/)，读取锁定源代码的
-`TOTP::check` 确认其 constant-time comparison；QZ 只实现数据库 step 防重放和
-初始化 CAS。bootstrap verifier 使用 Argon2id，不自己实现 KDF；Secret 使用
+本机浏览器不需要验证码、初始化或设备信任。会话固定12小时，有效性由原生
+PostgreSQL 授权记录校验；历史认证数据保留但无运行时登录入口或算法。
+机器 capability verifier 使用原生 Argon2id，不自己实现 KDF；Secret 使用
 [RustCrypto XChaCha20-Poly1305 0.10.1](https://docs.rs/chacha20poly1305/0.10.1/)
 与随机 nonce/UUID-purpose AAD、cap-std 3.4.5 受限文件访问。数据库备份不包含
 主密钥。这些密码学原生完整性不是研究资格或业务内容 hash。
@@ -217,8 +217,7 @@ TOTP 使用 [totp-rs 5.7.0](https://docs.rs/totp-rs/5.7.0/)，读取锁定源代
 
 This adapter uses Rust implementations; no Python exception is requested. It is not a browser authentication service or evidence of complete T36 acceptance.
 
-- totp-rs 5.7.0: native SHA-1, six digits, 30-second TOTP and otpauth URI; https://docs.rs/totp-rs/5.7.0/totp_rs/struct.TOTP.html . Tests use RFC 6238 Appendix B reference outputs; https://www.rfc-editor.org/rfc/rfc6238#appendix-B . Database time, monotonic accepted step, rate limits and operator enrollment remain Store responsibilities.
-- Argon2 0.5.3: native salted PHC verifier for random 256-bit bootstrap capabilities; https://docs.rs/argon2/0.5.3/argon2/ . This is the native cryptography exception, not a QZ business hash gate.
+- Argon2 0.5.3: native salted PHC verifier for random 256-bit machine capabilities; https://docs.rs/argon2/0.5.3/argon2/ . This is the native cryptography exception, not a QZ business hash gate.
 - chacha20poly1305 0.10.1: native XChaCha20-Poly1305 authenticated encryption; https://docs.rs/chacha20poly1305/0.10.1/chacha20poly1305/ . The UUID reference and purpose are authenticated additional data. Secret bytes never belong in domain receipts or public API results.
 - cap-std 3.4.5 and rustix 1.1.4: bounded directory-relative access and no-follow native file opens; https://docs.rs/cap-std/3.4.5/cap_std/fs/struct.Dir.html and https://docs.rs/rustix/1.1.4/rustix/fs/struct.OFlags.html . Only trusted processes receive the private directory; this does not prove Agent/container isolation.
 
@@ -325,7 +324,7 @@ Sources: [SQLx0.9](https://github.com/transact-rs/sqlx/discussions/4271),
 
 The original session DDL attribution above remains historical. The new adapter's
 schema, bound CRUD and MessagePack record format were compared with the original
-source; that inspection does not replace real migration/session/TOTP/recovery
+source; that inspection does not replace real migration/local-session/recovery
 tests. The existing Runtime journal test reads `sqlite_version()`, WAL mode,
 instance identity and integrity through the **linked SQLx connection**, not a host
 CLI. Existing PostgreSQL, browser, OCI and cold-restore checks remain required.

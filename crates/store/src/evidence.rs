@@ -51,7 +51,7 @@ pub(crate) async fn authorize(
     project: Id,
 ) -> Result<(), StoreError> {
     match actor {
-        Actor::Browser { .. } => authority::browser(tx, actor, false, false).await,
+        Actor::Browser { .. } => authority::browser(tx, actor, false).await,
         Actor::Machine { .. } => {
             let current = authority::machine(tx, actor, false).await?;
             if current.kind != PrincipalKind::Cli {

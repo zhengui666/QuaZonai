@@ -44,8 +44,8 @@ impl Http {
         let request = self
             .client
             .request(method, format!("{}{}", self.url, path))
-            .header("host", "research.example")
-            .header("origin", "https://research.example");
+            .header("host", "localhost")
+            .header("origin", "https://localhost");
         match cookie {
             Some(cookie) => request.header("cookie", cookie),
             None => request,
@@ -60,8 +60,7 @@ impl Http {
 }
 async fn authenticated(pool: PgPool) -> (Fixture, String) {
     let f = fixture(pool).await;
-    let (enrollment, anonymous, native) = start(&f).await;
-    let (reply, _) = confirm(&f, &enrollment, &anonymous, &native, true).await;
+    let reply = local_session(&f).await;
     assert_eq!(reply.status, axum::http::StatusCode::OK, "{}", reply.body);
     (f, reply.cookie.unwrap())
 }
@@ -129,7 +128,7 @@ async fn loopback_reads_and_cancel_use_real_auth_origin_revision_and_receipts(po
     let run = admitted(&pool, &f, "http").await;
     let http = Http::start(f.app.clone()).await;
     let path = format!("/api/v2/runs/{}", run.id);
-    json_reply(http.get(&path, None).await, StatusCode::UNAUTHORIZED).await;
+    json_reply(http.get(&path, None).await, StatusCode::OK).await;
     let current = json_reply(http.get(&path, Some(&cookie)).await, StatusCode::OK).await;
     assert_eq!(current["id"], run.id.to_string());
     assert_eq!(current["last_event_seq"], "1");
@@ -384,18 +383,20 @@ async fn live_sse_readers_poll_new_commits_and_resume_the_same_cursor(pool: PgPo
 #[sqlx::test(migrations = "../../migrations")]
 async fn sse_notices_revoked_authority_without_leaking_future_events(pool: PgPool) {
     let (f, cookie) = authenticated(pool.clone()).await;
+    let login: String = sqlx::query_scalar("SELECT id::text FROM app.browser_logins")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     let run = admitted(&pool, &f, "revocation").await;
     let http = Http::start(f.app.clone()).await;
     let mut stream = http
         .get(&format!("/api/v2/runs/{}/events", run.id), Some(&cookie))
         .await;
     assert_eq!(frame_ids(&one_event(&mut stream).await), vec![1]);
-    let response = http
-        .request(reqwest::Method::POST, "/api/v2/auth/logout", Some(&cookie))
-        .send()
+    f.store
+        .logout_browser(login.try_into().unwrap())
         .await
         .unwrap();
-    assert!(response.status().is_success());
     let text = one_event(&mut stream).await;
     assert!(text.contains("reset-required"));
     assert!(frame_ids(&text).is_empty());

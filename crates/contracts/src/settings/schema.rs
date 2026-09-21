@@ -36,9 +36,7 @@ fn secret_variant(purpose: IntegrationSecretPurpose) -> AllOfBuilder {
             8192,
             r"^[\u0021-\u007E]+(?![\s\S])",
         ),
-        IntegrationSecretPurpose::Downstream | IntegrationSecretPurpose::CustomProvider => {
-            (1, 8192, r"^[\u0021-\u007E]+(?![\s\S])")
-        }
+        IntegrationSecretPurpose::Downstream => (1, 8192, r"^[\u0021-\u007E]+(?![\s\S])"),
         IntegrationSecretPurpose::TlsCa => (1, 65536, r"^[\u0000-\u007F]+(?![\s\S])"),
     };
     AllOfBuilder::new()
@@ -68,7 +66,6 @@ impl PartialSchema for IntegrationSecretCreate {
         OneOfBuilder::new()
             .item(secret_variant(IntegrationSecretPurpose::Runtime))
             .item(secret_variant(IntegrationSecretPurpose::Downstream))
-            .item(secret_variant(IntegrationSecretPurpose::CustomProvider))
             .item(secret_variant(IntegrationSecretPurpose::TlsCa))
             .into()
     }

@@ -1,4 +1,4 @@
-//! Real TOTP/Axum/PostgreSQL/ArtifactStore + actual TLS metadata transport.
+//! Real local-session/Axum/PostgreSQL/ArtifactStore + actual TLS metadata transport.
 //! The returned source document is explicitly FIXTURE and cannot create qualification.
 #[path = "../../../tests/support/catalog_metadata.rs"]
 mod metadata_fixture;
@@ -28,8 +28,8 @@ async fn command(
         Request::builder()
             .method(method)
             .uri(path)
-            .header(header::HOST, "research.example")
-            .header(header::ORIGIN, "https://research.example")
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, "https://localhost")
             .header(header::COOKIE, cookie)
             .header(header::CONTENT_TYPE, "application/json")
             .header("Idempotency-Key", key)
@@ -44,10 +44,9 @@ async fn a_fresh_authenticated_operator_can_distinguish_empty_management_from_un
     pool: PgPool,
 ) {
     let f = support::fixture(pool).await;
-    let (enrollment, initial_cookie, totp) = support::start(&f).await;
-    let (confirmation, _) = support::confirm(&f, &enrollment, &initial_cookie, &totp, false).await;
+    let confirmation = support::local_session(&f).await;
     assert_eq!(confirmation.status, StatusCode::OK);
-    let cookie = confirmation.cookie.unwrap_or(initial_cookie);
+    let cookie = confirmation.cookie.unwrap();
     for path in [
         "/api/v2/data/sources",
         "/api/v2/data/revisions",
@@ -58,7 +57,8 @@ async fn a_fresh_authenticated_operator_can_distinguish_empty_management_from_un
         assert_eq!(reply.body["items"], json!([]));
         assert!(reply.body["next_cursor"].is_null());
         let anonymous = support::call(&f, "GET", path, Value::Null, None).await;
-        assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(anonymous.status, StatusCode::OK);
+        assert!(anonymous.cookie.is_some());
     }
 }
 
@@ -86,10 +86,9 @@ async fn setup(
     )
     .unwrap();
     let f = support::fixture_with_runtime_targets(pool, Some(targets)).await;
-    let (enrollment, initial_cookie, totp) = support::start(&f).await;
-    let (confirmation, _) = support::confirm(&f, &enrollment, &initial_cookie, &totp, false).await;
+    let confirmation = support::local_session(&f).await;
     assert_eq!(confirmation.status, StatusCode::OK);
-    let cookie = confirmation.cookie.unwrap_or(initial_cookie);
+    let cookie = confirmation.cookie.unwrap();
     let credential = command(&f, &cookie, "runtime-secret", "POST", "/api/v2/settings/credentials", json!({
         "intent":{"schema_version":1,"purpose":"RUNTIME","label":"Controlled Runtime credential"},"value":native::SECRET
     })).await;
@@ -340,8 +339,10 @@ async fn authenticated_http_native_validation_creates_one_real_queued_run_withou
     assert_eq!(replay.status, StatusCode::ACCEPTED);
     assert_eq!(replay.body["resource"], admitted.body["resource"]);
     assert_eq!(replay.body["replayed"], true);
-    let anonymous = support::call(&f, "POST", "/api/v2/data/validate", body.clone(), None).await;
+    let anonymous =
+        support::invalid_bearer(&f, "POST", "/api/v2/data/validate", body.clone()).await;
     assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+    assert!(anonymous.cookie.is_none());
     let mut changed = body;
     changed["limits"]["wall_seconds"] = json!(61);
     let conflict = command(
@@ -434,7 +435,8 @@ async fn data_http_rejects_client_authority_missing_keys_unauthenticated_and_bad
         "/api/v2/data/universes",
     ] {
         let anonymous = support::call(&f, "GET", path, Value::Null, None).await;
-        assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(anonymous.status, StatusCode::OK);
+        assert!(anonymous.cookie.is_some());
         let invalid = support::call(
             &f,
             "GET",

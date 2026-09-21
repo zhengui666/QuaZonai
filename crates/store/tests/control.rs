@@ -8,26 +8,7 @@ use store::{authority::Actor, Store, StoreError};
 
 async fn operator(pool: &PgPool) -> (Store, Actor) {
     let store = Store::from_pool(pool.clone());
-    let cap = store
-        .issue_bootstrap_capability("$argon2id$fixture-verified-by-native-adapter")
-        .await
-        .unwrap();
-    let binding = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
-    let e = store
-        .start_enrollment(cap.id, &cap.verifier, Id::new(), binding)
-        .await
-        .unwrap();
-    let login = store
-        .confirm_enrollment(
-            e.id,
-            binding,
-            e.secret_ref,
-            e.database_now.timestamp() / 30,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
+    let login = store.local_browser().await.unwrap();
     (store, Actor::Browser { login_id: login.id })
 }
 fn create(name: &str) -> ProjectCreate {
@@ -291,10 +272,8 @@ async fn grant_binds_parent_resource_and_is_not_reusable_by_another_credential(p
         principal_id: p1.id,
         request: issue.clone(),
     });
-    let snapshot = store.authentication_snapshot().await.unwrap();
-    let step = snapshot.database_now.timestamp() / 30 + 1;
     let granted = store
-        .issue_operator_grant(&cli, "grant", &command, None, &snapshot, step)
+        .issue_operator_grant(&cli, "grant", &command, None)
         .await
         .unwrap()
         .resource;

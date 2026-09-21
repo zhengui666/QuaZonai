@@ -26,7 +26,7 @@ pub async fn listen_with_downstream_targets(
 ) -> (String, Listener) {
     let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = socket.local_addr().unwrap();
-    let origin = format!("http://{address}");
+    let origin = format!("http://localhost:{}", address.port());
     let state = server::AppState::new(
         f.store.clone(),
         SecretVault::open(
@@ -60,8 +60,8 @@ pub async fn browser(
         Request::builder()
             .method("POST")
             .uri(path)
-            .header(header::HOST, "research.example")
-            .header(header::ORIGIN, "https://research.example")
+            .header(header::HOST, "localhost")
+            .header(header::ORIGIN, "https://localhost")
             .header(header::COOKIE, cookie)
             .header(header::CONTENT_TYPE, "application/json")
             .header("Idempotency-Key", key)

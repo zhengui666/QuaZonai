@@ -55,12 +55,6 @@ pub enum StoreError {
     AuthenticationRequired,
     #[error("authentication attempt rejected")]
     InvalidCredentials,
-    #[error("initial setup has already completed")]
-    SetupCompleted,
-    #[error("authentication code has already been consumed")]
-    TotpReplay,
-    #[error("recent authentication required")]
-    RecentAuthenticationRequired,
     #[error("authentication rate limit exceeded")]
     AuthRateLimited { retry_after_seconds: u32 },
     #[error("operation is not permitted for this identity")]

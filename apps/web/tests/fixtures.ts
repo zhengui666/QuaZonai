@@ -33,7 +33,6 @@ export function brief(state: 'DRAFT' | 'FROZEN' = 'FROZEN'): Schema['BriefView']
 }
 export const session: Schema['BrowserSession'] = {
   schema_version: 1, authenticated_at: '2026-09-08T00:00:00Z', expires_at: '2030-09-09T00:00:00Z',
-  trusted_device_id: null, recent_authentication_required: false,
 };
 export function problem(code: string, status: number, detail = '合成合同测试错误。') {
   return { type: `urn:quazonai:problem:${code.toLowerCase()}`, title: code, status, code, detail,
@@ -59,22 +58,14 @@ export async function reply(route: Route, json: unknown, status = 200) {
   await route.fulfill({ status, json, contentType: status >= 400 ? 'application/problem+json' : 'application/json', headers: { 'Cache-Control': 'no-store' } });
 }
 export type Captured = { path: string; method: string; key: string | null; body: unknown };
-export async function fixture(page: Page, options: { authenticated?: boolean; loseFirstCreate?: boolean; conflict?: boolean; requireVerify?: boolean } = {}) {
-  const state = { authenticated: options.authenticated ?? true, verified: !options.requireVerify,
+export async function fixture(page: Page, options: { loseFirstCreate?: boolean; conflict?: boolean } = {}) {
+  const state = {
     projects: [project], run: { ...run }, commands: [] as Captured[], eventHeaders: [] as (string | null)[],
   };
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname; const method = request.method();
     if (!['GET', 'HEAD'].includes(method)) state.commands.push({ path, method, key: await request.headerValue('Idempotency-Key'), body: request.postDataJSON() as unknown });
-    if (path === '/api/v2/bootstrap/status') return reply(route, { schema_version: 1, initialized: true, setup_allowed: false });
-    if (path === '/api/v2/auth/login') {
-      state.authenticated = true; return reply(route, session);
-    }
-    if (!state.authenticated) return reply(route, problem('AUTH_REQUIRED', 401), 401);
     if (path === '/api/v2/auth/session') return reply(route, session);
-    if (path === '/api/v2/auth/logout') { state.authenticated = false; return route.fulfill({ status: 204 }); }
-    if (path === '/api/v2/auth/verify') { state.verified = true; return reply(route, session); }
-    if (path === '/api/v2/auth/devices') return reply(route, { schema_version: 1, items: [], next_cursor: null });
     if (path === '/api/v2/projects' && method === 'GET') return reply(route, { schema_version: 1, items: state.projects, next_cursor: null });
     if (path === '/api/v2/projects' && method === 'POST') {
       const body = object(request.postDataJSON());
@@ -99,7 +90,6 @@ export async function fixture(page: Page, options: { authenticated?: boolean; lo
     if (path === `/api/v2/runs/${id(3)}/cancel`) {
       const body = object(request.postDataJSON());
       expect(body.expected_revision).toBe(run.revision);
-      if (!state.verified) return reply(route, problem('RECENT_AUTH_REQUIRED', 403), 403);
       state.run = { ...state.run, state: 'CANCEL_REQUESTED', cancellation_requested_at: '2026-09-08T00:01:00Z', revision: '9007199254740994' };
       return reply(route, { schema_version: 1, replayed: false, resource: state.run }, 202);
     }
@@ -114,7 +104,7 @@ export async function fixture(page: Page, options: { authenticated?: boolean; lo
 export async function navigate(page: Page, title: string) {
   const open = page.getByRole('button', { name: '打开主导航' });
   const item = page.getByRole('menuitem', { name: title, exact: true });
-  // Authentication is asynchronous. An immediate isVisible before the console
+  // Initial rendering is asynchronous. An immediate isVisible before the console
   // mounts would skip opening mobile navigation and then wait for a hidden item.
   await expect(open.or(item).first()).toBeVisible();
   if (!(await item.isVisible())) await open.click();

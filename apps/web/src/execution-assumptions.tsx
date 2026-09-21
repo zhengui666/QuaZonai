@@ -1,9 +1,9 @@
-import { Alert, App, Button, Checkbox, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Table, Typography } from 'antd';
+import { App, Button, Checkbox, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Table, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api, dataOf, displayTime, Intent, isCounter, isDecimal } from './api';
 import type { Schema } from './api';
-import { uuidPattern } from './auth';
+import { uuidPattern } from './api';
 import { counterRules } from './budget-fields';
 import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
 
@@ -26,10 +26,10 @@ export function ExecutionAssumptions({ project }: { project: string }) {
   const [selected, setSelected] = useState<string>(); const [creating, setCreating] = useState(false); const online = useOnline();
   const query = useQuery({ queryKey: ['execution-assumptions', project, history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}/execution-assumptions', { params: { path: { id: project }, query: { cursor: history.at(-1), limit: 25 } }, signal })) });
   return <Space orientation="vertical" size="middle" className="full-width">
-    <Alert showIcon type="info" title="不可变执行假设，不是真实账户或成交记录" description="仅保存保守 BAR 假设。费用须匹配原登记资产，保存不会启动模拟、证明 DATA_BACKED 或授予交付资格。" />
+    
     <Space wrap><Button type="primary" disabled={!online} onClick={() => setCreating(true)}>新建执行假设</Button><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新执行假设</Button></Space>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<View> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="尚无原生来源绑定的执行假设；不代表评估完成。" /> }} columns={[
+      <Table<View> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="暂无执行假设" /> }} columns={[
         { title: '假设编号', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>查看假设 {item.id}</Button> },
         { title: '资本假设', key: 'capital', render: (_, item) => `${item.settings.starting_capital} ${item.settings.base_currency}` },
         { title: '创建于', key: 'created', render: (_, item) => displayTime(item.created_at) },
@@ -49,8 +49,9 @@ function Detail({ id, close }: { id: string; close: () => void }) {
         ['id', '假设编号'], ['input_set_id', '冻结输入'], ['dataset_revision_id', '数据版本'], ['runtime_id', 'Runtime'],
         ['capability_snapshot_artifact_id', '能力探测证据'], ['fee_schedule_artifact_id', '原配置产物'], ['engine_image_ref', '原生镜像'],
         ['venue_capability_ref', '市场'], ['calendar_version', '日历版本'], ['settlement_rule_ref', '结算规则'],
+        ['cost_assumption_status', '成本假设'],
       ] as const).map(([key, label]) => ({ key, label, children: <Typography.Text className="break-word" copyable>{query.data![key]}</Typography.Text> }))} />
-      <Alert type="info" showIcon title="CONSERVATIVE_ASSUMPTION · 保守假设，不是数据支持成本证明" />
+      
       {query.data.bar_liquidity && <Descriptions column={1} items={[
         { key: 'report', label: '原生历史流动性报告', children: query.data.bar_liquidity.report_artifact_id },
         { key: 'age', label: '历史量最长年龄（秒）', children: query.data.bar_liquidity.maximum_age_seconds },
@@ -94,7 +95,7 @@ function Editor({ project, close }: { project: string; close: () => void }) {
     modal.confirm({ title: '放弃未保存的执行假设？', content: '不会撤销已发送请求；结果未知时保留原输入重试。', okText: '放弃修改', cancelText: '继续编辑', onOk: close });
   }
   return <Drawer title="新建不可变执行假设" open width={800} onClose={dismiss} closable={!mutation.isPending} maskClosable={!mutation.isPending}>
-    <Alert showIcon type="info" title="使用原登记数据与当前 Runtime 版本" description="冻结 Nautilus 0.63.0 费用、填充/滑点和延迟模型。参数由操作者明确填写，不从账户凭据或钱包读取。插入延迟合计必须大于零；现金模型杠杆必须为 1。" />
+    
     <ErrorNotice error={mutation.error} />
     <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)} onFinish={values => mutation.mutate(values)} disabled={!online || mutation.isPending} initialValues={{ settings: { fee_rates: [{}] } }}>
       {([['runtime_id', 'Runtime 编号'], ['input_set_id', '冻结输入编号'], ['dataset_revision_id', '数据版本编号']] as const).map(([name, label]) => <Form.Item key={name} name={name} label={label} rules={ids}><Input /></Form.Item>)}
@@ -103,12 +104,12 @@ function Editor({ project, close }: { project: string; close: () => void }) {
       <Form.Item name="use_bar_liquidity" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending || !!useRollingLiquidity}>绑定历史单 BAR 流动性假设</Checkbox></Form.Item>
       <Form.Item name="use_rolling_liquidity" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending || !!useBarLiquidity}>登记滚动 BAR 流动性政策</Checkbox></Form.Item>
       {useRollingLiquidity && <>
-        <Alert type="info" showIcon title="逐步测量政策，不是延长历史快照" description="每个研究截止从原目录测量当时已知 BAR，并重新检查年龄；不手填市场量、不证明 DATA_BACKED，也不启动研究。" />
+        
         <Form.Item name={['rolling_liquidity', 'maximum_age_seconds']} preserve={false} label="每步历史 BAR 最长年龄（秒）" rules={[required, { type: 'integer', min: 1, max: 4294967295 }]}><InputNumber min={1} max={4294967295} precision={0} /></Form.Item>
         <Form.Item name={['rolling_liquidity', 'participation_limit']} preserve={false} label="滚动单 BAR 参与率上限（大于 0 且不超过 1）" rules={decimals}><Input inputMode="decimal" /></Form.Item>
       </>}
       {useBarLiquidity && <>
-        <Alert type="info" showIcon title="历史量不是未来可成交保证" description="只接受同一冻结输入、数据版本和 Runtime 的原生 DATA_VALIDATE 报告。明确填写有效年龄与每次再平衡参与率；到期需创建新假设，不会自动刷新或提升 DATA_BACKED 资格。" />
+        
         <Form.Item name={['bar_liquidity', 'report_artifact_id']} preserve={false} label="原生历史流动性报告编号" rules={ids}><Input /></Form.Item>
         <Form.Item name={['bar_liquidity', 'maximum_age_seconds']} preserve={false} label="历史量最长年龄（秒）" rules={[required, { type: 'integer', min: 1, max: 4294967295 }]}><InputNumber min={1} max={4294967295} precision={0} /></Form.Item>
         <Form.Item name={['bar_liquidity', 'participation_limit']} preserve={false} label="单 BAR 参与率上限（大于 0 且不超过 1）" rules={decimals}><Input inputMode="decimal" /></Form.Item>
@@ -122,7 +123,7 @@ function Editor({ project, close }: { project: string; close: () => void }) {
       <Form.Item name={['fill', 'random_seed']} label="随机种子" rules={counts}><Input inputMode="numeric" /></Form.Item>
       {([['base_latency_ns', '基础延迟'], ['insert_latency_ns', '插入附加延迟'], ['update_latency_ns', '更新附加延迟'], ['cancel_latency_ns', '取消附加延迟']] as const).map(([name, label]) => <Form.Item key={name} name={['latency', name]} label={`${label}（纳秒）`} rules={counts}><Input inputMode="numeric" /></Form.Item>)}
       <Typography.Title level={2}>逐资产原生费用</Typography.Title>
-      <Typography.Paragraph>与原始资产定义精确核对，不接受以手填费率替换来源。</Typography.Paragraph>
+      
       <Form.List name={['settings', 'fee_rates']}>{(fields, { add, remove }) => <>
         {fields.map(field => <Space key={field.key} orientation="vertical" className="full-width">
           <Form.Item name={[field.name, 'instrument_id']} label={`资产 ${field.name + 1} 标识`} rules={[required, { max: 200, whitespace: true }]}><Input /></Form.Item>

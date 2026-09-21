@@ -59,14 +59,14 @@ export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => vo
   if (error === null || error === undefined) return null;
   const failure = error instanceof ApiFailure ? error : undefined;
   const wait = failure ? Math.max(0, Math.ceil((failure.retryAt - now) / 1000)) : 0;
-  return <Alert type="error" showIcon title={failure?.message ?? '请求未完成，请重试并检查服务状态。'}
+  return <Alert type="error" showIcon title={failure?.message ?? '请求失败，请重试'}
     description={<Space orientation="vertical" size="small">
       {failure?.problem && <>
-        <Typography.Text>错误：{failure.code} · 请求编号：{failure.problem.request_id}</Typography.Text>
-        {failure.problem.current_revision !== undefined && <Typography.Text>服务器当前版本：{failure.problem.current_revision}。请先重载；不会覆盖新版本。</Typography.Text>}
+        <Typography.Text>{failure.code} · {failure.problem.request_id}</Typography.Text>
+        {failure.problem.current_revision !== undefined && <Typography.Text>当前版本：{failure.problem.current_revision}，请重新载入</Typography.Text>}
         {failure.problem.field_errors.map(field => <Typography.Text key={`${field.field}:${field.code}`}>{field.field}：{field.message}</Typography.Text>)}
       </>}
-      {wait > 0 && <Typography.Text>服务器要求至少再等待 {wait} 秒。</Typography.Text>}
+      {wait > 0 && <Typography.Text>{wait} 秒后可重试</Typography.Text>}
       {retry && <Button disabled={wait > 0} onClick={retry}>重新载入</Button>}
     </Space>} />;
 }
@@ -76,7 +76,7 @@ export function QueryPanel({ pending, error, stale, reload, children }: {
   if (pending) return <div role="status" aria-label="正在载入"><Skeleton active paragraph={{ rows: 5 }} /></div>;
   if (error && !stale) return <ErrorNotice error={error} retry={reload} />;
   return <Space orientation="vertical" className="full-width" size="middle">
-    {error ? <><Alert type="warning" title="以下是上次成功读取的数据，当前无法确认其最新状态。" showIcon /><ErrorNotice error={error} retry={reload} /></> : null}
+    {error ? <><Alert type="warning" title="数据未更新" showIcon /><ErrorNotice error={error} retry={reload} /></> : null}
     {/* AntD Space flattens fragments and keys unkeyed children by position.
         Keep forms mounted when a stale-query warning is inserted or removed. */}
     <Space key="query-content" orientation="vertical" className="full-width" size="middle">{children}</Space>
@@ -96,7 +96,7 @@ export function Pager({ next, history, loading, move }: {
   move: (history: (string | undefined)[]) => void;
 }) {
   return <Space wrap><Button disabled={loading || history.length <= 1} onClick={() => move(history.slice(0, -1))}>上一页</Button>
-    <Typography.Text>第 {history.length} 页（游标分页）</Typography.Text>
+    <Typography.Text>第 {history.length} 页</Typography.Text>
     <Button disabled={loading || !next} onClick={() => { if (next) move([...history, next]); }}>下一页</Button></Space>;
 }
 export function NoData({ text }: { text: string }) {

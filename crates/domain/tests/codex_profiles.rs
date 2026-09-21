@@ -61,6 +61,7 @@ fn available(at: chrono::DateTime<Utc>) -> CodexProbeOutcomeV1 {
             reasoning_effort: Some("native-default".into()),
             service_tier: None,
         },
+        native_default_model: Some("observed-model".into()),
         models: vec![model(at)],
     }
 }
@@ -90,27 +91,31 @@ fn profile_references_are_labels_and_system_cannot_carry_a_custom_credential() {
 }
 
 #[test]
-fn custom_provider_requires_an_explicit_https_route_without_secret_url_components() {
-    for invalid in [
-        "http://provider.invalid/v1",
-        "https://user:secret@provider.invalid/v1",
-        "https://provider.invalid/v1?key=x",
-        "https://provider.invalid/v1#fragment",
-        " https://provider.invalid/v1",
-        "file:///tmp/provider",
-    ] {
-        assert!(provider_url(invalid).is_err());
-    }
-    assert!(provider_url("https://provider.invalid/v1").is_ok());
-    let mut request = profile();
-    request.connection = CodexConnectionCreateV1::CustomProvider {
-        base_url: "https://provider.invalid/v1".into(),
-        credential_ref: Id::new(),
+fn custom_provider_and_connection_updates_are_rejected_at_the_wire_boundary() {
+    let mut legacy = serde_json::to_value(profile()).unwrap();
+    legacy["connection"] = serde_json::json!({
+        "mode": "CUSTOM_PROVIDER", "base_url": "https://provider.invalid/v1", "credential_ref": Id::new()
+    });
+    assert!(serde_json::from_value::<CodexProfileCreateV1>(legacy).is_err());
+    let update = CodexProfileUpdateV1 {
+        schema_version: SchemaV1,
+        expected_revision: Revision::INITIAL,
+        model_settings: defaults(),
     };
-    assert!(profile_create(&request).is_ok());
+    assert!(profile_update(&update).is_ok());
+    for (key, value) in [
+        ("connection", serde_json::json!({"mode":"SYSTEM"})),
+        ("home_binding", serde_json::json!("other-home")),
+        ("name", serde_json::json!("other-name")),
+    ] {
+        let mut wire = serde_json::to_value(&update).unwrap();
+        wire[key] = value;
+        assert!(serde_json::from_value::<CodexProfileUpdateV1>(wire).is_err());
+    }
     for invalid in ["", " ", "small\n", "a\0b"] {
-        request.model_settings.saved_reasoning_effort = Some(invalid.into());
-        assert!(profile_create(&request).is_err());
+        let mut invalid_request = profile();
+        invalid_request.model_settings.saved_reasoning_effort = Some(invalid.into());
+        assert!(profile_create(&invalid_request).is_err());
     }
 }
 
@@ -161,6 +166,7 @@ fn incomplete_wrong_revision_stale_duplicate_or_unadvertised_catalogs_cannot_rep
             account,
             models,
             effective,
+            ..
         } = &mut invalid
         else {
             unreachable!()
@@ -230,6 +236,54 @@ fn fast_tier_requires_exact_native_advertisement_and_custom_cannot_fall_back_to_
     assert!(probe_outcome(
         &observation,
         &saved,
+        ConnectionMode::System,
+        Revision::INITIAL,
+        at,
+        at
+    )
+    .is_ok());
+}
+
+#[test]
+fn native_default_provenance_is_required_for_new_probes_but_old_records_remain_readable() {
+    let at = Utc::now();
+    let mut wire = serde_json::to_value(available(at)).unwrap();
+    wire.as_object_mut().unwrap().remove("native_default_model");
+    let historical: CodexProbeOutcomeV1 = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&historical).unwrap(), wire);
+    assert!(probe_outcome(
+        &historical,
+        &defaults(),
+        ConnectionMode::System,
+        Revision::INITIAL,
+        at,
+        at
+    )
+    .is_err());
+    for name in ["", " ", "not-the-inherited-model"] {
+        wire["native_default_model"] = serde_json::json!(name);
+        let invalid: CodexProbeOutcomeV1 = serde_json::from_value(wire.clone()).unwrap();
+        assert!(probe_outcome(
+            &invalid,
+            &defaults(),
+            ConnectionMode::System,
+            Revision::INITIAL,
+            at,
+            at
+        )
+        .is_err());
+    }
+    // A genuinely active model can differ from the native default. This does not
+    // grant the inherited model any capabilities or change the catalog marker.
+    let mut explicit = defaults();
+    explicit.use_default_model_settings = false;
+    explicit.saved_model = Some("observed-model".into());
+    explicit.saved_reasoning_effort = None;
+    explicit.saved_fast_mode = false;
+    let active: CodexProbeOutcomeV1 = serde_json::from_value(wire).unwrap();
+    assert!(probe_outcome(
+        &active,
+        &explicit,
         ConnectionMode::System,
         Revision::INITIAL,
         at,

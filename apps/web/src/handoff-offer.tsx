@@ -58,15 +58,15 @@ export function HandoffOffer({ release, approval, close }: { release: Schema['Re
   return <Modal open title="登记原目标 Offer" width={720} maskClosable={false} closable={!mutation.isPending} onCancel={dismiss} onOk={submit} confirmLoading={mutation.isPending}
     okText={submitted ? '重试同一 Offer' : '确认登记 Offer'} cancelText="返回" okButtonProps={{ disabled: !online || (!submitted && !ready) }} footer={receipt ? <Button onClick={close}>返回原审批</Button> : undefined}>
     <Space orientation="vertical" className="full-width">
-      <Alert showIcon type="info" title="Offer 不代表下游已领取或真实成交" description="服务端重验原审批、来源、撤销、决定与新鲜探测；前版已领取的事实不会被改写。" />
+      
       <Typography.Text className="break-word">原审批：{approval.id}；下游：{approval.downstream_id}；环境：{approval.environment}</Typography.Text>
       {current && <Typography.Text>原审批期限：{displayTime(current.valid_until)}；前版：{source.data?.latest?.id ?? '无前版交付'}</Typography.Text>}
       <Typography.Text>Offer 截止时间（本地时间）</Typography.Text>
       <Input aria-label="Offer 截止时间（本地时间）" type="datetime-local" value={until} onChange={e => setUntil(e.target.value)} disabled={!!submitted || !!receipt} />
       <ErrorNotice error={source.error ?? mutation.error} />
       {source.data?.duplicate && <Alert showIcon type="warning" title="原版本已登记 Offer 或原候选已领取，不能重复交付。" />}
-      {submitted && mutation.isError && <Alert showIcon type="warning" title="结果尚未确认，重试保留原审批、前版、期限和幂等键。" />}
-      {receipt && <Alert showIcon type="success" title="原 Offer 已登记。" description={`${receipt.id}；原回执状态：${receipt.state}。下游实际状态请查看交付记录。`} />}
+      {submitted && mutation.isError && <Alert showIcon type="warning" title="提交结果未知，请重试当前操作" />}
+      {receipt && <Alert showIcon type="success" title="原 Offer 已登记。" description={`${receipt.id}；原回执状态：${receipt.state}`} />}
     </Space>
   </Modal>;
 }

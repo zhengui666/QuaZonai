@@ -308,7 +308,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
     .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let origin = format!("http://{address}");
+    let origin = format!("http://localhost:{}", address.port());
     let cookie_material = format!("{}{}", random_capability(), random_capability());
     let app = server::router(
         AppState::new(

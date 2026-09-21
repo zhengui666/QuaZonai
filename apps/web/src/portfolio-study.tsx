@@ -73,7 +73,7 @@ export function PortfolioStudy({ candidate, close }: { candidate: Schema['Candid
     onOk={() => { if (!online || mutation.isPending || receipt) return; if (retry && submitted) mutation.mutate(submitted); else form.submit(); }}>
     <Space orientation="vertical" className="full-width" size="middle">
       <Typography.Paragraph className="break-word">原候选：{candidate.id}</Typography.Paragraph>
-      <Alert type="info" showIcon title="研究使用原完整成员和冻结政策，不使用历史候选权重作为持仓。" description="服务器重验原模型、费用、来源和预算。默认限额只是可修改草稿；请求不授予 PASS、审批或交付权限。" />
+      
       {[mandate.error, policy.error, cycle.error, runtime.error, mutation.error].map((error, index) => <ErrorNotice key={index} error={error} />)}
       {policy.data && !plan && <Alert type="warning" showIcon title="原政策没有 Study 计划，不能启动研究。" />}
       {plan && <Descriptions column={1} size="small" className="break-word" items={[
@@ -82,8 +82,8 @@ export function PortfolioStudy({ candidate, close }: { candidate: Schema['Candid
         { key: 'end', label: '研究终点', children: '固定取原数据版本结束，不接受覆盖' },
         { key: 'cutoffs', label: '手动时点', children: plan.manual_cutoffs?.map(displayTime).join('；') ?? '按原 Mandate 调度' },
       ]} />}
-      {retry && <Alert type="warning" showIcon title="请求结果尚未确认。" description="重试保留原内容、Runtime 修订与幂等键，不重新选择研究来源。" />}
-      {receipt ? <><Alert type="success" showIcon title="Study Run 已登记。" description="202 不是科学通过、资格或交付批准。" />
+      {retry && <Alert type="warning" showIcon title="提交结果未知，请重试当前操作" />}
+      {receipt ? <><Alert type="success" showIcon title="研究已提交" />
         <Typography.Text className="break-word">Run {receipt.id} · {receipt.state}</Typography.Text><Button onClick={() => setShowRun(true)}>查看 Study 运行</Button></> :
       <Form form={form} layout="vertical" onFinish={submit} disabled={!online || mutation.isPending || submitted !== undefined}
         initialValues={{ cpu_seconds: '10', wall_seconds: 60, memory_mib: 1024, output_bytes: '1048576' }}>
@@ -99,7 +99,7 @@ export function PortfolioStudy({ candidate, close }: { candidate: Schema['Candid
             return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.configuration.name} · ${item.id}`, disabled: !item.configuration.enabled || !item.configuration.allowed_capabilities.includes('PORTFOLIO_SIMULATE') })) };
           }} />
         </Form.Item>
-        {runtime.data && <Typography.Paragraph className="break-word">Runtime 修订：{runtime.data.revision}（提交后冻结）</Typography.Paragraph>}
+        {runtime.data && <Typography.Paragraph className="break-word">Runtime 修订：{runtime.data.revision}</Typography.Paragraph>}
         <div className="field-grid">
           <Form.Item name="cpu_seconds" label="CPU 秒数上限" rules={counterRules}><Input inputMode="numeric" maxLength={19} /></Form.Item>
           <Form.Item name="wall_seconds" label="墙钟秒数上限" rules={[{ required: true, type: 'integer', min: 1, max: 86400 }]}><InputNumber min={1} max={86400} precision={0} /></Form.Item>

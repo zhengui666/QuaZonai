@@ -61,9 +61,11 @@ async function setup(page: Page, response: (url: URL) => Schema['EquityCurveV1']
   return { state, reads };
 }
 
-test('real chart library renders rejected historical evidence with exact accessible observations', async ({ page, context }, info) => {
+for (const mode of ['light', 'dark'] as const) test(`real chart library preserves accessible historical evidence in ${mode}`, async ({ page, context }, info) => {
+  await page.addInitScript(value => localStorage.setItem('quazonai.theme', value), mode);
   const { state, reads } = await setup(page, () => curve());
   const section = await enter(page);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', mode);
   await expect(section.getByRole('heading', { name: '组合价值（USD）' })).toBeVisible();
   await expect(section.getByTestId('equity-chart').locator('canvas')).toHaveCount(1);
   await section.getByText('明细（4）', { exact: true }).click();

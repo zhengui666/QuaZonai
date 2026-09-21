@@ -94,7 +94,7 @@ async function setup(page: Page, options: { loseFirstSource?: boolean; malformed
 }
 async function openData(page: Page) {
   await page.goto('/'); await navigate(page, '设置');
-  await settingsCategory(page, '数据与许可');
+  await settingsCategory(page, '数据');
 }
 
 test('read-only revocation history has keyboard access to its horizontal table', async ({ page }) => {
@@ -186,7 +186,7 @@ test('historical Universe records are not presented as native registrations', as
   await page.getByRole('tab', { name: 'Universe 版本', exact: true }).click();
   await expect(page.getByRole('row').filter({ hasText: universe.name })).toContainText('有原生登记证据');
   await expect(page.getByRole('row').filter({ hasText: '尚未核验的历史资产集' })).toContainText('历史记录未核验');
-  await expect(page.getByText('有原生登记证据只表示版本来源可追溯，不等于真实市场数据、PIT 已验证或研究合格。历史记录未核验时不会补造证据。')).toBeVisible();
+  await expect(page.getByText('有原生登记证据只表示版本来源可追溯，不等于真实市场数据、PIT 已验证或研究合格。历史记录未核验时不会补造证据。')).toHaveCount(0);
 });
 
 test('lost source ACK reuses its exact request and idempotency key', async ({ page }) => {
@@ -245,13 +245,13 @@ test('native resource selection inherits the pending Form state without changing
 test('malformed successful data response cannot masquerade as an empty result', async ({ page }) => {
   await setup(page, { malformedSources: true }); await openData(page);
   await expect(page.getByRole('alert')).toBeVisible();
-  await expect(page.getByText('还没有数据源。先在集成设置登记 Runtime，再使用其目录登记键创建数据源。')).toBeHidden();
+  await expect(page.getByText('暂无数据源')).toBeHidden();
   await expect(page.getByRole('button', { name: '查看许可与版本登记' })).toHaveCount(0);
 });
 
 test('write-only Runtime credentials leave only references in saved configuration', async ({ page }) => {
   const commands = await setup(page); await page.goto('/'); await navigate(page, '设置');
-  await settingsCategory(page, '原生集成');
+  await settingsCategory(page, '集成');
   await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('名称', { exact: true }).fill('新的原生 Runtime');
@@ -262,7 +262,7 @@ test('write-only Runtime credentials leave only references in saved configuratio
   await dialog.getByLabel('新的 RUNTIME 凭据').fill(secret);
   await dialog.getByRole('button', { name: '登记凭据', exact: true }).click();
   await expect.poll(async () => (await dialog.getByLabel('新的 RUNTIME 凭据').inputValue()).length).toBe(0);
-  await expect(dialog).toContainText('新凭据已登记');
+  await expect(dialog).toContainText('凭据已登记');
   const persisted = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }));
   expect(persisted.includes(secret), 'write-only credential must not enter browser storage').toBe(false);
   await dialog.getByRole('button', { name: '保存配置', exact: true }).click();

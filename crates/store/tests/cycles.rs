@@ -287,7 +287,7 @@ async fn cycle_run_event_admission_queue_and_receipt_are_created_once(pool: PgPo
 async fn cycle_choices_are_explicit_revision_locked_and_never_rewritten_by_profile_updates(
     pool: PgPool,
 ) {
-    use contracts::codex::{CodexConnectionUpdateV1, CodexProfileUpdateV1};
+    use contracts::codex::CodexProfileUpdateV1;
     let (store, actor) = research_support::operator(&pool).await;
     let f = cycle_support::setup(&pool, &store, &actor).await;
     store
@@ -328,8 +328,6 @@ async fn cycle_choices_are_explicit_revision_locked_and_never_rewritten_by_profi
             &CodexProfileUpdateV1 {
                 schema_version: SchemaV1,
                 expected_revision: old.revision,
-                name: "changed native profile".into(),
-                connection: CodexConnectionUpdateV1::System {},
                 model_settings: old.model_settings,
             },
             |_| async { Ok(()) },

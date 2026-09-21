@@ -165,97 +165,56 @@ Worker现从原模拟任务发表不可变FORWARD保持研究评估，再确认�
 
 ## 首次启动认证服务
 
-### Codex 原生目录、模型与账号
+### Codex 本机发现与模型
 
-服务启动参数 `serve --codex-deployment /absolute/path/codex-deployment.json`（或
-`CODEX_DEPLOYMENT`）指定部署所有者的JSON文件；不设置时账号目录列表为空，不使用宿主默认目录。
-文件结构如下，所有路径须由部署者替换为已经存在的绝对路径；binary必须是锁定的官方0.144.4：
+API 和 Worker 必须以持有本机 Codex 的同一操作系统用户运行，并继承可定位
+`codex` 的 `PATH`。QZ 自动使用该用户的 `HOME` 和原生 `CODEX_HOME`
+（缺省 `~/.codex`）；没有配置文件注册、Provider URL 或 API Key 表单。
+QZ 不读取／复制 `auth.json`，不改写 `config.toml`，认证由原生 `codex login` 管理。
 
-```json
-{
-  "schema_version": 1,
-  "binary": "/opt/codex/bin/codex",
-  "executable_path": "/usr/local/bin:/usr/bin:/bin",
-  "bindings": [{
-    "reference": "research-native",
-    "label": "研究专用原生账号目录",
-    "profile_origin": "MANAGED_VOLUME",
-    "home": "/var/lib/quazonai/codex-home",
-    "codex_home": "/var/lib/quazonai/codex-home",
-    "working_directory": "/var/lib/quazonai/codex-workspace",
-    "environment_names": []
-  }]
-}
-```
+研究员和独立审阅员两个角色自动建立，共享用户的原生设置，但使用独立任务和 Thread。
+“设置 → Codex → 模型设置”提供“本机默认”、模型和推理强度。
+开启本机默认保留已保存的覆盖值但不发送覆盖；关闭时只发送非空覆盖，
+模型目录、强度和可选加速来自原生检测，不猜测或静默替换。
+缺少安装、认证或兼容版本会显示真实不可用状态。普通连接检测不发送推理请求。
 
-已有目录的显式挂载使用`OPERATOR_MOUNT`。每个CODEX_HOME只绑定一个标签；API不会创建、复制或删除认证目录。
+Worker 复用 `PUBLIC_URL`，包含代理端口。独立 Worker 可显式提供
+`MISSION_API_ORIGIN`；二者同时配置必须完全一致。发现本机 Codex 后缺少有效
+Origin 会在启动时明确报错，不猜测 API 地址。`MISSION_WORKSPACES` 可省略，
+缺省使用 `STATE_DIR/missions`。
+研究沙箱、独立审阅、预算和下游授权不因本机免验证码而取消。
+原生个人指令与研究隔离限制仍按实际 Mission 检查；不能将模型可用视为研究完成。
 
-研究Mission要求专用profile，不带个人`AGENTS.md`/`AGENTS.override.md`或`instructions`/`developer_instructions`/`model_instructions_file`覆盖。锁定原生版本没有关闭全局个人提示注入的stdio开关；遇到这些配置会在模型请求前拒绝，不能把“已登录/模型可用”当作Mission已经就绪。请使用独立命名卷或显式的专用挂载，按原生流程登录；系统不读取或删除个人提示、不复制auth.json，也不暗换账号/profile。
-只有`environment_names`明确列出的服务环境变量会传给该原生进程，JSON不写凭据值；不要传数据库、钱包、Broker或无关秘密。
-该账号操作所有者使用单个API进程；不能让多个API或外部登录进程同时管理同一CODEX_HOME。
-
-在“设置 → Codex 模型与连接”登记Profile，选择上述标签。SYSTEM沿用原生配置与认证；
-CUSTOM_PROVIDER使用独立写入的Provider凭据，不能从账号登录入口更改系统订阅。
-“登录ChatGPT账号”确认后在Codex返回的验证页输入设备码；不要把设备码、密码、Token或auth.json发给模型。
-设备码只留当前网页内存及有界原生所有者，刷新后只能读操作状态；同一发起页可用原请求重新显示。
-Codex自行完成OAuth并保存/刷新令牌，QZ不实现另一套OAuth流程。
-
-取消按钮仅请求取消，直到实际状态显示取消已确认才算取消。登录成功与取消竞争时保留原生完成结果。
-网页关闭不取消已接受的操作；服务重启、超时和UNKNOWN不能证明账号未变化。
-登录或注销开始后旧模型观测失效，操作结束后点击“探测Codex连接与模型”；探测不发起付费推理。
-模型与推理Slider只使用这次有效的原生目录，默认设置不发送覆盖，不改变已有Thread或研究预算。
-本地协议、数据库和浏览器测试不证明真实账号登录或付费推理。本次交付的专用账号实测已按[所有者验收修订](DESIGN.md#acceptance-scope)完成豁免（未执行），不再要求准备账号；其余科学/业务验证继续。实际使用研究功能仍需可用的原生Profile与认证，豁免不使空配置变为就绪。
-
-以下 `protected_codex_login` 是保留的可选原生账号检查示例，不属于本轮必测项，也不在普通 Actions 中执行真实登录。将来具备账号且另有明确授权时，先按 README 安装锁定的
-Codex0.144.4；在仓库根目录执行以下命令，可验证真实设备登录启动、取消、重启空账号状态及空账号退出的幂等行为：
-
-```sh
-cargo run --locked -p server --example protected_codex_login -- \
-  --codex-binary "$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex" \
-  --cancel-only
-```
-
-省略 `--cancel-only` 可运行完整原生登录检查；必须由操作人在未录制的私人交互终端执行。
-设备码和官方验证地址只显示在该终端，五分钟内完成授权。输入或输出被重定向时会在启动
-前拒绝完整检查。不要将设备码、终端录屏或原生认证文件发送到聊天、CI、Issue或PR。
-命令使用新建临时profile及原生file凭据存储，保留原生OAuth所有权；成功登录后重启
-App Server核对持久状态，再退出并重启确认注销，正常结束删除该临时profile。
-不读取既有profile、auth.json或账户令牌，也不执行推理。Ctrl+C或超时会按原登录ID请求取消并核对原生完成通知，已观察到的成功优先。
-随后先关闭原登录进程，再用独立的新进程清理临时账号并确认退出状态；系统强制终止不保证临时目录清理。
-
-`--cancel-only` 的结果必须保留 `logout_restart=not_run full_login=not_run`；
-`empty_account_logout=passed` 只证明空账号退出的幂等路径，不证明已登录凭据被移除，不能记为完整T07通过。
-此示例补充[官方App Server账号协议](https://learn.chatgpt.com/docs/app-server)的原生运行证据；
-本次账号部分的关闭依据是所有者豁免，不是此示例的执行结果。QZ原生协议、同Thread工具/结果消费、实际科学任务及T42非账号业务部分仍须分别验收；不能用豁免补造这些结果。
-
+专用真实账号实测仍按[验收范围](DESIGN.md#acceptance-scope)豁免，状态为
+`COMPLETED_BY_OWNER_WAIVER / NOT_RUN`，不代表真实认证或付费推理已执行。
 
 ### 应用认证与数据库
 
 依赖固定 Rust 工具链及 PostgreSQL18 + PGMQ1.10.0，使用独立的新数据库。由原生 PostgreSQL 管理工具创建不带超级用户、创建数据库、创建角色权限的应用登录角色，密码通过交互或受保护配置输入；迁移身份与应用身份分开。
 
-CLI.md 中 `init-state → migrate → bootstrap → serve` 是实际可执行入口。`migrate --application-role NAME` 通过 SQLx 和 tower-sessions 原生迁移创建域表及会话存储，授权应用 DML；`serve` 不执行迁移，并拒绝高权限/owner 数据库连接。升级前暂停 HTTP/CLI/MCP 写命令和 Worker，并等待旧事务结束；只用 `cargo run --locked -p server -- migrate`，不要在活跃库上直接执行 SQLx CLI 或单条迁移 SQL。该命令先用原生迁移锁和应用表写冲突锁保护整个待应用批次，失败全部回滚；锁超时应排查旧事务后重试，不杀事务或放宽锁跳过验证。0006 安全升级会撤销已初始化实例的全部历史浏览器/设备和一次性 Operator 授权，须重新 TOTP 登录；旧审计记录保留。生产入口使用同源 HTTPS，监听内部地址并由受信任反向代理终止 TLS、保留 Host；不要将明文内部端口直接暴露公网。
+CLI.md 中 `init-state → migrate → serve` 是实际可执行入口。`migrate --application-role NAME` 通过 SQLx 和 tower-sessions 原生迁移创建域表及会话存储，授权应用 DML；`serve` 不执行迁移，并拒绝高权限/owner 数据库连接。升级前暂停 HTTP/CLI/MCP 写命令和 Worker，并等待旧事务结束；只用 `cargo run --locked -p server -- migrate`，不要在活跃库上直接执行 SQLx CLI 或单条迁移 SQL。该命令先用原生迁移锁和应用表写冲突锁保护整个待应用批次，失败全部回滚；锁超时应排查旧事务后重试，不杀事务或放宽锁跳过验证。0006 安全升级会撤销已初始化实例的全部历史浏览器/设备和一次性 Operator 授权，本机迁移后自动建立新会话，旧审计记录保留。API 和网页代理仅监听 loopback；HTTPS 也不例外。默认地址为 `http://localhost:8081`，不对外提供免登录服务。
 
-`bootstrap` 只在本机显示一次 `capability_id/capability/expires_at`。浏览器使用该凭据请求 `POST /api/v2/bootstrap/start`，获得只展示一次的原生 `otpauth://` URI；扫码后提交 `/bootstrap/confirm` 的六位动态码。初始化确认与首个登录权限在同一事务提交，完成后所有 bootstrap capability 失效。
+浏览器直接进入工作台。首次本机请求自动建立不透明会话，业务数据不需要初始化验证码。旧 bootstrap、验证码登录、重新验证、信任设备和注销入口不再提供。
 
-正常登录仅提交 TOTP，勾选信任设备时同时提供标签。普通会话12小时，信任设备30天；到期不延长。会话 cookie 由 tower-sessions 原生私有 cookie 管理，HTTP-only、SameSite Strict、根路径、生产 Secure。API 无需/不接受浏览器提交用户名、密码或 cookie 内的自报权限。
+会话仅作本机请求关联，最长12小时，不滑动续期。tower-sessions 管理 HTTP-only、SameSite Strict、根路径 cookie；HTTPS 使用 Secure。过期或撤销后自动建立不同的新会话，不恢复旧权限。
 
 ## 撤销、重放与故障
 
-每次请求通过 PostgreSQL 的登录权限、设备状态和认证 epoch 复核，不只相信 cookie。注销先提交数据库撤销再删除原生 Session；并发请求保存旧 Session 也不能恢复登录。删除信任设备需最近300秒内 TOTP 验证。动态码按实际匹配的时间步一次性消费，±1步容差不允许重放；全局每操作60秒最多5次验证，多个 API 实例共享数据库限流。
+每次请求复核 PostgreSQL 会话、撤销和认证 epoch。API 与代理只允许 loopback；仍校验 Host、Origin 和机器 Bearer。无效机器凭据不得回退成本机浏览器。
 
 业务、认证响应均 `Cache-Control: no-store`；浏览器写入必须携带与 PUBLIC_URL 完全匹配的 Origin。数据库、Secret Store 或 Session Store 不可用时拒绝操作，不能退回匿名或内存认证。失败响应只包含安全错误和请求编号，不含路径、密钥或 SQL 详情。
 
 ## 机器凭据和项目管理
 
-项目与身份 API 的实际路径和严格 DTO 由 `cargo run --locked -p server -- openapi` 导出。浏览器登录后使用 `POST /api/v2/projects` 创建项目，`PATCH /api/v2/projects/{id}` 必须带当前 `expected_revision`；所有管理写请求必须提供非空且不超过200字节的 `Idempotency-Key`。重复同键/同请求只返回已提交的原始响应，不把后来修改过的对象冒充首次结果；同键不同内容返回409。项目未绑定已冻结 Brief 不能激活，归档后不能原地复活。
+项目与身份 API 的实际路径和严格 DTO 由 `cargo run --locked -p server -- openapi` 导出。进入工作台后使用 `POST /api/v2/projects` 创建项目，`PATCH /api/v2/projects/{id}` 必须带当前 `expected_revision`；所有管理写请求必须提供非空且不超过200字节的 `Idempotency-Key`。重复同键/同请求只返回已提交的原始响应，不把后来修改过的对象冒充首次结果；同键不同内容返回409。项目未绑定已冻结 Brief 不能激活，归档后不能原地复活。
 
 Operator 可创建独立 CLI/AUTOMATION/DOWNSTREAM 主体，系统任务的 MISSION 身份不由公共 API 创建。每个凭据只在首次响应中显示完整 `qz2.<public_id>.<opaque>` token；数据库只登记不可逆原生 verifier 的 SecretVault 引用，列表、回执、日志不含秘密。准确重试签发返回同一凭据和 `token:null`，不是再显示秘密；首次响应丢失时撤销该凭据并以新键重新签发。不要在 URL、命令行参数、issue、Agent prompt 或浏览器持久缓存中放 token。
 
 机器请求只能在 `Authorization: Bearer ...` 中提交一次，不能同时附带浏览器 Cookie。机器读写在业务事务内再次检查 scope、精确 project/run/downstream、到期、撤销和主体 epoch。禁用/重新启用主体都推进 epoch；旧凭据不复活。DOCTOR_READ 是独立只读 CLI/AUTOMATION 权限，不能与其他权限混合、不能授给 Downstream/Mission。
 
-人工 CLI 需要管理操作时，通过 `/auth/operator-command-grants` 提交真实 TOTP、封闭 operation 和完整预期请求，取得最长300秒且一次性的 grant；操作时用 `X-Operator-Grant`。创建资源的 UUID 由服务器选定，已存在资源必须指定精确 target。该授权不改变机器身份、不向 Agent 授予 Operator 权限，AUTOMATION/MISSION/DOWNSTREAM 不能领取。撤销、过期、请求替换、目标替换和再次使用不同键都拒绝；已提交的完全相同重试仅能读原回执。读取回执仍要求当前有效的机器凭据和相同认证 epoch，但先于新的 TOTP 校验与 REAUTH 限流，因此旧动态码过期或新验证额度用尽不会把已提交授权误报为失败；原授权到期时间不延长。
+人工 CLI 管理操作通过 `/auth/operator-command-grants` 提交封闭 operation、原始目标和完整请求，取得最长300秒的一次性授权；无需验证码。使用 `X-Operator-Grant` 提交。当前机器凭据必须有效且属于 CLI，Agent、AUTOMATION、MISSION、DOWNSTREAM 不得领取；作用域、撤销、过期和幂等检查保持不变。
 
-机器 capability 的原生 Argon2 校验前，PostgreSQL 原子预约60秒窗口：每凭据最多5个、全局最多32个失败或在途尝试。成功仅归还所属原窗口的占用，失败、取消和计算槽繁忙保留至窗口重置；429响应含 Retry-After。机器计算使用独立2个槽，不占用浏览器 TOTP 的2个槽；多个实例共享数据库窗口。不要以增加实例绕过限流。
+机器 capability 的原生 Argon2 校验前，PostgreSQL 原子预约60秒窗口：每凭据最多5个、全局最多32个失败或在途尝试。成功仅归还所属原窗口的占用，失败、取消和计算槽繁忙保留至窗口重置；429响应含 Retry-After。机器计算使用独立2个槽，与本机浏览器请求分离；多个实例共享数据库窗口。不要以增加实例绕过限流。
 
 ## 正式数据登记与集成管理
 
@@ -269,7 +228,7 @@ Operator 可创建独立 CLI/AUTOMATION/DOWNSTREAM 主体，系统任务的 MISS
 
 `024_data_registration` 增量迁移新增不可变 dataset_registration_evidence，不为旧 Dataset 推断或补造原生证据。升级仍使用停写、备份及正式 `server migrate` 入口；旧表、历史来源和授权保留。网络、文件发表或事务失败时精确回收未被引用的本次对象，不扫描其他产物；数据库结果未知时保留对象并给出错误，不误删可能已提交的证据。
 
-用户命令已接入原生 `server client`，具体命令、单次 TOTP grant、stdin JSON、私有凭据文件、SSE cursor 与导出退出码见 CLI.md。它只经 HTTP 使用现有权限，不能通过直接 SQL、应用 Master Key 或读 Vault 绕过同一 API。机器管理授权请求正文一旦改变，即使使用原 key，也可能先被单次 grant 的完整意图约束拒绝为403；只有当前授权通过后才进入回执冲突检查。正确重放必须保留原命令、正文、目标和幂等键。
+用户命令已接入原生 `server client`，具体命令、单次本机 CLI grant、stdin JSON、私有凭据文件、SSE cursor 与导出退出码见 CLI.md。它只经 HTTP 使用现有权限，不能通过直接 SQL、应用 Master Key 或读 Vault 绕过同一 API。机器管理授权请求正文一旦改变，即使使用原 key，也可能先被单次 grant 的完整意图约束拒绝为403；只有当前授权通过后才进入回执冲突检查。正确重放必须保留原命令、正文、目标和幂等键。
 
 ## Worker、正式数据验证与025升级
 
@@ -470,7 +429,7 @@ created_at 仍不可变，revision 仍必须递增且不得溢出。升级使用
 `init-state` 创建私有 `artifacts` 子目录；`serve` 必须能够打开它，旧状态目录升级时只会
 创建此前不存在的空目录。已有目录必须是非符号链接的私有目录；不会替操作者放宽或
 修复权限。产物保存为原始字节，不属于 SecretVault 加密对象；宿主卷和备份必须限制
-访问，不将此目录挂进研究 Agent 或任意 job。Secret/TOTP/model token仍不得作为研究
+访问，不将此目录挂进研究 Agent 或任意 job。Secret/model token仍不得作为研究
 产物上传。状态卷的容量告警和空间预算不能省略。
 
 本地对象在完整写入、只读同步和原子发布后，才在数据库提交元数据/原始命令回执。
@@ -503,7 +462,7 @@ issuer_attempt_id；新 Mission 签发由数据库锁住并绑定精确当前 At
 cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var
 ```
 
-此命令仅删除可用当前密钥认证、用途精确为 MACHINE_VERIFIER 且没有历史凭据引用的对象；已撤销/到期凭据的 verifier、TOTP、Session key、其他用途、符号链接和损坏文件均保留。失败应先恢复主库/状态目录可用性后重试，不手工批量删除 secrets。输出只含回收数量，不含密钥或文件内容。
+此命令仅删除可用当前密钥认证、用途精确为 MACHINE_VERIFIER 且没有历史凭据引用的对象；已撤销/到期凭据的 verifier、历史认证密文、Session key、其他用途、符号链接和损坏文件均保留。失败应先恢复主库/状态目录可用性后重试，不手工批量删除 secrets。输出只含回收数量，不含密钥或文件内容。
 
 源码删除不授权删除运行中的旧库、用户 artifacts、备份或 Codex profile。不得将新 schema 直接应用到旧库；实际产品切换仍须完成只读导入、备份恢复和回滚演练。当前没有声称达到 RPO/RTO。
 
@@ -640,7 +599,7 @@ Cycle 启动须明确提供 `researcher_profile` 和 `reviewer_profile`，各包
 
 浏览器在研究项目的 Brief 行选择“冻结执行上下文”，分别选本项目 DISCOVERY、VALIDATION、SEALED 输入和已有 Runtime。草稿/暂停项目可以冻结；冻结会更新当前 Brief，但不会自动启用项目。随后使用“修改项目状态”明确启用，再从冻结版本选择“启动新 Cycle”，分别选择研究者与独立 Reviewer 配置并确认。超出 JavaScript 安全整数的修订号始终按原始字符串提交。断线或未知回执保留原请求内容和幂等键，可“重试同一请求”；关闭不代表撤销，重开前先核对 Brief 和“研究周期”记录。研究周期展示服务器状态、预算预约/使用及准备 Run，不将排队或准备成功显示为科学研究完成。
 
-Runtime bearer 必须为32–8192字节、无空白的可打印ASCII；这只是最小线缆形状，不是随机性或熵保证。升级前登记的短Runtime凭据在原生传输构造时返回认证不可用，不会发送给远端。Operator应在真实Runtime端设置合适的新凭据，通过正式write-only Secret接口登记后更新Runtime引用并重新探测；不得用补字符、截断、降低验证或直接改数据库方式绕过。Downstream / Custom Provider保留各自上游支持的1–8192字节边界；TLS CA仍须通过原生PEM解析。
+Runtime bearer 必须为32–8192字节、无空白的可打印ASCII；这只是最小线缆形状，不是随机性或熵保证。升级前登记的短Runtime凭据在原生传输构造时返回认证不可用，不会发送给远端。Operator应在真实Runtime端设置合适的新凭据，通过正式write-only Secret接口登记后更新Runtime引用并重新探测；不得用补字符、截断、降低验证或直接改数据库方式绕过。Downstream保留上游支持的1–8192字节边界；TLS CA仍须通过原生PEM解析。
 
 `PINNED_CA`新建必须提供非空CA引用且`development_http=false`；更新可省略或使用null保留已存CA。切换`SYSTEM_CA`时请求必须省略/null CA，由Store清除绑定，不能携带未使用的CA。不存在静默明文回退。
 
@@ -736,7 +695,7 @@ MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，
 
 恢复访问切换使用 [CLI recover-access](CLI.md#恢复后的访问切换)。只在API/Worker停止和旧事务
 结束后，以迁移所有者连接恢复库执行；非所有者拒绝。保留本次恢复编号与回执以处理未知
-结果，新的恢复另取编号。保留对应原生密钥及TOTP密文后重新登录，重新签发所需机器凭据；
+结果，新的恢复另取编号。保留历史原生密钥和密文后重新进入工作台，重新签发所需机器凭据；
 外部Provider/Downstream凭据和原生Codex profile按其所有者的恢复流程核对。
 备份与归档恢复参数以 [PostgreSQL 18 pg_dump](https://www.postgresql.org/docs/18/app-pgdump.html)
 和 [pg_restore](https://www.postgresql.org/docs/18/app-pgrestore.html) 为准；访问切换测试不能证明
@@ -745,7 +704,7 @@ MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，
 恢复回归测试位于 `apps/server/tests/recovery_access.rs`。在一次性SQLx数据库环境中运行
 `cargo test --locked -p server --features native-codex --test recovery_access`；本机PATH需有匹配
 服务器版本的原生pg_dump/pg_restore以及GNU tar。CI通过QZ_TEST_PG_CONTAINER指定已有的一次性PGMQ容器，
-使用容器内数据库工具；连接凭据只通过环境传递。测试在没有并发写入时，以原生tar归档一次性实例的状态目录（合成TOTP与会话密钥的密文、附件及临时创建的历史文件/profile样例），明确排除master.key；主密钥保存在独立的私有恢复目录。随后生成custom数据库归档，向独立目标库单事务恢复，并从独立恢复输入恢复主密钥。原目录和恢复目录均与tar归档比较，再核对同密钥旧会话、访问切换和原始请求回执。
+使用容器内数据库工具；连接凭据只通过环境传递。测试在没有并发写入时，以原生tar归档一次性实例的状态目录（会话密钥的密文、附件及临时创建的历史文件/profile样例），明确排除master.key；主密钥保存在独立的私有恢复目录。随后生成custom数据库归档，向独立目标库单事务恢复，并从独立恢复输入恢复主密钥。原目录和恢复目录均与tar归档比较，再核对同密钥旧会话、访问切换和原始请求回执。
 此测试不读取用户备份或账号profile，也不证明完整历史关系、原生账号/Thread恢复、远端任务对账或生产RPO/RTO。
 
 上述恢复回归现还覆盖一个通过HTTP上传的合成附件：只恢复数据库时下载返回503；

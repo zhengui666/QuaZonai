@@ -1,7 +1,7 @@
 # Install as a USER unit and enable only for the quazonai account.
 # The native Mission launcher needs that user's manager and cgroup delegation.
 [Unit]
-Description=QuaZonai authenticated API
+Description=QuaZonai local API
 StartLimitIntervalSec=60
 StartLimitBurst=5
 

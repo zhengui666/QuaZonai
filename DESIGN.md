@@ -48,14 +48,63 @@
 | 验收范围 | 本次交付处理 | 保留义务 |
 |---|---|---|
 | T07 专用官方订阅账号登录、取消、注销及持久登录状态实测 | 已完成（所有者豁免，未执行） | 保留产品登录功能和现有无凭据原生协议/状态测试；不伪造登录成功或令牌清理结果 |
-| T03–T05、T08、T42 中必须由专用真实账号/Provider 凭据执行的在线账号及付费推理部分 | 仅该账号依赖部分已完成（所有者豁免，未执行） | 无凭据可执行的原生配置/模型目录、同 Thread 工具与结果消费、实际科学计算、独立评估及完整业务入口仍须验证；不得将整项 T08/T42 自动完成 |
-| 应用 TOTP/会话、数据真实性与许可、旧快照迁移、预算、Sealed/Reviewer、组合/交付、恢复及部署 | 未被豁免 | 仍按各自原合同及实际结果验收，不能用账号豁免删除或跳过 |
+| T03、T04、T08、T42 中必须由专用真实原生账号执行的在线账号及付费推理部分 | 仅该账号依赖部分已完成（所有者豁免，未执行） | 无凭据可执行的原生配置/模型目录、同 Thread 工具与结果消费、实际科学计算、独立评估及完整业务入口仍须验证；不得将整项 T08/T42 自动完成 |
+| 第0.5节替代后的 T05 本机配置所有权及旧接口拒绝 | 不属于账号豁免 | 原生配置发现、不注入服务凭据、不读写认证文件及旧 Provider/目录注册拒绝均须验证；旧 T05 已被替代，不记为通过 |
+| 本机会话、数据真实性与许可、旧快照迁移、预算、Sealed/Reviewer、组合/交付、恢复及部署 | 未被账号豁免 | 按当前合同及实际结果验收；本机入口以第0.5节为准 |
 
 验收索引将这类范围关闭明确表示为 `COMPLETED_BY_OWNER_WAIVER`，执行事实为 `NOT_RUN`，证据为所有者授权；它不是 `PASSED`，不计入实际测试通过数，不生成虚假的命令、登录、推理、用量或测试报告。这些只是文档状态，不新增数据库字段、执行开关或合并平台。专用账号不再是本次交付的待办、阻塞或要求用户补充的输入；除非所有者另行恢复该项范围，不重复索取账号或重新打开它。
 
 豁免只改变本次验收范围，不改变运行时事实。未配置可用原生 Profile/认证时不能发起真实模型研究；空配置不变 READY，受控 Provider 不冒充真实模型，FIXTURE 不变 REAL，Demo 不授予资格或生产交付权限。账号操作示例仍可在将来有条件且明确授权时手工使用，本轮不在 Actions 中执行真实登录或注入生产秘密。
 
 所有非豁免的适用 CI 仍必须在最终 Head 成功，全部 Review 问题解决并取得明确干净的独立审查后才可合并，再核对 main。一次已授权范围关闭不能掩盖其他失败、缺失、取消或应运行却跳过的检查，也不代表整个 #62 或生产部署已完成。
+
+<a id="local-console"></a>
+## 0.5 所有者修订：本机个人工作台（2026-09-20）
+
+本节落实所有者的四项新要求，优先于旧章节中相冲突的浏览器 TOTP、
+自定义 Codex Provider／配置目录、前端解释性文案与主题要求。
+
+- **直接进入**：本机浏览器无需账号、动态验证码、初始化二维码、信任设备、
+  再验证或退出登录。删除对应产品 UI、HTTP/CLI 请求、原生验证码算法和依赖。
+  保留已有不透明会话仅用于请求关联；首次访问自动建立，失效后自动更换，
+  不把旧会话复活。数据库迁移启用本地会话并提高认证 epoch，旧数据和历史密钥
+  不删除。授权恢复仍废止旧机器能力、会话与一次性命令授权。
+- **本机边界**：API 仅接受 loopback 监听与 loopback 公共地址，包括 HTTPS；
+  `localhost` 或字面量 loopback IPv4/IPv6 使用同一规则贯穿 CLI、Worker、
+  原生 Thread 与 MCP；HTTP 必须显式启用，传递实际 PUBLIC_URL，不替换主机名。
+  Worker 传递自身解析得到的 `development_http`；不得从 URL scheme 推断授权。
+  独立 Runtime/Downstream 的字面量 loopback HTTP 端点规则不变。
+  保留 Host、Origin 与机器 Bearer 的原生校验。错误 Bearer 不能回退成浏览器身份。
+  CLI 的精确命令授权不再要求验证码，但仍只允许有效 CLI 能力、原始请求、
+  原始目标及原有有效期；Agent、Mission、Automation 不获得 Operator 权限。
+- **本机 Codex**：从当前进程 PATH 探测可执行 Codex，使用 OS 用户 HOME 与
+  `CODEX_HOME`（缺省 `~/.codex`），由原生 Codex 读取自身配置和认证。
+  QZ 不读取／复制 `auth.json`，不写本机配置、不注入 Provider URL/API Key，
+  不接受自定义 Codex 配置文件、第三方 Provider 或配置目录注册。
+  研究员、独立审阅员的两个内部角色自动创建，角色、任务、工作区与 Thread
+  保持独立；同一所有者的本机 Codex 配置可共用，不要求重复登录或复制目录。
+  历史配置和已冻结任务不被静默重绑定；旧自定义连接不再作为可选活动配置。
+- **模型设置**：只开放模型、原生推理强度及已支持的加速偏好。
+  “本机默认”开启时省略覆盖并保留用户保存值；关闭时只发送非空覆盖。
+  模型目录、默认模型、可用强度均来自当前原生探测，不猜测或静默降档。
+  成功探测的 `native_default_model` 记录无覆盖 Thread 的原生模型；
+  `effective.model` 记录应用覆盖后的实际模型。清除模型后，强度和加速均按前者
+  校验，不使用目录 `is_default` 或旧覆盖模型代替。历史观测可缺少该新字段，
+  但不能用于激活依赖本机默认模型的强度或加速；刷新取得新观测，不改写历史。
+  无安装、认证或不兼容时显示实际简短错误，不伪造可用状态。
+- **界面与主题**：删除介绍、解释与澄清段落，保留必要操作名称、字段、
+  实际数据、简短错误／状态、不可逆操作确认和无障碍名称。
+  使用 Ant Design 原生浅色／深色算法，覆盖导航、表单、表格、浮层和错误状态。
+  首次跟随系统；明确选择后持久保存并跨标签页同步，存储不可用时仍可切换。
+  有效主题由错误边界之上的唯一状态拥有者保存，正常界面与错误恢复共享；
+  存储不可用时的手动选择不得因子组件渲染失败而重置为系统主题。
+  切换不得重置未保存表单或请求，首屏同步主题并保留减少动态效果偏好。
+
+验收使用现有 Actions 构建、生成器与真实数据库／浏览器入口：不提供验证码即可
+完成首次访问、设置与原有业务命令；旧验证码／配置入口不可用；无验证码机器授权
+仍保持作用域与幂等性；本机发现和模型覆盖正确；三视口两种主题可达且可读。
+这是需求替换，不把旧 TOTP 测试删除当作新增测试通过，也不将账号豁免当成执行证据。
+第 0.4 节的 Actions-only 执行、只读 Review 和账号豁免仍适用。
 
 ## 1. 当前实现与完整目标
 
@@ -180,19 +229,29 @@ Alpha 只发 score/expected_return/uncertainty，不发订单。score 未校准�
 
 ## 6. 原生 Codex、自治与权限
 
-连接合同：`connection_mode=SYSTEM|CUSTOM_PROVIDER`；`profile_origin=MANAGED_VOLUME|OPERATOR_MOUNT`；`use_default_model_settings:bool`；保存 model/effort 可空、fast_mode bool。来源不是第三种 Provider。
+本机连接合同：活动 `connection_mode=SYSTEM`，自动建立研究员与独立审阅员两个角色；内部 `local_role` 为 `RESEARCHER/REVIEWER`，
+各唯一，历史行保持 null。迁移生成全新 Profile UUID，home reference 为
+`local-<lowercase-role>-<profile-uuid>`，不复用任何旧标签或历史 Profile。服务从 PATH 发现可执行 Codex，使用同一操作系统用户 HOME 与原生 CODEX_HOME（缺省 `~/.codex`）。Profile/工作区/Thread 身份独立，不要求另建账号或复制认证目录。只开放 `SavedModelSettingsV1`：`use_default_model_settings:bool`、可空的 `saved_model/saved_reasoning_effort`、`saved_fast_mode:bool`。旧来源字段仅保存历史，不是第三种 Provider 或当前目录注册入口。
 
-SYSTEM 不注入 provider/base URL/API key，不写空值覆盖原生环境，不导入/删除 auth.json，使用明确的 Worker CODEX_HOME。CUSTOM_PROVIDER 只用显式激活路由与凭据，失败不偷用系统订阅。失败时不自动切连接/模型/effort。命名卷不等于宿主 ~/.codex；提供同卷同 UID 原生 login/status，显式挂载 profile 不自动复制/chown/删除。宿主 keyring 容器可用性不能保证，UI/运维明确说明。
+QZ 不注入 provider/base URL/API key，不用空值覆盖原生环境，不读取/导入/删除 auth.json，不改写 config.toml。
+发现阶段仅转发已有代理、证书、语言和用户进程管理环境，不读取/转发服务进程的
+`OPENAI_API_KEY` 等 Provider 凭据；认证由原生存储负责。两个本机角色的账号操作
+共享准入与观测失效组，沿用原有状态机、事务与发送许可；历史非本机 Profile 保持
+独立。组内 Profile 按 UUID 顺序锁定，任何一方登录/退出都使双方既有及在途观测
+失效，必须分别重新检测。原生发现只绑定数据库实际生成的两个 reference。
+Worker 优先复用 `PUBLIC_URL`；单独提供 `MISSION_API_ORIGIN` 时须是同一个
+有效 loopback Origin，同时配置两者必须完全相同；不猜测默认后台端口。
+原生 Codex 负责本机配置与认证。QZ 没有自定义 Provider、URL、凭据或目录注册接口；历史自定义连接不列为活动配置，已冻结任务不静默改绑。缺安装、原生目录或认证时报告真实不可用，不自动切连接/模型/effort。
 
-由锁定 Codex 二进制生成协议 schema，稳定 stdio initialize → initialized。model/list 遍历全部 cursor，模型 ID、支持 effort、默认值来自原生能力，不硬编码型号或 high/xhigh 集合。default 开关开启时省略 model/effort/Fast 覆盖但保留保存值；关闭时只传实际配置非空项。SYSTEM + model=null + 合法 effort 非空必须可用；unsupported 报错不降档。requested 与原生可观察 actual 分开，未观察到的 actual=unknown。
+由锁定 Codex 二进制生成协议 schema，稳定 stdio initialize → initialized。model/list 遍历全部 cursor，模型 ID、支持 effort、默认值来自原生能力，不硬编码型号或 high/xhigh 集合。default 开关开启时省略 model/effort/Fast 覆盖但保留保存值；关闭时只传实际配置非空项。本机连接 + model=null + 合法 effort 非空必须可用；unsupported 报错不降档。requested 与原生可观察 actual 分开，未观察到的 actual=unknown。
 
-账号读取、device code 登录/start/cancel/logout、保存/刷新凭据由原生 Codex 管理；QZ 只呈现受控流程，不维护 DB OAuth token 刷新器，不依赖实验 external-token。V1 不以 experimental WebSocket/dynamicTools/project environments 为必需能力。
+本机认证由同一 OS 用户执行原生 `codex login` 管理。现有受控账号协议适配与内部独立测试仍由 Codex 承担 device code/start/cancel/logout 和凭据刷新，不维护 DB OAuth token 刷新器，不依赖 experimental external-token。模型设置页不提供账号目录、Provider 或凭据配置。V1 不以 experimental WebSocket/dynamicTools/project environments 为必需能力。
 
 一个 Mission 对应一个 durable Thread，不使用无限长 Program Thread；真实 Job/Evaluation 结果回该 Thread 后才结论。Reviewer 有独立 Thread、权限和输入清单，不是同聊天换角色。QZ 只编排有限业务阶段，不另造 Agent DAG/规划/记忆/工具循环；并行使用验证过的原生机制或独立受控会话，不固定凑七个角色。
 
 Mission 默认独占临时 Git worktree、独立 App Server child、workspace-write、network disabled、approvalPolicy=never，仅允许 worktree root。Agent 不访问 QZ 源仓库/其他项目/Sealed/Secret/DB/Docker socket，不通过 Git 操作绕过工作区管理。所需数据与实验经 mission-scoped stdio MCP。受信任 App Server 可访问模型服务/Provider 凭据，不等于 Agent shell 可获得该文件系统/环境权限。随机名 sentinel、auth.json、DB、master key、sealed、socket 等真实越界测试是硬要求；过滤 KEY/TOKEN 变量名不是隔离。
 
-Mission复用锁定版本的原生named permissions及stdio MCP，不依赖dynamicTools。沿用已选模型/认证来源，Mission工具边界由受信任启动器覆盖：只允许专用工作区读写、原生最小系统文件及已锁定Codex二进制的只读访问；shell不继承服务环境，MCP能力只传入已绑定Run/Attempt的专属子进程。原生config/read只投影MCP名称并禁用其他服务器，不持久化或展示原始配置/环境值；启动与恢复重新应用同一边界。不加载个人插件、记忆、浏览器、跨Agent、无限Goal或登录shell能力。0.144.4的全局AGENTS由host独立加载，不受project_doc_max_bytes控制且无stdio关闭开关；Mission因此要求专用profile：若CODEX_HOME存在AGENTS.md/AGENTS.override.md或配置含个人instructions/developer_instructions/model_instructions_file，在发送Thread请求前明确拒绝，不读取文件内容、修改/删除用户文件、复制认证或暗换profile。Managed volume和显式Operator mount均可用，但后者也须满足这个已验证边界。项目文档自动注入关闭，任务材料由冻结Brief和受限MCP提供。原生发行版的权限/stdio运行必须实际验证，不用新版文档中而锁定协议没有的字段冒充已生效。
+Mission复用锁定版本的原生named permissions及stdio MCP，不依赖dynamicTools。沿用已选模型/认证来源，Mission工具边界由受信任启动器覆盖：只允许专用工作区读写、原生最小系统文件及已锁定Codex二进制的只读访问；shell不继承服务环境，MCP能力只传入已绑定Run/Attempt的专属子进程。原生config/read只投影MCP名称并禁用其他服务器，不持久化或展示原始配置/环境值；启动与恢复重新应用同一边界。不加载个人插件、记忆、浏览器、跨Agent、无限Goal或登录shell能力。0.144.4的全局AGENTS由host独立加载，不受project_doc_max_bytes控制且无stdio关闭开关；共享本机profile仍须满足原生研究隔离限制：若CODEX_HOME存在AGENTS.md/AGENTS.override.md或配置含个人instructions/developer_instructions/model_instructions_file，在发送Thread请求前明确拒绝，不读取文件内容、修改/删除用户文件、复制认证或暗换profile。不要求重新登记或复制账号；有冲突的个人指令会使研究不可用，不能把目录探测成功当成研究就绪。项目文档自动注入关闭，任务材料由冻结Brief和受限MCP提供。原生发行版的权限/stdio运行必须实际验证，不用新版文档中而锁定协议没有的字段冒充已生效。
 
 取消或到期后的Mission恢复只允许重连已登记Thread，对账原已发送Turn；不创建Thread、
 签发Mission凭据、启用MCP或准备新Turn。使用原资源上限及至多110秒的独立清理窗口，
@@ -313,7 +372,7 @@ Operator回执。Study登记和执行成功均不能代替正式独立Evaluation
 
 PWA 只缓存静态 shell；业务 API/认证/证据/审批/产物/SSE NetworkOnly。离线禁止 mutation。新版本由 Service Worker 生命周期检测并提示用户确认；未保存表单/审批对话框不强刷，不循环刷新。浏览器断线不取消运行。
 
-浏览器验收分离两种证据：三视口/axe/PWA故障展示用受控HTTP fixture；真实入口验收必须启动当前 `server` 原生二进制、PostgreSQL18/PGMQ1.10的新库和独立非owner应用角色，执行原生迁移、一次性bootstrap、真实 `/bootstrap/confirm` TOTP绑定、项目写入、丢ACK同键重放、跨源拒绝和确认退出。不能用页面文案或mock响应代替数据库事务。原生Playwright使用单独配置，不混入fixture测试；原始error-context等输出只放本次私有临时目录并清理，公开证据仅包含脱敏摘要。浏览器/Vite子进程只获得环境白名单，禁止继承管理员URL、数据库密码和GitHub/模型令牌；Vite关闭隐式.env加载。收到终止信号后先终止并等待本次子进程，再清理本次库/角色，脱敏清单失败不得阻止资源清理或发布原始日志。Web CI必须与Rust基线一致：固定1.98.1、仓库实际server包、固定PG18/PGMQ镜像、精确PR Head和生成合同无差异。此验收覆盖认证及研究组织入口，不冒充T42的Alpha/组合/交付全链路。
+浏览器验收分离两种证据：三视口/axe/PWA故障展示用受控HTTP fixture；真实入口验收必须启动当前 `server` 原生二进制、PostgreSQL18/PGMQ1.10的新库和独立非owner应用角色，执行原生迁移、真实本机直接进入、项目写入、丢ACK同键重放、跨源拒绝、会话/原回执跨API重启保留，并确认旧验证码入口不存在。不能用页面文案或mock响应代替数据库事务。原生Playwright使用单独配置，不混入fixture测试；原始error-context等输出只放本次私有临时目录并清理，公开证据仅包含脱敏摘要。浏览器/Vite子进程只获得环境白名单，禁止继承管理员URL、数据库密码和GitHub/模型令牌；Vite关闭隐式.env加载。收到终止信号后先终止并等待本次子进程，再清理本次库/角色，脱敏清单失败不得阻止资源清理或发布原始日志。Web CI必须与Rust基线一致：固定1.98.1、仓库实际server包、固定PG18/PGMQ镜像、精确PR Head和生成合同无差异。此验收覆盖本机会话及研究组织入口，不冒充T42的Alpha/组合/交付全链路。
 
 ### 9.1 已知不可提交选项与开发文件边界
 
@@ -325,7 +384,7 @@ BUDGET_EXHAUSTED 作为独立 HTTP429 Problem 保留，field_errors 仅使用封
 
 复合资源选择器通过官方ConfigProvider.useConfig继承Form的disabled上下文；请求在途、离线、首次选项未加载时不能打开选择器或改变原请求引用。菜单容器回调身份保持稳定。系统减少动态效果偏好通过matchMedia订阅映射至Ant Design原生theme.token.motion；reduce时motion=false，其余情况保持原生动画，运行中偏好变化不重建表单或清空选中值。不用全局0.01ms CSS覆盖组件的原生动画生命周期，不增加固定延时、手工坐标、强制点击或关闭无障碍规则。三视口重复验收覆盖reduce/no-preference、偏好变化后选项点击和在途表单不可编辑。依据：官方主题motion配置（https://ant.design/docs/react/customize-theme）与ConfigProvider.useConfig（https://ant.design/components/config-provider/）。
 
-表单不能把当前服务端必定拒绝的值当作可操作能力。费用目前仅有 UNAVAILABLE/ESTIMATED；EXACT 尚未接通，草稿编辑不提供该选项，已载入的不支持值必须先由用户明确修改而非自动替换。项目为 ARCHIVED 时只允许保留 ARCHIVED；ACTIVE 选项须取得该项目 current_brief_id 对应的真实 Brief，校验精确项目/编号、FROZEN 及 frozen_at，加载/错误/缺失时不可用。这只是基于服务端事实的字段约束，不授予权限，不替代提交事务对状态、活动 Run、近期认证与 revision 的再次检查。SEALED 的访问候选仅 METADATA_ONLY/EVALUATOR_ONLY；其他分区仅 METADATA_ONLY/RESEARCH_READ。分区变化使旧选择不兼容时清空该字段并要求用户重选，不能自动升级权限；依赖校验同时拒绝程序化或残留的不合法组合。
+表单不能把当前服务端必定拒绝的值当作可操作能力。费用目前仅有 UNAVAILABLE/ESTIMATED；EXACT 尚未接通，草稿编辑不提供该选项，已载入的不支持值必须先由用户明确修改而非自动替换。项目为 ARCHIVED 时只允许保留 ARCHIVED；ACTIVE 选项须取得该项目 current_brief_id 对应的真实 Brief，校验精确项目/编号、FROZEN 及 frozen_at，加载/错误/缺失时不可用。这只是基于服务端事实的字段约束，不授予权限，不替代提交事务对状态、活动 Run、当前本机会话与 revision 的再次检查。SEALED 的访问候选仅 METADATA_ONLY/EVALUATOR_ONLY；其他分区仅 METADATA_ONLY/RESEARCH_READ。分区变化使旧选择不兼容时清空该字段并要求用户重选，不能自动升级权限；依赖校验同时拒绝程序化或残留的不合法组合。
 
 PWA 生命周期 fixture 的宿主与 CI 限 Linux；浏览器产品不受此限制。静态内容读取使用 Node FileHandle 与 Linux `/proc/self/fd` 的已打开目录句柄，逐个单路径组件以 O_DIRECTORY/O_NOFOLLOW 打开中间目录、以 O_NOFOLLOW 打开最终普通文件；构建根和任意子目录软链均拒绝。单请求最多32层，每个目录锚点保持打开到读取结束，不因路径被 rename/软链替换而重新解析旧路径。最后只在同一个文件句柄上 fstat/readFile，所有已取得句柄在成功/错误路径都关闭；缺少原生能力时失败，不降级成先 realpath/lstat 再按路径读取。该最小 fixture 适配不用于产品 Artifact 服务，不声称防止可信构建目录拥有者原地改写文件或进行特权 mount。
 
@@ -355,42 +414,15 @@ BudgetV1 继续保留既有 Rust/serde 字段，原生 OpenAPI 用公共字段�
 
 ## 10. 身份、安全与运维
 
-### 10.1 浏览器认证的具体实现合同
+### 10.1 本机浏览器会话合同
 
-浏览器 session 复用 tower-sessions 0.15.0 与官方 SQLx PostgreSQL Store 的固定 Git 修订 `d18c9bf76f1d4fb73130dbe5aa643197f14b5d2d`（包版本仍为0.15.0，适配SQLx0.9.0，非新的已发布crate）；Time固定0.3.47。原生会话表、序列化与独立授权边界保持不变；
-TOTP 复用 totp-rs 5.7.0（SHA1 / 6 位 / 30 秒），密码学复用 RustCrypto。
-Cookie 只承载原生 opaque session ID，Secure（HTTPS）、HttpOnly、SameSite=Strict、
-Path=/，不放 TOTP secret、验证码、Provider token 或业务授权。每次请求还必须查询
-下述独立授权记录；不能因为会话 middleware 的并发保存而复活已注销/撤销的登录。
+浏览器 session 复用 tower-sessions 0.15.0 与官方 SQLx PostgreSQL Store 的固定 Git 修订 `d18c9bf76f1d4fb73130dbe5aa643197f14b5d2d`（包版本仍为0.15.0，适配SQLx0.9.0）；Time固定0.3.47。会话只作本机请求关联，不要求账号、初始化、验证码、信任设备或再次验证。
 
-- `bootstrap_capabilities`：id、原生 Argon2id verifier、created_at、expires_at（最多15分钟）、
-  consumed_at；仅本机特权 CLI 可签发，原始值仅一次输出。start 在锁定 capability 与
-  singleton auth state 的事务内消费；同一 capability 不能展示第二份二维码。
-- `auth_enrollments`：id、capability_id UNIQUE、secret_ref、browser_binding、expires_at、
-  confirmed_at；secret 为成熟 AEAD 加密文件的 UUID 引用，browser_binding 是短期浏览器
-  session 内独立随机关联值，不是 Operator 身份。QR/provisioning URI 只在 start 响应
-  展示一次，不存在 GET 回读接口；响应丢失需本机重新发证，不能降级为公网无保护初始化。
-- `browser_logins`：id、auth_epoch、authenticated_at、expires_at、device_id?、revoked_at。
-  login_id 仅保存在原生 server-side session 中；没有把它本身设计成可直接使用的 bearer。
-  信任浏览器最多30天，普通登录12小时；设备撤销、session_epoch 变化、到期或注销立即
-  使每次权限检查失败。trusted_devices 的 verifier_ref 只引用对应 native-session 授权
-  记录，不再保存/实现另一套 browser token。logout 先持久撤销再清空原生 session。
-- `auth_rate_windows`：operation（bootstrap/login/reauth）、window_started_at、attempts。
-  同一部署的全局60秒窗口最多5次尝试，在验证前短事务原子预约；多 API 实例不因进程
-  重启或多 IP 绕过。失败也占用尝试。数据库不可达时拒绝认证，不退回进程内允许状态。
+Cookie 只承载原生 opaque session ID，Secure（HTTPS）、HttpOnly、SameSite=Strict、Path=/，不放模型凭据或业务授权。第一次合法本机业务请求自动创建 session 与 `browser_logins`；后续请求复核其 id、auth_epoch、authenticated_at、expires_at、revoked_at。新记录的 device_id 必须为 null；固定12小时截止，不滑动延长。过期/撤销/epoch不符时旧记录保持无效，HTTP入口可建立不同的新会话，不能复活旧记录。
 
-所有表使用A0的UUIDv7/时间/共有字段；各次初始化和TOTP接受锁定同一 auth singleton。
-已接受的 step 只能递增；有限时钟宽容为 DB 当前30秒步的±1，匹配由上游 constant-time
-TOTP check 计算，QZ 不重写算法。确认初始化与首个登录记录同一事务提交；重放/两个
-并发confirm最多一项成功。近期认证为最多300秒；过期必须经独立 reauth 接口重新验证
-TOTP，不能仅修改 session 时间。原始 code/token/provisioning URI 不记录到日志、审计或
-command receipt。
+`GET /api/v2/auth/session` 只返回 schema_version、authenticated_at、expires_at。删除 bootstrap、登录、重新验证、信任设备和注销的HTTP/CLI/UI入口及算法依赖，不保留 skip-auth 开关。已部署历史迁移、旧 enrollment/device/认证窗口和密钥只保留为历史数据；当前运行路径不再创建或消费它们。
 
-新增浏览器接口：GET `/auth/session`、POST `/auth/verify`、GET `/auth/devices`、DELETE
-`/auth/devices/{id}`（近期认证）。服务端配置明确 public URL；所有浏览器 mutation 验证
-精确同源 Origin，拒绝缺失/null/不同 scheme、host 或 port；CORS 不开放通配。
-仅显式 loopback development 配置可使用 HTTP，且监听地址也必须为 loopback；不存在
-skip-auth 开关。配置错误在启动时失败，不暴露未认证的业务写入口。
+API bind 与 PUBLIC_URL 都必须是 loopback，包括 HTTPS。合法浏览器 mutation 仍校验精确 Origin，拒绝缺失/null/不同 scheme、host 或 port，沿用 Host 校验；CORS不开放通配。机器请求必须单独验证 Bearer，显式错误 Bearer不能降级成浏览器。数据库不可达返回实际故障，不用内存伪造身份。
 
 Secret 文件格式使用 XChaCha20-Poly1305，随机 nonce 与明确 UUID/purpose AAD，
 加密主密钥为仅owner可读的32字节本机文件（不随数据库备份一起存储）。库负责原生
@@ -398,22 +430,21 @@ Secret 文件格式使用 XChaCha20-Poly1305，随机 nonce 与明确 UUID/purpo
 发布，禁止任意路径、symlink越界、覆盖旧版本。轮换新建版本，不更改已有引用。
 本实现不把原生密码学完整性用作业务资格或内容身份。
 
-
-浏览器正常登录只输入 Google Authenticator-compatible 6 位 TOTP，不提交 username/password。首次初始化需要本机 CLI 一次性 bootstrap capability 或可信本地入口，不能公网抢绑；二维码/secret 仅受控 enrollment 展示，确认后 CAS 初始化并关闭 setup。TOTP 原生算法、防重放 last step、限流、信任浏览器撤销、注销/session epoch 均测试。
+本机迁移将实例置于直接可用状态并使认证epoch高于全部既有授权；新库与旧初始化库均可不输入验证码进入。实际测试覆盖首个GET/写命令、固定会话期限、撤销和epoch切换、错误Bearer、同源检查及真实API/代理重启，不用关闭断言替换原有认证测试。
 
 运行数据库身份检查包含 PostgreSQL 原生 ADMIN OPTION 委派闭包（即使 INHERIT/SET
 暂为 false），并拒绝可达的服务器文件读写/程序执行预定义角色，不能仅核对
 `rolsuper` 或单张表的 ACL。只有成员身份但无 INHERIT/SET/ADMIN 的边不产生权限。
 
-Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立范围受限可撤销 token，不把浏览器 cookie/TOTP secret/动态码当 API token。Agent MCP 不复用 Operator session。TOTP/session/AEAD/随机 verifier 使用成熟库，依第 0 节选语言，不自制密码学。Secret 仅受信任进程解析；UI 只见 configured/status/last_checked；日志不含 auth 文件、token、完整 Provider/stderr/traceback。
+机器/CLI 使用独立范围受限可撤销 token，不把浏览器 cookie 或历史认证材料当 API token；Agent MCP 不复用 Operator session。session/AEAD/随机 verifier 使用成熟库，不自制密码学。Secret仅受信任进程解析；UI只见configured/status/last_checked；日志不含auth文件、token、完整Provider/stderr/traceback。
 
-目标 Compose 为 server、worker、PostgreSQL+PGMQ；Codex/远端按 profile 配置，单机也保持权限分区。生产同源 HTTPS，未认证写接口不能暴露。默认不托管在线 wheel 上传/安装/插件市场；受支持集成经显式版本/能力登记，既有使用固定 release。上游 Python import 只在隔离 job/必要受控适配，不长期热加载/卸载不可信插件。
+本机部署复用已提交的 systemd user units、Caddy 与 PostgreSQL/PGMQ，API/Worker由持有本机Codex的同一OS用户运行，网页及API只监听loopback。远程Runtime与Downstream保持原独立配置/权限分区。默认不托管在线wheel上传/安装/插件市场；受支持集成经显式版本/能力登记。上游Python仅限经批准的隔离job适配，不长期热加载/卸载不可信插件。
 
-配置至少包括：HTTP bind/public URL、数据库/PGMQ、artifact root/backend、runtime endpoint/credential ref、Codex binary/CODEX_HOME、代理与 egress allowlist、预算/资源限制、session/TOTP secret ref、日志脱敏、backup destination/retention、telemetry opt-in。缺失 fail fast 指明字段，不退到公网无认证。来源显示 SYSTEM/EXPLICIT/DEFAULT 与安全摘要；启动验证镜像、协议、schema、ABI，不等首次真实研究才崩溃。
+配置包括HTTP bind/public URL、数据库/PGMQ、artifact root/backend、Runtime endpoint/credential ref、预算/资源限制、原生session key、日志脱敏、backup destination/retention、telemetry opt-in。Codex binary/HOME/CODEX_HOME从当前OS环境发现，不额外要求QZ配置文件或认证密钥字段。API本机入口可在Codex缺失时启动，但研究必须报告真实不可用；不能把缺少模型认证的空状态当成READY。
 
 统一 request_id/project_id/cycle_id/run_id/attempt，tracing/OpenTelemetry 兼容；指标含队列等待/重投/lease loss、时长、未确认取消、孤儿任务、数据失败、预算耗尽、审批过期、反馈迟到。readiness 分 research/sealed/portfolio/paper/live，含组件、状态、reason、checked_at/valid_until；健康检查不每次启动 Codex/付费调用。检测连接是显式有总超时动作。
 
-复用 PostgreSQL 原生备份/pgBackRest、restic 等，不建备份平台。备份数据库、引用 artifacts、配置和受保护原生 Codex profile；市场目录由原所有者按版本备份，密钥与数据分离。恢复先暂停 admission，恢复一致版本、查悬空引用、reconcile 未完成远端任务，再恢复消费；不盲目重放 Live。重置/恢复明确处理旧 session/设备/凭据。 同版本恢复在保持API/Worker停止期间，以迁移所有者运行本机recover-access及固定recovery-id；同事务将auth epoch提高到全部已记录授权之上，废止旧浏览器/设备/grant，撤销未撤销机器凭据，并保留非秘密回执供未知结果重放。TOTP密文及历史事实不删除；当前或更早TOTP步拒绝，下一步可重新登录。此入口不提供HTTP/MCP能力，非所有者拒绝。RPO 24h/RTO 60min 是待演练目标，只有实际记录才声称达到。
+复用 PostgreSQL 原生备份/pgBackRest、restic 等，不建备份平台。备份数据库、引用 artifacts、配置和受保护原生 Codex profile；市场目录由原所有者按版本备份，密钥与数据分离。恢复先暂停 admission，恢复一致版本、查悬空引用、reconcile 未完成远端任务，再恢复消费；不盲目重放 Live。重置/恢复明确处理旧 session/设备/凭据。 同版本恢复在保持API/Worker停止期间，以迁移所有者运行本机recover-access及固定recovery-id；同事务将auth epoch提高到全部已记录授权之上，废止旧浏览器/设备/grant，撤销未撤销机器凭据，并保留非秘密回执供未知结果重放。历史认证密文及业务事实不删除；重新进入工作台建立不同的新本机会话，机器凭据须重新发行。此入口不提供HTTP/MCP能力，非所有者拒绝。RPO 24h/RTO 60min 是待演练目标，只有实际记录才声称达到。
 
 升级检查版本、磁盘、备份与兼容矩阵；不可逆 schema 用备份恢复回滚，不声称旧二进制任意读新 schema。磁盘满/DB断连/runtime离线停止接新任务并明确告警。原生产物写入返回 ENOSPC 时，控制面保留 STORAGE_FULL 分类，HTTP 返回 503 与可重试提示，后台输出同一安全错误码；不输出宿主路径、产物内容或凭据。该错误不提交新的准入事务，空间恢复后使用原请求编号重试，已有回执仍按原事实重放。恢复报告包含备份时点、DB/产物验证、reconcile 清单、未重复 Handoff、凭据处理、耗时和损失区间。
 
@@ -427,7 +458,7 @@ Cookie Secure/HttpOnly/SameSite，同源 Origin/CSRF；机器/CLI 使用独立�
 
 完整 CLI 命令的原子性覆盖领域迁移、原生 session 表、可选运行角色的存在性检查与 DML 授权；这些步骤必须共享上述唯一 PgConnection/外层事务，全部成功后仅一次 COMMIT。不得先提交 Store 再从 pool 执行 `PostgresStore::migrate` 或 GRANT，也不能让另一连接的 advisory guard 冒充同事务。锁定 tower-sessions-sqlx-store 0.15.0 的 migrate API 不接受调用方事务；新增 `202609060009_native_sessions.sql` 原样复用该版本的默认 schema/table DDL，注明上游许可，交由 SQLx 版本管理。原生 PostgresStore 继续处理序列化及全部 session 操作，不 fork 或重写。每次正式迁移均在提交前核对 session 三列类型/非空与主键合同；已有不兼容对象明确失败而不删除/重建。锁定范围包含已有 `tower_sessions` 普通/分区表。运行角色名通过参数核对及原生 quote_ident，GRANT 不另开连接；会话合同、角色或任一权限操作失败，整个批次和 epoch 撤销均回滚。连接在异常/取消后关闭以释放原生锁；COMMIT 应答丢失只能记录提交结果未知，不能声称服务器一定回滚。上游今后支持外部事务时可替换适配，但已发布迁移字节保留。原生迁移参考表的 catalog 对比和原生 PostgresStore CRUD 是必需合同测试。
 
-对曾部署 0005 的实例，0006 是独立、原样可核验的修复迁移：第一步锁相关表，补齐旧窗口漏掉的 evaluation_publications，再检查全部 Degradation 精确关联。非法历史不删除、不改标签，迁移失败并保留。已初始化认证强制令 session_epoch 大于当前值及全部历史 browser_logins/trusted_devices/operator_command_grants 的 epoch 最大值，避免“先回退、再加一”误复活旧会话；超过 bigint 范围则整个升级失败，不回绕。以 command_receipts 的 SYSTEM_MIGRATOR/AUTH_UPGRADE_INVALIDATE/固定迁移版本记录原、新 epoch 和原因，resource_id 绑定真实 auth_state.id，不记录秘密。已有登录、信任设备和一次性授权失效，用户重新 TOTP 登录；未初始化新库不做无意义撤销。已应用迁移重跑只验证 checksum，不重复撤销。后续每次升级继续使用同一个外层写入隔离入口。
+对曾部署 0005 的实例，0006 是独立、原样可核验的修复迁移：第一步锁相关表，补齐旧窗口漏掉的 evaluation_publications，再检查全部 Degradation 精确关联。非法历史不删除、不改标签，迁移失败并保留。已初始化认证强制令 session_epoch 大于当前值及全部历史 browser_logins/trusted_devices/operator_command_grants 的 epoch 最大值，避免“先回退、再加一”误复活旧会话；超过 bigint 范围则整个升级失败，不回绕。以 command_receipts 的 SYSTEM_MIGRATOR/AUTH_UPGRADE_INVALIDATE/固定迁移版本记录原、新 epoch 和原因，resource_id 绑定真实 auth_state.id，不记录秘密。该迁移使既有登录、信任设备和一次性授权失效；后续本机入口迁移启用免验证码访问，不改变这份历史迁移。已应用迁移重跑只验证 checksum，不重复撤销。后续每次升级继续使用同一个外层写入隔离入口。
 
 新数据库/数据卷/API v2，不不可恢复重置原库：冻结旧写入 → 一致性备份/导出 → 新 schema → 导入映射/校验 → 只读对照 → 全链路验收 → 显式切换 → 观察/回滚窗口。不长期双写，不为语言删除有依据的合格复用；被替代的旧入口/架构/重复真相必须移除。
 
@@ -888,7 +919,7 @@ Runtime 配置中的 enabled、allowed_capabilities 仅表达 Operator 意图，
 
 探测网络 I/O 在事务外执行。网络返回后，只有取得命令幂等回执所有权的一方可通过有界本地存储回调发布 Store 分配的快照 ID 与精确字节；并发重放不调用回调、不留下额外快照。发布后再次检查授权和探测有效期，再原子提交快照元数据、观测与回执。数据库提交结果未知时保留可能已被引用的对象，不以猜测为依据删除。探测只证明集成可用性，不构成科学评估证据。
 
-Runtime bearer 凭据的线缆形状为 32–8192 字节可打印且不含空白的 ASCII；这是最小形状约束而非熵证明。注册和原生传输构造使用同一规则，旧短凭据在发送请求前返回认证不可用，避免短字符串与固定协议字段相撞而被误判为响应泄密。Downstream / Custom Provider 保留各自上游兼容的 1–8192 字节边界；TLS CA 保留 1–65536 字节 ASCII 形状并继续由原生证书解析器验证。响应中的解码后凭据反射检测不得移除。
+Runtime bearer 凭据的线缆形状为 32–8192 字节可打印且不含空白的 ASCII；这是最小形状约束而非熵证明。注册和原生传输构造使用同一规则，旧短凭据在发送请求前返回认证不可用，避免短字符串与固定协议字段相撞而被误判为响应泄密。Downstream 保留上游兼容的 1–8192 字节边界；TLS CA 保留 1–65536 字节 ASCII 形状并继续由原生证书解析器验证。响应中的解码后凭据反射检测不得移除。
 
 Rust 单一契约生成请求依赖关系：Runtime Create 的 PINNED_CA 必须附非空 CA 引用且 development_http=false；SYSTEM_CA 只允许省略或 null CA。Runtime Update 的 PINNED_CA 允许省略/null CA 以保留已存引用，转换配置时仍由领域校验与 Store 检查真实旧状态。engine_versions 必须有 1–64 个条目，键和值均为 1–120 字符的非空、非控制文本。JSON Schema / OpenAPI / TypeScript / Ajv 必须由同一 Rust 源生生成，新增回归同时覆盖长度、映射键、TLS 依赖、并发快照以及首次派发与已发出恢复的区别。
 
@@ -1033,7 +1064,7 @@ NativeSimulationRequestV1用同一账户、NETTING、固定Nautilus0.63.0和明�
 
 实验提案使用现有 `experiments`、Operator/机器权限、项目/周期行锁和 `command_receipts`，不增加工作流引擎。`POST /api/v2/experiments` 的 `ExperimentProposalV1` 只接 schema_version、cycle_id、family_id、可空parent_experiment_id、hypothesis、expected_failure_modes、proposal_artifact_id、parameter_artifact_id和可空code_artifact_id；请求最多64KiB。id/project/root/ordinal/trial_source/run/outcome/qualification一律由可信服务确定，客户端不能给PASS或扩大预算。报告/参数/代码引用必须是同项目、RESEARCH访问级别、真实已发布且非空的对应REPORT/PARAMETERS/CODE，不能引用Sealed、Reviewer报告或他项目对象。
 
-近期认证的Operator浏览器，以及精确项目EXPERIMENT_SUBMIT的CLI/MISSION可提交；AUTOMATION/DOWNSTREAM不能借此获得研究作者身份。MISSION还必须属于同Cycle的AGENT_RESEARCH、持当前issuer_attempt绑定且状态DISPATCHING/RUNNING、未过期。复用现有authority取得项目写锁后，锁Cycle；项目行作为跨命令共同串行屏障，所有后续锁等待结束再检查身份和时限。新提案要求项目ACTIVE、周期RUNNING、Brief FROZEN；family必须等于该Brief冻结政策的family且同根血缘，parent只能引用同family的已有实验。原始幂等请求经过当前身份检查后返回首次资源，不能更换字段或命令键复制已用预算。
+本机Operator浏览器，以及精确项目EXPERIMENT_SUBMIT的CLI/MISSION可提交；AUTOMATION/DOWNSTREAM不能借此获得研究作者身份。MISSION还必须属于同Cycle的AGENT_RESEARCH、持当前issuer_attempt绑定且状态DISPATCHING/RUNNING、未过期。复用现有authority取得项目写锁后，锁Cycle；项目行作为跨命令共同串行屏障，所有后续锁等待结束再检查身份和时限。新提案要求项目ACTIVE、周期RUNNING、Brief FROZEN；family必须等于该Brief冻结政策的family且同根血缘，parent只能引用同family的已有实验。原始幂等请求经过当前身份检查后返回首次资源，不能更换字段或命令键复制已用预算。
 
 每Cycle持锁检查全部已登记实验数量不超过冻结max_experiments，分配单调ordinal；失败/无效/已淘汰提案也占此不可删除的试验账本上限。这是提案数量约束，不再次更新run_admission的reserved_experiments/used_experiments；实际科学执行仍在原生Run准入事务预约，避免把一次试验双重计费。实验创建、作者记录与原始命令回执共同提交；任一步失败全部回滚。
 
@@ -1524,7 +1555,7 @@ split_policy和其余上述政策字段。GET列表要求project_id，稳定UUID
 
 上述两种写命令复用现有OperatorCommand与原始响应幂等回执，新增封闭操作
 INPUT_SET_CREATE/EVALUATION_POLICY_CREATE。浏览器仍需近期真实认证；人工CLI只经绑定
-完整非秘密请求的一次性TOTP grant。RESEARCH_READ机器、Mission与Automation不能创建。
+完整非秘密请求的一次性本机 CLI grant。RESEARCH_READ机器、Mission与Automation不能创建。
 规范请求不含密码/secret，失败无头记录、成员、family或回执；准确重试返回原始成功
 响应，不重新验证当前数据许可以改写历史成功，也不执行第二次登记。后续新消费必须
 再次核对当前许可。数据库错误不向客户端暴露；已知字段拒绝返回422及字段路径/原因码。
@@ -2954,9 +2985,9 @@ Codex固定复用官方0.144.4原生App Server。协议以该版本实际二进�
 
 初始化明确关闭原始事件和不需要的reasoning通知；协议包络只按方法名读取允许的状态、身份、原生token计数、登录完成布尔值。忽略字段由原生Serde跳过；不反序列化、不存储、不展示隐藏推理、任意native错误文本、账号token或会话原始items。`thread/turns/list`恢复使用 `itemsView=notLoaded`；会话投影仅含ThreadID、TurnID、状态与可观察配置，不复制turn items。服务器请求不属于本适配器允许的工具或交互时返回JSON-RPC方法不支持错误，不自动授予文件、命令、网络或登录权限。
 
-SYSTEM连接不发送model_provider、base_url、apikey覆盖，由官方Codex读取部署选定的原生HOME/CODEX_HOME及其订阅/配置；“使用默认模型设置”时同时省略model、reasoning effort和service tier，保留但不执行此前保存值。CUSTOM_PROVIDER只通过原生model_providers定义和专用env_key解析当前Vault引用，固定responses线缆；不得在argv、数据库回执或日志中放密钥，不得退回SYSTEM认证。模型和推理强度只接受完整、对应profile revision的原生分页目录；effort-only从原生实际模型观察校验，不能用isDefault猜实际模型。显式模型禁止provider fallback，native报告重路由不能仍标记原选择成功。
+本机连接不发送model_provider、base_url、apikey覆盖，由官方Codex读取当前OS用户的HOME/CODEX_HOME与原生配置。“本机默认”开启时同时省略model、reasoning effort和service tier，保留但不执行此前保存值。QZ不创建model_providers、不读取Vault的历史Provider引用、不暗换认证。模型与强度只接受完整、对应profile revision的原生分页目录；effort-only按原生实际模型校验，不用isDefault猜实际模型。显式模型禁止provider fallback，原生报告重路由不能仍标记原选择成功。
 
-远程网页的ChatGPT绑定优先采用原生 `account/login/start {type:chatgptDeviceCode}`：只展示原生loginId、verificationUrl和一次性userCode，完成/取消/注销均复用对应native方法；不接收内部chatgptAuthTokens注入，不自行轮询OAuth端点或刷新token。账号读取仅投影需认证/已配置、认证类型与原生计划类型，不读取或返回auth.json、email、access_token、refresh_token。设置/绑定属于Operator，研究Mission无此权限。模型用量须来自原生Thread累计计数的明确Turn区间或原生Turn回执，不能把工具循环中最后一次请求的last误当整个Turn，未知用量必须保留待对账。
+保留的受控ChatGPT账号协议采用原生 `account/login/start {type:chatgptDeviceCode}`：只展示原生loginId、verificationUrl和一次性userCode，完成/取消/注销均复用对应native方法；不接收内部chatgptAuthTokens注入，不自行轮询OAuth端点或刷新token。账号读取仅投影需认证/已配置、认证类型与原生计划类型，不读取或返回auth.json、email、access_token、refresh_token。设置/绑定属于Operator，研究Mission无此权限。模型用量须来自原生Thread累计计数的明确Turn区间或原生Turn回执，不能把工具循环中最后一次请求的last误当整个Turn，未知用量必须保留待对账。
 
 
 ```text
@@ -2980,25 +3011,25 @@ downstream_integrations [operator mutable]
 
 codex_profiles [operator mutable]
   name: text
-  connection_mode: SYSTEM|CUSTOM_PROVIDER
+  connection_mode: SYSTEM  # active; other stored values are historical only
   profile_origin: MANAGED_VOLUME|OPERATOR_MOUNT
   codex_home_ref: text
-  custom_base_url: text?
-  custom_api_key_ref: text?
-  custom_provider_options: StrictProviderOptionsV1?
+  custom_base_url: text?  # historical only; no write/read surface
+  custom_api_key_ref: text?  # historical only; never resolved for current Codex
+  custom_provider_options: JSON?  # historical only; nonempty values reject admission
   use_default_model_settings: bool default true
   saved_model: text?
   saved_reasoning_effort: text?
   saved_fast_mode: bool default false
 
 operator_auth_state [singleton mutable]
-  initialized: bool
-  totp_secret_ref: text?
-  last_accepted_totp_step: bigint?
+  initialized: bool  # true after local migration
+  totp_secret_ref: text?  # historical ciphertext reference; not active authentication
+  last_accepted_totp_step: bigint?  # historical only; not read or updated by local access
   session_epoch: bigint >= 1
   setup_completed_at: Time?
 
-trusted_devices [mutable]
+trusted_devices [historical only; no current creation, trust or device-login API]
   token_verifier_ref: text  # mature opaque-session/crypto verifier
   label: text
   last_used_at: Time?
@@ -3019,7 +3050,7 @@ command_receipts [immutable result binding]
 
 `operator_auth_state.session_epoch` 是全局撤销代数，只能保持或增加；禁止减小、归零、bigint 溢出回绕。相同 epoch 的正常认证状态更新可以继续；已全局失效但未单独撤销的旧 BrowserLogin/TrustedDevice，不能因误写旧 epoch 恢复权限。该不变量由数据库更新守卫执行，锁等待之后仍以实际 OLD 行比较。
 
-幂等唯一 `(principal_scope,operation,idempotency_key)`；同规范化非敏感请求返回原结果，不同请求409。长期不可重复操作另有领域唯一约束，receipt 过期不能再次 Live handoff。secret 操作用原生凭据存储/版本，不把 secret/token/auth JSON/可还原秘密请求存 receipt，也不自制请求哈希 Gate。StrictCommandV1 是各真实命令的严格版本化 union，不是任意 JSON；StrictProviderOptionsV1 来自 pinned provider 允许参数的严格 schema，不让配置指定任意命令、环境泄漏或认证模式兜底。
+幂等唯一 `(principal_scope,operation,idempotency_key)`；同规范化非敏感请求返回原结果，不同请求409。长期不可重复操作另有领域唯一约束，receipt 过期不能再次 Live handoff。secret 操作用原生凭据存储/版本，不把 secret/token/auth JSON/可还原秘密请求存 receipt，也不自制请求哈希 Gate。StrictCommandV1 是各真实命令的严格版本化 union，不是任意 JSON；当前没有自定义 Provider options 请求合同。
 
 credential_ref 只被可信进程解析；API 仅 configured/status/last_checked，Agent 不得读。ChatGPT native token 留在 Codex profile，QZ DB 不设 access_token/refresh_token 列。
 
@@ -3033,13 +3064,13 @@ Readiness snapshot 至少：`integration_id,integration_revision,capability_vers
 
 Operator业务写命令统一先锁单一 operator_auth_state FOR UPDATE，再锁真实BrowserLogin或已验证CLI credential；这是本系统单Operator合同下的原生串行化，不新增intent/队列/锁服务。在该锁下检查command_receipts同scope/operation/key，执行领域变更，再一次INSERT完整不可变receipt并同事务提交；不用先插入后UPDATE不可变receipt，也不新增事务identity。receipt增加 `response_nonsecret_body: StrictResponseV1?`，历史行为原样保留，新控制面命令必须在插入时完整保存非秘密原响应。重试返回原响应快照而不是资源后来的状态；同key不同规范化请求409，失败不留下receipt。机器写命令在主体锁下复用同一幂等机制。Idempotency-Key为1–200字节，不含控制字符或首尾空白。
 
-人工CLI授权进一步绑定完整非秘密命令：`OperatorGrantRequest(schema_version, command: OperatorCommandV1, target_id?, code)`；command是按operation标记的封闭union，request为该真实端点的严格DTO，不能任意JSON。credential_id由已验证的CLI Bearer派生，创建operation的target_id必须null并由服务器分配；更新/撤销的target必须准确。grant增加 `normalized_nonsecret_request: StrictCommandV1?`，历史空值grant不能被新服务消费，不补造授权。新grant的operation/target/完整非秘密request/credential/auth_epoch/到期必须全匹配，防止更换下游、环境、scope或其他参数。TOTP仍走原生限流/重放防护，code永不进入receipt/grant。有效性与消费在提交事务内再核对；完全相同已消费grant+key仅可读原receipt，不续期、不重复操作。
+人工CLI授权进一步绑定完整非秘密命令：`OperatorGrantRequest(schema_version, command: OperatorCommandV1, target_id?)`；command是按operation标记的封闭union，request为该真实端点的严格DTO，不能任意JSON。credential_id由已验证的CLI Bearer派生，创建operation的target_id必须null并由服务器分配；更新/撤销的target必须准确。grant增加 `normalized_nonsecret_request: StrictCommandV1?`，历史空值grant不能被新服务消费，不补造授权。新grant的operation/target/完整非秘密request/credential/auth_epoch/到期必须全匹配，防止更换下游、环境、scope或其他参数。本机CLI无需验证码，权限由当前有效CLI凭据、精确命令绑定及既有截止时间约束。有效性与消费在提交事务内再核对；完全相同已消费grant+key仅可读原receipt，不续期、不重复操作。
 
-控制面认证重试与密钥生命周期：人工CLI grant在真实机器认证、当前epoch和完整非秘密命令绑定检查后先读幂等回执；已有回执不重新验证TOTP、不消耗REAUTH配额、不续期。仅创建新grant需要新TOTP，正式提交事务再读一次回执。Verifier签发在持有现有Operator命令事务并确认无回执后才写加密文件；并发重试不生成另一份Verifier。数据库失败/提交不明后，重新取得同一authority行锁并在主库确认无任何machine_credentials.verifier_ref引用，才允许按UUID删除已通过MACHINE_VERIFIER用途认证的文件并同步目录；无法判定则保留待对账。进程中断遗留物由本地prune-unpublished-verifiers命令在相同锁序下回收。禁止删除TOTP、SESSION_KEY或外部凭据；没有任意路径/HTTP删除接口。文件写入失败只清理本次成功create_new的对象。
+控制面认证重试与密钥生命周期：人工CLI grant在真实机器认证、当前epoch和完整非秘密命令绑定检查后先读幂等回执；已有回执不延长期限或重复签发。新grant无需验证码，正式提交事务仍再读一次回执并复核当前CLI权限。Verifier签发在持有现有Operator命令事务并确认无回执后才写加密文件；并发重试不生成另一份Verifier。数据库失败/提交不明后，重新取得同一authority行锁并在主库确认无任何machine_credentials.verifier_ref引用，才允许按UUID删除已通过MACHINE_VERIFIER用途认证的文件并同步目录；无法判定则保留待对账。进程中断遗留物由本地prune-unpublished-verifiers命令在相同锁序下回收。禁止删除历史认证密文、SESSION_KEY或外部凭据；没有任意路径/HTTP删除接口。文件写入失败只清理本次成功create_new的对象。
 
-机器认证限流复用PostgreSQL原生原子窗口，不靠单进程内存。machine_auth_rate_windows的credential_id为nullable FK machine_credentials、UNIQUE NULLS NOT DISTINCT，NULL唯一全局窗口；window_started_at为Time、attempts为非负整数，全局上限32、每凭据上限5、窗口60秒。昂贵Argon2之前按全局→凭据顺序预约，任一超限全事务回滚并429/Retry-After；成功仅归还原窗口时间对应的一个占用，失败/取消保留到窗口重置。未知public_token_id不建立窗口。机器密码校验使用独立2槽，不占用TOTP/人工认证的2槽；该限制针对失败及在途计算，不限制持续成功的普通请求总量。
+机器认证限流复用PostgreSQL原生原子窗口，不靠单进程内存。machine_auth_rate_windows的credential_id为nullable FK machine_credentials、UNIQUE NULLS NOT DISTINCT，NULL唯一全局窗口；window_started_at为Time、attempts为非负整数，全局上限32、每凭据上限5、窗口60秒。昂贵Argon2之前按全局→凭据顺序预约，任一超限全事务回滚并429/Retry-After；成功仅归还原窗口时间对应的一个占用，失败/取消保留到窗口重置。未知public_token_id不建立窗口。机器密码校验使用原有独立2槽；该限制针对失败及在途计算，不限制持续成功的普通请求总量。
 
-首批OperatorCommandV1变体：PROJECT_CREATE(ProjectCreate)、PROJECT_UPDATE(ProjectUpdate)、PRINCIPAL_CREATE(PrincipalCreate)、PRINCIPAL_UPDATE(PrincipalUpdate)、CREDENTIAL_ISSUE(CredentialIssue)、CREDENTIAL_REVOKE(CredentialRevoke)。已记录的Release/Policy历史操作保留枚举，未提供真实端点前不允许新grant签发。后续B2命令以具体DTO扩展同一封闭union。CLI普通机器scope（含只读doctor）不会改变；单次grant是用户这次输入TOTP的人工授权，不是Doctor或Agent取得持久Operator权限。MISSION/AUTOMATION/DOWNSTREAM不能取得该授权。
+首批OperatorCommandV1变体：PROJECT_CREATE(ProjectCreate)、PROJECT_UPDATE(ProjectUpdate)、PRINCIPAL_CREATE(PrincipalCreate)、PRINCIPAL_UPDATE(PrincipalUpdate)、CREDENTIAL_ISSUE(CredentialIssue)、CREDENTIAL_REVOKE(CredentialRevoke)。已记录的Release/Policy历史操作保留枚举，未提供真实端点前不允许新grant签发。后续B2命令以具体DTO扩展同一封闭union。CLI普通机器scope（含只读doctor）不会改变；单次grant是本机CLI用户这次请求的精确命令授权，不是Doctor或Agent取得持久Operator权限。MISSION/AUTOMATION/DOWNSTREAM不能取得该授权。
 
 ProjectCreate(schema_version,name[1..120],description[0..8000],fork_from_project_id?)只允许Operator；服务端建立NEW/FORK谱系及DRAFT项目，不接id/root_lineage/current_brief/revision。ProjectUpdate(schema_version,expected_revision,name,description,state)不接不可变谱系/批准政策；ACTIVE必须已绑定同项目FROZEN Brief，归档需无未终态Run，ARCHIVED不得原地复活。ProjectView明确列出id/root_lineage/name/description/state/current_brief/current_automation_policy/created_by/archived_at/created_at/updated_at/revision，不输出其他表字段。所有列表limit默认50、1..100，按UUIDv7 id倒序，cursor为上一页末尾Id；机器查询只返回其授权项目，跨项目返回404。
 
@@ -3073,39 +3104,39 @@ machine_credential_revocations [append-only]
 
 MachineScopeV1闭合集合：RESEARCH_READ、EXPERIMENT_SUBMIT、ARTIFACT_SUBMIT、EVIDENCE_READ、RUN_READ、RUN_CANCEL、DOWNSTREAM_CLAIM、DOWNSTREAM_ACK、FORWARD_SUBMIT、DOCTOR_READ。无wildcard/SQL/Secret/Operator管理能力。除只读doctor主体外project绑定必填；DOWNSTREAM绑定下游且仅自身offer；MISSION绑定活动同项目run、expires<=deadline，不能拥有downstream或其他run权限。主体绑定发行后不扩大，改范围须新主体+撤销旧证；enabled/epoch可控制撤销。每次请求验证native opaque verifier/期满/撤销/epoch/归属，命令事务重查；只发证时显示token一次，不入receipt/日志。Secret/密码学复用成熟库，不自制hash gate。MISSION_SERVICE仅内部为已授权run派生更窄证，不能产生CLI/Operator身份。
 
-Operator-only CLI操作仍是人类动作，使用近期TOTP获取绑定CLI主体、命令、target的单次授权（独立于普通machine scope）：`operator_command_grants [immutable]` 包含 credential_id FK、operation（API命令封闭枚举）、target_id、auth_epoch、authenticated_at、expires_at（<=300秒）；`operator_command_consumptions [append-only]` 包含grant_id UNIQUE FK、command_receipt_id UNIQUE FK、operation（与grant一致的命令）、target_id（与grant一致的目标）。grant的(id,operation,target_id)、receipt的(id,operation,resource_id)各自UNIQUE，consumption以两个复合FK绑定同一命令及目标；不得把一次人类授权用于另一个资源或多个回执。该授权只能近期人类认证发出，Agent/Automation/Downstream不能获取，消费与命令同事务；幂等重试仅返回已执行receipt。管理权限不得放入普通scope来绕过近期认证。
+Operator-only CLI操作仍是人类动作，无需验证码，以有效本机CLI身份获取绑定该主体、命令、target的单次授权（独立于普通machine scope）：`operator_command_grants [immutable]` 包含 credential_id FK、operation（API命令封闭枚举）、target_id、auth_epoch、authenticated_at、expires_at（<=300秒）；`operator_command_consumptions [append-only]` 包含grant_id UNIQUE FK、command_receipt_id UNIQUE FK、operation（与grant一致的命令）、target_id（与grant一致的目标）。grant的(id,operation,target_id)、receipt的(id,operation,resource_id)各自UNIQUE，consumption以两个复合FK绑定同一命令及目标；不得把一次人类授权用于另一个资源或多个回执。该授权只能由有效CLI主体申请，Agent/Automation/Downstream不能获取，消费与命令同事务；幂等重试仅返回已执行receipt。管理权限不得放入普通scope来绕过精确命令绑定。
 
 Mission 凭据的 `issuer_attempt_id` 与 `issuer_owner_epoch` 必须由受信任发行路径在 project→run→Attempt→principal 的原生行锁下从当前有效租约读取并永久绑定。任何客户端自报的旧 epoch、跨 Run Attempt、已过期租约或非 Mission 的 Attempt/owner 绑定均拒绝。每次机器身份、普通读取和写命令同时复核当前 Attempt、owner_epoch 和数据库实际时钟下的 lease_expires_at；同一 Attempt 的接管只增加 owner_epoch，也必须令旧凭据失效。正常续租保持 epoch 不会使当前凭据失效。023 增量迁移只增加可空发行字段并替换原发行守卫，所有旧凭据的原字段保留；历史缺少 owner 绑定的 Mission 仅作审计，必须重新发行，不能猜测回填为现在的 owner。非 Mission 凭据不因该字段为空而失效。原生 PostgreSQL 锁规则依据 https://www.postgresql.org/docs/18/explicit-locking.html；迁移、接管、到期、续租与锁等待后的时限均用真实数据库验证。
 
 ### A8.2 原生凭据引用与集成配置的正式管理入口
 
-`POST /api/v2/settings/credentials` 只创建 RUNTIME、DOWNSTREAM、CUSTOM_PROVIDER 或 TLS_CA 用途的原生 SecretVault 对象。请求的非秘密 intent 为 schema_version/purpose/label；value 为只写、有大小限制的内容，无 Debug/日志/回执。近期 Operator 浏览器或绑定完整 intent 的一次性 CLI grant 才能执行，其他机器身份拒绝。服务器在原有 command transaction 内分配 UUID，由现有 AEAD 实现将该 UUID/purpose 绑定加密并 create_new 发布；不建立另一个密钥库/刷新器/哈希身份。相同键先核对非秘密 intent，再由可信原生解密比较原值，完全相同才返回原对象引用；不同内容409。原文件发布而数据库结果不明时保留对象，不清理可能已引用的秘密。凭据注册返回 id/purpose/label/created_at，不返回原值；配置读取只显示 configured 状态。原生密钥对象属于外部存储引用，不冒充一个可经公开 Artifact API 下载的产物。
+`POST /api/v2/settings/credentials` 只创建 RUNTIME、DOWNSTREAM 或 TLS_CA 用途的原生 SecretVault 对象。请求的非秘密 intent 为 schema_version/purpose/label；value 为只写、有大小限制的内容，无 Debug/日志/回执。本机 Operator 浏览器或绑定完整 intent 的一次性 CLI grant 才能执行，其他机器身份拒绝。服务器在原有 command transaction 内分配 UUID，由现有 AEAD 实现将该 UUID/purpose 绑定加密并 create_new 发布；不建立另一个密钥库/刷新器/哈希身份。相同键先核对非秘密 intent，再由可信原生解密比较原值，完全相同才返回原对象引用；不同内容409。原文件发布而数据库结果不明时保留对象，不清理可能已引用的秘密。凭据注册返回 id/purpose/label/created_at，不返回原值；配置读取只显示 configured 状态。原生密钥对象属于外部存储引用，不冒充一个可经公开 Artifact API 下载的产物。
 
 Runtime 与 Downstream 配置使用明确的 `/api/v2/integrations/runtimes`、`/downstreams` 集合和 `/{id}`，不开放任意表操作。create/update 分别进入同一 OperatorCommand union；更新要求 expected_revision。Runtime 非秘密配置为 name/endpoint/tls_policy/allowed_capabilities/enabled/development_http，protocol_version 固定当前原生合同1；Downstream 为 name/endpoint/accepted_package_versions/environments/enabled/development_http。配置写入必须验证 SecretVault 引用的精确用途；PINNED_CA 必须有有效原生 PEM CA 引用，SYSTEM_CA 不能混带自选 CA。更新不传新的 credential_ref 表示保留当前版本；转 SYSTEM_CA 明确清除 CA 绑定但不删除旧加密对象。仅部署显式 development-http 且 literal loopback 的端点可以使用 HTTP，生产默认 HTTPS；URL 不接受 userinfo/query/fragment。保存配置不发起网络请求，enabled/声明的 capability 不等于 readiness；后续 probe 必须经部署允许列表与原生 TLS/DNS 绑定，按精确配置 revision 采纳真实结果。
 
-公开配置 DTO 不回传 credential_ref/CA 存储位置，只显示 credential_configured/ca_configured 和实际非秘密配置。Operator 可读配置；DOCTOR_READ 的 CLI/AUTOMATION 只读同一无秘密诊断 DTO，不获得管理或原生对象读取能力。写权限仍为近期人类或一次性完整意图 grant。旧不可变会话/Run 保存其原配置版本，配置更新不能改写已派发任务；当前检查/新准入必须重新判断 revision 与能力有效期。URI 语法、字段/类型/未知字段、原生凭据用途、幂等/CAS、撤销/锁等待、真实 HTTP/数据库和原始命令回执均需回归。此管理入口不是 Runtime 网络或生产完整链路已验收的声明。
+公开配置 DTO 不回传 credential_ref/CA 存储位置，只显示 credential_configured/ca_configured 和实际非秘密配置。Operator 可读配置；DOCTOR_READ 的 CLI/AUTOMATION 只读同一无秘密诊断 DTO，不获得管理或原生对象读取能力。写权限仍为本机Operator或一次性完整意图CLI grant。旧不可变会话/Run 保存其原配置版本，配置更新不能改写已派发任务；当前检查/新准入必须重新判断 revision 与能力有效期。URI 语法、字段/类型/未知字段、原生凭据用途、幂等/CAS、撤销/锁等待、真实 HTTP/数据库和原始命令回执均需回归。此管理入口不是 Runtime 网络或生产完整链路已验收的声明。
 
 ### A8.3 Codex Profile 管理与原生目录观测
 
-`/settings/codex` 是 Profile 集合（GET/POST），`/settings/codex/{id}` 提供单项 GET/PATCH；保留 `/settings/codex` PATCH 作为明确携带 profile_id 的当前配置命令，不根据“第一行”选择账号。创建以 name、部署已登记的 home_binding、profile_origin、严格 SYSTEM/CUSTOM_PROVIDER connection 和 SavedModelSettingsV1 为意图。更新绑定 profile_id/expected_revision，只改名称、连接和保存的模型设置；home_binding/profile_origin 是不可变身份，切换原生账号目录须登记新 Profile，不原地接管旧 Thread。一个 home_binding 只能被一个 Profile 占用。公开 binding 仅为1–64字节可打印标识符，不是宿主路径；部署启动文件掌握原生 binary、HOME、CODEX_HOME、working_directory 和显式环境变量名。API 不创建、遍历、复制、chown 或删除原生账号目录，不返回真实路径/环境值。
+`GET /settings/codex` 返回两个自动建立的本机角色，`/settings/codex/{id}` 提供单项GET/PATCH，不提供POST注册或集合PATCH。更新只接受schema_version、expected_revision、SavedModelSettingsV1，不接name/connection/home_binding/profile_origin。旧记录和已冻结Thread不原地改绑。运行时从PATH/HOME/CODEX_HOME发现原生环境；QZ不提供部署JSON或目录注册UI，不复制、chown、删除本机账号目录，不返回真实路径/环境值。保留的内部构造器只为原生组件/测试注入，不是用户配置入口。
 
-SYSTEM 请求不得带 base_url/credential_ref；CUSTOM_PROVIDER 创建必须给合法 HTTPS base_url 与 CUSTOM_PROVIDER 用途的不可变 SecretVault 引用，更新省略/null 引用仅在已有 CUSTOM_PROVIDER 时保留。系统不复制 auth.json 或在数据库保存 token。保存任意语法有效的模型/effort 不代表其当前可运行，default=true 保留但不执行这些值。模型目录、实际生效的模型/provider/effort/service_tier 与请求保存值分开显示。
+当前Codex请求不接受base_url/credential_ref或自定义Provider。保存语法有效的模型/effort不代表其当前可运行；default=true保留但不执行保存值。模型目录、实际生效model/provider/effort/service_tier与用户保存值分别保留，不把保存成功当作探测成功。
 
-`POST /codex/probe` 明确携带 profile_id/expected_revision，近期 Operator 或绑定完整意图的 CLI grant 可调用。准备事务完成后才启动实际 pinned App Server，读取 account/read 与完整 model/list，并通过无推理 ephemeral Thread 观察原生实际默认配置；显式设置再由原生目录校验及 Thread 响应确认。Fast 仅选择目录实际公告的 priority（或该锁定版本仍公告的 fast）service tier；没有公告则拒绝，不用 isDefault 或字符串相似匹配猜测。default=true 不注入 tier。探测不得发 turn/start、执行研究或触发登录，也不是账号真实推理证明。
+`POST /codex/probe` 明确携带 profile_id/expected_revision，本机 Operator 或绑定完整意图的 CLI grant 可调用。准备事务完成后才启动实际 pinned App Server，读取 account/read 与完整 model/list，并通过无推理 ephemeral Thread 观察原生实际默认配置；显式设置再由原生目录校验及 Thread 响应确认。Fast 仅选择目录实际公告的 priority（或该锁定版本仍公告的 fast）service tier；没有公告则拒绝，不用 isDefault 或字符串相似匹配猜测。default=true 不注入 tier。探测不得发 turn/start、执行研究或触发登录，也不是账号真实推理证明。
 
 探测返回后在原命令幂等事务内再次核对 Profile revision、授权和120秒总期限，写入唯一不可变 codex_profile_observations（id/profile_id/profile_revision/observed_at/valid_until/严格非秘密outcome）与完整命令回执；无原生I/O发生在持锁事务内。Available 目录最多4096个唯一ID，各项有一致 revision/fetched_at；有效期最多60秒。Unavailable 保留明确原因，不制造默认目录；重试同键返回原响应，不再探测。`GET /codex/models?profile_id=...`、`GET /codex/account?profile_id=...` 只读取当前revision最近观测，返回 freshness 与原始 observed_at，不隐式刷新、启动模型进程或把旧成功覆盖最新失败。
 
 ### A8.4 Codex 设置的浏览器与 CLI 合同
 
-设置页增加 Codex 专用标签，使用正式 Profile/部署绑定/观测接口。创建和更新在确认后才采纳服务端响应；同一失败重试保留完整意图与 Idempotency-Key。编辑器打开时冻结原配置及 expected_revision，后台刷新不得把旧表单偷偷绑定到新 revision。409 保留用户输入并要求重新载入，不能覆盖其他配置。未保存对话框、凭据登记和待确认探测期间，PWA 更新与设置标签切换均不强制卸载表单。
+设置页Codex标签只展示自动角色、原生检测状态和模型偏好。打开时若观测从未运行或已失效，前端针对该Profile/revision发起一次显式probe；GET本身仍只读。模型更新确认后才采纳服务端响应，失败重试保留完整意图与Idempotency-Key。编辑器冻结原配置和expected_revision，后台刷新不偷换表单绑定。已知409保留输入并要求重新载入；结果未知不能换键或编辑原请求。未保存对话框/待确认探测期间，PWA更新与标签切换不强制卸载表单。
 
-模型与 Slider 的可选推理强度只能来自同 Profile/revision 且未过期、最近读取成功的完整原生目录。model=null 时使用原生已观察的实际模型决定 effort 能力，不用 isDefault 猜测。Slider 的零位置明确表示不覆盖原生设置，其余位置严格对应目录顺序；目录失效后不能选择新覆盖。历史未知模型/effort/Fast 保存值继续显示并可显式清除，以恢复原生默认，不把故障配置锁死；default=true 仍原样保留这些保存值而不执行。切换连接或换凭据后，旧目录不能用于确认新连接。取消保存不撤销已完成的凭据登记，也不改变历史 Thread。
+模型与 Slider 的可选推理强度只能来自同 Profile/revision 且未过期、最近读取成功的完整原生目录。model=null 时使用原生已观察的实际模型决定 effort 能力，不用 isDefault 猜测。Slider 的零位置明确表示不覆盖原生设置，其余位置严格对应目录顺序；目录失效后不能选择新覆盖。历史未知模型/effort/Fast 保存值继续显示并可显式清除，以恢复原生默认，不把故障配置锁死；default=true 仍原样保留这些保存值而不执行。原生账号或配置变化后，旧观测不能作为新的可用证明；取消模型编辑不改变本机配置或历史Thread。
 
-CLI 的 codex list/show/homes/models/account 只读正式 HTTP 非秘密视图，不隐式启动 Codex；create/update/probe 从 stdin 读取共享严格 Rust DTO，绑定显式 UUID、CAS 与单次 Operator grant。probe 的位置参数和正文 profile_id 必须一致。命令不接任意原生 RPC、HOME 路径、token 文件、shell 或认证模式回退。原生账号登录的后续交互独立于配置保存与无推理探测；未完成登录/推理验收不能因目录探测成功而被宣称完成。
+CLI 的 codex list/show/models/account 只读正式非秘密HTTP视图，不隐式启动Codex；update/probe从stdin读取共享严格Rust DTO，绑定显式UUID、CAS与单次Operator grant。删除create/homes命令；probe位置参数与正文profile_id必须一致。命令不接任意原生RPC、HOME路径、token文件、shell或认证模式回退。原生账号操作独立于模型保存与无推理探测，未执行真实账号/推理验收不能因目录探测成功而被宣称完成。
 
 ### A8.5 原生 Codex 账号操作
 
-`POST /codex/login/start` 与 `POST /codex/logout` 接收 schema_version/profile_id/expected_revision，均需近期 Operator 或完整命令绑定的单次 CLI grant，只允许 SYSTEM Profile。CUSTOM_PROVIDER 继续使用独立上游凭据，不借登录入口切换系统订阅。先在原有 Operator 幂等事务登记账号操作及202接受回执，再由可信进程取得唯一发送许可并调用 pinned Codex 的 account/login/start(chatgptDeviceCode) 或 account/logout。JSON-RPC ID 不是重试保证；同键重放只读原接受回执，不再次启动登录或注销。
+`POST /codex/login/start` 与 `POST /codex/logout` 接收 schema_version/profile_id/expected_revision，均需本机 Operator 或完整命令绑定的单次 CLI grant，只允许 SYSTEM Profile。当前无自定义Provider入口，也不能借原生账号协议激活历史自定义连接。先在原有 Operator 幂等事务登记账号操作及202接受回执，再由可信进程取得唯一发送许可并调用 pinned Codex 的 account/login/start(chatgptDeviceCode) 或 account/logout。JSON-RPC ID 不是重试保证；同键重放只读原接受回执，不再次启动登录或注销。
 
 `codex_account_operations` 保存本项目人工操作的 id、profile_id/profile_revision、action=LOGIN|LOGOUT、state=REQUESTED|WAITING|CANCEL_REQUESTED|SUCCEEDED|CANCELLED|FAILED|UNKNOWN、created_at/updated_at/revision、deadline_at、dispatch_started_at?、native_login_id?、cancel_requested_at?、cancel_dispatch_started_at?、finished_at?、reason_code?、account_snapshot?。接受引用与期限不可变，唯一活动 Profile 操作约束避免同时改变一个账号目录。原生 OAuth、token、邮箱、device userCode 与 canonical history 不入库。只有实际原生结果可形成成功/取消；UNKNOWN 不表示账号未变化，也不允许自动重发。
 
@@ -3155,7 +3186,7 @@ Content-Type: application/json
 {"type":"urn:quazonai:problem:revision-conflict","title":"对象已被修改","status":409,"code":"REVISION_CONFLICT","detail":"请重新载入后提交，不会覆盖新版本。","request_id":"<uuid>","retryable":false,"current_revision":"8","field_errors":[],"safe_next_actions":["RELOAD"]}
 ```
 
-最低 code：VALIDATION_ERROR、AUTH_REQUIRED、SETUP_ALREADY_COMPLETED、TOTP_REPLAY、FORBIDDEN_CAPABILITY、REVISION_CONFLICT、IDEMPOTENCY_CONFLICT、BUDGET_EXHAUSTED、UNSUPPORTED_MODEL_EFFORT、INTEGRATION_UNAVAILABLE、CAPABILITY_STALE、CONTRACT_VERSION_UNSUPPORTED、DATA_NOT_POINT_IN_TIME、SEALED_ACCESS_DENIED、SEALED_ALREADY_EXPOSED、UNSUPPORTED_LABEL_INTERVALS、INSUFFICIENT_EVIDENCE、SOLVER_INFEASIBLE、STALE_ATTEMPT、CANCEL_NOT_CONFIRMED、RELEASE_EXPIRED、APPROVAL_REVOKED、ALREADY_CLAIMED、DEMO_NOT_DELIVERABLE、EVENT_CURSOR_EXPIRED。
+最低 code：VALIDATION_ERROR、AUTH_REQUIRED、FORBIDDEN_CAPABILITY、REVISION_CONFLICT、IDEMPOTENCY_CONFLICT、BUDGET_EXHAUSTED、UNSUPPORTED_MODEL_EFFORT、INTEGRATION_UNAVAILABLE、CAPABILITY_STALE、CONTRACT_VERSION_UNSUPPORTED、DATA_NOT_POINT_IN_TIME、SEALED_ACCESS_DENIED、SEALED_ALREADY_EXPOSED、UNSUPPORTED_LABEL_INTERVALS、INSUFFICIENT_EVIDENCE、SOLVER_INFEASIBLE、STALE_ATTEMPT、CANCEL_NOT_CONFIRMED、RELEASE_EXPIRED、APPROVAL_REVOKED、ALREADY_CLAIMED、DEMO_NOT_DELIVERABLE、EVENT_CURSOR_EXPIRED。
 
 HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本/状态、410过期cursor/不可续用能力、429配额/限流、503暂时依赖故障。内部分类留受控日志，响应不泄漏路径/secret/Provider原文/堆栈。
 
@@ -3163,12 +3194,7 @@ HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本
 
 | API（均为 /api/v2 下） | 输入/结果要点 | 角色 / CLI |
 |---|---|---|
-| GET /bootstrap/status | initialized/setup_allowed，无 secret | 未认证；qz auth status |
-| POST /bootstrap/start | 一次性本机 capability → 短期 enrollment_id/二维码 | Bootstrap；qz auth bootstrap |
-| POST /bootstrap/confirm | enrollment_id/TOTP/可选 device label，CAS 初始化 | Bootstrap |
-| POST /auth/login | TOTP/trust_device/label，限速防重放 | 未认证 |
-| POST /auth/logout | 撤销当前 session | Operator |
-| GET/DELETE /auth/devices/{id} | 列表/撤销，敏感动作近期认证 | Operator |
+| GET /auth/session | 自动建立本机会话；schema_version/authenticated_at/expires_at | 本机浏览器，无验证码 |
 | GET/POST /projects | 筛选分页/新建，Agent 不得新建洗血缘 | Operator；qz project list/create |
 | GET/PATCH /projects/{id} | 展示/名称等可变字段，expected_revision | Operator；qz project show/update |
 | POST /projects/{id}/pause、/resume | 控制新研究，不操作下游交易 | Operator；qz project pause/resume |
@@ -3204,7 +3230,8 @@ HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本
 | POST /runs/{id}/cancel、/retry | 限定转换，202或409 | Operator；qz run cancel/retry |
 | GET /runs/{id}/events | 持久SSE/恢复cursor | Operator；qz run watch |
 | GET /artifacts/{id}、/content | 元数据/受限下载，敏感访问先 exposure | 限权；qz artifact show/export |
-| GET/PATCH /settings/codex | 正交配置，secret仅状态 | Operator；qz codex config |
+| GET /settings/codex | 自动发现的两个本机角色，只读集合 | 本机 Operator；server client codex list |
+| GET/PATCH /settings/codex/{id} | 单项读取／模型和推理偏好；无连接或凭据配置 | 本机 Operator／精确 CLI grant；server client codex show/update |
 | GET /codex/models | 全分页/支持effort/profile_revision | Operator；qz codex models |
 | POST /codex/login/start、/cancel、/logout | 原生account RPC，UI只展示受控流程 | Operator；qz codex login/logout |
 | GET /codex/account | 原生认证类型/status，不读回token | Operator；qz codex status |
@@ -3220,28 +3247,28 @@ HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本
 | POST /data/revisions | 已登记source/grant/native snapshot/version，native metadata受信任读取并校验；原生身份重试不新建 | qz data register |
 | GET/POST /integrations/runtimes；GET/PATCH /integrations/runtimes/{id} | A8字段；credential只引用服务端已登记ID，禁任意Secret路径；enabled=false停新任务 | qz runtime list/create/show/update/disable |
 | GET/POST /integrations/downstreams；GET/PATCH /integrations/downstreams/{id} | A8字段；native合同版本/环境明确；停用不终止已领交易 | qz downstream list/create/show/update/disable |
-| POST /credentials；POST /credentials/{id}/rotate | name/kind=RUNTIME或DOWNSTREAM或CUSTOM_PROVIDER/secret；近期认证，原生secret store，不打印/回读；改revision失效旧readiness | qz credential create/rotate |
+| POST /credentials；POST /credentials/{id}/rotate | name/kind=RUNTIME或DOWNSTREAM/secret；本机Operator，原生secret store，不打印/回读；改revision失效旧readiness | qz credential create/rotate |
 | POST /releases/{id}/rejections | environment/downstream_id/reason_code/reason/expected_latest_decision_id；追加REJECT | qz release reject |
 | POST /release-decisions/{id}/reopen | reason/expected_latest_decision_id；A7.1，仅追加，不自动审批 | qz release reconsider |
 | GET/POST /machine-principals；PATCH /machine-principals/{id} | name/kind/bindings；PATCH仅name/enabled，权限不能扩张 | qz token principal list/create/disable |
 | GET/POST /machine-principals/{id}/credentials；POST /machine-credentials/{id}/revoke | scopes/expires_at/reason，A8.1上限；只首次发行回token | qz token issue/list/revoke |
-| POST /auth/operator-command-grants | CLI credential/operation/target/TOTP，防重放/限流，单次300秒 | 敏感CLI命令的人类确认 |
+| POST /auth/operator-command-grants | 当前CLI身份/封闭command/target，无验证码，单次300秒 | 敏感CLI命令的人类确认 |
 
 服务端字段id/version/revision/snapshot/issuer/epoch不能由客户端指定。集成endpoint/credential/协议/能力变化使readiness失效并重新probe。被停用记录仍供历史引用；权限/授权事件不删除。
 
-表中 `/{id}` 等简写沿同一行资源前缀，不是根路由。列表 opaque cursor、服务端 limit 上限、稳定排序和项目/权限过滤。CLI 用生成客户端和同一服务器命令，不直写 SQL；唯一本地特权入口为受限 bootstrap/备份恢复等运维。
+表中 `/{id}` 等简写沿同一行资源前缀，不是根路由。列表 opaque cursor、服务端 limit 上限、稳定排序和项目/权限过滤。CLI 用生成客户端和同一服务器命令，不直写 SQL；本地特权入口仅为显式迁移、备份恢复等运维。
 
 ### B2.1 原生 HTTP CLI 与共同错误合同
 
-实际发行入口为同一 `server` 二进制的 `client` 子命令，不另外创建兼容别名目录或数据库CLI。CLI以固定命令映射复用Rust请求与响应DTO；`--origin`只接受显式HTTPS origin，`--credential-file`读取Unix私有文件中的现有qz2机器凭据，`--ca-certificate`可选择原生CA。仅同时明确 `--development-http` 与字面量loopback才允许HTTP；禁止关闭TLS校验、代理、重定向、隐式重试、任意URL、SQL或SecretVault读取。CLI操作数据库与读取生产Provider凭据不在此入口的能力中。
+实际发行入口为同一 `server` 二进制的 `client` 子命令，不另外创建兼容别名目录或数据库CLI。CLI以固定命令映射复用Rust请求与响应DTO；`--origin`只接受本机 `localhost` 或字面量 loopback IPv4/IPv6 的显式 origin，`--credential-file`读取Unix私有文件中的现有qz2机器凭据，`--ca-certificate`可选择原生CA。默认使用HTTPS；显式 `--development-http` 后允许这些本机地址使用HTTP，并与服务器 PUBLIC_URL 一致。该规则同样适用于 Worker/Mission/MCP 控制面入口，不改变 Runtime/Downstream 的独立字面量IP规则；禁止关闭TLS校验、代理、重定向、隐式重试、任意URL、SQL或SecretVault读取。CLI操作数据库与读取生产Provider凭据不在此入口的能力中。
 
-写入从stdin读取最多16MiB严格JSON，未知字段、错误UUID/十进制版本与不匹配父资源绑定拒绝。每次写入要求用户给定 `--idempotency-key`；受保护管理命令另需 `--operator-grant`，其值仅进入既有 `X-Operator-Grant` Header。`operator-grant`命令以完整OperatorGrantRequest、近期TOTP向正式接口申请单次grant，不取得持久Operator权限，不自动续期。结果未知时只允许用户以原命令/key/正文显式重放，CLI不自动换key、重复发送或把失败写为成功。
+写入从stdin读取最多16MiB严格JSON，未知字段、错误UUID/十进制版本与不匹配父资源绑定拒绝。每次写入要求用户给定 `--idempotency-key`；受保护管理命令另需 `--operator-grant`，其值仅进入既有 `X-Operator-Grant` Header。`operator-grant`命令以完整OperatorGrantRequest向正式本机接口申请单次grant，不取得持久Operator权限，不自动续期。结果未知时只允许用户以原命令/key/正文显式重放，CLI不自动换key、重复发送或把失败写为成功。
 
 API与CLI的Problem/FieldError移动到同一 `contracts::http`；API仍只生成既有封闭错误码/安全字段，CLI严格核对HTTP status、application/problem+json、UUID/Revision与同一RustDTO。输入、原生传输错误和不合合同的远端响应只打印封闭本地错误，不回显凭据、stdin、宿主路径或native错误。成功JSON写stdout；已验证Problem写stderr并退出1。产物导出先读取同一ID不可变元数据，随后核对正式content接口的media和精确byte_count，输出原始字节，不把Rust源码错误当成octet-stream。
 
 Run watch复用 `eventsource-stream=0.2.3` 的原生SSE分帧，来源：https://docs.rs/eventsource-stream/0.2.3/eventsource_stream/ 。每次最多3600秒/10000事件/16MiB线缆字节，单事件不超过已有公开合同，原生cursor、run_id、seq和event_type必须一致且单调。兼容未知event_type保留公开envelope及cursor，不猜业务状态；reset-required要求重读。客户端结束、Ctrl-C或断线只输出最后cursor和 `cancellation_requested=false`，不调用取消接口。SSE不是第二套事件数据库或重连调度器。
 
-原生子进程+TCP回归必须覆盖请求/响应DTO、精确header、未知结果显式重放、拒绝重定向/重复JSON/反射凭据、原生SSE及bigint；另以实际Axum+TOTP+PostgreSQL演练CLI获得单次grant、登记Source、回执重放、冲突和权限拒绝。HTTP fixture的成功不代替真实数据库/完整研究闭环，尚未实现的B2命令仍是同一Issue62的后续必交模块，不允许隐藏为已交付。
+原生子进程+TCP回归必须覆盖请求/响应DTO、精确header、未知结果显式重放、拒绝重定向/重复JSON/反射凭据、原生SSE及bigint；另以实际Axum+本机会话+PostgreSQL演练CLI获得单次grant、登记Source、回执重放、冲突和权限拒绝。HTTP fixture的成功不代替真实数据库/完整研究闭环，尚未实现的B2命令仍是同一Issue62的后续必交模块，不允许隐藏为已交付。
 
 ## B3. MCP 白名单与真实闭环
 
@@ -3632,7 +3659,7 @@ Run 进入终态后，其所有 Attempt 的新增、修改、删除均被持有�
 包括没有 manifest/accepted_at 的失败与取消。正确采纳先修改 Attempt 再同事务终结 Run/
 receipt；之后的准确重传只读原始回执。Attempt.error_class/error_code 仅存真实失败元数据，
 成功和成功后取消不存 RUNTIME_SUCCEEDED 等 Run 原因；Run.terminal_reason_code 仍保留原因。
-旧终态历史不通过迁移原地改写。浏览器取消必须 300 秒内的 TOTP 认证；读取不要求近期认证，
+旧终态历史不通过迁移原地改写。浏览器取消使用当前有效本机会话，不要求近期验证码，
 机器取消仍仅允许精确项目的 CLI/AUTOMATION RUN_CANCEL，不赋予 Mission/Downstream 权限。
 
 部署迁移使用脱离请求池的专用连接，在原生迁移 advisory lock 前 SET statement_timeout=0，
@@ -3700,7 +3727,7 @@ GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重�
 
 ## B8. 完整自动化验收矩阵 T01–T42
 
-全部是本次交付项；共享基础fixture不等于空断言。每项输出CI日志、输入版本、产物/截图。真实收益不是预设必须出现的结果。
+以下是按第0.4/0.5节修订后的交付项；旧 T05 自定义Provider已被本机配置所有权替代，不继续要求不存在的路由，也不将删除旧场景当作通过。共享基础fixture不等于空断言。每项输出CI日志、输入版本、产物/截图。真实收益不是预设必须出现的结果。
 
 | ID | 场景 | 必须证明 |
 |---|---|---|
@@ -3708,7 +3735,7 @@ GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重�
 | T02 | 无凭据Demo | 一条文档命令完整UI演示；synthetic/fixture明显且不能生产领取 |
 | T03 | 原生Codex SYSTEM | 空QZ URL/key不覆盖native配置；真实stdio使用既有profile，无自动删/复制auth.json |
 | T04 | SYSTEM+effort | model=null、合法非空effort生效，来源不变，default开关保留保存值 |
-| T05 | 自定义Provider | 显式route/key，失败不偷用订阅，inactive凭据不注入 |
+| T05 | 本机 Codex 配置唯一所有权 | 自动发现同一 OS 用户的 PATH/HOME/CODEX_HOME；拒绝项目内 Provider/URL/key/目录注册，不注入环境中的服务凭据，不复制 auth.json 或改写 config.toml；两原生角色独立身份且共享账号操作正确协调；无凭据回归必执行，不属账号豁免 |
 | T06 | 动态模型目录 | 全分页，Slider marks来自supported efforts；未知报错不降档 |
 | T07 | 官方订阅原生登录 | 本次已完成（所有者豁免，未执行），见[第0.4节](#acceptance-scope)；保留原生账号功能及无凭据回归，token不进QZ DB/日志 |
 | T08 | Agent真闭环 | tool→真实job/evaluation→同thread消费结果→引用真实证据结论，不scripted UI假成功 |
@@ -3739,7 +3766,7 @@ GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重�
 | T33 | 确定性再平衡 | 新cutoff新Candidate/Release，不覆盖旧包、不让LLM绕审批 |
 | T34 | Secret/文件系统隔离 | 随机变量名sentinel、auth.json、DB、master key、Docker socket实际不可达 |
 | T35 | 恶意产物 | symlink/traversal/压缩炸弹/出网/sealed/fork bomb/超输出受限且安全错误可见 |
-| T36 | 初始化/TOTP | 无本机capability不能公网抢绑，并发confirm只一成功，重放/限速/设备撤销/注销有效 |
+| T36 | 本机直接进入 | 首次读写无需验证码；旧认证入口/算法不可用；会话固定期限、撤销/epoch、错误Bearer和同源校验有效；新旧库升级与恢复保留原数据 |
 | T37 | antd桌面/移动 | 390/768/1440全部核心动作，无Radix残留/嵌套模态焦点丢失 |
 | T38 | a11y/PWA/离线/更新 | 键盘/标签/非颜色/触摸，API不缓存，离线不写，未保存表单不被强刷 |
 | T39 | 旧数据迁移 | dry-run报告/真实旧快照/FK完整，旧PASS不晋级，原数据不毁 |

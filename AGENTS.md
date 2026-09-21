@@ -1,6 +1,6 @@
 # QuaZonai Agent 治理
 
-本文件只定义开发治理与导航，不复制产品状态机。产品、领域、接口、数据、安全、运维和完整验收合同统一在 `DESIGN.md`。
+本文件只定义开发治理与导航，不复制产品状态机。产品、领域、接口、数据、安全、运维和完整验收合同统一在 `DESIGN.md`。本机免验证码、原生 Codex 自动发现和主题以 [DESIGN 0.5](DESIGN.md#local-console) 为准。
 
 开发入口见 [CONTRIBUTING](CONTRIBUTING.md) 与 [OpenSDLC 项目上下文](.opensdlc/project.md)。任务意图、计划、验证和交接保存在仓库根 `.opensdlc/tasks/<task-id>/task.md`；共享流程见 [review](.opensdlc/review.md)、[operations](.opensdlc/operations.md) 与 [Agent 评估](.opensdlc/evals/suite.md)。这些是治理与事实源导航，不复制产品合同。
 

@@ -4,8 +4,6 @@ import { responseKind, validateDecimal, validateProblem, validateResponse } from
 
 export type Schema = components['schemas'];
 export type Problem = Schema['Problem'];
-export const AUTH_CHANGED = 'quazonai-auth-changed';
-export const REAUTH_REQUIRED = 'quazonai-reauth-required';
 
 export class ApiFailure extends Error {
   constructor(
@@ -37,7 +35,7 @@ export async function responseFailure(response: Response, schemaPath: string, me
     && validateResponse(schemaPath, method, response.status, value, contentType)) {
     return new ApiFailure(value.code, value.detail, response.status, value, retryAt(response.headers.get('retry-after')));
   }
-  return new ApiFailure('HTTP_CONTRACT_ERROR', `服务返回了无法识别的响应（HTTP ${response.status}）。未将它当成空列表或成功结果。`, response.status);
+  return new ApiFailure('HTTP_CONTRACT_ERROR', `响应无效（HTTP ${response.status}）`, response.status);
 }
 
 export function makeClient(baseUrl: string, fetcher: typeof fetch = fetch) {
@@ -52,7 +50,7 @@ export function makeClient(baseUrl: string, fetcher: typeof fetch = fetch) {
         throw new ApiFailure('INVALID_ORIGIN', '拒绝向不同来源发送业务请求。');
       }
       if (typeof navigator !== 'undefined' && navigator.onLine === false && !['GET', 'HEAD'].includes(request.method)) {
-        throw new ApiFailure('OFFLINE', '当前离线，操作未提交。恢复连接后请手动确认并提交。');
+        throw new ApiFailure('OFFLINE', '离线，操作未提交');
       }
       return request;
     },
@@ -60,7 +58,7 @@ export function makeClient(baseUrl: string, fetcher: typeof fetch = fetch) {
       if (response.ok) {
         const kind = responseKind(schemaPath, request.method, response.status, response.headers.get('content-type'));
         if (kind === undefined) {
-          throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应状态或媒体类型不符合已生成的接口合同。', response.status);
+          throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应格式不兼容', response.status);
         }
         // Only a declared operation/status/media combination may retain its body.
         // openapi-fetch, not this middleware, owns parseAs for bytes and streams.
@@ -68,26 +66,20 @@ export function makeClient(baseUrl: string, fetcher: typeof fetch = fetch) {
         let value: unknown;
         if (kind === 'json') {
           try { value = await response.clone().json(); }
-          catch { throw new ApiFailure('HTTP_CONTRACT_ERROR', '服务没有返回合同规定的 JSON 响应。'); }
+          catch { throw new ApiFailure('HTTP_CONTRACT_ERROR', 'JSON 响应无效'); }
         }
         if (!validateResponse(schemaPath, request.method, response.status, value, response.headers.get('content-type'))) {
-          throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应字段或合同版本不兼容。未将它当成空列表或成功操作。');
+          throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应数据不兼容');
         }
         return response;
       }
       const failure = await responseFailure(response, schemaPath, request.method);
-      if (typeof window !== 'undefined') {
-        if (failure.code === 'AUTH_REQUIRED' && new URL(request.url).pathname !== '/api/v2/auth/session') {
-          window.dispatchEvent(new Event(AUTH_CHANGED));
-        }
-        if (failure.code === 'RECENT_AUTH_REQUIRED') window.dispatchEvent(new Event(REAUTH_REQUIRED));
-      }
       throw failure;
     },
     onError({ error }) {
       if (error instanceof ApiFailure) return error;
       if (error instanceof Error && error.name === 'AbortError') return error;
-      return new ApiFailure('NETWORK_UNKNOWN', '连接中断，尚不能确定操作是否已提交。不要重复创建新操作；重试将沿用原幂等键。');
+      return new ApiFailure('NETWORK_UNKNOWN', '连接中断，提交结果未知；请重试当前操作');
     },
   });
   return client;
@@ -95,7 +87,7 @@ export function makeClient(baseUrl: string, fetcher: typeof fetch = fetch) {
 export const api = makeClient(typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
 
 export function dataOf<T>(result: { data?: T }): T {
-  if (result.data === undefined) throw new ApiFailure('HTTP_CONTRACT_ERROR', '成功响应缺少合同规定的数据。');
+  if (result.data === undefined) throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应数据缺失');
   return result.data;
 }
 
@@ -138,3 +130,5 @@ export function displayTime(value: string | null | undefined): string {
 export function terminal(state: Schema['RunState']): boolean {
   return state === 'SUCCEEDED' || state === 'FAILED' || state === 'CANCELLED';
 }
+
+export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

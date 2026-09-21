@@ -80,7 +80,6 @@ impl CodexDeployment {
             working_directory: binding.working_directory.clone(),
             executable_path: self.executable_path.clone(),
             native_environment: binding.environment.clone(),
-            custom_provider: None,
         };
         let memory = binding.account.clone();
         let id = ticket.acceptance.resource.id;

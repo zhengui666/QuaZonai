@@ -15,6 +15,7 @@ use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 use std::future::Future;
 
 pub mod account;
+mod model_settings;
 
 type Tx<'a> = Transaction<'a, Postgres>;
 
@@ -22,13 +23,11 @@ type Tx<'a> = Transaction<'a, Postgres>;
 pub struct CodexBindingCheck {
     pub home_binding: String,
     pub profile_origin: ProfileOrigin,
-    pub credential_ref: Option<Id>,
 }
 
 /// A private service snapshot, not a caller-supplied serialized configuration.
 pub struct CodexProfileSnapshot {
     pub profile: CodexProfileViewV1,
-    pub credential_ref: Option<Id>,
 }
 
 pub enum CodexProbePreparation {
@@ -46,17 +45,12 @@ pub struct CodexProbeTicket {
 
 fn view(row: &PgRow) -> Result<CodexProfileViewV1, StoreError> {
     let binding: String = row.try_get("codex_home_ref")?;
-    let endpoint: Option<String> = row.try_get("custom_base_url")?;
     Ok(CodexProfileViewV1 {
         id: db::id(row.try_get("id")?)?,
         name: row.try_get("name")?,
         home_binding: rules::home_binding(&binding).is_ok().then_some(binding),
         profile_origin: db::enum_value(row, "profile_origin")?,
         connection_mode: db::enum_value(row, "connection_mode")?,
-        custom_base_url: endpoint.filter(|value| rules::provider_url(value).is_ok()),
-        credential_configured: row
-            .try_get::<Option<String>, _>("custom_api_key_ref")?
-            .is_some(),
         model_settings: SavedModelSettingsV1 {
             schema_version: SchemaV1,
             use_default_model_settings: row.try_get("use_default_model_settings")?,
@@ -91,16 +85,24 @@ fn observation(row: &PgRow) -> Result<CodexProbeViewV1, StoreError> {
 }
 
 async fn row(tx: &mut Tx<'_>, id: Id, write: bool) -> Result<PgRow, StoreError> {
+    // The local roles share native account state. Always lock their immutable
+    // membership in UUID order before an account-operation row, including reads
+    // and completion, so cross-role expiry/recovery cannot invert lock order.
     let query = if write {
-        "SELECT * FROM app.codex_profiles WHERE id=$1 FOR UPDATE"
+        "SELECT * FROM app.codex_profiles WHERE connection_mode='SYSTEM' AND (id=$1 OR (local_role IS NOT NULL AND EXISTS(SELECT 1 FROM app.codex_profiles WHERE id=$1 AND local_role IS NOT NULL))) ORDER BY id FOR UPDATE"
     } else {
-        "SELECT * FROM app.codex_profiles WHERE id=$1 FOR SHARE"
+        "SELECT * FROM app.codex_profiles WHERE connection_mode='SYSTEM' AND (id=$1 OR (local_role IS NOT NULL AND EXISTS(SELECT 1 FROM app.codex_profiles WHERE id=$1 AND local_role IS NOT NULL))) ORDER BY id FOR SHARE"
     };
-    sqlx::query(query)
+    for row in sqlx::query(query)
         .bind(id.as_uuid())
-        .fetch_optional(&mut **tx)
+        .fetch_all(&mut **tx)
         .await?
-        .ok_or(StoreError::NotFound)
+    {
+        if row.try_get::<uuid::Uuid, _>("id")? == id.as_uuid() {
+            return Ok(row);
+        }
+    }
+    Err(StoreError::NotFound)
 }
 
 /// Lock the selected version; probes and Cycle admission share the same checks.
@@ -126,23 +128,36 @@ pub(crate) async fn snapshot(
         )
         .into());
     }
-    let credential_ref = if profile.connection_mode == ConnectionMode::CustomProvider {
-        Some(
-            row.try_get::<Option<String>, _>("custom_api_key_ref")?
-                .ok_or(StoreError::Integrity)?
-                .try_into()
-                .map_err(|_| StoreError::Integrity)?,
-        )
-    } else {
-        None
-    };
-    Ok(CodexProfileSnapshot {
-        profile,
-        credential_ref,
-    })
+    Ok(CodexProfileSnapshot { profile })
 }
 
 impl Store {
+    /// Trusted process startup only. Role references are created by the local
+    /// migration, never inferred from a user-controlled historical home label.
+    pub async fn local_codex_bindings(&self) -> Result<Vec<CodexHomeBindingV1>, StoreError> {
+        let rows = sqlx::query("SELECT codex_home_ref,local_role FROM app.codex_profiles WHERE local_role IS NOT NULL ORDER BY local_role")
+            .fetch_all(&self.pool).await?;
+        if rows.len() != 2 {
+            return Err(StoreError::Integrity);
+        }
+        rows.iter()
+            .map(|row| {
+                let reference: String = row.try_get("codex_home_ref")?;
+                rules::home_binding(&reference).map_err(|_| StoreError::Integrity)?;
+                let label = match row.try_get::<String, _>("local_role")?.as_str() {
+                    "RESEARCHER" => "研究员",
+                    "REVIEWER" => "独立审阅员",
+                    _ => return Err(StoreError::Integrity),
+                };
+                Ok(CodexHomeBindingV1 {
+                    reference,
+                    label: label.into(),
+                    profile_origin: ProfileOrigin::OperatorMount,
+                })
+            })
+            .collect()
+    }
+
     pub async fn authorize_codex_settings_read(&self, actor: &Actor) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
         read_authority(&mut tx, actor).await?;
@@ -158,7 +173,7 @@ impl Store {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
         read_authority(&mut tx, actor).await?;
-        let rows = sqlx::query("SELECT * FROM app.codex_profiles WHERE ($1::uuid IS NULL OR id<$1) ORDER BY id DESC LIMIT $2")
+        let rows = sqlx::query("SELECT * FROM app.codex_profiles WHERE connection_mode='SYSTEM' AND local_role IS NOT NULL AND ($1::uuid IS NULL OR id<$1) ORDER BY id DESC LIMIT $2")
             .bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(view).collect::<Result<Vec<_>, _>>()?,
@@ -216,29 +231,16 @@ impl Store {
         if occupied {
             return Err(StoreError::Conflict);
         }
-        let (mode, endpoint, credential) = match &request.connection {
-            CodexConnectionCreateV1::System {} => (ConnectionMode::System, None, None),
-            CodexConnectionCreateV1::CustomProvider {
-                base_url,
-                credential_ref,
-            } => (
-                ConnectionMode::CustomProvider,
-                Some(base_url.as_str()),
-                Some(*credential_ref),
-            ),
-        };
         verify(CodexBindingCheck {
             home_binding: request.home_binding.clone(),
             profile_origin: request.profile_origin,
-            credential_ref: credential,
         })
         .await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         let settings = &request.model_settings;
-        let row = sqlx::query("INSERT INTO app.codex_profiles(id,name,connection_mode,profile_origin,codex_home_ref,custom_base_url,custom_api_key_ref,custom_provider_options,use_default_model_settings,saved_model,saved_reasoning_effort,saved_fast_mode) VALUES($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11) RETURNING *")
-            .bind(prepared.target.as_uuid()).bind(&request.name).bind(db::code(&mode)?)
+        let row = sqlx::query("INSERT INTO app.codex_profiles(id,name,connection_mode,profile_origin,codex_home_ref,use_default_model_settings,saved_model,saved_reasoning_effort,saved_fast_mode) VALUES($1,$2,'SYSTEM',$3,$4,$5,$6,$7,$8) RETURNING *")
+            .bind(prepared.target.as_uuid()).bind(&request.name)
             .bind(db::code(&request.profile_origin)?).bind(&request.home_binding)
-            .bind(endpoint).bind(credential.map(|id| id.to_string()))
             .bind(settings.use_default_model_settings).bind(&settings.saved_model)
             .bind(&settings.saved_reasoning_effort).bind(settings.saved_fast_mode).fetch_one(&mut *tx).await?;
         let result = commands::finish(&mut tx, prepared, view(&row)?, 201).await?;
@@ -279,51 +281,16 @@ impl Store {
         if current != request.expected_revision {
             return Err(StoreError::RevisionConflict { current });
         }
-        let (mode, endpoint, credential) = match &request.connection {
-            CodexConnectionUpdateV1::System {} => (ConnectionMode::System, None, None),
-            CodexConnectionUpdateV1::CustomProvider {
-                base_url,
-                credential_ref,
-            } => {
-                let credential = match credential_ref {
-                    Some(id) => *id,
-                    None if old.try_get::<String, _>("connection_mode")? == "CUSTOM_PROVIDER" => {
-                        old.try_get::<Option<String>, _>("custom_api_key_ref")?
-                            .ok_or_else(|| {
-                                domain::research::invalid(
-                                    "connection.credential_ref",
-                                    "CUSTOM_CREDENTIAL_REQUIRED",
-                                )
-                            })?
-                            .try_into()
-                            .map_err(|_| StoreError::Integrity)?
-                    }
-                    None => {
-                        return Err(domain::research::invalid(
-                            "connection.credential_ref",
-                            "CUSTOM_CREDENTIAL_REQUIRED",
-                        )
-                        .into())
-                    }
-                };
-                (
-                    ConnectionMode::CustomProvider,
-                    Some(base_url.as_str()),
-                    Some(credential),
-                )
-            }
-        };
         verify(CodexBindingCheck {
             home_binding: old.try_get("codex_home_ref")?,
             profile_origin: db::enum_value(&old, "profile_origin")?,
-            credential_ref: credential,
         })
         .await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         let settings = &request.model_settings;
-        let row = sqlx::query("UPDATE app.codex_profiles SET name=$2,connection_mode=$3,custom_base_url=$4,custom_api_key_ref=$5,custom_provider_options=NULL,use_default_model_settings=$6,saved_model=$7,saved_reasoning_effort=$8,saved_fast_mode=$9 WHERE id=$1 RETURNING *")
-            .bind(id.as_uuid()).bind(&request.name).bind(db::code(&mode)?).bind(endpoint)
-            .bind(credential.map(|id| id.to_string())).bind(settings.use_default_model_settings)
+        model_settings::validate(&mut tx, &view(&old)?, settings).await?;
+        let row = sqlx::query("UPDATE app.codex_profiles SET use_default_model_settings=$2,saved_model=$3,saved_reasoning_effort=$4,saved_fast_mode=$5 WHERE id=$1 RETURNING *")
+            .bind(id.as_uuid()).bind(settings.use_default_model_settings)
             .bind(&settings.saved_model).bind(&settings.saved_reasoning_effort).bind(settings.saved_fast_mode).fetch_one(&mut *tx).await?;
         let result = commands::finish(&mut tx, prepared, view(&row)?, 200).await?;
         tx.commit().await?;

@@ -26,11 +26,24 @@ QuaZonai 是面向独立研究者的单用户、自托管研究工作台。Rust 
 
 从研究结果到目标交付，资格、组合评估、人工授权与下游领取有各自的边界。页面显示的历史成功不等于当前资格；目标包交付也不是实际成交。已实现入口和未验收场景见[覆盖表](docs/architecture/issue-62-execution.md#executable-coverage-map)。
 
+
+## 本机工作台
+
+打开本机网页直接进入研究工作台，不使用账号、动态验证码或设备信任。
+API 和网页代理只监听 loopback；不要把它们暴露到局域网或公网。
+
+Codex 从服务进程的 `PATH` 自动发现，沿用同一操作系统用户的 `HOME` /
+`CODEX_HOME` 和原生配置。先在该用户的终端运行 `codex login`。
+“设置 → Codex”只配置模型与推理强度；启用“本机默认”时不覆盖原生设置，
+关闭时可选原生目录提供的模型与强度。研究员和独立审阅员自动建立，无需注册 Provider 或目录。
+
+右上角的主题按钮切换浅色／深色。首次跟随系统，手动选择后保存在当前浏览器。
+
 ## 个人部署：真实服务与持久数据
 
 [个人部署指南](docs/user-guide.md)给出 Linux 上的正式构建、独立状态目录、API/Worker 服务托管、同源 HTTPS 网关、升级与恢复路径。网页由 Caddy 提供静态文件，真实请求进入 Rust API；API 与 Worker 使用同一份持久数据和配置。它不是 `vite preview`，也不会在服务启动时自动创建密钥或执行数据库迁移。
 
-运行前需要准备 PostgreSQL/PGMQ、独立数据库身份和正确的公开 HTTPS Origin。原生 Codex 配置、授权数据与独立 Runtime 是实际研究的额外前提；空配置不会被伪装成就绪。先在可丢弃环境完成[验收与恢复检查](docs/user-guide.md#recovery)，再决定是否用于自己的正式工作。完整配置和操作仍以 [OPERATIONS](OPERATIONS.md) 为准。
+运行前需要准备 PostgreSQL/PGMQ、独立数据库身份和匹配的本机 Origin。本机 Codex、授权数据与独立 Runtime 是实际研究的额外前提；空配置不会被伪装成就绪。先在可丢弃环境完成[验收与恢复检查](docs/user-guide.md#recovery)，再决定是否用于自己的正式工作。完整配置和操作仍以 [OPERATIONS](OPERATIONS.md) 为准。
 
 <a id="quickstart"></a>
 ## 无凭据界面预览

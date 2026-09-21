@@ -1,7 +1,6 @@
 //! Immutable original command results. Operator writes serialize on the real
 //! single-operator authority row, not on an invented workflow/intent service.
 use crate::{
-    auth,
     authority::{self, Actor},
     db, Store, StoreError,
 };
@@ -83,7 +82,7 @@ pub(crate) async fn operator(
     }
     let (scope, grant) = match actor {
         Actor::Browser { .. } => {
-            authority::browser(tx, actor, true, true).await?;
+            authority::browser(tx, actor, true).await?;
             (String::from("OPERATOR"), None)
         }
         Actor::Machine { operator_grant, .. } => {
@@ -161,7 +160,7 @@ pub(crate) async fn operator(
     })
 }
 
-/// Native I/O can outlive a recent-auth or grant deadline even while row locks
+/// Native I/O can outlive a session or grant deadline even while row locks
 /// serialize revocation. New integration writes recheck the database clock after
 /// that I/O, immediately before recording their immutable result.
 pub(crate) async fn recheck_authority(
@@ -170,7 +169,7 @@ pub(crate) async fn recheck_authority(
     prepared: &Prepared,
 ) -> Result<(), StoreError> {
     match actor {
-        Actor::Browser { .. } => authority::browser(tx, actor, true, true).await?,
+        Actor::Browser { .. } => authority::browser(tx, actor, true).await?,
         Actor::Machine { .. } => {
             let machine = authority::machine(tx, actor, true).await?;
             if machine.kind != PrincipalKind::Cli
@@ -273,16 +272,14 @@ impl Store {
         tx.commit().await?;
         Ok(result)
     }
-    /// The adapter has cryptographically verified the code against this native
-    /// snapshot; this transaction consumes its exact step and binds one command.
+    /// A local CLI capability binds one exact, expiring command. Agent and
+    /// automation identities cannot issue these grants.
     pub async fn issue_operator_grant(
         &self,
         actor: &Actor,
         idempotency_key: &str,
         command: &OperatorCommand,
         requested_target: Option<Id>,
-        snapshot: &auth::AuthSnapshot,
-        verified_step: i64,
     ) -> Result<CommandResult<OperatorGrantView>, StoreError> {
         key(idempotency_key)?;
         let request = grant_request(command, requested_target)?;
@@ -301,7 +298,9 @@ impl Store {
             tx.commit().await?;
             return Ok(result);
         }
-        let (epoch, now) = auth::consume_step(&mut tx, snapshot, verified_step).await?;
+        let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&mut *tx)
+            .await?;
         let expires_at = std::cmp::min(now + Duration::seconds(300), machine.expires_at);
         if expires_at <= now {
             return Err(StoreError::InvalidCredentials);
