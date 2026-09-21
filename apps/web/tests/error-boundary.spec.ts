@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { fixture } from './fixtures';
 
 // Fault injection is confined to the existing Vite test server. The production
 // bundle has no crash switch, fixture route or alternate application entry.
@@ -88,3 +89,60 @@ test('healthy children render without a recovery prompt', async ({ page }) => {
   await expect(page.getByText('正常研究工作台', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '重新加载页面', exact: true })).toHaveCount(0);
 });
+
+for (const system of ['light', 'dark'] as const) {
+  test(`storage-blocked ${system} system retains the opposite selection after a render failure`, async ({ page }) => {
+    const selected = system === 'light' ? 'dark' : 'light';
+    const diagnostics: string[] = [];
+    page.on('console', message => { diagnostics.push(message.text()); });
+    page.on('pageerror', error => { diagnostics.push(error.message); });
+    await page.addInitScript(() => {
+      for (const key of ['getItem', 'setItem'] as const) {
+        Storage.prototype[key] = () => { throw new DOMException('Blocked', 'SecurityError'); };
+      }
+    });
+    await page.emulateMedia({ colorScheme: system });
+    const state = await fixture(page);
+    await page.route(projectModule, async route => {
+      const native = new URL(route.request().url());
+      if (native.searchParams.has('boundary-original')) { await route.continue(); return; }
+      native.searchParams.set('boundary-original', 'true');
+      const original = JSON.stringify(native.pathname + native.search);
+      await route.fulfill({
+        contentType: 'application/javascript',
+        body: `
+          import React from '/node_modules/.vite/deps/react.js';
+          const { createElement, useState } = React;
+          import { Projects as OriginalProjects } from ${original};
+          export * from ${original};
+          export function Projects() {
+            const [failed, setFailed] = useState(false);
+            if (failed) throw new Error('private-render-fixture-detail');
+            return createElement('section', null,
+              createElement('button', { onClick: () => setFailed(true) }, '触发测试渲染错误'),
+              createElement(OriginalProjects));
+          }
+        `,
+      });
+    });
+    await page.goto(origin);
+    await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+    await page.getByRole('button', {
+      name: selected === 'dark' ? '切换为深色主题' : '切换为浅色主题',
+    }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', selected);
+    await page.getByRole('button', { name: '触发测试渲染错误', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '页面暂时无法显示', exact: true })).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', selected);
+    expect(await page.evaluate(() => document.documentElement.style.colorScheme)).toBe(selected);
+    expect(await page.locator('meta[name="theme-color"]').getAttribute('content'))
+      .toBe(selected === 'dark' ? '#141414' : '#f6f7fa');
+    await page.emulateMedia({ colorScheme: selected });
+    await page.emulateMedia({ colorScheme: system });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', selected);
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+    expect(diagnostics.join('\n')).not.toContain('private-render-fixture-detail');
+    await expect(page.locator('body')).not.toContainText('private-render-fixture-detail');
+    expect(state.commands).toEqual([]);
+  });
+}

@@ -72,6 +72,7 @@
 - **本机边界**：API 仅接受 loopback 监听与 loopback 公共地址，包括 HTTPS；
   `localhost` 或字面量 loopback IPv4/IPv6 使用同一规则贯穿 CLI、Worker、
   原生 Thread 与 MCP；HTTP 必须显式启用，传递实际 PUBLIC_URL，不替换主机名。
+  Worker 传递自身解析得到的 `development_http`；不得从 URL scheme 推断授权。
   独立 Runtime/Downstream 的字面量 loopback HTTP 端点规则不变。
   保留 Host、Origin 与机器 Bearer 的原生校验。错误 Bearer 不能回退成浏览器身份。
   CLI 的精确命令授权不再要求验证码，但仍只允许有效 CLI 能力、原始请求、
@@ -95,6 +96,8 @@
   实际数据、简短错误／状态、不可逆操作确认和无障碍名称。
   使用 Ant Design 原生浅色／深色算法，覆盖导航、表单、表格、浮层和错误状态。
   首次跟随系统；明确选择后持久保存并跨标签页同步，存储不可用时仍可切换。
+  有效主题由错误边界之上的唯一状态拥有者保存，正常界面与错误恢复共享；
+  存储不可用时的手动选择不得因子组件渲染失败而重置为系统主题。
   切换不得重置未保存表单或请求，首屏同步主题并保留减少动态效果偏好。
 
 验收使用现有 Actions 构建、生成器与真实数据库／浏览器入口：不提供验证码即可

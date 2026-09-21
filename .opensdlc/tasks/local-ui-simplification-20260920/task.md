@@ -204,3 +204,26 @@ non-account obligations remain.
 Fresh focused native tests, all original final-Head workflows and independent
 read-only review are required. The previous e5 Web pass is not approval of this
 later source. No user-host installation, real account or #62 completion claimed.
+
+## Explicit transport and recovery-state follow-up
+
+Review5262205269 on027e156 identified inferred Worker HTTP opt-in and an
+independent recovery theme that lost session-only selection with blocked
+storage. Issue98/comment5754123055 specifies the correction. Worker now
+validates and forwards the parsed flag, not a scheme-derived value. A single
+native React context owns the existing theme state above the error boundary;
+the application and recovery share it. Actual browser regressions toggle
+with blocked storage before a nested render error in both system themes.
+
+CI35545652416 returned694Store/Server passes and one failed daily-quota
+assertion. Its old assertion did not record the actual result, so a root cause
+is not claimed from that log. The regression now distinguishes deliberate
+SKIP LOCKED contention from an uncontended quota check with a native committed
+row-lock barrier and diagnostic output. Both exact quota assertions and
+unchanged run/attempt counts remain. Production scheduler, limits and timing
+are unchanged. No sleep or retry converts a failure into success.
+
+All source in this follow-up requires actual native verification, all original
+same-final-Head workflows and explicit clean independent read-only review
+before merge. Account-only waivers, owner-host nondeployment and remaining
+Issue62 boundaries are unchanged.
