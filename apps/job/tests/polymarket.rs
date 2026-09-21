@@ -68,7 +68,7 @@ fn pnl(result: &NativeSimulationResultV1) -> f64 {
         .statistics
         .iter()
         .find(|s| {
-            s.group == NativeStatisticGroup::Pnls
+            s.group == NativeStatisticGroup::Pnl
                 && s.native_key == "PnL (total)"
                 && s.currency.as_deref() == Some("pUSD")
         })
@@ -83,7 +83,11 @@ fn native_shared_cash_settles_zero_one_and_half_at_original_availability() {
         for delay in [0, 2 * 1440] {
             let (catalog, request) = simulation("0", Some(payouts), delay);
             let result = simulate(catalog.path(), &request).unwrap();
-            assert_eq!(result.base_currency, "pUSD");
+            assert!(result
+                .statistics
+                .iter()
+                .filter(|s| s.group == NativeStatisticGroup::Pnl)
+                .all(|s| s.currency.as_deref() == Some("pUSD")));
             assert_eq!(result.consumed_target_points.get(), 1);
             assert_eq!(
                 result
