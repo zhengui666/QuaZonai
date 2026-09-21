@@ -1,5 +1,23 @@
 # Rust 复用决策与可复核证据
 
+## 2026-09-22：Polymarket 原生历史数据准备
+
+复用 `nautilus-polymarket =0.63.0`（LGPL-3.0-only），关闭默认特性。
+核查对应 [v2.0.0rc4 原生客户端](https://github.com/nautechsystems/nautilus_trader/tree/v2.0.0rc4/crates/adapters/polymarket/src/http)：
+PolymarketGammaRawHttpClient::get_gamma_market_by_slug、
+parse_gamma_market、create_instrument_from_def、
+PolymarketDataApiHttpClient::request_trade_ticks。HTTP、分页、金融字段解析
+与原生资产构造均留给上游；文件导入直接消费原生类型并使用现有
+ParquetDataCatalog::write_instruments / write_to_parquet。
+
+该版本的历史成交在 offset 触顶时返回部分数据，且产生同秒内的合成
+纳秒顺序；不能从成功响应推导完整覆盖或 PIT。当前元数据不回填历史，
+原始输入与终局信息保存在原生目录之外。无需 Python，也不需要交易凭据。
+
+新增依赖只属于显式启用的操作员数据准备二进制，不改变默认科学
+job 的网络边界。本项测试/构建结果必须引用对应 PR 的实际最终 Head；
+本文只记录 API 核查，不宣称已运行、真实数据完整或组合模拟已接通。
+
 核查日期：2026-09-05。此表是实施选择及证据，不是完成矩阵。完整产品合同仍在 DESIGN；不得把上游 README 的功能列表当成本项目已实现能力。
 
 ## 决策规则

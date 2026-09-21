@@ -18,14 +18,22 @@ use nautilus_polymarket::http::{
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, fs, io::Read, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeSet,
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 const MAX_INPUT_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_ROWS: usize = 1_000_000;
 const NATIVE_VERSION: &str = "0.63.0";
 
 #[derive(Parser)]
-#[command(version, about = "Prepare native Polymarket history; does not qualify or register research data")]
+#[command(
+    version,
+    about = "Prepare native Polymarket history; does not qualify or register research data"
+)]
 struct Arguments {
     #[command(subcommand)]
     command: Command,
@@ -99,7 +107,10 @@ struct ImportReport {
 }
 
 fn epoch_ns(seconds: u64) -> Result<UnixNanos> {
-    Ok(seconds.checked_mul(1_000_000_000).context("TIMESTAMP_RANGE")?.into())
+    Ok(seconds
+        .checked_mul(1_000_000_000)
+        .context("TIMESTAMP_RANGE")?
+        .into())
 }
 
 fn valid_price(price: Decimal) -> bool {
@@ -113,16 +124,36 @@ fn time_order(event: UnixNanos, available: UnixNanos) -> Result<()> {
 
 /// Strip terminal/live observations without inventing earlier metadata timestamps.
 fn historical_instrument(instrument: &InstrumentAny) -> Result<InstrumentAny> {
-    ensure!(matches!(instrument, InstrumentAny::BinaryOption(_)), "BINARY_OPTION_REQUIRED");
-    ensure!(instrument.venue().to_string() == "POLYMARKET", "POLYMARKET_VENUE_REQUIRED");
+    ensure!(
+        matches!(instrument, InstrumentAny::BinaryOption(_)),
+        "BINARY_OPTION_REQUIRED"
+    );
+    ensure!(
+        instrument.venue().to_string() == "POLYMARKET",
+        "POLYMARKET_VENUE_REQUIRED"
+    );
     let mut value = serde_json::to_value(instrument)?;
-    if let Some(info) = value.get_mut("BinaryOption")
-        .and_then(|v| v.get_mut("info")).and_then(serde_json::Value::as_object_mut)
+    if let Some(info) = value
+        .get_mut("BinaryOption")
+        .and_then(|v| v.get_mut("info"))
+        .and_then(serde_json::Value::as_object_mut)
     {
-        for key in ["active", "closed", "closedTime", "closed_time", "resolved", "winner",
-            "tokens", "outcomePrices", "outcome_prices", "umaResolutionStatus",
-            "accepting_orders", "acceptingOrders", "gamma_market", "gamma_event"]
-        {
+        for key in [
+            "active",
+            "closed",
+            "closedTime",
+            "closed_time",
+            "resolved",
+            "winner",
+            "tokens",
+            "outcomePrices",
+            "outcome_prices",
+            "umaResolutionStatus",
+            "accepting_orders",
+            "acceptingOrders",
+            "gamma_market",
+            "gamma_event",
+        ] {
             info.remove(key);
         }
     }
@@ -130,13 +161,25 @@ fn historical_instrument(instrument: &InstrumentAny) -> Result<InstrumentAny> {
 }
 
 fn validate(archive: &NativeArchive) -> Result<()> {
-    ensure!(!archive.source_reference.trim().is_empty() && archive.source_reference.len() <= 2000,
-        "SOURCE_REFERENCE_REQUIRED");
-    ensure!(archive.source_observed_at <= Utc::now(), "FUTURE_SOURCE_OBSERVATION");
-    ensure!((1..=256).contains(&archive.instruments.len()), "INSTRUMENT_LIMIT");
-    let rows = archive.trades.len().checked_add(archive.quotes.len())
+    ensure!(
+        !archive.source_reference.trim().is_empty() && archive.source_reference.len() <= 2000,
+        "SOURCE_REFERENCE_REQUIRED"
+    );
+    ensure!(
+        archive.source_observed_at <= Utc::now(),
+        "FUTURE_SOURCE_OBSERVATION"
+    );
+    ensure!(
+        (1..=256).contains(&archive.instruments.len()),
+        "INSTRUMENT_LIMIT"
+    );
+    let rows = archive
+        .trades
+        .len()
+        .checked_add(archive.quotes.len())
         .and_then(|n| n.checked_add(archive.deltas.len()))
-        .and_then(|n| n.checked_add(archive.bars.len())).context("ROW_COUNT_RANGE")?;
+        .and_then(|n| n.checked_add(archive.bars.len()))
+        .context("ROW_COUNT_RANGE")?;
     ensure!((1..=MAX_ROWS).contains(&rows), "NATIVE_ROW_LIMIT_OR_EMPTY");
     let mut ids = BTreeSet::new();
     for instrument in &archive.instruments {
@@ -146,29 +189,52 @@ fn validate(archive: &NativeArchive) -> Result<()> {
     let mut trade_ids = BTreeSet::new();
     for trade in &archive.trades {
         ensure!(ids.contains(&trade.instrument_id), "UNMAPPED_TRADE");
-        ensure!(valid_price(trade.price.as_decimal()) && trade.size.as_decimal() > Decimal::ZERO,
-            "INVALID_BINARY_TRADE");
-        ensure!(trade_ids.insert((trade.instrument_id, trade.trade_id)), "DUPLICATE_TRADE_ID");
+        ensure!(
+            valid_price(trade.price.as_decimal()) && trade.size.as_decimal() > Decimal::ZERO,
+            "INVALID_BINARY_TRADE"
+        );
+        ensure!(
+            trade_ids.insert((trade.instrument_id, trade.trade_id)),
+            "DUPLICATE_TRADE_ID"
+        );
         time_order(trade.ts_event, trade.ts_init)?;
     }
     for quote in &archive.quotes {
         ensure!(ids.contains(&quote.instrument_id), "UNMAPPED_QUOTE");
-        ensure!(valid_price(quote.bid_price.as_decimal()) && valid_price(quote.ask_price.as_decimal())
-            && quote.bid_price <= quote.ask_price, "INVALID_BINARY_QUOTE");
+        ensure!(
+            valid_price(quote.bid_price.as_decimal())
+                && valid_price(quote.ask_price.as_decimal())
+                && quote.bid_price <= quote.ask_price,
+            "INVALID_BINARY_QUOTE"
+        );
         time_order(quote.ts_event, quote.ts_init)?;
     }
     for delta in &archive.deltas {
         ensure!(ids.contains(&delta.instrument_id), "UNMAPPED_BOOK_DELTA");
-        ensure!(valid_price(delta.order.price.as_decimal()), "INVALID_BINARY_BOOK_PRICE");
+        ensure!(
+            valid_price(delta.order.price.as_decimal()),
+            "INVALID_BINARY_BOOK_PRICE"
+        );
         time_order(delta.ts_event, delta.ts_init)?;
     }
     for bar in &archive.bars {
         ensure!(ids.contains(&bar.bar_type.instrument_id()), "UNMAPPED_BAR");
-        ensure!(bar.bar_type.is_externally_aggregated()
-            && bar.bar_type.spec().price_type == PriceType::Last, "ONLY_NATIVE_LAST_BARS");
-        ensure!([bar.open, bar.high, bar.low, bar.close].iter().all(|p| valid_price(p.as_decimal()))
-            && bar.low <= bar.open && bar.low <= bar.close && bar.high >= bar.open
-            && bar.high >= bar.close && bar.high >= bar.low, "INVALID_BINARY_BAR");
+        ensure!(
+            bar.bar_type.is_externally_aggregated()
+                && bar.bar_type.spec().price_type == PriceType::Last,
+            "ONLY_NATIVE_LAST_BARS"
+        );
+        ensure!(
+            [bar.open, bar.high, bar.low, bar.close]
+                .iter()
+                .all(|p| valid_price(p.as_decimal()))
+                && bar.low <= bar.open
+                && bar.low <= bar.close
+                && bar.high >= bar.open
+                && bar.high >= bar.close
+                && bar.high >= bar.low,
+            "INVALID_BINARY_BAR"
+        );
         time_order(bar.ts_event, bar.ts_init)?;
     }
     Ok(())
@@ -178,21 +244,41 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
     validate(&archive)?;
     // Exclusively create a new destination. Never overwrite a registered catalog or user file.
     fs::create_dir(output).context("OUTPUT_MUST_BE_NEW")?;
-    fs::write(output.join("source-evidence.json"), serde_json::to_vec_pretty(&archive)?)?;
+    fs::write(
+        output.join("source-evidence.json"),
+        serde_json::to_vec_pretty(&archive)?,
+    )?;
     let root = output.join("catalog");
     fs::create_dir(&root)?;
-    let catalog = ParquetDataCatalog::from_uri(root.to_str().context("CATALOG_PATH_ENCODING")?,
-        None, Some(4096), None, None)?;
-    let instruments = archive.instruments.iter().map(historical_instrument).collect::<Result<Vec<_>>>()?;
+    let catalog = ParquetDataCatalog::from_uri(
+        root.to_str().context("CATALOG_PATH_ENCODING")?,
+        None,
+        Some(4096),
+        None,
+        None,
+    )?;
+    let instruments = archive
+        .instruments
+        .iter()
+        .map(historical_instrument)
+        .collect::<Result<Vec<_>>>()?;
     catalog.write_instruments(instruments)?;
     archive.trades.sort_by_key(|r| (r.ts_init, r.ts_event));
     archive.quotes.sort_by_key(|r| (r.ts_init, r.ts_event));
     archive.deltas.sort_by_key(|r| (r.ts_init, r.ts_event));
     archive.bars.sort_by_key(|r| (r.ts_init, r.ts_event));
-    if !archive.trades.is_empty() { catalog.write_to_parquet(&archive.trades, None, None, None)?; }
-    if !archive.quotes.is_empty() { catalog.write_to_parquet(&archive.quotes, None, None, None)?; }
-    if !archive.deltas.is_empty() { catalog.write_to_parquet(&archive.deltas, None, None, None)?; }
-    if !archive.bars.is_empty() { catalog.write_to_parquet(&archive.bars, None, None, None)?; }
+    if !archive.trades.is_empty() {
+        catalog.write_to_parquet(&archive.trades, None, None, None)?;
+    }
+    if !archive.quotes.is_empty() {
+        catalog.write_to_parquet(&archive.quotes, None, None, None)?;
+    }
+    if !archive.deltas.is_empty() {
+        catalog.write_to_parquet(&archive.deltas, None, None, None)?;
+    }
+    if !archive.bars.is_empty() {
+        catalog.write_to_parquet(&archive.bars, None, None, None)?;
+    }
     let report = ImportReport {
         schema_version: SchemaV1,
         native_version: NATIVE_VERSION.into(),
@@ -215,13 +301,19 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
         ],
     };
     // Written last: a directory without this report is an interrupted, unpublished import.
-    fs::write(output.join("import-report.json"), serde_json::to_vec_pretty(&report)?)?;
+    fs::write(
+        output.join("import-report.json"),
+        serde_json::to_vec_pretty(&report)?,
+    )?;
     Ok(report)
 }
 
 fn read_archive(path: &Path) -> Result<NativeArchive> {
     let file = fs::File::open(path)?;
-    ensure!(file.metadata()?.is_file() && file.metadata()?.len() <= MAX_INPUT_BYTES, "INPUT_FILE_LIMIT");
+    ensure!(
+        file.metadata()?.is_file() && file.metadata()?.len() <= MAX_INPUT_BYTES,
+        "INPUT_FILE_LIMIT"
+    );
     let mut bytes = Vec::new();
     file.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)?;
     ensure!(bytes.len() as u64 <= MAX_INPUT_BYTES, "INPUT_FILE_LIMIT");
@@ -229,27 +321,48 @@ fn read_archive(path: &Path) -> Result<NativeArchive> {
 }
 
 async fn fetch(slug: &str, start: u64, end: u64, max_trades: u32) -> Result<NativeArchive> {
-    ensure!(!slug.is_empty() && slug.len() <= 240
-        && slug.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'), "INVALID_MARKET_SLUG");
-    ensure!(start < end && end <= u64::try_from(Utc::now().timestamp())?, "INVALID_HISTORY_WINDOW");
+    ensure!(
+        !slug.is_empty()
+            && slug.len() <= 240
+            && slug.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+        "INVALID_MARKET_SLUG"
+    );
+    ensure!(
+        start < end && end <= u64::try_from(Utc::now().timestamp())?,
+        "INVALID_HISTORY_WINDOW"
+    );
     ensure!((1..=10000).contains(&max_trades), "TRADE_LIMIT");
     let start_ns = epoch_ns(start)?;
     let end_ns = epoch_ns(end)?;
     let gamma = PolymarketGammaRawHttpClient::new(None, 30)?;
     let market = gamma.get_gamma_market_by_slug(slug).await?;
     let observed = Utc::now();
-    let observed_ns = UnixNanos::from(u64::try_from(observed.timestamp_nanos_opt().context("CLOCK_RANGE")?)?);
+    let observed_ns = UnixNanos::from(u64::try_from(
+        observed.timestamp_nanos_opt().context("CLOCK_RANGE")?,
+    )?);
     let defs = parse_gamma_market(&market)?;
     let client = PolymarketDataApiHttpClient::new(None, 30)?;
     let mut instruments = Vec::new();
     let mut trades = Vec::new();
     for def in defs {
         let instrument = create_instrument_from_def(&def, observed_ns)?;
-        let rows = client.request_trade_ticks(instrument.id(), def.condition_id.as_str(),
-            def.token_id.as_str(), instrument.price_precision(), instrument.size_precision(),
-            Some(start_ns), Some(epoch_ns(end - 1)?), Some(max_trades)).await?;
+        let rows = client
+            .request_trade_ticks(
+                instrument.id(),
+                def.condition_id.as_str(),
+                def.token_id.as_str(),
+                instrument.price_precision(),
+                instrument.size_precision(),
+                Some(start_ns),
+                Some(epoch_ns(end - 1)?),
+                Some(max_trades),
+            )
+            .await?;
         // Enforce this command's half-open interval even if the upstream API returns a wider page.
-        trades.extend(rows.into_iter().filter(|r| r.ts_event >= start_ns && r.ts_event < end_ns));
+        trades.extend(
+            rows.into_iter()
+                .filter(|r| r.ts_event >= start_ns && r.ts_event < end_ns),
+        );
         instruments.push(instrument);
     }
     Ok(NativeArchive {
@@ -266,15 +379,28 @@ async fn main() {
     let args = Arguments::parse();
     let result = match args.command {
         Command::Import { input, output } => read_archive(&input).and_then(|a| import(a, &output)),
-        Command::Fetch { market_slug, start_seconds, end_seconds, max_trades, output } => {
-            match fetch(&market_slug, start_seconds, end_seconds, max_trades).await {
-                Ok(archive) => import(archive, &output), Err(error) => Err(error),
-            }
-        }
+        Command::Fetch {
+            market_slug,
+            start_seconds,
+            end_seconds,
+            max_trades,
+            output,
+        } => match fetch(&market_slug, start_seconds, end_seconds, max_trades).await {
+            Ok(archive) => import(archive, &output),
+            Err(error) => Err(error),
+        },
     };
     match result {
-        Ok(report) => { println!("{}", serde_json::to_string(&report).expect("report serialization")); }
-        Err(_) => { eprintln!("QZ_POLYMARKET_HISTORY_FAILED"); std::process::exit(1); }
+        Ok(report) => {
+            println!(
+                "{}",
+                serde_json::to_string(&report).expect("report serialization")
+            );
+        }
+        Err(_) => {
+            eprintln!("QZ_POLYMARKET_HISTORY_FAILED");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -282,29 +408,52 @@ async fn main() {
 mod tests {
     use super::*;
     use nautilus_model::{
-        enums::{AggressorSide, AssetClass}, identifiers::{InstrumentId, Symbol, TradeId},
-        instruments::BinaryOption, types::{Currency, Price, Quantity},
+        enums::{AggressorSide, AssetClass},
+        identifiers::{InstrumentId, Symbol, TradeId},
+        instruments::BinaryOption,
+        types::{Currency, Price, Quantity},
     };
     use std::str::FromStr;
 
     fn archive() -> NativeArchive {
-        let id = InstrumentId::from_str("test-condition-123456789012345678901234567890.POLYMARKET").unwrap();
+        let id = InstrumentId::from_str("test-condition-123456789012345678901234567890.POLYMARKET")
+            .unwrap();
         let instrument = BinaryOption::builder()
-            .instrument_id(id).raw_symbol(Symbol::new("123456789012345678901234567890"))
-            .asset_class(AssetClass::Alternative).currency(Currency::from_str("USD").unwrap())
-            .activation_ns(0_u64.into()).expiration_ns(1000_u64.into())
-            .price_precision(4).size_precision(6).price_increment(Price::from("0.0001"))
+            .instrument_id(id)
+            .raw_symbol(Symbol::new("123456789012345678901234567890"))
+            .asset_class(AssetClass::Alternative)
+            .currency(Currency::from_str("USD").unwrap())
+            .activation_ns(0_u64.into())
+            .expiration_ns(1000_u64.into())
+            .price_precision(4)
+            .size_precision(6)
+            .price_increment(Price::from("0.0001"))
             .size_increment(Quantity::from("0.000001"))
-            .ts_event(0_u64.into()).ts_init(0_u64.into()).build().unwrap();
-        let trade = |time: u64, name: &str| TradeTick::new(id, Price::from("0.4200"),
-            Quantity::from("2.000000"), AggressorSide::Buyer, TradeId::new(name), time.into(), (time + 1).into());
+            .ts_event(0_u64.into())
+            .ts_init(0_u64.into())
+            .build()
+            .unwrap();
+        let trade = |time: u64, name: &str| {
+            TradeTick::new(
+                id,
+                Price::from("0.4200"),
+                Quantity::from("2.000000"),
+                AggressorSide::Buyer,
+                TradeId::new(name),
+                time.into(),
+                (time + 1).into(),
+            )
+        };
         NativeArchive {
-            schema_version: SchemaV1, source_reference: "FIXTURE: native catalog round-trip".into(),
+            schema_version: SchemaV1,
+            source_reference: "FIXTURE: native catalog round-trip".into(),
             source_observed_at: DateTime::from_timestamp(0, 0).unwrap(),
             source_metadata: serde_json::json!({"winner": "Yes", "closed": true}),
             instruments: vec![InstrumentAny::BinaryOption(instrument)],
             trades: vec![trade(20, "second"), trade(10, "first")],
-            quotes: Vec::new(), deltas: Vec::new(), bars: Vec::new(),
+            quotes: Vec::new(),
+            deltas: Vec::new(),
+            bars: Vec::new(),
         }
     }
 
@@ -320,12 +469,16 @@ mod tests {
         assert_eq!(report.coverage, "UNPROVEN");
         assert!(!report.registered_in_quazonai);
         let root = target.join("catalog");
-        let mut catalog = ParquetDataCatalog::from_uri(root.to_str().unwrap(), None, None, None, None).unwrap();
+        let mut catalog =
+            ParquetDataCatalog::from_uri(root.to_str().unwrap(), None, None, None, None).unwrap();
         let instruments = catalog.instruments(None, None, None).unwrap();
         assert_eq!(instruments.len(), 1);
         assert_eq!(instruments[0].id(), expected_id);
-        let rows = catalog.query::<TradeTick>(None, None, None, None, None, true).unwrap()
-            .collect::<Result<Vec<_>, _>>().unwrap();
+        let rows = catalog
+            .query::<TradeTick>(None, None, None, None, None, true)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         assert_eq!(rows.len(), 2);
         assert!(target.join("source-evidence.json").exists());
         assert!(!root.join("source-evidence.json").exists());
@@ -339,7 +492,10 @@ mod tests {
             match mutation {
                 0 => data.trades.push(data.trades[0]),
                 1 => data.source_reference.clear(),
-                2 => data.trades[0].instrument_id = InstrumentId::from_str("other.POLYMARKET").unwrap(),
+                2 => {
+                    data.trades[0].instrument_id =
+                        InstrumentId::from_str("other.POLYMARKET").unwrap()
+                }
                 3 => data.trades[0].ts_init = 0_u64.into(),
                 _ => data.trades.clear(),
             }
@@ -355,7 +511,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         fs::write(directory.path().join("owner-data"), b"preserve").unwrap();
         assert!(import(archive(), directory.path()).is_err());
-        assert_eq!(fs::read(directory.path().join("owner-data")).unwrap(), b"preserve");
+        assert_eq!(
+            fs::read(directory.path().join("owner-data")).unwrap(),
+            b"preserve"
+        );
         assert!(!directory.path().join("import-report.json").exists());
     }
 

@@ -1,5 +1,30 @@
 # QuaZonai 产品、领域与架构事实源
 
+## Polymarket 原生历史数据准备
+
+历史接入复用 Nautilus Rust 客户端、BinaryOption、TradeTick、QuoteTick、
+OrderBookDelta、Bar 与 ParquetDataCatalog，不重建 SDK、行情存储或撮合器。
+操作员显式启用 `job/polymarket-history` 构建独立 `polymarket-history` 工具；
+默认科学 job 不因此获得网络功能。该工具不是 HTTP/MCP 科学任务。
+
+本地交换文件使用 schema_version=1、source_reference、source_observed_at、
+source_metadata、instruments 及分别存放的 trades/quotes/deltas/bars。
+资产限定为原生 POLYMARKET BinaryOption；记录必须匹配资产，并满足原生价格、
+时间和身份约束。导入至全新目录：catalog 为原生数据，source-evidence.json
+保存原始输入，import-report.json 最后写入。失败不覆盖旧目录；缺最后报告是
+未完成导入，不能登记为完整数据。最多 256 资产、100 万行、128 MiB 本地输入。
+
+当前抓取的 Gamma 元数据不回填历史时点；终局/当前状态不写入历史 instrument.info。
+历史成交使用原生客户端，不从逐笔数据虚构深度或 OHLCV。锁定 0.63.0
+可能在 offset 上限返回部分记录，并合成同秒内的细分顺序；导入报告必须保留
+UNPROVEN coverage 和 UNVERIFIED availability，不自动登记 Dataset、赋予 PIT
+或科学资格。交易窗口采用本工具的秒级半开区间；原生调用和过滤保持该边界。
+
+这只是数据准备合同，不放宽现有 BAR 研究、执行费用、到期或组合准入。
+接通正式二元合约研究必须另有真实原生消费与回放证据，不能把此工具写入
+等价为完整 Polymarket Alpha/组合已交付。操作说明见
+[Polymarket 数据准备](docs/polymarket-history.md)。
+
 > 需求基线：2026-09-05，Issue #62 正文及附录 A（评论 5549224292）、B（评论 5549244417）。
 > 所有者修订：2026-09-05，PR #63 的执行要求——**优先 Rust，其次 Python；优先复用，其次造轮子**。
 > **状态：PR #63 已合并，Issue #62 的完整产品验收仍未完成。** 当前实现与证据入口见 [实现证据](docs/architecture/issue-62-execution.md)，本文保留完整目标合同，不把代码存在或 CI 通过当作生产验收。
