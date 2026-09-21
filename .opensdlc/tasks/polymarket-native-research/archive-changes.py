@@ -28,8 +28,8 @@ replace(p, '    let report = ImportReport {', '''    if !archive.closes.is_empty
         catalog.write_to_parquet(&archive.closes, None, None, None)?;
     }
     let report = ImportReport {''')
-replace(p, '        bars: archive.bars.len(),', '        bars: archive.bars.len(),\n        closes: archive.closes.len(),')
-replace(p, '        bars: Vec::new(),', '        bars: Vec::new(),\n        closes: Vec::new(),')
+replace(p, 'bars: archive.bars.len(),', 'bars: archive.bars.len(), closes: archive.closes.len(),')
+replace(p, 'bars: Vec::new(),', 'bars: Vec::new(), closes: Vec::new(),')
 replace(p, '    #[test]\n    fn invalid_or_duplicate_records_do_not_publish()', '''    #[test]
     fn source_settlement_events_round_trip_separately_from_trades() {
         let directory = tempfile::tempdir().unwrap();
