@@ -438,7 +438,7 @@ mod tests {
                 id,
                 Price::from("0.4200"),
                 Quantity::from("2.000000"),
-                AggressorSide::Buyer,
+                AggressorSide::Buy,
                 TradeId::new(name),
                 time.into(),
                 (time + 1).into(),
