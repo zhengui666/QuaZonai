@@ -28,6 +28,12 @@ for path, expression in [
             f"!contracts::research_currency::supported({expression})")
 replace("crates/domain/src/brief.rs", '"ISO_CURRENCY_REQUIRED"', '"UNSUPPORTED_RESEARCH_CURRENCY"')
 
+replace("apps/web/src/briefs.tsx", 'label="基础币种（ISO 4217）"', 'label="基础币种"')
+replace("apps/web/src/briefs.tsx", "new Error('基础币种必须属于服务器原生币种表。')) }]}><Input maxLength={3}", "new Error('基础币种必须属于服务器原生币种表。')) }]}><Input maxLength={6}")
+replace("apps/web/src/portfolio.tsx", "new Error('请选择有效 ISO 币种代码。'); } }]}><Input maxLength={3}", "new Error('请选择服务器支持的研究币种。'); } }]}><Input maxLength={6}")
+replace("apps/web/src/execution-assumptions.tsx", "import { counterRules } from './budget-fields';", "import { counterRules } from './budget-fields';\nimport { validateBaseCurrency } from '@quazonai/web/response-contract';")
+replace("apps/web/src/execution-assumptions.tsx", "{ pattern: /^[A-Z]{3}$/, message: '请输入 ISO 币种代码。' }]}><Input maxLength={3}", "{ validator: async (_, value: unknown) => { if (!validateBaseCurrency(value)) throw new Error('请选择服务器支持的研究币种。'); } }]}><Input maxLength={6}")
+
 replace("DESIGN.md", "## Polymarket 原生历史数据准备\n", """## Polymarket 研究抵押币
 
 研究的 base_currency 与模型账单 cost_currency 分开：前者接受原 ISO 4217
