@@ -77,7 +77,9 @@ pub fn planning_fee(value: &Value) -> Result<DecimalValue, DomainError> {
         .get("info")
         .and_then(|v| v.get("fee_schedule"))
         .and_then(Value::as_object)
-        .ok_or_else(|| DomainError::CapabilityUnavailable("polymarket_fee_schedule_missing"))?;
+        .ok_or(DomainError::CapabilityUnavailable(
+            "polymarket_fee_schedule_missing",
+        ))?;
     let rate = decimal(schedule.get("rate").ok_or_else(invalid)?)?;
     let exponent = decimal(schedule.get("exponent").ok_or_else(invalid)?)?;
     let rebate = decimal(schedule.get("rebateRate").ok_or_else(invalid)?)?;
