@@ -1857,7 +1857,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch: operations["updateCodexSettings"];
+        patch?: never;
         trace?: never;
     };
     "/api/v2/settings/codex/{id}": {
@@ -2658,11 +2658,6 @@ export interface components {
             description: string;
             id: string;
             name: string;
-        };
-        CodexSettingsUpdateV1: {
-            profile_id: components["schemas"]["Id"];
-            request: components["schemas"]["CodexProfileUpdateV1"];
-            schema_version: components["schemas"]["SchemaV1"];
         };
         CommandResult_ApprovalRevocationViewV1: {
             replayed: boolean;
@@ -16303,90 +16298,6 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    updateCodexSettings: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexSettingsUpdateV1"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandResult_CodexProfileViewV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {

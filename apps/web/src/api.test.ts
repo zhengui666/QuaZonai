@@ -49,6 +49,16 @@ describe('same-origin strict API client', () => {
     const client = makeClient('https://example.test', async () => { throw new TypeError('secret-bearing transport message'); });
     await expect(client.POST('/api/v2/projects', { body: { schema_version: 1, name: 'Test', description: '', fork_from_project_id: null }, params: { header: { 'Idempotency-Key': 'test-key' } } })).rejects.toMatchObject({ code: 'NETWORK_UNKNOWN' });
   });
+  it('accepts only canonical Codex response operations', () => {
+    const collection = '/api/v2/settings/codex';
+    expect(validateResponse(collection, 'GET', 200, {
+      schema_version: 1, items: [], next_cursor: null,
+    })).toBe(true);
+    expect(validateResponse('/api/v2/settings/codex/{id}', 'PATCH', 409, problem, 'application/problem+json')).toBe(true);
+    // A valid Problem would have been accepted by the removed wrapper operation.
+    expect(validateResponse(collection, 'PATCH', 409, problem, 'application/problem+json')).toBe(false);
+    expect(validateResponse(collection, 'POST', 409, problem, 'application/problem+json')).toBe(false);
+  });
   it('validates the local session and exposes no interactive auth contracts', () => {
     expect(validateResponse('/api/v2/auth/session', 'GET', 200, {
       schema_version: 1, authenticated_at: '2026-09-20T00:00:00Z', expires_at: '2026-09-20T12:00:00Z',

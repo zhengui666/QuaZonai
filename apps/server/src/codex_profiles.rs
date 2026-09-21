@@ -47,26 +47,6 @@ pub async fn profile(
     Ok(Json(state.store.codex_profile(&actor, path(id)?).await?))
 }
 
-async fn update_profile(
-    state: &AppState,
-    actor: store::authority::Actor,
-    key: String,
-    id: Id,
-    request: CodexProfileUpdateV1,
-) -> Result<Json<CommandResult<CodexProfileViewV1>>, ApiError> {
-    let store = state.store.clone();
-    let deployment = state.codex_deployment.clone();
-    let result = crate::settings::command(state, async move {
-        store
-            .update_codex_profile(&actor, &key, id, &request, move |binding| async move {
-                deployment.verify(binding).await
-            })
-            .await
-    })
-    .await?;
-    Ok(Json(result))
-}
-
 #[utoipa::path(patch,path="/api/v2/settings/codex/{id}",operation_id="updateCodexProfile",tag="Codex settings",request_body=CodexProfileUpdateV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<CodexProfileViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn update(
     State(state): State<AppState>,
@@ -75,32 +55,20 @@ pub async fn update(
     id: Result<Path<Id>, PathRejection>,
     body: Result<Json<CodexProfileUpdateV1>, JsonRejection>,
 ) -> Result<Json<CommandResult<CodexProfileViewV1>>, ApiError> {
-    update_profile(
-        &state,
-        actor,
-        idempotency_key(&headers)?.to_owned(),
-        path(id)?,
-        json(body)?,
-    )
-    .await
-}
-
-#[utoipa::path(patch,path="/api/v2/settings/codex",operation_id="updateCodexSettings",tag="Codex settings",request_body=CodexSettingsUpdateV1,params(("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<CodexProfileViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
-pub async fn update_selected(
-    State(state): State<AppState>,
-    Authority(actor): Authority,
-    headers: HeaderMap,
-    body: Result<Json<CodexSettingsUpdateV1>, JsonRejection>,
-) -> Result<Json<CommandResult<CodexProfileViewV1>>, ApiError> {
+    let key = idempotency_key(&headers)?.to_owned();
+    let id = path(id)?;
     let request = json(body)?;
-    update_profile(
-        &state,
-        actor,
-        idempotency_key(&headers)?.to_owned(),
-        request.profile_id,
-        request.request,
-    )
-    .await
+    let store = state.store.clone();
+    let deployment = state.codex_deployment.clone();
+    let result = crate::settings::command(&state, async move {
+        store
+            .update_codex_profile(&actor, &key, id, &request, move |binding| async move {
+                deployment.verify(binding).await
+            })
+            .await
+    })
+    .await?;
+    Ok(Json(result))
 }
 
 #[utoipa::path(post,path="/api/v2/codex/probe",operation_id="probeCodexProfile",tag="Codex settings",request_body=CodexProbeRequestV1,params(("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<CodexProbeViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]

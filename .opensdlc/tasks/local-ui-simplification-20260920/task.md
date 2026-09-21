@@ -227,3 +227,19 @@ All source in this follow-up requires actual native verification, all original
 same-final-Head workflows and explicit clean independent read-only review
 before merge. Account-only waivers, owner-host nondeployment and remaining
 Issue62 boundaries are unchanged.
+
+## Canonical model-update API surface
+
+Review5262480047 on20f43c7 found the unused collection PATCH still registered.
+Issue98/comment5754466552 owns the correction: remove the route, handler,
+OpenAPI operation and unreferenced CodexSettingsUpdateV1 wrapper. Inline the
+single remaining handler helper without changing Store/replay/validation.
+Correct DESIGN's old route-summary row; item PATCH and its model-only DTO stay.
+
+The real HTTP/database regression first submits a valid legacy wrapper against
+the baseline, then proves405 without mutation after the fix and successful
+canonical item update/replay. OpenAPI and generated frontend validators must
+omit the removed operation/schema. Native generators own all generated files.
+The five original20f workflows passed, but review still found this defect;
+new source needs focused native checks, full final-Head CI and explicit clean
+independent read-only review. No account, user-host or #62 completion is claimed.

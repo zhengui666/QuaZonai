@@ -3230,7 +3230,8 @@ HTTP 400/422 输入、401认证、403权限、404不存在/需隐藏、409版本
 | POST /runs/{id}/cancel、/retry | 限定转换，202或409 | Operator；qz run cancel/retry |
 | GET /runs/{id}/events | 持久SSE/恢复cursor | Operator；qz run watch |
 | GET /artifacts/{id}、/content | 元数据/受限下载，敏感访问先 exposure | 限权；qz artifact show/export |
-| GET/PATCH /settings/codex | 正交配置，secret仅状态 | Operator；qz codex config |
+| GET /settings/codex | 自动发现的两个本机角色，只读集合 | 本机 Operator；server client codex list |
+| GET/PATCH /settings/codex/{id} | 单项读取／模型和推理偏好；无连接或凭据配置 | 本机 Operator／精确 CLI grant；server client codex show/update |
 | GET /codex/models | 全分页/支持effort/profile_revision | Operator；qz codex models |
 | POST /codex/login/start、/cancel、/logout | 原生account RPC，UI只展示受控流程 | Operator；qz codex login/logout |
 | GET /codex/account | 原生认证类型/status，不读回token | Operator；qz codex status |
