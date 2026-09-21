@@ -1,5 +1,42 @@
 # QuaZonai 产品、领域与架构事实源
 
+## Polymarket 原生研究与组合
+
+原生 BinaryOption 研究使用 POLYMARKET、原 condition/token 身份、原抵押币和
+当时可见的资产定义。现有有界 BAR Alpha／组合流程复用这些资产；不得将
+第三方价格点伪装为成交 BAR，或把当前 Gamma 快照回填为历史资产定义。
+原生执行选择 CASH、long-only 和统一资金账户；不把 NO 买入当成裸卖空 YES。
+组合、独立研究和目标证据继续使用现有冻结输入与 Clarabel，不新增回测内核。
+
+NAUTILUS_POLYMARKET 引用锁定 PolymarketFeeModel；费用 schedule 必须存在，
+且符合原生 exponent=1/takerOnly 合同。缺失不等于免费；真实零费表可以为零。
+模拟普通订单仍由原生模型计算佣金。规划字段 maker=0、taker=rate+0.000005
+（rate=0 时为0）为保守费率上界，不是固定实际收费；仅在每次买卖实际成交
+名义金额至少为1原抵押币时有效。下单与成交均校验此研究下限，不冒充交易所
+最低金额规则。策略当前只发市价单，不计算未观察的 maker 奖励。
+
+到期／结算使用目录中的原生 InstrumentClose(ContractExpired)，独立于 BAR。
+预测器不查询结算标签。事件在实际 ts_init 到达原生引擎；到期后没有来源结算
+事件的跨到期研究返回 POLYMARKET_PENDING_RESOLUTION，不能按最后价格补0/1。
+0、1及50/50兑付由原生引擎处理；其生成的 EXPIRATION 原生平仓只作兑付，
+不额外收取交易佣金。既有投资决策订单的延迟和有效期检查仍独立有效。
+保留来源中的实际可用时间；该适配不自动代办链上赎回或估算未观察gas。
+未知赎回可用性不可据此被标成已验证真实资金占用。
+
+Runtime 镜像声明 polymarket-research/1，仅有效原生资产才广告市场；旧镜像
+不具备新能力。登记执行假设要求对应版本；现有许可、PIT、Sealed和目标交付
+边界不因该能力放开。新适配须以实际原生结算、共享资金和多Alpha测试验收。
+
+## Polymarket 研究抵押币
+
+研究的 base_currency 与模型账单 cost_currency 分开：前者接受原 ISO 4217
+及锁定 Nautilus 的 USDC、USDC.e、pUSD，后者仍仅接受原 ISO 4217。
+这些是不同资产的精确原生代码，不自动按 1:1 换算为 USD，也不能相互替换。
+数据源与原生资产定义仍需证明实际 collateral contract、历史版本和可用时点。
+资产货币、研究 Brief、执行假设、预测、组合、模拟结果与目标快照必须同币种。
+数据库原生 research currency 列扩为 text，保留现有数据及模型账单限制。
+接纳币种不是数据许可、PIT、费用或市场模拟能力通过，现有准入仍须逐项验证。
+
 ## Polymarket 原生历史数据准备
 
 历史接入复用 Nautilus Rust 客户端、BinaryOption、TradeTick、QuoteTick、

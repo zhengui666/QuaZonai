@@ -26,6 +26,7 @@ pub mod lifecycle;
 pub mod portfolio;
 pub mod portfolio_history;
 pub mod research;
+pub mod research_currency;
 pub mod runs;
 pub mod runtime;
 pub mod runtime_jobs;

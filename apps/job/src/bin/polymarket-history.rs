@@ -6,8 +6,8 @@ use clap::{Parser, Subcommand};
 use contracts::SchemaV1;
 use nautilus_core::UnixNanos;
 use nautilus_model::{
-    data::{Bar, OrderBookDelta, QuoteTick, TradeTick},
-    enums::PriceType,
+    data::{Bar, InstrumentClose, OrderBookDelta, QuoteTick, TradeTick},
+    enums::{InstrumentCloseType, PriceType},
     instruments::{Instrument, InstrumentAny},
 };
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
@@ -84,6 +84,8 @@ struct NativeArchive {
     deltas: Vec<OrderBookDelta>,
     #[serde(default)]
     bars: Vec<Bar>,
+    #[serde(default)]
+    closes: Vec<InstrumentClose>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -99,6 +101,7 @@ struct ImportReport {
     quotes: usize,
     deltas: usize,
     bars: usize,
+    closes: usize,
     catalog_relative_path: String,
     coverage: String,
     historical_availability: String,
@@ -179,6 +182,7 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         .checked_add(archive.quotes.len())
         .and_then(|n| n.checked_add(archive.deltas.len()))
         .and_then(|n| n.checked_add(archive.bars.len()))
+        .and_then(|n| n.checked_add(archive.closes.len()))
         .context("ROW_COUNT_RANGE")?;
     ensure!((1..=MAX_ROWS).contains(&rows), "NATIVE_ROW_LIMIT_OR_EMPTY");
     let mut ids = BTreeSet::new();
@@ -216,6 +220,23 @@ fn validate(archive: &NativeArchive) -> Result<()> {
             "INVALID_BINARY_BOOK_PRICE"
         );
         time_order(delta.ts_event, delta.ts_init)?;
+    }
+    let mut settled = BTreeSet::new();
+    for close in &archive.closes {
+        ensure!(
+            ids.contains(&close.instrument_id),
+            "UNMAPPED_INSTRUMENT_CLOSE"
+        );
+        ensure!(
+            close.close_type == InstrumentCloseType::ContractExpired
+                && valid_price(close.close_price.as_decimal()),
+            "INVALID_BINARY_CLOSE"
+        );
+        ensure!(
+            settled.insert(close.instrument_id),
+            "DUPLICATE_BINARY_CLOSE"
+        );
+        time_order(close.ts_event, close.ts_init)?;
     }
     for bar in &archive.bars {
         ensure!(ids.contains(&bar.bar_type.instrument_id()), "UNMAPPED_BAR");
@@ -267,6 +288,7 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
     archive.quotes.sort_by_key(|r| (r.ts_init, r.ts_event));
     archive.deltas.sort_by_key(|r| (r.ts_init, r.ts_event));
     archive.bars.sort_by_key(|r| (r.ts_init, r.ts_event));
+    archive.closes.sort_by_key(|r| (r.ts_init, r.ts_event));
     if !archive.trades.is_empty() {
         catalog.write_to_parquet(&archive.trades, None, None, None)?;
     }
@@ -279,6 +301,9 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
     if !archive.bars.is_empty() {
         catalog.write_to_parquet(&archive.bars, None, None, None)?;
     }
+    if !archive.closes.is_empty() {
+        catalog.write_to_parquet(&archive.closes, None, None, None)?;
+    }
     let report = ImportReport {
         schema_version: SchemaV1,
         native_version: NATIVE_VERSION.into(),
@@ -287,7 +312,7 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
         imported_at: Utc::now(),
         instruments: archive.instruments.len(),
         trades: archive.trades.len(), quotes: archive.quotes.len(),
-        deltas: archive.deltas.len(), bars: archive.bars.len(),
+        deltas: archive.deltas.len(), bars: archive.bars.len(), closes: archive.closes.len(),
         catalog_relative_path: "catalog".into(),
         coverage: "UNPROVEN".into(),
         historical_availability: "UNVERIFIED".into(),
@@ -370,7 +395,7 @@ async fn fetch(slug: &str, start: u64, end: u64, max_trades: u32) -> Result<Nati
         source_reference: format!("nautilus-polymarket/{NATIVE_VERSION}:market/{slug};seconds=[{start},{end});per_outcome_limit={max_trades}"),
         source_observed_at: observed,
         source_metadata: serde_json::to_value(market)?,
-        instruments, trades, quotes: Vec::new(), deltas: Vec::new(), bars: Vec::new(),
+        instruments, trades, quotes: Vec::new(), deltas: Vec::new(), bars: Vec::new(), closes: Vec::new(),
     })
 }
 
@@ -454,6 +479,7 @@ mod tests {
             quotes: Vec::new(),
             deltas: Vec::new(),
             bars: Vec::new(),
+            closes: Vec::new(),
         }
     }
 
@@ -483,6 +509,37 @@ mod tests {
         assert!(target.join("source-evidence.json").exists());
         assert!(!root.join("source-evidence.json").exists());
         assert!(target.join("import-report.json").exists());
+    }
+
+    #[test]
+    fn source_settlement_events_round_trip_separately_from_trades() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("settlement");
+        let mut input = archive();
+        input.closes = vec![InstrumentClose::new(
+            input.instruments[0].id(),
+            Price::from("0.5000"),
+            InstrumentCloseType::ContractExpired,
+            1000_u64.into(),
+            1200_u64.into(),
+        )];
+        let expected = input.closes[0];
+        let report = import(input, &target).unwrap();
+        assert_eq!(report.closes, 1);
+        let path = target.join("catalog");
+        let mut catalog =
+            ParquetDataCatalog::from_uri(path.to_str().unwrap(), None, None, None, None).unwrap();
+        let rows = catalog
+            .query::<InstrumentClose>(None, None, None, None, None, true)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![nautilus_model::data::Data::InstrumentClose(expected)]
+        );
+        assert_eq!(report.bars, 0);
+        assert_eq!(report.historical_availability, "UNVERIFIED");
     }
 
     #[test]

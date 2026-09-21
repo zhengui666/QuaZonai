@@ -1,7 +1,10 @@
 //! Research units are not model-billing currencies and are never aliases for USD.
 //! These spellings are the pinned Nautilus native currencies. The original instrument
 //! and source evidence still determine the collateral contract and historical regime.
-use utoipa::openapi::{schema::{ObjectBuilder, OneOfBuilder, Type}, RefOr, Schema};
+use utoipa::openapi::{
+    schema::{ObjectBuilder, OneOfBuilder, Type},
+    RefOr, Schema,
+};
 
 pub const NATIVE_COLLATERAL: [&str; 3] = ["USDC", "USDC.e", "pUSD"];
 
@@ -12,8 +15,11 @@ pub fn supported(value: &str) -> bool {
 pub(crate) fn schema() -> RefOr<Schema> {
     OneOfBuilder::new()
         .item(crate::budget::currency_schema())
-        .item(ObjectBuilder::new().schema_type(Type::String)
-            .enum_values(Some(NATIVE_COLLATERAL)))
+        .item(
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .enum_values(Some(NATIVE_COLLATERAL)),
+        )
         .into()
 }
 

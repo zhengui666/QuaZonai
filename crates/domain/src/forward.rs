@@ -12,7 +12,7 @@ pub fn weights(request: &DownstreamWeightsSubmitV1) -> Result<(), DomainError> {
     text(&request.external_message_id, 1, 200, false)?;
     if request.asof_ns > request.available_ns
         || request.available_ns >= request.valid_until_ns
-        || iso_currency::Currency::from_code(&request.base_currency).is_none()
+        || !contracts::research_currency::supported(&request.base_currency)
         || !(1..=256).contains(&request.weights.len())
     {
         return Err(DomainError::Invalid("forward_weights"));

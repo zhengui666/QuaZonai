@@ -10,7 +10,9 @@ use std::str::FromStr;
 /// It is a frozen adapter constraint, not a claim about the venue's minimum order rules.
 pub const MINIMUM_TRADE_NOTIONAL: &str = "1";
 
-fn invalid() -> DomainError { DomainError::Invalid("polymarket_native_contract") }
+fn invalid() -> DomainError {
+    DomainError::Invalid("polymarket_native_contract")
+}
 
 fn decimal(value: &Value) -> Result<BigDecimal, DomainError> {
     match value {
@@ -26,18 +28,42 @@ pub fn uses_native_fee(model: &NativeModelRefV1) -> bool {
 
 /// Inspect original Rust BinaryOption payloads. These checks do not grant PIT status.
 pub fn instrument(value: &Value) -> Result<(u64, u64), DomainError> {
-    let info = value.get("info").and_then(Value::as_object).ok_or_else(invalid)?;
-    let condition = info.get("condition_id").and_then(Value::as_str).ok_or_else(invalid)?;
-    let token = info.get("token_id").and_then(Value::as_str).ok_or_else(invalid)?;
-    if condition.is_empty() || token.is_empty() || !token.bytes().all(|c| c.is_ascii_digit())
-        || value.get("id").and_then(Value::as_str) != Some(format!("{condition}-{token}.POLYMARKET").as_str())
+    let info = value
+        .get("info")
+        .and_then(Value::as_object)
+        .ok_or_else(invalid)?;
+    let condition = info
+        .get("condition_id")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid)?;
+    let token = info
+        .get("token_id")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid)?;
+    if condition.is_empty()
+        || token.is_empty()
+        || !token.bytes().all(|c| c.is_ascii_digit())
+        || value.get("id").and_then(Value::as_str)
+            != Some(format!("{condition}-{token}.POLYMARKET").as_str())
         || value.get("raw_symbol").and_then(Value::as_str) != Some(token)
-        || !value.get("currency").and_then(Value::as_str)
+        || !value
+            .get("currency")
+            .and_then(Value::as_str)
             .is_some_and(|v| contracts::research_currency::NATIVE_COLLATERAL.contains(&v))
-    { return Err(invalid()); }
-    let activation = value.get("activation_ns").and_then(Value::as_u64).ok_or_else(invalid)?;
-    let expiration = value.get("expiration_ns").and_then(Value::as_u64).ok_or_else(invalid)?;
-    if activation >= expiration || expiration > i64::MAX as u64 { return Err(invalid()); }
+    {
+        return Err(invalid());
+    }
+    let activation = value
+        .get("activation_ns")
+        .and_then(Value::as_u64)
+        .ok_or_else(invalid)?;
+    let expiration = value
+        .get("expiration_ns")
+        .and_then(Value::as_u64)
+        .ok_or_else(invalid)?;
+    if activation >= expiration || expiration > i64::MAX as u64 {
+        return Err(invalid());
+    }
     Ok((activation, expiration))
 }
 
@@ -47,20 +73,32 @@ pub fn instrument(value: &Value) -> Result<(u64, u64), DomainError> {
 /// bounds taker fee / notional. Confirmed zero rates remain exactly zero; missing is an error.
 pub fn planning_fee(value: &Value) -> Result<DecimalValue, DomainError> {
     instrument(value)?;
-    let schedule = value.get("info").and_then(|v| v.get("fee_schedule"))
-        .and_then(Value::as_object).ok_or_else(|| DomainError::CapabilityUnavailable("polymarket_fee_schedule_missing"))?;
+    let schedule = value
+        .get("info")
+        .and_then(|v| v.get("fee_schedule"))
+        .and_then(Value::as_object)
+        .ok_or_else(|| DomainError::CapabilityUnavailable("polymarket_fee_schedule_missing"))?;
     let rate = decimal(schedule.get("rate").ok_or_else(invalid)?)?;
     let exponent = decimal(schedule.get("exponent").ok_or_else(invalid)?)?;
     let rebate = decimal(schedule.get("rebateRate").ok_or_else(invalid)?)?;
-    if exponent != BigDecimal::from(1) || rate < BigDecimal::from(0)
+    if exponent != BigDecimal::from(1)
+        || rate < BigDecimal::from(0)
         || !(BigDecimal::from(0)..=BigDecimal::from(1)).contains(&rebate)
         || schedule.get("takerOnly").and_then(Value::as_bool) != Some(true)
-    { return Err(DomainError::CapabilityUnavailable("polymarket_fee_schedule")); }
-    let ceiling = if rate == BigDecimal::from(0) { rate } else {
+    {
+        return Err(DomainError::CapabilityUnavailable(
+            "polymarket_fee_schedule",
+        ));
+    }
+    let ceiling = if rate == BigDecimal::from(0) {
+        rate
+    } else {
         rate + BigDecimal::new(5.into(), 6)
     };
     if ceiling >= BigDecimal::from(1) {
-        return Err(DomainError::CapabilityUnavailable("polymarket_planning_fee_range"));
+        return Err(DomainError::CapabilityUnavailable(
+            "polymarket_planning_fee_range",
+        ));
     }
     ceiling.to_plain_string().parse().map_err(|_| invalid())
 }

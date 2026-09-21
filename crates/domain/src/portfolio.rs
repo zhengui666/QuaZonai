@@ -42,7 +42,7 @@ pub fn simulation_settings(
         || !settings.exposure_tolerance.is_positive()
         || settings.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
         || !(1..=86_400_000).contains(&settings.snapshot_interval_ms)
-        || iso_currency::Currency::from_code(&settings.base_currency).is_none()
+        || !contracts::research_currency::supported(&settings.base_currency)
         || !(1..=256).contains(&settings.fee_rates.len())
         || (settings.account_kind == contracts::science::NativeAccountKind::Cash
             && settings.leverage.as_decimal() != &BigDecimal::from(1))
@@ -83,6 +83,12 @@ pub fn simulation_models(
             upstream_version,
             ..
         } if upstream_class == NAUTILUS_FEE_CLASS
+            && upstream_version == NAUTILUS_EXECUTION_VERSION => {}
+        NativeModelRefV1::NautilusPolymarket {
+            upstream_class,
+            upstream_version,
+            ..
+        } if upstream_class == NAUTILUS_POLYMARKET_FEE_CLASS
             && upstream_version == NAUTILUS_EXECUTION_VERSION => {}
         _ => return Err(unavailable()),
     }
@@ -150,7 +156,7 @@ pub fn portfolio_forecast_alignment(input: &PortfolioForecastInputV1) -> Result<
         || age > u64::from(input.max_input_age_seconds) * 1_000_000_000
         || input.horizon_value.get() == 0
         || input.bar_types.len() != input.instrument_ids.len()
-        || iso_currency::Currency::from_code(&input.base_currency).is_none()
+        || !contracts::research_currency::supported(&input.base_currency)
     {
         return Err(invalid());
     }
@@ -319,7 +325,7 @@ pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
     if !content.capital_assumption.is_positive()
         || !content.exposure_tolerance.is_positive()
         || content.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
-        || iso_currency::Currency::from_code(&content.base_currency).is_none()
+        || !contracts::research_currency::supported(&content.base_currency)
     {
         return Err(DomainError::Invalid("portfolio_mandate"));
     }
@@ -371,7 +377,7 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
         || !input.exposure_tolerance.is_positive()
         || input.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
         || constraints.asset_overrides.len() > count
-        || iso_currency::Currency::from_code(&input.base_currency).is_none()
+        || !contracts::research_currency::supported(&input.base_currency)
     {
         return Err(invalid());
     }

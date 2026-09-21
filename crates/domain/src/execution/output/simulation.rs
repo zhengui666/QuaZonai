@@ -166,7 +166,7 @@ pub(super) fn shape(value: &NativeSimulationResultV1) -> Result<(), DomainError>
             || stat
                 .currency
                 .as_ref()
-                .is_some_and(|code| iso_currency::Currency::from_code(code).is_none())
+                .is_some_and(|code| !contracts::research_currency::supported(code))
         {
             return Err(bad("native_output.simulation_statistic"));
         }

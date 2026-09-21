@@ -155,7 +155,7 @@ fn allocation(value: &AllocationResultV1) -> Result<(), DomainError> {
         for target in targets {
             text(&target.instrument_id, 1, 200, false)?;
             if !identities.insert(&target.instrument_id)
-                || iso_currency::Currency::from_code(&target.currency).is_none()
+                || !contracts::research_currency::supported(&target.currency)
             {
                 return Err(bad("native_output.allocation_target"));
             }

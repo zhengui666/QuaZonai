@@ -11,6 +11,7 @@ pub mod forward;
 pub mod managed;
 mod optimization;
 pub mod portfolio;
+mod prediction;
 pub use domain::codex::verified_codex_version;
 pub use optimization::allocate;
 mod report;

@@ -36,7 +36,9 @@ pub fn execution_account(
 ) -> Result<(), DomainError> {
     use contracts::science::NativeAccountKind;
     match (class, account) {
-        ("CurrencyPair", NativeAccountKind::Margin) | ("Equity", _) => Ok(()),
+        ("CurrencyPair", NativeAccountKind::Margin)
+        | ("Equity", _)
+        | ("BinaryOption", NativeAccountKind::Cash) => Ok(()),
         _ => Err(DomainError::CapabilityUnavailable(
             "execution_assumption_account_instrument",
         )),
@@ -76,17 +78,37 @@ pub fn execution_fees(
         execution_account(class, settings.account_kind)?;
         let currency = match *class {
             "CurrencyPair" => &value["quote_currency"],
-            "Equity" => &value["currency"],
+            "Equity" | "BinaryOption" => &value["currency"],
             _ => {
                 return Err(DomainError::CapabilityUnavailable(
                     "execution_assumption_instrument",
                 ))
             }
         };
-        let maker: contracts::DecimalValue = serde_json::from_value(value["maker_fee"].clone())
-            .map_err(|_| bad("execution_fees.maker"))?;
-        let taker: contracts::DecimalValue = serde_json::from_value(value["taker_fee"].clone())
-            .map_err(|_| bad("execution_fees.taker"))?;
+        let (maker, taker): (contracts::DecimalValue, contracts::DecimalValue) =
+            if *class == "BinaryOption" {
+                if !crate::prediction::uses_native_fee(&settings.fee_model) {
+                    return Err(DomainError::CapabilityUnavailable(
+                        "polymarket_native_fee_model",
+                    ));
+                }
+                (
+                    "0".parse().map_err(|_| bad("execution_fees.maker"))?,
+                    crate::prediction::planning_fee(value)?,
+                )
+            } else {
+                if crate::prediction::uses_native_fee(&settings.fee_model) {
+                    return Err(DomainError::CapabilityUnavailable(
+                        "polymarket_binary_instrument",
+                    ));
+                }
+                (
+                    serde_json::from_value(value["maker_fee"].clone())
+                        .map_err(|_| bad("execution_fees.maker"))?,
+                    serde_json::from_value(value["taker_fee"].clone())
+                        .map_err(|_| bad("execution_fees.taker"))?,
+                )
+            };
         if fill.prob_slippage.is_positive() {
             let tick: contracts::DecimalValue =
                 serde_json::from_value(value["price_increment"].clone())

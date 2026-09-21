@@ -82,7 +82,7 @@ function BriefEditor({ projectId, editable, brief, close }: { projectId: string;
         <Form.Item name={['content', 'economic_rationale']} label="经济依据" rules={[{ required: true, whitespace: true, max: 8000 }]}><Input.TextArea rows={3} maxLength={8000} /></Form.Item>
         <div className="field-grid">
           <Form.Item name={['content', 'target_kind']} label="预测单位" rules={[{ required: true }]}><Select options={[{ value: 'SCORE', label: '无量纲分数' }, { value: 'EXPECTED_RETURN', label: '预期收益' }]} /></Form.Item>
-          <Form.Item name={['content', 'base_currency']} label="基础币种（ISO 4217）" rules={[{ required: true }, { validator: (_, value: unknown) => validateBaseCurrency(value) ? Promise.resolve() : Promise.reject(new Error('基础币种必须属于服务器原生币种表。')) }]}><Input maxLength={3} /></Form.Item>
+          <Form.Item name={['content', 'base_currency']} label="基础币种" rules={[{ required: true }, { validator: (_, value: unknown) => validateBaseCurrency(value) ? Promise.resolve() : Promise.reject(new Error('基础币种必须属于服务器原生币种表。')) }]}><Input maxLength={6} /></Form.Item>
           <Form.Item name={['content', 'horizon_kind']} label="预测周期" rules={[{ required: true }]}><Select options={[{ value: 'FIXED_BARS', label: '固定 K 线数' }, { value: 'FIXED_DURATION', label: '固定时长' }, { value: 'VARIABLE_INTERVAL', label: '可变区间' }]} /></Form.Item>
           {horizon !== 'VARIABLE_INTERVAL' && <Form.Item name={['content', 'horizon_value']} label="固定周期值（整数）" rules={counterRules}><Input inputMode="numeric" maxLength={19} /></Form.Item>}
         </div>

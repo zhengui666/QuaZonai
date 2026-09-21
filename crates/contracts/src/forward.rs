@@ -24,7 +24,7 @@ pub struct DownstreamWeightsSubmitV1 {
     pub asof_ns: DbCounter,
     pub available_ns: DbCounter,
     pub valid_until_ns: DbCounter,
-    #[schema(schema_with = crate::budget::currency_schema)]
+    #[schema(schema_with = crate::research_currency::schema)]
     pub base_currency: String,
     pub cash_weight: DecimalValue,
     #[schema(min_items = 1, max_items = 256)]

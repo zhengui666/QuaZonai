@@ -12,7 +12,7 @@ cargo build --locked -p job --features polymarket-history --bin polymarket-histo
 ```
 
 `polymarket-history` 是显式构建的独立工具。默认 `job` 二进制和科学镜像不启用
-该特性，现有 `cargo run -p job -- ...` 仍选择 job。原生 SDK 负责网络和格式，
+该命令入口，现有 `cargo run -p job -- ...` 仍选择 job。原生 SDK 负责网络和格式，
 不需要额外 Python 服务、插件平台或交易 API Key。
 
 ## 获取公开历史
@@ -59,6 +59,7 @@ end 必须是已经发生的时间。两个 outcome 分别受 `--max-trades` 限
 | quotes | Nautilus QuoteTick 列表，可省略 |
 | deltas | Nautilus OrderBookDelta 列表，可省略 |
 | bars | 原生成交 LAST/EXTERNAL Bar 列表，可省略；不是价格观察的占位 OHLCV |
+| closes | 原生 InstrumentClose/ContractExpired 列表，可省略；只接受来源记录，不推断赢家 |
 
 输入必须使用**同一锁定版本**的原生序列化对象。Third-party 档案应先在明确的
 来源映射中转换为这些原生对象；该命令不会猜 token、字段单位或行情类型。
@@ -85,7 +86,7 @@ registered_in_quazonai=false 是保留的能力边界，不是错误地填入“
 Runtime 元数据、BAR 合同、来源许可与时点验证。此命令不绕过这些步骤。
 
 盘口能写入 Parquet 不等于序列连续、存在可恢复快照或具备真实排队位置。
-当前读取到的 fee_schedule 也不是历史费表。本工具不推断结算、赎回、资金占用，
+当前读取到的 fee_schedule 也不是历史费表。本工具保留原 InstrumentClose 的价格与事件/可用时间，不推断结算、赎回、资金占用，
 不能用它的完成报告宣称 Polymarket Alpha 或组合模拟已经接通。
 
 ## 验证

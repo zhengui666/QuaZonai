@@ -10,12 +10,11 @@ use nautilus_backtest::{
 };
 use nautilus_common::{actor::DataActor, logging::logger::LoggerConfig};
 use nautilus_execution::models::{
-    fee::{FeeModelHandle, MakerTakerFeeModel},
     fill::{DefaultFillModel, FillModelHandle},
     latency::{LatencyModelHandle, StaticLatencyModel},
 };
 use nautilus_model::{
-    data::{Bar, BarType, Data},
+    data::{Bar, BarType, Data, InstrumentClose},
     enums::{AccountType, BookType, OmsType, OrderSide, OrderStatus},
     events::{OrderDenied, OrderFilled, OrderRejected},
     identifiers::{ClientOrderId, InstrumentId, StrategyId, Venue},
@@ -83,6 +82,7 @@ struct TargetReplay {
     reduction_ids: BTreeSet<ClientOrderId>,
     deferred_orders: Vec<OrderAny>,
     active_expiry_ns: u64,
+    settlement_events: BTreeMap<InstrumentId, InstrumentClose>,
     status: Rc<RefCell<ReplayStatus>>,
 }
 
@@ -104,6 +104,18 @@ nautilus_strategy!(TargetReplay, {
     }
     fn on_order_filled(&mut self, event: &OrderFilled) {
         let now = event.ts_event.as_u64();
+        if crate::prediction::is_native_settlement_order(event.client_order_id.as_str()) {
+            let matches = self
+                .settlement_events
+                .get(&event.instrument_id)
+                .is_some_and(|close| {
+                    now >= close.ts_init.as_u64() && event.last_px == close.close_price
+                });
+            if !matches {
+                self.status.borrow_mut().failure = Some("NATIVE_SETTLEMENT_SOURCE_MISMATCH");
+            }
+            return;
+        }
         if now <= self.status.borrow().submitted_after_ns || now >= self.active_expiry_ns {
             self.status.borrow_mut().failure = Some("NATIVE_NONCAUSAL_OR_EXPIRED_FILL");
             return;
@@ -323,6 +335,18 @@ impl TargetReplay {
                 if amount.is_zero() {
                     continue;
                 }
+                crate::prediction::order_notional(
+                    instrument,
+                    now,
+                    checked(amount.checked_mul(unit_value))?,
+                )?;
+                if let InstrumentAny::BinaryOption(binary) = instrument {
+                    ensure!(
+                        now.checked_add(self.latency_ns)
+                            .is_some_and(|at| at < binary.expiration_ns.as_u64()),
+                        "POLYMARKET_TARGET_EXPIRES_BEFORE_INSERT"
+                    );
+                }
                 let quantity = instrument.try_make_qty_from_decimal(amount, Some(true))?;
                 instrument.try_normalize_qty(quantity)?;
                 let order = self.order().market(
@@ -391,6 +415,7 @@ pub(crate) fn execution_market(
     settings: &NativeSimulationSettingsV1,
 ) -> Result<Currency> {
     domain::portfolio::simulation_settings(settings)?;
+    crate::prediction::validate_market(data, settings)?;
     let currency = Currency::from_str(&settings.base_currency)?;
     ensure!(
         settings.fee_rates.len() == data.series.len(),
@@ -409,17 +434,22 @@ pub(crate) fn execution_market(
         ensure!(
             matches!(
                 instrument,
-                InstrumentAny::CurrencyPair(_) | InstrumentAny::Equity(_)
+                InstrumentAny::CurrencyPair(_)
+                    | InstrumentAny::Equity(_)
+                    | InstrumentAny::BinaryOption(_)
             ) && instrument.venue() == venue
                 && instrument.quote_currency() == currency
                 && instrument.settlement_currency() == currency
                 && !instrument.is_inverse()
-                && !instrument.has_expiration(),
+                && (!instrument.has_expiration()
+                    || matches!(instrument, InstrumentAny::BinaryOption(_))),
             "SIMULATION_MARKET_UNSUPPORTED"
         );
         domain::catalogs::execution_account(
             if matches!(instrument, InstrumentAny::CurrencyPair(_)) {
                 "CurrencyPair"
+            } else if matches!(instrument, InstrumentAny::BinaryOption(_)) {
+                "BinaryOption"
             } else {
                 "Equity"
             },
@@ -428,11 +458,13 @@ pub(crate) fn execution_market(
         let rate = fees
             .remove(instrument.id().to_string().as_str())
             .ok_or_else(|| anyhow::anyhow!("SIMULATION_FEE_MISSING"))?;
-        ensure!(
-            native_decimal(&rate.maker)? == instrument.maker_fee()
-                && native_decimal(&rate.taker)? == instrument.taker_fee(),
-            "SIMULATION_FEE_SOURCE_MISMATCH"
-        );
+        if !matches!(instrument, InstrumentAny::BinaryOption(_)) {
+            ensure!(
+                native_decimal(&rate.maker)? == instrument.maker_fee()
+                    && native_decimal(&rate.taker)? == instrument.taker_fee(),
+                "SIMULATION_FEE_SOURCE_MISMATCH"
+            );
+        }
     }
     Ok(currency)
 }
@@ -554,6 +586,12 @@ pub(crate) fn run(
     let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
     let market = load_catalog(root, &request.selection)?;
     let currency = validate_settings(&market, request)?;
+    let closes = crate::prediction::close_events(root, &market, &request.selection)?;
+    let settlement_events = closes
+        .iter()
+        .map(|c| (c.instrument_id, *c))
+        .collect::<BTreeMap<_, _>>();
+    let settled_ids = settlement_events.keys().copied().collect::<Vec<_>>();
     let venue = market.series[0].instrument.venue();
     let status = Rc::new(RefCell::new(ReplayStatus::default()));
     let strategy = TargetReplay {
@@ -579,6 +617,7 @@ pub(crate) fn run(
         reduction_ids: BTreeSet::new(),
         deferred_orders: Vec::new(),
         active_expiry_ns: 0,
+        settlement_events,
         status: status.clone(),
     };
     let config = BacktestEngineConfig {
@@ -618,7 +657,7 @@ pub(crate) fn run(
                 ))
                 .map_err(anyhow::Error::msg)?])
                 .default_leverage(native_decimal(&settings.leverage)?)
-                .fee_model(FeeModelHandle::new(MakerTakerFeeModel))
+                .fee_model(crate::prediction::fee_model(settings))
                 .fill_model(FillModelHandle::new(DefaultFillModel::new(
                     fill.prob_fill_on_limit
                         .as_decimal()
@@ -645,9 +684,21 @@ pub(crate) fn run(
             engine.add_instrument(&series.instrument)?;
             events.extend(series.bars.into_iter().map(Data::Bar));
         }
+        events.extend(closes.into_iter().map(Data::InstrumentClose));
         engine.add_strategy(strategy)?;
         engine.add_data(events, None, true, true)?;
         engine.run(None, None, None, false)?;
+        for instrument_id in &settled_ids {
+            ensure!(
+                engine
+                    .kernel()
+                    .cache
+                    .borrow()
+                    .positions_open(None, Some(instrument_id), None, None, None)
+                    .is_empty(),
+                "POLYMARKET_NATIVE_SETTLEMENT_INCOMPLETE"
+            );
+        }
         let observed = status.borrow();
         ensure!(observed.failure.is_none(), "NATIVE_TARGET_REPLAY_FAILED");
         if observed.study_infeasible {

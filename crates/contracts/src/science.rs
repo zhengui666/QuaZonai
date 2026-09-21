@@ -110,7 +110,7 @@ pub struct NativeFeeRateV1 {
 #[serde(deny_unknown_fields)]
 pub struct NativeSimulationSettingsV1 {
     pub schema_version: SchemaV1,
-    #[schema(schema_with = crate::budget::currency_schema)]
+    #[schema(schema_with = crate::research_currency::schema)]
     pub base_currency: String,
     pub starting_capital: DecimalValue,
     pub account_kind: NativeAccountKind,

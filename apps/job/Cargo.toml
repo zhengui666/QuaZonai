@@ -10,7 +10,7 @@ publish = false
 
 [features]
 # Operator data preparation only; default scientific job images remain offline.
-polymarket-history = ["dep:nautilus-polymarket", "dep:tokio"]
+polymarket-history = ["dep:tokio"]
 
 [[bin]]
 name = "polymarket-history"
@@ -33,7 +33,7 @@ nautilus-execution = { version = "=0.63.0", default-features = false }
 nautilus-portfolio = { version = "=0.63.0", default-features = false }
 nautilus-persistence = { version = "=0.63.0", default-features = false }
 nautilus-indicators = { version = "=0.63.0", default-features = false }
-nautilus-polymarket = { version = "=0.63.0", default-features = false, optional = true }
+nautilus-polymarket = { version = "=0.63.0", default-features = false }
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"], optional = true }
 rust_decimal = "=1.42.1"
 nautilus-model = { version = "=0.63.0", default-features = false, features = ["test-support"] }

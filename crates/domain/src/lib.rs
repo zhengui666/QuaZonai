@@ -19,6 +19,7 @@ pub mod experiments;
 pub mod forward;
 pub mod imports;
 pub mod portfolio;
+pub mod prediction;
 pub mod research;
 pub mod runs;
 pub mod runtime;
