@@ -66,8 +66,8 @@ replace('apps/job/src/simulation.rs',
     }
     analyzer.set_portfolio_returns_from_snapshots(&account_ids, &snapshots);''')
 replace('apps/job/src/simulation.rs',
-    'let return_analysis = portfolio_return_analysis(&engine)?;',
-    'let return_analysis = portfolio_return_analysis(&engine, &request.settings)?;')
+    'portfolio_return_analysis(&engine)?',
+    'portfolio_return_analysis(&engine, &request.settings)?')
 replace('crates/domain/src/execution/output/simulation.rs',
     '    let mut records = Vec::with_capacity(3);',
     '''    let period = crate::prediction::portfolio_annualization_days(&request.settings.fee_model);
