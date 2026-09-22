@@ -2,39 +2,41 @@
 
 ## Intent
 
-Implement the owner's request to open and complete a QuaZonai PR based on the native Nautilus reuse conclusion. Related requirement: #100; broader production acceptance remains #62. Starting main: cd4b3e356b768a245358beb5e2b9c6e883f72d3d.
+Implement the owner's request to open and complete a QuaZonai PR based on the native Nautilus reuse conclusion. Implementation PR: [#101](https://github.com/zhengui666/QuaZonai/pull/101). Related requirement: #100; broader production acceptance remains #62. Starting main: cd4b3e356b768a245358beb5e2b9c6e883f72d3d.
 
 ## Specification
 
-Reuse the pinned Nautilus Rust Polymarket public clients, instrument parser, market-data types, Parquet catalog, fee model and simulator wherever they satisfy the required behavior. Do not rebuild a vendor SDK, matching engine, optimizer, plugin marketplace or live execution service. No trading credentials or wallet material are needed for historical data reads.
+Reuse the pinned Nautilus Rust Polymarket public clients, instrument parser, market-data types, Parquet catalog, fee model, simulator and portfolio statistics. Do not rebuild a vendor SDK, matching engine, optimizer, plugin marketplace or live execution service. No trading credentials or wallet material are needed for historical data reads.
 
 Data acquisition, native catalog publication, research admission, scientific results and target delivery are separate facts. A native catalog write cannot mark a dataset PIT-verified or make a portfolio deliverable. Preserve event, metadata-observation and import times. Never turn missing historical depth, fees or resolution into zero values or an assumed winner.
 
-## Plan
+## Implemented scope
 
-1. Inspect the pinned upstream APIs, repository governance and actual data/simulation callers.
-2. Add bounded native public-history acquisition and original native-record import, with detached source evidence and native catalog round-trip tests.
-3. Connect supported prediction-market research and shared-capital simulation without pretending unsupported lifecycle or cost behavior is available.
-4. Update canonical design, operations/CLI guidance and coverage using actual implementation evidence.
-5. Run the applicable native, contract, browser and repository CI on the final source; fix failures in this branch.
-6. Obtain explicit clean read-only Codex review on that same head, resolve threads and merge only after applicable CI succeeds.
+1. Operator-only public-history acquisition and bounded original native-record import, with detached source evidence and native catalog round-trip tests. Instrument and complete BarType identities have separate native Parquet partitions.
+2. Existing BAR Alpha and shared-capital portfolio research accept native POLYMARKET BinaryOption, CASH, original collateral and the native price-dependent fee model. Original close events drive 0/1 and 50/50 settlement; delayed or missing availability is not replaced with scheduled expiry or last price.
+3. Original USDC, USDC.e and pUSD remain distinct research units through API, database, execution assumptions, study results and web forms. Model-billing currency remains ISO-only.
+4. Published Polymarket portfolio statistics use native 365-day configuration and account snapshots; existing non-prediction paths retain 252 days. Canonical upstream output is preserved separately.
+5. Runtime capability/image binding, native CLI tests, real OCI study regression, web contract tests and three-viewport collateral form tests cover the integration. Synthetic preview history without simulation explicitly has no equity curve.
+6. Canonical design, CLI and operations guidance describe actual usage and remaining data limitations.
 
-## Inspection evidence
+## Inspection basis
 
-- AGENTS.md and DESIGN.md read from the starting main. DEVELOPMENT.md is absent; CONTRIBUTING.md is the development guide.
-- CodexPro plugin discovery returned no available plugin. No local workspace or executor run is claimed. Repository DESIGN 0.4 directs GitHub file-tool authorship and Actions verification.
-- apps/job pins native Rust crates to 0.63.0, corresponding to upstream v2.0.0rc4.
-- The pinned Polymarket Data API client returns partial historical trades at its offset ceiling. Its normalized timestamps include synthetic same-second tie-breakers. Neither behavior establishes complete history or observed subsecond availability.
-- The current QZ catalog validator only admits BAR data. Execution assumptions admit CurrencyPair/Margin or Equity; the simulator rejects expiration-bearing instruments. These are integration boundaries, not proof that upstream Nautilus lacks prediction-market data types.
+- AGENTS.md and DESIGN.md were read. DEVELOPMENT.md is absent; CONTRIBUTING.md is the development guide.
+- CodexPro plugin discovery returned no available plugin. No local workspace or executor run is claimed. DESIGN 0.4 directs GitHub file-tool authorship and Actions verification; GitHub Codex is a read-only reviewer, not a source author.
+- Native Rust crates are pinned to 0.63.0, corresponding to upstream v2.0.0rc4.
+- The pinned Data API client can return partial trades at its offset ceiling and includes synthetic same-second ordering. Neither behavior proves complete history or observed subsecond availability.
+- On the starting main, research accepted BAR data, execution assumptions excluded BinaryOption, and simulation rejected expiration-bearing assets. This PR extends native BinaryOption consumption; it does not introduce a new tick/L2 scientific runtime.
 
-## Verification
+## Verification evidence
 
-Preparation run 35671282868 successfully compiled the native source, ran the contracts/domain library checks, native-history round-trip tests and Polymarket simulation/study tests, and generated API/web contracts. Native source head: 5f01c7a696c7af87ce37ae6b44980fd818297232; generated-contract head: e76a29be34a420d9da0e096accb909c03ff04d7b. This is scoped intermediate evidence, not final-head CI or production acceptance.
+[Preparation run 35674382220](https://github.com/zhengui666/QuaZonai/actions/runs/35674382220) compiled/linted Job and the Runtime OCI target, passed all Contracts/Domain/Job tests, generated API/web contracts, and passed web type and unit checks on source 779b2973a522c3398eb655fb084a44bc5587c72d. These are scoped preparation results, not a substitute for final-head repository CI or completed real OCI/browser execution.
 
-The source fixes mixed native Parquet identities, accepts original research collateral through result binding, and selects native 365-day portfolio statistics for Polymarket while retaining the existing 252-day path. Additional Runtime/OCI and web currency regression checks must pass on the final head.
+The final applicable CI, clean independent review, resolved threads, expected-head merge and main verification are recorded in PR #101's native checks and discussion. Those records, not a self-authored status field here, determine delivery. Any source change requires new applicable checks and review.
 
-No real historical archive coverage, trading account, wallet, deployment or real-market Alpha/portfolio acceptance is claimed. Synthetic native computation is executed; real data and end-to-end product qualification are separate unexecuted facts.
+## Acceptance boundaries
 
-## Review and delivery
+The research path remains validated LAST/EXTERNAL BAR. Stored TradeTick/QuoteTick/L2 records are not automatically BAR inputs; arbitrary vendor CSV/Parquet normalization, complete archive coverage, historical fee/rule/PIT evidence and real-market research acceptance remain separate #100 work. Dataset registration and existing scientific admission are not bypassed.
 
-NOT_REQUESTED. The task is incomplete until the declared implementation scope, applicable final-head CI, explicit clean independent review and merge have actual evidence. Do not close #100 or #62 merely because this task record or an ingestion utility exists.
+No full real historical archive, trading account, wallet, production deployment, live order or real-market Alpha/portfolio profitability is claimed. Synthetic native computations and their regressions do not establish those facts. Settlement availability does not prove unobserved on-chain redemption or gas costs.
+
+Completion requires: (1) the implementation PR, (2) all applicable CI passing and explicit clean read-only Codex review on its final head, (3) merge after (2), followed by main verification. Do not close #100 or #62 merely because this native integration or an ingestion utility is merged.
