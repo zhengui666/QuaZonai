@@ -87,8 +87,10 @@ jobs:
           node tests/contracts/fraction-wire.mjs | tee /tmp/native-evidence/fraction-wire.log
       - name: Execute real Rust solver, Nautilus and Arrow round-trip
         run: target/debug/job verify-native --output /tmp/native-evidence/native
-      - name: Observe native signal compilation reuse (no timing threshold)
-        run: target/debug/examples/benchmark_signals | tee /tmp/native-evidence/signal-benchmark.log
+      - name: Check signal equivalence and observe compilation reuse (no timing threshold)
+        run: |
+          set -euo pipefail
+          target/debug/examples/benchmark_signals 2>&1 | tee /tmp/native-evidence/signal-benchmark.log
       - name: Install locked official Codex and verify native stdio
         run: |
           set -euo pipefail

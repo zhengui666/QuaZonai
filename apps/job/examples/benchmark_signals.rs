@@ -50,7 +50,8 @@ fn main() -> Result<()> {
         };
         ensure!(
             fresh.1 == reused.1 && fresh.2 == reused.2,
-            "reuse changed results or fuel"
+            "reuse changed results or fuel: fresh_checksum={} reused_checksum={} fresh_fuel={} reused_fuel={}",
+            fresh.1, reused.1, fresh.2, reused.2
         );
         println!(
             "round={round} compile_each_us={} reuse_us={} checksum={} fuel={}",

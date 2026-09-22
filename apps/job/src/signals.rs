@@ -2,8 +2,8 @@
 //! This module has no WASI, host imports, file, network, clock or credential access.
 use anyhow::{ensure, Result};
 use wasmi::{
-    Config, EnforcedLimits, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder,
-    TypedFunc,
+    CompilationMode, Config, EnforcedLimits, Engine, Linker, Module, Store, StoreLimits,
+    StoreLimitsBuilder, TypedFunc,
 };
 
 pub const MAX_SIGNAL_MODULE_BYTES: usize = 2 * 1024 * 1024;
@@ -42,7 +42,11 @@ impl SignalModule {
             "SIGNAL_REQUIRES_WASM_BINARY"
         );
         let mut config = Config::default();
+        // Lazy translation charges only the first caller of a shared function.
+        // Compile before instantiation so execution fuel never depends on cache warmth.
+        // Compilation remains bounded by module limits and the native job deadline.
         config
+            .compilation_mode(CompilationMode::Eager)
             .consume_fuel(true)
             .allow_start_fn(false)
             .ignore_custom_sections(true)

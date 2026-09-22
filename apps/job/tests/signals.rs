@@ -144,6 +144,44 @@ fn byte_and_budget_limits_reject_untrusted_inputs_before_compilation() {
 }
 
 #[test]
+fn compiled_module_warmth_never_changes_prediction_or_fuel_limits() {
+    let bytes = module("", "local.get 0 local.get 1 f64.div f64.const 1 f64.sub");
+    let compiled = SignalModule::new(&bytes).unwrap();
+    for budget in [1, 64, 100_000] {
+        // Exercise both first use and already translated code, including exhaustion.
+        for instance in 0..3 {
+            let mut reused = compiled.instantiate(32, budget).unwrap();
+            let mut fresh = WasmSignal::new(&bytes, 32, budget).unwrap();
+            for ordinal in 0..33 {
+                let mut features = FEATURES;
+                features[0] += f64::from(ordinal);
+                let expected = fresh.predict(features);
+                let actual = reused.predict(features);
+                assert_eq!(
+                    actual.is_ok(),
+                    expected.is_ok(),
+                    "instance={instance} budget={budget} ordinal={ordinal}"
+                );
+                assert_eq!(
+                    reused.remaining_fuel(),
+                    fresh.remaining_fuel(),
+                    "instance={instance} budget={budget} ordinal={ordinal}"
+                );
+                match (actual, expected) {
+                    (Ok(actual), Ok(expected)) => assert_eq!(actual.to_bits(), expected.to_bits()),
+                    (Err(_), Err(_)) => {
+                        assert!(reused.predict(FEATURES).is_err());
+                        assert!(fresh.predict(FEATURES).is_err());
+                        break;
+                    }
+                    _ => unreachable!("success status checked above"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn reused_code_preserves_linear_memory_fuel_results_and_failure_isolation() {
     let bytes = module(
         "(memory 1)",
