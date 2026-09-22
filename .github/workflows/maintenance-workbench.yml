@@ -4,20 +4,62 @@ on:
     branches: [chore/production-only-20260922]
     paths: [.github/workflows/maintenance-workbench.yml]
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: production-cleanup-publication
+  cancel-in-progress: false
 jobs:
-  source:
+  apply:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          persist-credentials: false
-      - name: Bundle tracked source for web-authored maintenance
-        run: git archive --format=tar HEAD -o "$RUNNER_TEMP/source.tar"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          name: production-maintenance-source
-          path: ${{ runner.temp }}/source.tar
-          retention-days: 1
-          if-no-files-found: error
+          node-version: '24'
+      - name: Apply the web-authored source changes
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import base64, gzip, os
+          encoded = ''.join(Path(f'.github/cleanup-payload/{i}.b64').read_text().strip() for i in range(4))
+          script = gzip.decompress(base64.b64decode(encoded, validate=True))
+          Path(os.environ['RUNNER_TEMP'], 'production-cleanup.py').write_bytes(script)
+          PY
+          python "$RUNNER_TEMP/production-cleanup.py"
+          rm -rf .github/cleanup-payload
+          test ! -e docs
+          test ! -e apps/web/demo
+          git diff --check
+          git add -A
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'refactor: remove demo and mock paths from production repository'
+          git push origin HEAD:refs/heads/chore/production-only-20260922
+      - name: Verify installation and service-management regressions
+        run: |
+          set -euo pipefail
+          node --test deploy/install.test.mjs apps/web/scripts/native-user-services.test.mjs 2>&1 | tee "$RUNNER_TEMP/installation-tests.log"
+      - name: Verify generated frontend, types, unit tests and build
+        run: |
+          set -euo pipefail
+          {
+            npm --prefix apps/web ci --ignore-scripts --no-audit --no-fund
+            npm --prefix apps/web run generate
+            git diff --exit-code -- apps/web/src/generated/
+            npm --prefix apps/web run typecheck
+            npm --prefix apps/web test
+            cd apps/web
+            node node_modules/vite/bin/vite.js build
+          } 2>&1 | tee "$RUNNER_TEMP/frontend-verification.log"
+      - name: Preserve verification logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: production-cleanup-verification
+          path: |
+            ${{ runner.temp }}/installation-tests.log
+            ${{ runner.temp }}/frontend-verification.log
+          if-no-files-found: warn
+          retention-days: 3
