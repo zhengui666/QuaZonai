@@ -58,7 +58,16 @@ fn simulate(
         request,
     );
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        // Keep the real CLI failure; inspect only this synthetic fixture in-process
+        // for a useful test diagnostic. The second call cannot turn failure into success.
+        let detail = job::simulation::simulate(root, request)
+            .err()
+            .map(|error| format!("{error:#}"))
+            .unwrap_or_else(|| "CLI/library result mismatch".into());
+        return Err(format!(
+            "{}: {detail}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
 }
@@ -213,11 +222,17 @@ fn two_original_alpha_members_run_through_native_portfolio_study() {
         ],
         &request,
     );
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    if !output.status.success() {
+        let detail = job::study::evaluate(catalog.path(), &request, |id| {
+            Ok(fs::read(objects.path().join(id.to_string()))?)
+        })
+        .err()
+        .map(|error| format!("{error:#}"));
+        panic!(
+            "{}; fixture diagnostic: {detail:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     let result: NativePortfolioStudyResultV1 = serde_json::from_slice(&output.stdout).unwrap();
     domain::execution::check_portfolio_study(&request, &result).unwrap();
     assert_eq!(result.frames.len(), 3);

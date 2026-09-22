@@ -115,7 +115,11 @@ pub fn settle(root: &Path, expiration: u64, available: u64, payouts: [&str; 2]) 
             )
         })
         .collect::<Vec<_>>();
-    catalog.write_to_parquet(&closes, None, None, None).unwrap();
+    for close in closes {
+        catalog
+            .write_to_parquet(&[close], None, None, None)
+            .unwrap();
+    }
 }
 
 pub fn settings(original: &mut NativeSimulationSettingsV1, rate: &str, expiration: u64) {
