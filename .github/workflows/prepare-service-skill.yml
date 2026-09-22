@@ -1,0 +1,35 @@
+name: Prepare service skill source
+on:
+  push:
+    branches: [feat/service-agent-skill]
+    paths: [.github/prepare-service-skill.mjs]
+permissions:
+  contents: write
+concurrency:
+  group: prepare-service-agent-skill
+  cancel-in-progress: false
+jobs:
+  apply-web-authored-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Apply fixed source and native formatting
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node .github/prepare-service-skill.mjs
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+          rustup run 1.98.1 cargo fmt --all
+          git diff --check
+          rm .github/prepare-service-skill.mjs .github/workflows/prepare-service-skill.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -u
+          git commit -m 'feat: wire native service-agent discovery and offline preview'
+          git push origin HEAD:refs/heads/feat/service-agent-skill
