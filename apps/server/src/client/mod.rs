@@ -504,6 +504,7 @@ mod origin_tests {
                 credential_file: file.clone(),
                 ca_certificate: None,
                 development_http,
+                preview: false,
                 idempotency_key: None,
                 operator_grant: None,
                 command: commands::Command::Project(commands::Project::List(commands::List {
