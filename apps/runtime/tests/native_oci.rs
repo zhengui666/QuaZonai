@@ -1164,6 +1164,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         let quality_operation = NativeTaskParametersV1::ValidateData {
             schema_version: SchemaV1,
             selections: vec![NativeDatasetSelectionV1 {
+                settlements: Vec::new(),
                 dataset_revision_id: dataset,
                 selection: request.selection.clone(),
             }],
@@ -1260,6 +1261,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
                 participation_limit: "0.00001".parse().unwrap(),
             },
             source: NativeDatasetSelectionV1 {
+                settlements: Vec::new(),
                 dataset_revision_id: dataset,
                 selection: request.selection.clone(),
             },

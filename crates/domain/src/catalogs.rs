@@ -201,6 +201,47 @@ pub fn metadata(
         return Err(bad("quality.sealed_bar_values"));
     }
     bar_notionals(quality)?;
+    crate::prediction::settlement_scope(
+        &quality.settlements,
+        &quality.instrument_ids,
+        &quality.selection,
+    )?;
+    if value.partition == contracts::research::DataPartition::Sealed
+        && !quality.settlements.is_empty()
+    {
+        return Err(bad("quality.sealed_settlement_values"));
+    }
+    for group in &quality.settlements {
+        for outcome in &group.outcomes {
+            if chrono::DateTime::from_timestamp_nanos(outcome.ts_init.get() as i64)
+                > value.available_through
+            {
+                return Err(bad("quality.settlement_availability"));
+            }
+            // The untraded sibling may have no BAR series. Its native definition is
+            // still required so one source cannot splice unrelated condition IDs.
+            let mut found = false;
+            for definition in &value.universe.instrument_definitions {
+                let (class, payload) = instrument_definition(definition)?;
+                if payload["id"].as_str() != Some(&outcome.instrument_id) {
+                    continue;
+                }
+                if found || class != "BinaryOption" {
+                    return Err(bad("quality.settlement_instrument"));
+                }
+                let (activation, _) = crate::prediction::instrument(payload)?;
+                if payload["info"]["condition_id"].as_str() != Some(&group.condition_id)
+                    || outcome.ts_event.get() < activation
+                {
+                    return Err(bad("quality.settlement_instrument"));
+                }
+                found = true;
+            }
+            if !found {
+                return Err(bad("quality.settlement_instrument"));
+            }
+        }
+    }
     if quality.row_count != value.row_count
         || quality.first_event_ns > quality.last_event_ns
         || quality.last_event_ns > quality.available_through_ns

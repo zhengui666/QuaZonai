@@ -30,6 +30,30 @@ Runtime 镜像声明 polymarket-research/1，仅有效原生资产才广告市�
 不具备新能力。登记执行假设要求对应版本；现有许可、PIT、Sealed和目标交付
 边界不因该能力放开。新适配须以实际原生结算、共享资金和多Alpha测试验收。
 
+### 冻结结算来源与目标期限
+
+结算不是登记 BAR 后隐式授予的额外目录权限。原登记元数据的
+quality.datasets[].settlements 冻结完整 NativeSettlementGroupV1：condition_id、
+source_reference、恰好两个 outcomes；每项保留 instrument_id、close_price、
+ts_event 和 ts_init。价格使用 DecimalValue，纳秒使用 DbCounter。不同 token
+必须属于同一 condition，价格均在 [0,1] 并精确合计 1。单 token 研究也保留完整
+来源向量，但不会给未选 token 建仓。不完整档案只能作为未验证数据准备，不能
+通过缺项、重复 token 或零填充拼出完整结算。Sealed 质量元数据不公开兑付明细。
+
+NativeDatasetSelectionV1、NativeSimulationRequestV1 和 NativePortfolioStudyRequestV1
+分别冻结该 settlements；缺省空数组表示没有结算依据，不表示免费、零赔付或
+可跳过结算。Store 从原登记证据生成请求，Runtime 对比同目录版本的完整可见
+向量，Job 再核对原生 InstrumentClose 的价格、资产及两种时间；新增、缺失、
+变更和重复记录均失败。未进入持有窗口或实际尚不可用的事件不会提前释放现金。
+fresh DATA_VALIDATE 和组合质量产物保留原绑定，发布时复验。结算记录不作为
+Alpha BAR 特征，也不传入其八参数 Wasm ABI。无需新鉴权服务、回测内核或账本。
+
+所有二元目标要求 activation <= decision < expiration，且原 decision + TTL
+不超过每个入选合约的 expiration。超期直接拒绝，不静默裁剪策略 TTL。原生
+portfolio preparation、Runtime/Store 构建准入和 Candidate 发布使用同一规则；
+Release 沿用既有原来源复验。交易目标到期不等于持仓已经结算：已建仓可继续
+等待冻结来源的实际结算时点，但不能因此延长新交易权限。
+
 ## Polymarket 研究抵押币
 
 研究的 base_currency 与模型账单 cost_currency 分开：前者接受原 ISO 4217
@@ -2305,11 +2329,13 @@ Candidate、政策、数据版本和完整意图；缺少独立PORTFOLIO发表�
 Returns统计组（不读canonical的position fallback），scope固定portfolio：
 PORTFOLIO_DAILY_RETURN_MEAN对应Average (Return)/nautilus-analysis.ReturnsAverage，
 unit=RETURN_PER_DAY，annualization_factor=null；PORTFOLIO_RETURN_VOLATILITY对应
-Returns Volatility (252 days)/nautilus-analysis.ReturnsVolatility，
-unit=ANNUALIZED_RETURN_STDDEV，annualization_factor=252；PORTFOLIO_SHARPE_RATIO对应
-Sharpe Ratio (252 days)/nautilus-analysis.SharpeRatio，unit=RATIO，
-annualization_factor=252。三者method_version=0.63.0、frequency=UTC_DAY；
-252表示原生每年日数，不是再次乘到原值的系数。波动率/Sharpe由原生按UTC日
+Returns Volatility ({period} days)/nautilus-analysis.ReturnsVolatility，
+unit=ANNUALIZED_RETURN_STDDEV，annualization_factor=period；PORTFOLIO_SHARPE_RATIO对应
+Sharpe Ratio ({period} days)/nautilus-analysis.SharpeRatio，unit=RATIO，
+annualization_factor=period。NAUTILUS_POLYMARKET 的 period=365，原股票／外汇路径
+period=252；方法键必须与该请求实际选择的原生配置一致，不跨分支替换。三者
+method_version=0.63.0、frequency=UTC_DAY；period 表示原生每年日数，不是再次乘到
+原值的系数。日均收益不年化。波动率/Sharpe由原生按UTC日
 复利分箱、样本标准差(ddof=1)计算；Sharpe该路径不扣无风险利率。
 适配不重算统计、不补日历空档，observation_count是原日收益条数；period是
 原canonical实际模拟起止（纳秒向外取整到微秒），不是声明的更大输入窗口。

@@ -89,6 +89,19 @@ pub fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
     let mut datasets = BTreeSet::new();
     for item in &value.datasets {
         crate::catalogs::bar_notionals(item)?;
+        crate::prediction::settlement_scope(
+            &item.settlements,
+            &item.instrument_ids,
+            &item.selection,
+        )?;
+        if item
+            .settlements
+            .iter()
+            .flat_map(|g| &g.outcomes)
+            .any(|o| o.ts_init.get() > checked)
+        {
+            return Err(bad("native_output.settlement_time"));
+        }
         let ids = instruments(&item.selection)?;
         if !datasets.insert(item.dataset_revision_id)
             || item
@@ -246,19 +259,23 @@ pub fn output_bindings(
             request,
             ..
         } => vec![contracts::execution::NativeDatasetSelectionV1 {
+            settlements: request.settlements.clone(),
             dataset_revision_id: *dataset_revision_id,
             selection: request.source_selection.clone(),
         }],
         NativeTaskParametersV1::SimulateCandidate {
             dataset_revision_id,
             source_selection,
+            request,
             ..
         }
         | NativeTaskParametersV1::SimulatePortfolioSequence {
             dataset_revision_id,
             source_selection,
+            request,
             ..
         } => vec![contracts::execution::NativeDatasetSelectionV1 {
+            settlements: request.settlements.clone(),
             dataset_revision_id: *dataset_revision_id,
             selection: source_selection.clone(),
         }],
@@ -275,6 +292,7 @@ pub fn output_bindings(
                 .zip(&selections)
                 .any(|(actual, expected)| {
                     actual.dataset_revision_id != expected.dataset_revision_id
+                        || actual.settlements != expected.settlements
                         || !same_selection(&actual.selection, &expected.selection)
                 })
         {

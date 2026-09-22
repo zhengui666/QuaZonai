@@ -238,6 +238,41 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         );
         time_order(close.ts_event, close.ts_init)?;
     }
+    // A partial archive stays unqualified, but observed sibling payouts must
+    // never contradict each other. This checks source conservation, not cash replay.
+    let mut conditions = std::collections::BTreeMap::<
+        String,
+        Vec<contracts::settlement::NativeSettlementOutcomeV1>,
+    >::new();
+    for close in &archive.closes {
+        let identity = close.instrument_id.to_string();
+        let (condition, _) = identity
+            .rsplit_once('-')
+            .context("POLYMARKET_CLOSE_IDENTITY")?;
+        conditions.entry(condition.into()).or_default().push(
+            contracts::settlement::NativeSettlementOutcomeV1 {
+                instrument_id: identity,
+                close_price: close
+                    .close_price
+                    .to_string()
+                    .parse()
+                    .map_err(anyhow::Error::msg)?,
+                ts_event: contracts::DbCounter::new(close.ts_event.as_u64())
+                    .map_err(anyhow::Error::msg)?,
+                ts_init: contracts::DbCounter::new(close.ts_init.as_u64())
+                    .map_err(anyhow::Error::msg)?,
+            },
+        );
+    }
+    for (condition_id, outcomes) in conditions {
+        if outcomes.len() > 1 {
+            domain::prediction::settlements(&[contracts::settlement::NativeSettlementGroupV1 {
+                condition_id,
+                source_reference: archive.source_reference.clone(),
+                outcomes,
+            }])?;
+        }
+    }
     for bar in &archive.bars {
         ensure!(ids.contains(&bar.bar_type.instrument_id()), "UNMAPPED_BAR");
         ensure!(
@@ -286,21 +321,11 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
     catalog.write_instruments(instruments)?;
     // Native Parquet metadata belongs to one instrument (one BarType for bars).
     // Stable ordering preserves the source order of simultaneous book updates.
-    archive
-        .trades
-        .sort_by_key(|r| (r.instrument_id, r.ts_init, r.ts_event));
-    archive
-        .quotes
-        .sort_by_key(|r| (r.instrument_id, r.ts_init, r.ts_event));
-    archive
-        .deltas
-        .sort_by_key(|r| (r.instrument_id, r.ts_init, r.ts_event));
-    archive
-        .bars
-        .sort_by_key(|r| (r.bar_type, r.ts_init, r.ts_event));
-    archive
-        .closes
-        .sort_by_key(|r| (r.instrument_id, r.ts_init, r.ts_event));
+    archive.trades.sort_by_key(|r| (r.instrument_id, r.ts_init));
+    archive.quotes.sort_by_key(|r| (r.instrument_id, r.ts_init));
+    archive.deltas.sort_by_key(|r| (r.instrument_id, r.ts_init));
+    archive.bars.sort_by_key(|r| (r.bar_type, r.ts_init));
+    archive.closes.sort_by_key(|r| (r.instrument_id, r.ts_init));
     for rows in archive
         .trades
         .chunk_by(|a, b| a.instrument_id == b.instrument_id)
@@ -727,6 +752,134 @@ mod tests {
         assert_eq!(info["condition_id"], "original");
         assert_eq!(info["fee_schedule"]["rate"], "0.01");
         assert_eq!(cleaned.ts_init(), original.ts_init());
+    }
+
+    #[test]
+    fn equal_reception_times_preserve_original_arrival_order_in_native_partitions() {
+        use nautilus_model::{
+            data::{BookOrder, Data},
+            enums::{BookAction, OrderSide, RecordFlag},
+        };
+        let mut input = archive();
+        let id = input.instruments[0].id();
+        for row in &mut input.trades {
+            row.ts_init = 50_u64.into();
+        }
+        for event in [20_u64, 10_u64] {
+            input.quotes.push(QuoteTick::new(
+                id,
+                Price::from("0.4000"),
+                Price::from("0.4500"),
+                Quantity::from("1.000000"),
+                Quantity::from("2.000000"),
+                event.into(),
+                50_u64.into(),
+            ));
+        }
+        input.deltas = vec![
+            OrderBookDelta::new(
+                id,
+                BookAction::Add,
+                BookOrder::new(
+                    OrderSide::Buy,
+                    Price::from("0.4000"),
+                    Quantity::from("1.000000"),
+                    1,
+                ),
+                0,
+                10,
+                20_u64.into(),
+                50_u64.into(),
+            ),
+            OrderBookDelta::new(
+                id,
+                BookAction::Update,
+                BookOrder::new(
+                    OrderSide::Buy,
+                    Price::from("0.4000"),
+                    Quantity::from("2.000000"),
+                    1,
+                ),
+                RecordFlag::F_LAST as u8,
+                11,
+                10_u64.into(),
+                50_u64.into(),
+            ),
+        ];
+        let trades = input
+            .trades
+            .iter()
+            .copied()
+            .map(Data::Trade)
+            .collect::<Vec<_>>();
+        let quotes = input
+            .quotes
+            .iter()
+            .copied()
+            .map(Data::Quote)
+            .collect::<Vec<_>>();
+        let deltas = input
+            .deltas
+            .iter()
+            .copied()
+            .map(Data::Delta)
+            .collect::<Vec<_>>();
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("arrival-order");
+        import(input, &output).unwrap();
+        let root = output.join("catalog");
+        let mut catalog =
+            ParquetDataCatalog::from_uri(root.to_str().unwrap(), None, None, None, None).unwrap();
+        macro_rules! rows {
+            ($kind:ty) => {
+                catalog
+                    .query::<$kind>(Some(vec![id.to_string()]), None, None, None, None, true)
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            };
+        }
+        assert_eq!(rows!(TradeTick), trades);
+        assert_eq!(rows!(QuoteTick), quotes);
+        assert_eq!(rows!(OrderBookDelta), deltas);
+    }
+
+    #[test]
+    fn contradictory_sibling_payouts_are_rejected_before_catalog_publication() {
+        for prices in [
+            ["1.0000", "1.0000"],
+            ["0.8000", "0.8000"],
+            ["0.0000", "0.0000"],
+        ] {
+            let mut input = archive();
+            let other =
+                InstrumentId::from_str("test-condition-987654321098765432109876543210.POLYMARKET")
+                    .unwrap();
+            let mut definition = serde_json::to_value(&input.instruments[0]).unwrap();
+            definition["BinaryOption"]["id"] = other.to_string().into();
+            definition["BinaryOption"]["raw_symbol"] = "987654321098765432109876543210".into();
+            input
+                .instruments
+                .push(serde_json::from_value(definition).unwrap());
+            input.closes = input
+                .instruments
+                .iter()
+                .zip(prices)
+                .map(|(instrument, price)| {
+                    InstrumentClose::new(
+                        instrument.id(),
+                        Price::from(price),
+                        InstrumentCloseType::ContractExpired,
+                        1000_u64.into(),
+                        1200_u64.into(),
+                    )
+                })
+                .collect();
+            let directory = tempfile::tempdir().unwrap();
+            let output = directory.path().join("incoherent");
+            assert!(import(input, &output).is_err());
+            assert!(!output.exists());
+        }
     }
 
     #[test]

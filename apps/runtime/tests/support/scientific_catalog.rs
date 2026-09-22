@@ -191,6 +191,7 @@ fn catalog() -> (
                 native_version: "nautilus-persistence/0.63.0".into(),
                 checked_at: runtime::now(),
                 datasets: vec![NativeDatasetQualityV1 {
+                    settlements: Vec::new(),
                     dataset_revision_id: Id::new(),
                     selection,
                     row_count: support::count(observed.rows as u64),

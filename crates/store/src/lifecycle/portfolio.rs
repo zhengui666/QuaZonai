@@ -386,6 +386,24 @@ where
         members,
     };
     domain::execution::portfolio_build_request(&native)?;
+    let until_ns = native
+        .selection
+        .decision_cutoff_ns
+        .get()
+        .checked_add(
+            u64::from(native.mandate.rebalance_schedule.target_ttl_seconds) * 1_000_000_000,
+        )
+        .ok_or(StoreError::Integrity)?;
+    domain::prediction::target_window(
+        &dataset.metadata.universe.instrument_definitions,
+        &native
+            .assets
+            .iter()
+            .map(|a| a.instrument_id.clone())
+            .collect::<Vec<_>>(),
+        native.selection.decision_cutoff_ns.get(),
+        until_ns,
+    )?;
     inputs.push(RuntimeInputV1::Artifact {
         artifact_id: costs,
         storage_version: "1".into(),

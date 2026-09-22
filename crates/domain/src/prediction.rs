@@ -115,6 +115,129 @@ pub fn planning_fee(value: &Value) -> Result<DecimalValue, DomainError> {
     ceiling.to_plain_string().parse().map_err(|_| invalid())
 }
 
+/// Validate source coherence only. Nautilus still performs every cash movement.
+pub fn settlements(
+    groups: &[contracts::settlement::NativeSettlementGroupV1],
+) -> Result<(), DomainError> {
+    use std::collections::BTreeSet;
+    let bad = || DomainError::Invalid("polymarket_settlement_source");
+    if groups.len() > 256 {
+        return Err(bad());
+    }
+    let mut conditions = BTreeSet::new();
+    let mut instruments = BTreeSet::new();
+    for group in groups {
+        crate::control::text(&group.condition_id, 1, 120, false)?;
+        crate::control::text(&group.source_reference, 1, 2000, false)?;
+        if !conditions.insert(&group.condition_id) || group.outcomes.len() != 2 {
+            return Err(bad());
+        }
+        let prefix = format!("{}-", group.condition_id);
+        let mut total = BigDecimal::from(0);
+        for outcome in &group.outcomes {
+            crate::control::text(&outcome.instrument_id, 1, 200, false)?;
+            let token = outcome
+                .instrument_id
+                .strip_prefix(&prefix)
+                .and_then(|s| s.strip_suffix(".POLYMARKET"))
+                .ok_or_else(bad)?;
+            if token.is_empty()
+                || !token.bytes().all(|b| b.is_ascii_digit())
+                || !instruments.insert(&outcome.instrument_id)
+                || !outcome.close_price.is_fraction()
+                || outcome.ts_event > outcome.ts_init
+            {
+                return Err(bad());
+            }
+            total += outcome.close_price.as_decimal();
+        }
+        if total != BigDecimal::from(1) {
+            return Err(DomainError::Invalid("polymarket_incoherent_payout_vector"));
+        }
+    }
+    Ok(())
+}
+
+/// Select whole conditions, never remove a sibling merely because it is not traded.
+pub fn scoped_settlements(
+    groups: &[contracts::settlement::NativeSettlementGroupV1],
+    instruments: &[String],
+) -> Vec<contracts::settlement::NativeSettlementGroupV1> {
+    groups
+        .iter()
+        .filter(|g| {
+            g.outcomes
+                .iter()
+                .any(|o| instruments.contains(&o.instrument_id))
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn visible_settlements(
+    groups: &[contracts::settlement::NativeSettlementGroupV1],
+    instruments: &[String],
+    cutoff: contracts::DbCounter,
+) -> Vec<contracts::settlement::NativeSettlementGroupV1> {
+    scoped_settlements(groups, instruments)
+        .into_iter()
+        .filter(|g| g.outcomes.iter().all(|o| o.ts_init <= cutoff))
+        .collect()
+}
+
+/// Bind complete payouts to the original quality window and selected native identities.
+pub fn settlement_scope(
+    groups: &[contracts::settlement::NativeSettlementGroupV1],
+    instruments: &[String],
+    selection: &contracts::science::NativeBarSelectionV1,
+) -> Result<(), DomainError> {
+    settlements(groups)?;
+    if groups != scoped_settlements(groups, instruments)
+        || groups
+            .iter()
+            .flat_map(|g| &g.outcomes)
+            .any(|o| o.ts_init > selection.decision_cutoff_ns)
+    {
+        return Err(DomainError::Invalid("polymarket_settlement_scope"));
+    }
+    Ok(())
+}
+
+/// Fixed TTLs are rejected, never silently clipped to conceal an expired target.
+pub fn target_window(
+    definitions: &[Value],
+    ids: &[String],
+    asof_ns: u64,
+    until_ns: u64,
+) -> Result<(), DomainError> {
+    if asof_ns >= until_ns {
+        return Err(DomainError::Invalid("polymarket_target_lifetime"));
+    }
+    for id in ids {
+        let mut found = false;
+        for definition in definitions {
+            let (class, payload) = crate::catalogs::instrument_definition(definition)?;
+            if payload.get("id").and_then(Value::as_str) != Some(id.as_str()) {
+                continue;
+            }
+            if found {
+                return Err(DomainError::Invalid("polymarket_target_identity"));
+            }
+            found = true;
+            if class == "BinaryOption" {
+                let (activation, expiration) = instrument(payload)?;
+                if asof_ns < activation || asof_ns >= expiration || until_ns > expiration {
+                    return Err(DomainError::Invalid("polymarket_target_lifetime"));
+                }
+            }
+        }
+        if !found {
+            return Err(DomainError::Invalid("polymarket_target_identity"));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

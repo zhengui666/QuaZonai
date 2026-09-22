@@ -138,3 +138,27 @@ pub fn settings(original: &mut NativeSimulationSettingsV1, rate: &str, expiratio
         })
         .collect();
 }
+
+/// Independently frozen fixture source declaration, not inferred from simulation output.
+pub fn settlement_groups(
+    event: u64,
+    available: u64,
+    payouts: [&str; 2],
+) -> Vec<contracts::settlement::NativeSettlementGroupV1> {
+    vec![contracts::settlement::NativeSettlementGroupV1 {
+        condition_id: "fixture-event".into(),
+        source_reference: "SYNTHETIC_NATIVE_REGRESSION".into(),
+        outcomes: IDS
+            .iter()
+            .zip(payouts)
+            .map(
+                |(id, price)| contracts::settlement::NativeSettlementOutcomeV1 {
+                    instrument_id: (*id).into(),
+                    close_price: price.parse().unwrap(),
+                    ts_event: contracts::DbCounter::new(event).unwrap(),
+                    ts_init: contracts::DbCounter::new(available).unwrap(),
+                },
+            )
+            .collect(),
+    }]
+}

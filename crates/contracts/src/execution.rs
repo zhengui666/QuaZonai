@@ -12,6 +12,10 @@ use utoipa::ToSchema;
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeDatasetSelectionV1 {
+    /// Complete original condition payouts; not inferred from a last bar or expiry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(max_items = 256)]
+    pub settlements: Vec<crate::settlement::NativeSettlementGroupV1>,
     pub dataset_revision_id: Id,
     pub selection: NativeBarSelectionV1,
 }
@@ -149,6 +153,10 @@ pub struct NativeJobOutputIndexV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeDatasetQualityV1 {
+    /// Complete original condition payouts; not inferred from a last bar or expiry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(max_items = 256)]
+    pub settlements: Vec<crate::settlement::NativeSettlementGroupV1>,
     pub dataset_revision_id: Id,
     pub selection: NativeBarSelectionV1,
     pub row_count: DbCounter,

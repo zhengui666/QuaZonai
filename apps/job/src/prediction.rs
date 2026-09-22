@@ -113,13 +113,14 @@ pub(crate) fn validate_market(
     Ok(())
 }
 
-/// Closing records remain in the original native catalog. Forecasts never query them.
-/// Query by original availability and retain only this simulation's half-open window.
-/// No payout is inferred from final prices, market labels or a scheduled expiry date.
-pub(crate) fn close_events(
+/// Verify the frozen source inventory before giving any close to the native engine.
+/// The complete condition is checked even when only one sibling is traded. A close
+/// added to a BAR directory cannot acquire authority merely by being on disk.
+pub(crate) fn catalog_closes(
     root: &Path,
     market: &NativeMarketData,
     selection: &NativeBarSelectionV1,
+    groups: &[contracts::settlement::NativeSettlementGroupV1],
 ) -> Result<Vec<InstrumentClose>> {
     let binaries = market
         .series
@@ -129,9 +130,28 @@ pub(crate) fn close_events(
             _ => None,
         })
         .collect::<BTreeMap<_, _>>();
+    let selected = binaries.keys().map(ToString::to_string).collect::<Vec<_>>();
+    domain::prediction::settlement_scope(groups, &selected, selection)?;
     if binaries.is_empty() {
         return Ok(Vec::new());
     }
+    let mut expected = BTreeMap::new();
+    for group in groups {
+        for outcome in &group.outcomes {
+            let id = outcome
+                .instrument_id
+                .parse::<nautilus_model::identifiers::InstrumentId>()?;
+            ensure!(
+                expected.insert(id, outcome).is_none(),
+                "DUPLICATE_POLYMARKET_SETTLEMENT"
+            );
+        }
+    }
+    let ids = binaries
+        .keys()
+        .chain(expected.keys())
+        .copied()
+        .collect::<BTreeSet<_>>();
     let mut catalog = ParquetDataCatalog::from_uri(
         root.to_str()
             .ok_or_else(|| anyhow::anyhow!("CATALOG_PATH_ENCODING"))?,
@@ -140,48 +160,100 @@ pub(crate) fn close_events(
         None,
         None,
     )?;
+    // All already-available closes for these identities must be registered. Only
+    // their later selection for replay uses the requested half-open holding window.
     let query = catalog.query::<InstrumentClose>(
-        Some(binaries.keys().map(ToString::to_string).collect()),
-        Some(UnixNanos::from(selection.event_start_ns.get())),
+        Some(ids.iter().map(ToString::to_string).collect()),
+        None,
         Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
         None,
         None,
         true,
     )?;
+    let mut seen = BTreeSet::new();
     let mut closes = Vec::new();
-    let mut identities = BTreeSet::new();
-    for record in query.take(binaries.len() + 1) {
+    for record in query.take(ids.len() + 1) {
         let Data::InstrumentClose(close) = record? else {
             anyhow::bail!("CATALOG_NATIVE_TYPE_MISMATCH");
         };
-        let binary = binaries
+        let original = expected
             .get(&close.instrument_id)
-            .ok_or_else(|| anyhow::anyhow!("UNMAPPED_INSTRUMENT_CLOSE"))?;
+            .ok_or_else(|| anyhow::anyhow!("POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"))?;
+        let price: contracts::DecimalValue = close
+            .close_price
+            .to_string()
+            .parse()
+            .map_err(anyhow::Error::msg)?;
         ensure!(
-            close.ts_init >= close.ts_event
-                && close.ts_event >= binary.activation_ns
-                && close.close_type == InstrumentCloseType::ContractExpired
-                && (Decimal::ZERO..=Decimal::ONE).contains(&close.close_price.as_decimal()),
-            "POLYMARKET_CLOSE_CONTRACT_INVALID"
+            close.close_type == InstrumentCloseType::ContractExpired
+                && close.ts_init >= close.ts_event
+                && close.ts_event.as_u64() == original.ts_event.get()
+                && close.ts_init.as_u64() == original.ts_init.get()
+                && price == original.close_price,
+            "POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"
         );
-        if close.ts_init.as_u64() >= selection.event_end_ns.get() {
-            continue;
-        }
         ensure!(
-            identities.insert(close.instrument_id),
+            seen.insert(close.instrument_id),
             "DUPLICATE_POLYMARKET_SETTLEMENT"
         );
-        closes.push(close);
-    }
-    // An unresolved expiry must not be assigned a fabricated terminal value. Historical
-    // mark-to-market before expiry remains possible; cross-expiry studies require source close events.
-    for (id, binary) in binaries {
-        if binary.expiration_ns.as_u64() < selection.event_end_ns.get() {
-            ensure!(identities.contains(&id), "POLYMARKET_PENDING_RESOLUTION");
+        if let Some(binary) = binaries.get(&close.instrument_id) {
+            ensure!(
+                close.ts_event >= binary.activation_ns
+                    && close.close_price.precision == binary.price_precision,
+                "POLYMARKET_CLOSE_CONTRACT_INVALID"
+            );
+            if close.ts_init.as_u64() >= selection.event_start_ns.get()
+                && close.ts_init.as_u64() < selection.event_end_ns.get()
+            {
+                closes.push(close);
+            }
         }
     }
-    closes.sort_by_key(|c| (c.ts_init, c.ts_event));
+    ensure!(
+        seen.len() == expected.len(),
+        "POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"
+    );
+    // Keep original arrival ordering, including ties; no synthetic timestamp is added.
+    closes.sort_by_key(|c| c.ts_init);
     Ok(closes)
+}
+
+pub(crate) fn close_events(
+    root: &Path,
+    market: &NativeMarketData,
+    selection: &NativeBarSelectionV1,
+    groups: &[contracts::settlement::NativeSettlementGroupV1],
+) -> Result<Vec<InstrumentClose>> {
+    let closes = catalog_closes(root, market, selection, groups)?;
+    for series in &market.series {
+        if let InstrumentAny::BinaryOption(binary) = &series.instrument {
+            if binary.expiration_ns.as_u64() < selection.event_end_ns.get() {
+                ensure!(
+                    closes.iter().any(|c| c.instrument_id == binary.id),
+                    "POLYMARKET_PENDING_RESOLUTION"
+                );
+            }
+        }
+    }
+    Ok(closes)
+}
+
+/// Native instruments remain the authority for the target's usable trading window.
+pub(crate) fn target_window(
+    instruments: &[InstrumentAny],
+    asof_ns: u64,
+    until_ns: u64,
+) -> Result<()> {
+    let definitions = instruments
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    let ids = instruments
+        .iter()
+        .map(|i| i.id().to_string())
+        .collect::<Vec<_>>();
+    domain::prediction::target_window(&definitions, &ids, asof_ns, until_ns)?;
+    Ok(())
 }
 
 pub(crate) fn order_notional(

@@ -139,6 +139,10 @@ pub struct NativeTargetPointV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSimulationRequestV1 {
+    /// Complete original condition payouts; not inferred from a last bar or expiry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(max_items = 256)]
+    pub settlements: Vec<crate::settlement::NativeSettlementGroupV1>,
     pub schema_version: SchemaV1,
     pub selection: NativeBarSelectionV1,
     pub settings: NativeSimulationSettingsV1,

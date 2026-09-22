@@ -338,6 +338,24 @@ where
         if binding.selection.selection != frozen.selection {
             return Err(StoreError::Integrity);
         }
+        let original_until = frozen
+            .selection
+            .decision_cutoff_ns
+            .get()
+            .checked_add(
+                u64::from(frozen.mandate.rebalance_schedule.target_ttl_seconds) * 1_000_000_000,
+            )
+            .ok_or(StoreError::Integrity)?;
+        domain::prediction::target_window(
+            &binding.metadata.universe.instrument_definitions,
+            &frozen
+                .assets
+                .iter()
+                .map(|a| a.instrument_id.clone())
+                .collect::<Vec<_>>(),
+            frozen.selection.decision_cutoff_ns.get(),
+            original_until,
+        )?;
         // These immutable inputs already passed admission at this same cutoff.
         // Corruption is retryable, not a newly ineligible final Candidate.
         domain::catalogs::execution_fees(&binding.metadata, &frozen.execution_settings)

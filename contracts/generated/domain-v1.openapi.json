@@ -12008,6 +12008,14 @@
           },
           "selection": {
             "$ref": "#/components/schemas/NativeBarSelectionV1"
+          },
+          "settlements": {
+            "description": "Complete original condition payouts; not inferred from a last bar or expiry.",
+            "items": {
+              "$ref": "#/components/schemas/NativeSettlementGroupV1"
+            },
+            "maxItems": 256,
+            "type": "array"
           }
         },
         "required": [
@@ -12029,6 +12037,14 @@
           },
           "selection": {
             "$ref": "#/components/schemas/NativeBarSelectionV1"
+          },
+          "settlements": {
+            "description": "Complete original condition payouts; not inferred from a last bar or expiry.",
+            "items": {
+              "$ref": "#/components/schemas/NativeSettlementGroupV1"
+            },
+            "maxItems": 256,
+            "type": "array"
           }
         },
         "required": [
@@ -13062,6 +13078,14 @@
           "schema_version": {
             "$ref": "#/components/schemas/SchemaV1"
           },
+          "settlements": {
+            "description": "Complete original condition payouts; not inferred from a last bar or expiry.",
+            "items": {
+              "$ref": "#/components/schemas/NativeSettlementGroupV1"
+            },
+            "maxItems": 256,
+            "type": "array"
+          },
           "source_selection": {
             "$ref": "#/components/schemas/NativeBarSelectionV1"
           }
@@ -13228,6 +13252,62 @@
         ],
         "type": "object"
       },
+      "NativeSettlementGroupV1": {
+        "additionalProperties": false,
+        "properties": {
+          "condition_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcomes": {
+            "description": "The complete two-outcome condition, even when only one token is traded.",
+            "items": {
+              "$ref": "#/components/schemas/NativeSettlementOutcomeV1"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "source_reference": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "condition_id",
+          "source_reference",
+          "outcomes"
+        ],
+        "type": "object"
+      },
+      "NativeSettlementOutcomeV1": {
+        "additionalProperties": false,
+        "properties": {
+          "close_price": {
+            "$ref": "#/components/schemas/DecimalValue"
+          },
+          "instrument_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "ts_event": {
+            "$ref": "#/components/schemas/DbCounter"
+          },
+          "ts_init": {
+            "$ref": "#/components/schemas/DbCounter"
+          }
+        },
+        "required": [
+          "instrument_id",
+          "close_price",
+          "ts_event",
+          "ts_init"
+        ],
+        "type": "object"
+      },
       "NativeSimulationRequestV1": {
         "additionalProperties": false,
         "properties": {
@@ -13239,6 +13319,14 @@
           },
           "settings": {
             "$ref": "#/components/schemas/NativeSimulationSettingsV1"
+          },
+          "settlements": {
+            "description": "Complete original condition payouts; not inferred from a last bar or expiry.",
+            "items": {
+              "$ref": "#/components/schemas/NativeSettlementGroupV1"
+            },
+            "maxItems": 256,
+            "type": "array"
           },
           "target_points": {
             "items": {

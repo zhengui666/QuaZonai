@@ -40,3 +40,17 @@ The research path remains validated LAST/EXTERNAL BAR. Stored TradeTick/QuoteTic
 No full real historical archive, trading account, wallet, production deployment, live order or real-market Alpha/portfolio profitability is claimed. Synthetic native computations and their regressions do not establish those facts. Settlement availability does not prove unobserved on-chain redemption or gas costs.
 
 Completion requires: (1) the implementation PR, (2) all applicable CI passing and explicit clean read-only Codex review on its final head, (3) merge after (2), followed by main verification. Do not close #100 or #62 merely because this native integration or an ingestion utility is merged.
+
+## First review corrections
+
+The first independent review identified unbound close rows, target TTL beyond binary
+expiry, incoherent sibling payouts and inconsistent annualization documentation.
+Corrections freeze complete source payout vectors in registered quality metadata and
+native task contracts, recheck native close records before replay, and enforce the
+original contract lifetime at build/adoption boundaries. No source scan grants its own
+scientific authority. The importer also preserves original arrival order for equal
+reception times. Native, domain and real-journal regressions cover these cases.
+
+These changes require final-head CI and another explicit read-only clean review in
+PR #101; their authorship alone is not a successful executor or acceptance result.
+The detailed remediation specification is recorded in Issue #100 comment 5770031108.

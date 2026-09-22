@@ -523,6 +523,7 @@ fn validate_point(
         point.targets.len() == instruments.len(),
         "SIMULATION_TARGET_IDENTITY"
     );
+    crate::prediction::target_window(instruments, point.asof_ns.get(), point.valid_until_ns.get())?;
     let mut total = point.cash_weight.as_decimal().clone();
     let mut gross = BigDecimal::from(0);
     for (target, instrument) in point.targets.iter().zip(instruments) {
@@ -617,7 +618,8 @@ pub(crate) fn run(
     let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
     let market = load_catalog(root, &request.selection)?;
     let currency = validate_settings(&market, request)?;
-    let closes = crate::prediction::close_events(root, &market, &request.selection)?;
+    let closes =
+        crate::prediction::close_events(root, &market, &request.selection, &request.settlements)?;
     let settlement_events = closes
         .iter()
         .map(|c| (c.instrument_id, *c))

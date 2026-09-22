@@ -33,6 +33,7 @@ pub mod runtime_jobs;
 pub mod scalars;
 pub mod science;
 pub mod settings;
+pub mod settlement;
 
 pub use scalars::{DbCounter, DecimalValue, Id, Revision, SchemaV1, Timestamp};
 

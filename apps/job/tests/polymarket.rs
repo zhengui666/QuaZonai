@@ -28,7 +28,9 @@ fn simulation(
     request.selection.decision_cutoff_ns = request.selection.event_end_ns;
     request.target_points.truncate(1);
     let target = &mut request.target_points[0];
-    target.valid_until_ns = request.selection.event_end_ns;
+    // Target trading authority ends at expiry; existing positions may wait
+    // longer for source-observed resolution without authorizing another trade.
+    target.valid_until_ns = market::count(expiration);
     target.cash_weight = "0.6".parse().unwrap();
     target.targets = IDS
         .iter()
@@ -39,6 +41,8 @@ fn simulation(
         })
         .collect();
     if let Some(payouts) = resolved {
+        request.settlements =
+            prediction::settlement_groups(expiration, (19 + delay_minutes) * STEP, payouts);
         prediction::settle(
             directory.path(),
             expiration,
@@ -274,4 +278,164 @@ fn two_original_alpha_members_run_through_native_portfolio_study() {
         .iter()
         .any(|s| s.group == NativeStatisticGroup::Returns && s.native_key.ends_with("(252 days)")));
     assert!(result.consumed_fuel.get() > 0);
+}
+
+#[test]
+fn unregistered_changed_and_missing_settlements_cannot_change_a_frozen_replay() {
+    let (catalog, request) = simulation("0", Some(["1.0000", "0.0000"]), 0);
+    for mutation in 0..4 {
+        let mut changed = request.clone();
+        match mutation {
+            0 => changed.settlements.clear(),
+            1 => {
+                for outcome in &mut changed.settlements[0].outcomes {
+                    outcome.close_price = "0.5".parse().unwrap();
+                }
+            }
+            2 => {
+                for outcome in &mut changed.settlements[0].outcomes {
+                    outcome.ts_init = market::count(outcome.ts_init.get() - 1);
+                }
+            }
+            _ => {
+                for outcome in &mut changed.settlements[0].outcomes {
+                    outcome.ts_event = market::count(outcome.ts_event.get() - 1);
+                }
+            }
+        }
+        let error = simulate(catalog.path(), &changed).unwrap_err();
+        assert!(
+            error.contains("POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"),
+            "{mutation}: {error}"
+        );
+    }
+    let (missing, mut frozen) = simulation("0", None, 0);
+    frozen.settlements = request.settlements;
+    assert!(simulate(missing.path(), &frozen)
+        .unwrap_err()
+        .contains("POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"));
+}
+
+#[test]
+fn native_settlement_rejects_incoherent_complete_condition_payouts() {
+    for payouts in [
+        ["1.0000", "1.0000"],
+        ["0.8000", "0.8000"],
+        ["0.0000", "0.0000"],
+    ] {
+        let (catalog, request) = simulation("0", Some(payouts), 0);
+        let error = simulate(catalog.path(), &request).unwrap_err();
+        assert!(
+            error.contains("polymarket_incoherent_payout_vector"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn one_traded_outcome_still_requires_the_complete_source_payout_vector() {
+    let (catalog, mut request) = simulation("0", Some(["1.0000", "0.0000"]), 0);
+    request.selection.bar_types.truncate(1);
+    request.settings.fee_rates.truncate(1);
+    request.target_points[0].targets.truncate(1);
+    request.target_points[0].cash_weight = "0.8".parse().unwrap();
+    let result = simulate(catalog.path(), &request).unwrap();
+    assert!((pnl(&result) - 300.0).abs() < 0.0001);
+    request.settlements[0].outcomes[1].close_price = "0.5".parse().unwrap();
+    assert!(simulate(catalog.path(), &request).is_err());
+    request.settlements[0].outcomes.truncate(1);
+    assert!(simulate(catalog.path(), &request).is_err());
+}
+
+#[test]
+fn close_on_the_exclusive_holding_boundary_is_not_early_cash() {
+    let (catalog, mut request) = simulation("0", Some(["1.0000", "0.0000"]), 0);
+    request.selection.event_end_ns = market::count(19 * STEP);
+    request.selection.decision_cutoff_ns = request.selection.event_end_ns;
+    assert!(simulate(catalog.path(), &request)
+        .unwrap_err()
+        .contains("POLYMARKET_PENDING_RESOLUTION"));
+}
+
+#[test]
+fn adding_a_close_to_an_existing_bar_catalog_does_not_authorize_it() {
+    use nautilus_model::{data::InstrumentClose, enums::InstrumentCloseType, types::Price};
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    let (root, request) = simulation("0", Some(["1.0000", "0.0000"]), 0);
+    let catalog =
+        ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, None, None, None)
+            .unwrap();
+    let extra = InstrumentClose::new(
+        IDS[0].parse().unwrap(),
+        Price::from("0.5000"),
+        InstrumentCloseType::ContractExpired,
+        (18 * STEP).into(),
+        (20 * STEP).into(),
+    );
+    catalog
+        .write_to_parquet(&[extra], None, None, None)
+        .unwrap();
+    assert!(simulate(root.path(), &request).is_err());
+}
+
+#[test]
+fn portfolio_build_rejects_expired_and_cross_expiry_targets_before_publishing_weights() {
+    let (_unused, original, model) = market::portfolio();
+    let cutoff = original.selection.decision_cutoff_ns.get();
+    let until =
+        cutoff + u64::from(original.mandate.rebalance_schedule.target_ttl_seconds) * 1_000_000_000;
+    for (expiration, accepted) in [
+        (cutoff - 1, false),
+        (cutoff, false),
+        (until - 1, false),
+        (until, true),
+        (until + 1, true),
+    ] {
+        let mut request = original.clone();
+        let catalog = tempfile::tempdir().unwrap();
+        prediction::write_catalog(catalog.path(), 20, "0", expiration, true);
+        prediction::settings(&mut request.execution_settings, "0", expiration);
+        request.mandate.base_currency = "pUSD".into();
+        request.current_weights.base_currency = "pUSD".into();
+        request.selection.bar_types = IDS
+            .iter()
+            .map(|id| format!("{id}-1-MINUTE-LAST-EXTERNAL"))
+            .collect();
+        for ((asset, weight), id) in request
+            .assets
+            .iter_mut()
+            .zip(&mut request.current_weights.weights)
+            .zip(IDS)
+        {
+            asset.instrument_id = id.into();
+            asset.currency = "pUSD".into();
+            weight.instrument_id = id.into();
+            weight.currency = "pUSD".into();
+        }
+        domain::execution::portfolio_build_request(&request).unwrap_or_else(|error| {
+            panic!("expiry={expiration}; fixture contract: {error:?}; request={request:?}")
+        });
+        let result = job::portfolio::build(catalog.path(), &request, |id| {
+            if id == request.mandate.constraints.transaction_costs_ref {
+                Ok(serde_json::to_vec(&request.execution_settings)?)
+            } else if id == request.current_weights_artifact_id {
+                Ok(serde_json::to_vec(&request.current_weights)?)
+            } else {
+                Ok(model.clone())
+            }
+        });
+        if accepted {
+            assert!(result.is_ok(), "expiry={expiration}: {result:?}");
+        } else {
+            let failure = result.unwrap_err();
+            let error = format!(
+                "{failure:?}; domain={:?}",
+                failure.downcast_ref::<domain::DomainError>()
+            );
+            assert!(
+                error.contains("polymarket_target_lifetime"),
+                "expiry={expiration}: {error}"
+            );
+        }
+    }
 }
