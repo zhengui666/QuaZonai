@@ -395,7 +395,7 @@ Release 的 `package_artifact_id` 必须引用同 Candidate 项目的独立不�
 `media_type=application/json`、`schema_name=qz.target_package`、`schema_version=1`，
 Release 的 `package_schema_version` 同为 `1`，且 `byte_count>0`。不能引用 PARAMETERS、
 别的项目或不同版本的对象。REAL Release 要求该 Package 的 origin=REAL 且
-access_class=DELIVERY；DEMO 也要使用真实的 PACKAGE 类型记录，而不能用任意测试参数充数。
+access_class=DELIVERY；历史非真实来源也必须保留原 PACKAGE 类型记录，不得改标或伪造来源。
 **DEMO Release 永远不能产生 PAPER/LIVE Approval 或 Handoff Offer。** 这些原生元数据
 约束不替代产物内容校验、真实输入来源、多 Alpha、独立评估和完整交付授权。
 
@@ -604,9 +604,9 @@ POST /migrations/import 只接收受信任导出注册引用和 dry_run，不能
 
 旧 API/db/Alembic/jobs/harness/auth/science/portfolio/remote/plugin/前端路径逐项标记复用或替换；保留已发布旧迁移语义和只读导出，Git 保存代码历史。删除自研投递、重复 LLM/OAuth、伪指标、错误 execution-control、在线插件市场、Radix/重复图表及过时永久 PASS 文档；删除旧代码同时删除仅适用于旧系统的测试；不能把剩余测试绿色当完整新系统验收。
 
-README 对标 uv 的清晰定位/快速使用、Nautilus 的架构与支持边界、Qlib 的数据准备/实际流程、RD-Agent 的可运行研究示例、Ant Design 的文档/生态导航；不借用上游性能/收益/全部功能当本项目已交付。中文为主，英文状态同步。最终结构：一句话是什么/不是什么；真实 E2E 截图/短演示；已验证能力与限制；真实架构图；无付费凭据 Demo；原生登录/数据/远端/预算真实启动；流程与证据；开发测试；部署备份升级故障安全；路线图贡献许可证/第三方。
+README 描述实际产品、安装入口、运行方式和许可证；安装与恢复只维护 OPERATIONS，命令只维护 CLI，模块与字段边界只维护本文件。服务 Agent 操作沿用 SKILL，不复制领域状态机。不提供独立演示后端、内存业务模式或测试数据启动入口。
 
-Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；真实模式不依赖测试 seed/手工 SQL。所有 Quickstart、CLI Help、配置/Skill 示例和生成合同进入 smoke；不存在命令就不能写“一键可用”。截图来自真实界面，不用概念图冒充。README/Skill 不复制领域状态机，实际 CI/Review 链接替代永久 RELEASE READY 声明。文档维护复用原生链接检查、CLI help 回归和生成合同差异检查；本地文件/标题链接损坏或命令帮助失败应使 CI 失败。需要真实账号、数据或数据库的示例由对应验收覆盖，不自动执行 Markdown 中任意 Shell，也不把静态检查等同完整 T41。
+运行入口仅连接真实服务，不依赖测试 seed 或手工 SQL。Quickstart、CLI Help、配置和 Skill 示例与实际命令保持一致；截图来自真实运行界面。使用原生链接检查、CLI help 回归和生成合同差异检查，不自动执行 Markdown 中任意 Shell。具体执行结果记录在对应 PR 和 CI。
 
 ## 12. 工作包与完成边界
 
@@ -619,7 +619,7 @@ Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；
 | W4 | PIT、分区、科学调用、trial ledger、独立评估 | 时间泄漏/缺数据/过拟合/非泄漏 golden |
 | W5 | 多 Alpha 原生优化、共享资金、Paper/Live、Forward/Wake | 数值参考、竞态、去重与自动闭环 |
 | W6 | 六域官方 antd、移动/PWA/状态/配置 | 三视口 Playwright/axe、截图 |
-| W7 | 备份恢复、升级/切换、迁移、README/CLI/Skill、清理 | 冷启动/恢复演练、docs smoke、残留检查 |
+| W7 | 备份恢复、升级/切换、迁移、README/CLI/Skill、清理 | 冷启动/恢复演练、安装与命令回归、残留检查 |
 | W8 | 全部 T01–T42、检查族、Review、合并后证据 | 最新 Head/merge/main 可复核 |
 
 新增选择先说明消除哪些第一方代码、增加哪些运维成本。核心缺口仍属于 Issue #62 的交付范围，不用空实现、永久关闭 Feature Flag、缩小范围或 Future Work 跳过。覆盖率不是正确性；相同 fixture 可共享但不能空断言。
@@ -630,7 +630,7 @@ Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；
 
 # 附录 A：完整字段级数据模型
 
-以下是正式目标合同，不声称数据库已经实现。逻辑记录不意味着同等数量的服务/页面/框架。字段可在一致迁移中统一命名，但语义、必填性、约束和权限不得缺失。所有本地引用为真实 FK，未标 `?` 的字段必填；类型别名和共有字段按 A0。本文包含源附录 B 的 SQL 补充，不需到外部 Issue 补全。
+以下定义领域字段、关系与约束。逻辑记录不意味着同等数量的服务/页面/框架。字段可在一致迁移中统一命名，但语义、必填性、约束和权限不得缺失。所有本地引用为真实 FK，未标 `?` 的字段必填；类型别名和共有字段按 A0。本文包含源附录 B 的 SQL 补充，不需到外部 Issue 补全。
 
 ## A0. 类型、共有字段与写入
 
@@ -3075,7 +3075,7 @@ Web 与 CLI 必须能够沿原 Forward Observation → Wake → Cycle 查看事�
 
 研究上下文从原 Candidate 生产 Run 的 Cycle/startup 继承，Brief 必须仍为项目当前冻结版本；两个 Profile 的 ID/版本必须与同项目同 Brief 的真实人工 CYCLE_START 原回执及启动记录一致。自动产生的后代 Cycle 可以继承同一人工上下文，不伪造 Operator 会话、grant 或命令回执，不猜选新 Brief/模型/运行时。缺失原生上下文不创建 Cycle；变更上下文需新的人工研究事实。原 AutomationPolicy 的非 MANUAL 有效授权允许该范围内的受限重新研究，不授予审批/交付权限。
 
-沿用原冻结 Brief 的 min_cycle_interval_seconds 和 max_cycles_per_day；所有人工/自动 Cycle 都计入该项目的冷却参照与 UTC 日额度，失败/取消不退款。暂未满足条件时 PENDING 延至冷却截止或下一 UTC 日；不加永久睡眠或第二队列。共用人工启动的 Profile、数据许可、原生 Runtime 和预算校验，首个 Run 仍为 DATA_VALIDATE，随后由既有 Worker 启动有界 Mission。Cycle(trigger=DEGRADATION,wake_id)、预算预约、原生任务、PGMQ、startup 与 Wake(CONSUMED,consumed_cycle_id) 同事务提交；并发/重放只能得到一个原 Cycle。对象发布之后、提交之前再次核验原 Wake 授权和期限，失败整体回滚并按原项目锁清理未引用对象。入队与受控协议测试不是多日真实反馈或生产模型验收。
+沿用原冻结 Brief 的 min_cycle_interval_seconds 和 max_cycles_per_day；所有人工/自动 Cycle 都计入该项目的冷却参照与 UTC 日额度，失败/取消不退款。暂未满足条件时 PENDING 延至冷却截止或下一 UTC 日；不加永久睡眠或第二队列。共用人工启动的 Profile、数据许可、原生 Runtime 和预算校验，首个 Run 仍为 DATA_VALIDATE，随后由既有 Worker 启动有界 Mission。Cycle(trigger=DEGRADATION,wake_id)、预算预约、原生任务、PGMQ、startup 与 Wake(CONSUMED,consumed_cycle_id) 同事务提交；并发/重放只能得到一个原 Cycle。对象发布之后、提交之前再次核验原 Wake 授权和期限，失败整体回滚并按原项目锁清理未引用对象。反馈与模型执行状态按原始观测和任务回执记录。
 
 ### A7.11 自动 Live 的原始晋级证据
 
@@ -3226,7 +3226,7 @@ Mission 凭据的 `issuer_attempt_id` 与 `issuer_owner_epoch` 必须由受信�
 
 Runtime 与 Downstream 配置使用明确的 `/api/v2/integrations/runtimes`、`/downstreams` 集合和 `/{id}`，不开放任意表操作。create/update 分别进入同一 OperatorCommand union；更新要求 expected_revision。Runtime 非秘密配置为 name/endpoint/tls_policy/allowed_capabilities/enabled/development_http，protocol_version 固定当前原生合同1；Downstream 为 name/endpoint/accepted_package_versions/environments/enabled/development_http。配置写入必须验证 SecretVault 引用的精确用途；PINNED_CA 必须有有效原生 PEM CA 引用，SYSTEM_CA 不能混带自选 CA。更新不传新的 credential_ref 表示保留当前版本；转 SYSTEM_CA 明确清除 CA 绑定但不删除旧加密对象。仅部署显式 development-http 且 literal loopback 的端点可以使用 HTTP，生产默认 HTTPS；URL 不接受 userinfo/query/fragment。保存配置不发起网络请求，enabled/声明的 capability 不等于 readiness；后续 probe 必须经部署允许列表与原生 TLS/DNS 绑定，按精确配置 revision 采纳真实结果。
 
-公开配置 DTO 不回传 credential_ref/CA 存储位置，只显示 credential_configured/ca_configured 和实际非秘密配置。Operator 可读配置；DOCTOR_READ 的 CLI/AUTOMATION 只读同一无秘密诊断 DTO，不获得管理或原生对象读取能力。写权限仍为本机Operator或一次性完整意图CLI grant。旧不可变会话/Run 保存其原配置版本，配置更新不能改写已派发任务；当前检查/新准入必须重新判断 revision 与能力有效期。URI 语法、字段/类型/未知字段、原生凭据用途、幂等/CAS、撤销/锁等待、真实 HTTP/数据库和原始命令回执均需回归。此管理入口不是 Runtime 网络或生产完整链路已验收的声明。
+公开配置 DTO 不回传 credential_ref/CA 存储位置，只显示 credential_configured/ca_configured 和实际非秘密配置。Operator 可读配置；DOCTOR_READ 的 CLI/AUTOMATION 只读同一无秘密诊断 DTO，不获得管理或原生对象读取能力。写权限仍为本机Operator或一次性完整意图CLI grant。旧不可变会话/Run 保存其原配置版本，配置更新不能改写已派发任务；当前检查/新准入必须重新判断 revision 与能力有效期。URI 语法、字段/类型/未知字段、原生凭据用途、幂等/CAS、撤销/锁等待、真实 HTTP/数据库和原始命令回执均需回归。运行状态来自独立的原生 Runtime 探测和任务回执。
 
 ### A8.3 Codex Profile 管理与原生目录观测
 
@@ -3412,7 +3412,7 @@ origin 只能是无userinfo/query/fragment/额外路径的 HTTPS origin；HTTP �
 
 Attempt fencing 不得只在 Artifact 写入或 MCP 配置层实施：统一 `authority::machine` 按 A8.1 的 Project→Run→Attempt→Principal→Credential 原生锁顺序，检查 `runs.active_attempt_id` 与不可变发行绑定 `issuer_attempt_id`、`issuer_owner_epoch`，并在锁等待后以数据库实时钟验证当前租约。所有 MISSION scope 都要求当前 Attempt 与发行 Attempt 非空且相同、当前 owner_epoch 与发行 owner_epoch 相同且租约未到期；同一 Attempt 的接管也令旧进程的读取、自省和写入失效，不能通过普通 HTTP 绕开 MCP。历史缺少任何绑定的签发原样保留审计，但不构成当前授权，不推断回填当前 Attempt/owner；可信任务服务为当前有效租约重新签发。CLI/AUTOMATION/DOWNSTREAM 的非 Mission 语义不改变，公开 DTO 不暴露内部发行绑定或秘密。
 
-首批实际接入的工具是 `research.get_brief{brief_id}` 与 `run.get{run_id}`：请求严格拒绝未知字段，Id 的 JSON Schema 直接复用 `contracts::Id` 的原生 schema。Brief 只能是启动绑定的同项目版本，state=FROZEN 且 frozen_at 存在；不能以 DRAFT 或另一个有效 Brief 代替已冻结任务。Run 只能读取绑定 Mission，返回现有 RunSnapshotV1，不能替客户端猜百分比或任务成功。工具只返回已反序列化的公开 DTO，未知字段/合同版本不兼容明确失败。未完成的 B3 工具不登记为假成功/空实现；本入口不是完整 W2/W3/T01–T42 的验收替代，实验提交、科学任务、证据披露、原生 Codex 闭环及其全部隔离仍必须在同一 PR 完成。
+首批实际接入的工具是 `research.get_brief{brief_id}` 与 `run.get{run_id}`：请求严格拒绝未知字段，Id 的 JSON Schema 直接复用 `contracts::Id` 的原生 schema。Brief 只能是启动绑定的同项目版本，state=FROZEN 且 frozen_at 存在；不能以 DRAFT 或另一个有效 Brief 代替已冻结任务。Run 只能读取绑定 Mission，返回现有 RunSnapshotV1，不能替客户端猜百分比或任务成功。工具只返回已反序列化的公开 DTO，未知字段/合同版本不兼容明确失败。未完成的 B3 工具不登记为假成功/空实现；实验提交、科学任务、证据披露与原生 Codex 闭环由各自实际服务入口处理。
 
 回归必须包括官方 SDK client 的实际 stdio/duplex 初始化与 tools/list/call、未知工具与未知字段、非UUIDv7、错 Mission/项目/周期/Attempt、非冻结 Brief、撤销后下一调用失败、截止时间、并发上限、响应超额、重定向不跟随与无秘密错误。协议/HTTP故障测试可以使用有明确标记的测试服务，但不能称为 PostgreSQL授权或原生 Codex生产闭环证明；真正授权链另外以实际 Axum/原生 PostgreSQL/Mission issuance 测试验证。依赖锁与生成物只能由原生工具产生后检查，禁止手造 registry checksum。
 
@@ -3844,7 +3844,7 @@ GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重�
 | ID | 场景 | 必须证明 |
 |---|---|---|
 | T01 | Rust/Nautilus/Clarabel/Arrow冷启动 | pinned镜像实际安装/导入/运行，真实版本/结果；科学解释器不在API进程，语言取舍按第0节 |
-| T02 | 无凭据Demo | 一条文档命令完整UI演示；synthetic/fixture明显且不能生产领取 |
+| T02 | 原生工作台启动 | 按安装命令运行真实 API、Worker、PostgreSQL/PGMQ 与 Caddy；网页直接进入，不使用内存业务后端或预置演示数据 |
 | T03 | 原生Codex SYSTEM | 空QZ URL/key不覆盖native配置；真实stdio使用既有profile，无自动删/复制auth.json |
 | T04 | SYSTEM+effort | model=null、合法非空effort生效，来源不变，default开关保留保存值 |
 | T05 | 本机 Codex 配置唯一所有权 | 自动发现同一 OS 用户的 PATH/HOME/CODEX_HOME；拒绝项目内 Provider/URL/key/目录注册，不注入环境中的服务凭据，不复制 auth.json 或改写 config.toml；两原生角色独立身份且共享账号操作正确协调；无凭据回归必执行，不属账号豁免 |
@@ -3886,7 +3886,7 @@ GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重�
 | T41 | README/CLI/Skill | 全部quickstart/help/示例实际执行，真实截图，能力矩阵与测试相符 |
 | T42 | Web/CLI双入口完整闭环 | 新实例分别达研究/Alpha/组合/Paper/Forward/晋级或劣化唤醒，无手工SQL |
 
-T16可用两资产独立手算最小方差/费用前后差，不维护第二生产优化器。T31/T42可用专门非交易验收下游接target，**不用真实下单**。Demo/fixture不能通过测试开关变生产可批；真实路径用可追溯有权数据，生产制品无跳过Gate后门。
+T16可用两资产独立手算最小方差/费用前后差，不维护第二生产优化器。T31/T42可用专门非交易验收下游接target，**不用真实下单**。历史非真实来源及测试样本不能通过开关变成可交付记录；真实路径用可追溯有权数据，生产制品无跳过Gate后门。
 
 ## B9. Required checks 与验收
 

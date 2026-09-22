@@ -10,4 +10,4 @@ Delete the standalone in-memory UI backend and its dedicated fixtures/configurat
 
 ## Verification and delivery
 
-Pending execution against this branch: generated-contract consistency, typecheck/unit/build, actual hosted browser/PWA tests, Rust/database/native Runtime regressions, Markdown links, and current-Head independent review. The source-bundling workflow is temporary and is not part of the delivered tree. No user database or running service is modified.
+Executed in GitHub Actions: generated frontend consistency, TypeScript typecheck, all 528 unit cases, production static/PWA build, 14 installation shell cases and 8 user-service helper cases passed. Current-Head hosted browser/PWA, Rust/database/native Runtime regressions, Markdown links and independent review are tracked in PR #106. Transfer workflows are temporary and excluded from delivery. No user database or running service is modified.

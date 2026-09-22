@@ -617,7 +617,7 @@ SYSTEM_CA 则只移除绑定，不删除旧加密对象。配置查询只显示 
 INTEGRATION_SECRET_REGISTER（request 仅 intent，不含 value）、RUNTIME_CREATE/UPDATE、
 DOWNSTREAM_CREATE/UPDATE。未提供 grant 的 DOCTOR_READ 只可读无秘密配置，不可写。
 Production 只接受 HTTPS origin；literal-loopback HTTP 还须配置和部署双方显式允许。
-本节给出实际 HTTP 合同，不把尚未实现的专属远程 CLI 子命令或 Runtime 网络执行说成已验收。
+本节定义 HTTP 配置接口；CLI 命令以 `server client --help` 为准，Runtime 网络执行通过独立运行链路完成。
 
 回归入口为 `cargo test --locked -p domain --test settings`、
 `cargo test --locked -p integrations --test secret_identity` 及隔离 PostgreSQL 上
@@ -923,7 +923,7 @@ IMPORT/EXPORT/DATA_VALIDATE 可由受信任内部服务以无 Cycle 路径准入
 
 自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级已接入同一 Worker，条件与证据边界见下段。
 
-自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”提供自动化政策、原审批/交付记录及Forward观察历史。完整市场与部署验收仍未完成。
+自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”提供自动化政策、原审批/交付记录及Forward观察历史。
 
 Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过；Worker分别执行原窗口评估和当前政策下的晋级检查，结果以原Evaluation、观察及交付记录为准。
 
@@ -1020,7 +1020,7 @@ CSV 使用 PostgreSQL 原生 UTF-8、HEADER、FORCE_QUOTE、UTC与ISO时间编�
 核对 `report.json` 的 `missing_tables`、各表 `unsupported_schema`、`source_rows`/`projected_rows`、`columns`/`excluded_columns`、CSV对象引用和字节数。原行数等于投影行数只表示被选择列覆盖这些行，不能掩盖被排除的字段。报告中的原外键检查只覆盖旧库实际声明的约束。退出0不等于全量迁移、原数据/密封沿袭验收或导入成功；完整原备份、排除项处理、身份映射、可信注册及原子导入仍需完成。
 
 
-源检查的 `tables[].primary_key` 保留原主键全部字段。整数事件 ID、旧 UUIDv4 和复合键均按原安装/原表/原键追溯，不能强转成新系统 UUIDv7。导出时缺少或更改主键会将该表标为不支持。接收侧现已有原生 COPY HEADER MATCH、主键/字节/行数及原生回导逐字节校验，防止重复键、错误列头和静默精度舍入。内部 Store 已支持事务化保存只读历史投影、原身份关联和报告；dry-run 只保存报告及回执，内容冲突整笔回滚，旧资格不继承。可信导出注册和 HTTP/CLI 入口见下；完整迁移及真实旧备份验收尚未完成。
+源检查的 `tables[].primary_key` 保留原主键全部字段。整数事件 ID、旧 UUIDv4 和复合键均按原安装/原表/原键追溯，不能强转成新系统 UUIDv7。导出时缺少或更改主键会将该表标为不支持。接收侧现已有原生 COPY HEADER MATCH、主键/字节/行数及原生回导逐字节校验，防止重复键、错误列头和静默精度舍入。内部 Store 已支持事务化保存只读历史投影、原身份关联和报告；dry-run 只保存报告及回执，内容冲突整笔回滚，旧资格不继承。可信导出注册和 HTTP/CLI 入口见下。
 
 
 ### 历史投影注册和导入

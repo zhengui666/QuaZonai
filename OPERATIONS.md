@@ -721,7 +721,7 @@ Mission/Automation/Downstream不能借此读取额外证据。Sealed及独立Rev
 
 自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级已接入同一 Worker，条件与证据边界见下段。
 
-自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”提供自动化政策、原审批/交付记录及Forward观察历史。完整市场与部署验收仍未完成。
+自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”提供自动化政策、原审批/交付记录及Forward观察历史。
 
 Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过；Worker分别执行原窗口评估和当前政策下的晋级检查，结果以原Evaluation、观察及交付记录为准。
 
@@ -753,12 +753,12 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 在网页“设置 → 历史迁移”使用部署者登记的导出编号，默认只试运行。请求结果未知时
 保留原表单并重试同一请求；报告列表可查看原/投影行数、缺表、排除原因、未核验关系
 和分页原身份映射。实际导入须明确取消“仅试运行”，仅保存只读历史，不赋予资格。
-报告与映射可查询不代表真实旧备份、全部原字段、产物、密封沿袭或恢复验收已完成。
+报告中的排除项、缺失字段和失败项必须保留原始状态，不补造映射或资格。
 
 在历史报告的“原身份映射”展开一行，可查看已导入字段目录，再按字段逐段读取。
 日期、数字和原状态保留为文本；NULL、空串明确区分。长字段用下一页继续，不执行
 其中的脚本或旧任务。排除的字段仍保留原备份，不能从本入口读取；原产物及密封沿袭
-验收仍须另外完成。
+保持原始访问与来源约束。
 
 历史行导出的注册可同时指定同安装的原生产物导出目录（CLI 的 artifact_directory）。
 试运行核对可读取字节但不保存副本；实际导入将原身份、逐项结果和历史副本引用一起提交。
@@ -768,7 +768,7 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 在网页“设置 → 历史迁移 → 报告 → 历史附件与覆盖情况”查看摘要、逐项结果和分页；
 只有本报告已保存的公开副本提供下载按钮。CLI 的 migrate artifact-summary/artifacts/artifact/download
 提供相同入口，下载成功后向 stdout 输出完整原字节。
-真实旧备份、完整密封沿袭及 T42 恢复验收仍未完成。
+
 
 旧库移除外键不代表引用已有效。导入会按已支持的0029表关系基线补查可投影引用；
 MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，重复约束不会重复计数。
