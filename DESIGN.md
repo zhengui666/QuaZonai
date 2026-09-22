@@ -89,15 +89,14 @@ UNPROVEN coverage 和 UNVERIFIED availability，不自动登记 Dataset、赋予
 这只是数据准备合同，不放宽现有 BAR 研究、执行费用、到期或组合准入。
 接通正式二元合约研究必须另有真实原生消费与回放证据，不能把此工具写入
 等价为完整 Polymarket Alpha/组合已交付。操作说明见
-[Polymarket 数据准备](docs/polymarket-history.md)。
+[Polymarket 数据准备](CLI.md#polymarket-history)。
 
 > 需求基线：2026-09-05，Issue #62 正文及附录 A（评论 5549224292）、B（评论 5549244417）。
 > 所有者修订：2026-09-05，PR #63 的执行要求——**优先 Rust，其次 Python；优先复用，其次造轮子**。
-> **状态：PR #63 已合并，Issue #62 的完整产品验收仍未完成。** 当前实现与证据入口见 [实现证据](docs/architecture/issue-62-execution.md)，本文保留完整目标合同，不把代码存在或 CI 通过当作生产验收。
 
 本文包含完整字段合同、API/CLI/MCP 映射、状态机、故障场景、T01–T42 和交付边界，是唯一完整架构事实源。Issue 是需求出处和验收追溯链接，不是运行时或离线审查必须另行读取的规范依赖；其后续编辑不会自动改变本文。任何新要求必须先通过版本控制更新本文，再实现。不得以摘要、局部绿色 CI、缺失能力清单或语言修订缩小核心范围。
 
-`AGENTS.md` 只定义治理；`OPERATIONS.md`、`CLI.md`、Skill、README 分别展开运行、命令、工作流和入口；`docs/architecture/issue-62-execution.md` 与兼容性矩阵只记录证据，不创造竞争架构。旧代码和过时设计从当前树删除；历史仅由 Git 保存，迁移以只读外部快照为输入。
+`AGENTS.md` 只定义治理；`OPERATIONS.md`、`CLI.md`、Skill、README 分别展开运行、命令、工作流和入口；具体变更的执行结果记录在对应 PR、CI 和任务记录，不创造竞争架构。旧代码和过时设计从当前树删除；历史仅由 Git 保存，迁移以只读外部快照为输入。
 
 ## 服务操作 Agent Skill
 
@@ -136,9 +135,9 @@ CI 不运行专属 CodeQL 或双格式 SBOM 生成，不保留只汇总其他结
 - 第一方目录不使用 `qz-` 前缀：`apps/job`、`apps/server`、`apps/runtime`、`crates/contracts`、`crates/domain`、`crates/store`、`crates/integrations`。包名/构建路径同步改名，不保留旧别名目录。
 - 旧代码没有兼容和保留义务。删除旧 Python 服务、旧前端、插件平台、旧专属测试/部署/文档及兼容层；Git 已提供代码历史，不在新树保留 legacy 副本。删除源码不是删除用户数据：不重置用户数据库/数据卷，不删除 LICENSE/NOTICE，迁移、导出及回滚仍是交付项。
 - 某组件有满足本项目能力和安全合同的 Rust 实现，就使用该实现。不能以现有桥接方便、旧工具链、版本解析失败、语言占比或赶工为理由选择 Python。
-- Python 例外须先提交 `docs/research/reuse.md` 中的具名能力证据：审查的 Rust 候选和具体版本/API、真实缺口/失败复现、采用的 Python API/版本、接口/权限/进程边界、测试和替换条件。检索不到不等于证明不存在；只批准必要范围，可由执行者依据证据自主决定。
+- Python 例外须先提交 本设计对应章节中的具名能力证据：审查的 Rust 候选和具体版本/API、真实缺口/失败复现、采用的 Python API/版本、接口/权限/进程边界、测试和替换条件。检索不到不等于证明不存在；只批准必要范围，可由执行者依据证据自主决定。
 - 已确认并实测：Nautilus `nautilus-backtest/model/trading 0.63.0`（官方 `v2.0.0rc4`）、Clarabel 0.11.1、Apache Arrow Rust 56.2.0；使用 Rust 1.98.0 满足上游 MSRV。第一方 job 不再通过 PyO3/CPython 调用这些能力。
-- 原生适配与分项测试不代表完整控制面/UX/研究/交付已就绪。删除旧测试不满足新系统 T01–T42；缺失检查仍阻塞产品验收。
+- 原生适配与控制面、UX、研究及交付保持同一合同；通过真实调用链核验受影响的 T01–T42 场景。
 
 ## 0.2 编译器补丁基线（2026-09-07）
 
@@ -170,7 +169,7 @@ CI 不运行专属 CodeQL 或双格式 SBOM 生成，不保留只汇总其他结
 
 豁免只改变本次验收范围，不改变运行时事实。未配置可用原生 Profile/认证时不能发起真实模型研究；空配置不变 READY，受控 Provider 不冒充真实模型，FIXTURE 不变 REAL，Demo 不授予资格或生产交付权限。账号操作示例仍可在将来有条件且明确授权时手工使用，本轮不在 Actions 中执行真实登录或注入生产秘密。
 
-所有非豁免的适用 CI 仍必须在最终 Head 成功，全部 Review 问题解决并取得明确干净的独立审查后才可合并，再核对 main。一次已授权范围关闭不能掩盖其他失败、缺失、取消或应运行却跳过的检查，也不代表整个 #62 或生产部署已完成。
+所有非豁免的适用 CI 仍必须在最终 Head 成功，全部 Review 问题解决并取得明确干净的独立审查后才可合并，再核对 main。一次已授权范围关闭不能掩盖其他失败、缺失、取消或应运行却跳过的检查。
 
 <a id="local-console"></a>
 ## 0.5 所有者修订：本机个人工作台（2026-09-20）
@@ -220,11 +219,11 @@ CI 不运行专属 CodeQL 或双格式 SBOM 生成，不保留只汇总其他结
 这是需求替换，不把旧 TOTP 测试删除当作新增测试通过，也不将账号豁免当成执行证据。
 第 0.4 节的 Actions-only 执行、只读 Review 和账号豁免仍适用。
 
-## 1. 当前实现与完整目标
+## 1. 生产系统仓库
 
-当前实现、实际测试入口、已合并基线及未完成验收统一记录在 [实现证据](docs/architecture/issue-62-execution.md)，README 只负责入口与使用说明，不另维护状态机或功能完成清单。
+本仓库直接维护可部署的个人生产系统，不提供演示服务、模拟业务后端或内存替代结果。README 是真实安装入口，根目录文档与操作 Skill 维护运行合同；不创建 docs 目录和重复的实现状态账本。源码的历史开发过程由 Git、Issue 和 PR 保存。
 
-[PR #63](https://github.com/zhengui666/QuaZonai/pull/63) 已合并至 main；其合并不证明本合同的全部目标已完成。后续修复通过新 PR 交付，[Issue #62](https://github.com/zhengui666/QuaZonai/issues/62) 继续承载 W0–W8/T01–T42 的全部完成责任。旧 Issue 不自动关闭，最终覆盖矩阵说明替代和独立保留关系。
+生产端到端验证复用真实 Rust 服务、数据库和原生计算组件。测试数据与故障注入限制在测试模块中；原始迁移和历史来源值保留读取与拒绝规则，绝不把旧演示产物改标为真实产物。具体检查报告保留实际结果，不从文案或代码存在推导通过。
 
 ## 2. 产品与所有权
 
@@ -275,12 +274,11 @@ migrations/            显式 SQLx 迁移
 contracts/generated/   Rust 原生合同生成物，不手改
 runtimes/              Codex 锁定依赖和原生镜像装配
 tests/                 共享合同、原生探针与跨包测试辅助
-docs/                  架构导航、实现证据、复用研究和真实截图
 .opensdlc/             开发上下文、任务、review、运维流程和 Agent 评估
 .github/               原生 CI 与贡献模板
 ```
 
-生产及构建依赖遵守以下直接 workspace 依赖方向；测试辅助可以跨层复用，但不因此进入生产路径。`contracts` 不依赖其他第一方包；`domain` 与 `integrations` 只依赖 `contracts`；`store` 只依赖 `contracts/domain`；`job` 只依赖 `contracts/domain`；`runtime` 只依赖 `contracts/domain/integrations`；`server` 只依赖 `contracts/domain/store/integrations`。领域与合同层不直接依赖 HTTP、SQLx、OCI 客户端或 MCP 传输库。`make check-architecture` 用原生 Cargo metadata 检查当前图；新增包或改变方向先更新本节，不为通过检查添加 wrapper。具体入口与调用链导航见 [架构导览](docs/architecture.md)。
+生产及构建依赖遵守以下直接 workspace 依赖方向；测试辅助可以跨层复用，但不因此进入生产路径。`contracts` 不依赖其他第一方包；`domain` 与 `integrations` 只依赖 `contracts`；`store` 只依赖 `contracts/domain`；`job` 只依赖 `contracts/domain`；`runtime` 只依赖 `contracts/domain/integrations`；`server` 只依赖 `contracts/domain/store/integrations`。领域与合同层不直接依赖 HTTP、SQLx、OCI 客户端或 MCP 传输库。`make check-architecture` 用原生 Cargo metadata 检查当前图；新增包或改变方向先更新本节，不为通过检查添加 wrapper。入口按本节的模块职责和实际源码路径定位。
 
 | 成熟组件/对标 | 采用能力 | 禁止重复建设 |
 |---|---|---|
@@ -486,7 +484,7 @@ Operator回执。Study登记和执行成功均不能代替正式独立Evaluation
 
 PWA 只缓存静态 shell；业务 API/认证/证据/审批/产物/SSE NetworkOnly。离线禁止 mutation。新版本由 Service Worker 生命周期检测并提示用户确认；未保存表单/审批对话框不强刷，不循环刷新。浏览器断线不取消运行。
 
-浏览器验收分离两种证据：三视口/axe/PWA故障展示用受控HTTP fixture；真实入口验收必须启动当前 `server` 原生二进制、PostgreSQL18/PGMQ1.10的新库和独立非owner应用角色，执行原生迁移、真实本机直接进入、项目写入、丢ACK同键重放、跨源拒绝、会话/原回执跨API重启保留，并确认旧验证码入口不存在。不能用页面文案或mock响应代替数据库事务。原生Playwright使用单独配置，不混入fixture测试；原始error-context等输出只放本次私有临时目录并清理，公开证据仅包含脱敏摘要。浏览器/Vite子进程只获得环境白名单，禁止继承管理员URL、数据库密码和GitHub/模型令牌；Vite关闭隐式.env加载。收到终止信号后先终止并等待本次子进程，再清理本次库/角色，脱敏清单失败不得阻止资源清理或发布原始日志。Web CI必须与Rust基线一致：固定1.98.1、仓库实际server包、固定PG18/PGMQ镜像、精确PR Head和生成合同无差异。此验收覆盖本机会话及研究组织入口，不冒充T42的Alpha/组合/交付全链路。
+浏览器回归只有真实服务入口：启动当前 server 二进制、PostgreSQL18/PGMQ1.10 的新库、Worker 与正式 Caddy 配置，执行原生迁移、本机访问、项目写入、丢 ACK 同键重放、跨源拒绝和重启持久化。三视口、主题、无障碍和 PWA 检查也使用同一真实服务，不另建假 API、预览后端或成功响应替身。Playwright 由 native-browser 启动并使用唯一配置，原始输出仅存本次私有临时目录；公开产物保留脱敏摘要。子进程不继承数据库管理密码或模型令牌，Vite 不加载隐式 .env。清理只回收本次测试资源。Web CI 固定 Rust1.98.1、精确提交和原生数据库镜像，并检查生成合同无差异。
 
 ### 9.1 已知不可提交选项与开发文件边界
 

@@ -6,7 +6,7 @@ Owner request: research excellent system-operation skills, particularly Lark CLI
 
 ## Design and boundaries
 
-[Research](../../../docs/research/service-agent-skills.md) records primary sources, adopted mechanisms and rejected alternatives. The skill is portable, task-first and progressively loaded. Reuse the installed Rust CLI/native schemas and existing bound MCP; no new dependency, HTTP client, authentication flow or business engine. Add machine identity discovery, focused schema discovery and an offline redacted request preview. Keep contributor governance outside the runtime pack.
+The source research and review are retained in the task’s Git history. The skill is portable, task-first and progressively loaded. Reuse the installed Rust CLI/native schemas and existing bound MCP; no new dependency, HTTP client, authentication flow or business engine. Add machine identity discovery, focused schema discovery and an offline redacted request preview. Keep contributor governance outside the runtime pack.
 
 Preserve the existing human/Reviewer/Downstream separation, native Mission binding, immutable provenance, budgets, cancellation reconciliation and target-only delivery. Do not change production services/data or unrelated local work. Follow DESIGN's Actions-only execution and paid-account waiver; waived is NOT_RUN, not PASSED.
 

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
@@ -119,7 +120,7 @@ async ({ page, context }) => {
       intercepted = true;
       initialKey = route.request().headers()['idempotency-key'];
       initialRequest = route.request().postDataJSON();
-      // The real Rust transaction commits before we discard its ACK. No mock body.
+      // The real Rust transaction commits before we discard its acknowledgement.
       const upstream = await route.fetch({ maxRetries: 0, timeout: 20_000 });
       committedStatus = upstream.status();
       originalReceipt = await upstream.json();
@@ -213,3 +214,104 @@ async ({ page, context }) => {
     writeFileSync(projectFile, JSON.stringify(checkpoint), { mode: 0o600, flag: 'wx' });
   });
 });
+
+
+// Both cases run before the controlled restart. The restart phase reuses only
+// the original persistent checkpoint; it does not recreate any project.
+if (config.phase === 'before-restart') {
+  test('all native pages remain accessible in three viewports', async ({ page, context }) => {
+    test.setTimeout(180_000);
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+    for (const cookie of await context.cookies()) rememberPrivateValue(config, cookie.value);
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      for (const label of ['研究', 'Alpha', '组合', '交付', '运行', '设置']) {
+        if (viewport.width < 992) {
+          await page.getByRole('button', { name: '打开主导航' }).click();
+        }
+        await page.getByRole('menuitem', { name: label, exact: true }).click();
+        await expect(page.getByRole('heading', { level: 1, name: label, exact: true })).toBeVisible();
+        if (viewport.width < 992) {
+          await expect(page.getByRole('dialog', { name: '主导航', exact: true })).toBeHidden();
+        }
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+          .toBeLessThanOrEqual(viewport.width + 1);
+        const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+        expect(result.violations, `${label} at ${viewport.width}px`).toEqual([]);
+      }
+    }
+  });
+
+  test('the deployed service worker keeps API data out of caches and protects unsaved edits during updates', async ({ page, context }) => {
+    const workerFile = resolve(dirname(config.redactionsFile), 'release/web/sw.js');
+    const originalWorker = readFileSync(workerFile, 'utf8');
+    const writes: string[] = [];
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
+        writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
+      }
+    });
+    try {
+      await page.goto('/');
+      await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+      for (const cookie of await context.cookies()) rememberPrivateValue(config, cookie.value);
+      await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+      // Workbox deliberately does not claim an already-open document.
+      await page.reload();
+      await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
+      await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+      const caches = await page.evaluate(async () => {
+        const names = await window.caches.keys();
+        const urls: string[] = [];
+        for (const name of names) {
+          const cache = await window.caches.open(name);
+          urls.push(...(await cache.keys()).map(request => new URL(request.url).pathname));
+        }
+        return { names, urls };
+      });
+      expect(caches.names.length).toBeGreaterThan(0);
+      expect(caches.urls.some(path => path.startsWith('/assets/'))).toBe(true);
+      expect(caches.urls.some(path => path.startsWith('/api/') || path.startsWith('/health/'))).toBe(false);
+
+      await page.getByRole('button', { name: '新建研究', exact: true }).click();
+      await page.getByLabel('研究名称').fill('Unsaved native PWA edit');
+      await context.setOffline(true);
+      await expect(page.getByText('离线，无法提交操作', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: '保存项目', exact: true })).toBeDisabled();
+      expect(writes).toEqual([]);
+      await context.setOffline(false);
+      await expect(page.getByText('离线，无法提交操作', { exact: true })).toHaveCount(0);
+      await expect(page.getByLabel('研究名称')).toHaveValue('Unsaved native PWA edit');
+      expect(writes).toEqual([]);
+
+      // Update the actual test-owned installed script served by Caddy. There is
+      // no fabricated Worker, navigator override, route fulfilment or API peer.
+      appendFileSync(workerFile, `\n// Native update ${randomUUID()}\n`);
+      await page.evaluate(async () => { await (await navigator.serviceWorker.ready).update(); });
+      await expect(page.getByRole('dialog', { name: '检测到新的前端版本' })).toBeVisible();
+      await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeDisabled();
+      await expect(page.getByText('请先保存或取消当前编辑', { exact: true })).toBeVisible();
+      await page.getByRole('button', { name: '稍后', exact: true }).click();
+      await expect(page.getByLabel('研究名称')).toHaveValue('Unsaved native PWA edit');
+      await page.getByRole('button', { name: '取消', exact: true }).click();
+      await page.getByRole('button', { name: '放弃修改', exact: true }).click();
+      await expect(page.getByLabel('研究名称')).toHaveCount(0);
+      await page.getByRole('button', { name: '有新版本', exact: true }).click();
+      await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeEnabled();
+      const reloaded = page.waitForEvent('load');
+      await page.getByRole('button', { name: '确认更新', exact: true }).click();
+      await reloaded;
+      await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+      const saved: Checkpoint = JSON.parse(readFileSync(projectFile, 'utf8'));
+      const listing = await page.request.get('/api/v2/projects?limit=100');
+      expect(listing.status()).toBe(200);
+      const body: { items: Schema['ProjectView'][] } = await listing.json();
+      expect(body.items).toEqual([saved.receipt.resource]);
+      expect(writes).toEqual([]);
+    } finally {
+      await context.setOffline(false);
+      writeFileSync(workerFile, originalWorker);
+    }
+  });
+}

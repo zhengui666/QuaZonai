@@ -2,7 +2,7 @@
 
 ## Agent 身份、合同发现与离线预览
 
-[服务操作 Skill](skills/quazonai/SKILL.md)面向使用已运行服务的 Agent；[宿主安装](docs/agent-operations.md)不要求运行时 Agent 阅读源码或构建项目。原生入口新增以下发现能力，沿用同一 Rust DTO 和传输层，不增加权限。
+[服务操作 Skill](skills/quazonai/SKILL.md)面向使用已运行服务的 Agent；宿主应安装整个 `skills/quazonai` 目录（包含 references），并提供与服务匹配的 server 二进制、真实 origin 和现有私有机器凭据路径；不将凭据写进模型上下文。运行时 Agent 不需要阅读源码或构建项目。原生入口新增以下发现能力，沿用同一 Rust DTO 和传输层，不增加权限。
 
 ```sh
 server client --origin "$QZ_ORIGIN" --credential-file "$QZ_CREDENTIAL_FILE" identity
@@ -101,13 +101,13 @@ POST /api/v2/releases，需原Candidate的RELEASE_CREATE人工grant及Idempotenc
 GET /api/v2/projects/{id}/releases，按原ID倒序分页，limit为1–100；同样需要
 精确项目RESEARCH_READ。列表与详情只读原元数据，不返回Package正文或刷新资格。
 未知提交保持原请求/键重试；不能覆盖权重、有效期、来源或上传包绕过PORTFOLIO/PASS。
-完整原生成功链路和下游交付仍待验收。
+实际交付以原 Release、Claim 和 ACK 记录为准。
 
 原生单币种模拟中 CurrencyPair 仅支持 MARGIN，Equity 支持 CASH/MARGIN。
 POLYMARKET BinaryOption 使用 CASH、原抵押币和 NAUTILUS_POLYMARKET 费用模型；
 需要 polymarket-research/1 镜像、原费用表及覆盖生命周期的来源记录，不自动转换旧配置。
 独立数据准备命令 `polymarket-history fetch/import` 的构建、参数、目录与限制见
-[Polymarket 历史数据与原生研究](docs/polymarket-history.md)。它不代替 Dataset 登记或研究准入。
+[Polymarket 历史数据与原生研究](#polymarket-history)。它不代替 Dataset 登记或研究准入。
 
 完整产品合同在 DESIGN。原生 `server client` 复用已实现 HTTP 控制面的同一 Rust 请求/响应合同；原生任务、认证、数据许可、研究准备与运行命令见下文。完整研究/组合/交付闭环仍须逐项验收，不提供绕过 API 的手工 SQL 业务路径。
 
@@ -210,7 +210,7 @@ server client --origin https://localhost --credential-file /private/cli.token \
 
 该操作的人工 `OperatorCommand` 为 `DATA_VALIDATE`，grant 的 `target_id` 必须为既有冻结 InputSet。只接受同项目正式登记的 DISCOVERY/VALIDATION 数据，拒绝 SEALED、任意原始报告和artifact-only输入；最多两个并行无Cycle数据验证任务。202返回唯一QUEUED Run，不代表已完成；同一key必须保存相同正文及grant重放。用 `run show/watch` 读取真实状态，用 `run cancel` 申请取消。
 
-Worker在首次提交之前刷新必要的原生探测；提交结果未知时只查询同一远端任务，不能重发新任务。退出Worker只停止新驱动，不等于远端任务已停止，也不会提前archive未知结果。固定任务成功会把原始结果清单和生产者绑定产物原子登记后再确认队列；质量报告不是PIT或Alpha资格。当前该入口及故障回归不替代尚需完成的完整Mission/研究/评估/组合/交付验收。
+Worker在首次提交之前刷新必要的原生探测；提交结果未知时只查询同一远端任务，不能重发新任务。退出Worker只停止新驱动，不等于远端任务已停止，也不会提前archive未知结果。固定任务成功会把原始结果清单和生产者绑定产物原子登记后再确认队列；质量报告不是PIT或Alpha资格。
 bar-notional/1镜像的原生质量报告新增last_bar_notionals：逐资产最后已知BAR的
 价格、数量及Nautilus原生收盘估值名义金额，保留原币种与事件/可用时间。null表示
 未测量；SEALED不输出这些明细。它不是真实逐笔成交额或未来流动性保证，也不会
@@ -283,7 +283,7 @@ CVAR直接使用完整场景，不能预先挑选极端收益或把未知历史�
 NativePortfolioBuildRequestV1，包含selection、mandate、current_weights_artifact_id、current_weights、
 assets与原Alpha/model/calibration成员。仅挂载明确FORWARD目录和MODEL产物，
 原生运行生成预测与历史收益，输出qz.native_portfolio/1。模型数值执行不代替
-Store的当前资格、许可、政策与资金来源检查；正式Candidate由Worker采纳原结果并完成发布核对后产生，完整真实数据链仍待验收。
+Store的当前资格、许可、政策与资金来源检查；正式Candidate由Worker采纳原结果并完成发布核对后产生。
 
 current_weights是PortfolioCurrentWeightsV1的原冻结副本，独立REPORT输入必须提供
 同一current_weights_artifact_id的原JSON。source严格区分FORWARD_SNAPSHOT
@@ -332,7 +332,7 @@ Store核对当前资格、独立Reviewer/原REAL报告、许可、原模型、Fo
 组约束使用原Forward Universe在决策时有效且已可用的唯一成员记录。
 成员groups未提供/null表示未知，[]表示明确无组；有组约束时未知、歧义或组无参与
 资产均拒绝，Candidate发布重读原来源。历史流动性/参与率见下文，DATA_BACKED仍未接通。
-成功准入的完整原生链及Candidate发布仍待验收，不能将此命令当作交付入口。
+准入后沿用原 Run 读取 Candidate 发布结果；此命令不是交付入口。
 
 原生SIMULATE_CANDIDATE仅为保持原目标的模拟适配，尚不是Operator评估命令。
 参数含schema_version、candidate_id、candidate_available_ns、dataset_revision_id、target_artifact_id、
@@ -366,7 +366,7 @@ qz.native_simulation；两者随原manifest绑定，不能把缩窄窗口行数�
 原valid_until；可用时间须由可信准入绑定，不允许人工回填。job重读两份文件，
 拒绝身份、权重/现金、时间或设置不同。不回放到Candidate产生前，不恢复实际账户，
 成功进程不等于PASS或Release。可信Worker从原任务双报告发布Candidate的FORWARD
-保持研究Evaluation，并在封口后才ACK；完整策略滚动评估及交付链仍待验收。
+保持研究Evaluation，并在封口后才ACK。
 原政策portfolio_metric_requirements、日收益样本数、原目录载入覆盖及当前来源
 分别核对；取消/失败和证据不足保留INCONCLUSIVE，重放不刷新有效期。
 
@@ -375,7 +375,7 @@ CandidateSimulationRequestV1，只有schema_version、
 cycle_id、candidate_id、input_set_id、runtime_id、expected_runtime_revision、limits，
 人工操作标识PORTFOLIO_SIMULATE，CLI grant的target_id为candidate_id，绑定完整
 请求与Idempotency-Key。202返回原Run，不是评估通过；同键同内容重放原Run。
-不自行构造原生任务代替准入；完整科学/评估发布与交付链仍待验收。
+不自行构造原生任务代替准入。
 
 执行假设入口为`POST /api/v2/execution-assumptions`，请求ExecutionAssumptionsCreateV1
 （schema_version、project_id、runtime_id、expected_runtime_revision、input_set_id、
@@ -412,7 +412,7 @@ Store在Build准入与Candidate发布时重读原报告/配置、核对当前许
 （原Dataset/选择）；报告必须以DATA_QUALITY角色提供原字节。job逐项核对原报告
 与assets.available_notional、原选择、币种、年龄及Mandate参与率，不接受无绑定
 的数值。需portfolio-liquidity/1镜像能力及原结果版本声明；不得把原生检查替代
-Store来源采纳与当前期限检查。当前不支持DATA_BACKED；独立组合Study/评估发布已有原生入口，完整真实数据验证仍待验收。
+Store来源采纳与当前期限检查。当前不支持DATA_BACKED；独立组合Study/评估发布已有原生入口。
 原生Build还必须冻结完整execution_settings，并以PARAMETERS角色传入原
 transaction_costs_ref文档；job核对完整原字节解析值、币种、本金及逐资产taker费用。
 准入与结果均要求portfolio-cost-source/1，Candidate发布重读原文档与保存配置。
@@ -636,7 +636,7 @@ Production 只接受 HTTPS origin；literal-loopback HTTP 还须配置和部署�
 serve 和 worker 的 `--downstream-targets` / `DOWNSTREAM_TARGETS` 使用下述 origin/addresses 格式，
 与 RUNTIME_TARGETS 独立，默认[]。原生下游固定 GET /downstream/v1/capabilities，只读
 DownstreamCapabilitiesV1 target-only合同。网络在事务外，总请求10秒；完成采纳总期限
-20秒，ArtifactStore与不可变观察/回执关联。人工审批/Offer/Claim已消费该观察，完整交付链尚未验收，不能据此宣称
+20秒，ArtifactStore与不可变观察/回执关联。人工审批/Offer/Claim已消费该观察，不能据此宣称
 完成交付。回归：隔离PostgreSQL执行 `cargo test --locked -p store --test downstream`、
 `cargo test --locked -p server --test downstream_http --test downstream_transport`。
 
@@ -646,7 +646,6 @@ Worker现自动刷新尚未到期的未领取Offer及ACTIVE项目当前有效自
 失效、发布失败或数据库写入超时会回滚；清理等待同一下游发布锁，未知提交不删已引用
 文件。使用同一STATE_DIR原DOWNSTREAM凭据和独立部署允许列表，不继承Runtime目标。
 关闭Worker停止新领取并等待已开始的有界I/O。自动刷新不创建审批或交付；冻结政策
-自动消费已接入Worker；专用账号实测按[DESIGN第0.4节](DESIGN.md#acceptance-scope)已完成豁免（未执行），非账号的真实市场数据与完整交付验收仍以[验收索引](docs/architecture/issue-62-execution.md#acceptance)为准。
 
 `POST /api/v2/integrations/runtimes/{id}/probe` 接收 schema_version=1、expected_revision，
 需要近期人类认证或 RUNTIME_PROBE 单次 CLI grant。响应200表示探测已记录；必须检查
@@ -1049,7 +1048,7 @@ DSN、源报告或自报 PASS。CLI 使用已有 `client` 连接参数、凭据�
 不创建活动 Job/资格。未知结果用相同授权、幂等键和参数重放。
 `migrate report UUID` / `GET /api/v2/migrations/reports/{id}` 读取摘要；浏览器 Operator
 可读报告，CLI 仅可读同一有效凭据实际发起的导入报告。缺表、排除项或未核验关系
-仍标明人工复核；此入口尚未完成全部密封沿袭和完整旧快照迁移验收。
+仍标明人工复核；后续登记保持原密封沿袭与旧快照核验要求。
 
 
 `migrate reports [--cursor UUID] [--limit 1..100]` 按报告编号倒序分页；
@@ -1110,3 +1109,37 @@ epoch、追加机器凭据撤销和非秘密回执；所有者检查或任一步
 返回 schema_version、recovery_id、previous_epoch、new_epoch、revoked_machine_credentials；
 计数以十进制字符串表示。保存回执，核对原编号及两次epoch，不将调用失败当作成功切换。
 实际完整备份、产物恢复、远端任务核对、防重复交付及RPO/RTO演练仍需完成。
+
+<a id="polymarket-history"></a>
+## Polymarket 历史数据准备
+
+操作员数据工具复用锁定的 Nautilus Rust 客户端和 ParquetDataCatalog，不发送订单或读取钱包。单独启用构建；科学 job 不因此获得联网能力。
+
+```sh
+cargo build --locked -p job --features polymarket-history --bin polymarket-history
+./target/debug/polymarket-history --help
+./target/debug/polymarket-history fetch \
+  --market-slug "$MARKET_SLUG" \
+  --start-seconds "$START_SECONDS" \
+  --end-seconds "$END_SECONDS" \
+  --max-trades 5000 \
+  --output /path/to/new-import
+```
+
+选择实际市场和 UTC 秒级半开区间 `[start,end)`；end 必须已发生。每个 outcome 最多 10,000 条；上游 offset 上限可能产生部分历史。当前 Gamma 元数据按实际观察时间记录，不回填历史；同秒内合成排序不是毫秒级市场时序。原始输入保留在科学数据挂载目录之外。
+
+已有原生交换文件可直接导入：
+
+```sh
+./target/debug/polymarket-history import \
+  --input /path/to/native-archive.json \
+  --output /path/to/new-import
+```
+
+JSON 使用 schema_version=1、source_reference、source_observed_at、source_metadata、instruments，以及同一锁定版本的 trades/quotes/deltas/bars/closes 原生对象。资产只接受 POLYMARKET BinaryOption；最多 256 资产、100 万行、128 MiB 输入。字段、分区和时间合同见 [DESIGN](DESIGN.md#polymarket-原生历史数据准备)。输入不是任意供应商 CSV/Parquet，不能猜测单位、token 或缺失行情。
+
+新输出目录包含 `catalog/`、`source-evidence.json` 和最后发布的 `import-report.json`。目录必须不存在；缺最后报告时保留失败结果，不覆盖已登记数据。报告如实保留覆盖和历史可见性；获取或导入不自动登记 Dataset，也不授予 PIT 资格。
+
+研究路径：原生目录与 Runtime 元数据 → DataSource 和许可 → Dataset / Universe → 冻结研究输入 → 探测含 polymarket-research/1 的 Runtime → 原抵押币、CASH、long-only、NAUTILUS_POLYMARKET 执行假设 → 原 Alpha / 组合入口。研究输入仍需原生 LAST/EXTERNAL BAR，不能把 TradeTick 伪装成 OHLCV。抵押币 USDC、USDC.e、pUSD 不互换，也不填进模型账单预算。
+
+费用使用锁定 PolymarketFeeModel，原 BinaryOption 元数据保留 condition_id、token_id、fee_schedule 与可用时间。跨到期研究使用原 InstrumentClose/ContractExpired 及质量元数据 settlements：同一 condition_id 的两侧 token、精确兑付比例和事件/可用纳秒必须匹配，价格合计为1；缺失不推断赢家或赎回时间。新增结算记录建立新不可变版本，不修改已登记目录。组合在一个原生现金账户中模拟，不能平均独立净值。其余字段和来源验证以 [DESIGN](DESIGN.md) 与原生生成合同为准。

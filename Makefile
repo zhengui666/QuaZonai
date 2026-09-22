@@ -1,4 +1,4 @@
-.PHONY: check check-unit check-store check-http check-docs check-links check-cli check-architecture check-web require-test-database native demo-preview
+.PHONY: check check-unit check-store check-http check-docs check-links check-cli check-architecture check-web require-test-database native
 
 # Use the repository pin even when a distribution cargo precedes rustup in PATH.
 RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)
@@ -49,8 +49,3 @@ require-test-database:
 native:
 	@test -n "$(OUTPUT)" || { printf '%s\n' 'OUTPUT must name a new directory.' >&2; exit 1; }
 	$(CARGO) run --locked -p job -- verify-native --output "$(OUTPUT)"
-
-# Isolated synthetic preview; no database or account configuration is consumed.
-demo-preview:
-	npm --prefix apps/web ci --ignore-scripts --no-audit --no-fund
-	npm --prefix apps/web run demo:preview

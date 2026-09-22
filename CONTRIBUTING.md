@@ -34,17 +34,17 @@ For the frontend:
 npm --prefix apps/web run dev
 ```
 
-This development UI uses the configured loopback API proxy. The credential-free UI preview is instead `make demo-preview`; see [README](README.md#quickstart). Real service setup, PUBLIC_URL and identity initialization belong to [OPERATIONS](OPERATIONS.md#首次启动认证服务).
+This development UI proxies the real loopback Rust API. Configure PUBLIC_URL for the browser origin and start the real dependencies described in [OPERATIONS](OPERATIONS.md#首次启动认证服务). There is no separate preview backend or automatic sample data.
 
 ## Find the right layer
 
-Start with [the architecture guide](docs/architecture.md) and the relevant [DESIGN](DESIGN.md) section. The design owns product behavior; update it before changing a contract. [AGENTS](AGENTS.md) owns development rules and [.opensdlc/project.md](.opensdlc/project.md) routes contributors and agents to actual commands and sources.
+Start with the relevant [DESIGN](DESIGN.md) section. The design owns product behavior; update it before changing a contract. [AGENTS](AGENTS.md) owns development rules and [.opensdlc/project.md](.opensdlc/project.md) routes contributors and agents to actual commands and sources.
 
 - Put wire types in `contracts`, QZ decisions in `domain`, atomic persistence in `store`, and orchestration/transport in the existing application entrypoints. Do not add a service, repository abstraction or compatibility wrapper without a real boundary.
 - Prefer existing implementations, the standard library, platform features and installed Rust dependencies. Keep upstream algorithms, Codex sessions and OCI lifecycle in their native owners.
 - Rust uses rustfmt and Clippy; TypeScript uses the existing types, tests and official Ant Design components. Follow local naming and layout; keep new behavior close to its tests. `.editorconfig` supplies editor defaults, not a replacement formatter.
 - Never hand-edit `contracts/generated/` or `apps/web/src/generated/`. Run the native generator for the changed contract as shown in [CLI](CLI.md#原生组件与合同验证) or [Runtime](runtimes/native/README.md), then `npm --prefix apps/web run generate`. Commit source and generated changes together; review the diff.
-- New dependencies need a concrete capability, license/version evidence and an existing-owner check; reuse research belongs in [docs/research/reuse.md](docs/research/reuse.md). Preserve LICENSE/NOTICE. Legacy code can be removed; user data and backups cannot.
+- New dependencies need a concrete capability, license/version evidence and an existing-owner check; reuse research belongs in the relevant [DESIGN](DESIGN.md) section. Preserve LICENSE/NOTICE. Legacy code can be removed; user data and backups cannot.
 
 ## Verify the change
 
@@ -57,8 +57,7 @@ Run commands at the repository root. Start with the affected behavior, then exer
 | Rust logic | `make check-unit` plus the affected package test | Formatting, lint or behavior regression: fix it and rerun the affected checks |
 | Transactions, worker, HTTP or identity | `make check-store`, `make check-http`, or `make check` with disposable prerequisites | Persistence/transport failure: reproduce against the real native components |
 | Web or API contracts | `make check-web` | Generated drift, type, test or build failure: regenerate from source and fix behavior |
-| Browser, preview or PWA | Install Chromium below, then `npm --prefix apps/web run test:e2e` after `make check-web` | UI/accessibility/offline regression: inspect the actual browser at all three viewports |
-| Real hosted API/Worker user services and restart | `CADDY_BIN=/path/to/caddy npm --prefix apps/web run test:e2e:native` with the [Web workflow prerequisites](.github/workflows/web.yml) | Real gateway/authentication/persistence failure: inspect sanitized results and clean only test resources |
+| Browser, PWA, real API/Worker, gateway and restart | `CADDY_BIN=/path/to/caddy npm --prefix apps/web run test:e2e` with the [Web workflow prerequisites](.github/workflows/web.yml) | Real gateway/authentication/persistence failure: inspect sanitized results and clean only test resources |
 | Native computation / OCI | `make native OUTPUT=/tmp/quazonai-native-example` with a new output path; [Runtime tests](runtimes/native/README.md) for OCI | A scientific or isolation failure: retain diagnostics; do not substitute a fixture for acceptance |
 
 ```sh
@@ -66,7 +65,7 @@ cd apps/web
 node node_modules/@playwright/test/cli.js install chromium
 ```
 
-The native browser checks require the actual systemd user manager, disposable PostgreSQL, Caddy and built server/web artifacts. Use the exact [Web workflow prerequisites](.github/workflows/web.yml), not a second setup copied here. The fixture runs real API/Worker/gateway services and checks restart, session and receipt persistence; it is not real market-research or host-boot acceptance.
+The native browser checks require the actual systemd user manager, disposable PostgreSQL, Caddy and built server/web artifacts. Use the exact [Web workflow prerequisites](.github/workflows/web.yml), not a second setup copied here. The harness runs real API/Worker/gateway services and checks three viewports, themes, accessibility, PWA updates, restart, session and receipt persistence.
 
 `check-unit` excludes Store/Server tests and is not the full suite. Architecture checks inspect normal/build dependencies, not transitive code or test-only helpers. Links/help/schema checks cannot execute account-dependent runbooks. State unrun checks and reasons; a skipped prerequisite never becomes a pass.
 
