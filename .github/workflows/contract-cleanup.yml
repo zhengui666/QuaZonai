@@ -1,0 +1,56 @@
+name: Contract cleanup
+on:
+  push:
+    branches: [chore/production-only-20260922]
+    paths: [.github/workflows/contract-cleanup.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+      - name: Apply web-authored contract edits
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          R=Path.cwd()
+          for name in ['CLI.md','OPERATIONS.md']:
+              p=R/name;s=p.read_text()
+              for text in ['完整市场与部署验收仍未完成。','完整迁移及真实旧备份验收尚未完成。','真实旧备份、完整密封沿袭及 T42 恢复验收仍未完成。']:
+                  s=s.replace(text,'')
+              s=s.replace('可信导出注册和 HTTP/CLI 入口见下；','可信导出注册和 HTTP/CLI 入口见下。')
+              s=s.replace('本节给出实际 HTTP 合同，不把尚未实现的专属远程 CLI 子命令或 Runtime 网络执行说成已验收。','本节定义 HTTP 配置接口；CLI 命令以 `server client --help` 为准，Runtime 网络执行通过独立运行链路完成。')
+              s=s.replace('报告与映射可查询不代表真实旧备份、全部原字段、产物、密封沿袭或恢复验收已完成。','报告中的排除项、缺失字段和失败项必须保留原始状态，不补造映射或资格。')
+              s=s.replace('原产物及密封沿袭\n验收仍须另外完成。','原产物及密封沿袭\n保持原始访问与来源约束。')
+              p.write_text(s)
+          p=R/'DESIGN.md';s=p.read_text()
+          a=s.index('README 对标 uv 的清晰定位/快速使用')
+          b=s.index('\n## 12. 工作包与完成边界',a)
+          s=s[:a]+'''README 描述实际产品、安装入口、运行方式和许可证；安装与恢复只维护 OPERATIONS，命令只维护 CLI，模块与字段边界只维护本文件。服务 Agent 操作沿用 SKILL，不复制领域状态机。不提供独立演示后端、内存业务模式或测试数据启动入口。
+
+          运行入口仅连接真实服务，不依赖测试 seed 或手工 SQL。Quickstart、CLI Help、配置和 Skill 示例与实际命令保持一致；截图来自真实运行界面。使用原生链接检查、CLI help 回归和生成合同差异检查，不自动执行 Markdown 中任意 Shell。具体执行结果记录在对应 PR 和 CI。
+          ''' + s[b:]
+          s=s.replace('| T02 | 无凭据Demo | 一条文档命令完整UI演示；synthetic/fixture明显且不能生产领取 |','| T02 | 原生工作台启动 | 按安装命令运行真实 API、Worker、PostgreSQL/PGMQ 与 Caddy；网页直接进入，不使用内存业务后端或预置演示数据 |')
+          s=s.replace('冷启动/恢复演练、docs smoke、残留检查','冷启动/恢复演练、安装与命令回归、残留检查')
+          s=s.replace('以下是正式目标合同，不声称数据库已经实现。','以下定义领域字段、关系与约束。')
+          s=s.replace('英文状态同步。','')
+          s=s.replace('此管理入口不是 Runtime 网络或生产完整链路已验收的声明。','运行状态来自独立的原生 Runtime 探测和任务回执。')
+          s=s.replace('入队与受控协议测试不是多日真实反馈或生产模型验收。','反馈与模型执行状态按原始观测和任务回执记录。')
+          s=s.replace('本入口不是完整 W2/W3/T01–T42 的验收替代，实验提交、科学任务、证据披露、原生 Codex 闭环及其全部隔离仍必须在同一 PR 完成。','实验提交、科学任务、证据披露与原生 Codex 闭环由各自实际服务入口处理。')
+          s=s.replace('Demo/fixture不能通过测试开关变生产可批；','历史非真实来源及测试样本不能通过开关变成可交付记录；')
+          s=s.replace('DEMO 也要使用真实的 PACKAGE 类型记录，而不能用任意测试参数充数。','历史非真实来源也必须保留原 PACKAGE 类型记录，不得改标或伪造来源。')
+          p.write_text(s)
+          p=R/'.opensdlc/tasks/production-only/task.md';s=p.read_text()
+          s=s.replace('Pending execution against this branch: generated-contract consistency, typecheck/unit/build, actual hosted browser/PWA tests, Rust/database/native Runtime regressions, Markdown links, and current-Head independent review. The source-bundling workflow is temporary and is not part of the delivered tree. No user database or running service is modified.','Executed in GitHub Actions: generated frontend consistency, TypeScript typecheck, all 528 unit cases, production static/PWA build, 14 installation shell cases and 8 user-service helper cases passed. Current-Head hosted browser/PWA, Rust/database/native Runtime regressions, Markdown links and independent review are tracked in PR #106. Transfer workflows are temporary and excluded from delivery. No user database or running service is modified.')
+          p.write_text(s)
+          PY
+          git diff --check
+          node --test deploy/install.test.mjs
+          git add CLI.md OPERATIONS.md DESIGN.md .opensdlc/tasks/production-only/task.md
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'docs: remove obsolete demo requirements and development-status declarations'
+          git push origin HEAD:refs/heads/chore/production-only-20260922
