@@ -36,7 +36,7 @@ Preview the final request and retain its original file and idempotency key. Send
 
 ## Submit research artifacts and experiments
 
-For an external client with `ARTIFACT_SUBMIT`, `ArtifactCreate` contains `schema_version`, the exact `project_id`, `kind` and UTF-8 `content`. Only CODE, PARAMETERS and REPORT are research submission kinds. The maximum content is 2 MiB; structured JSON content uses its required version. Do not submit arbitrary paths, producer/origin claims, other Attempts or self-reported qualification.
+For an external client with `ARTIFACT_SUBMIT`, `ArtifactCreate` contains `schema_version`, the exact `project_id`, `kind` and UTF-8 `content`. Only CODE, PARAMETERS and REPORT are research submission kinds. Content must be nonblank, contain no NUL and be no larger than 2 MiB. CODE contains source text; PARAMETERS and REPORT must contain a JSON object with numeric `schema_version: 1`, not raw Markdown, a JSON array or a string-valued version. For example, a report's inner content may be `{"schema_version":1,"text":"research notes"}`; encode that document as the outer DTO's `content` string. A locally valid preview does not validate this inner document or confer scientific eligibility. Do not submit arbitrary paths, producer/origin claims, other Attempts or self-reported qualification.
 
 For `EXPERIMENT_SUBMIT`, discover `ExperimentProposalV1`; use the original Cycle, inputs and registered artifact references. Proposed/PENDING is not executed, evaluated or qualified. Preserve the server's experiment ID and outcome. Return current output/experiment budget failures to the task; do not create another Attempt or key to evade them.
 
