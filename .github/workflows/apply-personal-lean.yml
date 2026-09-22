@@ -1,0 +1,30 @@
+name: Apply web-authored personal simplification
+on:
+  push:
+    branches: [perf/personal-lean-20260922]
+    paths: ['.github/personal-lean*.py', '.github/workflows/apply-personal-lean.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+      - name: Apply the web-authored source edits
+        run: |
+          set -euo pipefail
+          python3 .github/personal-lean.py
+          python3 .github/personal-lean-docs.py
+          python3 .github/personal-lean-final.py
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+          rustup run 1.98.1 cargo fmt --all
+          git rm .github/personal-lean.py .github/personal-lean-docs.py .github/personal-lean-final.py .github/workflows/apply-personal-lean.yml
+          git diff --check
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'perf: simplify single-user operation and reuse native computation'
+          git push origin HEAD:refs/heads/perf/personal-lean-20260922
