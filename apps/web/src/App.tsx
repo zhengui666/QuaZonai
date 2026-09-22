@@ -79,6 +79,12 @@ export default function App() {
     algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
     cssVar: { key: 'quazonai' },
     components: {
+      Button: {
+        defaultHoverColor: dark ? '#b0ccff' : '#1f4796',
+        defaultHoverBorderColor: dark ? '#b0ccff' : '#1f4796',
+        defaultActiveColor: dark ? '#83b2ff' : '#183b80',
+        defaultActiveBorderColor: dark ? '#83b2ff' : '#183b80',
+      },
       Tabs: {
         itemSelectedColor: dark ? '#83b2ff' : '#2857b4',
         itemHoverColor: dark ? '#b0ccff' : '#1f4796',
