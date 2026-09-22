@@ -8,7 +8,7 @@
 
 1. `DESIGN.md`：唯一完整的产品与架构事实源，包含字段级附录 A、接口/状态机/测试附录 B，以及所有者对 #62 的语言与复用修订。
 2. `OPERATIONS.md`：用户运行说明；`CLI.md`：命令和原生协议的实现展开；二者不得另创产品事实。
-3. `skills/quazonai/SKILL.md`：薄工作流、真实命令和权限边界，不是另一套业务引擎。
+3. `skills/quazonai/SKILL.md`：面向操纵已运行服务的 Agent 的薄工作流、真实命令和权限边界；不是开发入口或另一套业务引擎。
 4. `README.md`：入口、当前实现状态、可执行启动和文档索引。
 5. 代码、测试、CI/Review、`docs/architecture/issue-62-execution.md` 和兼容性矩阵：可核验实现证据，不得把目标写成已交付。
 

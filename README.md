@@ -4,7 +4,7 @@
 
 QuaZonai 是面向独立研究者的单用户、自托管研究工作台。Rust 原生组件负责科学计算，Codex 组织有界研究，独立评估约束结论，最终向下游交付 target-only 组合包。QZ 不持有券商凭据，不发送真实交易指令。
 
-[个人部署](docs/user-guide.md) · [使用与恢复](OPERATIONS.md) · [界面预览](#quickstart) · [架构](docs/architecture.md) · [参与贡献](CONTRIBUTING.md)
+[个人部署](docs/user-guide.md) · [使用与恢复](OPERATIONS.md) · [Agent 操作](docs/agent-operations.md) · [界面预览](#quickstart) · [架构](docs/architecture.md) · [参与贡献](CONTRIBUTING.md)
 
 [![CI](https://github.com/zhengui666/QuaZonai/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/zhengui666/QuaZonai/actions/workflows/ci.yml)
 [![Web console](https://github.com/zhengui666/QuaZonai/actions/workflows/web.yml/badge.svg?branch=main)](https://github.com/zhengui666/QuaZonai/actions/workflows/web.yml)

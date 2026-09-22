@@ -99,6 +99,16 @@ UNPROVEN coverage 和 UNVERIFIED availability，不自动登记 Dataset、赋予
 
 `AGENTS.md` 只定义治理；`OPERATIONS.md`、`CLI.md`、Skill、README 分别展开运行、命令、工作流和入口；`docs/architecture/issue-62-execution.md` 与兼容性矩阵只记录证据，不创造竞争架构。旧代码和过时设计从当前树删除；历史仅由 Git 保存，迁移以只读外部快照为输入。
 
+## 服务操作 Agent Skill
+
+`skills/quazonai` 服务于操纵已运行服务的 Agent，不承担贡献者治理或源代码导航。入口只传递任务选择、必要上下文、执行顺序、权限边界、完成判据和恢复动作；细节通过包内相对路径按需读取，无须源码仓库、编译器或数据库连接。开发规则继续由 AGENTS/CONTRIBUTING/OpenSDLC 承担。
+
+外部服务助手复用已安装 Rust CLI 与预先签发的机器身份；内部 Mission 仅使用可信启动器绑定的原生 MCP。Skill 不创造 Operator/Reviewer/Downstream 身份、不自行获取命令授权，不扩大 Mission 的工具、文件、网络或预算能力。已有准确委派给 CLI 的单次命令仍由原生服务核验；缺失权限不是改用 HTTP/SQL 的理由。
+
+CLI 的 identity 读取现有机器会话合同；OpenAPI 的单 DTO 发现从同一原生合同导出传递依赖闭包，不维护副本。`--preview` 复用原生请求解析和路由，仅检查本地 wire 格式；不读取凭据/CA、不发送请求、不返回正文或秘密，不声称已验证实时授权、业务状态、预算、科学资格或持久化。原有 HTTP、事务、Worker、科学评估和 target-only 交付规则不变。
+
+Skill 目录需由宿主安装/注册；仓库存在不等于已自动注入任意 Agent，亦不改变受限 Mission 原生配置。开发验证记录与调研不进入运行时 Skill。
+
 ## 0. 所有者修订：语言与复用的决策顺序
 
 1. 优先寻找仓库已有实现、标准库、平台和成熟外部组件，随后才考虑新写代码。先验证实际接口、安全、许可证、维护性和目标行为，而不是按语言数量评价架构。

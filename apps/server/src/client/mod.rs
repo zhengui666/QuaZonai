@@ -1,5 +1,6 @@
 //! Native HTTP CLI over shared Rust contracts. Never opens a database or an application vault.
 mod commands;
+mod preview;
 mod watch;
 
 use clap::Args;
@@ -27,6 +28,9 @@ pub struct Arguments {
     /// Explicit local-console HTTP only; the server must also permit it.
     #[arg(long)]
     pub development_http: bool,
+    /// Validate the local request and print a redacted plan; no credentials or network.
+    #[arg(long, global = true)]
+    pub preview: bool,
     /// Required for writes. Keep the same key and input after an unknown result.
     #[arg(long, global = true)]
     pub idempotency_key: Option<String>,
@@ -365,6 +369,16 @@ fn write_json(value: &impl serde::Serialize) -> Result<()> {
 }
 
 pub async fn run(arguments: Arguments) -> Result<()> {
+    if arguments.preview {
+        let request = arguments.command.request()?;
+        return write_json(&preview::inspect(
+            &request,
+            &arguments.origin,
+            arguments.development_http,
+            arguments.idempotency_key.as_deref(),
+            arguments.operator_grant.as_deref(),
+        )?);
+    }
     let connection = Connection::open(&arguments)?;
     let request = arguments.command.request()?;
     // A download is bound to the same immutable ID and its declared bytes/media,
@@ -490,6 +504,7 @@ mod origin_tests {
                 credential_file: file.clone(),
                 ca_certificate: None,
                 development_http,
+                preview: false,
                 idempotency_key: None,
                 operator_grant: None,
                 command: commands::Command::Project(commands::Project::List(commands::List {

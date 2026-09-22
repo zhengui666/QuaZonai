@@ -56,6 +56,8 @@ pub struct ProjectList {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Read the current machine identity, scopes and binding; never returns a token.
+    Identity,
     #[command(subcommand)]
     Migrate(Migrate),
     /// Submit target-only weights using the authenticated downstream identity.
@@ -109,27 +111,39 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum Alpha {
     List(ProjectList),
+    /// Read qualification history for one AlphaVersionView.id, not the parent Alpha ID.
     Qualifications {
+        #[arg(value_name = "ALPHA_VERSION_ID")]
         id: String,
         #[command(flatten)]
         page: List,
     },
+    /// Evaluate one AlphaVersionView.id using the exact authorized native request.
     Evaluate {
+        #[arg(value_name = "ALPHA_VERSION_ID")]
         id: String,
     },
+    /// Read calibration for one AlphaVersionView.id, not the parent Alpha ID.
     Calibration {
+        #[arg(value_name = "ALPHA_VERSION_ID")]
         id: String,
     },
+    /// List versions of an Alpha entity; use the returned version IDs for evidence reads.
     Versions {
+        #[arg(value_name = "ALPHA_ID")]
         id: String,
         #[command(flatten)]
         page: List,
     },
+    /// Resolve an Alpha entity and decimal version number to its AlphaVersionView.
     Show {
+        #[arg(value_name = "ALPHA_ID")]
         id: String,
         version: String,
     },
+    /// Read evaluation history for one AlphaVersionView.id, not the parent Alpha ID.
     Evaluations {
+        #[arg(value_name = "ALPHA_VERSION_ID")]
         id: String,
         #[command(flatten)]
         page: List,
@@ -684,6 +698,9 @@ impl Command {
         const PATCH: Method = Method::PATCH;
         const POST: Method = Method::POST;
         let result = match self {
+            Self::Identity => {
+                Request::get::<contracts::control::MachineSessionView>("/api/v2/auth/machine")
+            }
             Self::Migrate(command) => match command {
                 Migrate::ArtifactSummary { id: report } => {
                     Request::get::<contracts::imports::HistoricalArtifactSummaryV1>(format!(

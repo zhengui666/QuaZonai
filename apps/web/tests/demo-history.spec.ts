@@ -58,7 +58,9 @@ test('synthetic two-Alpha history keeps expired qualification and original portf
   expect(await equity.json()).toMatchObject({
     origin: 'FIXTURE', curve: { status: 'UNAVAILABLE', reason_code: 'NO_SIMULATION' },
   });
-  await expect(evaluation.getByText('本次研究未产生权益数据', { exact: true })).toBeVisible();
+  const history = evaluation.getByRole('region', { name: '历史回测组合价值', exact: true });
+  await expect(history.getByText('本次研究未产生权益数据', { exact: true })).toBeVisible();
+  await expect(history.getByTestId('equity-chart')).toHaveCount(0);
   await expect(evaluation.getByText('FIXTURE', { exact: true })).toBeVisible();
   await expect(evaluation.getByText('01990000-0000-7000-8000-000000000500', { exact: true })).toBeVisible();
   await expect(evaluation.getByText(/无有效期/)).toBeVisible();

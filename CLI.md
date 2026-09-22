@@ -1,5 +1,25 @@
 # CLI 命令
 
+## Agent 身份、合同发现与离线预览
+
+[服务操作 Skill](skills/quazonai/SKILL.md)面向使用已运行服务的 Agent；[宿主安装](docs/agent-operations.md)不要求运行时 Agent 阅读源码或构建项目。原生入口新增以下发现能力，沿用同一 Rust DTO 和传输层，不增加权限。
+
+```sh
+server client --origin "$QZ_ORIGIN" --credential-file "$QZ_CREDENTIAL_FILE" identity
+server openapi --list-schemas
+server openapi --schema ArtifactCreate
+server client --origin "$QZ_ORIGIN" --credential-file "$QZ_CREDENTIAL_FILE" \
+  --preview --idempotency-key "$REQUEST_KEY" artifact submit < artifact-request.json
+```
+
+变量由可信宿主提供。明确配置的本机 HTTP 才追加 `--development-http`；不读取或展示凭据文件内容。`identity` 通过现有 `/api/v2/auth/machine` 返回 `MachineSessionView`，包含公开身份、scope、绑定与到期，不返回 token，也不授予新权限。
+
+`--list-schemas` 离线列出安装二进制中的合同名；`--schema NAME` 返回 `schema_version/name/schema/components.schemas`，包含所选 DTO 与全部原生引用依赖，未知名称报 `CLI_INPUT_INVALID`。二者互斥，不读取数据库；不带选项的 `server openapi` 完整导出保持不变。安装合同不是远端实时版本或授权证明。
+
+`--preview` 在任何连接和凭据/CA读取之前，使用同一命令路由、严格 JSON DTO、UUID/cursor 与原生幂等键校验；写操作仍需 key。输出 method、route、query、预期 HTTP 状态、输出类型、正文 byte count、所需授权及 `request_sent=false/authorization_checked=false/server_state_checked=false`，省略所有正文、key、grant 和连接值。未提供 Operator grant 只显示需求，便于人工准备，不意味着正式发送获准；已提供的 grant 仍检查 UUID 格式。它不核验 token、当前 revision、预算、领域资格或持久化。
+
+本地失败与正式 CLI 使用同一安全 stderr/非零退出合同。预览成功后，只有明确意图与已委派权限允许时才移除 `--preview` 发送原请求。此选项与会访问服务的 `migrate import --dry-run` 不同，不能混淆。
+
 命令以实际 Rust `--help` 和生成 OpenAPI 为准；本页展开需要精确授权、原请求重试和输入边界的用法。
 
 - [HTTP CLI 与凭据](#面向用户的原生-http-cli)

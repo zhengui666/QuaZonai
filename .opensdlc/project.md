@@ -49,7 +49,7 @@ Read [AGENTS](../AGENTS.md). Preserve dirty worktrees and verify ownership. Upda
 | Capability | Actual entry / observed discovery |
 | --- | --- |
 | Agent instructions | Root [AGENTS.md](../AGENTS.md), read in this task |
-| Project workflow skill | [skills/quazonai/SKILL.md](../skills/quazonai/SKILL.md), explicitly linked/read; this path is not claimed to auto-install into every host |
+| Service-operation skill | [skills/quazonai/SKILL.md](../skills/quazonai/SKILL.md) is for operating the running service, not contributor navigation; [installation](../docs/agent-operations.md) remains host-specific |
 | Build and test | [Makefile](../Makefile), Cargo workspace, [web package](../apps/web/package.json) |
 | CI | [.github/workflows](../.github/workflows); GitHub run results are canonical |
 | Contribution and ownership | [PR template](../.github/PULL_REQUEST_TEMPLATE.md), [Issue forms](../.github/ISSUE_TEMPLATE), [CODEOWNERS](../.github/CODEOWNERS) |
