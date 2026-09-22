@@ -258,7 +258,7 @@ React + TypeScript + antd → REST/SSE 生成合同 → qz API/Domain/Worker/CLI
                                                    / 已验证的原生统计与研究组件
 ```
 
-当前源码布局（模块存在不代表完整产品验收，不是一 crate 一微服务）：
+源码按实际职责划分；crate 边界不等于独立微服务：
 
 ```text
 Cargo.toml / Cargo.lock / rust-toolchain.toml
@@ -303,6 +303,23 @@ PGMQ 只保证至少一次投递场景，外部副作用不是全链路 exactly-
 DSR/PBO 默认不支持：未确认选定 skfolio 版本具备满足本项目的完整接口。只有接通已审计上游、参考数据验证、完整可比试验集合后才能开启；CPCV 不是 CSCV/PBO。required 指标不支持时 INCONCLUSIVE，不手写常量/近似冒充。基础交付仍必须完成 PIT、时间隔离、真实样本外、试验账本、sealed 防重复消费。
 
 默认不引入 Redis、Kafka、Temporal、向量/图数据库、通用 Workflow DSL、插件市场、第二实验记录平台或自建密钥平台。模块只为真实边界存在，不建立形式化 Repository/Factory/事件总线模板。保持 LICENSE/NOTICE/第三方声明，不擅自换许可证。
+
+<a id="cycle-startup"></a>
+### 3.1 研究启动调用链与回归入口
+
+`POST /api/v2/projects/{id}/cycles` 从用户请求到持久任务的路径如下；首个任务是 `DATA_VALIDATE`，HTTP 202 表示已提交排队记录，不表示研究完成。
+
+| 阶段 | 实现与职责 |
+|---|---|
+| HTTP | [apps/server/src/cycles.rs](apps/server/src/cycles.rs) 的 `start` 提取 `Authority`、路径、`CycleStartV1` 和 `Idempotency-Key`，组装 `CycleStartIntent`，向 Store 提供产物读写适配。HTTP 层不执行 SQL 或复制准入规则。 |
+| 事务与幂等 | [crates/store/src/cycles.rs](crates/store/src/cycles.rs) 的 `Store::start_cycle` 开启事务，调用 `commands::operator` 读取原幂等回执；新请求进入 `admit_cycle`，锁定项目并检查修订、ACTIVE 状态、冻结 Brief、输入与 Runtime，再写入 Cycle。 |
+| 领域判断 | [crates/domain/src/admission.rs](crates/domain/src/admission.rs) 的 `reserve_non_trial` 计算初始非试验任务的预算准入；[crates/domain/src/runtime.rs](crates/domain/src/runtime.rs) 的 `job_limits` 校验执行能力。Store 读取事实、持锁和应用结果，domain 保持无 SQL/HTTP 的规则层。 |
+| 持久任务与队列 | `admit_cycle` 通过 [crates/store/src/data_validation.rs](crates/store/src/data_validation.rs) 准备真实验证参数，然后调用 [crates/store/src/lifecycle.rs](crates/store/src/lifecycle.rs) 的 `enqueue_run_in_transaction`。后者在同一事务内预留预算、创建 QUEUED Run、追加事件，执行 `pgmq.send('runs', ...)` 并保存 `run_admissions`。 |
+| 提交与领取 | `admit_cycle` 绑定原生任务定义并保存 `cycle_startups`；`start_cycle` 重验权限、保存原 HTTP 回执后提交，HTTP 层才返回 202。提交后的消息由 [crates/store/src/lifecycle/queue.rs](crates/store/src/lifecycle/queue.rs) 通过 PGMQ 读取并领取。响应未知时按原请求与幂等键对账，不另建任务。 |
+
+回归从 [HTTP 启动测试](apps/server/tests/cycles_http.rs) 的 `authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_http_receipt`、[Store 启动测试](crates/store/tests/cycles.rs) 的 `cycle_run_event_admission_queue_and_receipt_are_created_once` 与 `failure_after_queue_enqueue_rolls_back_the_entire_official_start_command` 开始。[原子准入测试](crates/store/tests/atomic_cycle_admission.rs) 进一步检查提交前后可见性与取消回滚。
+
+依赖方向由 [architecture.rs](crates/contracts/tests/architecture.rs) 的 `workspace_dependencies_follow_design_boundaries` 检查：`domain` 的第一方生产/构建依赖仅允许 `contracts`，不能依赖 `store`。执行 `make check-architecture` 不需要数据库；执行 `cargo test --locked -p server --test cycles_http` 或 `cargo test --locked -p store --test cycles --test atomic_cycle_admission` 前，按 [开发检查](CONTRIBUTING.md) 配置可丢弃 PostgreSQL/PGMQ 及对应测试前置条件，不使用生产实例。
 
 ## 4. 当前原生适配的准确边界
 
@@ -608,6 +625,7 @@ README 描述实际产品、安装入口、运行方式和许可证；安装与�
 
 运行入口仅连接真实服务，不依赖测试 seed 或手工 SQL。Quickstart、CLI Help、配置和 Skill 示例与实际命令保持一致；截图来自真实运行界面。使用原生链接检查、CLI help 回归和生成合同差异检查，不自动执行 Markdown 中任意 Shell。具体执行结果记录在对应 PR 和 CI。
 
+<a id="delivery-completion"></a>
 ## 12. 工作包与完成边界
 
 | 工作包 | 必须输出 | 证明 |

@@ -91,9 +91,23 @@ sudo systemctl --machine=quazonai@.host --user status quazonai-api quazonai-work
 
 浏览器直接进入工作台。核对真实项目保存与重启后的同一记录、原幂等回执、主题和错误状态。`/health/live` 用于进程存活检查；数据、模型和科学 Runtime 分别读取自己的就绪状态。运行服务不使用 Vite preview，不把源代码、密钥、备份或状态目录放在 web root。
 
-### 4. 升级与恢复
+<a id="stop-services"></a>
+### 4. 停止服务、升级与恢复
 
-准备新版本后，停止 API / Worker，保留原数据库、artifacts、状态目录及单独保管的 master key，再显式执行迁移。原生镜像、数据目录、JobSpec 与 Runtime journal 纳入同一恢复点。只有兼容当前 schema/协议时才切换旧二进制；需要数据恢复时，保留原副本并依照[数据和密钥](#数据和密钥)与 [Runtime 冷恢复](runtimes/native/README.md#recovery)恢复。
+日常停止或升级前，使用与启动时相同的 user manager，停止 Worker 与 API：
+
+```sh
+set -eu
+sudo systemctl --machine=quazonai@.host --user stop \
+  quazonai-worker.service quazonai-api.service
+sudo systemctl --machine=quazonai@.host --user show \
+  quazonai-worker.service quazonai-api.service \
+  --property=Id --property=ActiveState --property=SubState
+```
+
+确认两个单元均为 `ActiveState=inactive`、`SubState=dead` 后再迁移；停止命令失败或仍有活动单元时，先排查，不继续升级。不停止用户 manager 或其他站点的 Caddy。停止 API / Worker 不等于取消远端计算；按 Runtime 的原任务身份检查在途任务，并在备份前取得一致的静止恢复点。
+
+准备新版本并停止服务后，保留原数据库、artifacts、状态目录及单独保管的 master key，再显式执行迁移。原生镜像、数据目录、JobSpec 与 Runtime journal 纳入同一恢复点。只有兼容当前 schema/协议时才切换旧二进制；需要数据恢复时，保留原副本并依照[数据和密钥](#数据和密钥)与 [Runtime 冷恢复](runtimes/native/README.md#recovery)恢复。
 
 选择新版本使用原子替换 current 链接，重启后重读同一项目、Run、原回执与任务身份。未知提交按原请求/幂等键对账；不能换 ID 重跑或删除状态目录来修复。浏览器新版本通过已有 PWA 提示确认更新，未保存编辑不强制刷新。
 

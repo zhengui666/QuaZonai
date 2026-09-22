@@ -2,7 +2,7 @@
 
 ## Intent
 
-Implement the owner's request to open and complete a QuaZonai PR based on the native Nautilus reuse conclusion. Implementation PR: [#101](https://github.com/zhengui666/QuaZonai/pull/101). Related requirement: #100; broader production acceptance remains #62. Starting main: cd4b3e356b768a245358beb5e2b9c6e883f72d3d.
+Implement the owner's request to open and complete a QuaZonai PR based on the native Nautilus reuse conclusion. Implementation PR: [#101](https://github.com/zhengui666/QuaZonai/pull/101). Related requirement: #100; product-completion criteria are defined in [DESIGN](../../../DESIGN.md#delivery-completion). Starting main: cd4b3e356b768a245358beb5e2b9c6e883f72d3d.
 
 ## Specification
 

@@ -121,13 +121,13 @@ jobs:
           set -euo pipefail
           profile="$RUNNER_TEMP/runtime-evidence/science-codex.apparmor"
           if test -f "$profile"; then sudo apparmor_parser -R "$profile"; fi
-      - name: Record exact evidence scope without substituting for whole-product acceptance
+      - name: Record Runtime checks and test input provenance
         if: always()
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/runtime-evidence"
           cp Cargo.lock "$RUNNER_TEMP/runtime-evidence/Cargo.lock"
-          printf '%s\n' 'Native Runtime, quiescent recovery and connected scientific/Mission Thread fixtures. Actual phase results are required; controlled Responses are not account inference and FIXTURE data is not market qualification. Full T42/production acceptance remains separate.' > "$RUNNER_TEMP/runtime-evidence/SCOPE.txt"
+          printf '%s\n' 'Native Runtime, quiescent recovery and connected scientific/Mission Thread tests. Per-phase logs record actual outcomes. Controlled Responses and fixed test data exercise protocol and computation behavior; they are not real-account inference or market qualification.' > "$RUNNER_TEMP/runtime-evidence/SCOPE.txt"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
