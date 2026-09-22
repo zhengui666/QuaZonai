@@ -62,7 +62,7 @@ fn simulate(
         // for a useful test diagnostic. The second call cannot turn failure into success.
         let detail = job::simulation::simulate(root, request)
             .err()
-            .map(|error| format!("{error:#}"))
+            .map(|error| format!("{error:?}"))
             .unwrap_or_else(|| "CLI/library result mismatch".into());
         return Err(format!(
             "{}: {detail}",
@@ -187,6 +187,7 @@ fn two_original_alpha_members_run_through_native_portfolio_study() {
         .collect();
     for (asset, id) in request.assets.iter_mut().zip(IDS) {
         asset.instrument_id = id.into();
+        asset.currency = "pUSD".into();
     }
     assert!(request.members.len() >= 2);
     assert_ne!(
@@ -227,7 +228,7 @@ fn two_original_alpha_members_run_through_native_portfolio_study() {
             Ok(fs::read(objects.path().join(id.to_string()))?)
         })
         .err()
-        .map(|error| format!("{error:#}"));
+        .map(|error| format!("{error:?}"));
         panic!(
             "{}; fixture diagnostic: {detail:?}",
             String::from_utf8_lossy(&output.stderr)
