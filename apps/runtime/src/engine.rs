@@ -282,9 +282,9 @@ impl NativeEngine {
                     else {
                         continue;
                     };
-                    if !matches!(class, "CurrencyPair" | "Equity")
-                        && !(class == "BinaryOption"
-                            && domain::prediction::instrument(definition).is_ok())
+                    if !(matches!(class, "CurrencyPair" | "Equity")
+                        || (class == "BinaryOption"
+                            && domain::prediction::instrument(definition).is_ok()))
                     {
                         continue;
                     }
