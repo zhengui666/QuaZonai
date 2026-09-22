@@ -67,9 +67,10 @@ jobs:
         run: |
           set -euo pipefail
           cargo clippy --locked -p job --features polymarket-history --all-targets -- -D warnings
-          cargo test --locked -p contracts -p domain --lib
+          cargo clippy --locked -p runtime --features native-oci --test native_oci -- -D warnings
+          cargo test --locked -p contracts -p domain
           cargo test --locked -p job --features polymarket-history --bin polymarket-history
-          cargo test --locked -p job --test polymarket -- --nocapture
+          cargo test --locked -p job
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- --help
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -92,6 +93,12 @@ jobs:
           fi
           git diff --exit-code
           git rev-parse HEAD
+      - name: Web type and behavior regressions
+        run: |
+          set -euo pipefail
+          npm --prefix apps/web run typecheck
+          npm --prefix apps/web test
+          git diff --exit-code
       - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         if: always()
         with:
