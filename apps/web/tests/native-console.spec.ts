@@ -235,10 +235,18 @@ if (config.phase === 'before-restart') {
         if (viewport.width < 992) {
           await expect(page.getByRole('dialog', { name: '主导航', exact: true })).toBeHidden();
         }
+        // Audit the completed real query, not a button's disabled-to-enabled
+        // transition. Wait on browser animation completion, not a fixed delay.
+        await expect(page.locator('.ant-select-loading:visible, .ant-skeleton:visible, .ant-spin-spinning:visible')).toHaveCount(0);
+        await page.evaluate(async () => {
+          await Promise.all(document.getAnimations()
+            .filter(animation => animation.effect?.getTiming().iterations !== Infinity)
+            .map(animation => animation.finished.catch(() => {})));
+        });
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth))
           .toBeLessThanOrEqual(viewport.width + 1);
         const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
-        expect(result.violations, `${label} at ${viewport.width}px`).toEqual([]);
+        expect.soft(result.violations, `${label} at ${viewport.width}px`).toEqual([]);
       }
     }
   });
