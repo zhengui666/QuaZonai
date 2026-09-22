@@ -30,7 +30,8 @@ check-links:
 	git ls-files -z --cached --others --exclude-standard -- '*.md' | xargs -0 $(LYCHEE) --config .lychee.toml --
 
 check-cli:
-	$(CARGO) test --locked -p server --test client_help
+	$(CARGO) test --locked -p server --test client_help --test client_skill
+	$(CARGO) test --locked -p server --bin server agent_schema
 
 check-architecture:
 	$(CARGO) test --locked -p contracts --test architecture

@@ -56,6 +56,8 @@ pub struct ProjectList {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Read the current machine identity, scopes and binding; never returns a token.
+    Identity,
     #[command(subcommand)]
     Migrate(Migrate),
     /// Submit target-only weights using the authenticated downstream identity.
@@ -684,6 +686,9 @@ impl Command {
         const PATCH: Method = Method::PATCH;
         const POST: Method = Method::POST;
         let result = match self {
+            Self::Identity => {
+                Request::get::<contracts::control::MachineSessionView>("/api/v2/auth/machine")
+            }
             Self::Migrate(command) => match command {
                 Migrate::ArtifactSummary { id: report } => {
                     Request::get::<contracts::imports::HistoricalArtifactSummaryV1>(format!(

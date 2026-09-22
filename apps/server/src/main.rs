@@ -1,3 +1,4 @@
+mod agent_schema;
 mod historical_export;
 use clap::{Args, Parser, Subcommand};
 use contracts::Id;
@@ -172,7 +173,14 @@ enum Command {
         state_dir: PathBuf,
     },
     /// Export native-generated HTTP contracts to stdout without connecting to a DB.
-    Openapi,
+    Openapi {
+        /// Select one native DTO and its complete schema dependency closure.
+        #[arg(long)]
+        schema: Option<String>,
+        /// List installed native schema names without connecting to a service.
+        #[arg(long, conflicts_with = "schema")]
+        list_schemas: bool,
+    },
 }
 #[derive(Args)]
 struct Database {
@@ -396,7 +404,16 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::json!({"schema_version":1,"removed_unpublished_verifiers":removed})
             );
         }
-        Command::Openapi => print!("{}", server::openapi_json()?),
+        Command::Openapi {
+            schema,
+            list_schemas,
+        } => {
+            if schema.is_none() && !list_schemas {
+                print!("{}", server::openapi_json()?);
+            } else {
+                println!("{}", agent_schema::describe(schema.as_deref())?);
+            }
+        }
         Command::Migrate {
             database,
             application_role,

@@ -98,9 +98,15 @@ mod tests {
             "Unrelated":{"type":"boolean"}
         }}});
         let result = select(&source, "Request").unwrap();
-        assert_eq!(result["components"]["schemas"].as_object().unwrap().len(), 2);
+        assert_eq!(
+            result["components"]["schemas"].as_object().unwrap().len(),
+            2
+        );
         for name in ["Request", "Counter"] {
-            assert_eq!(result["components"]["schemas"][name], source["components"]["schemas"][name]);
+            assert_eq!(
+                result["components"]["schemas"][name],
+                source["components"]["schemas"][name]
+            );
         }
         assert_eq!(result["schema"]["$ref"], "#/components/schemas/Request");
     }
@@ -113,14 +119,21 @@ mod tests {
         }}});
         let result = select(&source, "A/B").unwrap();
         assert_eq!(result["schema"]["$ref"], "#/components/schemas/A~1B");
-        assert_eq!(result["components"]["schemas"], source["components"]["schemas"]);
+        assert_eq!(
+            result["components"]["schemas"],
+            source["components"]["schemas"]
+        );
     }
 
     #[test]
     fn unknown_missing_malformed_and_external_references_fail_closed() {
         let empty = json!({"components":{"schemas":{}}});
         assert!(matches!(select(&empty, "Unknown"), Err(Failure::Input)));
-        for reference in [json!("https://example.invalid/schema"), json!("#/components/schemas/Missing"), json!(7)] {
+        for reference in [
+            json!("https://example.invalid/schema"),
+            json!("#/components/schemas/Missing"),
+            json!(7),
+        ] {
             let source = json!({"components":{"schemas":{"Request":{"$ref":reference}}}});
             assert!(matches!(select(&source, "Request"), Err(Failure::Contract)));
         }

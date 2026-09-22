@@ -9,7 +9,9 @@ use sqlx::PgPool;
 use std::{fs, os::unix::fs::PermissionsExt};
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn identity_reports_the_current_public_machine_binding_without_returning_its_token(pool: PgPool) {
+async fn identity_reports_the_current_public_machine_binding_without_returning_its_token(
+    pool: PgPool,
+) {
     let f = support::fixture(pool).await;
     let confirmed = support::local_session(&f).await;
     assert_eq!(confirmed.status, StatusCode::OK);
@@ -28,10 +30,18 @@ async fn identity_reports_the_current_public_machine_binding_without_returning_i
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
     let (origin, _listener) = listen(&f).await;
     let output = invoke(&origin, &file, &["identity"], Value::Null).await;
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let session: contracts::control::MachineSessionView = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let session: contracts::control::MachineSessionView =
+        serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(session.kind, contracts::control::PrincipalKind::Cli);
-    assert_eq!(session.scope_codes, vec![contracts::control::MachineScope::DoctorRead]);
+    assert_eq!(
+        session.scope_codes,
+        vec![contracts::control::MachineScope::DoctorRead]
+    );
     assert!(session.project_id.is_none());
     assert!(session.run_id.is_none());
     assert!(session.expires_at > chrono::Utc::now());

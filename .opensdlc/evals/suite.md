@@ -3,7 +3,7 @@
 <a id="scope"></a>
 ## Purpose and responsibility
 
-Evaluate whether a fresh contributor agent can navigate the repository and respect its evidence/authority boundaries. This evaluates task behavior, not just product unit tests. The owner is [@zhengui666](https://github.com/zhengui666); relevant inputs are [AGENTS](../../AGENTS.md), [project context](../project.md), [project skill](../../skills/quazonai/SKILL.md) and [review policy](../review.md).
+Evaluate whether a fresh contributor agent can navigate the repository and respect its evidence/authority boundaries. This evaluates task behavior, not just product unit tests. The owner is [@zhengui666](https://github.com/zhengui666); relevant inputs are [AGENTS](../../AGENTS.md), [project context](../project.md) and [review policy](../review.md). Runtime service-operation behavior is separately defined in [service-agent cases](service-agent.md).
 
 <a id="cases"></a>
 ## Representative cases
