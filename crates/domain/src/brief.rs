@@ -21,8 +21,11 @@ pub fn content(content: &BriefContentV1, bindings: &[BriefBindingV1]) -> Result<
             record(format!("content.{field}"), "TEXT_RANGE");
         }
     }
-    if iso_currency::Currency::from_code(&content.base_currency).is_none() {
-        record("content.base_currency".into(), "ISO_CURRENCY_REQUIRED");
+    if !contracts::research_currency::supported(&content.base_currency) {
+        record(
+            "content.base_currency".into(),
+            "UNSUPPORTED_RESEARCH_CURRENCY",
+        );
     }
     if !matches!(
         (content.horizon_kind, content.horizon_value),

@@ -312,6 +312,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
     let start = day + 1;
     let end = 2 * day;
     let request = NativeSimulationRequestV1 {
+        settlements: Vec::new(),
         schema_version: SchemaV1,
         selection: NativeBarSelectionV1 {
             schema_version: SchemaV1,

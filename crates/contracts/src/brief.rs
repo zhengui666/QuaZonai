@@ -84,7 +84,7 @@ fn brief_content_variant(
                 .enum_values(Some([horizon_kind])),
         )
         .required("horizon_kind")
-        .property("base_currency", crate::budget::currency_schema())
+        .property("base_currency", crate::research_currency::schema())
         .required("base_currency")
         .property("benchmark_ref", Option::<Id>::schema())
         .property("evaluation_policy_id", Id::schema())

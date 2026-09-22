@@ -321,19 +321,23 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             request,
             ..
         } => vec![contracts::execution::NativeDatasetSelectionV1 {
+            settlements: request.settlements.clone(),
             dataset_revision_id: *dataset_revision_id,
             selection: request.source_selection.clone(),
         }],
         NativeTaskParametersV1::SimulateCandidate {
             dataset_revision_id,
             source_selection,
+            request,
             ..
         }
         | NativeTaskParametersV1::SimulatePortfolioSequence {
             dataset_revision_id,
             source_selection,
+            request,
             ..
         } => vec![contracts::execution::NativeDatasetSelectionV1 {
+            settlements: request.settlements.clone(),
             dataset_revision_id: *dataset_revision_id,
             selection: source_selection.clone(),
         }],
@@ -355,6 +359,14 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                     .join(selected.dataset_revision_id.to_string()),
                 &selected.selection,
             )?;
+            crate::prediction::catalog_closes(
+                &input
+                    .join("catalogs")
+                    .join(selected.dataset_revision_id.to_string()),
+                &data,
+                &selected.selection,
+                &selected.settlements,
+            )?;
             let mut first = u64::MAX;
             let mut last = 0;
             let mut available = 0;
@@ -371,6 +383,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                 }
             }
             datasets.push(NativeDatasetQualityV1 {
+                settlements: selected.settlements,
                 dataset_revision_id: selected.dataset_revision_id,
                 selection: selected.selection,
                 row_count: counter(data.rows as u64)?,

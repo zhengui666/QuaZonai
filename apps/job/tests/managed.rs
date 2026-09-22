@@ -178,6 +178,7 @@ fn actual_managed_catalog_validation_publishes_native_counts_and_no_pit_claim() 
         NativeTaskParametersV1::ValidateData {
             schema_version: SchemaV1,
             selections: vec![NativeDatasetSelectionV1 {
+                settlements: Vec::new(),
                 dataset_revision_id: id,
                 selection: request.selection,
             }],
@@ -230,6 +231,7 @@ fn sealed_quality_does_not_publish_last_bar_values() {
         NativeTaskParametersV1::ValidateData {
             schema_version: SchemaV1,
             selections: vec![NativeDatasetSelectionV1 {
+                settlements: Vec::new(),
                 dataset_revision_id: id,
                 selection: request.selection,
             }],
@@ -791,6 +793,7 @@ fn managed_portfolio_uses_original_measured_liquidity_and_rejects_changed_copies
                 schema_version: SchemaV1,
                 assumption,
                 source: NativeDatasetSelectionV1 {
+                    settlements: Vec::new(),
                     dataset_revision_id: Id::new(),
                     selection: request.selection.clone(),
                 },
@@ -1574,6 +1577,7 @@ fn original_native_allocation_enters_one_shared_account_without_future_build_row
             + u64::from(request.mandate.rebalance_schedule.target_ttl_seconds) * 1_000_000_000,
     );
     let simulation = NativeSimulationRequestV1 {
+        settlements: Vec::new(),
         schema_version: SchemaV1,
         selection: NativeBarSelectionV1 {
             event_start_ns: cutoff,

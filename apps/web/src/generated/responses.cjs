@@ -8930,7 +8930,7 @@ return errors === 0;
 }
 validate282.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-const schema73 = {"oneOf":[{"additionalProperties":false,"properties":{"base_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"benchmark_ref":{"oneOf":[{"type":"null"},{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}]},"budget":{"allOf":[{"additionalProperties":false,"properties":{"cost_currency":{"oneOf":[{"type":"null"},{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"}]},"cost_enforcement":{"$ref":"#/components/schemas/CostEnforcement"},"max_cost_decimal":{"oneOf":[{"type":"null"},{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"}]},"max_cpu_seconds":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_cycles_per_day":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_experiments":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_memory_mib":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_output_bytes":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_parallel_runs":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_repair_turns":{"format":"int32","maximum":65535,"minimum":0,"type":"integer"},"max_tokens":{"oneOf":[{"type":"null"},{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"}]},"max_turns_per_mission":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_wall_seconds":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"min_cycle_interval_seconds":{"format":"int64","maximum":4294967295,"minimum":0,"type":"integer"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"}},"required":["schema_version","max_experiments","max_parallel_runs","max_turns_per_mission","max_repair_turns","max_wall_seconds","max_memory_mib","max_cycles_per_day","min_cycle_interval_seconds","max_cpu_seconds","max_output_bytes","cost_enforcement"],"type":"object"},{"oneOf":[{"properties":{"cost_currency":{"type":"null"},"cost_enforcement":{"enum":["UNAVAILABLE"],"type":"string"},"max_cost_decimal":{"type":"null"}},"required":["cost_enforcement"],"type":"object"},{"properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["ESTIMATED"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"},{"description":"Requires a native exact-cost capability; currently rejected by admission.","properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["EXACT"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"}]}]},"economic_rationale":{"maxLength":8000,"minLength":1,"type":"string"},"evaluation_policy_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"execution_assumptions_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"horizon_kind":{"enum":["FIXED_BARS"],"type":"string"},"horizon_value":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"hypothesis":{"maxLength":8000,"minLength":1,"type":"string"},"stop_rule":{"additionalProperties":false,"properties":{"schema_version":{"$ref":"#/components/schemas/SchemaV1"},"stop_on_budget":{"type":"boolean"},"stop_on_invalid_data":{"type":"boolean"},"stop_on_no_improvement_trials":{"format":"int32","maximum":65535,"minimum":1,"type":["integer","null"]},"stop_on_qualified_count":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"}},"required":["schema_version","stop_on_qualified_count","stop_on_budget","stop_on_invalid_data"],"type":"object"},"target_kind":{"enum":["SCORE","EXPECTED_RETURN"],"type":"string"},"universe_version_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}},"required":["hypothesis","economic_rationale","universe_version_id","target_kind","horizon_kind","base_currency","evaluation_policy_id","execution_assumptions_id","budget","stop_rule","horizon_value"],"type":"object"},{"additionalProperties":false,"properties":{"base_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"benchmark_ref":{"oneOf":[{"type":"null"},{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}]},"budget":{"allOf":[{"additionalProperties":false,"properties":{"cost_currency":{"oneOf":[{"type":"null"},{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"}]},"cost_enforcement":{"$ref":"#/components/schemas/CostEnforcement"},"max_cost_decimal":{"oneOf":[{"type":"null"},{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"}]},"max_cpu_seconds":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_cycles_per_day":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_experiments":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_memory_mib":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_output_bytes":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_parallel_runs":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_repair_turns":{"format":"int32","maximum":65535,"minimum":0,"type":"integer"},"max_tokens":{"oneOf":[{"type":"null"},{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"}]},"max_turns_per_mission":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_wall_seconds":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"min_cycle_interval_seconds":{"format":"int64","maximum":4294967295,"minimum":0,"type":"integer"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"}},"required":["schema_version","max_experiments","max_parallel_runs","max_turns_per_mission","max_repair_turns","max_wall_seconds","max_memory_mib","max_cycles_per_day","min_cycle_interval_seconds","max_cpu_seconds","max_output_bytes","cost_enforcement"],"type":"object"},{"oneOf":[{"properties":{"cost_currency":{"type":"null"},"cost_enforcement":{"enum":["UNAVAILABLE"],"type":"string"},"max_cost_decimal":{"type":"null"}},"required":["cost_enforcement"],"type":"object"},{"properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["ESTIMATED"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"},{"description":"Requires a native exact-cost capability; currently rejected by admission.","properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["EXACT"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"}]}]},"economic_rationale":{"maxLength":8000,"minLength":1,"type":"string"},"evaluation_policy_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"execution_assumptions_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"horizon_kind":{"enum":["FIXED_DURATION"],"type":"string"},"horizon_value":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"hypothesis":{"maxLength":8000,"minLength":1,"type":"string"},"stop_rule":{"additionalProperties":false,"properties":{"schema_version":{"$ref":"#/components/schemas/SchemaV1"},"stop_on_budget":{"type":"boolean"},"stop_on_invalid_data":{"type":"boolean"},"stop_on_no_improvement_trials":{"format":"int32","maximum":65535,"minimum":1,"type":["integer","null"]},"stop_on_qualified_count":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"}},"required":["schema_version","stop_on_qualified_count","stop_on_budget","stop_on_invalid_data"],"type":"object"},"target_kind":{"enum":["SCORE","EXPECTED_RETURN"],"type":"string"},"universe_version_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}},"required":["hypothesis","economic_rationale","universe_version_id","target_kind","horizon_kind","base_currency","evaluation_policy_id","execution_assumptions_id","budget","stop_rule","horizon_value"],"type":"object"},{"additionalProperties":false,"properties":{"base_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"benchmark_ref":{"oneOf":[{"type":"null"},{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}]},"budget":{"allOf":[{"additionalProperties":false,"properties":{"cost_currency":{"oneOf":[{"type":"null"},{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"}]},"cost_enforcement":{"$ref":"#/components/schemas/CostEnforcement"},"max_cost_decimal":{"oneOf":[{"type":"null"},{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"}]},"max_cpu_seconds":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_cycles_per_day":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_experiments":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_memory_mib":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_output_bytes":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_parallel_runs":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_repair_turns":{"format":"int32","maximum":65535,"minimum":0,"type":"integer"},"max_tokens":{"oneOf":[{"type":"null"},{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"}]},"max_turns_per_mission":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_wall_seconds":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"min_cycle_interval_seconds":{"format":"int64","maximum":4294967295,"minimum":0,"type":"integer"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"}},"required":["schema_version","max_experiments","max_parallel_runs","max_turns_per_mission","max_repair_turns","max_wall_seconds","max_memory_mib","max_cycles_per_day","min_cycle_interval_seconds","max_cpu_seconds","max_output_bytes","cost_enforcement"],"type":"object"},{"oneOf":[{"properties":{"cost_currency":{"type":"null"},"cost_enforcement":{"enum":["UNAVAILABLE"],"type":"string"},"max_cost_decimal":{"type":"null"}},"required":["cost_enforcement"],"type":"object"},{"properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["ESTIMATED"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"},{"description":"Requires a native exact-cost capability; currently rejected by admission.","properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["EXACT"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"}]}]},"economic_rationale":{"maxLength":8000,"minLength":1,"type":"string"},"evaluation_policy_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"execution_assumptions_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"horizon_kind":{"enum":["VARIABLE_INTERVAL"],"type":"string"},"horizon_value":{"type":"null"},"hypothesis":{"maxLength":8000,"minLength":1,"type":"string"},"stop_rule":{"additionalProperties":false,"properties":{"schema_version":{"$ref":"#/components/schemas/SchemaV1"},"stop_on_budget":{"type":"boolean"},"stop_on_invalid_data":{"type":"boolean"},"stop_on_no_improvement_trials":{"format":"int32","maximum":65535,"minimum":1,"type":["integer","null"]},"stop_on_qualified_count":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"}},"required":["schema_version","stop_on_qualified_count","stop_on_budget","stop_on_invalid_data"],"type":"object"},"target_kind":{"enum":["SCORE","EXPECTED_RETURN"],"type":"string"},"universe_version_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}},"required":["hypothesis","economic_rationale","universe_version_id","target_kind","horizon_kind","base_currency","evaluation_policy_id","execution_assumptions_id","budget","stop_rule"],"type":"object"}]};
+const schema73 = {"oneOf":[{"additionalProperties":false,"properties":{"base_currency":{"oneOf":[{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},{"enum":["USDC","USDC.e","pUSD"],"type":"string"}]},"benchmark_ref":{"oneOf":[{"type":"null"},{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}]},"budget":{"allOf":[{"additionalProperties":false,"properties":{"cost_currency":{"oneOf":[{"type":"null"},{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"}]},"cost_enforcement":{"$ref":"#/components/schemas/CostEnforcement"},"max_cost_decimal":{"oneOf":[{"type":"null"},{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"}]},"max_cpu_seconds":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_cycles_per_day":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_experiments":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_memory_mib":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_output_bytes":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_parallel_runs":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_repair_turns":{"format":"int32","maximum":65535,"minimum":0,"type":"integer"},"max_tokens":{"oneOf":[{"type":"null"},{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"}]},"max_turns_per_mission":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_wall_seconds":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"min_cycle_interval_seconds":{"format":"int64","maximum":4294967295,"minimum":0,"type":"integer"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"}},"required":["schema_version","max_experiments","max_parallel_runs","max_turns_per_mission","max_repair_turns","max_wall_seconds","max_memory_mib","max_cycles_per_day","min_cycle_interval_seconds","max_cpu_seconds","max_output_bytes","cost_enforcement"],"type":"object"},{"oneOf":[{"properties":{"cost_currency":{"type":"null"},"cost_enforcement":{"enum":["UNAVAILABLE"],"type":"string"},"max_cost_decimal":{"type":"null"}},"required":["cost_enforcement"],"type":"object"},{"properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["ESTIMATED"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"},{"description":"Requires a native exact-cost capability; currently rejected by admission.","properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["EXACT"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"}]}]},"economic_rationale":{"maxLength":8000,"minLength":1,"type":"string"},"evaluation_policy_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"execution_assumptions_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"horizon_kind":{"enum":["FIXED_BARS"],"type":"string"},"horizon_value":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"hypothesis":{"maxLength":8000,"minLength":1,"type":"string"},"stop_rule":{"additionalProperties":false,"properties":{"schema_version":{"$ref":"#/components/schemas/SchemaV1"},"stop_on_budget":{"type":"boolean"},"stop_on_invalid_data":{"type":"boolean"},"stop_on_no_improvement_trials":{"format":"int32","maximum":65535,"minimum":1,"type":["integer","null"]},"stop_on_qualified_count":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"}},"required":["schema_version","stop_on_qualified_count","stop_on_budget","stop_on_invalid_data"],"type":"object"},"target_kind":{"enum":["SCORE","EXPECTED_RETURN"],"type":"string"},"universe_version_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}},"required":["hypothesis","economic_rationale","universe_version_id","target_kind","horizon_kind","base_currency","evaluation_policy_id","execution_assumptions_id","budget","stop_rule","horizon_value"],"type":"object"},{"additionalProperties":false,"properties":{"base_currency":{"oneOf":[{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},{"enum":["USDC","USDC.e","pUSD"],"type":"string"}]},"benchmark_ref":{"oneOf":[{"type":"null"},{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}]},"budget":{"allOf":[{"additionalProperties":false,"properties":{"cost_currency":{"oneOf":[{"type":"null"},{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"}]},"cost_enforcement":{"$ref":"#/components/schemas/CostEnforcement"},"max_cost_decimal":{"oneOf":[{"type":"null"},{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"}]},"max_cpu_seconds":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_cycles_per_day":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_experiments":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_memory_mib":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_output_bytes":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_parallel_runs":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_repair_turns":{"format":"int32","maximum":65535,"minimum":0,"type":"integer"},"max_tokens":{"oneOf":[{"type":"null"},{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"}]},"max_turns_per_mission":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_wall_seconds":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"min_cycle_interval_seconds":{"format":"int64","maximum":4294967295,"minimum":0,"type":"integer"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"}},"required":["schema_version","max_experiments","max_parallel_runs","max_turns_per_mission","max_repair_turns","max_wall_seconds","max_memory_mib","max_cycles_per_day","min_cycle_interval_seconds","max_cpu_seconds","max_output_bytes","cost_enforcement"],"type":"object"},{"oneOf":[{"properties":{"cost_currency":{"type":"null"},"cost_enforcement":{"enum":["UNAVAILABLE"],"type":"string"},"max_cost_decimal":{"type":"null"}},"required":["cost_enforcement"],"type":"object"},{"properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["ESTIMATED"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"},{"description":"Requires a native exact-cost capability; currently rejected by admission.","properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["EXACT"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"}]}]},"economic_rationale":{"maxLength":8000,"minLength":1,"type":"string"},"evaluation_policy_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"execution_assumptions_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"horizon_kind":{"enum":["FIXED_DURATION"],"type":"string"},"horizon_value":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"hypothesis":{"maxLength":8000,"minLength":1,"type":"string"},"stop_rule":{"additionalProperties":false,"properties":{"schema_version":{"$ref":"#/components/schemas/SchemaV1"},"stop_on_budget":{"type":"boolean"},"stop_on_invalid_data":{"type":"boolean"},"stop_on_no_improvement_trials":{"format":"int32","maximum":65535,"minimum":1,"type":["integer","null"]},"stop_on_qualified_count":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"}},"required":["schema_version","stop_on_qualified_count","stop_on_budget","stop_on_invalid_data"],"type":"object"},"target_kind":{"enum":["SCORE","EXPECTED_RETURN"],"type":"string"},"universe_version_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}},"required":["hypothesis","economic_rationale","universe_version_id","target_kind","horizon_kind","base_currency","evaluation_policy_id","execution_assumptions_id","budget","stop_rule","horizon_value"],"type":"object"},{"additionalProperties":false,"properties":{"base_currency":{"oneOf":[{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},{"enum":["USDC","USDC.e","pUSD"],"type":"string"}]},"benchmark_ref":{"oneOf":[{"type":"null"},{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}]},"budget":{"allOf":[{"additionalProperties":false,"properties":{"cost_currency":{"oneOf":[{"type":"null"},{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"}]},"cost_enforcement":{"$ref":"#/components/schemas/CostEnforcement"},"max_cost_decimal":{"oneOf":[{"type":"null"},{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"}]},"max_cpu_seconds":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_cycles_per_day":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_experiments":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_memory_mib":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"max_output_bytes":{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"},"max_parallel_runs":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_repair_turns":{"format":"int32","maximum":65535,"minimum":0,"type":"integer"},"max_tokens":{"oneOf":[{"type":"null"},{"description":"Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions.","maxLength":19,"minLength":1,"pattern":"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])","type":"string"}]},"max_turns_per_mission":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"},"max_wall_seconds":{"format":"int64","maximum":4294967295,"minimum":1,"type":"integer"},"min_cycle_interval_seconds":{"format":"int64","maximum":4294967295,"minimum":0,"type":"integer"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"}},"required":["schema_version","max_experiments","max_parallel_runs","max_turns_per_mission","max_repair_turns","max_wall_seconds","max_memory_mib","max_cycles_per_day","min_cycle_interval_seconds","max_cpu_seconds","max_output_bytes","cost_enforcement"],"type":"object"},{"oneOf":[{"properties":{"cost_currency":{"type":"null"},"cost_enforcement":{"enum":["UNAVAILABLE"],"type":"string"},"max_cost_decimal":{"type":"null"}},"required":["cost_enforcement"],"type":"object"},{"properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["ESTIMATED"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"},{"description":"Requires a native exact-cost capability; currently rejected by admission.","properties":{"cost_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"cost_enforcement":{"enum":["EXACT"],"type":"string"},"max_cost_decimal":{"allOf":[{"description":"Plain decimal exactly representable by NUMERIC(38,18).","maxLength":64,"minLength":1,"pattern":"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])","type":"string"},{"pattern":"^(?!-)(?=[0-9+.]*[1-9])","type":"string"}]}},"required":["cost_enforcement","max_cost_decimal","cost_currency"],"type":"object"}]}]},"economic_rationale":{"maxLength":8000,"minLength":1,"type":"string"},"evaluation_policy_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"execution_assumptions_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"},"horizon_kind":{"enum":["VARIABLE_INTERVAL"],"type":"string"},"horizon_value":{"type":"null"},"hypothesis":{"maxLength":8000,"minLength":1,"type":"string"},"stop_rule":{"additionalProperties":false,"properties":{"schema_version":{"$ref":"#/components/schemas/SchemaV1"},"stop_on_budget":{"type":"boolean"},"stop_on_invalid_data":{"type":"boolean"},"stop_on_no_improvement_trials":{"format":"int32","maximum":65535,"minimum":1,"type":["integer","null"]},"stop_on_qualified_count":{"format":"int32","maximum":65535,"minimum":1,"type":"integer"}},"required":["schema_version","stop_on_qualified_count","stop_on_budget","stop_on_invalid_data"],"type":"object"},"target_kind":{"enum":["SCORE","EXPECTED_RETURN"],"type":"string"},"universe_version_id":{"format":"uuid","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$","type":"string"}},"required":["hypothesis","economic_rationale","universe_version_id","target_kind","horizon_kind","base_currency","evaluation_policy_id","execution_assumptions_id","budget","stop_rule"],"type":"object"}]};
 const pattern13 = new RegExp("^(?!-)(?=[0-9+.]*[1-9])", "u");
 const schema74 = {"enum":["UNAVAILABLE","ESTIMATED","EXACT"],"type":"string"};
 
@@ -9004,8 +9004,12 @@ if(_errs3 === errors){
 if(data.base_currency !== undefined){
 let data0 = data.base_currency;
 const _errs4 = errors;
+const _errs5 = errors;
+let valid2 = false;
+let passing1 = null;
+const _errs6 = errors;
 if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data0 === "AED") || (data0 === "AFN")) || (data0 === "ALL")) || (data0 === "AMD")) || (data0 === "AOA")) || (data0 === "ARS")) || (data0 === "AUD")) || (data0 === "AWG")) || (data0 === "AZN")) || (data0 === "BAM")) || (data0 === "BBD")) || (data0 === "BDT")) || (data0 === "BGN")) || (data0 === "BHD")) || (data0 === "BIF")) || (data0 === "BMD")) || (data0 === "BND")) || (data0 === "BOB")) || (data0 === "BOV")) || (data0 === "BRL")) || (data0 === "BSD")) || (data0 === "BTN")) || (data0 === "BWP")) || (data0 === "BYN")) || (data0 === "BZD")) || (data0 === "CAD")) || (data0 === "CDF")) || (data0 === "CHE")) || (data0 === "CHF")) || (data0 === "CHW")) || (data0 === "CLF")) || (data0 === "CLP")) || (data0 === "CNY")) || (data0 === "COP")) || (data0 === "COU")) || (data0 === "CRC")) || (data0 === "CUC")) || (data0 === "CUP")) || (data0 === "CVE")) || (data0 === "CZK")) || (data0 === "DJF")) || (data0 === "DKK")) || (data0 === "DOP")) || (data0 === "DZD")) || (data0 === "EGP")) || (data0 === "ERN")) || (data0 === "ETB")) || (data0 === "EUR")) || (data0 === "FJD")) || (data0 === "FKP")) || (data0 === "GBP")) || (data0 === "GEL")) || (data0 === "GHS")) || (data0 === "GIP")) || (data0 === "GMD")) || (data0 === "GNF")) || (data0 === "GTQ")) || (data0 === "GYD")) || (data0 === "HKD")) || (data0 === "HNL")) || (data0 === "HRK")) || (data0 === "HTG")) || (data0 === "HUF")) || (data0 === "IDR")) || (data0 === "ILS")) || (data0 === "INR")) || (data0 === "IQD")) || (data0 === "IRR")) || (data0 === "ISK")) || (data0 === "JMD")) || (data0 === "JOD")) || (data0 === "JPY")) || (data0 === "KES")) || (data0 === "KGS")) || (data0 === "KHR")) || (data0 === "KMF")) || (data0 === "KPW")) || (data0 === "KRW")) || (data0 === "KWD")) || (data0 === "KYD")) || (data0 === "KZT")) || (data0 === "LAK")) || (data0 === "LBP")) || (data0 === "LKR")) || (data0 === "LRD")) || (data0 === "LSL")) || (data0 === "LYD")) || (data0 === "MAD")) || (data0 === "MDL")) || (data0 === "MGA")) || (data0 === "MKD")) || (data0 === "MMK")) || (data0 === "MNT")) || (data0 === "MOP")) || (data0 === "MRU")) || (data0 === "MUR")) || (data0 === "MVR")) || (data0 === "MWK")) || (data0 === "MXN")) || (data0 === "MXV")) || (data0 === "MYR")) || (data0 === "MZN")) || (data0 === "NAD")) || (data0 === "NGN")) || (data0 === "NIO")) || (data0 === "NOK")) || (data0 === "NPR")) || (data0 === "NZD")) || (data0 === "OMR")) || (data0 === "PAB")) || (data0 === "PEN")) || (data0 === "PGK")) || (data0 === "PHP")) || (data0 === "PKR")) || (data0 === "PLN")) || (data0 === "PYG")) || (data0 === "QAR")) || (data0 === "RON")) || (data0 === "RSD")) || (data0 === "RUB")) || (data0 === "RWF")) || (data0 === "SAR")) || (data0 === "SBD")) || (data0 === "SCR")) || (data0 === "SDG")) || (data0 === "SEK")) || (data0 === "SGD")) || (data0 === "SHP")) || (data0 === "SLE")) || (data0 === "SLL")) || (data0 === "SOS")) || (data0 === "SRD")) || (data0 === "SSP")) || (data0 === "STN")) || (data0 === "SVC")) || (data0 === "SYP")) || (data0 === "SZL")) || (data0 === "THB")) || (data0 === "TJS")) || (data0 === "TMT")) || (data0 === "TND")) || (data0 === "TOP")) || (data0 === "TRY")) || (data0 === "TTD")) || (data0 === "TWD")) || (data0 === "TZS")) || (data0 === "UAH")) || (data0 === "UGX")) || (data0 === "USD")) || (data0 === "USN")) || (data0 === "UYI")) || (data0 === "UYU")) || (data0 === "UYW")) || (data0 === "UZS")) || (data0 === "VED")) || (data0 === "VES")) || (data0 === "VND")) || (data0 === "VUV")) || (data0 === "WST")) || (data0 === "XAD")) || (data0 === "XAF")) || (data0 === "XAG")) || (data0 === "XAU")) || (data0 === "XBA")) || (data0 === "XBB")) || (data0 === "XBC")) || (data0 === "XBD")) || (data0 === "XCD")) || (data0 === "XCG")) || (data0 === "XDR")) || (data0 === "XOF")) || (data0 === "XPD")) || (data0 === "XPF")) || (data0 === "XPT")) || (data0 === "XSU")) || (data0 === "XTS")) || (data0 === "XUA")) || (data0 === "XXX")) || (data0 === "YER")) || (data0 === "ZAR")) || (data0 === "ZMW")) || (data0 === "ZWG")) || (data0 === "ZWL"))){
-const err2 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.base_currency.enum},message:"must be equal to one of the allowed values"};
+const err2 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/oneOf/0/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.base_currency.oneOf[0].enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err2];
 }
@@ -9014,10 +9018,10 @@ vErrors.push(err2);
 }
 errors++;
 }
-if(errors === _errs4){
+if(errors === _errs6){
 if(typeof data0 === "string"){
 if(func2(data0) > 3){
-const err3 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+const err3 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/oneOf/0/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err3];
 }
@@ -9028,7 +9032,7 @@ errors++;
 }
 else {
 if(func2(data0) < 3){
-const err4 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+const err4 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/oneOf/0/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err4];
 }
@@ -9040,7 +9044,7 @@ errors++;
 }
 }
 else {
-const err5 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err5 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/oneOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err5];
 }
@@ -9050,21 +9054,14 @@ vErrors.push(err5);
 errors++;
 }
 }
-var valid1 = _errs4 === errors;
+var _valid1 = _errs6 === errors;
+if(_valid1){
+valid2 = true;
+passing1 = 0;
 }
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data.benchmark_ref !== undefined){
-let data1 = data.benchmark_ref;
-const _errs6 = errors;
-const _errs7 = errors;
-let valid2 = false;
-let passing1 = null;
 const _errs8 = errors;
-if(data1 !== null){
-const err6 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/0/properties/benchmark_ref/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(typeof data0 !== "string"){
+const err6 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err6];
 }
@@ -9073,17 +9070,8 @@ vErrors.push(err6);
 }
 errors++;
 }
-var _valid1 = _errs8 === errors;
-if(_valid1){
-valid2 = true;
-passing1 = 0;
-}
-const _errs10 = errors;
-if(errors === _errs10){
-if(errors === _errs10){
-if(typeof data1 === "string"){
-if(!pattern3.test(data1)){
-const err7 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/0/properties/benchmark_ref/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+if(!(((data0 === "USDC") || (data0 === "USDC.e")) || (data0 === "pUSD"))){
+const err7 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.base_currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err7];
 }
@@ -9092,32 +9080,7 @@ vErrors.push(err7);
 }
 errors++;
 }
-else {
-if(!(formats0.test(data1))){
-const err8 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/0/properties/benchmark_ref/oneOf/1/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
-if(vErrors === null){
-vErrors = [err8];
-}
-else {
-vErrors.push(err8);
-}
-errors++;
-}
-}
-}
-else {
-const err9 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/0/properties/benchmark_ref/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err9];
-}
-else {
-vErrors.push(err9);
-}
-errors++;
-}
-}
-}
-var _valid1 = _errs10 === errors;
+var _valid1 = _errs8 === errors;
 if(_valid1 && valid2){
 valid2 = false;
 passing1 = [passing1, 1];
@@ -9129,7 +9092,60 @@ passing1 = 1;
 }
 }
 if(!valid2){
-const err10 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/0/properties/benchmark_ref/oneOf",keyword:"oneOf",params:{passingSchemas: passing1},message:"must match exactly one schema in oneOf"};
+const err8 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/0/properties/base_currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing1},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err8];
+}
+else {
+vErrors.push(err8);
+}
+errors++;
+}
+else {
+errors = _errs5;
+if(vErrors !== null){
+if(_errs5){
+vErrors.length = _errs5;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid1 = _errs4 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.benchmark_ref !== undefined){
+let data1 = data.benchmark_ref;
+const _errs10 = errors;
+const _errs11 = errors;
+let valid3 = false;
+let passing2 = null;
+const _errs12 = errors;
+if(data1 !== null){
+const err9 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/0/properties/benchmark_ref/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err9];
+}
+else {
+vErrors.push(err9);
+}
+errors++;
+}
+var _valid2 = _errs12 === errors;
+if(_valid2){
+valid3 = true;
+passing2 = 0;
+}
+const _errs14 = errors;
+if(errors === _errs14){
+if(errors === _errs14){
+if(typeof data1 === "string"){
+if(!pattern3.test(data1)){
+const err10 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/0/properties/benchmark_ref/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err10];
 }
@@ -9139,31 +9155,8 @@ vErrors.push(err10);
 errors++;
 }
 else {
-errors = _errs7;
-if(vErrors !== null){
-if(_errs7){
-vErrors.length = _errs7;
-}
-else {
-vErrors = null;
-}
-}
-}
-var valid1 = _errs6 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data.budget !== undefined){
-let data2 = data.budget;
-const _errs12 = errors;
-const _errs13 = errors;
-if(errors === _errs13){
-if(data2 && typeof data2 == "object" && !Array.isArray(data2)){
-let missing1;
-if(((((((((((((data2.schema_version === undefined) && (missing1 = "schema_version")) || ((data2.max_experiments === undefined) && (missing1 = "max_experiments"))) || ((data2.max_parallel_runs === undefined) && (missing1 = "max_parallel_runs"))) || ((data2.max_turns_per_mission === undefined) && (missing1 = "max_turns_per_mission"))) || ((data2.max_repair_turns === undefined) && (missing1 = "max_repair_turns"))) || ((data2.max_wall_seconds === undefined) && (missing1 = "max_wall_seconds"))) || ((data2.max_memory_mib === undefined) && (missing1 = "max_memory_mib"))) || ((data2.max_cycles_per_day === undefined) && (missing1 = "max_cycles_per_day"))) || ((data2.min_cycle_interval_seconds === undefined) && (missing1 = "min_cycle_interval_seconds"))) || ((data2.max_cpu_seconds === undefined) && (missing1 = "max_cpu_seconds"))) || ((data2.max_output_bytes === undefined) && (missing1 = "max_output_bytes"))) || ((data2.cost_enforcement === undefined) && (missing1 = "cost_enforcement"))){
-const err11 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/0/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"};
+if(!(formats0.test(data1))){
+const err11 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/0/properties/benchmark_ref/oneOf/1/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
 if(vErrors === null){
 vErrors = [err11];
 }
@@ -9172,11 +9165,10 @@ vErrors.push(err11);
 }
 errors++;
 }
+}
+}
 else {
-const _errs15 = errors;
-for(const key1 in data2){
-if(!(func1.call(schema73.oneOf[0].properties.budget.allOf[0].properties, key1))){
-const err12 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"};
+const err12 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/0/properties/benchmark_ref/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err12];
 }
@@ -9184,19 +9176,22 @@ else {
 vErrors.push(err12);
 }
 errors++;
-break;
 }
 }
-if(_errs15 === errors){
-if(data2.cost_currency !== undefined){
-let data3 = data2.cost_currency;
-const _errs16 = errors;
-const _errs17 = errors;
-let valid5 = false;
-let passing2 = null;
-const _errs18 = errors;
-if(data3 !== null){
-const err13 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+}
+var _valid2 = _errs14 === errors;
+if(_valid2 && valid3){
+valid3 = false;
+passing2 = [passing2, 1];
+}
+else {
+if(_valid2){
+valid3 = true;
+passing2 = 1;
+}
+}
+if(!valid3){
+const err13 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/0/properties/benchmark_ref/oneOf",keyword:"oneOf",params:{passingSchemas: passing2},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err13];
 }
@@ -9205,14 +9200,32 @@ vErrors.push(err13);
 }
 errors++;
 }
-var _valid2 = _errs18 === errors;
-if(_valid2){
-valid5 = true;
-passing2 = 0;
+else {
+errors = _errs11;
+if(vErrors !== null){
+if(_errs11){
+vErrors.length = _errs11;
 }
-const _errs20 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data3 === "AED") || (data3 === "AFN")) || (data3 === "ALL")) || (data3 === "AMD")) || (data3 === "AOA")) || (data3 === "ARS")) || (data3 === "AUD")) || (data3 === "AWG")) || (data3 === "AZN")) || (data3 === "BAM")) || (data3 === "BBD")) || (data3 === "BDT")) || (data3 === "BGN")) || (data3 === "BHD")) || (data3 === "BIF")) || (data3 === "BMD")) || (data3 === "BND")) || (data3 === "BOB")) || (data3 === "BOV")) || (data3 === "BRL")) || (data3 === "BSD")) || (data3 === "BTN")) || (data3 === "BWP")) || (data3 === "BYN")) || (data3 === "BZD")) || (data3 === "CAD")) || (data3 === "CDF")) || (data3 === "CHE")) || (data3 === "CHF")) || (data3 === "CHW")) || (data3 === "CLF")) || (data3 === "CLP")) || (data3 === "CNY")) || (data3 === "COP")) || (data3 === "COU")) || (data3 === "CRC")) || (data3 === "CUC")) || (data3 === "CUP")) || (data3 === "CVE")) || (data3 === "CZK")) || (data3 === "DJF")) || (data3 === "DKK")) || (data3 === "DOP")) || (data3 === "DZD")) || (data3 === "EGP")) || (data3 === "ERN")) || (data3 === "ETB")) || (data3 === "EUR")) || (data3 === "FJD")) || (data3 === "FKP")) || (data3 === "GBP")) || (data3 === "GEL")) || (data3 === "GHS")) || (data3 === "GIP")) || (data3 === "GMD")) || (data3 === "GNF")) || (data3 === "GTQ")) || (data3 === "GYD")) || (data3 === "HKD")) || (data3 === "HNL")) || (data3 === "HRK")) || (data3 === "HTG")) || (data3 === "HUF")) || (data3 === "IDR")) || (data3 === "ILS")) || (data3 === "INR")) || (data3 === "IQD")) || (data3 === "IRR")) || (data3 === "ISK")) || (data3 === "JMD")) || (data3 === "JOD")) || (data3 === "JPY")) || (data3 === "KES")) || (data3 === "KGS")) || (data3 === "KHR")) || (data3 === "KMF")) || (data3 === "KPW")) || (data3 === "KRW")) || (data3 === "KWD")) || (data3 === "KYD")) || (data3 === "KZT")) || (data3 === "LAK")) || (data3 === "LBP")) || (data3 === "LKR")) || (data3 === "LRD")) || (data3 === "LSL")) || (data3 === "LYD")) || (data3 === "MAD")) || (data3 === "MDL")) || (data3 === "MGA")) || (data3 === "MKD")) || (data3 === "MMK")) || (data3 === "MNT")) || (data3 === "MOP")) || (data3 === "MRU")) || (data3 === "MUR")) || (data3 === "MVR")) || (data3 === "MWK")) || (data3 === "MXN")) || (data3 === "MXV")) || (data3 === "MYR")) || (data3 === "MZN")) || (data3 === "NAD")) || (data3 === "NGN")) || (data3 === "NIO")) || (data3 === "NOK")) || (data3 === "NPR")) || (data3 === "NZD")) || (data3 === "OMR")) || (data3 === "PAB")) || (data3 === "PEN")) || (data3 === "PGK")) || (data3 === "PHP")) || (data3 === "PKR")) || (data3 === "PLN")) || (data3 === "PYG")) || (data3 === "QAR")) || (data3 === "RON")) || (data3 === "RSD")) || (data3 === "RUB")) || (data3 === "RWF")) || (data3 === "SAR")) || (data3 === "SBD")) || (data3 === "SCR")) || (data3 === "SDG")) || (data3 === "SEK")) || (data3 === "SGD")) || (data3 === "SHP")) || (data3 === "SLE")) || (data3 === "SLL")) || (data3 === "SOS")) || (data3 === "SRD")) || (data3 === "SSP")) || (data3 === "STN")) || (data3 === "SVC")) || (data3 === "SYP")) || (data3 === "SZL")) || (data3 === "THB")) || (data3 === "TJS")) || (data3 === "TMT")) || (data3 === "TND")) || (data3 === "TOP")) || (data3 === "TRY")) || (data3 === "TTD")) || (data3 === "TWD")) || (data3 === "TZS")) || (data3 === "UAH")) || (data3 === "UGX")) || (data3 === "USD")) || (data3 === "USN")) || (data3 === "UYI")) || (data3 === "UYU")) || (data3 === "UYW")) || (data3 === "UZS")) || (data3 === "VED")) || (data3 === "VES")) || (data3 === "VND")) || (data3 === "VUV")) || (data3 === "WST")) || (data3 === "XAD")) || (data3 === "XAF")) || (data3 === "XAG")) || (data3 === "XAU")) || (data3 === "XBA")) || (data3 === "XBB")) || (data3 === "XBC")) || (data3 === "XBD")) || (data3 === "XCD")) || (data3 === "XCG")) || (data3 === "XDR")) || (data3 === "XOF")) || (data3 === "XPD")) || (data3 === "XPF")) || (data3 === "XPT")) || (data3 === "XSU")) || (data3 === "XTS")) || (data3 === "XUA")) || (data3 === "XXX")) || (data3 === "YER")) || (data3 === "ZAR")) || (data3 === "ZMW")) || (data3 === "ZWG")) || (data3 === "ZWL"))){
-const err14 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[0].properties.cost_currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
+else {
+vErrors = null;
+}
+}
+}
+var valid1 = _errs10 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.budget !== undefined){
+let data2 = data.budget;
+const _errs16 = errors;
+const _errs17 = errors;
+if(errors === _errs17){
+if(data2 && typeof data2 == "object" && !Array.isArray(data2)){
+let missing1;
+if(((((((((((((data2.schema_version === undefined) && (missing1 = "schema_version")) || ((data2.max_experiments === undefined) && (missing1 = "max_experiments"))) || ((data2.max_parallel_runs === undefined) && (missing1 = "max_parallel_runs"))) || ((data2.max_turns_per_mission === undefined) && (missing1 = "max_turns_per_mission"))) || ((data2.max_repair_turns === undefined) && (missing1 = "max_repair_turns"))) || ((data2.max_wall_seconds === undefined) && (missing1 = "max_wall_seconds"))) || ((data2.max_memory_mib === undefined) && (missing1 = "max_memory_mib"))) || ((data2.max_cycles_per_day === undefined) && (missing1 = "max_cycles_per_day"))) || ((data2.min_cycle_interval_seconds === undefined) && (missing1 = "min_cycle_interval_seconds"))) || ((data2.max_cpu_seconds === undefined) && (missing1 = "max_cpu_seconds"))) || ((data2.max_output_bytes === undefined) && (missing1 = "max_output_bytes"))) || ((data2.cost_enforcement === undefined) && (missing1 = "cost_enforcement"))){
+const err14 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/0/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"};
 if(vErrors === null){
 vErrors = [err14];
 }
@@ -9221,10 +9234,11 @@ vErrors.push(err14);
 }
 errors++;
 }
-if(errors === _errs20){
-if(typeof data3 === "string"){
-if(func2(data3) > 3){
-const err15 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+else {
+const _errs19 = errors;
+for(const key1 in data2){
+if(!(func1.call(schema73.oneOf[0].properties.budget.allOf[0].properties, key1))){
+const err15 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err15];
 }
@@ -9232,10 +9246,19 @@ else {
 vErrors.push(err15);
 }
 errors++;
+break;
 }
-else {
-if(func2(data3) < 3){
-const err16 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf/1/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+}
+if(_errs19 === errors){
+if(data2.cost_currency !== undefined){
+let data3 = data2.cost_currency;
+const _errs20 = errors;
+const _errs21 = errors;
+let valid6 = false;
+let passing3 = null;
+const _errs22 = errors;
+if(data3 !== null){
+const err16 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err16];
 }
@@ -9244,10 +9267,14 @@ vErrors.push(err16);
 }
 errors++;
 }
+var _valid3 = _errs22 === errors;
+if(_valid3){
+valid6 = true;
+passing3 = 0;
 }
-}
-else {
-const err17 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const _errs24 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data3 === "AED") || (data3 === "AFN")) || (data3 === "ALL")) || (data3 === "AMD")) || (data3 === "AOA")) || (data3 === "ARS")) || (data3 === "AUD")) || (data3 === "AWG")) || (data3 === "AZN")) || (data3 === "BAM")) || (data3 === "BBD")) || (data3 === "BDT")) || (data3 === "BGN")) || (data3 === "BHD")) || (data3 === "BIF")) || (data3 === "BMD")) || (data3 === "BND")) || (data3 === "BOB")) || (data3 === "BOV")) || (data3 === "BRL")) || (data3 === "BSD")) || (data3 === "BTN")) || (data3 === "BWP")) || (data3 === "BYN")) || (data3 === "BZD")) || (data3 === "CAD")) || (data3 === "CDF")) || (data3 === "CHE")) || (data3 === "CHF")) || (data3 === "CHW")) || (data3 === "CLF")) || (data3 === "CLP")) || (data3 === "CNY")) || (data3 === "COP")) || (data3 === "COU")) || (data3 === "CRC")) || (data3 === "CUC")) || (data3 === "CUP")) || (data3 === "CVE")) || (data3 === "CZK")) || (data3 === "DJF")) || (data3 === "DKK")) || (data3 === "DOP")) || (data3 === "DZD")) || (data3 === "EGP")) || (data3 === "ERN")) || (data3 === "ETB")) || (data3 === "EUR")) || (data3 === "FJD")) || (data3 === "FKP")) || (data3 === "GBP")) || (data3 === "GEL")) || (data3 === "GHS")) || (data3 === "GIP")) || (data3 === "GMD")) || (data3 === "GNF")) || (data3 === "GTQ")) || (data3 === "GYD")) || (data3 === "HKD")) || (data3 === "HNL")) || (data3 === "HRK")) || (data3 === "HTG")) || (data3 === "HUF")) || (data3 === "IDR")) || (data3 === "ILS")) || (data3 === "INR")) || (data3 === "IQD")) || (data3 === "IRR")) || (data3 === "ISK")) || (data3 === "JMD")) || (data3 === "JOD")) || (data3 === "JPY")) || (data3 === "KES")) || (data3 === "KGS")) || (data3 === "KHR")) || (data3 === "KMF")) || (data3 === "KPW")) || (data3 === "KRW")) || (data3 === "KWD")) || (data3 === "KYD")) || (data3 === "KZT")) || (data3 === "LAK")) || (data3 === "LBP")) || (data3 === "LKR")) || (data3 === "LRD")) || (data3 === "LSL")) || (data3 === "LYD")) || (data3 === "MAD")) || (data3 === "MDL")) || (data3 === "MGA")) || (data3 === "MKD")) || (data3 === "MMK")) || (data3 === "MNT")) || (data3 === "MOP")) || (data3 === "MRU")) || (data3 === "MUR")) || (data3 === "MVR")) || (data3 === "MWK")) || (data3 === "MXN")) || (data3 === "MXV")) || (data3 === "MYR")) || (data3 === "MZN")) || (data3 === "NAD")) || (data3 === "NGN")) || (data3 === "NIO")) || (data3 === "NOK")) || (data3 === "NPR")) || (data3 === "NZD")) || (data3 === "OMR")) || (data3 === "PAB")) || (data3 === "PEN")) || (data3 === "PGK")) || (data3 === "PHP")) || (data3 === "PKR")) || (data3 === "PLN")) || (data3 === "PYG")) || (data3 === "QAR")) || (data3 === "RON")) || (data3 === "RSD")) || (data3 === "RUB")) || (data3 === "RWF")) || (data3 === "SAR")) || (data3 === "SBD")) || (data3 === "SCR")) || (data3 === "SDG")) || (data3 === "SEK")) || (data3 === "SGD")) || (data3 === "SHP")) || (data3 === "SLE")) || (data3 === "SLL")) || (data3 === "SOS")) || (data3 === "SRD")) || (data3 === "SSP")) || (data3 === "STN")) || (data3 === "SVC")) || (data3 === "SYP")) || (data3 === "SZL")) || (data3 === "THB")) || (data3 === "TJS")) || (data3 === "TMT")) || (data3 === "TND")) || (data3 === "TOP")) || (data3 === "TRY")) || (data3 === "TTD")) || (data3 === "TWD")) || (data3 === "TZS")) || (data3 === "UAH")) || (data3 === "UGX")) || (data3 === "USD")) || (data3 === "USN")) || (data3 === "UYI")) || (data3 === "UYU")) || (data3 === "UYW")) || (data3 === "UZS")) || (data3 === "VED")) || (data3 === "VES")) || (data3 === "VND")) || (data3 === "VUV")) || (data3 === "WST")) || (data3 === "XAD")) || (data3 === "XAF")) || (data3 === "XAG")) || (data3 === "XAU")) || (data3 === "XBA")) || (data3 === "XBB")) || (data3 === "XBC")) || (data3 === "XBD")) || (data3 === "XCD")) || (data3 === "XCG")) || (data3 === "XDR")) || (data3 === "XOF")) || (data3 === "XPD")) || (data3 === "XPF")) || (data3 === "XPT")) || (data3 === "XSU")) || (data3 === "XTS")) || (data3 === "XUA")) || (data3 === "XXX")) || (data3 === "YER")) || (data3 === "ZAR")) || (data3 === "ZMW")) || (data3 === "ZWG")) || (data3 === "ZWL"))){
+const err17 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[0].properties.cost_currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err17];
 }
@@ -9256,20 +9283,10 @@ vErrors.push(err17);
 }
 errors++;
 }
-}
-var _valid2 = _errs20 === errors;
-if(_valid2 && valid5){
-valid5 = false;
-passing2 = [passing2, 1];
-}
-else {
-if(_valid2){
-valid5 = true;
-passing2 = 1;
-}
-}
-if(!valid5){
-const err18 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing2},message:"must match exactly one schema in oneOf"};
+if(errors === _errs24){
+if(typeof data3 === "string"){
+if(func2(data3) > 3){
+const err18 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err18];
 }
@@ -9279,43 +9296,8 @@ vErrors.push(err18);
 errors++;
 }
 else {
-errors = _errs17;
-if(vErrors !== null){
-if(_errs17){
-vErrors.length = _errs17;
-}
-else {
-vErrors = null;
-}
-}
-}
-var valid4 = _errs16 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.cost_enforcement !== undefined){
-const _errs22 = errors;
-if(!(validate290(data2.cost_enforcement, {instancePath:instancePath+"/budget/cost_enforcement",parentData:data2,parentDataProperty:"cost_enforcement",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate290.errors : vErrors.concat(validate290.errors);
-errors = vErrors.length;
-}
-var valid4 = _errs22 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_cost_decimal !== undefined){
-let data5 = data2.max_cost_decimal;
-const _errs23 = errors;
-const _errs24 = errors;
-let valid6 = false;
-let passing3 = null;
-const _errs25 = errors;
-if(data5 !== null){
-const err19 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(func2(data3) < 3){
+const err19 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf/1/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err19];
 }
@@ -9324,16 +9306,10 @@ vErrors.push(err19);
 }
 errors++;
 }
-var _valid3 = _errs25 === errors;
-if(_valid3){
-valid6 = true;
-passing3 = 0;
 }
-const _errs27 = errors;
-if(errors === _errs27){
-if(typeof data5 === "string"){
-if(func2(data5) > 64){
-const err20 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+}
+else {
+const err20 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err20];
 }
@@ -9342,43 +9318,8 @@ vErrors.push(err20);
 }
 errors++;
 }
-else {
-if(func2(data5) < 1){
-const err21 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
-if(vErrors === null){
-vErrors = [err21];
 }
-else {
-vErrors.push(err21);
-}
-errors++;
-}
-else {
-if(!pattern6.test(data5)){
-const err22 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
-if(vErrors === null){
-vErrors = [err22];
-}
-else {
-vErrors.push(err22);
-}
-errors++;
-}
-}
-}
-}
-else {
-const err23 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err23];
-}
-else {
-vErrors.push(err23);
-}
-errors++;
-}
-}
-var _valid3 = _errs27 === errors;
+var _valid3 = _errs24 === errors;
 if(_valid3 && valid6){
 valid6 = false;
 passing3 = [passing3, 1];
@@ -9390,7 +9331,82 @@ passing3 = 1;
 }
 }
 if(!valid6){
-const err24 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf",keyword:"oneOf",params:{passingSchemas: passing3},message:"must match exactly one schema in oneOf"};
+const err21 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/cost_currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing3},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err21];
+}
+else {
+vErrors.push(err21);
+}
+errors++;
+}
+else {
+errors = _errs21;
+if(vErrors !== null){
+if(_errs21){
+vErrors.length = _errs21;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid5 = _errs20 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.cost_enforcement !== undefined){
+const _errs26 = errors;
+if(!(validate290(data2.cost_enforcement, {instancePath:instancePath+"/budget/cost_enforcement",parentData:data2,parentDataProperty:"cost_enforcement",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate290.errors : vErrors.concat(validate290.errors);
+errors = vErrors.length;
+}
+var valid5 = _errs26 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_cost_decimal !== undefined){
+let data5 = data2.max_cost_decimal;
+const _errs27 = errors;
+const _errs28 = errors;
+let valid7 = false;
+let passing4 = null;
+const _errs29 = errors;
+if(data5 !== null){
+const err22 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err22];
+}
+else {
+vErrors.push(err22);
+}
+errors++;
+}
+var _valid4 = _errs29 === errors;
+if(_valid4){
+valid7 = true;
+passing4 = 0;
+}
+const _errs31 = errors;
+if(errors === _errs31){
+if(typeof data5 === "string"){
+if(func2(data5) > 64){
+const err23 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+if(vErrors === null){
+vErrors = [err23];
+}
+else {
+vErrors.push(err23);
+}
+errors++;
+}
+else {
+if(func2(data5) < 1){
+const err24 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err24];
 }
@@ -9400,29 +9416,8 @@ vErrors.push(err24);
 errors++;
 }
 else {
-errors = _errs24;
-if(vErrors !== null){
-if(_errs24){
-vErrors.length = _errs24;
-}
-else {
-vErrors = null;
-}
-}
-}
-var valid4 = _errs23 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_cpu_seconds !== undefined){
-let data6 = data2.max_cpu_seconds;
-const _errs29 = errors;
-if(errors === _errs29){
-if(typeof data6 === "string"){
-if(func2(data6) > 19){
-const err25 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cpu_seconds/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+if(!pattern6.test(data5)){
+const err25 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err25];
 }
@@ -9431,9 +9426,11 @@ vErrors.push(err25);
 }
 errors++;
 }
+}
+}
+}
 else {
-if(func2(data6) < 1){
-const err26 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cpu_seconds/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+const err26 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err26];
 }
@@ -9442,451 +9439,8 @@ vErrors.push(err26);
 }
 errors++;
 }
-else {
-if(!pattern5.test(data6)){
-const err27 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cpu_seconds/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
-if(vErrors === null){
-vErrors = [err27];
 }
-else {
-vErrors.push(err27);
-}
-errors++;
-}
-}
-}
-}
-else {
-const err28 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cpu_seconds/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err28];
-}
-else {
-vErrors.push(err28);
-}
-errors++;
-}
-}
-var valid4 = _errs29 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_cycles_per_day !== undefined){
-let data7 = data2.max_cycles_per_day;
-const _errs31 = errors;
-if(!((typeof data7 == "number") && (!(data7 % 1) && !isNaN(data7)))){
-const err29 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cycles_per_day/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err29];
-}
-else {
-vErrors.push(err29);
-}
-errors++;
-}
-if(errors === _errs31){
-if(typeof data7 == "number"){
-if(data7 > 65535 || isNaN(data7)){
-const err30 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cycles_per_day/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
-if(vErrors === null){
-vErrors = [err30];
-}
-else {
-vErrors.push(err30);
-}
-errors++;
-}
-else {
-if(data7 < 1 || isNaN(data7)){
-const err31 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cycles_per_day/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err31];
-}
-else {
-vErrors.push(err31);
-}
-errors++;
-}
-else {
-if(!(formats12.validate(data7))){
-const err32 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cycles_per_day/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
-if(vErrors === null){
-vErrors = [err32];
-}
-else {
-vErrors.push(err32);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid4 = _errs31 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_experiments !== undefined){
-let data8 = data2.max_experiments;
-const _errs33 = errors;
-if(!((typeof data8 == "number") && (!(data8 % 1) && !isNaN(data8)))){
-const err33 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_experiments/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err33];
-}
-else {
-vErrors.push(err33);
-}
-errors++;
-}
-if(errors === _errs33){
-if(typeof data8 == "number"){
-if(data8 > 4294967295 || isNaN(data8)){
-const err34 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_experiments/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
-if(vErrors === null){
-vErrors = [err34];
-}
-else {
-vErrors.push(err34);
-}
-errors++;
-}
-else {
-if(data8 < 1 || isNaN(data8)){
-const err35 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_experiments/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err35];
-}
-else {
-vErrors.push(err35);
-}
-errors++;
-}
-else {
-if(!(formats22.validate(data8))){
-const err36 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_experiments/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
-if(vErrors === null){
-vErrors = [err36];
-}
-else {
-vErrors.push(err36);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid4 = _errs33 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_memory_mib !== undefined){
-let data9 = data2.max_memory_mib;
-const _errs35 = errors;
-if(!((typeof data9 == "number") && (!(data9 % 1) && !isNaN(data9)))){
-const err37 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_memory_mib/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err37];
-}
-else {
-vErrors.push(err37);
-}
-errors++;
-}
-if(errors === _errs35){
-if(typeof data9 == "number"){
-if(data9 > 4294967295 || isNaN(data9)){
-const err38 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_memory_mib/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
-if(vErrors === null){
-vErrors = [err38];
-}
-else {
-vErrors.push(err38);
-}
-errors++;
-}
-else {
-if(data9 < 1 || isNaN(data9)){
-const err39 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_memory_mib/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err39];
-}
-else {
-vErrors.push(err39);
-}
-errors++;
-}
-else {
-if(!(formats22.validate(data9))){
-const err40 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_memory_mib/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
-if(vErrors === null){
-vErrors = [err40];
-}
-else {
-vErrors.push(err40);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid4 = _errs35 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_output_bytes !== undefined){
-let data10 = data2.max_output_bytes;
-const _errs37 = errors;
-if(errors === _errs37){
-if(typeof data10 === "string"){
-if(func2(data10) > 19){
-const err41 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_output_bytes/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
-if(vErrors === null){
-vErrors = [err41];
-}
-else {
-vErrors.push(err41);
-}
-errors++;
-}
-else {
-if(func2(data10) < 1){
-const err42 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_output_bytes/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
-if(vErrors === null){
-vErrors = [err42];
-}
-else {
-vErrors.push(err42);
-}
-errors++;
-}
-else {
-if(!pattern5.test(data10)){
-const err43 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_output_bytes/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
-if(vErrors === null){
-vErrors = [err43];
-}
-else {
-vErrors.push(err43);
-}
-errors++;
-}
-}
-}
-}
-else {
-const err44 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_output_bytes/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err44];
-}
-else {
-vErrors.push(err44);
-}
-errors++;
-}
-}
-var valid4 = _errs37 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_parallel_runs !== undefined){
-let data11 = data2.max_parallel_runs;
-const _errs39 = errors;
-if(!((typeof data11 == "number") && (!(data11 % 1) && !isNaN(data11)))){
-const err45 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_parallel_runs/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err45];
-}
-else {
-vErrors.push(err45);
-}
-errors++;
-}
-if(errors === _errs39){
-if(typeof data11 == "number"){
-if(data11 > 65535 || isNaN(data11)){
-const err46 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_parallel_runs/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
-if(vErrors === null){
-vErrors = [err46];
-}
-else {
-vErrors.push(err46);
-}
-errors++;
-}
-else {
-if(data11 < 1 || isNaN(data11)){
-const err47 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_parallel_runs/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err47];
-}
-else {
-vErrors.push(err47);
-}
-errors++;
-}
-else {
-if(!(formats12.validate(data11))){
-const err48 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_parallel_runs/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
-if(vErrors === null){
-vErrors = [err48];
-}
-else {
-vErrors.push(err48);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid4 = _errs39 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_repair_turns !== undefined){
-let data12 = data2.max_repair_turns;
-const _errs41 = errors;
-if(!((typeof data12 == "number") && (!(data12 % 1) && !isNaN(data12)))){
-const err49 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_repair_turns/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err49];
-}
-else {
-vErrors.push(err49);
-}
-errors++;
-}
-if(errors === _errs41){
-if(typeof data12 == "number"){
-if(data12 > 65535 || isNaN(data12)){
-const err50 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_repair_turns/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
-if(vErrors === null){
-vErrors = [err50];
-}
-else {
-vErrors.push(err50);
-}
-errors++;
-}
-else {
-if(data12 < 0 || isNaN(data12)){
-const err51 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_repair_turns/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
-if(vErrors === null){
-vErrors = [err51];
-}
-else {
-vErrors.push(err51);
-}
-errors++;
-}
-else {
-if(!(formats12.validate(data12))){
-const err52 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_repair_turns/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
-if(vErrors === null){
-vErrors = [err52];
-}
-else {
-vErrors.push(err52);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid4 = _errs41 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_tokens !== undefined){
-let data13 = data2.max_tokens;
-const _errs43 = errors;
-const _errs44 = errors;
-let valid7 = false;
-let passing4 = null;
-const _errs45 = errors;
-if(data13 !== null){
-const err53 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
-if(vErrors === null){
-vErrors = [err53];
-}
-else {
-vErrors.push(err53);
-}
-errors++;
-}
-var _valid4 = _errs45 === errors;
-if(_valid4){
-valid7 = true;
-passing4 = 0;
-}
-const _errs47 = errors;
-if(errors === _errs47){
-if(typeof data13 === "string"){
-if(func2(data13) > 19){
-const err54 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
-if(vErrors === null){
-vErrors = [err54];
-}
-else {
-vErrors.push(err54);
-}
-errors++;
-}
-else {
-if(func2(data13) < 1){
-const err55 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
-if(vErrors === null){
-vErrors = [err55];
-}
-else {
-vErrors.push(err55);
-}
-errors++;
-}
-else {
-if(!pattern5.test(data13)){
-const err56 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
-if(vErrors === null){
-vErrors = [err56];
-}
-else {
-vErrors.push(err56);
-}
-errors++;
-}
-}
-}
-}
-else {
-const err57 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err57];
-}
-else {
-vErrors.push(err57);
-}
-errors++;
-}
-}
-var _valid4 = _errs47 === errors;
+var _valid4 = _errs31 === errors;
 if(_valid4 && valid7){
 valid7 = false;
 passing4 = [passing4, 1];
@@ -9898,7 +9452,469 @@ passing4 = 1;
 }
 }
 if(!valid7){
-const err58 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf",keyword:"oneOf",params:{passingSchemas: passing4},message:"must match exactly one schema in oneOf"};
+const err27 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cost_decimal/oneOf",keyword:"oneOf",params:{passingSchemas: passing4},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err27];
+}
+else {
+vErrors.push(err27);
+}
+errors++;
+}
+else {
+errors = _errs28;
+if(vErrors !== null){
+if(_errs28){
+vErrors.length = _errs28;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid5 = _errs27 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_cpu_seconds !== undefined){
+let data6 = data2.max_cpu_seconds;
+const _errs33 = errors;
+if(errors === _errs33){
+if(typeof data6 === "string"){
+if(func2(data6) > 19){
+const err28 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cpu_seconds/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+if(vErrors === null){
+vErrors = [err28];
+}
+else {
+vErrors.push(err28);
+}
+errors++;
+}
+else {
+if(func2(data6) < 1){
+const err29 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cpu_seconds/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(vErrors === null){
+vErrors = [err29];
+}
+else {
+vErrors.push(err29);
+}
+errors++;
+}
+else {
+if(!pattern5.test(data6)){
+const err30 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cpu_seconds/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
+if(vErrors === null){
+vErrors = [err30];
+}
+else {
+vErrors.push(err30);
+}
+errors++;
+}
+}
+}
+}
+else {
+const err31 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cpu_seconds/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err31];
+}
+else {
+vErrors.push(err31);
+}
+errors++;
+}
+}
+var valid5 = _errs33 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_cycles_per_day !== undefined){
+let data7 = data2.max_cycles_per_day;
+const _errs35 = errors;
+if(!((typeof data7 == "number") && (!(data7 % 1) && !isNaN(data7)))){
+const err32 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cycles_per_day/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err32];
+}
+else {
+vErrors.push(err32);
+}
+errors++;
+}
+if(errors === _errs35){
+if(typeof data7 == "number"){
+if(data7 > 65535 || isNaN(data7)){
+const err33 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cycles_per_day/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+if(vErrors === null){
+vErrors = [err33];
+}
+else {
+vErrors.push(err33);
+}
+errors++;
+}
+else {
+if(data7 < 1 || isNaN(data7)){
+const err34 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cycles_per_day/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err34];
+}
+else {
+vErrors.push(err34);
+}
+errors++;
+}
+else {
+if(!(formats12.validate(data7))){
+const err35 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_cycles_per_day/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(vErrors === null){
+vErrors = [err35];
+}
+else {
+vErrors.push(err35);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid5 = _errs35 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_experiments !== undefined){
+let data8 = data2.max_experiments;
+const _errs37 = errors;
+if(!((typeof data8 == "number") && (!(data8 % 1) && !isNaN(data8)))){
+const err36 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_experiments/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err36];
+}
+else {
+vErrors.push(err36);
+}
+errors++;
+}
+if(errors === _errs37){
+if(typeof data8 == "number"){
+if(data8 > 4294967295 || isNaN(data8)){
+const err37 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_experiments/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+if(vErrors === null){
+vErrors = [err37];
+}
+else {
+vErrors.push(err37);
+}
+errors++;
+}
+else {
+if(data8 < 1 || isNaN(data8)){
+const err38 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_experiments/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err38];
+}
+else {
+vErrors.push(err38);
+}
+errors++;
+}
+else {
+if(!(formats22.validate(data8))){
+const err39 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_experiments/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+if(vErrors === null){
+vErrors = [err39];
+}
+else {
+vErrors.push(err39);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid5 = _errs37 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_memory_mib !== undefined){
+let data9 = data2.max_memory_mib;
+const _errs39 = errors;
+if(!((typeof data9 == "number") && (!(data9 % 1) && !isNaN(data9)))){
+const err40 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_memory_mib/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err40];
+}
+else {
+vErrors.push(err40);
+}
+errors++;
+}
+if(errors === _errs39){
+if(typeof data9 == "number"){
+if(data9 > 4294967295 || isNaN(data9)){
+const err41 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_memory_mib/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+if(vErrors === null){
+vErrors = [err41];
+}
+else {
+vErrors.push(err41);
+}
+errors++;
+}
+else {
+if(data9 < 1 || isNaN(data9)){
+const err42 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_memory_mib/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err42];
+}
+else {
+vErrors.push(err42);
+}
+errors++;
+}
+else {
+if(!(formats22.validate(data9))){
+const err43 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_memory_mib/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+if(vErrors === null){
+vErrors = [err43];
+}
+else {
+vErrors.push(err43);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid5 = _errs39 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_output_bytes !== undefined){
+let data10 = data2.max_output_bytes;
+const _errs41 = errors;
+if(errors === _errs41){
+if(typeof data10 === "string"){
+if(func2(data10) > 19){
+const err44 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_output_bytes/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+if(vErrors === null){
+vErrors = [err44];
+}
+else {
+vErrors.push(err44);
+}
+errors++;
+}
+else {
+if(func2(data10) < 1){
+const err45 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_output_bytes/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(vErrors === null){
+vErrors = [err45];
+}
+else {
+vErrors.push(err45);
+}
+errors++;
+}
+else {
+if(!pattern5.test(data10)){
+const err46 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_output_bytes/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
+if(vErrors === null){
+vErrors = [err46];
+}
+else {
+vErrors.push(err46);
+}
+errors++;
+}
+}
+}
+}
+else {
+const err47 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_output_bytes/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err47];
+}
+else {
+vErrors.push(err47);
+}
+errors++;
+}
+}
+var valid5 = _errs41 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_parallel_runs !== undefined){
+let data11 = data2.max_parallel_runs;
+const _errs43 = errors;
+if(!((typeof data11 == "number") && (!(data11 % 1) && !isNaN(data11)))){
+const err48 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_parallel_runs/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err48];
+}
+else {
+vErrors.push(err48);
+}
+errors++;
+}
+if(errors === _errs43){
+if(typeof data11 == "number"){
+if(data11 > 65535 || isNaN(data11)){
+const err49 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_parallel_runs/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+if(vErrors === null){
+vErrors = [err49];
+}
+else {
+vErrors.push(err49);
+}
+errors++;
+}
+else {
+if(data11 < 1 || isNaN(data11)){
+const err50 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_parallel_runs/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err50];
+}
+else {
+vErrors.push(err50);
+}
+errors++;
+}
+else {
+if(!(formats12.validate(data11))){
+const err51 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_parallel_runs/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(vErrors === null){
+vErrors = [err51];
+}
+else {
+vErrors.push(err51);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid5 = _errs43 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_repair_turns !== undefined){
+let data12 = data2.max_repair_turns;
+const _errs45 = errors;
+if(!((typeof data12 == "number") && (!(data12 % 1) && !isNaN(data12)))){
+const err52 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_repair_turns/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err52];
+}
+else {
+vErrors.push(err52);
+}
+errors++;
+}
+if(errors === _errs45){
+if(typeof data12 == "number"){
+if(data12 > 65535 || isNaN(data12)){
+const err53 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_repair_turns/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+if(vErrors === null){
+vErrors = [err53];
+}
+else {
+vErrors.push(err53);
+}
+errors++;
+}
+else {
+if(data12 < 0 || isNaN(data12)){
+const err54 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_repair_turns/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+if(vErrors === null){
+vErrors = [err54];
+}
+else {
+vErrors.push(err54);
+}
+errors++;
+}
+else {
+if(!(formats12.validate(data12))){
+const err55 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_repair_turns/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(vErrors === null){
+vErrors = [err55];
+}
+else {
+vErrors.push(err55);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid5 = _errs45 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_tokens !== undefined){
+let data13 = data2.max_tokens;
+const _errs47 = errors;
+const _errs48 = errors;
+let valid8 = false;
+let passing5 = null;
+const _errs49 = errors;
+if(data13 !== null){
+const err56 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err56];
+}
+else {
+vErrors.push(err56);
+}
+errors++;
+}
+var _valid5 = _errs49 === errors;
+if(_valid5){
+valid8 = true;
+passing5 = 0;
+}
+const _errs51 = errors;
+if(errors === _errs51){
+if(typeof data13 === "string"){
+if(func2(data13) > 19){
+const err57 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+if(vErrors === null){
+vErrors = [err57];
+}
+else {
+vErrors.push(err57);
+}
+errors++;
+}
+else {
+if(func2(data13) < 1){
+const err58 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err58];
 }
@@ -9908,27 +9924,8 @@ vErrors.push(err58);
 errors++;
 }
 else {
-errors = _errs44;
-if(vErrors !== null){
-if(_errs44){
-vErrors.length = _errs44;
-}
-else {
-vErrors = null;
-}
-}
-}
-var valid4 = _errs43 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_turns_per_mission !== undefined){
-let data14 = data2.max_turns_per_mission;
-const _errs49 = errors;
-if(!((typeof data14 == "number") && (!(data14 % 1) && !isNaN(data14)))){
-const err59 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_turns_per_mission/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(!pattern5.test(data13)){
+const err59 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err59];
 }
@@ -9937,10 +9934,11 @@ vErrors.push(err59);
 }
 errors++;
 }
-if(errors === _errs49){
-if(typeof data14 == "number"){
-if(data14 > 65535 || isNaN(data14)){
-const err60 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_turns_per_mission/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+}
+}
+}
+else {
+const err60 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err60];
 }
@@ -9949,9 +9947,20 @@ vErrors.push(err60);
 }
 errors++;
 }
+}
+var _valid5 = _errs51 === errors;
+if(_valid5 && valid8){
+valid8 = false;
+passing5 = [passing5, 1];
+}
 else {
-if(data14 < 1 || isNaN(data14)){
-const err61 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_turns_per_mission/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(_valid5){
+valid8 = true;
+passing5 = 1;
+}
+}
+if(!valid8){
+const err61 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_tokens/oneOf",keyword:"oneOf",params:{passingSchemas: passing5},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err61];
 }
@@ -9961,8 +9970,27 @@ vErrors.push(err61);
 errors++;
 }
 else {
-if(!(formats12.validate(data14))){
-const err62 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_turns_per_mission/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+errors = _errs48;
+if(vErrors !== null){
+if(_errs48){
+vErrors.length = _errs48;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid5 = _errs47 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_turns_per_mission !== undefined){
+let data14 = data2.max_turns_per_mission;
+const _errs53 = errors;
+if(!((typeof data14 == "number") && (!(data14 % 1) && !isNaN(data14)))){
+const err62 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_turns_per_mission/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err62];
 }
@@ -9971,21 +9999,10 @@ vErrors.push(err62);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid4 = _errs49 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.max_wall_seconds !== undefined){
-let data15 = data2.max_wall_seconds;
-const _errs51 = errors;
-if(!((typeof data15 == "number") && (!(data15 % 1) && !isNaN(data15)))){
-const err63 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_wall_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(errors === _errs53){
+if(typeof data14 == "number"){
+if(data14 > 65535 || isNaN(data14)){
+const err63 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_turns_per_mission/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
 if(vErrors === null){
 vErrors = [err63];
 }
@@ -9994,10 +10011,9 @@ vErrors.push(err63);
 }
 errors++;
 }
-if(errors === _errs51){
-if(typeof data15 == "number"){
-if(data15 > 4294967295 || isNaN(data15)){
-const err64 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_wall_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+else {
+if(data14 < 1 || isNaN(data14)){
+const err64 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_turns_per_mission/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err64];
 }
@@ -10007,8 +10023,8 @@ vErrors.push(err64);
 errors++;
 }
 else {
-if(data15 < 1 || isNaN(data15)){
-const err65 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_wall_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(!(formats12.validate(data14))){
+const err65 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_turns_per_mission/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err65];
 }
@@ -10017,9 +10033,21 @@ vErrors.push(err65);
 }
 errors++;
 }
+}
+}
+}
+}
+var valid5 = _errs53 === errors;
+}
 else {
-if(!(formats22.validate(data15))){
-const err66 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_wall_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+var valid5 = true;
+}
+if(valid5){
+if(data2.max_wall_seconds !== undefined){
+let data15 = data2.max_wall_seconds;
+const _errs55 = errors;
+if(!((typeof data15 == "number") && (!(data15 % 1) && !isNaN(data15)))){
+const err66 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_wall_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err66];
 }
@@ -10028,21 +10056,10 @@ vErrors.push(err66);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid4 = _errs51 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.min_cycle_interval_seconds !== undefined){
-let data16 = data2.min_cycle_interval_seconds;
-const _errs53 = errors;
-if(!((typeof data16 == "number") && (!(data16 % 1) && !isNaN(data16)))){
-const err67 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/min_cycle_interval_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(errors === _errs55){
+if(typeof data15 == "number"){
+if(data15 > 4294967295 || isNaN(data15)){
+const err67 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_wall_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err67];
 }
@@ -10051,10 +10068,9 @@ vErrors.push(err67);
 }
 errors++;
 }
-if(errors === _errs53){
-if(typeof data16 == "number"){
-if(data16 > 4294967295 || isNaN(data16)){
-const err68 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/min_cycle_interval_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+else {
+if(data15 < 1 || isNaN(data15)){
+const err68 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_wall_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err68];
 }
@@ -10064,8 +10080,8 @@ vErrors.push(err68);
 errors++;
 }
 else {
-if(data16 < 0 || isNaN(data16)){
-const err69 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/min_cycle_interval_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+if(!(formats22.validate(data15))){
+const err69 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/max_wall_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
 if(vErrors === null){
 vErrors = [err69];
 }
@@ -10074,9 +10090,21 @@ vErrors.push(err69);
 }
 errors++;
 }
+}
+}
+}
+}
+var valid5 = _errs55 === errors;
+}
 else {
-if(!(formats22.validate(data16))){
-const err70 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/min_cycle_interval_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+var valid5 = true;
+}
+if(valid5){
+if(data2.min_cycle_interval_seconds !== undefined){
+let data16 = data2.min_cycle_interval_seconds;
+const _errs57 = errors;
+if(!((typeof data16 == "number") && (!(data16 % 1) && !isNaN(data16)))){
+const err70 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/min_cycle_interval_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err70];
 }
@@ -10085,21 +10113,10 @@ vErrors.push(err70);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid4 = _errs53 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data2.schema_version !== undefined){
-let data17 = data2.schema_version;
-const _errs55 = errors;
-if(!((typeof data17 == "number") && (!(data17 % 1) && !isNaN(data17)))){
-const err71 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(errors === _errs57){
+if(typeof data16 == "number"){
+if(data16 > 4294967295 || isNaN(data16)){
+const err71 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/min_cycle_interval_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err71];
 }
@@ -10108,8 +10125,9 @@ vErrors.push(err71);
 }
 errors++;
 }
-if(!(data17 === 1)){
-const err72 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[0].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
+else {
+if(data16 < 0 || isNaN(data16)){
+const err72 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/min_cycle_interval_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err72];
 }
@@ -10118,10 +10136,9 @@ vErrors.push(err72);
 }
 errors++;
 }
-if(errors === _errs55){
-if(typeof data17 == "number"){
-if(data17 > 1 || isNaN(data17)){
-const err73 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
+else {
+if(!(formats22.validate(data16))){
+const err73 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/min_cycle_interval_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
 if(vErrors === null){
 vErrors = [err73];
 }
@@ -10130,9 +10147,21 @@ vErrors.push(err73);
 }
 errors++;
 }
+}
+}
+}
+}
+var valid5 = _errs57 === errors;
+}
 else {
-if(data17 < 1 || isNaN(data17)){
-const err74 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+var valid5 = true;
+}
+if(valid5){
+if(data2.schema_version !== undefined){
+let data17 = data2.schema_version;
+const _errs59 = errors;
+if(!((typeof data17 == "number") && (!(data17 % 1) && !isNaN(data17)))){
+const err74 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err74];
 }
@@ -10141,33 +10170,8 @@ vErrors.push(err74);
 }
 errors++;
 }
-}
-}
-}
-var valid4 = _errs55 === errors;
-}
-else {
-var valid4 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err75 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(!(data17 === 1)){
+const err75 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[0].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err75];
 }
@@ -10176,19 +10180,10 @@ vErrors.push(err75);
 }
 errors++;
 }
-}
-var valid3 = _errs13 === errors;
-if(valid3){
-const _errs57 = errors;
-const _errs58 = errors;
-let valid8 = false;
-let passing5 = null;
-const _errs59 = errors;
 if(errors === _errs59){
-if(data2 && typeof data2 == "object" && !Array.isArray(data2)){
-let missing2;
-if((data2.cost_enforcement === undefined) && (missing2 = "cost_enforcement")){
-const err76 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"};
+if(typeof data17 == "number"){
+if(data17 > 1 || isNaN(data17)){
+const err76 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
 if(vErrors === null){
 vErrors = [err76];
 }
@@ -10198,10 +10193,8 @@ vErrors.push(err76);
 errors++;
 }
 else {
-if(data2.cost_currency !== undefined){
-const _errs61 = errors;
-if(data2.cost_currency !== null){
-const err77 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/properties/cost_currency/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(data17 < 1 || isNaN(data17)){
+const err77 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/0/properties/budget/allOf/0/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err77];
 }
@@ -10210,17 +10203,33 @@ vErrors.push(err77);
 }
 errors++;
 }
-var valid9 = _errs61 === errors;
+}
+}
+}
+var valid5 = _errs59 === errors;
 }
 else {
-var valid9 = true;
+var valid5 = true;
 }
-if(valid9){
-if(data2.cost_enforcement !== undefined){
-let data19 = data2.cost_enforcement;
-const _errs63 = errors;
-if(typeof data19 !== "string"){
-const err78 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+const err78 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err78];
 }
@@ -10229,8 +10238,19 @@ vErrors.push(err78);
 }
 errors++;
 }
-if(!(data19 === "UNAVAILABLE")){
-const err79 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[1].oneOf[0].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
+}
+var valid4 = _errs17 === errors;
+if(valid4){
+const _errs61 = errors;
+const _errs62 = errors;
+let valid9 = false;
+let passing6 = null;
+const _errs63 = errors;
+if(errors === _errs63){
+if(data2 && typeof data2 == "object" && !Array.isArray(data2)){
+let missing2;
+if((data2.cost_enforcement === undefined) && (missing2 = "cost_enforcement")){
+const err79 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"};
 if(vErrors === null){
 vErrors = [err79];
 }
@@ -10239,16 +10259,11 @@ vErrors.push(err79);
 }
 errors++;
 }
-var valid9 = _errs63 === errors;
-}
 else {
-var valid9 = true;
-}
-if(valid9){
-if(data2.max_cost_decimal !== undefined){
+if(data2.cost_currency !== undefined){
 const _errs65 = errors;
-if(data2.max_cost_decimal !== null){
-const err80 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/properties/max_cost_decimal/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(data2.cost_currency !== null){
+const err80 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/properties/cost_currency/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err80];
 }
@@ -10257,17 +10272,17 @@ vErrors.push(err80);
 }
 errors++;
 }
-var valid9 = _errs65 === errors;
+var valid10 = _errs65 === errors;
 }
 else {
-var valid9 = true;
+var valid10 = true;
 }
-}
-}
-}
-}
-else {
-const err81 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(valid10){
+if(data2.cost_enforcement !== undefined){
+let data19 = data2.cost_enforcement;
+const _errs67 = errors;
+if(typeof data19 !== "string"){
+const err81 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err81];
 }
@@ -10276,22 +10291,8 @@ vErrors.push(err81);
 }
 errors++;
 }
-}
-var _valid5 = _errs59 === errors;
-if(_valid5){
-valid8 = true;
-passing5 = 0;
-var props0 = {};
-props0.cost_currency = true;
-props0.cost_enforcement = true;
-props0.max_cost_decimal = true;
-}
-const _errs67 = errors;
-if(errors === _errs67){
-if(data2 && typeof data2 == "object" && !Array.isArray(data2)){
-let missing3;
-if((((data2.cost_enforcement === undefined) && (missing3 = "cost_enforcement")) || ((data2.max_cost_decimal === undefined) && (missing3 = "max_cost_decimal"))) || ((data2.cost_currency === undefined) && (missing3 = "cost_currency"))){
-const err82 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/required",keyword:"required",params:{missingProperty: missing3},message:"must have required property '"+missing3+"'"};
+if(!(data19 === "UNAVAILABLE")){
+const err82 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[1].oneOf[0].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err82];
 }
@@ -10300,12 +10301,16 @@ vErrors.push(err82);
 }
 errors++;
 }
+var valid10 = _errs67 === errors;
+}
 else {
-if(data2.cost_currency !== undefined){
-let data21 = data2.cost_currency;
+var valid10 = true;
+}
+if(valid10){
+if(data2.max_cost_decimal !== undefined){
 const _errs69 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data21 === "AED") || (data21 === "AFN")) || (data21 === "ALL")) || (data21 === "AMD")) || (data21 === "AOA")) || (data21 === "ARS")) || (data21 === "AUD")) || (data21 === "AWG")) || (data21 === "AZN")) || (data21 === "BAM")) || (data21 === "BBD")) || (data21 === "BDT")) || (data21 === "BGN")) || (data21 === "BHD")) || (data21 === "BIF")) || (data21 === "BMD")) || (data21 === "BND")) || (data21 === "BOB")) || (data21 === "BOV")) || (data21 === "BRL")) || (data21 === "BSD")) || (data21 === "BTN")) || (data21 === "BWP")) || (data21 === "BYN")) || (data21 === "BZD")) || (data21 === "CAD")) || (data21 === "CDF")) || (data21 === "CHE")) || (data21 === "CHF")) || (data21 === "CHW")) || (data21 === "CLF")) || (data21 === "CLP")) || (data21 === "CNY")) || (data21 === "COP")) || (data21 === "COU")) || (data21 === "CRC")) || (data21 === "CUC")) || (data21 === "CUP")) || (data21 === "CVE")) || (data21 === "CZK")) || (data21 === "DJF")) || (data21 === "DKK")) || (data21 === "DOP")) || (data21 === "DZD")) || (data21 === "EGP")) || (data21 === "ERN")) || (data21 === "ETB")) || (data21 === "EUR")) || (data21 === "FJD")) || (data21 === "FKP")) || (data21 === "GBP")) || (data21 === "GEL")) || (data21 === "GHS")) || (data21 === "GIP")) || (data21 === "GMD")) || (data21 === "GNF")) || (data21 === "GTQ")) || (data21 === "GYD")) || (data21 === "HKD")) || (data21 === "HNL")) || (data21 === "HRK")) || (data21 === "HTG")) || (data21 === "HUF")) || (data21 === "IDR")) || (data21 === "ILS")) || (data21 === "INR")) || (data21 === "IQD")) || (data21 === "IRR")) || (data21 === "ISK")) || (data21 === "JMD")) || (data21 === "JOD")) || (data21 === "JPY")) || (data21 === "KES")) || (data21 === "KGS")) || (data21 === "KHR")) || (data21 === "KMF")) || (data21 === "KPW")) || (data21 === "KRW")) || (data21 === "KWD")) || (data21 === "KYD")) || (data21 === "KZT")) || (data21 === "LAK")) || (data21 === "LBP")) || (data21 === "LKR")) || (data21 === "LRD")) || (data21 === "LSL")) || (data21 === "LYD")) || (data21 === "MAD")) || (data21 === "MDL")) || (data21 === "MGA")) || (data21 === "MKD")) || (data21 === "MMK")) || (data21 === "MNT")) || (data21 === "MOP")) || (data21 === "MRU")) || (data21 === "MUR")) || (data21 === "MVR")) || (data21 === "MWK")) || (data21 === "MXN")) || (data21 === "MXV")) || (data21 === "MYR")) || (data21 === "MZN")) || (data21 === "NAD")) || (data21 === "NGN")) || (data21 === "NIO")) || (data21 === "NOK")) || (data21 === "NPR")) || (data21 === "NZD")) || (data21 === "OMR")) || (data21 === "PAB")) || (data21 === "PEN")) || (data21 === "PGK")) || (data21 === "PHP")) || (data21 === "PKR")) || (data21 === "PLN")) || (data21 === "PYG")) || (data21 === "QAR")) || (data21 === "RON")) || (data21 === "RSD")) || (data21 === "RUB")) || (data21 === "RWF")) || (data21 === "SAR")) || (data21 === "SBD")) || (data21 === "SCR")) || (data21 === "SDG")) || (data21 === "SEK")) || (data21 === "SGD")) || (data21 === "SHP")) || (data21 === "SLE")) || (data21 === "SLL")) || (data21 === "SOS")) || (data21 === "SRD")) || (data21 === "SSP")) || (data21 === "STN")) || (data21 === "SVC")) || (data21 === "SYP")) || (data21 === "SZL")) || (data21 === "THB")) || (data21 === "TJS")) || (data21 === "TMT")) || (data21 === "TND")) || (data21 === "TOP")) || (data21 === "TRY")) || (data21 === "TTD")) || (data21 === "TWD")) || (data21 === "TZS")) || (data21 === "UAH")) || (data21 === "UGX")) || (data21 === "USD")) || (data21 === "USN")) || (data21 === "UYI")) || (data21 === "UYU")) || (data21 === "UYW")) || (data21 === "UZS")) || (data21 === "VED")) || (data21 === "VES")) || (data21 === "VND")) || (data21 === "VUV")) || (data21 === "WST")) || (data21 === "XAD")) || (data21 === "XAF")) || (data21 === "XAG")) || (data21 === "XAU")) || (data21 === "XBA")) || (data21 === "XBB")) || (data21 === "XBC")) || (data21 === "XBD")) || (data21 === "XCD")) || (data21 === "XCG")) || (data21 === "XDR")) || (data21 === "XOF")) || (data21 === "XPD")) || (data21 === "XPF")) || (data21 === "XPT")) || (data21 === "XSU")) || (data21 === "XTS")) || (data21 === "XUA")) || (data21 === "XXX")) || (data21 === "YER")) || (data21 === "ZAR")) || (data21 === "ZMW")) || (data21 === "ZWG")) || (data21 === "ZWL"))){
-const err83 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[1].oneOf[1].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
+if(data2.max_cost_decimal !== null){
+const err83 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/properties/max_cost_decimal/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err83];
 }
@@ -10314,10 +10319,17 @@ vErrors.push(err83);
 }
 errors++;
 }
-if(errors === _errs69){
-if(typeof data21 === "string"){
-if(func2(data21) > 3){
-const err84 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+var valid10 = _errs69 === errors;
+}
+else {
+var valid10 = true;
+}
+}
+}
+}
+}
+else {
+const err84 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err84];
 }
@@ -10326,9 +10338,22 @@ vErrors.push(err84);
 }
 errors++;
 }
-else {
-if(func2(data21) < 3){
-const err85 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+}
+var _valid6 = _errs63 === errors;
+if(_valid6){
+valid9 = true;
+passing6 = 0;
+var props0 = {};
+props0.cost_currency = true;
+props0.cost_enforcement = true;
+props0.max_cost_decimal = true;
+}
+const _errs71 = errors;
+if(errors === _errs71){
+if(data2 && typeof data2 == "object" && !Array.isArray(data2)){
+let missing3;
+if((((data2.cost_enforcement === undefined) && (missing3 = "cost_enforcement")) || ((data2.max_cost_decimal === undefined) && (missing3 = "max_cost_decimal"))) || ((data2.cost_currency === undefined) && (missing3 = "cost_currency"))){
+const err85 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/required",keyword:"required",params:{missingProperty: missing3},message:"must have required property '"+missing3+"'"};
 if(vErrors === null){
 vErrors = [err85];
 }
@@ -10337,10 +10362,12 @@ vErrors.push(err85);
 }
 errors++;
 }
-}
-}
 else {
-const err86 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(data2.cost_currency !== undefined){
+let data21 = data2.cost_currency;
+const _errs73 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data21 === "AED") || (data21 === "AFN")) || (data21 === "ALL")) || (data21 === "AMD")) || (data21 === "AOA")) || (data21 === "ARS")) || (data21 === "AUD")) || (data21 === "AWG")) || (data21 === "AZN")) || (data21 === "BAM")) || (data21 === "BBD")) || (data21 === "BDT")) || (data21 === "BGN")) || (data21 === "BHD")) || (data21 === "BIF")) || (data21 === "BMD")) || (data21 === "BND")) || (data21 === "BOB")) || (data21 === "BOV")) || (data21 === "BRL")) || (data21 === "BSD")) || (data21 === "BTN")) || (data21 === "BWP")) || (data21 === "BYN")) || (data21 === "BZD")) || (data21 === "CAD")) || (data21 === "CDF")) || (data21 === "CHE")) || (data21 === "CHF")) || (data21 === "CHW")) || (data21 === "CLF")) || (data21 === "CLP")) || (data21 === "CNY")) || (data21 === "COP")) || (data21 === "COU")) || (data21 === "CRC")) || (data21 === "CUC")) || (data21 === "CUP")) || (data21 === "CVE")) || (data21 === "CZK")) || (data21 === "DJF")) || (data21 === "DKK")) || (data21 === "DOP")) || (data21 === "DZD")) || (data21 === "EGP")) || (data21 === "ERN")) || (data21 === "ETB")) || (data21 === "EUR")) || (data21 === "FJD")) || (data21 === "FKP")) || (data21 === "GBP")) || (data21 === "GEL")) || (data21 === "GHS")) || (data21 === "GIP")) || (data21 === "GMD")) || (data21 === "GNF")) || (data21 === "GTQ")) || (data21 === "GYD")) || (data21 === "HKD")) || (data21 === "HNL")) || (data21 === "HRK")) || (data21 === "HTG")) || (data21 === "HUF")) || (data21 === "IDR")) || (data21 === "ILS")) || (data21 === "INR")) || (data21 === "IQD")) || (data21 === "IRR")) || (data21 === "ISK")) || (data21 === "JMD")) || (data21 === "JOD")) || (data21 === "JPY")) || (data21 === "KES")) || (data21 === "KGS")) || (data21 === "KHR")) || (data21 === "KMF")) || (data21 === "KPW")) || (data21 === "KRW")) || (data21 === "KWD")) || (data21 === "KYD")) || (data21 === "KZT")) || (data21 === "LAK")) || (data21 === "LBP")) || (data21 === "LKR")) || (data21 === "LRD")) || (data21 === "LSL")) || (data21 === "LYD")) || (data21 === "MAD")) || (data21 === "MDL")) || (data21 === "MGA")) || (data21 === "MKD")) || (data21 === "MMK")) || (data21 === "MNT")) || (data21 === "MOP")) || (data21 === "MRU")) || (data21 === "MUR")) || (data21 === "MVR")) || (data21 === "MWK")) || (data21 === "MXN")) || (data21 === "MXV")) || (data21 === "MYR")) || (data21 === "MZN")) || (data21 === "NAD")) || (data21 === "NGN")) || (data21 === "NIO")) || (data21 === "NOK")) || (data21 === "NPR")) || (data21 === "NZD")) || (data21 === "OMR")) || (data21 === "PAB")) || (data21 === "PEN")) || (data21 === "PGK")) || (data21 === "PHP")) || (data21 === "PKR")) || (data21 === "PLN")) || (data21 === "PYG")) || (data21 === "QAR")) || (data21 === "RON")) || (data21 === "RSD")) || (data21 === "RUB")) || (data21 === "RWF")) || (data21 === "SAR")) || (data21 === "SBD")) || (data21 === "SCR")) || (data21 === "SDG")) || (data21 === "SEK")) || (data21 === "SGD")) || (data21 === "SHP")) || (data21 === "SLE")) || (data21 === "SLL")) || (data21 === "SOS")) || (data21 === "SRD")) || (data21 === "SSP")) || (data21 === "STN")) || (data21 === "SVC")) || (data21 === "SYP")) || (data21 === "SZL")) || (data21 === "THB")) || (data21 === "TJS")) || (data21 === "TMT")) || (data21 === "TND")) || (data21 === "TOP")) || (data21 === "TRY")) || (data21 === "TTD")) || (data21 === "TWD")) || (data21 === "TZS")) || (data21 === "UAH")) || (data21 === "UGX")) || (data21 === "USD")) || (data21 === "USN")) || (data21 === "UYI")) || (data21 === "UYU")) || (data21 === "UYW")) || (data21 === "UZS")) || (data21 === "VED")) || (data21 === "VES")) || (data21 === "VND")) || (data21 === "VUV")) || (data21 === "WST")) || (data21 === "XAD")) || (data21 === "XAF")) || (data21 === "XAG")) || (data21 === "XAU")) || (data21 === "XBA")) || (data21 === "XBB")) || (data21 === "XBC")) || (data21 === "XBD")) || (data21 === "XCD")) || (data21 === "XCG")) || (data21 === "XDR")) || (data21 === "XOF")) || (data21 === "XPD")) || (data21 === "XPF")) || (data21 === "XPT")) || (data21 === "XSU")) || (data21 === "XTS")) || (data21 === "XUA")) || (data21 === "XXX")) || (data21 === "YER")) || (data21 === "ZAR")) || (data21 === "ZMW")) || (data21 === "ZWG")) || (data21 === "ZWL"))){
+const err86 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[1].oneOf[1].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err86];
 }
@@ -10349,18 +10376,10 @@ vErrors.push(err86);
 }
 errors++;
 }
-}
-var valid10 = _errs69 === errors;
-}
-else {
-var valid10 = true;
-}
-if(valid10){
-if(data2.cost_enforcement !== undefined){
-let data22 = data2.cost_enforcement;
-const _errs71 = errors;
-if(typeof data22 !== "string"){
-const err87 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(errors === _errs73){
+if(typeof data21 === "string"){
+if(func2(data21) > 3){
+const err87 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err87];
 }
@@ -10369,8 +10388,9 @@ vErrors.push(err87);
 }
 errors++;
 }
-if(!(data22 === "ESTIMATED")){
-const err88 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[1].oneOf[1].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
+else {
+if(func2(data21) < 3){
+const err88 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err88];
 }
@@ -10379,20 +10399,10 @@ vErrors.push(err88);
 }
 errors++;
 }
-var valid10 = _errs71 === errors;
+}
 }
 else {
-var valid10 = true;
-}
-if(valid10){
-if(data2.max_cost_decimal !== undefined){
-let data23 = data2.max_cost_decimal;
-const _errs73 = errors;
-const _errs74 = errors;
-if(errors === _errs74){
-if(typeof data23 === "string"){
-if(func2(data23) > 64){
-const err89 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+const err89 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err89];
 }
@@ -10401,9 +10411,18 @@ vErrors.push(err89);
 }
 errors++;
 }
+}
+var valid11 = _errs73 === errors;
+}
 else {
-if(func2(data23) < 1){
-const err90 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+var valid11 = true;
+}
+if(valid11){
+if(data2.cost_enforcement !== undefined){
+let data22 = data2.cost_enforcement;
+const _errs75 = errors;
+if(typeof data22 !== "string"){
+const err90 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err90];
 }
@@ -10412,9 +10431,8 @@ vErrors.push(err90);
 }
 errors++;
 }
-else {
-if(!pattern6.test(data23)){
-const err91 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
+if(!(data22 === "ESTIMATED")){
+const err91 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[1].oneOf[1].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err91];
 }
@@ -10423,11 +10441,20 @@ vErrors.push(err91);
 }
 errors++;
 }
-}
-}
+var valid11 = _errs75 === errors;
 }
 else {
-const err92 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+var valid11 = true;
+}
+if(valid11){
+if(data2.max_cost_decimal !== undefined){
+let data23 = data2.max_cost_decimal;
+const _errs77 = errors;
+const _errs78 = errors;
+if(errors === _errs78){
+if(typeof data23 === "string"){
+if(func2(data23) > 64){
+const err92 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
 if(vErrors === null){
 vErrors = [err92];
 }
@@ -10436,14 +10463,9 @@ vErrors.push(err92);
 }
 errors++;
 }
-}
-var valid11 = _errs74 === errors;
-if(valid11){
-const _errs76 = errors;
-if(errors === _errs76){
-if(typeof data23 === "string"){
-if(!pattern13.test(data23)){
-const err93 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
+else {
+if(func2(data23) < 1){
+const err93 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err93];
 }
@@ -10452,9 +10474,9 @@ vErrors.push(err93);
 }
 errors++;
 }
-}
 else {
-const err94 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!pattern6.test(data23)){
+const err94 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err94];
 }
@@ -10464,19 +10486,10 @@ vErrors.push(err94);
 errors++;
 }
 }
-var valid11 = _errs76 === errors;
-}
-var valid10 = _errs73 === errors;
-}
-else {
-var valid10 = true;
-}
-}
-}
 }
 }
 else {
-const err95 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err95 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err95];
 }
@@ -10486,28 +10499,13 @@ vErrors.push(err95);
 errors++;
 }
 }
-var _valid5 = _errs67 === errors;
-if(_valid5 && valid8){
-valid8 = false;
-passing5 = [passing5, 1];
-}
-else {
-if(_valid5){
-valid8 = true;
-passing5 = 1;
-if(props0 !== true){
-props0 = props0 || {};
-props0.cost_currency = true;
-props0.cost_enforcement = true;
-props0.max_cost_decimal = true;
-}
-}
-const _errs78 = errors;
-if(errors === _errs78){
-if(data2 && typeof data2 == "object" && !Array.isArray(data2)){
-let missing4;
-if((((data2.cost_enforcement === undefined) && (missing4 = "cost_enforcement")) || ((data2.max_cost_decimal === undefined) && (missing4 = "max_cost_decimal"))) || ((data2.cost_currency === undefined) && (missing4 = "cost_currency"))){
-const err96 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
+var valid12 = _errs78 === errors;
+if(valid12){
+const _errs80 = errors;
+if(errors === _errs80){
+if(typeof data23 === "string"){
+if(!pattern13.test(data23)){
+const err96 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
 if(vErrors === null){
 vErrors = [err96];
 }
@@ -10516,12 +10514,9 @@ vErrors.push(err96);
 }
 errors++;
 }
+}
 else {
-if(data2.cost_currency !== undefined){
-let data24 = data2.cost_currency;
-const _errs80 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data24 === "AED") || (data24 === "AFN")) || (data24 === "ALL")) || (data24 === "AMD")) || (data24 === "AOA")) || (data24 === "ARS")) || (data24 === "AUD")) || (data24 === "AWG")) || (data24 === "AZN")) || (data24 === "BAM")) || (data24 === "BBD")) || (data24 === "BDT")) || (data24 === "BGN")) || (data24 === "BHD")) || (data24 === "BIF")) || (data24 === "BMD")) || (data24 === "BND")) || (data24 === "BOB")) || (data24 === "BOV")) || (data24 === "BRL")) || (data24 === "BSD")) || (data24 === "BTN")) || (data24 === "BWP")) || (data24 === "BYN")) || (data24 === "BZD")) || (data24 === "CAD")) || (data24 === "CDF")) || (data24 === "CHE")) || (data24 === "CHF")) || (data24 === "CHW")) || (data24 === "CLF")) || (data24 === "CLP")) || (data24 === "CNY")) || (data24 === "COP")) || (data24 === "COU")) || (data24 === "CRC")) || (data24 === "CUC")) || (data24 === "CUP")) || (data24 === "CVE")) || (data24 === "CZK")) || (data24 === "DJF")) || (data24 === "DKK")) || (data24 === "DOP")) || (data24 === "DZD")) || (data24 === "EGP")) || (data24 === "ERN")) || (data24 === "ETB")) || (data24 === "EUR")) || (data24 === "FJD")) || (data24 === "FKP")) || (data24 === "GBP")) || (data24 === "GEL")) || (data24 === "GHS")) || (data24 === "GIP")) || (data24 === "GMD")) || (data24 === "GNF")) || (data24 === "GTQ")) || (data24 === "GYD")) || (data24 === "HKD")) || (data24 === "HNL")) || (data24 === "HRK")) || (data24 === "HTG")) || (data24 === "HUF")) || (data24 === "IDR")) || (data24 === "ILS")) || (data24 === "INR")) || (data24 === "IQD")) || (data24 === "IRR")) || (data24 === "ISK")) || (data24 === "JMD")) || (data24 === "JOD")) || (data24 === "JPY")) || (data24 === "KES")) || (data24 === "KGS")) || (data24 === "KHR")) || (data24 === "KMF")) || (data24 === "KPW")) || (data24 === "KRW")) || (data24 === "KWD")) || (data24 === "KYD")) || (data24 === "KZT")) || (data24 === "LAK")) || (data24 === "LBP")) || (data24 === "LKR")) || (data24 === "LRD")) || (data24 === "LSL")) || (data24 === "LYD")) || (data24 === "MAD")) || (data24 === "MDL")) || (data24 === "MGA")) || (data24 === "MKD")) || (data24 === "MMK")) || (data24 === "MNT")) || (data24 === "MOP")) || (data24 === "MRU")) || (data24 === "MUR")) || (data24 === "MVR")) || (data24 === "MWK")) || (data24 === "MXN")) || (data24 === "MXV")) || (data24 === "MYR")) || (data24 === "MZN")) || (data24 === "NAD")) || (data24 === "NGN")) || (data24 === "NIO")) || (data24 === "NOK")) || (data24 === "NPR")) || (data24 === "NZD")) || (data24 === "OMR")) || (data24 === "PAB")) || (data24 === "PEN")) || (data24 === "PGK")) || (data24 === "PHP")) || (data24 === "PKR")) || (data24 === "PLN")) || (data24 === "PYG")) || (data24 === "QAR")) || (data24 === "RON")) || (data24 === "RSD")) || (data24 === "RUB")) || (data24 === "RWF")) || (data24 === "SAR")) || (data24 === "SBD")) || (data24 === "SCR")) || (data24 === "SDG")) || (data24 === "SEK")) || (data24 === "SGD")) || (data24 === "SHP")) || (data24 === "SLE")) || (data24 === "SLL")) || (data24 === "SOS")) || (data24 === "SRD")) || (data24 === "SSP")) || (data24 === "STN")) || (data24 === "SVC")) || (data24 === "SYP")) || (data24 === "SZL")) || (data24 === "THB")) || (data24 === "TJS")) || (data24 === "TMT")) || (data24 === "TND")) || (data24 === "TOP")) || (data24 === "TRY")) || (data24 === "TTD")) || (data24 === "TWD")) || (data24 === "TZS")) || (data24 === "UAH")) || (data24 === "UGX")) || (data24 === "USD")) || (data24 === "USN")) || (data24 === "UYI")) || (data24 === "UYU")) || (data24 === "UYW")) || (data24 === "UZS")) || (data24 === "VED")) || (data24 === "VES")) || (data24 === "VND")) || (data24 === "VUV")) || (data24 === "WST")) || (data24 === "XAD")) || (data24 === "XAF")) || (data24 === "XAG")) || (data24 === "XAU")) || (data24 === "XBA")) || (data24 === "XBB")) || (data24 === "XBC")) || (data24 === "XBD")) || (data24 === "XCD")) || (data24 === "XCG")) || (data24 === "XDR")) || (data24 === "XOF")) || (data24 === "XPD")) || (data24 === "XPF")) || (data24 === "XPT")) || (data24 === "XSU")) || (data24 === "XTS")) || (data24 === "XUA")) || (data24 === "XXX")) || (data24 === "YER")) || (data24 === "ZAR")) || (data24 === "ZMW")) || (data24 === "ZWG")) || (data24 === "ZWL"))){
-const err97 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[1].oneOf[2].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
+const err97 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err97];
 }
@@ -10530,10 +10525,20 @@ vErrors.push(err97);
 }
 errors++;
 }
-if(errors === _errs80){
-if(typeof data24 === "string"){
-if(func2(data24) > 3){
-const err98 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+}
+var valid12 = _errs80 === errors;
+}
+var valid11 = _errs77 === errors;
+}
+else {
+var valid11 = true;
+}
+}
+}
+}
+}
+else {
+const err98 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err98];
 }
@@ -10542,9 +10547,29 @@ vErrors.push(err98);
 }
 errors++;
 }
+}
+var _valid6 = _errs71 === errors;
+if(_valid6 && valid9){
+valid9 = false;
+passing6 = [passing6, 1];
+}
 else {
-if(func2(data24) < 3){
-const err99 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+if(_valid6){
+valid9 = true;
+passing6 = 1;
+if(props0 !== true){
+props0 = props0 || {};
+props0.cost_currency = true;
+props0.cost_enforcement = true;
+props0.max_cost_decimal = true;
+}
+}
+const _errs82 = errors;
+if(errors === _errs82){
+if(data2 && typeof data2 == "object" && !Array.isArray(data2)){
+let missing4;
+if((((data2.cost_enforcement === undefined) && (missing4 = "cost_enforcement")) || ((data2.max_cost_decimal === undefined) && (missing4 = "max_cost_decimal"))) || ((data2.cost_currency === undefined) && (missing4 = "cost_currency"))){
+const err99 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
 if(vErrors === null){
 vErrors = [err99];
 }
@@ -10553,10 +10578,12 @@ vErrors.push(err99);
 }
 errors++;
 }
-}
-}
 else {
-const err100 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(data2.cost_currency !== undefined){
+let data24 = data2.cost_currency;
+const _errs84 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data24 === "AED") || (data24 === "AFN")) || (data24 === "ALL")) || (data24 === "AMD")) || (data24 === "AOA")) || (data24 === "ARS")) || (data24 === "AUD")) || (data24 === "AWG")) || (data24 === "AZN")) || (data24 === "BAM")) || (data24 === "BBD")) || (data24 === "BDT")) || (data24 === "BGN")) || (data24 === "BHD")) || (data24 === "BIF")) || (data24 === "BMD")) || (data24 === "BND")) || (data24 === "BOB")) || (data24 === "BOV")) || (data24 === "BRL")) || (data24 === "BSD")) || (data24 === "BTN")) || (data24 === "BWP")) || (data24 === "BYN")) || (data24 === "BZD")) || (data24 === "CAD")) || (data24 === "CDF")) || (data24 === "CHE")) || (data24 === "CHF")) || (data24 === "CHW")) || (data24 === "CLF")) || (data24 === "CLP")) || (data24 === "CNY")) || (data24 === "COP")) || (data24 === "COU")) || (data24 === "CRC")) || (data24 === "CUC")) || (data24 === "CUP")) || (data24 === "CVE")) || (data24 === "CZK")) || (data24 === "DJF")) || (data24 === "DKK")) || (data24 === "DOP")) || (data24 === "DZD")) || (data24 === "EGP")) || (data24 === "ERN")) || (data24 === "ETB")) || (data24 === "EUR")) || (data24 === "FJD")) || (data24 === "FKP")) || (data24 === "GBP")) || (data24 === "GEL")) || (data24 === "GHS")) || (data24 === "GIP")) || (data24 === "GMD")) || (data24 === "GNF")) || (data24 === "GTQ")) || (data24 === "GYD")) || (data24 === "HKD")) || (data24 === "HNL")) || (data24 === "HRK")) || (data24 === "HTG")) || (data24 === "HUF")) || (data24 === "IDR")) || (data24 === "ILS")) || (data24 === "INR")) || (data24 === "IQD")) || (data24 === "IRR")) || (data24 === "ISK")) || (data24 === "JMD")) || (data24 === "JOD")) || (data24 === "JPY")) || (data24 === "KES")) || (data24 === "KGS")) || (data24 === "KHR")) || (data24 === "KMF")) || (data24 === "KPW")) || (data24 === "KRW")) || (data24 === "KWD")) || (data24 === "KYD")) || (data24 === "KZT")) || (data24 === "LAK")) || (data24 === "LBP")) || (data24 === "LKR")) || (data24 === "LRD")) || (data24 === "LSL")) || (data24 === "LYD")) || (data24 === "MAD")) || (data24 === "MDL")) || (data24 === "MGA")) || (data24 === "MKD")) || (data24 === "MMK")) || (data24 === "MNT")) || (data24 === "MOP")) || (data24 === "MRU")) || (data24 === "MUR")) || (data24 === "MVR")) || (data24 === "MWK")) || (data24 === "MXN")) || (data24 === "MXV")) || (data24 === "MYR")) || (data24 === "MZN")) || (data24 === "NAD")) || (data24 === "NGN")) || (data24 === "NIO")) || (data24 === "NOK")) || (data24 === "NPR")) || (data24 === "NZD")) || (data24 === "OMR")) || (data24 === "PAB")) || (data24 === "PEN")) || (data24 === "PGK")) || (data24 === "PHP")) || (data24 === "PKR")) || (data24 === "PLN")) || (data24 === "PYG")) || (data24 === "QAR")) || (data24 === "RON")) || (data24 === "RSD")) || (data24 === "RUB")) || (data24 === "RWF")) || (data24 === "SAR")) || (data24 === "SBD")) || (data24 === "SCR")) || (data24 === "SDG")) || (data24 === "SEK")) || (data24 === "SGD")) || (data24 === "SHP")) || (data24 === "SLE")) || (data24 === "SLL")) || (data24 === "SOS")) || (data24 === "SRD")) || (data24 === "SSP")) || (data24 === "STN")) || (data24 === "SVC")) || (data24 === "SYP")) || (data24 === "SZL")) || (data24 === "THB")) || (data24 === "TJS")) || (data24 === "TMT")) || (data24 === "TND")) || (data24 === "TOP")) || (data24 === "TRY")) || (data24 === "TTD")) || (data24 === "TWD")) || (data24 === "TZS")) || (data24 === "UAH")) || (data24 === "UGX")) || (data24 === "USD")) || (data24 === "USN")) || (data24 === "UYI")) || (data24 === "UYU")) || (data24 === "UYW")) || (data24 === "UZS")) || (data24 === "VED")) || (data24 === "VES")) || (data24 === "VND")) || (data24 === "VUV")) || (data24 === "WST")) || (data24 === "XAD")) || (data24 === "XAF")) || (data24 === "XAG")) || (data24 === "XAU")) || (data24 === "XBA")) || (data24 === "XBB")) || (data24 === "XBC")) || (data24 === "XBD")) || (data24 === "XCD")) || (data24 === "XCG")) || (data24 === "XDR")) || (data24 === "XOF")) || (data24 === "XPD")) || (data24 === "XPF")) || (data24 === "XPT")) || (data24 === "XSU")) || (data24 === "XTS")) || (data24 === "XUA")) || (data24 === "XXX")) || (data24 === "YER")) || (data24 === "ZAR")) || (data24 === "ZMW")) || (data24 === "ZWG")) || (data24 === "ZWL"))){
+const err100 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[1].oneOf[2].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err100];
 }
@@ -10565,18 +10592,10 @@ vErrors.push(err100);
 }
 errors++;
 }
-}
-var valid12 = _errs80 === errors;
-}
-else {
-var valid12 = true;
-}
-if(valid12){
-if(data2.cost_enforcement !== undefined){
-let data25 = data2.cost_enforcement;
-const _errs82 = errors;
-if(typeof data25 !== "string"){
-const err101 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(errors === _errs84){
+if(typeof data24 === "string"){
+if(func2(data24) > 3){
+const err101 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err101];
 }
@@ -10585,8 +10604,9 @@ vErrors.push(err101);
 }
 errors++;
 }
-if(!(data25 === "EXACT")){
-const err102 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[1].oneOf[2].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
+else {
+if(func2(data24) < 3){
+const err102 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err102];
 }
@@ -10595,20 +10615,10 @@ vErrors.push(err102);
 }
 errors++;
 }
-var valid12 = _errs82 === errors;
+}
 }
 else {
-var valid12 = true;
-}
-if(valid12){
-if(data2.max_cost_decimal !== undefined){
-let data26 = data2.max_cost_decimal;
-const _errs84 = errors;
-const _errs85 = errors;
-if(errors === _errs85){
-if(typeof data26 === "string"){
-if(func2(data26) > 64){
-const err103 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+const err103 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err103];
 }
@@ -10617,9 +10627,18 @@ vErrors.push(err103);
 }
 errors++;
 }
+}
+var valid13 = _errs84 === errors;
+}
 else {
-if(func2(data26) < 1){
-const err104 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+var valid13 = true;
+}
+if(valid13){
+if(data2.cost_enforcement !== undefined){
+let data25 = data2.cost_enforcement;
+const _errs86 = errors;
+if(typeof data25 !== "string"){
+const err104 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err104];
 }
@@ -10628,9 +10647,8 @@ vErrors.push(err104);
 }
 errors++;
 }
-else {
-if(!pattern6.test(data26)){
-const err105 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
+if(!(data25 === "EXACT")){
+const err105 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.budget.allOf[1].oneOf[2].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err105];
 }
@@ -10639,11 +10657,20 @@ vErrors.push(err105);
 }
 errors++;
 }
-}
-}
+var valid13 = _errs86 === errors;
 }
 else {
-const err106 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+var valid13 = true;
+}
+if(valid13){
+if(data2.max_cost_decimal !== undefined){
+let data26 = data2.max_cost_decimal;
+const _errs88 = errors;
+const _errs89 = errors;
+if(errors === _errs89){
+if(typeof data26 === "string"){
+if(func2(data26) > 64){
+const err106 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
 if(vErrors === null){
 vErrors = [err106];
 }
@@ -10652,14 +10679,9 @@ vErrors.push(err106);
 }
 errors++;
 }
-}
-var valid13 = _errs85 === errors;
-if(valid13){
-const _errs87 = errors;
-if(errors === _errs87){
-if(typeof data26 === "string"){
-if(!pattern13.test(data26)){
-const err107 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
+else {
+if(func2(data26) < 1){
+const err107 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err107];
 }
@@ -10668,9 +10690,9 @@ vErrors.push(err107);
 }
 errors++;
 }
-}
 else {
-const err108 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!pattern6.test(data26)){
+const err108 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err108];
 }
@@ -10680,19 +10702,10 @@ vErrors.push(err108);
 errors++;
 }
 }
-var valid13 = _errs87 === errors;
-}
-var valid12 = _errs84 === errors;
-}
-else {
-var valid12 = true;
-}
-}
-}
 }
 }
 else {
-const err109 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err109 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err109];
 }
@@ -10702,26 +10715,13 @@ vErrors.push(err109);
 errors++;
 }
 }
-var _valid5 = _errs78 === errors;
-if(_valid5 && valid8){
-valid8 = false;
-passing5 = [passing5, 2];
-}
-else {
-if(_valid5){
-valid8 = true;
-passing5 = 2;
-if(props0 !== true){
-props0 = props0 || {};
-props0.cost_currency = true;
-props0.cost_enforcement = true;
-props0.max_cost_decimal = true;
-}
-}
-}
-}
-if(!valid8){
-const err110 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf",keyword:"oneOf",params:{passingSchemas: passing5},message:"must match exactly one schema in oneOf"};
+var valid14 = _errs89 === errors;
+if(valid14){
+const _errs91 = errors;
+if(errors === _errs91){
+if(typeof data26 === "string"){
+if(!pattern13.test(data26)){
+const err110 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
 if(vErrors === null){
 vErrors = [err110];
 }
@@ -10730,32 +10730,9 @@ vErrors.push(err110);
 }
 errors++;
 }
-else {
-errors = _errs58;
-if(vErrors !== null){
-if(_errs58){
-vErrors.length = _errs58;
 }
 else {
-vErrors = null;
-}
-}
-}
-var valid3 = _errs57 === errors;
-}
-var valid1 = _errs12 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data.economic_rationale !== undefined){
-let data27 = data.economic_rationale;
-const _errs89 = errors;
-if(errors === _errs89){
-if(typeof data27 === "string"){
-if(func2(data27) > 8000){
-const err111 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/0/properties/economic_rationale/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
+const err111 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err111];
 }
@@ -10764,9 +10741,20 @@ vErrors.push(err111);
 }
 errors++;
 }
+}
+var valid14 = _errs91 === errors;
+}
+var valid13 = _errs88 === errors;
+}
 else {
-if(func2(data27) < 1){
-const err112 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/0/properties/economic_rationale/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+var valid13 = true;
+}
+}
+}
+}
+}
+else {
+const err112 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err112];
 }
@@ -10776,9 +10764,26 @@ vErrors.push(err112);
 errors++;
 }
 }
+var _valid6 = _errs82 === errors;
+if(_valid6 && valid9){
+valid9 = false;
+passing6 = [passing6, 2];
 }
 else {
-const err113 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/0/properties/economic_rationale/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(_valid6){
+valid9 = true;
+passing6 = 2;
+if(props0 !== true){
+props0 = props0 || {};
+props0.cost_currency = true;
+props0.cost_enforcement = true;
+props0.max_cost_decimal = true;
+}
+}
+}
+}
+if(!valid9){
+const err113 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/0/properties/budget/allOf/1/oneOf",keyword:"oneOf",params:{passingSchemas: passing6},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err113];
 }
@@ -10787,21 +10792,32 @@ vErrors.push(err113);
 }
 errors++;
 }
+else {
+errors = _errs62;
+if(vErrors !== null){
+if(_errs62){
+vErrors.length = _errs62;
 }
-var valid1 = _errs89 === errors;
+else {
+vErrors = null;
+}
+}
+}
+var valid4 = _errs61 === errors;
+}
+var valid1 = _errs16 === errors;
 }
 else {
 var valid1 = true;
 }
 if(valid1){
-if(data.evaluation_policy_id !== undefined){
-let data28 = data.evaluation_policy_id;
-const _errs91 = errors;
-if(errors === _errs91){
-if(errors === _errs91){
-if(typeof data28 === "string"){
-if(!pattern3.test(data28)){
-const err114 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/0/properties/evaluation_policy_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+if(data.economic_rationale !== undefined){
+let data27 = data.economic_rationale;
+const _errs93 = errors;
+if(errors === _errs93){
+if(typeof data27 === "string"){
+if(func2(data27) > 8000){
+const err114 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/0/properties/economic_rationale/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
 if(vErrors === null){
 vErrors = [err114];
 }
@@ -10811,8 +10827,8 @@ vErrors.push(err114);
 errors++;
 }
 else {
-if(!(formats0.test(data28))){
-const err115 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/0/properties/evaluation_policy_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+if(func2(data27) < 1){
+const err115 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/0/properties/economic_rationale/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err115];
 }
@@ -10824,7 +10840,7 @@ errors++;
 }
 }
 else {
-const err116 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/0/properties/evaluation_policy_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err116 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/0/properties/economic_rationale/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err116];
 }
@@ -10834,21 +10850,20 @@ vErrors.push(err116);
 errors++;
 }
 }
-}
-var valid1 = _errs91 === errors;
+var valid1 = _errs93 === errors;
 }
 else {
 var valid1 = true;
 }
 if(valid1){
-if(data.execution_assumptions_id !== undefined){
-let data29 = data.execution_assumptions_id;
-const _errs93 = errors;
-if(errors === _errs93){
-if(errors === _errs93){
-if(typeof data29 === "string"){
-if(!pattern3.test(data29)){
-const err117 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/0/properties/execution_assumptions_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+if(data.evaluation_policy_id !== undefined){
+let data28 = data.evaluation_policy_id;
+const _errs95 = errors;
+if(errors === _errs95){
+if(errors === _errs95){
+if(typeof data28 === "string"){
+if(!pattern3.test(data28)){
+const err117 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/0/properties/evaluation_policy_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err117];
 }
@@ -10858,8 +10873,8 @@ vErrors.push(err117);
 errors++;
 }
 else {
-if(!(formats0.test(data29))){
-const err118 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/0/properties/execution_assumptions_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+if(!(formats0.test(data28))){
+const err118 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/0/properties/evaluation_policy_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
 if(vErrors === null){
 vErrors = [err118];
 }
@@ -10871,7 +10886,7 @@ errors++;
 }
 }
 else {
-const err119 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/0/properties/execution_assumptions_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err119 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/0/properties/evaluation_policy_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err119];
 }
@@ -10882,17 +10897,20 @@ errors++;
 }
 }
 }
-var valid1 = _errs93 === errors;
+var valid1 = _errs95 === errors;
 }
 else {
 var valid1 = true;
 }
 if(valid1){
-if(data.horizon_kind !== undefined){
-let data30 = data.horizon_kind;
-const _errs95 = errors;
-if(typeof data30 !== "string"){
-const err120 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/0/properties/horizon_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(data.execution_assumptions_id !== undefined){
+let data29 = data.execution_assumptions_id;
+const _errs97 = errors;
+if(errors === _errs97){
+if(errors === _errs97){
+if(typeof data29 === "string"){
+if(!pattern3.test(data29)){
+const err120 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/0/properties/execution_assumptions_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err120];
 }
@@ -10901,8 +10919,9 @@ vErrors.push(err120);
 }
 errors++;
 }
-if(!(data30 === "FIXED_BARS")){
-const err121 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/0/properties/horizon_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.horizon_kind.enum},message:"must be equal to one of the allowed values"};
+else {
+if(!(formats0.test(data29))){
+const err121 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/0/properties/execution_assumptions_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
 if(vErrors === null){
 vErrors = [err121];
 }
@@ -10911,19 +10930,10 @@ vErrors.push(err121);
 }
 errors++;
 }
-var valid1 = _errs95 === errors;
+}
 }
 else {
-var valid1 = true;
-}
-if(valid1){
-if(data.horizon_value !== undefined){
-let data31 = data.horizon_value;
-const _errs97 = errors;
-if(errors === _errs97){
-if(typeof data31 === "string"){
-if(func2(data31) > 19){
-const err122 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/0/properties/horizon_value/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+const err122 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/0/properties/execution_assumptions_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err122];
 }
@@ -10932,40 +10942,6 @@ vErrors.push(err122);
 }
 errors++;
 }
-else {
-if(func2(data31) < 1){
-const err123 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/0/properties/horizon_value/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
-if(vErrors === null){
-vErrors = [err123];
-}
-else {
-vErrors.push(err123);
-}
-errors++;
-}
-else {
-if(!pattern5.test(data31)){
-const err124 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/0/properties/horizon_value/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
-if(vErrors === null){
-vErrors = [err124];
-}
-else {
-vErrors.push(err124);
-}
-errors++;
-}
-}
-}
-}
-else {
-const err125 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/0/properties/horizon_value/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err125];
-}
-else {
-vErrors.push(err125);
-}
-errors++;
 }
 }
 var valid1 = _errs97 === errors;
@@ -10974,13 +10950,53 @@ else {
 var valid1 = true;
 }
 if(valid1){
-if(data.hypothesis !== undefined){
-let data32 = data.hypothesis;
+if(data.horizon_kind !== undefined){
+let data30 = data.horizon_kind;
 const _errs99 = errors;
-if(errors === _errs99){
-if(typeof data32 === "string"){
-if(func2(data32) > 8000){
-const err126 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/0/properties/hypothesis/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
+if(typeof data30 !== "string"){
+const err123 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/0/properties/horizon_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err123];
+}
+else {
+vErrors.push(err123);
+}
+errors++;
+}
+if(!(data30 === "FIXED_BARS")){
+const err124 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/0/properties/horizon_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.horizon_kind.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err124];
+}
+else {
+vErrors.push(err124);
+}
+errors++;
+}
+var valid1 = _errs99 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.horizon_value !== undefined){
+let data31 = data.horizon_value;
+const _errs101 = errors;
+if(errors === _errs101){
+if(typeof data31 === "string"){
+if(func2(data31) > 19){
+const err125 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/0/properties/horizon_value/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+if(vErrors === null){
+vErrors = [err125];
+}
+else {
+vErrors.push(err125);
+}
+errors++;
+}
+else {
+if(func2(data31) < 1){
+const err126 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/0/properties/horizon_value/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err126];
 }
@@ -10990,8 +11006,8 @@ vErrors.push(err126);
 errors++;
 }
 else {
-if(func2(data32) < 1){
-const err127 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/0/properties/hypothesis/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(!pattern5.test(data31)){
+const err127 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/0/properties/horizon_value/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err127];
 }
@@ -11002,230 +11018,14 @@ errors++;
 }
 }
 }
+}
 else {
-const err128 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/0/properties/hypothesis/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err128 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/0/properties/horizon_value/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err128];
 }
 else {
 vErrors.push(err128);
-}
-errors++;
-}
-}
-var valid1 = _errs99 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data.stop_rule !== undefined){
-let data33 = data.stop_rule;
-const _errs101 = errors;
-if(errors === _errs101){
-if(data33 && typeof data33 == "object" && !Array.isArray(data33)){
-let missing5;
-if(((((data33.schema_version === undefined) && (missing5 = "schema_version")) || ((data33.stop_on_qualified_count === undefined) && (missing5 = "stop_on_qualified_count"))) || ((data33.stop_on_budget === undefined) && (missing5 = "stop_on_budget"))) || ((data33.stop_on_invalid_data === undefined) && (missing5 = "stop_on_invalid_data"))){
-const err129 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/0/properties/stop_rule/required",keyword:"required",params:{missingProperty: missing5},message:"must have required property '"+missing5+"'"};
-if(vErrors === null){
-vErrors = [err129];
-}
-else {
-vErrors.push(err129);
-}
-errors++;
-}
-else {
-const _errs103 = errors;
-for(const key2 in data33){
-if(!(((((key2 === "schema_version") || (key2 === "stop_on_budget")) || (key2 === "stop_on_invalid_data")) || (key2 === "stop_on_no_improvement_trials")) || (key2 === "stop_on_qualified_count"))){
-const err130 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/0/properties/stop_rule/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"};
-if(vErrors === null){
-vErrors = [err130];
-}
-else {
-vErrors.push(err130);
-}
-errors++;
-break;
-}
-}
-if(_errs103 === errors){
-if(data33.schema_version !== undefined){
-const _errs104 = errors;
-if(!(validate108(data33.schema_version, {instancePath:instancePath+"/stop_rule/schema_version",parentData:data33,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
-errors = vErrors.length;
-}
-var valid14 = _errs104 === errors;
-}
-else {
-var valid14 = true;
-}
-if(valid14){
-if(data33.stop_on_budget !== undefined){
-const _errs105 = errors;
-if(typeof data33.stop_on_budget !== "boolean"){
-const err131 = {instancePath:instancePath+"/stop_rule/stop_on_budget",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_budget/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
-if(vErrors === null){
-vErrors = [err131];
-}
-else {
-vErrors.push(err131);
-}
-errors++;
-}
-var valid14 = _errs105 === errors;
-}
-else {
-var valid14 = true;
-}
-if(valid14){
-if(data33.stop_on_invalid_data !== undefined){
-const _errs107 = errors;
-if(typeof data33.stop_on_invalid_data !== "boolean"){
-const err132 = {instancePath:instancePath+"/stop_rule/stop_on_invalid_data",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_invalid_data/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
-if(vErrors === null){
-vErrors = [err132];
-}
-else {
-vErrors.push(err132);
-}
-errors++;
-}
-var valid14 = _errs107 === errors;
-}
-else {
-var valid14 = true;
-}
-if(valid14){
-if(data33.stop_on_no_improvement_trials !== undefined){
-let data37 = data33.stop_on_no_improvement_trials;
-const _errs109 = errors;
-if((!((typeof data37 == "number") && (!(data37 % 1) && !isNaN(data37)))) && (data37 !== null)){
-const err133 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_no_improvement_trials/type",keyword:"type",params:{type: schema73.oneOf[0].properties.stop_rule.properties.stop_on_no_improvement_trials.type},message:"must be integer,null"};
-if(vErrors === null){
-vErrors = [err133];
-}
-else {
-vErrors.push(err133);
-}
-errors++;
-}
-if(errors === _errs109){
-if(typeof data37 == "number"){
-if(data37 > 65535 || isNaN(data37)){
-const err134 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_no_improvement_trials/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
-if(vErrors === null){
-vErrors = [err134];
-}
-else {
-vErrors.push(err134);
-}
-errors++;
-}
-else {
-if(data37 < 1 || isNaN(data37)){
-const err135 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_no_improvement_trials/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err135];
-}
-else {
-vErrors.push(err135);
-}
-errors++;
-}
-else {
-if(!(formats12.validate(data37))){
-const err136 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_no_improvement_trials/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
-if(vErrors === null){
-vErrors = [err136];
-}
-else {
-vErrors.push(err136);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid14 = _errs109 === errors;
-}
-else {
-var valid14 = true;
-}
-if(valid14){
-if(data33.stop_on_qualified_count !== undefined){
-let data38 = data33.stop_on_qualified_count;
-const _errs111 = errors;
-if(!((typeof data38 == "number") && (!(data38 % 1) && !isNaN(data38)))){
-const err137 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_qualified_count/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err137];
-}
-else {
-vErrors.push(err137);
-}
-errors++;
-}
-if(errors === _errs111){
-if(typeof data38 == "number"){
-if(data38 > 65535 || isNaN(data38)){
-const err138 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_qualified_count/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
-if(vErrors === null){
-vErrors = [err138];
-}
-else {
-vErrors.push(err138);
-}
-errors++;
-}
-else {
-if(data38 < 1 || isNaN(data38)){
-const err139 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_qualified_count/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err139];
-}
-else {
-vErrors.push(err139);
-}
-errors++;
-}
-else {
-if(!(formats12.validate(data38))){
-const err140 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_qualified_count/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
-if(vErrors === null){
-vErrors = [err140];
-}
-else {
-vErrors.push(err140);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid14 = _errs111 === errors;
-}
-else {
-var valid14 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err141 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/0/properties/stop_rule/type",keyword:"type",params:{type: "object"},message:"must be object"};
-if(vErrors === null){
-vErrors = [err141];
-}
-else {
-vErrors.push(err141);
 }
 errors++;
 }
@@ -11236,11 +11036,216 @@ else {
 var valid1 = true;
 }
 if(valid1){
-if(data.target_kind !== undefined){
-let data39 = data.target_kind;
+if(data.hypothesis !== undefined){
+let data32 = data.hypothesis;
+const _errs103 = errors;
+if(errors === _errs103){
+if(typeof data32 === "string"){
+if(func2(data32) > 8000){
+const err129 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/0/properties/hypothesis/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
+if(vErrors === null){
+vErrors = [err129];
+}
+else {
+vErrors.push(err129);
+}
+errors++;
+}
+else {
+if(func2(data32) < 1){
+const err130 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/0/properties/hypothesis/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(vErrors === null){
+vErrors = [err130];
+}
+else {
+vErrors.push(err130);
+}
+errors++;
+}
+}
+}
+else {
+const err131 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/0/properties/hypothesis/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err131];
+}
+else {
+vErrors.push(err131);
+}
+errors++;
+}
+}
+var valid1 = _errs103 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.stop_rule !== undefined){
+let data33 = data.stop_rule;
+const _errs105 = errors;
+if(errors === _errs105){
+if(data33 && typeof data33 == "object" && !Array.isArray(data33)){
+let missing5;
+if(((((data33.schema_version === undefined) && (missing5 = "schema_version")) || ((data33.stop_on_qualified_count === undefined) && (missing5 = "stop_on_qualified_count"))) || ((data33.stop_on_budget === undefined) && (missing5 = "stop_on_budget"))) || ((data33.stop_on_invalid_data === undefined) && (missing5 = "stop_on_invalid_data"))){
+const err132 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/0/properties/stop_rule/required",keyword:"required",params:{missingProperty: missing5},message:"must have required property '"+missing5+"'"};
+if(vErrors === null){
+vErrors = [err132];
+}
+else {
+vErrors.push(err132);
+}
+errors++;
+}
+else {
+const _errs107 = errors;
+for(const key2 in data33){
+if(!(((((key2 === "schema_version") || (key2 === "stop_on_budget")) || (key2 === "stop_on_invalid_data")) || (key2 === "stop_on_no_improvement_trials")) || (key2 === "stop_on_qualified_count"))){
+const err133 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/0/properties/stop_rule/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err133];
+}
+else {
+vErrors.push(err133);
+}
+errors++;
+break;
+}
+}
+if(_errs107 === errors){
+if(data33.schema_version !== undefined){
+const _errs108 = errors;
+if(!(validate108(data33.schema_version, {instancePath:instancePath+"/stop_rule/schema_version",parentData:data33,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
+errors = vErrors.length;
+}
+var valid15 = _errs108 === errors;
+}
+else {
+var valid15 = true;
+}
+if(valid15){
+if(data33.stop_on_budget !== undefined){
+const _errs109 = errors;
+if(typeof data33.stop_on_budget !== "boolean"){
+const err134 = {instancePath:instancePath+"/stop_rule/stop_on_budget",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_budget/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+if(vErrors === null){
+vErrors = [err134];
+}
+else {
+vErrors.push(err134);
+}
+errors++;
+}
+var valid15 = _errs109 === errors;
+}
+else {
+var valid15 = true;
+}
+if(valid15){
+if(data33.stop_on_invalid_data !== undefined){
+const _errs111 = errors;
+if(typeof data33.stop_on_invalid_data !== "boolean"){
+const err135 = {instancePath:instancePath+"/stop_rule/stop_on_invalid_data",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_invalid_data/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+if(vErrors === null){
+vErrors = [err135];
+}
+else {
+vErrors.push(err135);
+}
+errors++;
+}
+var valid15 = _errs111 === errors;
+}
+else {
+var valid15 = true;
+}
+if(valid15){
+if(data33.stop_on_no_improvement_trials !== undefined){
+let data37 = data33.stop_on_no_improvement_trials;
 const _errs113 = errors;
-if(typeof data39 !== "string"){
-const err142 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/0/properties/target_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if((!((typeof data37 == "number") && (!(data37 % 1) && !isNaN(data37)))) && (data37 !== null)){
+const err136 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_no_improvement_trials/type",keyword:"type",params:{type: schema73.oneOf[0].properties.stop_rule.properties.stop_on_no_improvement_trials.type},message:"must be integer,null"};
+if(vErrors === null){
+vErrors = [err136];
+}
+else {
+vErrors.push(err136);
+}
+errors++;
+}
+if(errors === _errs113){
+if(typeof data37 == "number"){
+if(data37 > 65535 || isNaN(data37)){
+const err137 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_no_improvement_trials/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+if(vErrors === null){
+vErrors = [err137];
+}
+else {
+vErrors.push(err137);
+}
+errors++;
+}
+else {
+if(data37 < 1 || isNaN(data37)){
+const err138 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_no_improvement_trials/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err138];
+}
+else {
+vErrors.push(err138);
+}
+errors++;
+}
+else {
+if(!(formats12.validate(data37))){
+const err139 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_no_improvement_trials/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(vErrors === null){
+vErrors = [err139];
+}
+else {
+vErrors.push(err139);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid15 = _errs113 === errors;
+}
+else {
+var valid15 = true;
+}
+if(valid15){
+if(data33.stop_on_qualified_count !== undefined){
+let data38 = data33.stop_on_qualified_count;
+const _errs115 = errors;
+if(!((typeof data38 == "number") && (!(data38 % 1) && !isNaN(data38)))){
+const err140 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_qualified_count/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err140];
+}
+else {
+vErrors.push(err140);
+}
+errors++;
+}
+if(errors === _errs115){
+if(typeof data38 == "number"){
+if(data38 > 65535 || isNaN(data38)){
+const err141 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_qualified_count/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+if(vErrors === null){
+vErrors = [err141];
+}
+else {
+vErrors.push(err141);
+}
+errors++;
+}
+else {
+if(data38 < 1 || isNaN(data38)){
+const err142 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_qualified_count/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err142];
 }
@@ -11249,8 +11254,9 @@ vErrors.push(err142);
 }
 errors++;
 }
-if(!((data39 === "SCORE") || (data39 === "EXPECTED_RETURN"))){
-const err143 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/0/properties/target_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.target_kind.enum},message:"must be equal to one of the allowed values"};
+else {
+if(!(formats12.validate(data38))){
+const err143 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/0/properties/stop_rule/properties/stop_on_qualified_count/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err143];
 }
@@ -11259,20 +11265,24 @@ vErrors.push(err143);
 }
 errors++;
 }
-var valid1 = _errs113 === errors;
+}
+}
+}
+}
+var valid15 = _errs115 === errors;
 }
 else {
-var valid1 = true;
+var valid15 = true;
 }
-if(valid1){
-if(data.universe_version_id !== undefined){
-let data40 = data.universe_version_id;
-const _errs115 = errors;
-if(errors === _errs115){
-if(errors === _errs115){
-if(typeof data40 === "string"){
-if(!pattern3.test(data40)){
-const err144 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/0/properties/universe_version_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+}
+}
+}
+}
+}
+}
+}
+else {
+const err144 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/0/properties/stop_rule/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err144];
 }
@@ -11281,9 +11291,18 @@ vErrors.push(err144);
 }
 errors++;
 }
+}
+var valid1 = _errs105 === errors;
+}
 else {
-if(!(formats0.test(data40))){
-const err145 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/0/properties/universe_version_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+var valid1 = true;
+}
+if(valid1){
+if(data.target_kind !== undefined){
+let data39 = data.target_kind;
+const _errs117 = errors;
+if(typeof data39 !== "string"){
+const err145 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/0/properties/target_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err145];
 }
@@ -11292,10 +11311,8 @@ vErrors.push(err145);
 }
 errors++;
 }
-}
-}
-else {
-const err146 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/0/properties/universe_version_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!((data39 === "SCORE") || (data39 === "EXPECTED_RETURN"))){
+const err146 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/0/properties/target_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[0].properties.target_kind.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err146];
 }
@@ -11304,9 +11321,54 @@ vErrors.push(err146);
 }
 errors++;
 }
+var valid1 = _errs117 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.universe_version_id !== undefined){
+let data40 = data.universe_version_id;
+const _errs119 = errors;
+if(errors === _errs119){
+if(errors === _errs119){
+if(typeof data40 === "string"){
+if(!pattern3.test(data40)){
+const err147 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/0/properties/universe_version_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+if(vErrors === null){
+vErrors = [err147];
+}
+else {
+vErrors.push(err147);
+}
+errors++;
+}
+else {
+if(!(formats0.test(data40))){
+const err148 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/0/properties/universe_version_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+if(vErrors === null){
+vErrors = [err148];
+}
+else {
+vErrors.push(err148);
+}
+errors++;
 }
 }
-var valid1 = _errs115 === errors;
+}
+else {
+const err149 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/0/properties/universe_version_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err149];
+}
+else {
+vErrors.push(err149);
+}
+errors++;
+}
+}
+}
+var valid1 = _errs119 === errors;
 }
 else {
 var valid1 = true;
@@ -11326,12 +11388,12 @@ var valid1 = true;
 }
 }
 else {
-const err147 = {instancePath,schemaPath:"#/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err150 = {instancePath,schemaPath:"#/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err147];
+vErrors = [err150];
 }
 else {
-vErrors.push(err147);
+vErrors.push(err150);
 }
 errors++;
 }
@@ -11342,53 +11404,12 @@ valid0 = true;
 passing0 = 0;
 var props1 = true;
 }
-const _errs117 = errors;
-if(errors === _errs117){
+const _errs121 = errors;
+if(errors === _errs121){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing6;
 if((((((((((((data.hypothesis === undefined) && (missing6 = "hypothesis")) || ((data.economic_rationale === undefined) && (missing6 = "economic_rationale"))) || ((data.universe_version_id === undefined) && (missing6 = "universe_version_id"))) || ((data.target_kind === undefined) && (missing6 = "target_kind"))) || ((data.horizon_kind === undefined) && (missing6 = "horizon_kind"))) || ((data.base_currency === undefined) && (missing6 = "base_currency"))) || ((data.evaluation_policy_id === undefined) && (missing6 = "evaluation_policy_id"))) || ((data.execution_assumptions_id === undefined) && (missing6 = "execution_assumptions_id"))) || ((data.budget === undefined) && (missing6 = "budget"))) || ((data.stop_rule === undefined) && (missing6 = "stop_rule"))) || ((data.horizon_value === undefined) && (missing6 = "horizon_value"))){
-const err148 = {instancePath,schemaPath:"#/oneOf/1/required",keyword:"required",params:{missingProperty: missing6},message:"must have required property '"+missing6+"'"};
-if(vErrors === null){
-vErrors = [err148];
-}
-else {
-vErrors.push(err148);
-}
-errors++;
-}
-else {
-const _errs119 = errors;
-for(const key3 in data){
-if(!(func1.call(schema73.oneOf[1].properties, key3))){
-const err149 = {instancePath,schemaPath:"#/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key3},message:"must NOT have additional properties"};
-if(vErrors === null){
-vErrors = [err149];
-}
-else {
-vErrors.push(err149);
-}
-errors++;
-break;
-}
-}
-if(_errs119 === errors){
-if(data.base_currency !== undefined){
-let data41 = data.base_currency;
-const _errs120 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data41 === "AED") || (data41 === "AFN")) || (data41 === "ALL")) || (data41 === "AMD")) || (data41 === "AOA")) || (data41 === "ARS")) || (data41 === "AUD")) || (data41 === "AWG")) || (data41 === "AZN")) || (data41 === "BAM")) || (data41 === "BBD")) || (data41 === "BDT")) || (data41 === "BGN")) || (data41 === "BHD")) || (data41 === "BIF")) || (data41 === "BMD")) || (data41 === "BND")) || (data41 === "BOB")) || (data41 === "BOV")) || (data41 === "BRL")) || (data41 === "BSD")) || (data41 === "BTN")) || (data41 === "BWP")) || (data41 === "BYN")) || (data41 === "BZD")) || (data41 === "CAD")) || (data41 === "CDF")) || (data41 === "CHE")) || (data41 === "CHF")) || (data41 === "CHW")) || (data41 === "CLF")) || (data41 === "CLP")) || (data41 === "CNY")) || (data41 === "COP")) || (data41 === "COU")) || (data41 === "CRC")) || (data41 === "CUC")) || (data41 === "CUP")) || (data41 === "CVE")) || (data41 === "CZK")) || (data41 === "DJF")) || (data41 === "DKK")) || (data41 === "DOP")) || (data41 === "DZD")) || (data41 === "EGP")) || (data41 === "ERN")) || (data41 === "ETB")) || (data41 === "EUR")) || (data41 === "FJD")) || (data41 === "FKP")) || (data41 === "GBP")) || (data41 === "GEL")) || (data41 === "GHS")) || (data41 === "GIP")) || (data41 === "GMD")) || (data41 === "GNF")) || (data41 === "GTQ")) || (data41 === "GYD")) || (data41 === "HKD")) || (data41 === "HNL")) || (data41 === "HRK")) || (data41 === "HTG")) || (data41 === "HUF")) || (data41 === "IDR")) || (data41 === "ILS")) || (data41 === "INR")) || (data41 === "IQD")) || (data41 === "IRR")) || (data41 === "ISK")) || (data41 === "JMD")) || (data41 === "JOD")) || (data41 === "JPY")) || (data41 === "KES")) || (data41 === "KGS")) || (data41 === "KHR")) || (data41 === "KMF")) || (data41 === "KPW")) || (data41 === "KRW")) || (data41 === "KWD")) || (data41 === "KYD")) || (data41 === "KZT")) || (data41 === "LAK")) || (data41 === "LBP")) || (data41 === "LKR")) || (data41 === "LRD")) || (data41 === "LSL")) || (data41 === "LYD")) || (data41 === "MAD")) || (data41 === "MDL")) || (data41 === "MGA")) || (data41 === "MKD")) || (data41 === "MMK")) || (data41 === "MNT")) || (data41 === "MOP")) || (data41 === "MRU")) || (data41 === "MUR")) || (data41 === "MVR")) || (data41 === "MWK")) || (data41 === "MXN")) || (data41 === "MXV")) || (data41 === "MYR")) || (data41 === "MZN")) || (data41 === "NAD")) || (data41 === "NGN")) || (data41 === "NIO")) || (data41 === "NOK")) || (data41 === "NPR")) || (data41 === "NZD")) || (data41 === "OMR")) || (data41 === "PAB")) || (data41 === "PEN")) || (data41 === "PGK")) || (data41 === "PHP")) || (data41 === "PKR")) || (data41 === "PLN")) || (data41 === "PYG")) || (data41 === "QAR")) || (data41 === "RON")) || (data41 === "RSD")) || (data41 === "RUB")) || (data41 === "RWF")) || (data41 === "SAR")) || (data41 === "SBD")) || (data41 === "SCR")) || (data41 === "SDG")) || (data41 === "SEK")) || (data41 === "SGD")) || (data41 === "SHP")) || (data41 === "SLE")) || (data41 === "SLL")) || (data41 === "SOS")) || (data41 === "SRD")) || (data41 === "SSP")) || (data41 === "STN")) || (data41 === "SVC")) || (data41 === "SYP")) || (data41 === "SZL")) || (data41 === "THB")) || (data41 === "TJS")) || (data41 === "TMT")) || (data41 === "TND")) || (data41 === "TOP")) || (data41 === "TRY")) || (data41 === "TTD")) || (data41 === "TWD")) || (data41 === "TZS")) || (data41 === "UAH")) || (data41 === "UGX")) || (data41 === "USD")) || (data41 === "USN")) || (data41 === "UYI")) || (data41 === "UYU")) || (data41 === "UYW")) || (data41 === "UZS")) || (data41 === "VED")) || (data41 === "VES")) || (data41 === "VND")) || (data41 === "VUV")) || (data41 === "WST")) || (data41 === "XAD")) || (data41 === "XAF")) || (data41 === "XAG")) || (data41 === "XAU")) || (data41 === "XBA")) || (data41 === "XBB")) || (data41 === "XBC")) || (data41 === "XBD")) || (data41 === "XCD")) || (data41 === "XCG")) || (data41 === "XDR")) || (data41 === "XOF")) || (data41 === "XPD")) || (data41 === "XPF")) || (data41 === "XPT")) || (data41 === "XSU")) || (data41 === "XTS")) || (data41 === "XUA")) || (data41 === "XXX")) || (data41 === "YER")) || (data41 === "ZAR")) || (data41 === "ZMW")) || (data41 === "ZWG")) || (data41 === "ZWL"))){
-const err150 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.base_currency.enum},message:"must be equal to one of the allowed values"};
-if(vErrors === null){
-vErrors = [err150];
-}
-else {
-vErrors.push(err150);
-}
-errors++;
-}
-if(errors === _errs120){
-if(typeof data41 === "string"){
-if(func2(data41) > 3){
-const err151 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+const err151 = {instancePath,schemaPath:"#/oneOf/1/required",keyword:"required",params:{missingProperty: missing6},message:"must have required property '"+missing6+"'"};
 if(vErrors === null){
 vErrors = [err151];
 }
@@ -11398,8 +11419,10 @@ vErrors.push(err151);
 errors++;
 }
 else {
-if(func2(data41) < 3){
-const err152 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+const _errs123 = errors;
+for(const key3 in data){
+if(!(func1.call(schema73.oneOf[1].properties, key3))){
+const err152 = {instancePath,schemaPath:"#/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key3},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err152];
 }
@@ -11407,11 +11430,19 @@ else {
 vErrors.push(err152);
 }
 errors++;
+break;
 }
 }
-}
-else {
-const err153 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(_errs123 === errors){
+if(data.base_currency !== undefined){
+let data41 = data.base_currency;
+const _errs124 = errors;
+const _errs125 = errors;
+let valid17 = false;
+let passing7 = null;
+const _errs126 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data41 === "AED") || (data41 === "AFN")) || (data41 === "ALL")) || (data41 === "AMD")) || (data41 === "AOA")) || (data41 === "ARS")) || (data41 === "AUD")) || (data41 === "AWG")) || (data41 === "AZN")) || (data41 === "BAM")) || (data41 === "BBD")) || (data41 === "BDT")) || (data41 === "BGN")) || (data41 === "BHD")) || (data41 === "BIF")) || (data41 === "BMD")) || (data41 === "BND")) || (data41 === "BOB")) || (data41 === "BOV")) || (data41 === "BRL")) || (data41 === "BSD")) || (data41 === "BTN")) || (data41 === "BWP")) || (data41 === "BYN")) || (data41 === "BZD")) || (data41 === "CAD")) || (data41 === "CDF")) || (data41 === "CHE")) || (data41 === "CHF")) || (data41 === "CHW")) || (data41 === "CLF")) || (data41 === "CLP")) || (data41 === "CNY")) || (data41 === "COP")) || (data41 === "COU")) || (data41 === "CRC")) || (data41 === "CUC")) || (data41 === "CUP")) || (data41 === "CVE")) || (data41 === "CZK")) || (data41 === "DJF")) || (data41 === "DKK")) || (data41 === "DOP")) || (data41 === "DZD")) || (data41 === "EGP")) || (data41 === "ERN")) || (data41 === "ETB")) || (data41 === "EUR")) || (data41 === "FJD")) || (data41 === "FKP")) || (data41 === "GBP")) || (data41 === "GEL")) || (data41 === "GHS")) || (data41 === "GIP")) || (data41 === "GMD")) || (data41 === "GNF")) || (data41 === "GTQ")) || (data41 === "GYD")) || (data41 === "HKD")) || (data41 === "HNL")) || (data41 === "HRK")) || (data41 === "HTG")) || (data41 === "HUF")) || (data41 === "IDR")) || (data41 === "ILS")) || (data41 === "INR")) || (data41 === "IQD")) || (data41 === "IRR")) || (data41 === "ISK")) || (data41 === "JMD")) || (data41 === "JOD")) || (data41 === "JPY")) || (data41 === "KES")) || (data41 === "KGS")) || (data41 === "KHR")) || (data41 === "KMF")) || (data41 === "KPW")) || (data41 === "KRW")) || (data41 === "KWD")) || (data41 === "KYD")) || (data41 === "KZT")) || (data41 === "LAK")) || (data41 === "LBP")) || (data41 === "LKR")) || (data41 === "LRD")) || (data41 === "LSL")) || (data41 === "LYD")) || (data41 === "MAD")) || (data41 === "MDL")) || (data41 === "MGA")) || (data41 === "MKD")) || (data41 === "MMK")) || (data41 === "MNT")) || (data41 === "MOP")) || (data41 === "MRU")) || (data41 === "MUR")) || (data41 === "MVR")) || (data41 === "MWK")) || (data41 === "MXN")) || (data41 === "MXV")) || (data41 === "MYR")) || (data41 === "MZN")) || (data41 === "NAD")) || (data41 === "NGN")) || (data41 === "NIO")) || (data41 === "NOK")) || (data41 === "NPR")) || (data41 === "NZD")) || (data41 === "OMR")) || (data41 === "PAB")) || (data41 === "PEN")) || (data41 === "PGK")) || (data41 === "PHP")) || (data41 === "PKR")) || (data41 === "PLN")) || (data41 === "PYG")) || (data41 === "QAR")) || (data41 === "RON")) || (data41 === "RSD")) || (data41 === "RUB")) || (data41 === "RWF")) || (data41 === "SAR")) || (data41 === "SBD")) || (data41 === "SCR")) || (data41 === "SDG")) || (data41 === "SEK")) || (data41 === "SGD")) || (data41 === "SHP")) || (data41 === "SLE")) || (data41 === "SLL")) || (data41 === "SOS")) || (data41 === "SRD")) || (data41 === "SSP")) || (data41 === "STN")) || (data41 === "SVC")) || (data41 === "SYP")) || (data41 === "SZL")) || (data41 === "THB")) || (data41 === "TJS")) || (data41 === "TMT")) || (data41 === "TND")) || (data41 === "TOP")) || (data41 === "TRY")) || (data41 === "TTD")) || (data41 === "TWD")) || (data41 === "TZS")) || (data41 === "UAH")) || (data41 === "UGX")) || (data41 === "USD")) || (data41 === "USN")) || (data41 === "UYI")) || (data41 === "UYU")) || (data41 === "UYW")) || (data41 === "UZS")) || (data41 === "VED")) || (data41 === "VES")) || (data41 === "VND")) || (data41 === "VUV")) || (data41 === "WST")) || (data41 === "XAD")) || (data41 === "XAF")) || (data41 === "XAG")) || (data41 === "XAU")) || (data41 === "XBA")) || (data41 === "XBB")) || (data41 === "XBC")) || (data41 === "XBD")) || (data41 === "XCD")) || (data41 === "XCG")) || (data41 === "XDR")) || (data41 === "XOF")) || (data41 === "XPD")) || (data41 === "XPF")) || (data41 === "XPT")) || (data41 === "XSU")) || (data41 === "XTS")) || (data41 === "XUA")) || (data41 === "XXX")) || (data41 === "YER")) || (data41 === "ZAR")) || (data41 === "ZMW")) || (data41 === "ZWG")) || (data41 === "ZWL"))){
+const err153 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/oneOf/0/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.base_currency.oneOf[0].enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err153];
 }
@@ -11420,22 +11451,10 @@ vErrors.push(err153);
 }
 errors++;
 }
-}
-var valid15 = _errs120 === errors;
-}
-else {
-var valid15 = true;
-}
-if(valid15){
-if(data.benchmark_ref !== undefined){
-let data42 = data.benchmark_ref;
-const _errs122 = errors;
-const _errs123 = errors;
-let valid16 = false;
-let passing6 = null;
-const _errs124 = errors;
-if(data42 !== null){
-const err154 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/1/properties/benchmark_ref/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(errors === _errs126){
+if(typeof data41 === "string"){
+if(func2(data41) > 3){
+const err154 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/oneOf/0/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err154];
 }
@@ -11444,17 +11463,9 @@ vErrors.push(err154);
 }
 errors++;
 }
-var _valid6 = _errs124 === errors;
-if(_valid6){
-valid16 = true;
-passing6 = 0;
-}
-const _errs126 = errors;
-if(errors === _errs126){
-if(errors === _errs126){
-if(typeof data42 === "string"){
-if(!pattern3.test(data42)){
-const err155 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/1/properties/benchmark_ref/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+else {
+if(func2(data41) < 3){
+const err155 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/oneOf/0/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err155];
 }
@@ -11463,9 +11474,10 @@ vErrors.push(err155);
 }
 errors++;
 }
+}
+}
 else {
-if(!(formats0.test(data42))){
-const err156 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/1/properties/benchmark_ref/oneOf/1/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+const err156 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/oneOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err156];
 }
@@ -11475,9 +11487,14 @@ vErrors.push(err156);
 errors++;
 }
 }
+var _valid7 = _errs126 === errors;
+if(_valid7){
+valid17 = true;
+passing7 = 0;
 }
-else {
-const err157 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/1/properties/benchmark_ref/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const _errs128 = errors;
+if(typeof data41 !== "string"){
+const err157 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err157];
 }
@@ -11486,21 +11503,8 @@ vErrors.push(err157);
 }
 errors++;
 }
-}
-}
-var _valid6 = _errs126 === errors;
-if(_valid6 && valid16){
-valid16 = false;
-passing6 = [passing6, 1];
-}
-else {
-if(_valid6){
-valid16 = true;
-passing6 = 1;
-}
-}
-if(!valid16){
-const err158 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/1/properties/benchmark_ref/oneOf",keyword:"oneOf",params:{passingSchemas: passing6},message:"must match exactly one schema in oneOf"};
+if(!(((data41 === "USDC") || (data41 === "USDC.e")) || (data41 === "pUSD"))){
+const err158 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.base_currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err158];
 }
@@ -11509,32 +11513,19 @@ vErrors.push(err158);
 }
 errors++;
 }
-else {
-errors = _errs123;
-if(vErrors !== null){
-if(_errs123){
-vErrors.length = _errs123;
+var _valid7 = _errs128 === errors;
+if(_valid7 && valid17){
+valid17 = false;
+passing7 = [passing7, 1];
 }
 else {
-vErrors = null;
+if(_valid7){
+valid17 = true;
+passing7 = 1;
 }
 }
-}
-var valid15 = _errs122 === errors;
-}
-else {
-var valid15 = true;
-}
-if(valid15){
-if(data.budget !== undefined){
-let data43 = data.budget;
-const _errs128 = errors;
-const _errs129 = errors;
-if(errors === _errs129){
-if(data43 && typeof data43 == "object" && !Array.isArray(data43)){
-let missing7;
-if(((((((((((((data43.schema_version === undefined) && (missing7 = "schema_version")) || ((data43.max_experiments === undefined) && (missing7 = "max_experiments"))) || ((data43.max_parallel_runs === undefined) && (missing7 = "max_parallel_runs"))) || ((data43.max_turns_per_mission === undefined) && (missing7 = "max_turns_per_mission"))) || ((data43.max_repair_turns === undefined) && (missing7 = "max_repair_turns"))) || ((data43.max_wall_seconds === undefined) && (missing7 = "max_wall_seconds"))) || ((data43.max_memory_mib === undefined) && (missing7 = "max_memory_mib"))) || ((data43.max_cycles_per_day === undefined) && (missing7 = "max_cycles_per_day"))) || ((data43.min_cycle_interval_seconds === undefined) && (missing7 = "min_cycle_interval_seconds"))) || ((data43.max_cpu_seconds === undefined) && (missing7 = "max_cpu_seconds"))) || ((data43.max_output_bytes === undefined) && (missing7 = "max_output_bytes"))) || ((data43.cost_enforcement === undefined) && (missing7 = "cost_enforcement"))){
-const err159 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/0/required",keyword:"required",params:{missingProperty: missing7},message:"must have required property '"+missing7+"'"};
+if(!valid17){
+const err159 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/1/properties/base_currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing7},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err159];
 }
@@ -11544,10 +11535,31 @@ vErrors.push(err159);
 errors++;
 }
 else {
+errors = _errs125;
+if(vErrors !== null){
+if(_errs125){
+vErrors.length = _errs125;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid16 = _errs124 === errors;
+}
+else {
+var valid16 = true;
+}
+if(valid16){
+if(data.benchmark_ref !== undefined){
+let data42 = data.benchmark_ref;
+const _errs130 = errors;
 const _errs131 = errors;
-for(const key4 in data43){
-if(!(func1.call(schema73.oneOf[1].properties.budget.allOf[0].properties, key4))){
-const err160 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key4},message:"must NOT have additional properties"};
+let valid18 = false;
+let passing8 = null;
+const _errs132 = errors;
+if(data42 !== null){
+const err160 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/1/properties/benchmark_ref/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err160];
 }
@@ -11555,19 +11567,18 @@ else {
 vErrors.push(err160);
 }
 errors++;
-break;
 }
+var _valid8 = _errs132 === errors;
+if(_valid8){
+valid18 = true;
+passing8 = 0;
 }
-if(_errs131 === errors){
-if(data43.cost_currency !== undefined){
-let data44 = data43.cost_currency;
-const _errs132 = errors;
-const _errs133 = errors;
-let valid19 = false;
-let passing7 = null;
 const _errs134 = errors;
-if(data44 !== null){
-const err161 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(errors === _errs134){
+if(errors === _errs134){
+if(typeof data42 === "string"){
+if(!pattern3.test(data42)){
+const err161 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/1/properties/benchmark_ref/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err161];
 }
@@ -11576,14 +11587,9 @@ vErrors.push(err161);
 }
 errors++;
 }
-var _valid7 = _errs134 === errors;
-if(_valid7){
-valid19 = true;
-passing7 = 0;
-}
-const _errs136 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data44 === "AED") || (data44 === "AFN")) || (data44 === "ALL")) || (data44 === "AMD")) || (data44 === "AOA")) || (data44 === "ARS")) || (data44 === "AUD")) || (data44 === "AWG")) || (data44 === "AZN")) || (data44 === "BAM")) || (data44 === "BBD")) || (data44 === "BDT")) || (data44 === "BGN")) || (data44 === "BHD")) || (data44 === "BIF")) || (data44 === "BMD")) || (data44 === "BND")) || (data44 === "BOB")) || (data44 === "BOV")) || (data44 === "BRL")) || (data44 === "BSD")) || (data44 === "BTN")) || (data44 === "BWP")) || (data44 === "BYN")) || (data44 === "BZD")) || (data44 === "CAD")) || (data44 === "CDF")) || (data44 === "CHE")) || (data44 === "CHF")) || (data44 === "CHW")) || (data44 === "CLF")) || (data44 === "CLP")) || (data44 === "CNY")) || (data44 === "COP")) || (data44 === "COU")) || (data44 === "CRC")) || (data44 === "CUC")) || (data44 === "CUP")) || (data44 === "CVE")) || (data44 === "CZK")) || (data44 === "DJF")) || (data44 === "DKK")) || (data44 === "DOP")) || (data44 === "DZD")) || (data44 === "EGP")) || (data44 === "ERN")) || (data44 === "ETB")) || (data44 === "EUR")) || (data44 === "FJD")) || (data44 === "FKP")) || (data44 === "GBP")) || (data44 === "GEL")) || (data44 === "GHS")) || (data44 === "GIP")) || (data44 === "GMD")) || (data44 === "GNF")) || (data44 === "GTQ")) || (data44 === "GYD")) || (data44 === "HKD")) || (data44 === "HNL")) || (data44 === "HRK")) || (data44 === "HTG")) || (data44 === "HUF")) || (data44 === "IDR")) || (data44 === "ILS")) || (data44 === "INR")) || (data44 === "IQD")) || (data44 === "IRR")) || (data44 === "ISK")) || (data44 === "JMD")) || (data44 === "JOD")) || (data44 === "JPY")) || (data44 === "KES")) || (data44 === "KGS")) || (data44 === "KHR")) || (data44 === "KMF")) || (data44 === "KPW")) || (data44 === "KRW")) || (data44 === "KWD")) || (data44 === "KYD")) || (data44 === "KZT")) || (data44 === "LAK")) || (data44 === "LBP")) || (data44 === "LKR")) || (data44 === "LRD")) || (data44 === "LSL")) || (data44 === "LYD")) || (data44 === "MAD")) || (data44 === "MDL")) || (data44 === "MGA")) || (data44 === "MKD")) || (data44 === "MMK")) || (data44 === "MNT")) || (data44 === "MOP")) || (data44 === "MRU")) || (data44 === "MUR")) || (data44 === "MVR")) || (data44 === "MWK")) || (data44 === "MXN")) || (data44 === "MXV")) || (data44 === "MYR")) || (data44 === "MZN")) || (data44 === "NAD")) || (data44 === "NGN")) || (data44 === "NIO")) || (data44 === "NOK")) || (data44 === "NPR")) || (data44 === "NZD")) || (data44 === "OMR")) || (data44 === "PAB")) || (data44 === "PEN")) || (data44 === "PGK")) || (data44 === "PHP")) || (data44 === "PKR")) || (data44 === "PLN")) || (data44 === "PYG")) || (data44 === "QAR")) || (data44 === "RON")) || (data44 === "RSD")) || (data44 === "RUB")) || (data44 === "RWF")) || (data44 === "SAR")) || (data44 === "SBD")) || (data44 === "SCR")) || (data44 === "SDG")) || (data44 === "SEK")) || (data44 === "SGD")) || (data44 === "SHP")) || (data44 === "SLE")) || (data44 === "SLL")) || (data44 === "SOS")) || (data44 === "SRD")) || (data44 === "SSP")) || (data44 === "STN")) || (data44 === "SVC")) || (data44 === "SYP")) || (data44 === "SZL")) || (data44 === "THB")) || (data44 === "TJS")) || (data44 === "TMT")) || (data44 === "TND")) || (data44 === "TOP")) || (data44 === "TRY")) || (data44 === "TTD")) || (data44 === "TWD")) || (data44 === "TZS")) || (data44 === "UAH")) || (data44 === "UGX")) || (data44 === "USD")) || (data44 === "USN")) || (data44 === "UYI")) || (data44 === "UYU")) || (data44 === "UYW")) || (data44 === "UZS")) || (data44 === "VED")) || (data44 === "VES")) || (data44 === "VND")) || (data44 === "VUV")) || (data44 === "WST")) || (data44 === "XAD")) || (data44 === "XAF")) || (data44 === "XAG")) || (data44 === "XAU")) || (data44 === "XBA")) || (data44 === "XBB")) || (data44 === "XBC")) || (data44 === "XBD")) || (data44 === "XCD")) || (data44 === "XCG")) || (data44 === "XDR")) || (data44 === "XOF")) || (data44 === "XPD")) || (data44 === "XPF")) || (data44 === "XPT")) || (data44 === "XSU")) || (data44 === "XTS")) || (data44 === "XUA")) || (data44 === "XXX")) || (data44 === "YER")) || (data44 === "ZAR")) || (data44 === "ZMW")) || (data44 === "ZWG")) || (data44 === "ZWL"))){
-const err162 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[0].properties.cost_currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
+else {
+if(!(formats0.test(data42))){
+const err162 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/1/properties/benchmark_ref/oneOf/1/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
 if(vErrors === null){
 vErrors = [err162];
 }
@@ -11592,10 +11598,10 @@ vErrors.push(err162);
 }
 errors++;
 }
-if(errors === _errs136){
-if(typeof data44 === "string"){
-if(func2(data44) > 3){
-const err163 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+}
+}
+else {
+const err163 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/1/properties/benchmark_ref/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err163];
 }
@@ -11604,9 +11610,21 @@ vErrors.push(err163);
 }
 errors++;
 }
+}
+}
+var _valid8 = _errs134 === errors;
+if(_valid8 && valid18){
+valid18 = false;
+passing8 = [passing8, 1];
+}
 else {
-if(func2(data44) < 3){
-const err164 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf/1/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+if(_valid8){
+valid18 = true;
+passing8 = 1;
+}
+}
+if(!valid18){
+const err164 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/1/properties/benchmark_ref/oneOf",keyword:"oneOf",params:{passingSchemas: passing8},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err164];
 }
@@ -11615,10 +11633,32 @@ vErrors.push(err164);
 }
 errors++;
 }
-}
+else {
+errors = _errs131;
+if(vErrors !== null){
+if(_errs131){
+vErrors.length = _errs131;
 }
 else {
-const err165 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+vErrors = null;
+}
+}
+}
+var valid16 = _errs130 === errors;
+}
+else {
+var valid16 = true;
+}
+if(valid16){
+if(data.budget !== undefined){
+let data43 = data.budget;
+const _errs136 = errors;
+const _errs137 = errors;
+if(errors === _errs137){
+if(data43 && typeof data43 == "object" && !Array.isArray(data43)){
+let missing7;
+if(((((((((((((data43.schema_version === undefined) && (missing7 = "schema_version")) || ((data43.max_experiments === undefined) && (missing7 = "max_experiments"))) || ((data43.max_parallel_runs === undefined) && (missing7 = "max_parallel_runs"))) || ((data43.max_turns_per_mission === undefined) && (missing7 = "max_turns_per_mission"))) || ((data43.max_repair_turns === undefined) && (missing7 = "max_repair_turns"))) || ((data43.max_wall_seconds === undefined) && (missing7 = "max_wall_seconds"))) || ((data43.max_memory_mib === undefined) && (missing7 = "max_memory_mib"))) || ((data43.max_cycles_per_day === undefined) && (missing7 = "max_cycles_per_day"))) || ((data43.min_cycle_interval_seconds === undefined) && (missing7 = "min_cycle_interval_seconds"))) || ((data43.max_cpu_seconds === undefined) && (missing7 = "max_cpu_seconds"))) || ((data43.max_output_bytes === undefined) && (missing7 = "max_output_bytes"))) || ((data43.cost_enforcement === undefined) && (missing7 = "cost_enforcement"))){
+const err165 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/0/required",keyword:"required",params:{missingProperty: missing7},message:"must have required property '"+missing7+"'"};
 if(vErrors === null){
 vErrors = [err165];
 }
@@ -11627,20 +11667,11 @@ vErrors.push(err165);
 }
 errors++;
 }
-}
-var _valid7 = _errs136 === errors;
-if(_valid7 && valid19){
-valid19 = false;
-passing7 = [passing7, 1];
-}
 else {
-if(_valid7){
-valid19 = true;
-passing7 = 1;
-}
-}
-if(!valid19){
-const err166 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing7},message:"must match exactly one schema in oneOf"};
+const _errs139 = errors;
+for(const key4 in data43){
+if(!(func1.call(schema73.oneOf[1].properties.budget.allOf[0].properties, key4))){
+const err166 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key4},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err166];
 }
@@ -11648,45 +11679,19 @@ else {
 vErrors.push(err166);
 }
 errors++;
-}
-else {
-errors = _errs133;
-if(vErrors !== null){
-if(_errs133){
-vErrors.length = _errs133;
-}
-else {
-vErrors = null;
+break;
 }
 }
-}
-var valid18 = _errs132 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.cost_enforcement !== undefined){
-const _errs138 = errors;
-if(!(validate290(data43.cost_enforcement, {instancePath:instancePath+"/budget/cost_enforcement",parentData:data43,parentDataProperty:"cost_enforcement",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate290.errors : vErrors.concat(validate290.errors);
-errors = vErrors.length;
-}
-var valid18 = _errs138 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_cost_decimal !== undefined){
-let data46 = data43.max_cost_decimal;
-const _errs139 = errors;
+if(_errs139 === errors){
+if(data43.cost_currency !== undefined){
+let data44 = data43.cost_currency;
 const _errs140 = errors;
-let valid20 = false;
-let passing8 = null;
 const _errs141 = errors;
-if(data46 !== null){
-const err167 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+let valid21 = false;
+let passing9 = null;
+const _errs142 = errors;
+if(data44 !== null){
+const err167 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err167];
 }
@@ -11695,16 +11700,14 @@ vErrors.push(err167);
 }
 errors++;
 }
-var _valid8 = _errs141 === errors;
-if(_valid8){
-valid20 = true;
-passing8 = 0;
+var _valid9 = _errs142 === errors;
+if(_valid9){
+valid21 = true;
+passing9 = 0;
 }
-const _errs143 = errors;
-if(errors === _errs143){
-if(typeof data46 === "string"){
-if(func2(data46) > 64){
-const err168 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+const _errs144 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data44 === "AED") || (data44 === "AFN")) || (data44 === "ALL")) || (data44 === "AMD")) || (data44 === "AOA")) || (data44 === "ARS")) || (data44 === "AUD")) || (data44 === "AWG")) || (data44 === "AZN")) || (data44 === "BAM")) || (data44 === "BBD")) || (data44 === "BDT")) || (data44 === "BGN")) || (data44 === "BHD")) || (data44 === "BIF")) || (data44 === "BMD")) || (data44 === "BND")) || (data44 === "BOB")) || (data44 === "BOV")) || (data44 === "BRL")) || (data44 === "BSD")) || (data44 === "BTN")) || (data44 === "BWP")) || (data44 === "BYN")) || (data44 === "BZD")) || (data44 === "CAD")) || (data44 === "CDF")) || (data44 === "CHE")) || (data44 === "CHF")) || (data44 === "CHW")) || (data44 === "CLF")) || (data44 === "CLP")) || (data44 === "CNY")) || (data44 === "COP")) || (data44 === "COU")) || (data44 === "CRC")) || (data44 === "CUC")) || (data44 === "CUP")) || (data44 === "CVE")) || (data44 === "CZK")) || (data44 === "DJF")) || (data44 === "DKK")) || (data44 === "DOP")) || (data44 === "DZD")) || (data44 === "EGP")) || (data44 === "ERN")) || (data44 === "ETB")) || (data44 === "EUR")) || (data44 === "FJD")) || (data44 === "FKP")) || (data44 === "GBP")) || (data44 === "GEL")) || (data44 === "GHS")) || (data44 === "GIP")) || (data44 === "GMD")) || (data44 === "GNF")) || (data44 === "GTQ")) || (data44 === "GYD")) || (data44 === "HKD")) || (data44 === "HNL")) || (data44 === "HRK")) || (data44 === "HTG")) || (data44 === "HUF")) || (data44 === "IDR")) || (data44 === "ILS")) || (data44 === "INR")) || (data44 === "IQD")) || (data44 === "IRR")) || (data44 === "ISK")) || (data44 === "JMD")) || (data44 === "JOD")) || (data44 === "JPY")) || (data44 === "KES")) || (data44 === "KGS")) || (data44 === "KHR")) || (data44 === "KMF")) || (data44 === "KPW")) || (data44 === "KRW")) || (data44 === "KWD")) || (data44 === "KYD")) || (data44 === "KZT")) || (data44 === "LAK")) || (data44 === "LBP")) || (data44 === "LKR")) || (data44 === "LRD")) || (data44 === "LSL")) || (data44 === "LYD")) || (data44 === "MAD")) || (data44 === "MDL")) || (data44 === "MGA")) || (data44 === "MKD")) || (data44 === "MMK")) || (data44 === "MNT")) || (data44 === "MOP")) || (data44 === "MRU")) || (data44 === "MUR")) || (data44 === "MVR")) || (data44 === "MWK")) || (data44 === "MXN")) || (data44 === "MXV")) || (data44 === "MYR")) || (data44 === "MZN")) || (data44 === "NAD")) || (data44 === "NGN")) || (data44 === "NIO")) || (data44 === "NOK")) || (data44 === "NPR")) || (data44 === "NZD")) || (data44 === "OMR")) || (data44 === "PAB")) || (data44 === "PEN")) || (data44 === "PGK")) || (data44 === "PHP")) || (data44 === "PKR")) || (data44 === "PLN")) || (data44 === "PYG")) || (data44 === "QAR")) || (data44 === "RON")) || (data44 === "RSD")) || (data44 === "RUB")) || (data44 === "RWF")) || (data44 === "SAR")) || (data44 === "SBD")) || (data44 === "SCR")) || (data44 === "SDG")) || (data44 === "SEK")) || (data44 === "SGD")) || (data44 === "SHP")) || (data44 === "SLE")) || (data44 === "SLL")) || (data44 === "SOS")) || (data44 === "SRD")) || (data44 === "SSP")) || (data44 === "STN")) || (data44 === "SVC")) || (data44 === "SYP")) || (data44 === "SZL")) || (data44 === "THB")) || (data44 === "TJS")) || (data44 === "TMT")) || (data44 === "TND")) || (data44 === "TOP")) || (data44 === "TRY")) || (data44 === "TTD")) || (data44 === "TWD")) || (data44 === "TZS")) || (data44 === "UAH")) || (data44 === "UGX")) || (data44 === "USD")) || (data44 === "USN")) || (data44 === "UYI")) || (data44 === "UYU")) || (data44 === "UYW")) || (data44 === "UZS")) || (data44 === "VED")) || (data44 === "VES")) || (data44 === "VND")) || (data44 === "VUV")) || (data44 === "WST")) || (data44 === "XAD")) || (data44 === "XAF")) || (data44 === "XAG")) || (data44 === "XAU")) || (data44 === "XBA")) || (data44 === "XBB")) || (data44 === "XBC")) || (data44 === "XBD")) || (data44 === "XCD")) || (data44 === "XCG")) || (data44 === "XDR")) || (data44 === "XOF")) || (data44 === "XPD")) || (data44 === "XPF")) || (data44 === "XPT")) || (data44 === "XSU")) || (data44 === "XTS")) || (data44 === "XUA")) || (data44 === "XXX")) || (data44 === "YER")) || (data44 === "ZAR")) || (data44 === "ZMW")) || (data44 === "ZWG")) || (data44 === "ZWL"))){
+const err168 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[0].properties.cost_currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err168];
 }
@@ -11713,9 +11716,10 @@ vErrors.push(err168);
 }
 errors++;
 }
-else {
-if(func2(data46) < 1){
-const err169 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(errors === _errs144){
+if(typeof data44 === "string"){
+if(func2(data44) > 3){
+const err169 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err169];
 }
@@ -11725,8 +11729,8 @@ vErrors.push(err169);
 errors++;
 }
 else {
-if(!pattern6.test(data46)){
-const err170 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
+if(func2(data44) < 3){
+const err170 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf/1/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err170];
 }
@@ -11737,9 +11741,8 @@ errors++;
 }
 }
 }
-}
 else {
-const err171 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err171 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err171];
 }
@@ -11749,515 +11752,7 @@ vErrors.push(err171);
 errors++;
 }
 }
-var _valid8 = _errs143 === errors;
-if(_valid8 && valid20){
-valid20 = false;
-passing8 = [passing8, 1];
-}
-else {
-if(_valid8){
-valid20 = true;
-passing8 = 1;
-}
-}
-if(!valid20){
-const err172 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf",keyword:"oneOf",params:{passingSchemas: passing8},message:"must match exactly one schema in oneOf"};
-if(vErrors === null){
-vErrors = [err172];
-}
-else {
-vErrors.push(err172);
-}
-errors++;
-}
-else {
-errors = _errs140;
-if(vErrors !== null){
-if(_errs140){
-vErrors.length = _errs140;
-}
-else {
-vErrors = null;
-}
-}
-}
-var valid18 = _errs139 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_cpu_seconds !== undefined){
-let data47 = data43.max_cpu_seconds;
-const _errs145 = errors;
-if(errors === _errs145){
-if(typeof data47 === "string"){
-if(func2(data47) > 19){
-const err173 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cpu_seconds/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
-if(vErrors === null){
-vErrors = [err173];
-}
-else {
-vErrors.push(err173);
-}
-errors++;
-}
-else {
-if(func2(data47) < 1){
-const err174 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cpu_seconds/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
-if(vErrors === null){
-vErrors = [err174];
-}
-else {
-vErrors.push(err174);
-}
-errors++;
-}
-else {
-if(!pattern5.test(data47)){
-const err175 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cpu_seconds/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
-if(vErrors === null){
-vErrors = [err175];
-}
-else {
-vErrors.push(err175);
-}
-errors++;
-}
-}
-}
-}
-else {
-const err176 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cpu_seconds/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err176];
-}
-else {
-vErrors.push(err176);
-}
-errors++;
-}
-}
-var valid18 = _errs145 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_cycles_per_day !== undefined){
-let data48 = data43.max_cycles_per_day;
-const _errs147 = errors;
-if(!((typeof data48 == "number") && (!(data48 % 1) && !isNaN(data48)))){
-const err177 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cycles_per_day/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err177];
-}
-else {
-vErrors.push(err177);
-}
-errors++;
-}
-if(errors === _errs147){
-if(typeof data48 == "number"){
-if(data48 > 65535 || isNaN(data48)){
-const err178 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cycles_per_day/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
-if(vErrors === null){
-vErrors = [err178];
-}
-else {
-vErrors.push(err178);
-}
-errors++;
-}
-else {
-if(data48 < 1 || isNaN(data48)){
-const err179 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cycles_per_day/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err179];
-}
-else {
-vErrors.push(err179);
-}
-errors++;
-}
-else {
-if(!(formats12.validate(data48))){
-const err180 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cycles_per_day/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
-if(vErrors === null){
-vErrors = [err180];
-}
-else {
-vErrors.push(err180);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid18 = _errs147 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_experiments !== undefined){
-let data49 = data43.max_experiments;
-const _errs149 = errors;
-if(!((typeof data49 == "number") && (!(data49 % 1) && !isNaN(data49)))){
-const err181 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_experiments/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err181];
-}
-else {
-vErrors.push(err181);
-}
-errors++;
-}
-if(errors === _errs149){
-if(typeof data49 == "number"){
-if(data49 > 4294967295 || isNaN(data49)){
-const err182 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_experiments/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
-if(vErrors === null){
-vErrors = [err182];
-}
-else {
-vErrors.push(err182);
-}
-errors++;
-}
-else {
-if(data49 < 1 || isNaN(data49)){
-const err183 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_experiments/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err183];
-}
-else {
-vErrors.push(err183);
-}
-errors++;
-}
-else {
-if(!(formats22.validate(data49))){
-const err184 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_experiments/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
-if(vErrors === null){
-vErrors = [err184];
-}
-else {
-vErrors.push(err184);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid18 = _errs149 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_memory_mib !== undefined){
-let data50 = data43.max_memory_mib;
-const _errs151 = errors;
-if(!((typeof data50 == "number") && (!(data50 % 1) && !isNaN(data50)))){
-const err185 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_memory_mib/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err185];
-}
-else {
-vErrors.push(err185);
-}
-errors++;
-}
-if(errors === _errs151){
-if(typeof data50 == "number"){
-if(data50 > 4294967295 || isNaN(data50)){
-const err186 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_memory_mib/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
-if(vErrors === null){
-vErrors = [err186];
-}
-else {
-vErrors.push(err186);
-}
-errors++;
-}
-else {
-if(data50 < 1 || isNaN(data50)){
-const err187 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_memory_mib/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err187];
-}
-else {
-vErrors.push(err187);
-}
-errors++;
-}
-else {
-if(!(formats22.validate(data50))){
-const err188 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_memory_mib/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
-if(vErrors === null){
-vErrors = [err188];
-}
-else {
-vErrors.push(err188);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid18 = _errs151 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_output_bytes !== undefined){
-let data51 = data43.max_output_bytes;
-const _errs153 = errors;
-if(errors === _errs153){
-if(typeof data51 === "string"){
-if(func2(data51) > 19){
-const err189 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_output_bytes/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
-if(vErrors === null){
-vErrors = [err189];
-}
-else {
-vErrors.push(err189);
-}
-errors++;
-}
-else {
-if(func2(data51) < 1){
-const err190 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_output_bytes/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
-if(vErrors === null){
-vErrors = [err190];
-}
-else {
-vErrors.push(err190);
-}
-errors++;
-}
-else {
-if(!pattern5.test(data51)){
-const err191 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_output_bytes/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
-if(vErrors === null){
-vErrors = [err191];
-}
-else {
-vErrors.push(err191);
-}
-errors++;
-}
-}
-}
-}
-else {
-const err192 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_output_bytes/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err192];
-}
-else {
-vErrors.push(err192);
-}
-errors++;
-}
-}
-var valid18 = _errs153 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_parallel_runs !== undefined){
-let data52 = data43.max_parallel_runs;
-const _errs155 = errors;
-if(!((typeof data52 == "number") && (!(data52 % 1) && !isNaN(data52)))){
-const err193 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_parallel_runs/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err193];
-}
-else {
-vErrors.push(err193);
-}
-errors++;
-}
-if(errors === _errs155){
-if(typeof data52 == "number"){
-if(data52 > 65535 || isNaN(data52)){
-const err194 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_parallel_runs/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
-if(vErrors === null){
-vErrors = [err194];
-}
-else {
-vErrors.push(err194);
-}
-errors++;
-}
-else {
-if(data52 < 1 || isNaN(data52)){
-const err195 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_parallel_runs/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err195];
-}
-else {
-vErrors.push(err195);
-}
-errors++;
-}
-else {
-if(!(formats12.validate(data52))){
-const err196 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_parallel_runs/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
-if(vErrors === null){
-vErrors = [err196];
-}
-else {
-vErrors.push(err196);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid18 = _errs155 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_repair_turns !== undefined){
-let data53 = data43.max_repair_turns;
-const _errs157 = errors;
-if(!((typeof data53 == "number") && (!(data53 % 1) && !isNaN(data53)))){
-const err197 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_repair_turns/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err197];
-}
-else {
-vErrors.push(err197);
-}
-errors++;
-}
-if(errors === _errs157){
-if(typeof data53 == "number"){
-if(data53 > 65535 || isNaN(data53)){
-const err198 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_repair_turns/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
-if(vErrors === null){
-vErrors = [err198];
-}
-else {
-vErrors.push(err198);
-}
-errors++;
-}
-else {
-if(data53 < 0 || isNaN(data53)){
-const err199 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_repair_turns/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
-if(vErrors === null){
-vErrors = [err199];
-}
-else {
-vErrors.push(err199);
-}
-errors++;
-}
-else {
-if(!(formats12.validate(data53))){
-const err200 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_repair_turns/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
-if(vErrors === null){
-vErrors = [err200];
-}
-else {
-vErrors.push(err200);
-}
-errors++;
-}
-}
-}
-}
-}
-var valid18 = _errs157 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_tokens !== undefined){
-let data54 = data43.max_tokens;
-const _errs159 = errors;
-const _errs160 = errors;
-let valid21 = false;
-let passing9 = null;
-const _errs161 = errors;
-if(data54 !== null){
-const err201 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
-if(vErrors === null){
-vErrors = [err201];
-}
-else {
-vErrors.push(err201);
-}
-errors++;
-}
-var _valid9 = _errs161 === errors;
-if(_valid9){
-valid21 = true;
-passing9 = 0;
-}
-const _errs163 = errors;
-if(errors === _errs163){
-if(typeof data54 === "string"){
-if(func2(data54) > 19){
-const err202 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
-if(vErrors === null){
-vErrors = [err202];
-}
-else {
-vErrors.push(err202);
-}
-errors++;
-}
-else {
-if(func2(data54) < 1){
-const err203 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
-if(vErrors === null){
-vErrors = [err203];
-}
-else {
-vErrors.push(err203);
-}
-errors++;
-}
-else {
-if(!pattern5.test(data54)){
-const err204 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
-if(vErrors === null){
-vErrors = [err204];
-}
-else {
-vErrors.push(err204);
-}
-errors++;
-}
-}
-}
-}
-else {
-const err205 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err205];
-}
-else {
-vErrors.push(err205);
-}
-errors++;
-}
-}
-var _valid9 = _errs163 === errors;
+var _valid9 = _errs144 === errors;
 if(_valid9 && valid21){
 valid21 = false;
 passing9 = [passing9, 1];
@@ -12269,7 +11764,534 @@ passing9 = 1;
 }
 }
 if(!valid21){
-const err206 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf",keyword:"oneOf",params:{passingSchemas: passing9},message:"must match exactly one schema in oneOf"};
+const err172 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/cost_currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing9},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err172];
+}
+else {
+vErrors.push(err172);
+}
+errors++;
+}
+else {
+errors = _errs141;
+if(vErrors !== null){
+if(_errs141){
+vErrors.length = _errs141;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid20 = _errs140 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.cost_enforcement !== undefined){
+const _errs146 = errors;
+if(!(validate290(data43.cost_enforcement, {instancePath:instancePath+"/budget/cost_enforcement",parentData:data43,parentDataProperty:"cost_enforcement",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate290.errors : vErrors.concat(validate290.errors);
+errors = vErrors.length;
+}
+var valid20 = _errs146 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.max_cost_decimal !== undefined){
+let data46 = data43.max_cost_decimal;
+const _errs147 = errors;
+const _errs148 = errors;
+let valid22 = false;
+let passing10 = null;
+const _errs149 = errors;
+if(data46 !== null){
+const err173 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err173];
+}
+else {
+vErrors.push(err173);
+}
+errors++;
+}
+var _valid10 = _errs149 === errors;
+if(_valid10){
+valid22 = true;
+passing10 = 0;
+}
+const _errs151 = errors;
+if(errors === _errs151){
+if(typeof data46 === "string"){
+if(func2(data46) > 64){
+const err174 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+if(vErrors === null){
+vErrors = [err174];
+}
+else {
+vErrors.push(err174);
+}
+errors++;
+}
+else {
+if(func2(data46) < 1){
+const err175 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(vErrors === null){
+vErrors = [err175];
+}
+else {
+vErrors.push(err175);
+}
+errors++;
+}
+else {
+if(!pattern6.test(data46)){
+const err176 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
+if(vErrors === null){
+vErrors = [err176];
+}
+else {
+vErrors.push(err176);
+}
+errors++;
+}
+}
+}
+}
+else {
+const err177 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err177];
+}
+else {
+vErrors.push(err177);
+}
+errors++;
+}
+}
+var _valid10 = _errs151 === errors;
+if(_valid10 && valid22){
+valid22 = false;
+passing10 = [passing10, 1];
+}
+else {
+if(_valid10){
+valid22 = true;
+passing10 = 1;
+}
+}
+if(!valid22){
+const err178 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cost_decimal/oneOf",keyword:"oneOf",params:{passingSchemas: passing10},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err178];
+}
+else {
+vErrors.push(err178);
+}
+errors++;
+}
+else {
+errors = _errs148;
+if(vErrors !== null){
+if(_errs148){
+vErrors.length = _errs148;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid20 = _errs147 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.max_cpu_seconds !== undefined){
+let data47 = data43.max_cpu_seconds;
+const _errs153 = errors;
+if(errors === _errs153){
+if(typeof data47 === "string"){
+if(func2(data47) > 19){
+const err179 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cpu_seconds/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+if(vErrors === null){
+vErrors = [err179];
+}
+else {
+vErrors.push(err179);
+}
+errors++;
+}
+else {
+if(func2(data47) < 1){
+const err180 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cpu_seconds/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(vErrors === null){
+vErrors = [err180];
+}
+else {
+vErrors.push(err180);
+}
+errors++;
+}
+else {
+if(!pattern5.test(data47)){
+const err181 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cpu_seconds/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
+if(vErrors === null){
+vErrors = [err181];
+}
+else {
+vErrors.push(err181);
+}
+errors++;
+}
+}
+}
+}
+else {
+const err182 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cpu_seconds/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err182];
+}
+else {
+vErrors.push(err182);
+}
+errors++;
+}
+}
+var valid20 = _errs153 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.max_cycles_per_day !== undefined){
+let data48 = data43.max_cycles_per_day;
+const _errs155 = errors;
+if(!((typeof data48 == "number") && (!(data48 % 1) && !isNaN(data48)))){
+const err183 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cycles_per_day/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err183];
+}
+else {
+vErrors.push(err183);
+}
+errors++;
+}
+if(errors === _errs155){
+if(typeof data48 == "number"){
+if(data48 > 65535 || isNaN(data48)){
+const err184 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cycles_per_day/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+if(vErrors === null){
+vErrors = [err184];
+}
+else {
+vErrors.push(err184);
+}
+errors++;
+}
+else {
+if(data48 < 1 || isNaN(data48)){
+const err185 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cycles_per_day/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err185];
+}
+else {
+vErrors.push(err185);
+}
+errors++;
+}
+else {
+if(!(formats12.validate(data48))){
+const err186 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_cycles_per_day/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(vErrors === null){
+vErrors = [err186];
+}
+else {
+vErrors.push(err186);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid20 = _errs155 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.max_experiments !== undefined){
+let data49 = data43.max_experiments;
+const _errs157 = errors;
+if(!((typeof data49 == "number") && (!(data49 % 1) && !isNaN(data49)))){
+const err187 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_experiments/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err187];
+}
+else {
+vErrors.push(err187);
+}
+errors++;
+}
+if(errors === _errs157){
+if(typeof data49 == "number"){
+if(data49 > 4294967295 || isNaN(data49)){
+const err188 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_experiments/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+if(vErrors === null){
+vErrors = [err188];
+}
+else {
+vErrors.push(err188);
+}
+errors++;
+}
+else {
+if(data49 < 1 || isNaN(data49)){
+const err189 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_experiments/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err189];
+}
+else {
+vErrors.push(err189);
+}
+errors++;
+}
+else {
+if(!(formats22.validate(data49))){
+const err190 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_experiments/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+if(vErrors === null){
+vErrors = [err190];
+}
+else {
+vErrors.push(err190);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid20 = _errs157 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.max_memory_mib !== undefined){
+let data50 = data43.max_memory_mib;
+const _errs159 = errors;
+if(!((typeof data50 == "number") && (!(data50 % 1) && !isNaN(data50)))){
+const err191 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_memory_mib/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err191];
+}
+else {
+vErrors.push(err191);
+}
+errors++;
+}
+if(errors === _errs159){
+if(typeof data50 == "number"){
+if(data50 > 4294967295 || isNaN(data50)){
+const err192 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_memory_mib/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+if(vErrors === null){
+vErrors = [err192];
+}
+else {
+vErrors.push(err192);
+}
+errors++;
+}
+else {
+if(data50 < 1 || isNaN(data50)){
+const err193 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_memory_mib/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err193];
+}
+else {
+vErrors.push(err193);
+}
+errors++;
+}
+else {
+if(!(formats22.validate(data50))){
+const err194 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_memory_mib/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+if(vErrors === null){
+vErrors = [err194];
+}
+else {
+vErrors.push(err194);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid20 = _errs159 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.max_output_bytes !== undefined){
+let data51 = data43.max_output_bytes;
+const _errs161 = errors;
+if(errors === _errs161){
+if(typeof data51 === "string"){
+if(func2(data51) > 19){
+const err195 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_output_bytes/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+if(vErrors === null){
+vErrors = [err195];
+}
+else {
+vErrors.push(err195);
+}
+errors++;
+}
+else {
+if(func2(data51) < 1){
+const err196 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_output_bytes/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(vErrors === null){
+vErrors = [err196];
+}
+else {
+vErrors.push(err196);
+}
+errors++;
+}
+else {
+if(!pattern5.test(data51)){
+const err197 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_output_bytes/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
+if(vErrors === null){
+vErrors = [err197];
+}
+else {
+vErrors.push(err197);
+}
+errors++;
+}
+}
+}
+}
+else {
+const err198 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_output_bytes/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err198];
+}
+else {
+vErrors.push(err198);
+}
+errors++;
+}
+}
+var valid20 = _errs161 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.max_parallel_runs !== undefined){
+let data52 = data43.max_parallel_runs;
+const _errs163 = errors;
+if(!((typeof data52 == "number") && (!(data52 % 1) && !isNaN(data52)))){
+const err199 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_parallel_runs/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err199];
+}
+else {
+vErrors.push(err199);
+}
+errors++;
+}
+if(errors === _errs163){
+if(typeof data52 == "number"){
+if(data52 > 65535 || isNaN(data52)){
+const err200 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_parallel_runs/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+if(vErrors === null){
+vErrors = [err200];
+}
+else {
+vErrors.push(err200);
+}
+errors++;
+}
+else {
+if(data52 < 1 || isNaN(data52)){
+const err201 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_parallel_runs/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err201];
+}
+else {
+vErrors.push(err201);
+}
+errors++;
+}
+else {
+if(!(formats12.validate(data52))){
+const err202 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_parallel_runs/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(vErrors === null){
+vErrors = [err202];
+}
+else {
+vErrors.push(err202);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid20 = _errs163 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.max_repair_turns !== undefined){
+let data53 = data43.max_repair_turns;
+const _errs165 = errors;
+if(!((typeof data53 == "number") && (!(data53 % 1) && !isNaN(data53)))){
+const err203 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_repair_turns/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err203];
+}
+else {
+vErrors.push(err203);
+}
+errors++;
+}
+if(errors === _errs165){
+if(typeof data53 == "number"){
+if(data53 > 65535 || isNaN(data53)){
+const err204 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_repair_turns/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+if(vErrors === null){
+vErrors = [err204];
+}
+else {
+vErrors.push(err204);
+}
+errors++;
+}
+else {
+if(data53 < 0 || isNaN(data53)){
+const err205 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_repair_turns/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+if(vErrors === null){
+vErrors = [err205];
+}
+else {
+vErrors.push(err205);
+}
+errors++;
+}
+else {
+if(!(formats12.validate(data53))){
+const err206 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_repair_turns/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err206];
 }
@@ -12278,28 +12300,25 @@ vErrors.push(err206);
 }
 errors++;
 }
-else {
-errors = _errs160;
-if(vErrors !== null){
-if(_errs160){
-vErrors.length = _errs160;
+}
+}
+}
+}
+var valid20 = _errs165 === errors;
 }
 else {
-vErrors = null;
+var valid20 = true;
 }
-}
-}
-var valid18 = _errs159 === errors;
-}
-else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_turns_per_mission !== undefined){
-let data55 = data43.max_turns_per_mission;
-const _errs165 = errors;
-if(!((typeof data55 == "number") && (!(data55 % 1) && !isNaN(data55)))){
-const err207 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_turns_per_mission/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(valid20){
+if(data43.max_tokens !== undefined){
+let data54 = data43.max_tokens;
+const _errs167 = errors;
+const _errs168 = errors;
+let valid23 = false;
+let passing11 = null;
+const _errs169 = errors;
+if(data54 !== null){
+const err207 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err207];
 }
@@ -12308,10 +12327,16 @@ vErrors.push(err207);
 }
 errors++;
 }
-if(errors === _errs165){
-if(typeof data55 == "number"){
-if(data55 > 65535 || isNaN(data55)){
-const err208 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_turns_per_mission/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+var _valid11 = _errs169 === errors;
+if(_valid11){
+valid23 = true;
+passing11 = 0;
+}
+const _errs171 = errors;
+if(errors === _errs171){
+if(typeof data54 === "string"){
+if(func2(data54) > 19){
+const err208 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
 if(vErrors === null){
 vErrors = [err208];
 }
@@ -12321,8 +12346,8 @@ vErrors.push(err208);
 errors++;
 }
 else {
-if(data55 < 1 || isNaN(data55)){
-const err209 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_turns_per_mission/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(func2(data54) < 1){
+const err209 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err209];
 }
@@ -12332,8 +12357,8 @@ vErrors.push(err209);
 errors++;
 }
 else {
-if(!(formats12.validate(data55))){
-const err210 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_turns_per_mission/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(!pattern5.test(data54)){
+const err210 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err210];
 }
@@ -12345,18 +12370,8 @@ errors++;
 }
 }
 }
-}
-var valid18 = _errs165 === errors;
-}
 else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.max_wall_seconds !== undefined){
-let data56 = data43.max_wall_seconds;
-const _errs167 = errors;
-if(!((typeof data56 == "number") && (!(data56 % 1) && !isNaN(data56)))){
-const err211 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_wall_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err211 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err211];
 }
@@ -12365,10 +12380,20 @@ vErrors.push(err211);
 }
 errors++;
 }
-if(errors === _errs167){
-if(typeof data56 == "number"){
-if(data56 > 4294967295 || isNaN(data56)){
-const err212 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_wall_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+}
+var _valid11 = _errs171 === errors;
+if(_valid11 && valid23){
+valid23 = false;
+passing11 = [passing11, 1];
+}
+else {
+if(_valid11){
+valid23 = true;
+passing11 = 1;
+}
+}
+if(!valid23){
+const err212 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_tokens/oneOf",keyword:"oneOf",params:{passingSchemas: passing11},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err212];
 }
@@ -12378,8 +12403,27 @@ vErrors.push(err212);
 errors++;
 }
 else {
-if(data56 < 1 || isNaN(data56)){
-const err213 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_wall_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+errors = _errs168;
+if(vErrors !== null){
+if(_errs168){
+vErrors.length = _errs168;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid20 = _errs167 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.max_turns_per_mission !== undefined){
+let data55 = data43.max_turns_per_mission;
+const _errs173 = errors;
+if(!((typeof data55 == "number") && (!(data55 % 1) && !isNaN(data55)))){
+const err213 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_turns_per_mission/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err213];
 }
@@ -12388,9 +12432,10 @@ vErrors.push(err213);
 }
 errors++;
 }
-else {
-if(!(formats22.validate(data56))){
-const err214 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_wall_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+if(errors === _errs173){
+if(typeof data55 == "number"){
+if(data55 > 65535 || isNaN(data55)){
+const err214 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_turns_per_mission/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
 if(vErrors === null){
 vErrors = [err214];
 }
@@ -12399,21 +12444,9 @@ vErrors.push(err214);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid18 = _errs167 === errors;
-}
 else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.min_cycle_interval_seconds !== undefined){
-let data57 = data43.min_cycle_interval_seconds;
-const _errs169 = errors;
-if(!((typeof data57 == "number") && (!(data57 % 1) && !isNaN(data57)))){
-const err215 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/min_cycle_interval_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(data55 < 1 || isNaN(data55)){
+const err215 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_turns_per_mission/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err215];
 }
@@ -12422,10 +12455,9 @@ vErrors.push(err215);
 }
 errors++;
 }
-if(errors === _errs169){
-if(typeof data57 == "number"){
-if(data57 > 4294967295 || isNaN(data57)){
-const err216 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/min_cycle_interval_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+else {
+if(!(formats12.validate(data55))){
+const err216 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_turns_per_mission/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err216];
 }
@@ -12434,9 +12466,21 @@ vErrors.push(err216);
 }
 errors++;
 }
+}
+}
+}
+}
+var valid20 = _errs173 === errors;
+}
 else {
-if(data57 < 0 || isNaN(data57)){
-const err217 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/min_cycle_interval_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+var valid20 = true;
+}
+if(valid20){
+if(data43.max_wall_seconds !== undefined){
+let data56 = data43.max_wall_seconds;
+const _errs175 = errors;
+if(!((typeof data56 == "number") && (!(data56 % 1) && !isNaN(data56)))){
+const err217 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_wall_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err217];
 }
@@ -12445,9 +12489,10 @@ vErrors.push(err217);
 }
 errors++;
 }
-else {
-if(!(formats22.validate(data57))){
-const err218 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/min_cycle_interval_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+if(errors === _errs175){
+if(typeof data56 == "number"){
+if(data56 > 4294967295 || isNaN(data56)){
+const err218 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_wall_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err218];
 }
@@ -12456,21 +12501,9 @@ vErrors.push(err218);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid18 = _errs169 === errors;
-}
 else {
-var valid18 = true;
-}
-if(valid18){
-if(data43.schema_version !== undefined){
-let data58 = data43.schema_version;
-const _errs171 = errors;
-if(!((typeof data58 == "number") && (!(data58 % 1) && !isNaN(data58)))){
-const err219 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(data56 < 1 || isNaN(data56)){
+const err219 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_wall_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err219];
 }
@@ -12479,8 +12512,9 @@ vErrors.push(err219);
 }
 errors++;
 }
-if(!(data58 === 1)){
-const err220 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[0].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
+else {
+if(!(formats22.validate(data56))){
+const err220 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/max_wall_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
 if(vErrors === null){
 vErrors = [err220];
 }
@@ -12489,10 +12523,21 @@ vErrors.push(err220);
 }
 errors++;
 }
-if(errors === _errs171){
-if(typeof data58 == "number"){
-if(data58 > 1 || isNaN(data58)){
-const err221 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
+}
+}
+}
+}
+var valid20 = _errs175 === errors;
+}
+else {
+var valid20 = true;
+}
+if(valid20){
+if(data43.min_cycle_interval_seconds !== undefined){
+let data57 = data43.min_cycle_interval_seconds;
+const _errs177 = errors;
+if(!((typeof data57 == "number") && (!(data57 % 1) && !isNaN(data57)))){
+const err221 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/min_cycle_interval_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err221];
 }
@@ -12501,9 +12546,10 @@ vErrors.push(err221);
 }
 errors++;
 }
-else {
-if(data58 < 1 || isNaN(data58)){
-const err222 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(errors === _errs177){
+if(typeof data57 == "number"){
+if(data57 > 4294967295 || isNaN(data57)){
+const err222 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/min_cycle_interval_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err222];
 }
@@ -12512,33 +12558,9 @@ vErrors.push(err222);
 }
 errors++;
 }
-}
-}
-}
-var valid18 = _errs171 === errors;
-}
 else {
-var valid18 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err223 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(data57 < 0 || isNaN(data57)){
+const err223 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/min_cycle_interval_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err223];
 }
@@ -12547,19 +12569,9 @@ vErrors.push(err223);
 }
 errors++;
 }
-}
-var valid17 = _errs129 === errors;
-if(valid17){
-const _errs173 = errors;
-const _errs174 = errors;
-let valid22 = false;
-let passing10 = null;
-const _errs175 = errors;
-if(errors === _errs175){
-if(data43 && typeof data43 == "object" && !Array.isArray(data43)){
-let missing8;
-if((data43.cost_enforcement === undefined) && (missing8 = "cost_enforcement")){
-const err224 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/required",keyword:"required",params:{missingProperty: missing8},message:"must have required property '"+missing8+"'"};
+else {
+if(!(formats22.validate(data57))){
+const err224 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/min_cycle_interval_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
 if(vErrors === null){
 vErrors = [err224];
 }
@@ -12568,11 +12580,21 @@ vErrors.push(err224);
 }
 errors++;
 }
+}
+}
+}
+}
+var valid20 = _errs177 === errors;
+}
 else {
-if(data43.cost_currency !== undefined){
-const _errs177 = errors;
-if(data43.cost_currency !== null){
-const err225 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/properties/cost_currency/type",keyword:"type",params:{type: "null"},message:"must be null"};
+var valid20 = true;
+}
+if(valid20){
+if(data43.schema_version !== undefined){
+let data58 = data43.schema_version;
+const _errs179 = errors;
+if(!((typeof data58 == "number") && (!(data58 % 1) && !isNaN(data58)))){
+const err225 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err225];
 }
@@ -12581,17 +12603,8 @@ vErrors.push(err225);
 }
 errors++;
 }
-var valid23 = _errs177 === errors;
-}
-else {
-var valid23 = true;
-}
-if(valid23){
-if(data43.cost_enforcement !== undefined){
-let data60 = data43.cost_enforcement;
-const _errs179 = errors;
-if(typeof data60 !== "string"){
-const err226 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!(data58 === 1)){
+const err226 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[0].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err226];
 }
@@ -12600,8 +12613,10 @@ vErrors.push(err226);
 }
 errors++;
 }
-if(!(data60 === "UNAVAILABLE")){
-const err227 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[1].oneOf[0].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
+if(errors === _errs179){
+if(typeof data58 == "number"){
+if(data58 > 1 || isNaN(data58)){
+const err227 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
 if(vErrors === null){
 vErrors = [err227];
 }
@@ -12610,16 +12625,9 @@ vErrors.push(err227);
 }
 errors++;
 }
-var valid23 = _errs179 === errors;
-}
 else {
-var valid23 = true;
-}
-if(valid23){
-if(data43.max_cost_decimal !== undefined){
-const _errs181 = errors;
-if(data43.max_cost_decimal !== null){
-const err228 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/properties/max_cost_decimal/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(data58 < 1 || isNaN(data58)){
+const err228 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/1/properties/budget/allOf/0/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err228];
 }
@@ -12628,17 +12636,33 @@ vErrors.push(err228);
 }
 errors++;
 }
-var valid23 = _errs181 === errors;
+}
+}
+}
+var valid20 = _errs179 === errors;
 }
 else {
-var valid23 = true;
+var valid20 = true;
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
 }
 }
 }
 }
 }
 else {
-const err229 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err229 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err229];
 }
@@ -12648,21 +12672,18 @@ vErrors.push(err229);
 errors++;
 }
 }
-var _valid10 = _errs175 === errors;
-if(_valid10){
-valid22 = true;
-passing10 = 0;
-var props2 = {};
-props2.cost_currency = true;
-props2.cost_enforcement = true;
-props2.max_cost_decimal = true;
-}
+var valid19 = _errs137 === errors;
+if(valid19){
+const _errs181 = errors;
+const _errs182 = errors;
+let valid24 = false;
+let passing12 = null;
 const _errs183 = errors;
 if(errors === _errs183){
 if(data43 && typeof data43 == "object" && !Array.isArray(data43)){
-let missing9;
-if((((data43.cost_enforcement === undefined) && (missing9 = "cost_enforcement")) || ((data43.max_cost_decimal === undefined) && (missing9 = "max_cost_decimal"))) || ((data43.cost_currency === undefined) && (missing9 = "cost_currency"))){
-const err230 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/required",keyword:"required",params:{missingProperty: missing9},message:"must have required property '"+missing9+"'"};
+let missing8;
+if((data43.cost_enforcement === undefined) && (missing8 = "cost_enforcement")){
+const err230 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/required",keyword:"required",params:{missingProperty: missing8},message:"must have required property '"+missing8+"'"};
 if(vErrors === null){
 vErrors = [err230];
 }
@@ -12673,10 +12694,9 @@ errors++;
 }
 else {
 if(data43.cost_currency !== undefined){
-let data62 = data43.cost_currency;
 const _errs185 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data62 === "AED") || (data62 === "AFN")) || (data62 === "ALL")) || (data62 === "AMD")) || (data62 === "AOA")) || (data62 === "ARS")) || (data62 === "AUD")) || (data62 === "AWG")) || (data62 === "AZN")) || (data62 === "BAM")) || (data62 === "BBD")) || (data62 === "BDT")) || (data62 === "BGN")) || (data62 === "BHD")) || (data62 === "BIF")) || (data62 === "BMD")) || (data62 === "BND")) || (data62 === "BOB")) || (data62 === "BOV")) || (data62 === "BRL")) || (data62 === "BSD")) || (data62 === "BTN")) || (data62 === "BWP")) || (data62 === "BYN")) || (data62 === "BZD")) || (data62 === "CAD")) || (data62 === "CDF")) || (data62 === "CHE")) || (data62 === "CHF")) || (data62 === "CHW")) || (data62 === "CLF")) || (data62 === "CLP")) || (data62 === "CNY")) || (data62 === "COP")) || (data62 === "COU")) || (data62 === "CRC")) || (data62 === "CUC")) || (data62 === "CUP")) || (data62 === "CVE")) || (data62 === "CZK")) || (data62 === "DJF")) || (data62 === "DKK")) || (data62 === "DOP")) || (data62 === "DZD")) || (data62 === "EGP")) || (data62 === "ERN")) || (data62 === "ETB")) || (data62 === "EUR")) || (data62 === "FJD")) || (data62 === "FKP")) || (data62 === "GBP")) || (data62 === "GEL")) || (data62 === "GHS")) || (data62 === "GIP")) || (data62 === "GMD")) || (data62 === "GNF")) || (data62 === "GTQ")) || (data62 === "GYD")) || (data62 === "HKD")) || (data62 === "HNL")) || (data62 === "HRK")) || (data62 === "HTG")) || (data62 === "HUF")) || (data62 === "IDR")) || (data62 === "ILS")) || (data62 === "INR")) || (data62 === "IQD")) || (data62 === "IRR")) || (data62 === "ISK")) || (data62 === "JMD")) || (data62 === "JOD")) || (data62 === "JPY")) || (data62 === "KES")) || (data62 === "KGS")) || (data62 === "KHR")) || (data62 === "KMF")) || (data62 === "KPW")) || (data62 === "KRW")) || (data62 === "KWD")) || (data62 === "KYD")) || (data62 === "KZT")) || (data62 === "LAK")) || (data62 === "LBP")) || (data62 === "LKR")) || (data62 === "LRD")) || (data62 === "LSL")) || (data62 === "LYD")) || (data62 === "MAD")) || (data62 === "MDL")) || (data62 === "MGA")) || (data62 === "MKD")) || (data62 === "MMK")) || (data62 === "MNT")) || (data62 === "MOP")) || (data62 === "MRU")) || (data62 === "MUR")) || (data62 === "MVR")) || (data62 === "MWK")) || (data62 === "MXN")) || (data62 === "MXV")) || (data62 === "MYR")) || (data62 === "MZN")) || (data62 === "NAD")) || (data62 === "NGN")) || (data62 === "NIO")) || (data62 === "NOK")) || (data62 === "NPR")) || (data62 === "NZD")) || (data62 === "OMR")) || (data62 === "PAB")) || (data62 === "PEN")) || (data62 === "PGK")) || (data62 === "PHP")) || (data62 === "PKR")) || (data62 === "PLN")) || (data62 === "PYG")) || (data62 === "QAR")) || (data62 === "RON")) || (data62 === "RSD")) || (data62 === "RUB")) || (data62 === "RWF")) || (data62 === "SAR")) || (data62 === "SBD")) || (data62 === "SCR")) || (data62 === "SDG")) || (data62 === "SEK")) || (data62 === "SGD")) || (data62 === "SHP")) || (data62 === "SLE")) || (data62 === "SLL")) || (data62 === "SOS")) || (data62 === "SRD")) || (data62 === "SSP")) || (data62 === "STN")) || (data62 === "SVC")) || (data62 === "SYP")) || (data62 === "SZL")) || (data62 === "THB")) || (data62 === "TJS")) || (data62 === "TMT")) || (data62 === "TND")) || (data62 === "TOP")) || (data62 === "TRY")) || (data62 === "TTD")) || (data62 === "TWD")) || (data62 === "TZS")) || (data62 === "UAH")) || (data62 === "UGX")) || (data62 === "USD")) || (data62 === "USN")) || (data62 === "UYI")) || (data62 === "UYU")) || (data62 === "UYW")) || (data62 === "UZS")) || (data62 === "VED")) || (data62 === "VES")) || (data62 === "VND")) || (data62 === "VUV")) || (data62 === "WST")) || (data62 === "XAD")) || (data62 === "XAF")) || (data62 === "XAG")) || (data62 === "XAU")) || (data62 === "XBA")) || (data62 === "XBB")) || (data62 === "XBC")) || (data62 === "XBD")) || (data62 === "XCD")) || (data62 === "XCG")) || (data62 === "XDR")) || (data62 === "XOF")) || (data62 === "XPD")) || (data62 === "XPF")) || (data62 === "XPT")) || (data62 === "XSU")) || (data62 === "XTS")) || (data62 === "XUA")) || (data62 === "XXX")) || (data62 === "YER")) || (data62 === "ZAR")) || (data62 === "ZMW")) || (data62 === "ZWG")) || (data62 === "ZWL"))){
-const err231 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[1].oneOf[1].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
+if(data43.cost_currency !== null){
+const err231 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/properties/cost_currency/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err231];
 }
@@ -12685,10 +12705,17 @@ vErrors.push(err231);
 }
 errors++;
 }
-if(errors === _errs185){
-if(typeof data62 === "string"){
-if(func2(data62) > 3){
-const err232 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+var valid25 = _errs185 === errors;
+}
+else {
+var valid25 = true;
+}
+if(valid25){
+if(data43.cost_enforcement !== undefined){
+let data60 = data43.cost_enforcement;
+const _errs187 = errors;
+if(typeof data60 !== "string"){
+const err232 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err232];
 }
@@ -12697,9 +12724,8 @@ vErrors.push(err232);
 }
 errors++;
 }
-else {
-if(func2(data62) < 3){
-const err233 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+if(!(data60 === "UNAVAILABLE")){
+const err233 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[1].oneOf[0].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err233];
 }
@@ -12708,10 +12734,16 @@ vErrors.push(err233);
 }
 errors++;
 }
-}
+var valid25 = _errs187 === errors;
 }
 else {
-const err234 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
+var valid25 = true;
+}
+if(valid25){
+if(data43.max_cost_decimal !== undefined){
+const _errs189 = errors;
+if(data43.max_cost_decimal !== null){
+const err234 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/properties/max_cost_decimal/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err234];
 }
@@ -12720,18 +12752,17 @@ vErrors.push(err234);
 }
 errors++;
 }
-}
-var valid24 = _errs185 === errors;
+var valid25 = _errs189 === errors;
 }
 else {
-var valid24 = true;
+var valid25 = true;
 }
-if(valid24){
-if(data43.cost_enforcement !== undefined){
-let data63 = data43.cost_enforcement;
-const _errs187 = errors;
-if(typeof data63 !== "string"){
-const err235 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
+}
+}
+}
+}
+else {
+const err235 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err235];
 }
@@ -12740,8 +12771,22 @@ vErrors.push(err235);
 }
 errors++;
 }
-if(!(data63 === "ESTIMATED")){
-const err236 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[1].oneOf[1].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
+}
+var _valid12 = _errs183 === errors;
+if(_valid12){
+valid24 = true;
+passing12 = 0;
+var props2 = {};
+props2.cost_currency = true;
+props2.cost_enforcement = true;
+props2.max_cost_decimal = true;
+}
+const _errs191 = errors;
+if(errors === _errs191){
+if(data43 && typeof data43 == "object" && !Array.isArray(data43)){
+let missing9;
+if((((data43.cost_enforcement === undefined) && (missing9 = "cost_enforcement")) || ((data43.max_cost_decimal === undefined) && (missing9 = "max_cost_decimal"))) || ((data43.cost_currency === undefined) && (missing9 = "cost_currency"))){
+const err236 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/required",keyword:"required",params:{missingProperty: missing9},message:"must have required property '"+missing9+"'"};
 if(vErrors === null){
 vErrors = [err236];
 }
@@ -12750,20 +12795,12 @@ vErrors.push(err236);
 }
 errors++;
 }
-var valid24 = _errs187 === errors;
-}
 else {
-var valid24 = true;
-}
-if(valid24){
-if(data43.max_cost_decimal !== undefined){
-let data64 = data43.max_cost_decimal;
-const _errs189 = errors;
-const _errs190 = errors;
-if(errors === _errs190){
-if(typeof data64 === "string"){
-if(func2(data64) > 64){
-const err237 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+if(data43.cost_currency !== undefined){
+let data62 = data43.cost_currency;
+const _errs193 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data62 === "AED") || (data62 === "AFN")) || (data62 === "ALL")) || (data62 === "AMD")) || (data62 === "AOA")) || (data62 === "ARS")) || (data62 === "AUD")) || (data62 === "AWG")) || (data62 === "AZN")) || (data62 === "BAM")) || (data62 === "BBD")) || (data62 === "BDT")) || (data62 === "BGN")) || (data62 === "BHD")) || (data62 === "BIF")) || (data62 === "BMD")) || (data62 === "BND")) || (data62 === "BOB")) || (data62 === "BOV")) || (data62 === "BRL")) || (data62 === "BSD")) || (data62 === "BTN")) || (data62 === "BWP")) || (data62 === "BYN")) || (data62 === "BZD")) || (data62 === "CAD")) || (data62 === "CDF")) || (data62 === "CHE")) || (data62 === "CHF")) || (data62 === "CHW")) || (data62 === "CLF")) || (data62 === "CLP")) || (data62 === "CNY")) || (data62 === "COP")) || (data62 === "COU")) || (data62 === "CRC")) || (data62 === "CUC")) || (data62 === "CUP")) || (data62 === "CVE")) || (data62 === "CZK")) || (data62 === "DJF")) || (data62 === "DKK")) || (data62 === "DOP")) || (data62 === "DZD")) || (data62 === "EGP")) || (data62 === "ERN")) || (data62 === "ETB")) || (data62 === "EUR")) || (data62 === "FJD")) || (data62 === "FKP")) || (data62 === "GBP")) || (data62 === "GEL")) || (data62 === "GHS")) || (data62 === "GIP")) || (data62 === "GMD")) || (data62 === "GNF")) || (data62 === "GTQ")) || (data62 === "GYD")) || (data62 === "HKD")) || (data62 === "HNL")) || (data62 === "HRK")) || (data62 === "HTG")) || (data62 === "HUF")) || (data62 === "IDR")) || (data62 === "ILS")) || (data62 === "INR")) || (data62 === "IQD")) || (data62 === "IRR")) || (data62 === "ISK")) || (data62 === "JMD")) || (data62 === "JOD")) || (data62 === "JPY")) || (data62 === "KES")) || (data62 === "KGS")) || (data62 === "KHR")) || (data62 === "KMF")) || (data62 === "KPW")) || (data62 === "KRW")) || (data62 === "KWD")) || (data62 === "KYD")) || (data62 === "KZT")) || (data62 === "LAK")) || (data62 === "LBP")) || (data62 === "LKR")) || (data62 === "LRD")) || (data62 === "LSL")) || (data62 === "LYD")) || (data62 === "MAD")) || (data62 === "MDL")) || (data62 === "MGA")) || (data62 === "MKD")) || (data62 === "MMK")) || (data62 === "MNT")) || (data62 === "MOP")) || (data62 === "MRU")) || (data62 === "MUR")) || (data62 === "MVR")) || (data62 === "MWK")) || (data62 === "MXN")) || (data62 === "MXV")) || (data62 === "MYR")) || (data62 === "MZN")) || (data62 === "NAD")) || (data62 === "NGN")) || (data62 === "NIO")) || (data62 === "NOK")) || (data62 === "NPR")) || (data62 === "NZD")) || (data62 === "OMR")) || (data62 === "PAB")) || (data62 === "PEN")) || (data62 === "PGK")) || (data62 === "PHP")) || (data62 === "PKR")) || (data62 === "PLN")) || (data62 === "PYG")) || (data62 === "QAR")) || (data62 === "RON")) || (data62 === "RSD")) || (data62 === "RUB")) || (data62 === "RWF")) || (data62 === "SAR")) || (data62 === "SBD")) || (data62 === "SCR")) || (data62 === "SDG")) || (data62 === "SEK")) || (data62 === "SGD")) || (data62 === "SHP")) || (data62 === "SLE")) || (data62 === "SLL")) || (data62 === "SOS")) || (data62 === "SRD")) || (data62 === "SSP")) || (data62 === "STN")) || (data62 === "SVC")) || (data62 === "SYP")) || (data62 === "SZL")) || (data62 === "THB")) || (data62 === "TJS")) || (data62 === "TMT")) || (data62 === "TND")) || (data62 === "TOP")) || (data62 === "TRY")) || (data62 === "TTD")) || (data62 === "TWD")) || (data62 === "TZS")) || (data62 === "UAH")) || (data62 === "UGX")) || (data62 === "USD")) || (data62 === "USN")) || (data62 === "UYI")) || (data62 === "UYU")) || (data62 === "UYW")) || (data62 === "UZS")) || (data62 === "VED")) || (data62 === "VES")) || (data62 === "VND")) || (data62 === "VUV")) || (data62 === "WST")) || (data62 === "XAD")) || (data62 === "XAF")) || (data62 === "XAG")) || (data62 === "XAU")) || (data62 === "XBA")) || (data62 === "XBB")) || (data62 === "XBC")) || (data62 === "XBD")) || (data62 === "XCD")) || (data62 === "XCG")) || (data62 === "XDR")) || (data62 === "XOF")) || (data62 === "XPD")) || (data62 === "XPF")) || (data62 === "XPT")) || (data62 === "XSU")) || (data62 === "XTS")) || (data62 === "XUA")) || (data62 === "XXX")) || (data62 === "YER")) || (data62 === "ZAR")) || (data62 === "ZMW")) || (data62 === "ZWG")) || (data62 === "ZWL"))){
+const err237 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[1].oneOf[1].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err237];
 }
@@ -12772,9 +12809,10 @@ vErrors.push(err237);
 }
 errors++;
 }
-else {
-if(func2(data64) < 1){
-const err238 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(errors === _errs193){
+if(typeof data62 === "string"){
+if(func2(data62) > 3){
+const err238 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err238];
 }
@@ -12784,8 +12822,8 @@ vErrors.push(err238);
 errors++;
 }
 else {
-if(!pattern6.test(data64)){
-const err239 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
+if(func2(data62) < 3){
+const err239 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err239];
 }
@@ -12796,9 +12834,8 @@ errors++;
 }
 }
 }
-}
 else {
-const err240 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err240 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err240];
 }
@@ -12808,13 +12845,17 @@ vErrors.push(err240);
 errors++;
 }
 }
-var valid25 = _errs190 === errors;
-if(valid25){
-const _errs192 = errors;
-if(errors === _errs192){
-if(typeof data64 === "string"){
-if(!pattern13.test(data64)){
-const err241 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
+var valid26 = _errs193 === errors;
+}
+else {
+var valid26 = true;
+}
+if(valid26){
+if(data43.cost_enforcement !== undefined){
+let data63 = data43.cost_enforcement;
+const _errs195 = errors;
+if(typeof data63 !== "string"){
+const err241 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err241];
 }
@@ -12823,9 +12864,8 @@ vErrors.push(err241);
 }
 errors++;
 }
-}
-else {
-const err242 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!(data63 === "ESTIMATED")){
+const err242 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[1].oneOf[1].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err242];
 }
@@ -12834,20 +12874,20 @@ vErrors.push(err242);
 }
 errors++;
 }
-}
-var valid25 = _errs192 === errors;
-}
-var valid24 = _errs189 === errors;
+var valid26 = _errs195 === errors;
 }
 else {
-var valid24 = true;
+var valid26 = true;
 }
-}
-}
-}
-}
-else {
-const err243 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(valid26){
+if(data43.max_cost_decimal !== undefined){
+let data64 = data43.max_cost_decimal;
+const _errs197 = errors;
+const _errs198 = errors;
+if(errors === _errs198){
+if(typeof data64 === "string"){
+if(func2(data64) > 64){
+const err243 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
 if(vErrors === null){
 vErrors = [err243];
 }
@@ -12856,29 +12896,9 @@ vErrors.push(err243);
 }
 errors++;
 }
-}
-var _valid10 = _errs183 === errors;
-if(_valid10 && valid22){
-valid22 = false;
-passing10 = [passing10, 1];
-}
 else {
-if(_valid10){
-valid22 = true;
-passing10 = 1;
-if(props2 !== true){
-props2 = props2 || {};
-props2.cost_currency = true;
-props2.cost_enforcement = true;
-props2.max_cost_decimal = true;
-}
-}
-const _errs194 = errors;
-if(errors === _errs194){
-if(data43 && typeof data43 == "object" && !Array.isArray(data43)){
-let missing10;
-if((((data43.cost_enforcement === undefined) && (missing10 = "cost_enforcement")) || ((data43.max_cost_decimal === undefined) && (missing10 = "max_cost_decimal"))) || ((data43.cost_currency === undefined) && (missing10 = "cost_currency"))){
-const err244 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/required",keyword:"required",params:{missingProperty: missing10},message:"must have required property '"+missing10+"'"};
+if(func2(data64) < 1){
+const err244 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err244];
 }
@@ -12888,11 +12908,8 @@ vErrors.push(err244);
 errors++;
 }
 else {
-if(data43.cost_currency !== undefined){
-let data65 = data43.cost_currency;
-const _errs196 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data65 === "AED") || (data65 === "AFN")) || (data65 === "ALL")) || (data65 === "AMD")) || (data65 === "AOA")) || (data65 === "ARS")) || (data65 === "AUD")) || (data65 === "AWG")) || (data65 === "AZN")) || (data65 === "BAM")) || (data65 === "BBD")) || (data65 === "BDT")) || (data65 === "BGN")) || (data65 === "BHD")) || (data65 === "BIF")) || (data65 === "BMD")) || (data65 === "BND")) || (data65 === "BOB")) || (data65 === "BOV")) || (data65 === "BRL")) || (data65 === "BSD")) || (data65 === "BTN")) || (data65 === "BWP")) || (data65 === "BYN")) || (data65 === "BZD")) || (data65 === "CAD")) || (data65 === "CDF")) || (data65 === "CHE")) || (data65 === "CHF")) || (data65 === "CHW")) || (data65 === "CLF")) || (data65 === "CLP")) || (data65 === "CNY")) || (data65 === "COP")) || (data65 === "COU")) || (data65 === "CRC")) || (data65 === "CUC")) || (data65 === "CUP")) || (data65 === "CVE")) || (data65 === "CZK")) || (data65 === "DJF")) || (data65 === "DKK")) || (data65 === "DOP")) || (data65 === "DZD")) || (data65 === "EGP")) || (data65 === "ERN")) || (data65 === "ETB")) || (data65 === "EUR")) || (data65 === "FJD")) || (data65 === "FKP")) || (data65 === "GBP")) || (data65 === "GEL")) || (data65 === "GHS")) || (data65 === "GIP")) || (data65 === "GMD")) || (data65 === "GNF")) || (data65 === "GTQ")) || (data65 === "GYD")) || (data65 === "HKD")) || (data65 === "HNL")) || (data65 === "HRK")) || (data65 === "HTG")) || (data65 === "HUF")) || (data65 === "IDR")) || (data65 === "ILS")) || (data65 === "INR")) || (data65 === "IQD")) || (data65 === "IRR")) || (data65 === "ISK")) || (data65 === "JMD")) || (data65 === "JOD")) || (data65 === "JPY")) || (data65 === "KES")) || (data65 === "KGS")) || (data65 === "KHR")) || (data65 === "KMF")) || (data65 === "KPW")) || (data65 === "KRW")) || (data65 === "KWD")) || (data65 === "KYD")) || (data65 === "KZT")) || (data65 === "LAK")) || (data65 === "LBP")) || (data65 === "LKR")) || (data65 === "LRD")) || (data65 === "LSL")) || (data65 === "LYD")) || (data65 === "MAD")) || (data65 === "MDL")) || (data65 === "MGA")) || (data65 === "MKD")) || (data65 === "MMK")) || (data65 === "MNT")) || (data65 === "MOP")) || (data65 === "MRU")) || (data65 === "MUR")) || (data65 === "MVR")) || (data65 === "MWK")) || (data65 === "MXN")) || (data65 === "MXV")) || (data65 === "MYR")) || (data65 === "MZN")) || (data65 === "NAD")) || (data65 === "NGN")) || (data65 === "NIO")) || (data65 === "NOK")) || (data65 === "NPR")) || (data65 === "NZD")) || (data65 === "OMR")) || (data65 === "PAB")) || (data65 === "PEN")) || (data65 === "PGK")) || (data65 === "PHP")) || (data65 === "PKR")) || (data65 === "PLN")) || (data65 === "PYG")) || (data65 === "QAR")) || (data65 === "RON")) || (data65 === "RSD")) || (data65 === "RUB")) || (data65 === "RWF")) || (data65 === "SAR")) || (data65 === "SBD")) || (data65 === "SCR")) || (data65 === "SDG")) || (data65 === "SEK")) || (data65 === "SGD")) || (data65 === "SHP")) || (data65 === "SLE")) || (data65 === "SLL")) || (data65 === "SOS")) || (data65 === "SRD")) || (data65 === "SSP")) || (data65 === "STN")) || (data65 === "SVC")) || (data65 === "SYP")) || (data65 === "SZL")) || (data65 === "THB")) || (data65 === "TJS")) || (data65 === "TMT")) || (data65 === "TND")) || (data65 === "TOP")) || (data65 === "TRY")) || (data65 === "TTD")) || (data65 === "TWD")) || (data65 === "TZS")) || (data65 === "UAH")) || (data65 === "UGX")) || (data65 === "USD")) || (data65 === "USN")) || (data65 === "UYI")) || (data65 === "UYU")) || (data65 === "UYW")) || (data65 === "UZS")) || (data65 === "VED")) || (data65 === "VES")) || (data65 === "VND")) || (data65 === "VUV")) || (data65 === "WST")) || (data65 === "XAD")) || (data65 === "XAF")) || (data65 === "XAG")) || (data65 === "XAU")) || (data65 === "XBA")) || (data65 === "XBB")) || (data65 === "XBC")) || (data65 === "XBD")) || (data65 === "XCD")) || (data65 === "XCG")) || (data65 === "XDR")) || (data65 === "XOF")) || (data65 === "XPD")) || (data65 === "XPF")) || (data65 === "XPT")) || (data65 === "XSU")) || (data65 === "XTS")) || (data65 === "XUA")) || (data65 === "XXX")) || (data65 === "YER")) || (data65 === "ZAR")) || (data65 === "ZMW")) || (data65 === "ZWG")) || (data65 === "ZWL"))){
-const err245 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[1].oneOf[2].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
+if(!pattern6.test(data64)){
+const err245 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err245];
 }
@@ -12901,10 +12918,11 @@ vErrors.push(err245);
 }
 errors++;
 }
-if(errors === _errs196){
-if(typeof data65 === "string"){
-if(func2(data65) > 3){
-const err246 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+}
+}
+}
+else {
+const err246 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err246];
 }
@@ -12913,9 +12931,14 @@ vErrors.push(err246);
 }
 errors++;
 }
-else {
-if(func2(data65) < 3){
-const err247 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+}
+var valid27 = _errs198 === errors;
+if(valid27){
+const _errs200 = errors;
+if(errors === _errs200){
+if(typeof data64 === "string"){
+if(!pattern13.test(data64)){
+const err247 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
 if(vErrors === null){
 vErrors = [err247];
 }
@@ -12925,9 +12948,8 @@ vErrors.push(err247);
 errors++;
 }
 }
-}
 else {
-const err248 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err248 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err248];
 }
@@ -12937,17 +12959,19 @@ vErrors.push(err248);
 errors++;
 }
 }
-var valid26 = _errs196 === errors;
+var valid27 = _errs200 === errors;
+}
+var valid26 = _errs197 === errors;
 }
 else {
 var valid26 = true;
 }
-if(valid26){
-if(data43.cost_enforcement !== undefined){
-let data66 = data43.cost_enforcement;
-const _errs198 = errors;
-if(typeof data66 !== "string"){
-const err249 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
+}
+}
+}
+}
+else {
+const err249 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err249];
 }
@@ -12956,8 +12980,29 @@ vErrors.push(err249);
 }
 errors++;
 }
-if(!(data66 === "EXACT")){
-const err250 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[1].oneOf[2].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
+}
+var _valid12 = _errs191 === errors;
+if(_valid12 && valid24){
+valid24 = false;
+passing12 = [passing12, 1];
+}
+else {
+if(_valid12){
+valid24 = true;
+passing12 = 1;
+if(props2 !== true){
+props2 = props2 || {};
+props2.cost_currency = true;
+props2.cost_enforcement = true;
+props2.max_cost_decimal = true;
+}
+}
+const _errs202 = errors;
+if(errors === _errs202){
+if(data43 && typeof data43 == "object" && !Array.isArray(data43)){
+let missing10;
+if((((data43.cost_enforcement === undefined) && (missing10 = "cost_enforcement")) || ((data43.max_cost_decimal === undefined) && (missing10 = "max_cost_decimal"))) || ((data43.cost_currency === undefined) && (missing10 = "cost_currency"))){
+const err250 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/required",keyword:"required",params:{missingProperty: missing10},message:"must have required property '"+missing10+"'"};
 if(vErrors === null){
 vErrors = [err250];
 }
@@ -12966,20 +13011,12 @@ vErrors.push(err250);
 }
 errors++;
 }
-var valid26 = _errs198 === errors;
-}
 else {
-var valid26 = true;
-}
-if(valid26){
-if(data43.max_cost_decimal !== undefined){
-let data67 = data43.max_cost_decimal;
-const _errs200 = errors;
-const _errs201 = errors;
-if(errors === _errs201){
-if(typeof data67 === "string"){
-if(func2(data67) > 64){
-const err251 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+if(data43.cost_currency !== undefined){
+let data65 = data43.cost_currency;
+const _errs204 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data65 === "AED") || (data65 === "AFN")) || (data65 === "ALL")) || (data65 === "AMD")) || (data65 === "AOA")) || (data65 === "ARS")) || (data65 === "AUD")) || (data65 === "AWG")) || (data65 === "AZN")) || (data65 === "BAM")) || (data65 === "BBD")) || (data65 === "BDT")) || (data65 === "BGN")) || (data65 === "BHD")) || (data65 === "BIF")) || (data65 === "BMD")) || (data65 === "BND")) || (data65 === "BOB")) || (data65 === "BOV")) || (data65 === "BRL")) || (data65 === "BSD")) || (data65 === "BTN")) || (data65 === "BWP")) || (data65 === "BYN")) || (data65 === "BZD")) || (data65 === "CAD")) || (data65 === "CDF")) || (data65 === "CHE")) || (data65 === "CHF")) || (data65 === "CHW")) || (data65 === "CLF")) || (data65 === "CLP")) || (data65 === "CNY")) || (data65 === "COP")) || (data65 === "COU")) || (data65 === "CRC")) || (data65 === "CUC")) || (data65 === "CUP")) || (data65 === "CVE")) || (data65 === "CZK")) || (data65 === "DJF")) || (data65 === "DKK")) || (data65 === "DOP")) || (data65 === "DZD")) || (data65 === "EGP")) || (data65 === "ERN")) || (data65 === "ETB")) || (data65 === "EUR")) || (data65 === "FJD")) || (data65 === "FKP")) || (data65 === "GBP")) || (data65 === "GEL")) || (data65 === "GHS")) || (data65 === "GIP")) || (data65 === "GMD")) || (data65 === "GNF")) || (data65 === "GTQ")) || (data65 === "GYD")) || (data65 === "HKD")) || (data65 === "HNL")) || (data65 === "HRK")) || (data65 === "HTG")) || (data65 === "HUF")) || (data65 === "IDR")) || (data65 === "ILS")) || (data65 === "INR")) || (data65 === "IQD")) || (data65 === "IRR")) || (data65 === "ISK")) || (data65 === "JMD")) || (data65 === "JOD")) || (data65 === "JPY")) || (data65 === "KES")) || (data65 === "KGS")) || (data65 === "KHR")) || (data65 === "KMF")) || (data65 === "KPW")) || (data65 === "KRW")) || (data65 === "KWD")) || (data65 === "KYD")) || (data65 === "KZT")) || (data65 === "LAK")) || (data65 === "LBP")) || (data65 === "LKR")) || (data65 === "LRD")) || (data65 === "LSL")) || (data65 === "LYD")) || (data65 === "MAD")) || (data65 === "MDL")) || (data65 === "MGA")) || (data65 === "MKD")) || (data65 === "MMK")) || (data65 === "MNT")) || (data65 === "MOP")) || (data65 === "MRU")) || (data65 === "MUR")) || (data65 === "MVR")) || (data65 === "MWK")) || (data65 === "MXN")) || (data65 === "MXV")) || (data65 === "MYR")) || (data65 === "MZN")) || (data65 === "NAD")) || (data65 === "NGN")) || (data65 === "NIO")) || (data65 === "NOK")) || (data65 === "NPR")) || (data65 === "NZD")) || (data65 === "OMR")) || (data65 === "PAB")) || (data65 === "PEN")) || (data65 === "PGK")) || (data65 === "PHP")) || (data65 === "PKR")) || (data65 === "PLN")) || (data65 === "PYG")) || (data65 === "QAR")) || (data65 === "RON")) || (data65 === "RSD")) || (data65 === "RUB")) || (data65 === "RWF")) || (data65 === "SAR")) || (data65 === "SBD")) || (data65 === "SCR")) || (data65 === "SDG")) || (data65 === "SEK")) || (data65 === "SGD")) || (data65 === "SHP")) || (data65 === "SLE")) || (data65 === "SLL")) || (data65 === "SOS")) || (data65 === "SRD")) || (data65 === "SSP")) || (data65 === "STN")) || (data65 === "SVC")) || (data65 === "SYP")) || (data65 === "SZL")) || (data65 === "THB")) || (data65 === "TJS")) || (data65 === "TMT")) || (data65 === "TND")) || (data65 === "TOP")) || (data65 === "TRY")) || (data65 === "TTD")) || (data65 === "TWD")) || (data65 === "TZS")) || (data65 === "UAH")) || (data65 === "UGX")) || (data65 === "USD")) || (data65 === "USN")) || (data65 === "UYI")) || (data65 === "UYU")) || (data65 === "UYW")) || (data65 === "UZS")) || (data65 === "VED")) || (data65 === "VES")) || (data65 === "VND")) || (data65 === "VUV")) || (data65 === "WST")) || (data65 === "XAD")) || (data65 === "XAF")) || (data65 === "XAG")) || (data65 === "XAU")) || (data65 === "XBA")) || (data65 === "XBB")) || (data65 === "XBC")) || (data65 === "XBD")) || (data65 === "XCD")) || (data65 === "XCG")) || (data65 === "XDR")) || (data65 === "XOF")) || (data65 === "XPD")) || (data65 === "XPF")) || (data65 === "XPT")) || (data65 === "XSU")) || (data65 === "XTS")) || (data65 === "XUA")) || (data65 === "XXX")) || (data65 === "YER")) || (data65 === "ZAR")) || (data65 === "ZMW")) || (data65 === "ZWG")) || (data65 === "ZWL"))){
+const err251 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[1].oneOf[2].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err251];
 }
@@ -12988,9 +13025,10 @@ vErrors.push(err251);
 }
 errors++;
 }
-else {
-if(func2(data67) < 1){
-const err252 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(errors === _errs204){
+if(typeof data65 === "string"){
+if(func2(data65) > 3){
+const err252 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err252];
 }
@@ -13000,8 +13038,8 @@ vErrors.push(err252);
 errors++;
 }
 else {
-if(!pattern6.test(data67)){
-const err253 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
+if(func2(data65) < 3){
+const err253 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err253];
 }
@@ -13012,9 +13050,8 @@ errors++;
 }
 }
 }
-}
 else {
-const err254 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err254 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err254];
 }
@@ -13024,13 +13061,17 @@ vErrors.push(err254);
 errors++;
 }
 }
-var valid27 = _errs201 === errors;
-if(valid27){
-const _errs203 = errors;
-if(errors === _errs203){
-if(typeof data67 === "string"){
-if(!pattern13.test(data67)){
-const err255 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
+var valid28 = _errs204 === errors;
+}
+else {
+var valid28 = true;
+}
+if(valid28){
+if(data43.cost_enforcement !== undefined){
+let data66 = data43.cost_enforcement;
+const _errs206 = errors;
+if(typeof data66 !== "string"){
+const err255 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err255];
 }
@@ -13039,9 +13080,8 @@ vErrors.push(err255);
 }
 errors++;
 }
-}
-else {
-const err256 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!(data66 === "EXACT")){
+const err256 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.budget.allOf[1].oneOf[2].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err256];
 }
@@ -13050,20 +13090,20 @@ vErrors.push(err256);
 }
 errors++;
 }
-}
-var valid27 = _errs203 === errors;
-}
-var valid26 = _errs200 === errors;
+var valid28 = _errs206 === errors;
 }
 else {
-var valid26 = true;
+var valid28 = true;
 }
-}
-}
-}
-}
-else {
-const err257 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(valid28){
+if(data43.max_cost_decimal !== undefined){
+let data67 = data43.max_cost_decimal;
+const _errs208 = errors;
+const _errs209 = errors;
+if(errors === _errs209){
+if(typeof data67 === "string"){
+if(func2(data67) > 64){
+const err257 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
 if(vErrors === null){
 vErrors = [err257];
 }
@@ -13072,27 +13112,9 @@ vErrors.push(err257);
 }
 errors++;
 }
-}
-var _valid10 = _errs194 === errors;
-if(_valid10 && valid22){
-valid22 = false;
-passing10 = [passing10, 2];
-}
 else {
-if(_valid10){
-valid22 = true;
-passing10 = 2;
-if(props2 !== true){
-props2 = props2 || {};
-props2.cost_currency = true;
-props2.cost_enforcement = true;
-props2.max_cost_decimal = true;
-}
-}
-}
-}
-if(!valid22){
-const err258 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf",keyword:"oneOf",params:{passingSchemas: passing10},message:"must match exactly one schema in oneOf"};
+if(func2(data67) < 1){
+const err258 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err258];
 }
@@ -13102,31 +13124,8 @@ vErrors.push(err258);
 errors++;
 }
 else {
-errors = _errs174;
-if(vErrors !== null){
-if(_errs174){
-vErrors.length = _errs174;
-}
-else {
-vErrors = null;
-}
-}
-}
-var valid17 = _errs173 === errors;
-}
-var valid15 = _errs128 === errors;
-}
-else {
-var valid15 = true;
-}
-if(valid15){
-if(data.economic_rationale !== undefined){
-let data68 = data.economic_rationale;
-const _errs205 = errors;
-if(errors === _errs205){
-if(typeof data68 === "string"){
-if(func2(data68) > 8000){
-const err259 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/1/properties/economic_rationale/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
+if(!pattern6.test(data67)){
+const err259 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err259];
 }
@@ -13135,9 +13134,11 @@ vErrors.push(err259);
 }
 errors++;
 }
+}
+}
+}
 else {
-if(func2(data68) < 1){
-const err260 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/1/properties/economic_rationale/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+const err260 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err260];
 }
@@ -13147,9 +13148,13 @@ vErrors.push(err260);
 errors++;
 }
 }
-}
-else {
-const err261 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/1/properties/economic_rationale/type",keyword:"type",params:{type: "string"},message:"must be string"};
+var valid29 = _errs209 === errors;
+if(valid29){
+const _errs211 = errors;
+if(errors === _errs211){
+if(typeof data67 === "string"){
+if(!pattern13.test(data67)){
+const err261 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
 if(vErrors === null){
 vErrors = [err261];
 }
@@ -13159,20 +13164,8 @@ vErrors.push(err261);
 errors++;
 }
 }
-var valid15 = _errs205 === errors;
-}
 else {
-var valid15 = true;
-}
-if(valid15){
-if(data.evaluation_policy_id !== undefined){
-let data69 = data.evaluation_policy_id;
-const _errs207 = errors;
-if(errors === _errs207){
-if(errors === _errs207){
-if(typeof data69 === "string"){
-if(!pattern3.test(data69)){
-const err262 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/1/properties/evaluation_policy_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+const err262 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err262];
 }
@@ -13181,9 +13174,20 @@ vErrors.push(err262);
 }
 errors++;
 }
+}
+var valid29 = _errs211 === errors;
+}
+var valid28 = _errs208 === errors;
+}
 else {
-if(!(formats0.test(data69))){
-const err263 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/1/properties/evaluation_policy_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+var valid28 = true;
+}
+}
+}
+}
+}
+else {
+const err263 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err263];
 }
@@ -13193,9 +13197,26 @@ vErrors.push(err263);
 errors++;
 }
 }
+var _valid12 = _errs202 === errors;
+if(_valid12 && valid24){
+valid24 = false;
+passing12 = [passing12, 2];
 }
 else {
-const err264 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/1/properties/evaluation_policy_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(_valid12){
+valid24 = true;
+passing12 = 2;
+if(props2 !== true){
+props2 = props2 || {};
+props2.cost_currency = true;
+props2.cost_enforcement = true;
+props2.max_cost_decimal = true;
+}
+}
+}
+}
+if(!valid24){
+const err264 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/1/properties/budget/allOf/1/oneOf",keyword:"oneOf",params:{passingSchemas: passing12},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err264];
 }
@@ -13204,22 +13225,32 @@ vErrors.push(err264);
 }
 errors++;
 }
-}
-}
-var valid15 = _errs207 === errors;
+else {
+errors = _errs182;
+if(vErrors !== null){
+if(_errs182){
+vErrors.length = _errs182;
 }
 else {
-var valid15 = true;
+vErrors = null;
 }
-if(valid15){
-if(data.execution_assumptions_id !== undefined){
-let data70 = data.execution_assumptions_id;
-const _errs209 = errors;
-if(errors === _errs209){
-if(errors === _errs209){
-if(typeof data70 === "string"){
-if(!pattern3.test(data70)){
-const err265 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/1/properties/execution_assumptions_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+}
+}
+var valid19 = _errs181 === errors;
+}
+var valid16 = _errs136 === errors;
+}
+else {
+var valid16 = true;
+}
+if(valid16){
+if(data.economic_rationale !== undefined){
+let data68 = data.economic_rationale;
+const _errs213 = errors;
+if(errors === _errs213){
+if(typeof data68 === "string"){
+if(func2(data68) > 8000){
+const err265 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/1/properties/economic_rationale/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
 if(vErrors === null){
 vErrors = [err265];
 }
@@ -13229,8 +13260,8 @@ vErrors.push(err265);
 errors++;
 }
 else {
-if(!(formats0.test(data70))){
-const err266 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/1/properties/execution_assumptions_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+if(func2(data68) < 1){
+const err266 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/1/properties/economic_rationale/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err266];
 }
@@ -13242,7 +13273,7 @@ errors++;
 }
 }
 else {
-const err267 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/1/properties/execution_assumptions_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err267 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/1/properties/economic_rationale/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err267];
 }
@@ -13252,18 +13283,20 @@ vErrors.push(err267);
 errors++;
 }
 }
-}
-var valid15 = _errs209 === errors;
+var valid16 = _errs213 === errors;
 }
 else {
-var valid15 = true;
+var valid16 = true;
 }
-if(valid15){
-if(data.horizon_kind !== undefined){
-let data71 = data.horizon_kind;
-const _errs211 = errors;
-if(typeof data71 !== "string"){
-const err268 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/1/properties/horizon_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(valid16){
+if(data.evaluation_policy_id !== undefined){
+let data69 = data.evaluation_policy_id;
+const _errs215 = errors;
+if(errors === _errs215){
+if(errors === _errs215){
+if(typeof data69 === "string"){
+if(!pattern3.test(data69)){
+const err268 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/1/properties/evaluation_policy_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err268];
 }
@@ -13272,8 +13305,9 @@ vErrors.push(err268);
 }
 errors++;
 }
-if(!(data71 === "FIXED_DURATION")){
-const err269 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/1/properties/horizon_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.horizon_kind.enum},message:"must be equal to one of the allowed values"};
+else {
+if(!(formats0.test(data69))){
+const err269 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/1/properties/evaluation_policy_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
 if(vErrors === null){
 vErrors = [err269];
 }
@@ -13282,19 +13316,10 @@ vErrors.push(err269);
 }
 errors++;
 }
-var valid15 = _errs211 === errors;
+}
 }
 else {
-var valid15 = true;
-}
-if(valid15){
-if(data.horizon_value !== undefined){
-let data72 = data.horizon_value;
-const _errs213 = errors;
-if(errors === _errs213){
-if(typeof data72 === "string"){
-if(func2(data72) > 19){
-const err270 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/1/properties/horizon_value/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+const err270 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/1/properties/evaluation_policy_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err270];
 }
@@ -13303,9 +13328,22 @@ vErrors.push(err270);
 }
 errors++;
 }
+}
+}
+var valid16 = _errs215 === errors;
+}
 else {
-if(func2(data72) < 1){
-const err271 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/1/properties/horizon_value/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+var valid16 = true;
+}
+if(valid16){
+if(data.execution_assumptions_id !== undefined){
+let data70 = data.execution_assumptions_id;
+const _errs217 = errors;
+if(errors === _errs217){
+if(errors === _errs217){
+if(typeof data70 === "string"){
+if(!pattern3.test(data70)){
+const err271 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/1/properties/execution_assumptions_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err271];
 }
@@ -13315,8 +13353,8 @@ vErrors.push(err271);
 errors++;
 }
 else {
-if(!pattern5.test(data72)){
-const err272 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/1/properties/horizon_value/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
+if(!(formats0.test(data70))){
+const err272 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/1/properties/execution_assumptions_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
 if(vErrors === null){
 vErrors = [err272];
 }
@@ -13327,9 +13365,8 @@ errors++;
 }
 }
 }
-}
 else {
-const err273 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/1/properties/horizon_value/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err273 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/1/properties/execution_assumptions_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err273];
 }
@@ -13339,19 +13376,18 @@ vErrors.push(err273);
 errors++;
 }
 }
-var valid15 = _errs213 === errors;
+}
+var valid16 = _errs217 === errors;
 }
 else {
-var valid15 = true;
+var valid16 = true;
 }
-if(valid15){
-if(data.hypothesis !== undefined){
-let data73 = data.hypothesis;
-const _errs215 = errors;
-if(errors === _errs215){
-if(typeof data73 === "string"){
-if(func2(data73) > 8000){
-const err274 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/1/properties/hypothesis/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
+if(valid16){
+if(data.horizon_kind !== undefined){
+let data71 = data.horizon_kind;
+const _errs219 = errors;
+if(typeof data71 !== "string"){
+const err274 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/1/properties/horizon_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err274];
 }
@@ -13360,9 +13396,8 @@ vErrors.push(err274);
 }
 errors++;
 }
-else {
-if(func2(data73) < 1){
-const err275 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/1/properties/hypothesis/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(!(data71 === "FIXED_DURATION")){
+const err275 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/1/properties/horizon_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.horizon_kind.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err275];
 }
@@ -13371,10 +13406,19 @@ vErrors.push(err275);
 }
 errors++;
 }
-}
+var valid16 = _errs219 === errors;
 }
 else {
-const err276 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/1/properties/hypothesis/type",keyword:"type",params:{type: "string"},message:"must be string"};
+var valid16 = true;
+}
+if(valid16){
+if(data.horizon_value !== undefined){
+let data72 = data.horizon_value;
+const _errs221 = errors;
+if(errors === _errs221){
+if(typeof data72 === "string"){
+if(func2(data72) > 19){
+const err276 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/1/properties/horizon_value/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
 if(vErrors === null){
 vErrors = [err276];
 }
@@ -13383,21 +13427,9 @@ vErrors.push(err276);
 }
 errors++;
 }
-}
-var valid15 = _errs215 === errors;
-}
 else {
-var valid15 = true;
-}
-if(valid15){
-if(data.stop_rule !== undefined){
-let data74 = data.stop_rule;
-const _errs217 = errors;
-if(errors === _errs217){
-if(data74 && typeof data74 == "object" && !Array.isArray(data74)){
-let missing11;
-if(((((data74.schema_version === undefined) && (missing11 = "schema_version")) || ((data74.stop_on_qualified_count === undefined) && (missing11 = "stop_on_qualified_count"))) || ((data74.stop_on_budget === undefined) && (missing11 = "stop_on_budget"))) || ((data74.stop_on_invalid_data === undefined) && (missing11 = "stop_on_invalid_data"))){
-const err277 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/1/properties/stop_rule/required",keyword:"required",params:{missingProperty: missing11},message:"must have required property '"+missing11+"'"};
+if(func2(data72) < 1){
+const err277 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/1/properties/horizon_value/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err277];
 }
@@ -13407,10 +13439,8 @@ vErrors.push(err277);
 errors++;
 }
 else {
-const _errs219 = errors;
-for(const key5 in data74){
-if(!(((((key5 === "schema_version") || (key5 === "stop_on_budget")) || (key5 === "stop_on_invalid_data")) || (key5 === "stop_on_no_improvement_trials")) || (key5 === "stop_on_qualified_count"))){
-const err278 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/1/properties/stop_rule/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key5},message:"must NOT have additional properties"};
+if(!pattern5.test(data72)){
+const err278 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/1/properties/horizon_value/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err278];
 }
@@ -13418,26 +13448,12 @@ else {
 vErrors.push(err278);
 }
 errors++;
-break;
 }
 }
-if(_errs219 === errors){
-if(data74.schema_version !== undefined){
-const _errs220 = errors;
-if(!(validate108(data74.schema_version, {instancePath:instancePath+"/stop_rule/schema_version",parentData:data74,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
-errors = vErrors.length;
 }
-var valid28 = _errs220 === errors;
 }
 else {
-var valid28 = true;
-}
-if(valid28){
-if(data74.stop_on_budget !== undefined){
-const _errs221 = errors;
-if(typeof data74.stop_on_budget !== "boolean"){
-const err279 = {instancePath:instancePath+"/stop_rule/stop_on_budget",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_budget/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+const err279 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/1/properties/horizon_value/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err279];
 }
@@ -13446,16 +13462,20 @@ vErrors.push(err279);
 }
 errors++;
 }
-var valid28 = _errs221 === errors;
+}
+var valid16 = _errs221 === errors;
 }
 else {
-var valid28 = true;
+var valid16 = true;
 }
-if(valid28){
-if(data74.stop_on_invalid_data !== undefined){
+if(valid16){
+if(data.hypothesis !== undefined){
+let data73 = data.hypothesis;
 const _errs223 = errors;
-if(typeof data74.stop_on_invalid_data !== "boolean"){
-const err280 = {instancePath:instancePath+"/stop_rule/stop_on_invalid_data",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_invalid_data/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+if(errors === _errs223){
+if(typeof data73 === "string"){
+if(func2(data73) > 8000){
+const err280 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/1/properties/hypothesis/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
 if(vErrors === null){
 vErrors = [err280];
 }
@@ -13464,17 +13484,9 @@ vErrors.push(err280);
 }
 errors++;
 }
-var valid28 = _errs223 === errors;
-}
 else {
-var valid28 = true;
-}
-if(valid28){
-if(data74.stop_on_no_improvement_trials !== undefined){
-let data78 = data74.stop_on_no_improvement_trials;
-const _errs225 = errors;
-if((!((typeof data78 == "number") && (!(data78 % 1) && !isNaN(data78)))) && (data78 !== null)){
-const err281 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_no_improvement_trials/type",keyword:"type",params:{type: schema73.oneOf[1].properties.stop_rule.properties.stop_on_no_improvement_trials.type},message:"must be integer,null"};
+if(func2(data73) < 1){
+const err281 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/1/properties/hypothesis/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err281];
 }
@@ -13483,10 +13495,10 @@ vErrors.push(err281);
 }
 errors++;
 }
-if(errors === _errs225){
-if(typeof data78 == "number"){
-if(data78 > 65535 || isNaN(data78)){
-const err282 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_no_improvement_trials/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+}
+}
+else {
+const err282 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/1/properties/hypothesis/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err282];
 }
@@ -13495,9 +13507,21 @@ vErrors.push(err282);
 }
 errors++;
 }
+}
+var valid16 = _errs223 === errors;
+}
 else {
-if(data78 < 1 || isNaN(data78)){
-const err283 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_no_improvement_trials/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+var valid16 = true;
+}
+if(valid16){
+if(data.stop_rule !== undefined){
+let data74 = data.stop_rule;
+const _errs225 = errors;
+if(errors === _errs225){
+if(data74 && typeof data74 == "object" && !Array.isArray(data74)){
+let missing11;
+if(((((data74.schema_version === undefined) && (missing11 = "schema_version")) || ((data74.stop_on_qualified_count === undefined) && (missing11 = "stop_on_qualified_count"))) || ((data74.stop_on_budget === undefined) && (missing11 = "stop_on_budget"))) || ((data74.stop_on_invalid_data === undefined) && (missing11 = "stop_on_invalid_data"))){
+const err283 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/1/properties/stop_rule/required",keyword:"required",params:{missingProperty: missing11},message:"must have required property '"+missing11+"'"};
 if(vErrors === null){
 vErrors = [err283];
 }
@@ -13507,8 +13531,10 @@ vErrors.push(err283);
 errors++;
 }
 else {
-if(!(formats12.validate(data78))){
-const err284 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_no_improvement_trials/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+const _errs227 = errors;
+for(const key5 in data74){
+if(!(((((key5 === "schema_version") || (key5 === "stop_on_budget")) || (key5 === "stop_on_invalid_data")) || (key5 === "stop_on_no_improvement_trials")) || (key5 === "stop_on_qualified_count"))){
+const err284 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/1/properties/stop_rule/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key5},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err284];
 }
@@ -13516,22 +13542,26 @@ else {
 vErrors.push(err284);
 }
 errors++;
+break;
 }
 }
+if(_errs227 === errors){
+if(data74.schema_version !== undefined){
+const _errs228 = errors;
+if(!(validate108(data74.schema_version, {instancePath:instancePath+"/stop_rule/schema_version",parentData:data74,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
+errors = vErrors.length;
 }
-}
-}
-var valid28 = _errs225 === errors;
+var valid30 = _errs228 === errors;
 }
 else {
-var valid28 = true;
+var valid30 = true;
 }
-if(valid28){
-if(data74.stop_on_qualified_count !== undefined){
-let data79 = data74.stop_on_qualified_count;
-const _errs227 = errors;
-if(!((typeof data79 == "number") && (!(data79 % 1) && !isNaN(data79)))){
-const err285 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_qualified_count/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(valid30){
+if(data74.stop_on_budget !== undefined){
+const _errs229 = errors;
+if(typeof data74.stop_on_budget !== "boolean"){
+const err285 = {instancePath:instancePath+"/stop_rule/stop_on_budget",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_budget/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
 if(vErrors === null){
 vErrors = [err285];
 }
@@ -13540,10 +13570,16 @@ vErrors.push(err285);
 }
 errors++;
 }
-if(errors === _errs227){
-if(typeof data79 == "number"){
-if(data79 > 65535 || isNaN(data79)){
-const err286 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_qualified_count/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+var valid30 = _errs229 === errors;
+}
+else {
+var valid30 = true;
+}
+if(valid30){
+if(data74.stop_on_invalid_data !== undefined){
+const _errs231 = errors;
+if(typeof data74.stop_on_invalid_data !== "boolean"){
+const err286 = {instancePath:instancePath+"/stop_rule/stop_on_invalid_data",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_invalid_data/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
 if(vErrors === null){
 vErrors = [err286];
 }
@@ -13552,9 +13588,17 @@ vErrors.push(err286);
 }
 errors++;
 }
+var valid30 = _errs231 === errors;
+}
 else {
-if(data79 < 1 || isNaN(data79)){
-const err287 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_qualified_count/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+var valid30 = true;
+}
+if(valid30){
+if(data74.stop_on_no_improvement_trials !== undefined){
+let data78 = data74.stop_on_no_improvement_trials;
+const _errs233 = errors;
+if((!((typeof data78 == "number") && (!(data78 % 1) && !isNaN(data78)))) && (data78 !== null)){
+const err287 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_no_improvement_trials/type",keyword:"type",params:{type: schema73.oneOf[1].properties.stop_rule.properties.stop_on_no_improvement_trials.type},message:"must be integer,null"};
 if(vErrors === null){
 vErrors = [err287];
 }
@@ -13563,9 +13607,10 @@ vErrors.push(err287);
 }
 errors++;
 }
-else {
-if(!(formats12.validate(data79))){
-const err288 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_qualified_count/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(errors === _errs233){
+if(typeof data78 == "number"){
+if(data78 > 65535 || isNaN(data78)){
+const err288 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_no_improvement_trials/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
 if(vErrors === null){
 vErrors = [err288];
 }
@@ -13574,24 +13619,9 @@ vErrors.push(err288);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid28 = _errs227 === errors;
-}
 else {
-var valid28 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err289 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/1/properties/stop_rule/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(data78 < 1 || isNaN(data78)){
+const err289 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_no_improvement_trials/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err289];
 }
@@ -13600,18 +13630,9 @@ vErrors.push(err289);
 }
 errors++;
 }
-}
-var valid15 = _errs217 === errors;
-}
 else {
-var valid15 = true;
-}
-if(valid15){
-if(data.target_kind !== undefined){
-let data80 = data.target_kind;
-const _errs229 = errors;
-if(typeof data80 !== "string"){
-const err290 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/1/properties/target_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!(formats12.validate(data78))){
+const err290 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_no_improvement_trials/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err290];
 }
@@ -13620,8 +13641,21 @@ vErrors.push(err290);
 }
 errors++;
 }
-if(!((data80 === "SCORE") || (data80 === "EXPECTED_RETURN"))){
-const err291 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/1/properties/target_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.target_kind.enum},message:"must be equal to one of the allowed values"};
+}
+}
+}
+}
+var valid30 = _errs233 === errors;
+}
+else {
+var valid30 = true;
+}
+if(valid30){
+if(data74.stop_on_qualified_count !== undefined){
+let data79 = data74.stop_on_qualified_count;
+const _errs235 = errors;
+if(!((typeof data79 == "number") && (!(data79 % 1) && !isNaN(data79)))){
+const err291 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_qualified_count/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err291];
 }
@@ -13630,20 +13664,10 @@ vErrors.push(err291);
 }
 errors++;
 }
-var valid15 = _errs229 === errors;
-}
-else {
-var valid15 = true;
-}
-if(valid15){
-if(data.universe_version_id !== undefined){
-let data81 = data.universe_version_id;
-const _errs231 = errors;
-if(errors === _errs231){
-if(errors === _errs231){
-if(typeof data81 === "string"){
-if(!pattern3.test(data81)){
-const err292 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/1/properties/universe_version_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+if(errors === _errs235){
+if(typeof data79 == "number"){
+if(data79 > 65535 || isNaN(data79)){
+const err292 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_qualified_count/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
 if(vErrors === null){
 vErrors = [err292];
 }
@@ -13653,8 +13677,8 @@ vErrors.push(err292);
 errors++;
 }
 else {
-if(!(formats0.test(data81))){
-const err293 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/1/properties/universe_version_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+if(data79 < 1 || isNaN(data79)){
+const err293 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_qualified_count/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err293];
 }
@@ -13663,10 +13687,9 @@ vErrors.push(err293);
 }
 errors++;
 }
-}
-}
 else {
-const err294 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/1/properties/universe_version_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!(formats12.validate(data79))){
+const err294 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/1/properties/stop_rule/properties/stop_on_qualified_count/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err294];
 }
@@ -13677,17 +13700,12 @@ errors++;
 }
 }
 }
-var valid15 = _errs231 === errors;
+}
+}
+var valid30 = _errs235 === errors;
 }
 else {
-var valid15 = true;
-}
-}
-}
-}
-}
-}
-}
+var valid30 = true;
 }
 }
 }
@@ -13697,7 +13715,7 @@ var valid15 = true;
 }
 }
 else {
-const err295 = {instancePath,schemaPath:"#/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err295 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/1/properties/stop_rule/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err295];
 }
@@ -13707,7 +13725,113 @@ vErrors.push(err295);
 errors++;
 }
 }
-var _valid0 = _errs117 === errors;
+var valid16 = _errs225 === errors;
+}
+else {
+var valid16 = true;
+}
+if(valid16){
+if(data.target_kind !== undefined){
+let data80 = data.target_kind;
+const _errs237 = errors;
+if(typeof data80 !== "string"){
+const err296 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/1/properties/target_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err296];
+}
+else {
+vErrors.push(err296);
+}
+errors++;
+}
+if(!((data80 === "SCORE") || (data80 === "EXPECTED_RETURN"))){
+const err297 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/1/properties/target_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[1].properties.target_kind.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err297];
+}
+else {
+vErrors.push(err297);
+}
+errors++;
+}
+var valid16 = _errs237 === errors;
+}
+else {
+var valid16 = true;
+}
+if(valid16){
+if(data.universe_version_id !== undefined){
+let data81 = data.universe_version_id;
+const _errs239 = errors;
+if(errors === _errs239){
+if(errors === _errs239){
+if(typeof data81 === "string"){
+if(!pattern3.test(data81)){
+const err298 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/1/properties/universe_version_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+if(vErrors === null){
+vErrors = [err298];
+}
+else {
+vErrors.push(err298);
+}
+errors++;
+}
+else {
+if(!(formats0.test(data81))){
+const err299 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/1/properties/universe_version_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+if(vErrors === null){
+vErrors = [err299];
+}
+else {
+vErrors.push(err299);
+}
+errors++;
+}
+}
+}
+else {
+const err300 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/1/properties/universe_version_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err300];
+}
+else {
+vErrors.push(err300);
+}
+errors++;
+}
+}
+}
+var valid16 = _errs239 === errors;
+}
+else {
+var valid16 = true;
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+const err301 = {instancePath,schemaPath:"#/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err301];
+}
+else {
+vErrors.push(err301);
+}
+errors++;
+}
+}
+var _valid0 = _errs121 === errors;
 if(_valid0 && valid0){
 valid0 = false;
 passing0 = [passing0, 1];
@@ -13720,100 +13844,12 @@ if(props1 !== true){
 props1 = true;
 }
 }
-const _errs233 = errors;
-if(errors === _errs233){
+const _errs241 = errors;
+if(errors === _errs241){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing12;
 if(((((((((((data.hypothesis === undefined) && (missing12 = "hypothesis")) || ((data.economic_rationale === undefined) && (missing12 = "economic_rationale"))) || ((data.universe_version_id === undefined) && (missing12 = "universe_version_id"))) || ((data.target_kind === undefined) && (missing12 = "target_kind"))) || ((data.horizon_kind === undefined) && (missing12 = "horizon_kind"))) || ((data.base_currency === undefined) && (missing12 = "base_currency"))) || ((data.evaluation_policy_id === undefined) && (missing12 = "evaluation_policy_id"))) || ((data.execution_assumptions_id === undefined) && (missing12 = "execution_assumptions_id"))) || ((data.budget === undefined) && (missing12 = "budget"))) || ((data.stop_rule === undefined) && (missing12 = "stop_rule"))){
-const err296 = {instancePath,schemaPath:"#/oneOf/2/required",keyword:"required",params:{missingProperty: missing12},message:"must have required property '"+missing12+"'"};
-if(vErrors === null){
-vErrors = [err296];
-}
-else {
-vErrors.push(err296);
-}
-errors++;
-}
-else {
-const _errs235 = errors;
-for(const key6 in data){
-if(!(func1.call(schema73.oneOf[2].properties, key6))){
-const err297 = {instancePath,schemaPath:"#/oneOf/2/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key6},message:"must NOT have additional properties"};
-if(vErrors === null){
-vErrors = [err297];
-}
-else {
-vErrors.push(err297);
-}
-errors++;
-break;
-}
-}
-if(_errs235 === errors){
-if(data.base_currency !== undefined){
-let data82 = data.base_currency;
-const _errs236 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data82 === "AED") || (data82 === "AFN")) || (data82 === "ALL")) || (data82 === "AMD")) || (data82 === "AOA")) || (data82 === "ARS")) || (data82 === "AUD")) || (data82 === "AWG")) || (data82 === "AZN")) || (data82 === "BAM")) || (data82 === "BBD")) || (data82 === "BDT")) || (data82 === "BGN")) || (data82 === "BHD")) || (data82 === "BIF")) || (data82 === "BMD")) || (data82 === "BND")) || (data82 === "BOB")) || (data82 === "BOV")) || (data82 === "BRL")) || (data82 === "BSD")) || (data82 === "BTN")) || (data82 === "BWP")) || (data82 === "BYN")) || (data82 === "BZD")) || (data82 === "CAD")) || (data82 === "CDF")) || (data82 === "CHE")) || (data82 === "CHF")) || (data82 === "CHW")) || (data82 === "CLF")) || (data82 === "CLP")) || (data82 === "CNY")) || (data82 === "COP")) || (data82 === "COU")) || (data82 === "CRC")) || (data82 === "CUC")) || (data82 === "CUP")) || (data82 === "CVE")) || (data82 === "CZK")) || (data82 === "DJF")) || (data82 === "DKK")) || (data82 === "DOP")) || (data82 === "DZD")) || (data82 === "EGP")) || (data82 === "ERN")) || (data82 === "ETB")) || (data82 === "EUR")) || (data82 === "FJD")) || (data82 === "FKP")) || (data82 === "GBP")) || (data82 === "GEL")) || (data82 === "GHS")) || (data82 === "GIP")) || (data82 === "GMD")) || (data82 === "GNF")) || (data82 === "GTQ")) || (data82 === "GYD")) || (data82 === "HKD")) || (data82 === "HNL")) || (data82 === "HRK")) || (data82 === "HTG")) || (data82 === "HUF")) || (data82 === "IDR")) || (data82 === "ILS")) || (data82 === "INR")) || (data82 === "IQD")) || (data82 === "IRR")) || (data82 === "ISK")) || (data82 === "JMD")) || (data82 === "JOD")) || (data82 === "JPY")) || (data82 === "KES")) || (data82 === "KGS")) || (data82 === "KHR")) || (data82 === "KMF")) || (data82 === "KPW")) || (data82 === "KRW")) || (data82 === "KWD")) || (data82 === "KYD")) || (data82 === "KZT")) || (data82 === "LAK")) || (data82 === "LBP")) || (data82 === "LKR")) || (data82 === "LRD")) || (data82 === "LSL")) || (data82 === "LYD")) || (data82 === "MAD")) || (data82 === "MDL")) || (data82 === "MGA")) || (data82 === "MKD")) || (data82 === "MMK")) || (data82 === "MNT")) || (data82 === "MOP")) || (data82 === "MRU")) || (data82 === "MUR")) || (data82 === "MVR")) || (data82 === "MWK")) || (data82 === "MXN")) || (data82 === "MXV")) || (data82 === "MYR")) || (data82 === "MZN")) || (data82 === "NAD")) || (data82 === "NGN")) || (data82 === "NIO")) || (data82 === "NOK")) || (data82 === "NPR")) || (data82 === "NZD")) || (data82 === "OMR")) || (data82 === "PAB")) || (data82 === "PEN")) || (data82 === "PGK")) || (data82 === "PHP")) || (data82 === "PKR")) || (data82 === "PLN")) || (data82 === "PYG")) || (data82 === "QAR")) || (data82 === "RON")) || (data82 === "RSD")) || (data82 === "RUB")) || (data82 === "RWF")) || (data82 === "SAR")) || (data82 === "SBD")) || (data82 === "SCR")) || (data82 === "SDG")) || (data82 === "SEK")) || (data82 === "SGD")) || (data82 === "SHP")) || (data82 === "SLE")) || (data82 === "SLL")) || (data82 === "SOS")) || (data82 === "SRD")) || (data82 === "SSP")) || (data82 === "STN")) || (data82 === "SVC")) || (data82 === "SYP")) || (data82 === "SZL")) || (data82 === "THB")) || (data82 === "TJS")) || (data82 === "TMT")) || (data82 === "TND")) || (data82 === "TOP")) || (data82 === "TRY")) || (data82 === "TTD")) || (data82 === "TWD")) || (data82 === "TZS")) || (data82 === "UAH")) || (data82 === "UGX")) || (data82 === "USD")) || (data82 === "USN")) || (data82 === "UYI")) || (data82 === "UYU")) || (data82 === "UYW")) || (data82 === "UZS")) || (data82 === "VED")) || (data82 === "VES")) || (data82 === "VND")) || (data82 === "VUV")) || (data82 === "WST")) || (data82 === "XAD")) || (data82 === "XAF")) || (data82 === "XAG")) || (data82 === "XAU")) || (data82 === "XBA")) || (data82 === "XBB")) || (data82 === "XBC")) || (data82 === "XBD")) || (data82 === "XCD")) || (data82 === "XCG")) || (data82 === "XDR")) || (data82 === "XOF")) || (data82 === "XPD")) || (data82 === "XPF")) || (data82 === "XPT")) || (data82 === "XSU")) || (data82 === "XTS")) || (data82 === "XUA")) || (data82 === "XXX")) || (data82 === "YER")) || (data82 === "ZAR")) || (data82 === "ZMW")) || (data82 === "ZWG")) || (data82 === "ZWL"))){
-const err298 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.base_currency.enum},message:"must be equal to one of the allowed values"};
-if(vErrors === null){
-vErrors = [err298];
-}
-else {
-vErrors.push(err298);
-}
-errors++;
-}
-if(errors === _errs236){
-if(typeof data82 === "string"){
-if(func2(data82) > 3){
-const err299 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
-if(vErrors === null){
-vErrors = [err299];
-}
-else {
-vErrors.push(err299);
-}
-errors++;
-}
-else {
-if(func2(data82) < 3){
-const err300 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
-if(vErrors === null){
-vErrors = [err300];
-}
-else {
-vErrors.push(err300);
-}
-errors++;
-}
-}
-}
-else {
-const err301 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err301];
-}
-else {
-vErrors.push(err301);
-}
-errors++;
-}
-}
-var valid29 = _errs236 === errors;
-}
-else {
-var valid29 = true;
-}
-if(valid29){
-if(data.benchmark_ref !== undefined){
-let data83 = data.benchmark_ref;
-const _errs238 = errors;
-const _errs239 = errors;
-let valid30 = false;
-let passing11 = null;
-const _errs240 = errors;
-if(data83 !== null){
-const err302 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/2/properties/benchmark_ref/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+const err302 = {instancePath,schemaPath:"#/oneOf/2/required",keyword:"required",params:{missingProperty: missing12},message:"must have required property '"+missing12+"'"};
 if(vErrors === null){
 vErrors = [err302];
 }
@@ -13822,17 +13858,11 @@ vErrors.push(err302);
 }
 errors++;
 }
-var _valid11 = _errs240 === errors;
-if(_valid11){
-valid30 = true;
-passing11 = 0;
-}
-const _errs242 = errors;
-if(errors === _errs242){
-if(errors === _errs242){
-if(typeof data83 === "string"){
-if(!pattern3.test(data83)){
-const err303 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/2/properties/benchmark_ref/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+else {
+const _errs243 = errors;
+for(const key6 in data){
+if(!(func1.call(schema73.oneOf[2].properties, key6))){
+const err303 = {instancePath,schemaPath:"#/oneOf/2/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key6},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err303];
 }
@@ -13840,10 +13870,19 @@ else {
 vErrors.push(err303);
 }
 errors++;
+break;
 }
-else {
-if(!(formats0.test(data83))){
-const err304 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/2/properties/benchmark_ref/oneOf/1/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+}
+if(_errs243 === errors){
+if(data.base_currency !== undefined){
+let data82 = data.base_currency;
+const _errs244 = errors;
+const _errs245 = errors;
+let valid32 = false;
+let passing13 = null;
+const _errs246 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data82 === "AED") || (data82 === "AFN")) || (data82 === "ALL")) || (data82 === "AMD")) || (data82 === "AOA")) || (data82 === "ARS")) || (data82 === "AUD")) || (data82 === "AWG")) || (data82 === "AZN")) || (data82 === "BAM")) || (data82 === "BBD")) || (data82 === "BDT")) || (data82 === "BGN")) || (data82 === "BHD")) || (data82 === "BIF")) || (data82 === "BMD")) || (data82 === "BND")) || (data82 === "BOB")) || (data82 === "BOV")) || (data82 === "BRL")) || (data82 === "BSD")) || (data82 === "BTN")) || (data82 === "BWP")) || (data82 === "BYN")) || (data82 === "BZD")) || (data82 === "CAD")) || (data82 === "CDF")) || (data82 === "CHE")) || (data82 === "CHF")) || (data82 === "CHW")) || (data82 === "CLF")) || (data82 === "CLP")) || (data82 === "CNY")) || (data82 === "COP")) || (data82 === "COU")) || (data82 === "CRC")) || (data82 === "CUC")) || (data82 === "CUP")) || (data82 === "CVE")) || (data82 === "CZK")) || (data82 === "DJF")) || (data82 === "DKK")) || (data82 === "DOP")) || (data82 === "DZD")) || (data82 === "EGP")) || (data82 === "ERN")) || (data82 === "ETB")) || (data82 === "EUR")) || (data82 === "FJD")) || (data82 === "FKP")) || (data82 === "GBP")) || (data82 === "GEL")) || (data82 === "GHS")) || (data82 === "GIP")) || (data82 === "GMD")) || (data82 === "GNF")) || (data82 === "GTQ")) || (data82 === "GYD")) || (data82 === "HKD")) || (data82 === "HNL")) || (data82 === "HRK")) || (data82 === "HTG")) || (data82 === "HUF")) || (data82 === "IDR")) || (data82 === "ILS")) || (data82 === "INR")) || (data82 === "IQD")) || (data82 === "IRR")) || (data82 === "ISK")) || (data82 === "JMD")) || (data82 === "JOD")) || (data82 === "JPY")) || (data82 === "KES")) || (data82 === "KGS")) || (data82 === "KHR")) || (data82 === "KMF")) || (data82 === "KPW")) || (data82 === "KRW")) || (data82 === "KWD")) || (data82 === "KYD")) || (data82 === "KZT")) || (data82 === "LAK")) || (data82 === "LBP")) || (data82 === "LKR")) || (data82 === "LRD")) || (data82 === "LSL")) || (data82 === "LYD")) || (data82 === "MAD")) || (data82 === "MDL")) || (data82 === "MGA")) || (data82 === "MKD")) || (data82 === "MMK")) || (data82 === "MNT")) || (data82 === "MOP")) || (data82 === "MRU")) || (data82 === "MUR")) || (data82 === "MVR")) || (data82 === "MWK")) || (data82 === "MXN")) || (data82 === "MXV")) || (data82 === "MYR")) || (data82 === "MZN")) || (data82 === "NAD")) || (data82 === "NGN")) || (data82 === "NIO")) || (data82 === "NOK")) || (data82 === "NPR")) || (data82 === "NZD")) || (data82 === "OMR")) || (data82 === "PAB")) || (data82 === "PEN")) || (data82 === "PGK")) || (data82 === "PHP")) || (data82 === "PKR")) || (data82 === "PLN")) || (data82 === "PYG")) || (data82 === "QAR")) || (data82 === "RON")) || (data82 === "RSD")) || (data82 === "RUB")) || (data82 === "RWF")) || (data82 === "SAR")) || (data82 === "SBD")) || (data82 === "SCR")) || (data82 === "SDG")) || (data82 === "SEK")) || (data82 === "SGD")) || (data82 === "SHP")) || (data82 === "SLE")) || (data82 === "SLL")) || (data82 === "SOS")) || (data82 === "SRD")) || (data82 === "SSP")) || (data82 === "STN")) || (data82 === "SVC")) || (data82 === "SYP")) || (data82 === "SZL")) || (data82 === "THB")) || (data82 === "TJS")) || (data82 === "TMT")) || (data82 === "TND")) || (data82 === "TOP")) || (data82 === "TRY")) || (data82 === "TTD")) || (data82 === "TWD")) || (data82 === "TZS")) || (data82 === "UAH")) || (data82 === "UGX")) || (data82 === "USD")) || (data82 === "USN")) || (data82 === "UYI")) || (data82 === "UYU")) || (data82 === "UYW")) || (data82 === "UZS")) || (data82 === "VED")) || (data82 === "VES")) || (data82 === "VND")) || (data82 === "VUV")) || (data82 === "WST")) || (data82 === "XAD")) || (data82 === "XAF")) || (data82 === "XAG")) || (data82 === "XAU")) || (data82 === "XBA")) || (data82 === "XBB")) || (data82 === "XBC")) || (data82 === "XBD")) || (data82 === "XCD")) || (data82 === "XCG")) || (data82 === "XDR")) || (data82 === "XOF")) || (data82 === "XPD")) || (data82 === "XPF")) || (data82 === "XPT")) || (data82 === "XSU")) || (data82 === "XTS")) || (data82 === "XUA")) || (data82 === "XXX")) || (data82 === "YER")) || (data82 === "ZAR")) || (data82 === "ZMW")) || (data82 === "ZWG")) || (data82 === "ZWL"))){
+const err304 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/oneOf/0/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.base_currency.oneOf[0].enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err304];
 }
@@ -13852,10 +13891,10 @@ vErrors.push(err304);
 }
 errors++;
 }
-}
-}
-else {
-const err305 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/2/properties/benchmark_ref/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(errors === _errs246){
+if(typeof data82 === "string"){
+if(func2(data82) > 3){
+const err305 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/oneOf/0/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err305];
 }
@@ -13864,21 +13903,9 @@ vErrors.push(err305);
 }
 errors++;
 }
-}
-}
-var _valid11 = _errs242 === errors;
-if(_valid11 && valid30){
-valid30 = false;
-passing11 = [passing11, 1];
-}
 else {
-if(_valid11){
-valid30 = true;
-passing11 = 1;
-}
-}
-if(!valid30){
-const err306 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/2/properties/benchmark_ref/oneOf",keyword:"oneOf",params:{passingSchemas: passing11},message:"must match exactly one schema in oneOf"};
+if(func2(data82) < 3){
+const err306 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/oneOf/0/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err306];
 }
@@ -13887,32 +13914,10 @@ vErrors.push(err306);
 }
 errors++;
 }
-else {
-errors = _errs239;
-if(vErrors !== null){
-if(_errs239){
-vErrors.length = _errs239;
+}
 }
 else {
-vErrors = null;
-}
-}
-}
-var valid29 = _errs238 === errors;
-}
-else {
-var valid29 = true;
-}
-if(valid29){
-if(data.budget !== undefined){
-let data84 = data.budget;
-const _errs244 = errors;
-const _errs245 = errors;
-if(errors === _errs245){
-if(data84 && typeof data84 == "object" && !Array.isArray(data84)){
-let missing13;
-if(((((((((((((data84.schema_version === undefined) && (missing13 = "schema_version")) || ((data84.max_experiments === undefined) && (missing13 = "max_experiments"))) || ((data84.max_parallel_runs === undefined) && (missing13 = "max_parallel_runs"))) || ((data84.max_turns_per_mission === undefined) && (missing13 = "max_turns_per_mission"))) || ((data84.max_repair_turns === undefined) && (missing13 = "max_repair_turns"))) || ((data84.max_wall_seconds === undefined) && (missing13 = "max_wall_seconds"))) || ((data84.max_memory_mib === undefined) && (missing13 = "max_memory_mib"))) || ((data84.max_cycles_per_day === undefined) && (missing13 = "max_cycles_per_day"))) || ((data84.min_cycle_interval_seconds === undefined) && (missing13 = "min_cycle_interval_seconds"))) || ((data84.max_cpu_seconds === undefined) && (missing13 = "max_cpu_seconds"))) || ((data84.max_output_bytes === undefined) && (missing13 = "max_output_bytes"))) || ((data84.cost_enforcement === undefined) && (missing13 = "cost_enforcement"))){
-const err307 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/0/required",keyword:"required",params:{missingProperty: missing13},message:"must have required property '"+missing13+"'"};
+const err307 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/oneOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err307];
 }
@@ -13921,11 +13926,15 @@ vErrors.push(err307);
 }
 errors++;
 }
-else {
-const _errs247 = errors;
-for(const key7 in data84){
-if(!(func1.call(schema73.oneOf[2].properties.budget.allOf[0].properties, key7))){
-const err308 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key7},message:"must NOT have additional properties"};
+}
+var _valid13 = _errs246 === errors;
+if(_valid13){
+valid32 = true;
+passing13 = 0;
+}
+const _errs248 = errors;
+if(typeof data82 !== "string"){
+const err308 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err308];
 }
@@ -13933,19 +13942,9 @@ else {
 vErrors.push(err308);
 }
 errors++;
-break;
 }
-}
-if(_errs247 === errors){
-if(data84.cost_currency !== undefined){
-let data85 = data84.cost_currency;
-const _errs248 = errors;
-const _errs249 = errors;
-let valid33 = false;
-let passing12 = null;
-const _errs250 = errors;
-if(data85 !== null){
-const err309 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(!(((data82 === "USDC") || (data82 === "USDC.e")) || (data82 === "pUSD"))){
+const err309 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.base_currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err309];
 }
@@ -13954,14 +13953,19 @@ vErrors.push(err309);
 }
 errors++;
 }
-var _valid12 = _errs250 === errors;
-if(_valid12){
-valid33 = true;
-passing12 = 0;
+var _valid13 = _errs248 === errors;
+if(_valid13 && valid32){
+valid32 = false;
+passing13 = [passing13, 1];
 }
-const _errs252 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data85 === "AED") || (data85 === "AFN")) || (data85 === "ALL")) || (data85 === "AMD")) || (data85 === "AOA")) || (data85 === "ARS")) || (data85 === "AUD")) || (data85 === "AWG")) || (data85 === "AZN")) || (data85 === "BAM")) || (data85 === "BBD")) || (data85 === "BDT")) || (data85 === "BGN")) || (data85 === "BHD")) || (data85 === "BIF")) || (data85 === "BMD")) || (data85 === "BND")) || (data85 === "BOB")) || (data85 === "BOV")) || (data85 === "BRL")) || (data85 === "BSD")) || (data85 === "BTN")) || (data85 === "BWP")) || (data85 === "BYN")) || (data85 === "BZD")) || (data85 === "CAD")) || (data85 === "CDF")) || (data85 === "CHE")) || (data85 === "CHF")) || (data85 === "CHW")) || (data85 === "CLF")) || (data85 === "CLP")) || (data85 === "CNY")) || (data85 === "COP")) || (data85 === "COU")) || (data85 === "CRC")) || (data85 === "CUC")) || (data85 === "CUP")) || (data85 === "CVE")) || (data85 === "CZK")) || (data85 === "DJF")) || (data85 === "DKK")) || (data85 === "DOP")) || (data85 === "DZD")) || (data85 === "EGP")) || (data85 === "ERN")) || (data85 === "ETB")) || (data85 === "EUR")) || (data85 === "FJD")) || (data85 === "FKP")) || (data85 === "GBP")) || (data85 === "GEL")) || (data85 === "GHS")) || (data85 === "GIP")) || (data85 === "GMD")) || (data85 === "GNF")) || (data85 === "GTQ")) || (data85 === "GYD")) || (data85 === "HKD")) || (data85 === "HNL")) || (data85 === "HRK")) || (data85 === "HTG")) || (data85 === "HUF")) || (data85 === "IDR")) || (data85 === "ILS")) || (data85 === "INR")) || (data85 === "IQD")) || (data85 === "IRR")) || (data85 === "ISK")) || (data85 === "JMD")) || (data85 === "JOD")) || (data85 === "JPY")) || (data85 === "KES")) || (data85 === "KGS")) || (data85 === "KHR")) || (data85 === "KMF")) || (data85 === "KPW")) || (data85 === "KRW")) || (data85 === "KWD")) || (data85 === "KYD")) || (data85 === "KZT")) || (data85 === "LAK")) || (data85 === "LBP")) || (data85 === "LKR")) || (data85 === "LRD")) || (data85 === "LSL")) || (data85 === "LYD")) || (data85 === "MAD")) || (data85 === "MDL")) || (data85 === "MGA")) || (data85 === "MKD")) || (data85 === "MMK")) || (data85 === "MNT")) || (data85 === "MOP")) || (data85 === "MRU")) || (data85 === "MUR")) || (data85 === "MVR")) || (data85 === "MWK")) || (data85 === "MXN")) || (data85 === "MXV")) || (data85 === "MYR")) || (data85 === "MZN")) || (data85 === "NAD")) || (data85 === "NGN")) || (data85 === "NIO")) || (data85 === "NOK")) || (data85 === "NPR")) || (data85 === "NZD")) || (data85 === "OMR")) || (data85 === "PAB")) || (data85 === "PEN")) || (data85 === "PGK")) || (data85 === "PHP")) || (data85 === "PKR")) || (data85 === "PLN")) || (data85 === "PYG")) || (data85 === "QAR")) || (data85 === "RON")) || (data85 === "RSD")) || (data85 === "RUB")) || (data85 === "RWF")) || (data85 === "SAR")) || (data85 === "SBD")) || (data85 === "SCR")) || (data85 === "SDG")) || (data85 === "SEK")) || (data85 === "SGD")) || (data85 === "SHP")) || (data85 === "SLE")) || (data85 === "SLL")) || (data85 === "SOS")) || (data85 === "SRD")) || (data85 === "SSP")) || (data85 === "STN")) || (data85 === "SVC")) || (data85 === "SYP")) || (data85 === "SZL")) || (data85 === "THB")) || (data85 === "TJS")) || (data85 === "TMT")) || (data85 === "TND")) || (data85 === "TOP")) || (data85 === "TRY")) || (data85 === "TTD")) || (data85 === "TWD")) || (data85 === "TZS")) || (data85 === "UAH")) || (data85 === "UGX")) || (data85 === "USD")) || (data85 === "USN")) || (data85 === "UYI")) || (data85 === "UYU")) || (data85 === "UYW")) || (data85 === "UZS")) || (data85 === "VED")) || (data85 === "VES")) || (data85 === "VND")) || (data85 === "VUV")) || (data85 === "WST")) || (data85 === "XAD")) || (data85 === "XAF")) || (data85 === "XAG")) || (data85 === "XAU")) || (data85 === "XBA")) || (data85 === "XBB")) || (data85 === "XBC")) || (data85 === "XBD")) || (data85 === "XCD")) || (data85 === "XCG")) || (data85 === "XDR")) || (data85 === "XOF")) || (data85 === "XPD")) || (data85 === "XPF")) || (data85 === "XPT")) || (data85 === "XSU")) || (data85 === "XTS")) || (data85 === "XUA")) || (data85 === "XXX")) || (data85 === "YER")) || (data85 === "ZAR")) || (data85 === "ZMW")) || (data85 === "ZWG")) || (data85 === "ZWL"))){
-const err310 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[0].properties.cost_currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
+else {
+if(_valid13){
+valid32 = true;
+passing13 = 1;
+}
+}
+if(!valid32){
+const err310 = {instancePath:instancePath+"/base_currency",schemaPath:"#/oneOf/2/properties/base_currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing13},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err310];
 }
@@ -13970,10 +13974,32 @@ vErrors.push(err310);
 }
 errors++;
 }
-if(errors === _errs252){
-if(typeof data85 === "string"){
-if(func2(data85) > 3){
-const err311 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+else {
+errors = _errs245;
+if(vErrors !== null){
+if(_errs245){
+vErrors.length = _errs245;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid31 = _errs244 === errors;
+}
+else {
+var valid31 = true;
+}
+if(valid31){
+if(data.benchmark_ref !== undefined){
+let data83 = data.benchmark_ref;
+const _errs250 = errors;
+const _errs251 = errors;
+let valid33 = false;
+let passing14 = null;
+const _errs252 = errors;
+if(data83 !== null){
+const err311 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/2/properties/benchmark_ref/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err311];
 }
@@ -13982,9 +14008,17 @@ vErrors.push(err311);
 }
 errors++;
 }
-else {
-if(func2(data85) < 3){
-const err312 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf/1/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+var _valid14 = _errs252 === errors;
+if(_valid14){
+valid33 = true;
+passing14 = 0;
+}
+const _errs254 = errors;
+if(errors === _errs254){
+if(errors === _errs254){
+if(typeof data83 === "string"){
+if(!pattern3.test(data83)){
+const err312 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/2/properties/benchmark_ref/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err312];
 }
@@ -13993,10 +14027,9 @@ vErrors.push(err312);
 }
 errors++;
 }
-}
-}
 else {
-const err313 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!(formats0.test(data83))){
+const err313 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/2/properties/benchmark_ref/oneOf/1/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
 if(vErrors === null){
 vErrors = [err313];
 }
@@ -14006,19 +14039,9 @@ vErrors.push(err313);
 errors++;
 }
 }
-var _valid12 = _errs252 === errors;
-if(_valid12 && valid33){
-valid33 = false;
-passing12 = [passing12, 1];
 }
 else {
-if(_valid12){
-valid33 = true;
-passing12 = 1;
-}
-}
-if(!valid33){
-const err314 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing12},message:"must match exactly one schema in oneOf"};
+const err314 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/2/properties/benchmark_ref/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err314];
 }
@@ -14027,44 +14050,21 @@ vErrors.push(err314);
 }
 errors++;
 }
-else {
-errors = _errs249;
-if(vErrors !== null){
-if(_errs249){
-vErrors.length = _errs249;
+}
+}
+var _valid14 = _errs254 === errors;
+if(_valid14 && valid33){
+valid33 = false;
+passing14 = [passing14, 1];
 }
 else {
-vErrors = null;
+if(_valid14){
+valid33 = true;
+passing14 = 1;
 }
 }
-}
-var valid32 = _errs248 === errors;
-}
-else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.cost_enforcement !== undefined){
-const _errs254 = errors;
-if(!(validate290(data84.cost_enforcement, {instancePath:instancePath+"/budget/cost_enforcement",parentData:data84,parentDataProperty:"cost_enforcement",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate290.errors : vErrors.concat(validate290.errors);
-errors = vErrors.length;
-}
-var valid32 = _errs254 === errors;
-}
-else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.max_cost_decimal !== undefined){
-let data87 = data84.max_cost_decimal;
-const _errs255 = errors;
-const _errs256 = errors;
-let valid34 = false;
-let passing13 = null;
-const _errs257 = errors;
-if(data87 !== null){
-const err315 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(!valid33){
+const err315 = {instancePath:instancePath+"/benchmark_ref",schemaPath:"#/oneOf/2/properties/benchmark_ref/oneOf",keyword:"oneOf",params:{passingSchemas: passing14},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err315];
 }
@@ -14073,16 +14073,32 @@ vErrors.push(err315);
 }
 errors++;
 }
-var _valid13 = _errs257 === errors;
-if(_valid13){
-valid34 = true;
-passing13 = 0;
+else {
+errors = _errs251;
+if(vErrors !== null){
+if(_errs251){
+vErrors.length = _errs251;
 }
-const _errs259 = errors;
-if(errors === _errs259){
-if(typeof data87 === "string"){
-if(func2(data87) > 64){
-const err316 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+else {
+vErrors = null;
+}
+}
+}
+var valid31 = _errs250 === errors;
+}
+else {
+var valid31 = true;
+}
+if(valid31){
+if(data.budget !== undefined){
+let data84 = data.budget;
+const _errs256 = errors;
+const _errs257 = errors;
+if(errors === _errs257){
+if(data84 && typeof data84 == "object" && !Array.isArray(data84)){
+let missing13;
+if(((((((((((((data84.schema_version === undefined) && (missing13 = "schema_version")) || ((data84.max_experiments === undefined) && (missing13 = "max_experiments"))) || ((data84.max_parallel_runs === undefined) && (missing13 = "max_parallel_runs"))) || ((data84.max_turns_per_mission === undefined) && (missing13 = "max_turns_per_mission"))) || ((data84.max_repair_turns === undefined) && (missing13 = "max_repair_turns"))) || ((data84.max_wall_seconds === undefined) && (missing13 = "max_wall_seconds"))) || ((data84.max_memory_mib === undefined) && (missing13 = "max_memory_mib"))) || ((data84.max_cycles_per_day === undefined) && (missing13 = "max_cycles_per_day"))) || ((data84.min_cycle_interval_seconds === undefined) && (missing13 = "min_cycle_interval_seconds"))) || ((data84.max_cpu_seconds === undefined) && (missing13 = "max_cpu_seconds"))) || ((data84.max_output_bytes === undefined) && (missing13 = "max_output_bytes"))) || ((data84.cost_enforcement === undefined) && (missing13 = "cost_enforcement"))){
+const err316 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/0/required",keyword:"required",params:{missingProperty: missing13},message:"must have required property '"+missing13+"'"};
 if(vErrors === null){
 vErrors = [err316];
 }
@@ -14092,8 +14108,10 @@ vErrors.push(err316);
 errors++;
 }
 else {
-if(func2(data87) < 1){
-const err317 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+const _errs259 = errors;
+for(const key7 in data84){
+if(!(func1.call(schema73.oneOf[2].properties.budget.allOf[0].properties, key7))){
+const err317 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key7},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err317];
 }
@@ -14101,10 +14119,19 @@ else {
 vErrors.push(err317);
 }
 errors++;
+break;
 }
-else {
-if(!pattern6.test(data87)){
-const err318 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
+}
+if(_errs259 === errors){
+if(data84.cost_currency !== undefined){
+let data85 = data84.cost_currency;
+const _errs260 = errors;
+const _errs261 = errors;
+let valid36 = false;
+let passing15 = null;
+const _errs262 = errors;
+if(data85 !== null){
+const err318 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err318];
 }
@@ -14113,11 +14140,14 @@ vErrors.push(err318);
 }
 errors++;
 }
+var _valid15 = _errs262 === errors;
+if(_valid15){
+valid36 = true;
+passing15 = 0;
 }
-}
-}
-else {
-const err319 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const _errs264 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data85 === "AED") || (data85 === "AFN")) || (data85 === "ALL")) || (data85 === "AMD")) || (data85 === "AOA")) || (data85 === "ARS")) || (data85 === "AUD")) || (data85 === "AWG")) || (data85 === "AZN")) || (data85 === "BAM")) || (data85 === "BBD")) || (data85 === "BDT")) || (data85 === "BGN")) || (data85 === "BHD")) || (data85 === "BIF")) || (data85 === "BMD")) || (data85 === "BND")) || (data85 === "BOB")) || (data85 === "BOV")) || (data85 === "BRL")) || (data85 === "BSD")) || (data85 === "BTN")) || (data85 === "BWP")) || (data85 === "BYN")) || (data85 === "BZD")) || (data85 === "CAD")) || (data85 === "CDF")) || (data85 === "CHE")) || (data85 === "CHF")) || (data85 === "CHW")) || (data85 === "CLF")) || (data85 === "CLP")) || (data85 === "CNY")) || (data85 === "COP")) || (data85 === "COU")) || (data85 === "CRC")) || (data85 === "CUC")) || (data85 === "CUP")) || (data85 === "CVE")) || (data85 === "CZK")) || (data85 === "DJF")) || (data85 === "DKK")) || (data85 === "DOP")) || (data85 === "DZD")) || (data85 === "EGP")) || (data85 === "ERN")) || (data85 === "ETB")) || (data85 === "EUR")) || (data85 === "FJD")) || (data85 === "FKP")) || (data85 === "GBP")) || (data85 === "GEL")) || (data85 === "GHS")) || (data85 === "GIP")) || (data85 === "GMD")) || (data85 === "GNF")) || (data85 === "GTQ")) || (data85 === "GYD")) || (data85 === "HKD")) || (data85 === "HNL")) || (data85 === "HRK")) || (data85 === "HTG")) || (data85 === "HUF")) || (data85 === "IDR")) || (data85 === "ILS")) || (data85 === "INR")) || (data85 === "IQD")) || (data85 === "IRR")) || (data85 === "ISK")) || (data85 === "JMD")) || (data85 === "JOD")) || (data85 === "JPY")) || (data85 === "KES")) || (data85 === "KGS")) || (data85 === "KHR")) || (data85 === "KMF")) || (data85 === "KPW")) || (data85 === "KRW")) || (data85 === "KWD")) || (data85 === "KYD")) || (data85 === "KZT")) || (data85 === "LAK")) || (data85 === "LBP")) || (data85 === "LKR")) || (data85 === "LRD")) || (data85 === "LSL")) || (data85 === "LYD")) || (data85 === "MAD")) || (data85 === "MDL")) || (data85 === "MGA")) || (data85 === "MKD")) || (data85 === "MMK")) || (data85 === "MNT")) || (data85 === "MOP")) || (data85 === "MRU")) || (data85 === "MUR")) || (data85 === "MVR")) || (data85 === "MWK")) || (data85 === "MXN")) || (data85 === "MXV")) || (data85 === "MYR")) || (data85 === "MZN")) || (data85 === "NAD")) || (data85 === "NGN")) || (data85 === "NIO")) || (data85 === "NOK")) || (data85 === "NPR")) || (data85 === "NZD")) || (data85 === "OMR")) || (data85 === "PAB")) || (data85 === "PEN")) || (data85 === "PGK")) || (data85 === "PHP")) || (data85 === "PKR")) || (data85 === "PLN")) || (data85 === "PYG")) || (data85 === "QAR")) || (data85 === "RON")) || (data85 === "RSD")) || (data85 === "RUB")) || (data85 === "RWF")) || (data85 === "SAR")) || (data85 === "SBD")) || (data85 === "SCR")) || (data85 === "SDG")) || (data85 === "SEK")) || (data85 === "SGD")) || (data85 === "SHP")) || (data85 === "SLE")) || (data85 === "SLL")) || (data85 === "SOS")) || (data85 === "SRD")) || (data85 === "SSP")) || (data85 === "STN")) || (data85 === "SVC")) || (data85 === "SYP")) || (data85 === "SZL")) || (data85 === "THB")) || (data85 === "TJS")) || (data85 === "TMT")) || (data85 === "TND")) || (data85 === "TOP")) || (data85 === "TRY")) || (data85 === "TTD")) || (data85 === "TWD")) || (data85 === "TZS")) || (data85 === "UAH")) || (data85 === "UGX")) || (data85 === "USD")) || (data85 === "USN")) || (data85 === "UYI")) || (data85 === "UYU")) || (data85 === "UYW")) || (data85 === "UZS")) || (data85 === "VED")) || (data85 === "VES")) || (data85 === "VND")) || (data85 === "VUV")) || (data85 === "WST")) || (data85 === "XAD")) || (data85 === "XAF")) || (data85 === "XAG")) || (data85 === "XAU")) || (data85 === "XBA")) || (data85 === "XBB")) || (data85 === "XBC")) || (data85 === "XBD")) || (data85 === "XCD")) || (data85 === "XCG")) || (data85 === "XDR")) || (data85 === "XOF")) || (data85 === "XPD")) || (data85 === "XPF")) || (data85 === "XPT")) || (data85 === "XSU")) || (data85 === "XTS")) || (data85 === "XUA")) || (data85 === "XXX")) || (data85 === "YER")) || (data85 === "ZAR")) || (data85 === "ZMW")) || (data85 === "ZWG")) || (data85 === "ZWL"))){
+const err319 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[0].properties.cost_currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err319];
 }
@@ -14126,20 +14156,10 @@ vErrors.push(err319);
 }
 errors++;
 }
-}
-var _valid13 = _errs259 === errors;
-if(_valid13 && valid34){
-valid34 = false;
-passing13 = [passing13, 1];
-}
-else {
-if(_valid13){
-valid34 = true;
-passing13 = 1;
-}
-}
-if(!valid34){
-const err320 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf",keyword:"oneOf",params:{passingSchemas: passing13},message:"must match exactly one schema in oneOf"};
+if(errors === _errs264){
+if(typeof data85 === "string"){
+if(func2(data85) > 3){
+const err320 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err320];
 }
@@ -14149,29 +14169,8 @@ vErrors.push(err320);
 errors++;
 }
 else {
-errors = _errs256;
-if(vErrors !== null){
-if(_errs256){
-vErrors.length = _errs256;
-}
-else {
-vErrors = null;
-}
-}
-}
-var valid32 = _errs255 === errors;
-}
-else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.max_cpu_seconds !== undefined){
-let data88 = data84.max_cpu_seconds;
-const _errs261 = errors;
-if(errors === _errs261){
-if(typeof data88 === "string"){
-if(func2(data88) > 19){
-const err321 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cpu_seconds/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+if(func2(data85) < 3){
+const err321 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf/1/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err321];
 }
@@ -14180,9 +14179,10 @@ vErrors.push(err321);
 }
 errors++;
 }
+}
+}
 else {
-if(func2(data88) < 1){
-const err322 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cpu_seconds/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+const err322 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err322];
 }
@@ -14191,9 +14191,20 @@ vErrors.push(err322);
 }
 errors++;
 }
+}
+var _valid15 = _errs264 === errors;
+if(_valid15 && valid36){
+valid36 = false;
+passing15 = [passing15, 1];
+}
 else {
-if(!pattern5.test(data88)){
-const err323 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cpu_seconds/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
+if(_valid15){
+valid36 = true;
+passing15 = 1;
+}
+}
+if(!valid36){
+const err323 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/cost_currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing15},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err323];
 }
@@ -14202,11 +14213,44 @@ vErrors.push(err323);
 }
 errors++;
 }
-}
-}
+else {
+errors = _errs261;
+if(vErrors !== null){
+if(_errs261){
+vErrors.length = _errs261;
 }
 else {
-const err324 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cpu_seconds/type",keyword:"type",params:{type: "string"},message:"must be string"};
+vErrors = null;
+}
+}
+}
+var valid35 = _errs260 === errors;
+}
+else {
+var valid35 = true;
+}
+if(valid35){
+if(data84.cost_enforcement !== undefined){
+const _errs266 = errors;
+if(!(validate290(data84.cost_enforcement, {instancePath:instancePath+"/budget/cost_enforcement",parentData:data84,parentDataProperty:"cost_enforcement",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate290.errors : vErrors.concat(validate290.errors);
+errors = vErrors.length;
+}
+var valid35 = _errs266 === errors;
+}
+else {
+var valid35 = true;
+}
+if(valid35){
+if(data84.max_cost_decimal !== undefined){
+let data87 = data84.max_cost_decimal;
+const _errs267 = errors;
+const _errs268 = errors;
+let valid37 = false;
+let passing16 = null;
+const _errs269 = errors;
+if(data87 !== null){
+const err324 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err324];
 }
@@ -14215,18 +14259,16 @@ vErrors.push(err324);
 }
 errors++;
 }
+var _valid16 = _errs269 === errors;
+if(_valid16){
+valid37 = true;
+passing16 = 0;
 }
-var valid32 = _errs261 === errors;
-}
-else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.max_cycles_per_day !== undefined){
-let data89 = data84.max_cycles_per_day;
-const _errs263 = errors;
-if(!((typeof data89 == "number") && (!(data89 % 1) && !isNaN(data89)))){
-const err325 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cycles_per_day/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const _errs271 = errors;
+if(errors === _errs271){
+if(typeof data87 === "string"){
+if(func2(data87) > 64){
+const err325 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
 if(vErrors === null){
 vErrors = [err325];
 }
@@ -14235,10 +14277,9 @@ vErrors.push(err325);
 }
 errors++;
 }
-if(errors === _errs263){
-if(typeof data89 == "number"){
-if(data89 > 65535 || isNaN(data89)){
-const err326 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cycles_per_day/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+else {
+if(func2(data87) < 1){
+const err326 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err326];
 }
@@ -14248,8 +14289,8 @@ vErrors.push(err326);
 errors++;
 }
 else {
-if(data89 < 1 || isNaN(data89)){
-const err327 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cycles_per_day/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(!pattern6.test(data87)){
+const err327 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err327];
 }
@@ -14258,9 +14299,11 @@ vErrors.push(err327);
 }
 errors++;
 }
+}
+}
+}
 else {
-if(!(formats12.validate(data89))){
-const err328 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cycles_per_day/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+const err328 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err328];
 }
@@ -14270,20 +14313,19 @@ vErrors.push(err328);
 errors++;
 }
 }
-}
-}
-}
-var valid32 = _errs263 === errors;
+var _valid16 = _errs271 === errors;
+if(_valid16 && valid37){
+valid37 = false;
+passing16 = [passing16, 1];
 }
 else {
-var valid32 = true;
+if(_valid16){
+valid37 = true;
+passing16 = 1;
 }
-if(valid32){
-if(data84.max_experiments !== undefined){
-let data90 = data84.max_experiments;
-const _errs265 = errors;
-if(!((typeof data90 == "number") && (!(data90 % 1) && !isNaN(data90)))){
-const err329 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_experiments/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+}
+if(!valid37){
+const err329 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cost_decimal/oneOf",keyword:"oneOf",params:{passingSchemas: passing16},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err329];
 }
@@ -14292,10 +14334,30 @@ vErrors.push(err329);
 }
 errors++;
 }
-if(errors === _errs265){
-if(typeof data90 == "number"){
-if(data90 > 4294967295 || isNaN(data90)){
-const err330 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_experiments/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+else {
+errors = _errs268;
+if(vErrors !== null){
+if(_errs268){
+vErrors.length = _errs268;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid35 = _errs267 === errors;
+}
+else {
+var valid35 = true;
+}
+if(valid35){
+if(data84.max_cpu_seconds !== undefined){
+let data88 = data84.max_cpu_seconds;
+const _errs273 = errors;
+if(errors === _errs273){
+if(typeof data88 === "string"){
+if(func2(data88) > 19){
+const err330 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cpu_seconds/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
 if(vErrors === null){
 vErrors = [err330];
 }
@@ -14305,8 +14367,8 @@ vErrors.push(err330);
 errors++;
 }
 else {
-if(data90 < 1 || isNaN(data90)){
-const err331 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_experiments/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(func2(data88) < 1){
+const err331 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cpu_seconds/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err331];
 }
@@ -14316,8 +14378,8 @@ vErrors.push(err331);
 errors++;
 }
 else {
-if(!(formats22.validate(data90))){
-const err332 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_experiments/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+if(!pattern5.test(data88)){
+const err332 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cpu_seconds/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err332];
 }
@@ -14329,18 +14391,8 @@ errors++;
 }
 }
 }
-}
-var valid32 = _errs265 === errors;
-}
 else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.max_memory_mib !== undefined){
-let data91 = data84.max_memory_mib;
-const _errs267 = errors;
-if(!((typeof data91 == "number") && (!(data91 % 1) && !isNaN(data91)))){
-const err333 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_memory_mib/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err333 = {instancePath:instancePath+"/budget/max_cpu_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cpu_seconds/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err333];
 }
@@ -14349,10 +14401,18 @@ vErrors.push(err333);
 }
 errors++;
 }
-if(errors === _errs267){
-if(typeof data91 == "number"){
-if(data91 > 4294967295 || isNaN(data91)){
-const err334 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_memory_mib/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+}
+var valid35 = _errs273 === errors;
+}
+else {
+var valid35 = true;
+}
+if(valid35){
+if(data84.max_cycles_per_day !== undefined){
+let data89 = data84.max_cycles_per_day;
+const _errs275 = errors;
+if(!((typeof data89 == "number") && (!(data89 % 1) && !isNaN(data89)))){
+const err334 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cycles_per_day/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err334];
 }
@@ -14361,9 +14421,10 @@ vErrors.push(err334);
 }
 errors++;
 }
-else {
-if(data91 < 1 || isNaN(data91)){
-const err335 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_memory_mib/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(errors === _errs275){
+if(typeof data89 == "number"){
+if(data89 > 65535 || isNaN(data89)){
+const err335 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cycles_per_day/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
 if(vErrors === null){
 vErrors = [err335];
 }
@@ -14373,8 +14434,8 @@ vErrors.push(err335);
 errors++;
 }
 else {
-if(!(formats22.validate(data91))){
-const err336 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_memory_mib/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+if(data89 < 1 || isNaN(data89)){
+const err336 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cycles_per_day/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err336];
 }
@@ -14383,23 +14444,9 @@ vErrors.push(err336);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid32 = _errs267 === errors;
-}
 else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.max_output_bytes !== undefined){
-let data92 = data84.max_output_bytes;
-const _errs269 = errors;
-if(errors === _errs269){
-if(typeof data92 === "string"){
-if(func2(data92) > 19){
-const err337 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_output_bytes/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+if(!(formats12.validate(data89))){
+const err337 = {instancePath:instancePath+"/budget/max_cycles_per_day",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_cycles_per_day/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err337];
 }
@@ -14408,9 +14455,21 @@ vErrors.push(err337);
 }
 errors++;
 }
+}
+}
+}
+}
+var valid35 = _errs275 === errors;
+}
 else {
-if(func2(data92) < 1){
-const err338 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_output_bytes/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+var valid35 = true;
+}
+if(valid35){
+if(data84.max_experiments !== undefined){
+let data90 = data84.max_experiments;
+const _errs277 = errors;
+if(!((typeof data90 == "number") && (!(data90 % 1) && !isNaN(data90)))){
+const err338 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_experiments/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err338];
 }
@@ -14419,9 +14478,10 @@ vErrors.push(err338);
 }
 errors++;
 }
-else {
-if(!pattern5.test(data92)){
-const err339 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_output_bytes/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
+if(errors === _errs277){
+if(typeof data90 == "number"){
+if(data90 > 4294967295 || isNaN(data90)){
+const err339 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_experiments/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err339];
 }
@@ -14430,11 +14490,9 @@ vErrors.push(err339);
 }
 errors++;
 }
-}
-}
-}
 else {
-const err340 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_output_bytes/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(data90 < 1 || isNaN(data90)){
+const err340 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_experiments/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err340];
 }
@@ -14443,18 +14501,9 @@ vErrors.push(err340);
 }
 errors++;
 }
-}
-var valid32 = _errs269 === errors;
-}
 else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.max_parallel_runs !== undefined){
-let data93 = data84.max_parallel_runs;
-const _errs271 = errors;
-if(!((typeof data93 == "number") && (!(data93 % 1) && !isNaN(data93)))){
-const err341 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_parallel_runs/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(!(formats22.validate(data90))){
+const err341 = {instancePath:instancePath+"/budget/max_experiments",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_experiments/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
 if(vErrors === null){
 vErrors = [err341];
 }
@@ -14463,10 +14512,21 @@ vErrors.push(err341);
 }
 errors++;
 }
-if(errors === _errs271){
-if(typeof data93 == "number"){
-if(data93 > 65535 || isNaN(data93)){
-const err342 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_parallel_runs/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+}
+}
+}
+}
+var valid35 = _errs277 === errors;
+}
+else {
+var valid35 = true;
+}
+if(valid35){
+if(data84.max_memory_mib !== undefined){
+let data91 = data84.max_memory_mib;
+const _errs279 = errors;
+if(!((typeof data91 == "number") && (!(data91 % 1) && !isNaN(data91)))){
+const err342 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_memory_mib/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err342];
 }
@@ -14475,9 +14535,10 @@ vErrors.push(err342);
 }
 errors++;
 }
-else {
-if(data93 < 1 || isNaN(data93)){
-const err343 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_parallel_runs/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(errors === _errs279){
+if(typeof data91 == "number"){
+if(data91 > 4294967295 || isNaN(data91)){
+const err343 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_memory_mib/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err343];
 }
@@ -14487,8 +14548,8 @@ vErrors.push(err343);
 errors++;
 }
 else {
-if(!(formats12.validate(data93))){
-const err344 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_parallel_runs/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(data91 < 1 || isNaN(data91)){
+const err344 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_memory_mib/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err344];
 }
@@ -14497,21 +14558,9 @@ vErrors.push(err344);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid32 = _errs271 === errors;
-}
 else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.max_repair_turns !== undefined){
-let data94 = data84.max_repair_turns;
-const _errs273 = errors;
-if(!((typeof data94 == "number") && (!(data94 % 1) && !isNaN(data94)))){
-const err345 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_repair_turns/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(!(formats22.validate(data91))){
+const err345 = {instancePath:instancePath+"/budget/max_memory_mib",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_memory_mib/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
 if(vErrors === null){
 vErrors = [err345];
 }
@@ -14520,10 +14569,23 @@ vErrors.push(err345);
 }
 errors++;
 }
-if(errors === _errs273){
-if(typeof data94 == "number"){
-if(data94 > 65535 || isNaN(data94)){
-const err346 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_repair_turns/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+}
+}
+}
+}
+var valid35 = _errs279 === errors;
+}
+else {
+var valid35 = true;
+}
+if(valid35){
+if(data84.max_output_bytes !== undefined){
+let data92 = data84.max_output_bytes;
+const _errs281 = errors;
+if(errors === _errs281){
+if(typeof data92 === "string"){
+if(func2(data92) > 19){
+const err346 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_output_bytes/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
 if(vErrors === null){
 vErrors = [err346];
 }
@@ -14533,8 +14595,8 @@ vErrors.push(err346);
 errors++;
 }
 else {
-if(data94 < 0 || isNaN(data94)){
-const err347 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_repair_turns/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+if(func2(data92) < 1){
+const err347 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_output_bytes/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err347];
 }
@@ -14544,8 +14606,8 @@ vErrors.push(err347);
 errors++;
 }
 else {
-if(!(formats12.validate(data94))){
-const err348 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_repair_turns/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(!pattern5.test(data92)){
+const err348 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_output_bytes/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err348];
 }
@@ -14557,22 +14619,8 @@ errors++;
 }
 }
 }
-}
-var valid32 = _errs273 === errors;
-}
 else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.max_tokens !== undefined){
-let data95 = data84.max_tokens;
-const _errs275 = errors;
-const _errs276 = errors;
-let valid35 = false;
-let passing14 = null;
-const _errs277 = errors;
-if(data95 !== null){
-const err349 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+const err349 = {instancePath:instancePath+"/budget/max_output_bytes",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_output_bytes/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err349];
 }
@@ -14581,16 +14629,18 @@ vErrors.push(err349);
 }
 errors++;
 }
-var _valid14 = _errs277 === errors;
-if(_valid14){
-valid35 = true;
-passing14 = 0;
 }
-const _errs279 = errors;
-if(errors === _errs279){
-if(typeof data95 === "string"){
-if(func2(data95) > 19){
-const err350 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
+var valid35 = _errs281 === errors;
+}
+else {
+var valid35 = true;
+}
+if(valid35){
+if(data84.max_parallel_runs !== undefined){
+let data93 = data84.max_parallel_runs;
+const _errs283 = errors;
+if(!((typeof data93 == "number") && (!(data93 % 1) && !isNaN(data93)))){
+const err350 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_parallel_runs/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err350];
 }
@@ -14599,9 +14649,10 @@ vErrors.push(err350);
 }
 errors++;
 }
-else {
-if(func2(data95) < 1){
-const err351 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(errors === _errs283){
+if(typeof data93 == "number"){
+if(data93 > 65535 || isNaN(data93)){
+const err351 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_parallel_runs/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
 if(vErrors === null){
 vErrors = [err351];
 }
@@ -14611,8 +14662,8 @@ vErrors.push(err351);
 errors++;
 }
 else {
-if(!pattern5.test(data95)){
-const err352 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
+if(data93 < 1 || isNaN(data93)){
+const err352 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_parallel_runs/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err352];
 }
@@ -14621,11 +14672,9 @@ vErrors.push(err352);
 }
 errors++;
 }
-}
-}
-}
 else {
-const err353 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!(formats12.validate(data93))){
+const err353 = {instancePath:instancePath+"/budget/max_parallel_runs",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_parallel_runs/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err353];
 }
@@ -14635,19 +14684,20 @@ vErrors.push(err353);
 errors++;
 }
 }
-var _valid14 = _errs279 === errors;
-if(_valid14 && valid35){
-valid35 = false;
-passing14 = [passing14, 1];
+}
+}
+}
+var valid35 = _errs283 === errors;
 }
 else {
-if(_valid14){
-valid35 = true;
-passing14 = 1;
+var valid35 = true;
 }
-}
-if(!valid35){
-const err354 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf",keyword:"oneOf",params:{passingSchemas: passing14},message:"must match exactly one schema in oneOf"};
+if(valid35){
+if(data84.max_repair_turns !== undefined){
+let data94 = data84.max_repair_turns;
+const _errs285 = errors;
+if(!((typeof data94 == "number") && (!(data94 % 1) && !isNaN(data94)))){
+const err354 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_repair_turns/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err354];
 }
@@ -14656,28 +14706,10 @@ vErrors.push(err354);
 }
 errors++;
 }
-else {
-errors = _errs276;
-if(vErrors !== null){
-if(_errs276){
-vErrors.length = _errs276;
-}
-else {
-vErrors = null;
-}
-}
-}
-var valid32 = _errs275 === errors;
-}
-else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.max_turns_per_mission !== undefined){
-let data96 = data84.max_turns_per_mission;
-const _errs281 = errors;
-if(!((typeof data96 == "number") && (!(data96 % 1) && !isNaN(data96)))){
-const err355 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_turns_per_mission/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(errors === _errs285){
+if(typeof data94 == "number"){
+if(data94 > 65535 || isNaN(data94)){
+const err355 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_repair_turns/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
 if(vErrors === null){
 vErrors = [err355];
 }
@@ -14686,10 +14718,9 @@ vErrors.push(err355);
 }
 errors++;
 }
-if(errors === _errs281){
-if(typeof data96 == "number"){
-if(data96 > 65535 || isNaN(data96)){
-const err356 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_turns_per_mission/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+else {
+if(data94 < 0 || isNaN(data94)){
+const err356 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_repair_turns/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err356];
 }
@@ -14699,8 +14730,8 @@ vErrors.push(err356);
 errors++;
 }
 else {
-if(data96 < 1 || isNaN(data96)){
-const err357 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_turns_per_mission/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(!(formats12.validate(data94))){
+const err357 = {instancePath:instancePath+"/budget/max_repair_turns",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_repair_turns/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err357];
 }
@@ -14709,9 +14740,25 @@ vErrors.push(err357);
 }
 errors++;
 }
+}
+}
+}
+}
+var valid35 = _errs285 === errors;
+}
 else {
-if(!(formats12.validate(data96))){
-const err358 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_turns_per_mission/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+var valid35 = true;
+}
+if(valid35){
+if(data84.max_tokens !== undefined){
+let data95 = data84.max_tokens;
+const _errs287 = errors;
+const _errs288 = errors;
+let valid38 = false;
+let passing17 = null;
+const _errs289 = errors;
+if(data95 !== null){
+const err358 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err358];
 }
@@ -14720,21 +14767,16 @@ vErrors.push(err358);
 }
 errors++;
 }
+var _valid17 = _errs289 === errors;
+if(_valid17){
+valid38 = true;
+passing17 = 0;
 }
-}
-}
-}
-var valid32 = _errs281 === errors;
-}
-else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.max_wall_seconds !== undefined){
-let data97 = data84.max_wall_seconds;
-const _errs283 = errors;
-if(!((typeof data97 == "number") && (!(data97 % 1) && !isNaN(data97)))){
-const err359 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_wall_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const _errs291 = errors;
+if(errors === _errs291){
+if(typeof data95 === "string"){
+if(func2(data95) > 19){
+const err359 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf/1/maxLength",keyword:"maxLength",params:{limit: 19},message:"must NOT have more than 19 characters"};
 if(vErrors === null){
 vErrors = [err359];
 }
@@ -14743,10 +14785,9 @@ vErrors.push(err359);
 }
 errors++;
 }
-if(errors === _errs283){
-if(typeof data97 == "number"){
-if(data97 > 4294967295 || isNaN(data97)){
-const err360 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_wall_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+else {
+if(func2(data95) < 1){
+const err360 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf/1/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err360];
 }
@@ -14756,8 +14797,8 @@ vErrors.push(err360);
 errors++;
 }
 else {
-if(data97 < 1 || isNaN(data97)){
-const err361 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_wall_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(!pattern5.test(data95)){
+const err361 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf/1/pattern",keyword:"pattern",params:{pattern: "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"},message:"must match pattern \""+"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err361];
 }
@@ -14766,9 +14807,11 @@ vErrors.push(err361);
 }
 errors++;
 }
+}
+}
+}
 else {
-if(!(formats22.validate(data97))){
-const err362 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_wall_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+const err362 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err362];
 }
@@ -14778,20 +14821,19 @@ vErrors.push(err362);
 errors++;
 }
 }
-}
-}
-}
-var valid32 = _errs283 === errors;
+var _valid17 = _errs291 === errors;
+if(_valid17 && valid38){
+valid38 = false;
+passing17 = [passing17, 1];
 }
 else {
-var valid32 = true;
+if(_valid17){
+valid38 = true;
+passing17 = 1;
 }
-if(valid32){
-if(data84.min_cycle_interval_seconds !== undefined){
-let data98 = data84.min_cycle_interval_seconds;
-const _errs285 = errors;
-if(!((typeof data98 == "number") && (!(data98 % 1) && !isNaN(data98)))){
-const err363 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/min_cycle_interval_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+}
+if(!valid38){
+const err363 = {instancePath:instancePath+"/budget/max_tokens",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_tokens/oneOf",keyword:"oneOf",params:{passingSchemas: passing17},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err363];
 }
@@ -14800,10 +14842,28 @@ vErrors.push(err363);
 }
 errors++;
 }
-if(errors === _errs285){
-if(typeof data98 == "number"){
-if(data98 > 4294967295 || isNaN(data98)){
-const err364 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/min_cycle_interval_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
+else {
+errors = _errs288;
+if(vErrors !== null){
+if(_errs288){
+vErrors.length = _errs288;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid35 = _errs287 === errors;
+}
+else {
+var valid35 = true;
+}
+if(valid35){
+if(data84.max_turns_per_mission !== undefined){
+let data96 = data84.max_turns_per_mission;
+const _errs293 = errors;
+if(!((typeof data96 == "number") && (!(data96 % 1) && !isNaN(data96)))){
+const err364 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_turns_per_mission/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err364];
 }
@@ -14812,9 +14872,10 @@ vErrors.push(err364);
 }
 errors++;
 }
-else {
-if(data98 < 0 || isNaN(data98)){
-const err365 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/min_cycle_interval_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
+if(errors === _errs293){
+if(typeof data96 == "number"){
+if(data96 > 65535 || isNaN(data96)){
+const err365 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_turns_per_mission/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
 if(vErrors === null){
 vErrors = [err365];
 }
@@ -14824,8 +14885,8 @@ vErrors.push(err365);
 errors++;
 }
 else {
-if(!(formats22.validate(data98))){
-const err366 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/min_cycle_interval_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
+if(data96 < 1 || isNaN(data96)){
+const err366 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_turns_per_mission/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err366];
 }
@@ -14834,21 +14895,9 @@ vErrors.push(err366);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid32 = _errs285 === errors;
-}
 else {
-var valid32 = true;
-}
-if(valid32){
-if(data84.schema_version !== undefined){
-let data99 = data84.schema_version;
-const _errs287 = errors;
-if(!((typeof data99 == "number") && (!(data99 % 1) && !isNaN(data99)))){
-const err367 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(!(formats12.validate(data96))){
+const err367 = {instancePath:instancePath+"/budget/max_turns_per_mission",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_turns_per_mission/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err367];
 }
@@ -14857,8 +14906,21 @@ vErrors.push(err367);
 }
 errors++;
 }
-if(!(data99 === 1)){
-const err368 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[0].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
+}
+}
+}
+}
+var valid35 = _errs293 === errors;
+}
+else {
+var valid35 = true;
+}
+if(valid35){
+if(data84.max_wall_seconds !== undefined){
+let data97 = data84.max_wall_seconds;
+const _errs295 = errors;
+if(!((typeof data97 == "number") && (!(data97 % 1) && !isNaN(data97)))){
+const err368 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_wall_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err368];
 }
@@ -14867,10 +14929,10 @@ vErrors.push(err368);
 }
 errors++;
 }
-if(errors === _errs287){
-if(typeof data99 == "number"){
-if(data99 > 1 || isNaN(data99)){
-const err369 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
+if(errors === _errs295){
+if(typeof data97 == "number"){
+if(data97 > 4294967295 || isNaN(data97)){
+const err369 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_wall_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err369];
 }
@@ -14880,8 +14942,8 @@ vErrors.push(err369);
 errors++;
 }
 else {
-if(data99 < 1 || isNaN(data99)){
-const err370 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(data97 < 1 || isNaN(data97)){
+const err370 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_wall_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err370];
 }
@@ -14890,33 +14952,9 @@ vErrors.push(err370);
 }
 errors++;
 }
-}
-}
-}
-var valid32 = _errs287 === errors;
-}
 else {
-var valid32 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err371 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(!(formats22.validate(data97))){
+const err371 = {instancePath:instancePath+"/budget/max_wall_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/max_wall_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
 if(vErrors === null){
 vErrors = [err371];
 }
@@ -14926,18 +14964,20 @@ vErrors.push(err371);
 errors++;
 }
 }
-var valid31 = _errs245 === errors;
-if(valid31){
-const _errs289 = errors;
-const _errs290 = errors;
-let valid36 = false;
-let passing15 = null;
-const _errs291 = errors;
-if(errors === _errs291){
-if(data84 && typeof data84 == "object" && !Array.isArray(data84)){
-let missing14;
-if((data84.cost_enforcement === undefined) && (missing14 = "cost_enforcement")){
-const err372 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/required",keyword:"required",params:{missingProperty: missing14},message:"must have required property '"+missing14+"'"};
+}
+}
+}
+var valid35 = _errs295 === errors;
+}
+else {
+var valid35 = true;
+}
+if(valid35){
+if(data84.min_cycle_interval_seconds !== undefined){
+let data98 = data84.min_cycle_interval_seconds;
+const _errs297 = errors;
+if(!((typeof data98 == "number") && (!(data98 % 1) && !isNaN(data98)))){
+const err372 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/min_cycle_interval_seconds/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err372];
 }
@@ -14946,11 +14986,10 @@ vErrors.push(err372);
 }
 errors++;
 }
-else {
-if(data84.cost_currency !== undefined){
-const _errs293 = errors;
-if(data84.cost_currency !== null){
-const err373 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/properties/cost_currency/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(errors === _errs297){
+if(typeof data98 == "number"){
+if(data98 > 4294967295 || isNaN(data98)){
+const err373 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/min_cycle_interval_seconds/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err373];
 }
@@ -14959,17 +14998,9 @@ vErrors.push(err373);
 }
 errors++;
 }
-var valid37 = _errs293 === errors;
-}
 else {
-var valid37 = true;
-}
-if(valid37){
-if(data84.cost_enforcement !== undefined){
-let data101 = data84.cost_enforcement;
-const _errs295 = errors;
-if(typeof data101 !== "string"){
-const err374 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(data98 < 0 || isNaN(data98)){
+const err374 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/min_cycle_interval_seconds/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err374];
 }
@@ -14978,8 +15009,9 @@ vErrors.push(err374);
 }
 errors++;
 }
-if(!(data101 === "UNAVAILABLE")){
-const err375 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[1].oneOf[0].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
+else {
+if(!(formats22.validate(data98))){
+const err375 = {instancePath:instancePath+"/budget/min_cycle_interval_seconds",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/min_cycle_interval_seconds/format",keyword:"format",params:{format: "int64"},message:"must match format \""+"int64"+"\""};
 if(vErrors === null){
 vErrors = [err375];
 }
@@ -14988,16 +15020,21 @@ vErrors.push(err375);
 }
 errors++;
 }
-var valid37 = _errs295 === errors;
+}
+}
+}
+}
+var valid35 = _errs297 === errors;
 }
 else {
-var valid37 = true;
+var valid35 = true;
 }
-if(valid37){
-if(data84.max_cost_decimal !== undefined){
-const _errs297 = errors;
-if(data84.max_cost_decimal !== null){
-const err376 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/properties/max_cost_decimal/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(valid35){
+if(data84.schema_version !== undefined){
+let data99 = data84.schema_version;
+const _errs299 = errors;
+if(!((typeof data99 == "number") && (!(data99 % 1) && !isNaN(data99)))){
+const err376 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err376];
 }
@@ -15006,17 +15043,8 @@ vErrors.push(err376);
 }
 errors++;
 }
-var valid37 = _errs297 === errors;
-}
-else {
-var valid37 = true;
-}
-}
-}
-}
-}
-else {
-const err377 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(!(data99 === 1)){
+const err377 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[0].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err377];
 }
@@ -15025,22 +15053,10 @@ vErrors.push(err377);
 }
 errors++;
 }
-}
-var _valid15 = _errs291 === errors;
-if(_valid15){
-valid36 = true;
-passing15 = 0;
-var props3 = {};
-props3.cost_currency = true;
-props3.cost_enforcement = true;
-props3.max_cost_decimal = true;
-}
-const _errs299 = errors;
 if(errors === _errs299){
-if(data84 && typeof data84 == "object" && !Array.isArray(data84)){
-let missing15;
-if((((data84.cost_enforcement === undefined) && (missing15 = "cost_enforcement")) || ((data84.max_cost_decimal === undefined) && (missing15 = "max_cost_decimal"))) || ((data84.cost_currency === undefined) && (missing15 = "cost_currency"))){
-const err378 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/required",keyword:"required",params:{missingProperty: missing15},message:"must have required property '"+missing15+"'"};
+if(typeof data99 == "number"){
+if(data99 > 1 || isNaN(data99)){
+const err378 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
 if(vErrors === null){
 vErrors = [err378];
 }
@@ -15050,11 +15066,8 @@ vErrors.push(err378);
 errors++;
 }
 else {
-if(data84.cost_currency !== undefined){
-let data103 = data84.cost_currency;
-const _errs301 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data103 === "AED") || (data103 === "AFN")) || (data103 === "ALL")) || (data103 === "AMD")) || (data103 === "AOA")) || (data103 === "ARS")) || (data103 === "AUD")) || (data103 === "AWG")) || (data103 === "AZN")) || (data103 === "BAM")) || (data103 === "BBD")) || (data103 === "BDT")) || (data103 === "BGN")) || (data103 === "BHD")) || (data103 === "BIF")) || (data103 === "BMD")) || (data103 === "BND")) || (data103 === "BOB")) || (data103 === "BOV")) || (data103 === "BRL")) || (data103 === "BSD")) || (data103 === "BTN")) || (data103 === "BWP")) || (data103 === "BYN")) || (data103 === "BZD")) || (data103 === "CAD")) || (data103 === "CDF")) || (data103 === "CHE")) || (data103 === "CHF")) || (data103 === "CHW")) || (data103 === "CLF")) || (data103 === "CLP")) || (data103 === "CNY")) || (data103 === "COP")) || (data103 === "COU")) || (data103 === "CRC")) || (data103 === "CUC")) || (data103 === "CUP")) || (data103 === "CVE")) || (data103 === "CZK")) || (data103 === "DJF")) || (data103 === "DKK")) || (data103 === "DOP")) || (data103 === "DZD")) || (data103 === "EGP")) || (data103 === "ERN")) || (data103 === "ETB")) || (data103 === "EUR")) || (data103 === "FJD")) || (data103 === "FKP")) || (data103 === "GBP")) || (data103 === "GEL")) || (data103 === "GHS")) || (data103 === "GIP")) || (data103 === "GMD")) || (data103 === "GNF")) || (data103 === "GTQ")) || (data103 === "GYD")) || (data103 === "HKD")) || (data103 === "HNL")) || (data103 === "HRK")) || (data103 === "HTG")) || (data103 === "HUF")) || (data103 === "IDR")) || (data103 === "ILS")) || (data103 === "INR")) || (data103 === "IQD")) || (data103 === "IRR")) || (data103 === "ISK")) || (data103 === "JMD")) || (data103 === "JOD")) || (data103 === "JPY")) || (data103 === "KES")) || (data103 === "KGS")) || (data103 === "KHR")) || (data103 === "KMF")) || (data103 === "KPW")) || (data103 === "KRW")) || (data103 === "KWD")) || (data103 === "KYD")) || (data103 === "KZT")) || (data103 === "LAK")) || (data103 === "LBP")) || (data103 === "LKR")) || (data103 === "LRD")) || (data103 === "LSL")) || (data103 === "LYD")) || (data103 === "MAD")) || (data103 === "MDL")) || (data103 === "MGA")) || (data103 === "MKD")) || (data103 === "MMK")) || (data103 === "MNT")) || (data103 === "MOP")) || (data103 === "MRU")) || (data103 === "MUR")) || (data103 === "MVR")) || (data103 === "MWK")) || (data103 === "MXN")) || (data103 === "MXV")) || (data103 === "MYR")) || (data103 === "MZN")) || (data103 === "NAD")) || (data103 === "NGN")) || (data103 === "NIO")) || (data103 === "NOK")) || (data103 === "NPR")) || (data103 === "NZD")) || (data103 === "OMR")) || (data103 === "PAB")) || (data103 === "PEN")) || (data103 === "PGK")) || (data103 === "PHP")) || (data103 === "PKR")) || (data103 === "PLN")) || (data103 === "PYG")) || (data103 === "QAR")) || (data103 === "RON")) || (data103 === "RSD")) || (data103 === "RUB")) || (data103 === "RWF")) || (data103 === "SAR")) || (data103 === "SBD")) || (data103 === "SCR")) || (data103 === "SDG")) || (data103 === "SEK")) || (data103 === "SGD")) || (data103 === "SHP")) || (data103 === "SLE")) || (data103 === "SLL")) || (data103 === "SOS")) || (data103 === "SRD")) || (data103 === "SSP")) || (data103 === "STN")) || (data103 === "SVC")) || (data103 === "SYP")) || (data103 === "SZL")) || (data103 === "THB")) || (data103 === "TJS")) || (data103 === "TMT")) || (data103 === "TND")) || (data103 === "TOP")) || (data103 === "TRY")) || (data103 === "TTD")) || (data103 === "TWD")) || (data103 === "TZS")) || (data103 === "UAH")) || (data103 === "UGX")) || (data103 === "USD")) || (data103 === "USN")) || (data103 === "UYI")) || (data103 === "UYU")) || (data103 === "UYW")) || (data103 === "UZS")) || (data103 === "VED")) || (data103 === "VES")) || (data103 === "VND")) || (data103 === "VUV")) || (data103 === "WST")) || (data103 === "XAD")) || (data103 === "XAF")) || (data103 === "XAG")) || (data103 === "XAU")) || (data103 === "XBA")) || (data103 === "XBB")) || (data103 === "XBC")) || (data103 === "XBD")) || (data103 === "XCD")) || (data103 === "XCG")) || (data103 === "XDR")) || (data103 === "XOF")) || (data103 === "XPD")) || (data103 === "XPF")) || (data103 === "XPT")) || (data103 === "XSU")) || (data103 === "XTS")) || (data103 === "XUA")) || (data103 === "XXX")) || (data103 === "YER")) || (data103 === "ZAR")) || (data103 === "ZMW")) || (data103 === "ZWG")) || (data103 === "ZWL"))){
-const err379 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[1].oneOf[1].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
+if(data99 < 1 || isNaN(data99)){
+const err379 = {instancePath:instancePath+"/budget/schema_version",schemaPath:"#/oneOf/2/properties/budget/allOf/0/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err379];
 }
@@ -15063,10 +15076,33 @@ vErrors.push(err379);
 }
 errors++;
 }
-if(errors === _errs301){
-if(typeof data103 === "string"){
-if(func2(data103) > 3){
-const err380 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+}
+}
+}
+var valid35 = _errs299 === errors;
+}
+else {
+var valid35 = true;
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+const err380 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err380];
 }
@@ -15075,9 +15111,19 @@ vErrors.push(err380);
 }
 errors++;
 }
-else {
-if(func2(data103) < 3){
-const err381 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+}
+var valid34 = _errs257 === errors;
+if(valid34){
+const _errs301 = errors;
+const _errs302 = errors;
+let valid39 = false;
+let passing18 = null;
+const _errs303 = errors;
+if(errors === _errs303){
+if(data84 && typeof data84 == "object" && !Array.isArray(data84)){
+let missing14;
+if((data84.cost_enforcement === undefined) && (missing14 = "cost_enforcement")){
+const err381 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/required",keyword:"required",params:{missingProperty: missing14},message:"must have required property '"+missing14+"'"};
 if(vErrors === null){
 vErrors = [err381];
 }
@@ -15086,10 +15132,11 @@ vErrors.push(err381);
 }
 errors++;
 }
-}
-}
 else {
-const err382 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(data84.cost_currency !== undefined){
+const _errs305 = errors;
+if(data84.cost_currency !== null){
+const err382 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/properties/cost_currency/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err382];
 }
@@ -15098,18 +15145,17 @@ vErrors.push(err382);
 }
 errors++;
 }
-}
-var valid38 = _errs301 === errors;
+var valid40 = _errs305 === errors;
 }
 else {
-var valid38 = true;
+var valid40 = true;
 }
-if(valid38){
+if(valid40){
 if(data84.cost_enforcement !== undefined){
-let data104 = data84.cost_enforcement;
-const _errs303 = errors;
-if(typeof data104 !== "string"){
-const err383 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
+let data101 = data84.cost_enforcement;
+const _errs307 = errors;
+if(typeof data101 !== "string"){
+const err383 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err383];
 }
@@ -15118,8 +15164,8 @@ vErrors.push(err383);
 }
 errors++;
 }
-if(!(data104 === "ESTIMATED")){
-const err384 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[1].oneOf[1].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
+if(!(data101 === "UNAVAILABLE")){
+const err384 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[1].oneOf[0].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err384];
 }
@@ -15128,20 +15174,16 @@ vErrors.push(err384);
 }
 errors++;
 }
-var valid38 = _errs303 === errors;
+var valid40 = _errs307 === errors;
 }
 else {
-var valid38 = true;
+var valid40 = true;
 }
-if(valid38){
+if(valid40){
 if(data84.max_cost_decimal !== undefined){
-let data105 = data84.max_cost_decimal;
-const _errs305 = errors;
-const _errs306 = errors;
-if(errors === _errs306){
-if(typeof data105 === "string"){
-if(func2(data105) > 64){
-const err385 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+const _errs309 = errors;
+if(data84.max_cost_decimal !== null){
+const err385 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/properties/max_cost_decimal/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err385];
 }
@@ -15150,9 +15192,17 @@ vErrors.push(err385);
 }
 errors++;
 }
+var valid40 = _errs309 === errors;
+}
 else {
-if(func2(data105) < 1){
-const err386 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+var valid40 = true;
+}
+}
+}
+}
+}
+else {
+const err386 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err386];
 }
@@ -15161,9 +15211,22 @@ vErrors.push(err386);
 }
 errors++;
 }
-else {
-if(!pattern6.test(data105)){
-const err387 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
+}
+var _valid18 = _errs303 === errors;
+if(_valid18){
+valid39 = true;
+passing18 = 0;
+var props3 = {};
+props3.cost_currency = true;
+props3.cost_enforcement = true;
+props3.max_cost_decimal = true;
+}
+const _errs311 = errors;
+if(errors === _errs311){
+if(data84 && typeof data84 == "object" && !Array.isArray(data84)){
+let missing15;
+if((((data84.cost_enforcement === undefined) && (missing15 = "cost_enforcement")) || ((data84.max_cost_decimal === undefined) && (missing15 = "max_cost_decimal"))) || ((data84.cost_currency === undefined) && (missing15 = "cost_currency"))){
+const err387 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/required",keyword:"required",params:{missingProperty: missing15},message:"must have required property '"+missing15+"'"};
 if(vErrors === null){
 vErrors = [err387];
 }
@@ -15172,11 +15235,12 @@ vErrors.push(err387);
 }
 errors++;
 }
-}
-}
-}
 else {
-const err388 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(data84.cost_currency !== undefined){
+let data103 = data84.cost_currency;
+const _errs313 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data103 === "AED") || (data103 === "AFN")) || (data103 === "ALL")) || (data103 === "AMD")) || (data103 === "AOA")) || (data103 === "ARS")) || (data103 === "AUD")) || (data103 === "AWG")) || (data103 === "AZN")) || (data103 === "BAM")) || (data103 === "BBD")) || (data103 === "BDT")) || (data103 === "BGN")) || (data103 === "BHD")) || (data103 === "BIF")) || (data103 === "BMD")) || (data103 === "BND")) || (data103 === "BOB")) || (data103 === "BOV")) || (data103 === "BRL")) || (data103 === "BSD")) || (data103 === "BTN")) || (data103 === "BWP")) || (data103 === "BYN")) || (data103 === "BZD")) || (data103 === "CAD")) || (data103 === "CDF")) || (data103 === "CHE")) || (data103 === "CHF")) || (data103 === "CHW")) || (data103 === "CLF")) || (data103 === "CLP")) || (data103 === "CNY")) || (data103 === "COP")) || (data103 === "COU")) || (data103 === "CRC")) || (data103 === "CUC")) || (data103 === "CUP")) || (data103 === "CVE")) || (data103 === "CZK")) || (data103 === "DJF")) || (data103 === "DKK")) || (data103 === "DOP")) || (data103 === "DZD")) || (data103 === "EGP")) || (data103 === "ERN")) || (data103 === "ETB")) || (data103 === "EUR")) || (data103 === "FJD")) || (data103 === "FKP")) || (data103 === "GBP")) || (data103 === "GEL")) || (data103 === "GHS")) || (data103 === "GIP")) || (data103 === "GMD")) || (data103 === "GNF")) || (data103 === "GTQ")) || (data103 === "GYD")) || (data103 === "HKD")) || (data103 === "HNL")) || (data103 === "HRK")) || (data103 === "HTG")) || (data103 === "HUF")) || (data103 === "IDR")) || (data103 === "ILS")) || (data103 === "INR")) || (data103 === "IQD")) || (data103 === "IRR")) || (data103 === "ISK")) || (data103 === "JMD")) || (data103 === "JOD")) || (data103 === "JPY")) || (data103 === "KES")) || (data103 === "KGS")) || (data103 === "KHR")) || (data103 === "KMF")) || (data103 === "KPW")) || (data103 === "KRW")) || (data103 === "KWD")) || (data103 === "KYD")) || (data103 === "KZT")) || (data103 === "LAK")) || (data103 === "LBP")) || (data103 === "LKR")) || (data103 === "LRD")) || (data103 === "LSL")) || (data103 === "LYD")) || (data103 === "MAD")) || (data103 === "MDL")) || (data103 === "MGA")) || (data103 === "MKD")) || (data103 === "MMK")) || (data103 === "MNT")) || (data103 === "MOP")) || (data103 === "MRU")) || (data103 === "MUR")) || (data103 === "MVR")) || (data103 === "MWK")) || (data103 === "MXN")) || (data103 === "MXV")) || (data103 === "MYR")) || (data103 === "MZN")) || (data103 === "NAD")) || (data103 === "NGN")) || (data103 === "NIO")) || (data103 === "NOK")) || (data103 === "NPR")) || (data103 === "NZD")) || (data103 === "OMR")) || (data103 === "PAB")) || (data103 === "PEN")) || (data103 === "PGK")) || (data103 === "PHP")) || (data103 === "PKR")) || (data103 === "PLN")) || (data103 === "PYG")) || (data103 === "QAR")) || (data103 === "RON")) || (data103 === "RSD")) || (data103 === "RUB")) || (data103 === "RWF")) || (data103 === "SAR")) || (data103 === "SBD")) || (data103 === "SCR")) || (data103 === "SDG")) || (data103 === "SEK")) || (data103 === "SGD")) || (data103 === "SHP")) || (data103 === "SLE")) || (data103 === "SLL")) || (data103 === "SOS")) || (data103 === "SRD")) || (data103 === "SSP")) || (data103 === "STN")) || (data103 === "SVC")) || (data103 === "SYP")) || (data103 === "SZL")) || (data103 === "THB")) || (data103 === "TJS")) || (data103 === "TMT")) || (data103 === "TND")) || (data103 === "TOP")) || (data103 === "TRY")) || (data103 === "TTD")) || (data103 === "TWD")) || (data103 === "TZS")) || (data103 === "UAH")) || (data103 === "UGX")) || (data103 === "USD")) || (data103 === "USN")) || (data103 === "UYI")) || (data103 === "UYU")) || (data103 === "UYW")) || (data103 === "UZS")) || (data103 === "VED")) || (data103 === "VES")) || (data103 === "VND")) || (data103 === "VUV")) || (data103 === "WST")) || (data103 === "XAD")) || (data103 === "XAF")) || (data103 === "XAG")) || (data103 === "XAU")) || (data103 === "XBA")) || (data103 === "XBB")) || (data103 === "XBC")) || (data103 === "XBD")) || (data103 === "XCD")) || (data103 === "XCG")) || (data103 === "XDR")) || (data103 === "XOF")) || (data103 === "XPD")) || (data103 === "XPF")) || (data103 === "XPT")) || (data103 === "XSU")) || (data103 === "XTS")) || (data103 === "XUA")) || (data103 === "XXX")) || (data103 === "YER")) || (data103 === "ZAR")) || (data103 === "ZMW")) || (data103 === "ZWG")) || (data103 === "ZWL"))){
+const err388 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[1].oneOf[1].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err388];
 }
@@ -15185,14 +15249,10 @@ vErrors.push(err388);
 }
 errors++;
 }
-}
-var valid39 = _errs306 === errors;
-if(valid39){
-const _errs308 = errors;
-if(errors === _errs308){
-if(typeof data105 === "string"){
-if(!pattern13.test(data105)){
-const err389 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
+if(errors === _errs313){
+if(typeof data103 === "string"){
+if(func2(data103) > 3){
+const err389 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err389];
 }
@@ -15201,9 +15261,9 @@ vErrors.push(err389);
 }
 errors++;
 }
-}
 else {
-const err390 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(func2(data103) < 3){
+const err390 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err390];
 }
@@ -15213,19 +15273,9 @@ vErrors.push(err390);
 errors++;
 }
 }
-var valid39 = _errs308 === errors;
-}
-var valid38 = _errs305 === errors;
 }
 else {
-var valid38 = true;
-}
-}
-}
-}
-}
-else {
-const err391 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err391 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err391];
 }
@@ -15235,28 +15285,17 @@ vErrors.push(err391);
 errors++;
 }
 }
-var _valid15 = _errs299 === errors;
-if(_valid15 && valid36){
-valid36 = false;
-passing15 = [passing15, 1];
+var valid41 = _errs313 === errors;
 }
 else {
-if(_valid15){
-valid36 = true;
-passing15 = 1;
-if(props3 !== true){
-props3 = props3 || {};
-props3.cost_currency = true;
-props3.cost_enforcement = true;
-props3.max_cost_decimal = true;
+var valid41 = true;
 }
-}
-const _errs310 = errors;
-if(errors === _errs310){
-if(data84 && typeof data84 == "object" && !Array.isArray(data84)){
-let missing16;
-if((((data84.cost_enforcement === undefined) && (missing16 = "cost_enforcement")) || ((data84.max_cost_decimal === undefined) && (missing16 = "max_cost_decimal"))) || ((data84.cost_currency === undefined) && (missing16 = "cost_currency"))){
-const err392 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/required",keyword:"required",params:{missingProperty: missing16},message:"must have required property '"+missing16+"'"};
+if(valid41){
+if(data84.cost_enforcement !== undefined){
+let data104 = data84.cost_enforcement;
+const _errs315 = errors;
+if(typeof data104 !== "string"){
+const err392 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err392];
 }
@@ -15265,12 +15304,8 @@ vErrors.push(err392);
 }
 errors++;
 }
-else {
-if(data84.cost_currency !== undefined){
-let data106 = data84.cost_currency;
-const _errs312 = errors;
-if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data106 === "AED") || (data106 === "AFN")) || (data106 === "ALL")) || (data106 === "AMD")) || (data106 === "AOA")) || (data106 === "ARS")) || (data106 === "AUD")) || (data106 === "AWG")) || (data106 === "AZN")) || (data106 === "BAM")) || (data106 === "BBD")) || (data106 === "BDT")) || (data106 === "BGN")) || (data106 === "BHD")) || (data106 === "BIF")) || (data106 === "BMD")) || (data106 === "BND")) || (data106 === "BOB")) || (data106 === "BOV")) || (data106 === "BRL")) || (data106 === "BSD")) || (data106 === "BTN")) || (data106 === "BWP")) || (data106 === "BYN")) || (data106 === "BZD")) || (data106 === "CAD")) || (data106 === "CDF")) || (data106 === "CHE")) || (data106 === "CHF")) || (data106 === "CHW")) || (data106 === "CLF")) || (data106 === "CLP")) || (data106 === "CNY")) || (data106 === "COP")) || (data106 === "COU")) || (data106 === "CRC")) || (data106 === "CUC")) || (data106 === "CUP")) || (data106 === "CVE")) || (data106 === "CZK")) || (data106 === "DJF")) || (data106 === "DKK")) || (data106 === "DOP")) || (data106 === "DZD")) || (data106 === "EGP")) || (data106 === "ERN")) || (data106 === "ETB")) || (data106 === "EUR")) || (data106 === "FJD")) || (data106 === "FKP")) || (data106 === "GBP")) || (data106 === "GEL")) || (data106 === "GHS")) || (data106 === "GIP")) || (data106 === "GMD")) || (data106 === "GNF")) || (data106 === "GTQ")) || (data106 === "GYD")) || (data106 === "HKD")) || (data106 === "HNL")) || (data106 === "HRK")) || (data106 === "HTG")) || (data106 === "HUF")) || (data106 === "IDR")) || (data106 === "ILS")) || (data106 === "INR")) || (data106 === "IQD")) || (data106 === "IRR")) || (data106 === "ISK")) || (data106 === "JMD")) || (data106 === "JOD")) || (data106 === "JPY")) || (data106 === "KES")) || (data106 === "KGS")) || (data106 === "KHR")) || (data106 === "KMF")) || (data106 === "KPW")) || (data106 === "KRW")) || (data106 === "KWD")) || (data106 === "KYD")) || (data106 === "KZT")) || (data106 === "LAK")) || (data106 === "LBP")) || (data106 === "LKR")) || (data106 === "LRD")) || (data106 === "LSL")) || (data106 === "LYD")) || (data106 === "MAD")) || (data106 === "MDL")) || (data106 === "MGA")) || (data106 === "MKD")) || (data106 === "MMK")) || (data106 === "MNT")) || (data106 === "MOP")) || (data106 === "MRU")) || (data106 === "MUR")) || (data106 === "MVR")) || (data106 === "MWK")) || (data106 === "MXN")) || (data106 === "MXV")) || (data106 === "MYR")) || (data106 === "MZN")) || (data106 === "NAD")) || (data106 === "NGN")) || (data106 === "NIO")) || (data106 === "NOK")) || (data106 === "NPR")) || (data106 === "NZD")) || (data106 === "OMR")) || (data106 === "PAB")) || (data106 === "PEN")) || (data106 === "PGK")) || (data106 === "PHP")) || (data106 === "PKR")) || (data106 === "PLN")) || (data106 === "PYG")) || (data106 === "QAR")) || (data106 === "RON")) || (data106 === "RSD")) || (data106 === "RUB")) || (data106 === "RWF")) || (data106 === "SAR")) || (data106 === "SBD")) || (data106 === "SCR")) || (data106 === "SDG")) || (data106 === "SEK")) || (data106 === "SGD")) || (data106 === "SHP")) || (data106 === "SLE")) || (data106 === "SLL")) || (data106 === "SOS")) || (data106 === "SRD")) || (data106 === "SSP")) || (data106 === "STN")) || (data106 === "SVC")) || (data106 === "SYP")) || (data106 === "SZL")) || (data106 === "THB")) || (data106 === "TJS")) || (data106 === "TMT")) || (data106 === "TND")) || (data106 === "TOP")) || (data106 === "TRY")) || (data106 === "TTD")) || (data106 === "TWD")) || (data106 === "TZS")) || (data106 === "UAH")) || (data106 === "UGX")) || (data106 === "USD")) || (data106 === "USN")) || (data106 === "UYI")) || (data106 === "UYU")) || (data106 === "UYW")) || (data106 === "UZS")) || (data106 === "VED")) || (data106 === "VES")) || (data106 === "VND")) || (data106 === "VUV")) || (data106 === "WST")) || (data106 === "XAD")) || (data106 === "XAF")) || (data106 === "XAG")) || (data106 === "XAU")) || (data106 === "XBA")) || (data106 === "XBB")) || (data106 === "XBC")) || (data106 === "XBD")) || (data106 === "XCD")) || (data106 === "XCG")) || (data106 === "XDR")) || (data106 === "XOF")) || (data106 === "XPD")) || (data106 === "XPF")) || (data106 === "XPT")) || (data106 === "XSU")) || (data106 === "XTS")) || (data106 === "XUA")) || (data106 === "XXX")) || (data106 === "YER")) || (data106 === "ZAR")) || (data106 === "ZMW")) || (data106 === "ZWG")) || (data106 === "ZWL"))){
-const err393 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[1].oneOf[2].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
+if(!(data104 === "ESTIMATED")){
+const err393 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[1].oneOf[1].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err393];
 }
@@ -15279,10 +15314,20 @@ vErrors.push(err393);
 }
 errors++;
 }
-if(errors === _errs312){
-if(typeof data106 === "string"){
-if(func2(data106) > 3){
-const err394 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+var valid41 = _errs315 === errors;
+}
+else {
+var valid41 = true;
+}
+if(valid41){
+if(data84.max_cost_decimal !== undefined){
+let data105 = data84.max_cost_decimal;
+const _errs317 = errors;
+const _errs318 = errors;
+if(errors === _errs318){
+if(typeof data105 === "string"){
+if(func2(data105) > 64){
+const err394 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
 if(vErrors === null){
 vErrors = [err394];
 }
@@ -15292,8 +15337,8 @@ vErrors.push(err394);
 errors++;
 }
 else {
-if(func2(data106) < 3){
-const err395 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+if(func2(data105) < 1){
+const err395 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err395];
 }
@@ -15302,10 +15347,9 @@ vErrors.push(err395);
 }
 errors++;
 }
-}
-}
 else {
-const err396 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!pattern6.test(data105)){
+const err396 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err396];
 }
@@ -15315,17 +15359,10 @@ vErrors.push(err396);
 errors++;
 }
 }
-var valid40 = _errs312 === errors;
+}
 }
 else {
-var valid40 = true;
-}
-if(valid40){
-if(data84.cost_enforcement !== undefined){
-let data107 = data84.cost_enforcement;
-const _errs314 = errors;
-if(typeof data107 !== "string"){
-const err397 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err397 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err397];
 }
@@ -15334,8 +15371,14 @@ vErrors.push(err397);
 }
 errors++;
 }
-if(!(data107 === "EXACT")){
-const err398 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[1].oneOf[2].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
+}
+var valid42 = _errs318 === errors;
+if(valid42){
+const _errs320 = errors;
+if(errors === _errs320){
+if(typeof data105 === "string"){
+if(!pattern13.test(data105)){
+const err398 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
 if(vErrors === null){
 vErrors = [err398];
 }
@@ -15344,20 +15387,9 @@ vErrors.push(err398);
 }
 errors++;
 }
-var valid40 = _errs314 === errors;
 }
 else {
-var valid40 = true;
-}
-if(valid40){
-if(data84.max_cost_decimal !== undefined){
-let data108 = data84.max_cost_decimal;
-const _errs316 = errors;
-const _errs317 = errors;
-if(errors === _errs317){
-if(typeof data108 === "string"){
-if(func2(data108) > 64){
-const err399 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
+const err399 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err399];
 }
@@ -15366,9 +15398,20 @@ vErrors.push(err399);
 }
 errors++;
 }
+}
+var valid42 = _errs320 === errors;
+}
+var valid41 = _errs317 === errors;
+}
 else {
-if(func2(data108) < 1){
-const err400 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+var valid41 = true;
+}
+}
+}
+}
+}
+else {
+const err400 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err400];
 }
@@ -15377,9 +15420,29 @@ vErrors.push(err400);
 }
 errors++;
 }
+}
+var _valid18 = _errs311 === errors;
+if(_valid18 && valid39){
+valid39 = false;
+passing18 = [passing18, 1];
+}
 else {
-if(!pattern6.test(data108)){
-const err401 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
+if(_valid18){
+valid39 = true;
+passing18 = 1;
+if(props3 !== true){
+props3 = props3 || {};
+props3.cost_currency = true;
+props3.cost_enforcement = true;
+props3.max_cost_decimal = true;
+}
+}
+const _errs322 = errors;
+if(errors === _errs322){
+if(data84 && typeof data84 == "object" && !Array.isArray(data84)){
+let missing16;
+if((((data84.cost_enforcement === undefined) && (missing16 = "cost_enforcement")) || ((data84.max_cost_decimal === undefined) && (missing16 = "max_cost_decimal"))) || ((data84.cost_currency === undefined) && (missing16 = "cost_currency"))){
+const err401 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/required",keyword:"required",params:{missingProperty: missing16},message:"must have required property '"+missing16+"'"};
 if(vErrors === null){
 vErrors = [err401];
 }
@@ -15388,11 +15451,12 @@ vErrors.push(err401);
 }
 errors++;
 }
-}
-}
-}
 else {
-const err402 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(data84.cost_currency !== undefined){
+let data106 = data84.cost_currency;
+const _errs324 = errors;
+if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data106 === "AED") || (data106 === "AFN")) || (data106 === "ALL")) || (data106 === "AMD")) || (data106 === "AOA")) || (data106 === "ARS")) || (data106 === "AUD")) || (data106 === "AWG")) || (data106 === "AZN")) || (data106 === "BAM")) || (data106 === "BBD")) || (data106 === "BDT")) || (data106 === "BGN")) || (data106 === "BHD")) || (data106 === "BIF")) || (data106 === "BMD")) || (data106 === "BND")) || (data106 === "BOB")) || (data106 === "BOV")) || (data106 === "BRL")) || (data106 === "BSD")) || (data106 === "BTN")) || (data106 === "BWP")) || (data106 === "BYN")) || (data106 === "BZD")) || (data106 === "CAD")) || (data106 === "CDF")) || (data106 === "CHE")) || (data106 === "CHF")) || (data106 === "CHW")) || (data106 === "CLF")) || (data106 === "CLP")) || (data106 === "CNY")) || (data106 === "COP")) || (data106 === "COU")) || (data106 === "CRC")) || (data106 === "CUC")) || (data106 === "CUP")) || (data106 === "CVE")) || (data106 === "CZK")) || (data106 === "DJF")) || (data106 === "DKK")) || (data106 === "DOP")) || (data106 === "DZD")) || (data106 === "EGP")) || (data106 === "ERN")) || (data106 === "ETB")) || (data106 === "EUR")) || (data106 === "FJD")) || (data106 === "FKP")) || (data106 === "GBP")) || (data106 === "GEL")) || (data106 === "GHS")) || (data106 === "GIP")) || (data106 === "GMD")) || (data106 === "GNF")) || (data106 === "GTQ")) || (data106 === "GYD")) || (data106 === "HKD")) || (data106 === "HNL")) || (data106 === "HRK")) || (data106 === "HTG")) || (data106 === "HUF")) || (data106 === "IDR")) || (data106 === "ILS")) || (data106 === "INR")) || (data106 === "IQD")) || (data106 === "IRR")) || (data106 === "ISK")) || (data106 === "JMD")) || (data106 === "JOD")) || (data106 === "JPY")) || (data106 === "KES")) || (data106 === "KGS")) || (data106 === "KHR")) || (data106 === "KMF")) || (data106 === "KPW")) || (data106 === "KRW")) || (data106 === "KWD")) || (data106 === "KYD")) || (data106 === "KZT")) || (data106 === "LAK")) || (data106 === "LBP")) || (data106 === "LKR")) || (data106 === "LRD")) || (data106 === "LSL")) || (data106 === "LYD")) || (data106 === "MAD")) || (data106 === "MDL")) || (data106 === "MGA")) || (data106 === "MKD")) || (data106 === "MMK")) || (data106 === "MNT")) || (data106 === "MOP")) || (data106 === "MRU")) || (data106 === "MUR")) || (data106 === "MVR")) || (data106 === "MWK")) || (data106 === "MXN")) || (data106 === "MXV")) || (data106 === "MYR")) || (data106 === "MZN")) || (data106 === "NAD")) || (data106 === "NGN")) || (data106 === "NIO")) || (data106 === "NOK")) || (data106 === "NPR")) || (data106 === "NZD")) || (data106 === "OMR")) || (data106 === "PAB")) || (data106 === "PEN")) || (data106 === "PGK")) || (data106 === "PHP")) || (data106 === "PKR")) || (data106 === "PLN")) || (data106 === "PYG")) || (data106 === "QAR")) || (data106 === "RON")) || (data106 === "RSD")) || (data106 === "RUB")) || (data106 === "RWF")) || (data106 === "SAR")) || (data106 === "SBD")) || (data106 === "SCR")) || (data106 === "SDG")) || (data106 === "SEK")) || (data106 === "SGD")) || (data106 === "SHP")) || (data106 === "SLE")) || (data106 === "SLL")) || (data106 === "SOS")) || (data106 === "SRD")) || (data106 === "SSP")) || (data106 === "STN")) || (data106 === "SVC")) || (data106 === "SYP")) || (data106 === "SZL")) || (data106 === "THB")) || (data106 === "TJS")) || (data106 === "TMT")) || (data106 === "TND")) || (data106 === "TOP")) || (data106 === "TRY")) || (data106 === "TTD")) || (data106 === "TWD")) || (data106 === "TZS")) || (data106 === "UAH")) || (data106 === "UGX")) || (data106 === "USD")) || (data106 === "USN")) || (data106 === "UYI")) || (data106 === "UYU")) || (data106 === "UYW")) || (data106 === "UZS")) || (data106 === "VED")) || (data106 === "VES")) || (data106 === "VND")) || (data106 === "VUV")) || (data106 === "WST")) || (data106 === "XAD")) || (data106 === "XAF")) || (data106 === "XAG")) || (data106 === "XAU")) || (data106 === "XBA")) || (data106 === "XBB")) || (data106 === "XBC")) || (data106 === "XBD")) || (data106 === "XCD")) || (data106 === "XCG")) || (data106 === "XDR")) || (data106 === "XOF")) || (data106 === "XPD")) || (data106 === "XPF")) || (data106 === "XPT")) || (data106 === "XSU")) || (data106 === "XTS")) || (data106 === "XUA")) || (data106 === "XXX")) || (data106 === "YER")) || (data106 === "ZAR")) || (data106 === "ZMW")) || (data106 === "ZWG")) || (data106 === "ZWL"))){
+const err402 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_currency/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[1].oneOf[2].properties.cost_currency.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err402];
 }
@@ -15401,14 +15465,10 @@ vErrors.push(err402);
 }
 errors++;
 }
-}
-var valid41 = _errs317 === errors;
-if(valid41){
-const _errs319 = errors;
-if(errors === _errs319){
-if(typeof data108 === "string"){
-if(!pattern13.test(data108)){
-const err403 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
+if(errors === _errs324){
+if(typeof data106 === "string"){
+if(func2(data106) > 3){
+const err403 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
 if(vErrors === null){
 vErrors = [err403];
 }
@@ -15417,9 +15477,9 @@ vErrors.push(err403);
 }
 errors++;
 }
-}
 else {
-const err404 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(func2(data106) < 3){
+const err404 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
 if(vErrors === null){
 vErrors = [err404];
 }
@@ -15429,19 +15489,9 @@ vErrors.push(err404);
 errors++;
 }
 }
-var valid41 = _errs319 === errors;
-}
-var valid40 = _errs316 === errors;
 }
 else {
-var valid40 = true;
-}
-}
-}
-}
-}
-else {
-const err405 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err405 = {instancePath:instancePath+"/budget/cost_currency",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_currency/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err405];
 }
@@ -15451,26 +15501,17 @@ vErrors.push(err405);
 errors++;
 }
 }
-var _valid15 = _errs310 === errors;
-if(_valid15 && valid36){
-valid36 = false;
-passing15 = [passing15, 2];
+var valid43 = _errs324 === errors;
 }
 else {
-if(_valid15){
-valid36 = true;
-passing15 = 2;
-if(props3 !== true){
-props3 = props3 || {};
-props3.cost_currency = true;
-props3.cost_enforcement = true;
-props3.max_cost_decimal = true;
+var valid43 = true;
 }
-}
-}
-}
-if(!valid36){
-const err406 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf",keyword:"oneOf",params:{passingSchemas: passing15},message:"must match exactly one schema in oneOf"};
+if(valid43){
+if(data84.cost_enforcement !== undefined){
+let data107 = data84.cost_enforcement;
+const _errs326 = errors;
+if(typeof data107 !== "string"){
+const err406 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err406];
 }
@@ -15479,32 +15520,8 @@ vErrors.push(err406);
 }
 errors++;
 }
-else {
-errors = _errs290;
-if(vErrors !== null){
-if(_errs290){
-vErrors.length = _errs290;
-}
-else {
-vErrors = null;
-}
-}
-}
-var valid31 = _errs289 === errors;
-}
-var valid29 = _errs244 === errors;
-}
-else {
-var valid29 = true;
-}
-if(valid29){
-if(data.economic_rationale !== undefined){
-let data109 = data.economic_rationale;
-const _errs321 = errors;
-if(errors === _errs321){
-if(typeof data109 === "string"){
-if(func2(data109) > 8000){
-const err407 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/2/properties/economic_rationale/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
+if(!(data107 === "EXACT")){
+const err407 = {instancePath:instancePath+"/budget/cost_enforcement",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/cost_enforcement/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.budget.allOf[1].oneOf[2].properties.cost_enforcement.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err407];
 }
@@ -15513,9 +15530,20 @@ vErrors.push(err407);
 }
 errors++;
 }
+var valid43 = _errs326 === errors;
+}
 else {
-if(func2(data109) < 1){
-const err408 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/2/properties/economic_rationale/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+var valid43 = true;
+}
+if(valid43){
+if(data84.max_cost_decimal !== undefined){
+let data108 = data84.max_cost_decimal;
+const _errs328 = errors;
+const _errs329 = errors;
+if(errors === _errs329){
+if(typeof data108 === "string"){
+if(func2(data108) > 64){
+const err408 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/maxLength",keyword:"maxLength",params:{limit: 64},message:"must NOT have more than 64 characters"};
 if(vErrors === null){
 vErrors = [err408];
 }
@@ -15524,10 +15552,9 @@ vErrors.push(err408);
 }
 errors++;
 }
-}
-}
 else {
-const err409 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/2/properties/economic_rationale/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(func2(data108) < 1){
+const err409 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err409];
 }
@@ -15536,21 +15563,9 @@ vErrors.push(err409);
 }
 errors++;
 }
-}
-var valid29 = _errs321 === errors;
-}
 else {
-var valid29 = true;
-}
-if(valid29){
-if(data.evaluation_policy_id !== undefined){
-let data110 = data.evaluation_policy_id;
-const _errs323 = errors;
-if(errors === _errs323){
-if(errors === _errs323){
-if(typeof data110 === "string"){
-if(!pattern3.test(data110)){
-const err410 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/2/properties/evaluation_policy_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+if(!pattern6.test(data108)){
+const err410 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/pattern",keyword:"pattern",params:{pattern: "^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"},message:"must match pattern \""+"^[+-]?(?:0*[0-9]{1,20}(?:\\.[0-9]{0,18}0*)?|\\.[0-9]{1,18}0*)(?![\\s\\S])"+"\""};
 if(vErrors === null){
 vErrors = [err410];
 }
@@ -15559,9 +15574,11 @@ vErrors.push(err410);
 }
 errors++;
 }
+}
+}
+}
 else {
-if(!(formats0.test(data110))){
-const err411 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/2/properties/evaluation_policy_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+const err411 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err411];
 }
@@ -15571,9 +15588,13 @@ vErrors.push(err411);
 errors++;
 }
 }
-}
-else {
-const err412 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/2/properties/evaluation_policy_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+var valid44 = _errs329 === errors;
+if(valid44){
+const _errs331 = errors;
+if(errors === _errs331){
+if(typeof data108 === "string"){
+if(!pattern13.test(data108)){
+const err412 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/pattern",keyword:"pattern",params:{pattern: "^(?!-)(?=[0-9+.]*[1-9])"},message:"must match pattern \""+"^(?!-)(?=[0-9+.]*[1-9])"+"\""};
 if(vErrors === null){
 vErrors = [err412];
 }
@@ -15583,21 +15604,8 @@ vErrors.push(err412);
 errors++;
 }
 }
-}
-var valid29 = _errs323 === errors;
-}
 else {
-var valid29 = true;
-}
-if(valid29){
-if(data.execution_assumptions_id !== undefined){
-let data111 = data.execution_assumptions_id;
-const _errs325 = errors;
-if(errors === _errs325){
-if(errors === _errs325){
-if(typeof data111 === "string"){
-if(!pattern3.test(data111)){
-const err413 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/2/properties/execution_assumptions_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+const err413 = {instancePath:instancePath+"/budget/max_cost_decimal",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/properties/max_cost_decimal/allOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err413];
 }
@@ -15606,9 +15614,20 @@ vErrors.push(err413);
 }
 errors++;
 }
+}
+var valid44 = _errs331 === errors;
+}
+var valid43 = _errs328 === errors;
+}
 else {
-if(!(formats0.test(data111))){
-const err414 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/2/properties/execution_assumptions_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+var valid43 = true;
+}
+}
+}
+}
+}
+else {
+const err414 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err414];
 }
@@ -15618,9 +15637,26 @@ vErrors.push(err414);
 errors++;
 }
 }
+var _valid18 = _errs322 === errors;
+if(_valid18 && valid39){
+valid39 = false;
+passing18 = [passing18, 2];
 }
 else {
-const err415 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/2/properties/execution_assumptions_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(_valid18){
+valid39 = true;
+passing18 = 2;
+if(props3 !== true){
+props3 = props3 || {};
+props3.cost_currency = true;
+props3.cost_enforcement = true;
+props3.max_cost_decimal = true;
+}
+}
+}
+}
+if(!valid39){
+const err415 = {instancePath:instancePath+"/budget",schemaPath:"#/oneOf/2/properties/budget/allOf/1/oneOf",keyword:"oneOf",params:{passingSchemas: passing18},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err415];
 }
@@ -15629,19 +15665,32 @@ vErrors.push(err415);
 }
 errors++;
 }
-}
-}
-var valid29 = _errs325 === errors;
+else {
+errors = _errs302;
+if(vErrors !== null){
+if(_errs302){
+vErrors.length = _errs302;
 }
 else {
-var valid29 = true;
+vErrors = null;
 }
-if(valid29){
-if(data.horizon_kind !== undefined){
-let data112 = data.horizon_kind;
-const _errs327 = errors;
-if(typeof data112 !== "string"){
-const err416 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/2/properties/horizon_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+}
+}
+var valid34 = _errs301 === errors;
+}
+var valid31 = _errs256 === errors;
+}
+else {
+var valid31 = true;
+}
+if(valid31){
+if(data.economic_rationale !== undefined){
+let data109 = data.economic_rationale;
+const _errs333 = errors;
+if(errors === _errs333){
+if(typeof data109 === "string"){
+if(func2(data109) > 8000){
+const err416 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/2/properties/economic_rationale/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
 if(vErrors === null){
 vErrors = [err416];
 }
@@ -15650,8 +15699,9 @@ vErrors.push(err416);
 }
 errors++;
 }
-if(!(data112 === "VARIABLE_INTERVAL")){
-const err417 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/2/properties/horizon_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.horizon_kind.enum},message:"must be equal to one of the allowed values"};
+else {
+if(func2(data109) < 1){
+const err417 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/2/properties/economic_rationale/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err417];
 }
@@ -15660,16 +15710,10 @@ vErrors.push(err417);
 }
 errors++;
 }
-var valid29 = _errs327 === errors;
+}
 }
 else {
-var valid29 = true;
-}
-if(valid29){
-if(data.horizon_value !== undefined){
-const _errs329 = errors;
-if(data.horizon_value !== null){
-const err418 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/2/properties/horizon_value/type",keyword:"type",params:{type: "null"},message:"must be null"};
+const err418 = {instancePath:instancePath+"/economic_rationale",schemaPath:"#/oneOf/2/properties/economic_rationale/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err418];
 }
@@ -15678,19 +15722,21 @@ vErrors.push(err418);
 }
 errors++;
 }
-var valid29 = _errs329 === errors;
+}
+var valid31 = _errs333 === errors;
 }
 else {
-var valid29 = true;
+var valid31 = true;
 }
-if(valid29){
-if(data.hypothesis !== undefined){
-let data114 = data.hypothesis;
-const _errs331 = errors;
-if(errors === _errs331){
-if(typeof data114 === "string"){
-if(func2(data114) > 8000){
-const err419 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/2/properties/hypothesis/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
+if(valid31){
+if(data.evaluation_policy_id !== undefined){
+let data110 = data.evaluation_policy_id;
+const _errs335 = errors;
+if(errors === _errs335){
+if(errors === _errs335){
+if(typeof data110 === "string"){
+if(!pattern3.test(data110)){
+const err419 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/2/properties/evaluation_policy_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err419];
 }
@@ -15700,8 +15746,8 @@ vErrors.push(err419);
 errors++;
 }
 else {
-if(func2(data114) < 1){
-const err420 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/2/properties/hypothesis/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(!(formats0.test(data110))){
+const err420 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/2/properties/evaluation_policy_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
 if(vErrors === null){
 vErrors = [err420];
 }
@@ -15713,7 +15759,7 @@ errors++;
 }
 }
 else {
-const err421 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/2/properties/hypothesis/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err421 = {instancePath:instancePath+"/evaluation_policy_id",schemaPath:"#/oneOf/2/properties/evaluation_policy_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err421];
 }
@@ -15723,20 +15769,21 @@ vErrors.push(err421);
 errors++;
 }
 }
-var valid29 = _errs331 === errors;
+}
+var valid31 = _errs335 === errors;
 }
 else {
-var valid29 = true;
+var valid31 = true;
 }
-if(valid29){
-if(data.stop_rule !== undefined){
-let data115 = data.stop_rule;
-const _errs333 = errors;
-if(errors === _errs333){
-if(data115 && typeof data115 == "object" && !Array.isArray(data115)){
-let missing17;
-if(((((data115.schema_version === undefined) && (missing17 = "schema_version")) || ((data115.stop_on_qualified_count === undefined) && (missing17 = "stop_on_qualified_count"))) || ((data115.stop_on_budget === undefined) && (missing17 = "stop_on_budget"))) || ((data115.stop_on_invalid_data === undefined) && (missing17 = "stop_on_invalid_data"))){
-const err422 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/2/properties/stop_rule/required",keyword:"required",params:{missingProperty: missing17},message:"must have required property '"+missing17+"'"};
+if(valid31){
+if(data.execution_assumptions_id !== undefined){
+let data111 = data.execution_assumptions_id;
+const _errs337 = errors;
+if(errors === _errs337){
+if(errors === _errs337){
+if(typeof data111 === "string"){
+if(!pattern3.test(data111)){
+const err422 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/2/properties/execution_assumptions_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
 if(vErrors === null){
 vErrors = [err422];
 }
@@ -15746,10 +15793,8 @@ vErrors.push(err422);
 errors++;
 }
 else {
-const _errs335 = errors;
-for(const key8 in data115){
-if(!(((((key8 === "schema_version") || (key8 === "stop_on_budget")) || (key8 === "stop_on_invalid_data")) || (key8 === "stop_on_no_improvement_trials")) || (key8 === "stop_on_qualified_count"))){
-const err423 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/2/properties/stop_rule/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key8},message:"must NOT have additional properties"};
+if(!(formats0.test(data111))){
+const err423 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/2/properties/execution_assumptions_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
 if(vErrors === null){
 vErrors = [err423];
 }
@@ -15757,26 +15802,11 @@ else {
 vErrors.push(err423);
 }
 errors++;
-break;
 }
 }
-if(_errs335 === errors){
-if(data115.schema_version !== undefined){
-const _errs336 = errors;
-if(!(validate108(data115.schema_version, {instancePath:instancePath+"/stop_rule/schema_version",parentData:data115,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
-errors = vErrors.length;
-}
-var valid42 = _errs336 === errors;
 }
 else {
-var valid42 = true;
-}
-if(valid42){
-if(data115.stop_on_budget !== undefined){
-const _errs337 = errors;
-if(typeof data115.stop_on_budget !== "boolean"){
-const err424 = {instancePath:instancePath+"/stop_rule/stop_on_budget",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_budget/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+const err424 = {instancePath:instancePath+"/execution_assumptions_id",schemaPath:"#/oneOf/2/properties/execution_assumptions_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err424];
 }
@@ -15785,16 +15815,19 @@ vErrors.push(err424);
 }
 errors++;
 }
-var valid42 = _errs337 === errors;
+}
+}
+var valid31 = _errs337 === errors;
 }
 else {
-var valid42 = true;
+var valid31 = true;
 }
-if(valid42){
-if(data115.stop_on_invalid_data !== undefined){
+if(valid31){
+if(data.horizon_kind !== undefined){
+let data112 = data.horizon_kind;
 const _errs339 = errors;
-if(typeof data115.stop_on_invalid_data !== "boolean"){
-const err425 = {instancePath:instancePath+"/stop_rule/stop_on_invalid_data",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_invalid_data/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+if(typeof data112 !== "string"){
+const err425 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/2/properties/horizon_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err425];
 }
@@ -15803,17 +15836,8 @@ vErrors.push(err425);
 }
 errors++;
 }
-var valid42 = _errs339 === errors;
-}
-else {
-var valid42 = true;
-}
-if(valid42){
-if(data115.stop_on_no_improvement_trials !== undefined){
-let data119 = data115.stop_on_no_improvement_trials;
-const _errs341 = errors;
-if((!((typeof data119 == "number") && (!(data119 % 1) && !isNaN(data119)))) && (data119 !== null)){
-const err426 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_no_improvement_trials/type",keyword:"type",params:{type: schema73.oneOf[2].properties.stop_rule.properties.stop_on_no_improvement_trials.type},message:"must be integer,null"};
+if(!(data112 === "VARIABLE_INTERVAL")){
+const err426 = {instancePath:instancePath+"/horizon_kind",schemaPath:"#/oneOf/2/properties/horizon_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.horizon_kind.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err426];
 }
@@ -15822,10 +15846,16 @@ vErrors.push(err426);
 }
 errors++;
 }
-if(errors === _errs341){
-if(typeof data119 == "number"){
-if(data119 > 65535 || isNaN(data119)){
-const err427 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_no_improvement_trials/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+var valid31 = _errs339 === errors;
+}
+else {
+var valid31 = true;
+}
+if(valid31){
+if(data.horizon_value !== undefined){
+const _errs341 = errors;
+if(data.horizon_value !== null){
+const err427 = {instancePath:instancePath+"/horizon_value",schemaPath:"#/oneOf/2/properties/horizon_value/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err427];
 }
@@ -15834,9 +15864,19 @@ vErrors.push(err427);
 }
 errors++;
 }
+var valid31 = _errs341 === errors;
+}
 else {
-if(data119 < 1 || isNaN(data119)){
-const err428 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_no_improvement_trials/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+var valid31 = true;
+}
+if(valid31){
+if(data.hypothesis !== undefined){
+let data114 = data.hypothesis;
+const _errs343 = errors;
+if(errors === _errs343){
+if(typeof data114 === "string"){
+if(func2(data114) > 8000){
+const err428 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/2/properties/hypothesis/maxLength",keyword:"maxLength",params:{limit: 8000},message:"must NOT have more than 8000 characters"};
 if(vErrors === null){
 vErrors = [err428];
 }
@@ -15846,8 +15886,8 @@ vErrors.push(err428);
 errors++;
 }
 else {
-if(!(formats12.validate(data119))){
-const err429 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_no_improvement_trials/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(func2(data114) < 1){
+const err429 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/2/properties/hypothesis/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err429];
 }
@@ -15858,19 +15898,8 @@ errors++;
 }
 }
 }
-}
-}
-var valid42 = _errs341 === errors;
-}
 else {
-var valid42 = true;
-}
-if(valid42){
-if(data115.stop_on_qualified_count !== undefined){
-let data120 = data115.stop_on_qualified_count;
-const _errs343 = errors;
-if(!((typeof data120 == "number") && (!(data120 % 1) && !isNaN(data120)))){
-const err430 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_qualified_count/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err430 = {instancePath:instancePath+"/hypothesis",schemaPath:"#/oneOf/2/properties/hypothesis/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err430];
 }
@@ -15879,10 +15908,21 @@ vErrors.push(err430);
 }
 errors++;
 }
-if(errors === _errs343){
-if(typeof data120 == "number"){
-if(data120 > 65535 || isNaN(data120)){
-const err431 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_qualified_count/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
+}
+var valid31 = _errs343 === errors;
+}
+else {
+var valid31 = true;
+}
+if(valid31){
+if(data.stop_rule !== undefined){
+let data115 = data.stop_rule;
+const _errs345 = errors;
+if(errors === _errs345){
+if(data115 && typeof data115 == "object" && !Array.isArray(data115)){
+let missing17;
+if(((((data115.schema_version === undefined) && (missing17 = "schema_version")) || ((data115.stop_on_qualified_count === undefined) && (missing17 = "stop_on_qualified_count"))) || ((data115.stop_on_budget === undefined) && (missing17 = "stop_on_budget"))) || ((data115.stop_on_invalid_data === undefined) && (missing17 = "stop_on_invalid_data"))){
+const err431 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/2/properties/stop_rule/required",keyword:"required",params:{missingProperty: missing17},message:"must have required property '"+missing17+"'"};
 if(vErrors === null){
 vErrors = [err431];
 }
@@ -15892,8 +15932,10 @@ vErrors.push(err431);
 errors++;
 }
 else {
-if(data120 < 1 || isNaN(data120)){
-const err432 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_qualified_count/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+const _errs347 = errors;
+for(const key8 in data115){
+if(!(((((key8 === "schema_version") || (key8 === "stop_on_budget")) || (key8 === "stop_on_invalid_data")) || (key8 === "stop_on_no_improvement_trials")) || (key8 === "stop_on_qualified_count"))){
+const err432 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/2/properties/stop_rule/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key8},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err432];
 }
@@ -15901,10 +15943,26 @@ else {
 vErrors.push(err432);
 }
 errors++;
+break;
+}
+}
+if(_errs347 === errors){
+if(data115.schema_version !== undefined){
+const _errs348 = errors;
+if(!(validate108(data115.schema_version, {instancePath:instancePath+"/stop_rule/schema_version",parentData:data115,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
+errors = vErrors.length;
+}
+var valid45 = _errs348 === errors;
 }
 else {
-if(!(formats12.validate(data120))){
-const err433 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_qualified_count/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+var valid45 = true;
+}
+if(valid45){
+if(data115.stop_on_budget !== undefined){
+const _errs349 = errors;
+if(typeof data115.stop_on_budget !== "boolean"){
+const err433 = {instancePath:instancePath+"/stop_rule/stop_on_budget",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_budget/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
 if(vErrors === null){
 vErrors = [err433];
 }
@@ -15913,24 +15971,16 @@ vErrors.push(err433);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid42 = _errs343 === errors;
+var valid45 = _errs349 === errors;
 }
 else {
-var valid42 = true;
+var valid45 = true;
 }
-}
-}
-}
-}
-}
-}
-}
-else {
-const err434 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/2/properties/stop_rule/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(valid45){
+if(data115.stop_on_invalid_data !== undefined){
+const _errs351 = errors;
+if(typeof data115.stop_on_invalid_data !== "boolean"){
+const err434 = {instancePath:instancePath+"/stop_rule/stop_on_invalid_data",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_invalid_data/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
 if(vErrors === null){
 vErrors = [err434];
 }
@@ -15939,18 +15989,17 @@ vErrors.push(err434);
 }
 errors++;
 }
-}
-var valid29 = _errs333 === errors;
+var valid45 = _errs351 === errors;
 }
 else {
-var valid29 = true;
+var valid45 = true;
 }
-if(valid29){
-if(data.target_kind !== undefined){
-let data121 = data.target_kind;
-const _errs345 = errors;
-if(typeof data121 !== "string"){
-const err435 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/2/properties/target_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(valid45){
+if(data115.stop_on_no_improvement_trials !== undefined){
+let data119 = data115.stop_on_no_improvement_trials;
+const _errs353 = errors;
+if((!((typeof data119 == "number") && (!(data119 % 1) && !isNaN(data119)))) && (data119 !== null)){
+const err435 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_no_improvement_trials/type",keyword:"type",params:{type: schema73.oneOf[2].properties.stop_rule.properties.stop_on_no_improvement_trials.type},message:"must be integer,null"};
 if(vErrors === null){
 vErrors = [err435];
 }
@@ -15959,8 +16008,10 @@ vErrors.push(err435);
 }
 errors++;
 }
-if(!((data121 === "SCORE") || (data121 === "EXPECTED_RETURN"))){
-const err436 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/2/properties/target_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.target_kind.enum},message:"must be equal to one of the allowed values"};
+if(errors === _errs353){
+if(typeof data119 == "number"){
+if(data119 > 65535 || isNaN(data119)){
+const err436 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_no_improvement_trials/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
 if(vErrors === null){
 vErrors = [err436];
 }
@@ -15969,20 +16020,9 @@ vErrors.push(err436);
 }
 errors++;
 }
-var valid29 = _errs345 === errors;
-}
 else {
-var valid29 = true;
-}
-if(valid29){
-if(data.universe_version_id !== undefined){
-let data122 = data.universe_version_id;
-const _errs347 = errors;
-if(errors === _errs347){
-if(errors === _errs347){
-if(typeof data122 === "string"){
-if(!pattern3.test(data122)){
-const err437 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/2/properties/universe_version_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+if(data119 < 1 || isNaN(data119)){
+const err437 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_no_improvement_trials/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err437];
 }
@@ -15992,8 +16032,8 @@ vErrors.push(err437);
 errors++;
 }
 else {
-if(!(formats0.test(data122))){
-const err438 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/2/properties/universe_version_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+if(!(formats12.validate(data119))){
+const err438 = {instancePath:instancePath+"/stop_rule/stop_on_no_improvement_trials",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_no_improvement_trials/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err438];
 }
@@ -16004,8 +16044,19 @@ errors++;
 }
 }
 }
+}
+}
+var valid45 = _errs353 === errors;
+}
 else {
-const err439 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/2/properties/universe_version_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+var valid45 = true;
+}
+if(valid45){
+if(data115.stop_on_qualified_count !== undefined){
+let data120 = data115.stop_on_qualified_count;
+const _errs355 = errors;
+if(!((typeof data120 == "number") && (!(data120 % 1) && !isNaN(data120)))){
+const err439 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_qualified_count/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err439];
 }
@@ -16014,29 +16065,10 @@ vErrors.push(err439);
 }
 errors++;
 }
-}
-}
-var valid29 = _errs347 === errors;
-}
-else {
-var valid29 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err440 = {instancePath,schemaPath:"#/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(errors === _errs355){
+if(typeof data120 == "number"){
+if(data120 > 65535 || isNaN(data120)){
+const err440 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_qualified_count/maximum",keyword:"maximum",params:{comparison: "<=", limit: 65535},message:"must be <= 65535"};
 if(vErrors === null){
 vErrors = [err440];
 }
@@ -16045,8 +16077,162 @@ vErrors.push(err440);
 }
 errors++;
 }
+else {
+if(data120 < 1 || isNaN(data120)){
+const err441 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_qualified_count/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err441];
 }
-var _valid0 = _errs233 === errors;
+else {
+vErrors.push(err441);
+}
+errors++;
+}
+else {
+if(!(formats12.validate(data120))){
+const err442 = {instancePath:instancePath+"/stop_rule/stop_on_qualified_count",schemaPath:"#/oneOf/2/properties/stop_rule/properties/stop_on_qualified_count/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(vErrors === null){
+vErrors = [err442];
+}
+else {
+vErrors.push(err442);
+}
+errors++;
+}
+}
+}
+}
+}
+var valid45 = _errs355 === errors;
+}
+else {
+var valid45 = true;
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+const err443 = {instancePath:instancePath+"/stop_rule",schemaPath:"#/oneOf/2/properties/stop_rule/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err443];
+}
+else {
+vErrors.push(err443);
+}
+errors++;
+}
+}
+var valid31 = _errs345 === errors;
+}
+else {
+var valid31 = true;
+}
+if(valid31){
+if(data.target_kind !== undefined){
+let data121 = data.target_kind;
+const _errs357 = errors;
+if(typeof data121 !== "string"){
+const err444 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/2/properties/target_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err444];
+}
+else {
+vErrors.push(err444);
+}
+errors++;
+}
+if(!((data121 === "SCORE") || (data121 === "EXPECTED_RETURN"))){
+const err445 = {instancePath:instancePath+"/target_kind",schemaPath:"#/oneOf/2/properties/target_kind/enum",keyword:"enum",params:{allowedValues: schema73.oneOf[2].properties.target_kind.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err445];
+}
+else {
+vErrors.push(err445);
+}
+errors++;
+}
+var valid31 = _errs357 === errors;
+}
+else {
+var valid31 = true;
+}
+if(valid31){
+if(data.universe_version_id !== undefined){
+let data122 = data.universe_version_id;
+const _errs359 = errors;
+if(errors === _errs359){
+if(errors === _errs359){
+if(typeof data122 === "string"){
+if(!pattern3.test(data122)){
+const err446 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/2/properties/universe_version_id/pattern",keyword:"pattern",params:{pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"},message:"must match pattern \""+"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"+"\""};
+if(vErrors === null){
+vErrors = [err446];
+}
+else {
+vErrors.push(err446);
+}
+errors++;
+}
+else {
+if(!(formats0.test(data122))){
+const err447 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/2/properties/universe_version_id/format",keyword:"format",params:{format: "uuid"},message:"must match format \""+"uuid"+"\""};
+if(vErrors === null){
+vErrors = [err447];
+}
+else {
+vErrors.push(err447);
+}
+errors++;
+}
+}
+}
+else {
+const err448 = {instancePath:instancePath+"/universe_version_id",schemaPath:"#/oneOf/2/properties/universe_version_id/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err448];
+}
+else {
+vErrors.push(err448);
+}
+errors++;
+}
+}
+}
+var valid31 = _errs359 === errors;
+}
+else {
+var valid31 = true;
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+const err449 = {instancePath,schemaPath:"#/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err449];
+}
+else {
+vErrors.push(err449);
+}
+errors++;
+}
+}
+var _valid0 = _errs241 === errors;
 if(_valid0 && valid0){
 valid0 = false;
 passing0 = [passing0, 2];
@@ -16062,12 +16248,12 @@ props1 = true;
 }
 }
 if(!valid0){
-const err441 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+const err450 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
-vErrors = [err441];
+vErrors = [err450];
 }
 else {
-vErrors.push(err441);
+vErrors.push(err450);
 }
 errors++;
 validate289.errors = vErrors;
@@ -33376,7 +33562,7 @@ return errors === 0;
 }
 validate706.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-const schema159 = {"additionalProperties":false,"properties":{"account_kind":{"$ref":"#/components/schemas/NativeAccountKind"},"base_currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"exposure_tolerance":{"$ref":"#/components/schemas/DecimalValue"},"fee_model":{"$ref":"#/components/schemas/NativeModelRefV1"},"fee_rates":{"items":{"$ref":"#/components/schemas/NativeFeeRateV1"},"maxItems":256,"minItems":1,"type":"array"},"fill_model":{"$ref":"#/components/schemas/NativeModelRefV1"},"latency_model":{"$ref":"#/components/schemas/NativeModelRefV1"},"leverage":{"$ref":"#/components/schemas/DecimalValue"},"schema_version":{"$ref":"#/components/schemas/SchemaV1"},"snapshot_interval_ms":{"format":"int32","maximum":86400000,"minimum":1,"type":"integer"},"starting_capital":{"$ref":"#/components/schemas/DecimalValue"}},"required":["schema_version","base_currency","starting_capital","account_kind","leverage","fee_model","fill_model","latency_model","snapshot_interval_ms","exposure_tolerance","fee_rates"],"type":"object"};
+const schema159 = {"additionalProperties":false,"properties":{"account_kind":{"$ref":"#/components/schemas/NativeAccountKind"},"base_currency":{"oneOf":[{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},{"enum":["USDC","USDC.e","pUSD"],"type":"string"}]},"exposure_tolerance":{"$ref":"#/components/schemas/DecimalValue"},"fee_model":{"$ref":"#/components/schemas/NativeModelRefV1"},"fee_rates":{"items":{"$ref":"#/components/schemas/NativeFeeRateV1"},"maxItems":256,"minItems":1,"type":"array"},"fill_model":{"$ref":"#/components/schemas/NativeModelRefV1"},"latency_model":{"$ref":"#/components/schemas/NativeModelRefV1"},"leverage":{"$ref":"#/components/schemas/DecimalValue"},"schema_version":{"$ref":"#/components/schemas/SchemaV1"},"snapshot_interval_ms":{"format":"int32","maximum":86400000,"minimum":1,"type":"integer"},"starting_capital":{"$ref":"#/components/schemas/DecimalValue"}},"required":["schema_version","base_currency","starting_capital","account_kind","leverage","fee_model","fill_model","latency_model","snapshot_interval_ms","exposure_tolerance","fee_rates"],"type":"object"};
 const schema160 = {"enum":["CASH","MARGIN"],"type":"string"};
 
 function validate713(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
@@ -33402,7 +33588,7 @@ return errors === 0;
 }
 validate713.evaluated = {"dynamicProps":false,"dynamicItems":false};
 
-const schema161 = {"oneOf":[{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["NAUTILUS_DEFAULT_FILL"],"type":"string"},"parameters":{"additionalProperties":false,"properties":{"prob_fill_on_limit":{"$ref":"#/components/schemas/DecimalValue"},"prob_slippage":{"$ref":"#/components/schemas/DecimalValue"},"random_seed":{"$ref":"#/components/schemas/DbCounter"}},"required":["prob_fill_on_limit","prob_slippage","random_seed"],"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["nautilus_execution::models::fill::DefaultFillModel"],"type":"string"},"upstream_version":{"enum":["0.63.0"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["NAUTILUS_MAKER_TAKER"],"type":"string"},"parameters":{"additionalProperties":false,"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["nautilus_execution::models::fee::MakerTakerFeeModel"],"type":"string"},"upstream_version":{"enum":["0.63.0"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["NAUTILUS_STATIC_LATENCY"],"type":"string"},"parameters":{"additionalProperties":false,"properties":{"base_latency_ns":{"$ref":"#/components/schemas/DbCounter"},"cancel_latency_ns":{"$ref":"#/components/schemas/DbCounter"},"insert_latency_ns":{"$ref":"#/components/schemas/DbCounter"},"update_latency_ns":{"$ref":"#/components/schemas/DbCounter"}},"required":["base_latency_ns","insert_latency_ns","update_latency_ns","cancel_latency_ns"],"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["nautilus_execution::models::latency::StaticLatencyModel"],"type":"string"},"upstream_version":{"enum":["0.63.0"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["CLARABEL_QP"],"type":"string"},"parameters":{"additionalProperties":false,"properties":{"accept_inaccurate":{"type":"boolean"},"cvar_confidence":{"oneOf":[{"type":"null"},{"$ref":"#/components/schemas/DecimalValue","description":"Required for CVAR, absent/null for VARIANCE. Strictly between zero and one."}]},"max_iterations":{"format":"int32","maximum":100000,"minimum":1,"type":"integer"},"risk_aversion":{"$ref":"#/components/schemas/DecimalValue"},"risk_budgeting":{"oneOf":[{"type":"null"},{"$ref":"#/components/schemas/RiskBudgetSettingsV1","description":"Required only for RISK_BUDGETING; explicit asset identity, share, sign and scale."}]},"schema_version":{"$ref":"#/components/schemas/SchemaV1"},"solver_tolerance":{"$ref":"#/components/schemas/DecimalValue","description":"Numerical stopping tolerance, not permission to violate the mandate."}},"required":["schema_version","risk_aversion","max_iterations","solver_tolerance","accept_inaccurate"],"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["clarabel::solver::DefaultSolver"],"type":"string"},"upstream_version":{"enum":["0.11.1"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["FIXED_WEIGHTED_FORECAST"],"type":"string"},"parameters":{"additionalProperties":false,"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["ndarray::ArrayBase::dot"],"type":"string"},"upstream_version":{"enum":["0.17.1"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["SAMPLE_COVARIANCE"],"type":"string"},"parameters":{"additionalProperties":false,"properties":{"ddof":{"format":"int32","maximum":1,"minimum":1,"type":"integer"}},"required":["ddof"],"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["ndarray_stats::CorrelationExt::cov"],"type":"string"},"upstream_version":{"enum":["0.7.0"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"}]};
+const schema161 = {"oneOf":[{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["NAUTILUS_DEFAULT_FILL"],"type":"string"},"parameters":{"additionalProperties":false,"properties":{"prob_fill_on_limit":{"$ref":"#/components/schemas/DecimalValue"},"prob_slippage":{"$ref":"#/components/schemas/DecimalValue"},"random_seed":{"$ref":"#/components/schemas/DbCounter"}},"required":["prob_fill_on_limit","prob_slippage","random_seed"],"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["nautilus_execution::models::fill::DefaultFillModel"],"type":"string"},"upstream_version":{"enum":["0.63.0"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["NAUTILUS_MAKER_TAKER"],"type":"string"},"parameters":{"additionalProperties":false,"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["nautilus_execution::models::fee::MakerTakerFeeModel"],"type":"string"},"upstream_version":{"enum":["0.63.0"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["NAUTILUS_POLYMARKET"],"type":"string"},"parameters":{"additionalProperties":false,"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["nautilus_polymarket::models::PolymarketFeeModel"],"type":"string"},"upstream_version":{"enum":["0.63.0"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["NAUTILUS_STATIC_LATENCY"],"type":"string"},"parameters":{"additionalProperties":false,"properties":{"base_latency_ns":{"$ref":"#/components/schemas/DbCounter"},"cancel_latency_ns":{"$ref":"#/components/schemas/DbCounter"},"insert_latency_ns":{"$ref":"#/components/schemas/DbCounter"},"update_latency_ns":{"$ref":"#/components/schemas/DbCounter"}},"required":["base_latency_ns","insert_latency_ns","update_latency_ns","cancel_latency_ns"],"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["nautilus_execution::models::latency::StaticLatencyModel"],"type":"string"},"upstream_version":{"enum":["0.63.0"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["CLARABEL_QP"],"type":"string"},"parameters":{"additionalProperties":false,"properties":{"accept_inaccurate":{"type":"boolean"},"cvar_confidence":{"oneOf":[{"type":"null"},{"$ref":"#/components/schemas/DecimalValue","description":"Required for CVAR, absent/null for VARIANCE. Strictly between zero and one."}]},"max_iterations":{"format":"int32","maximum":100000,"minimum":1,"type":"integer"},"risk_aversion":{"$ref":"#/components/schemas/DecimalValue"},"risk_budgeting":{"oneOf":[{"type":"null"},{"$ref":"#/components/schemas/RiskBudgetSettingsV1","description":"Required only for RISK_BUDGETING; explicit asset identity, share, sign and scale."}]},"schema_version":{"$ref":"#/components/schemas/SchemaV1"},"solver_tolerance":{"$ref":"#/components/schemas/DecimalValue","description":"Numerical stopping tolerance, not permission to violate the mandate."}},"required":["schema_version","risk_aversion","max_iterations","solver_tolerance","accept_inaccurate"],"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["clarabel::solver::DefaultSolver"],"type":"string"},"upstream_version":{"enum":["0.11.1"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["FIXED_WEIGHTED_FORECAST"],"type":"string"},"parameters":{"additionalProperties":false,"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["ndarray::ArrayBase::dot"],"type":"string"},"upstream_version":{"enum":["0.17.1"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"},{"additionalProperties":false,"properties":{"adapter_kind":{"enum":["SAMPLE_COVARIANCE"],"type":"string"},"parameters":{"additionalProperties":false,"properties":{"ddof":{"format":"int32","maximum":1,"minimum":1,"type":"integer"}},"required":["ddof"],"type":"object"},"schema_version":{"enum":[1],"maximum":1,"minimum":1,"type":"integer"},"upstream_class":{"enum":["ndarray_stats::CorrelationExt::cov"],"type":"string"},"upstream_version":{"enum":["0.7.0"],"type":"string"}},"required":["schema_version","adapter_kind","upstream_class","upstream_version","parameters"],"type":"object"}]};
 const schema162 = {"additionalProperties":false,"properties":{"assets":{"items":{"$ref":"#/components/schemas/RiskBudgetAssetV1"},"maxItems":256,"minItems":1,"type":"array"},"risky_gross_exposure":{"$ref":"#/components/schemas/DecimalValue"},"schema_version":{"$ref":"#/components/schemas/SchemaV1"}},"required":["schema_version","risky_gross_exposure","assets"],"type":"object"};
 const schema163 = {"additionalProperties":false,"properties":{"instrument_id":{"maxLength":200,"minLength":1,"type":"string"},"share":{"$ref":"#/components/schemas/DecimalValue"},"sign":{"$ref":"#/components/schemas/RiskBudgetSign"}},"required":["instrument_id","share","sign"],"type":"object"};
 const schema164 = {"enum":["LONG","SHORT"],"type":"string"};
@@ -34208,7 +34394,7 @@ vErrors.push(err33);
 }
 errors++;
 }
-if(!(data13 === "NAUTILUS_STATIC_LATENCY")){
+if(!(data13 === "NAUTILUS_POLYMARKET")){
 const err34 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/2/properties/adapter_kind/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[2].properties.adapter_kind.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err34];
@@ -34229,9 +34415,8 @@ let data14 = data.parameters;
 const _errs37 = errors;
 if(errors === _errs37){
 if(data14 && typeof data14 == "object" && !Array.isArray(data14)){
-let missing4;
-if(((((data14.base_latency_ns === undefined) && (missing4 = "base_latency_ns")) || ((data14.insert_latency_ns === undefined) && (missing4 = "insert_latency_ns"))) || ((data14.update_latency_ns === undefined) && (missing4 = "update_latency_ns"))) || ((data14.cancel_latency_ns === undefined) && (missing4 = "cancel_latency_ns"))){
-const err35 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/2/properties/parameters/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
+for(const key5 in data14){
+const err35 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/2/properties/parameters/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key5},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err35];
 }
@@ -34239,83 +34424,16 @@ else {
 vErrors.push(err35);
 }
 errors++;
+break;
+}
 }
 else {
-const _errs39 = errors;
-for(const key5 in data14){
-if(!((((key5 === "base_latency_ns") || (key5 === "cancel_latency_ns")) || (key5 === "insert_latency_ns")) || (key5 === "update_latency_ns"))){
-const err36 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/2/properties/parameters/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key5},message:"must NOT have additional properties"};
+const err36 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/2/properties/parameters/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err36];
 }
 else {
 vErrors.push(err36);
-}
-errors++;
-break;
-}
-}
-if(_errs39 === errors){
-if(data14.base_latency_ns !== undefined){
-const _errs40 = errors;
-if(!(validate58(data14.base_latency_ns, {instancePath:instancePath+"/parameters/base_latency_ns",parentData:data14,parentDataProperty:"base_latency_ns",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate58.errors : vErrors.concat(validate58.errors);
-errors = vErrors.length;
-}
-var valid5 = _errs40 === errors;
-}
-else {
-var valid5 = true;
-}
-if(valid5){
-if(data14.cancel_latency_ns !== undefined){
-const _errs41 = errors;
-if(!(validate58(data14.cancel_latency_ns, {instancePath:instancePath+"/parameters/cancel_latency_ns",parentData:data14,parentDataProperty:"cancel_latency_ns",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate58.errors : vErrors.concat(validate58.errors);
-errors = vErrors.length;
-}
-var valid5 = _errs41 === errors;
-}
-else {
-var valid5 = true;
-}
-if(valid5){
-if(data14.insert_latency_ns !== undefined){
-const _errs42 = errors;
-if(!(validate58(data14.insert_latency_ns, {instancePath:instancePath+"/parameters/insert_latency_ns",parentData:data14,parentDataProperty:"insert_latency_ns",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate58.errors : vErrors.concat(validate58.errors);
-errors = vErrors.length;
-}
-var valid5 = _errs42 === errors;
-}
-else {
-var valid5 = true;
-}
-if(valid5){
-if(data14.update_latency_ns !== undefined){
-const _errs43 = errors;
-if(!(validate58(data14.update_latency_ns, {instancePath:instancePath+"/parameters/update_latency_ns",parentData:data14,parentDataProperty:"update_latency_ns",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate58.errors : vErrors.concat(validate58.errors);
-errors = vErrors.length;
-}
-var valid5 = _errs43 === errors;
-}
-else {
-var valid5 = true;
-}
-}
-}
-}
-}
-}
-}
-else {
-const err37 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/2/properties/parameters/type",keyword:"type",params:{type: "object"},message:"must be object"};
-if(vErrors === null){
-vErrors = [err37];
-}
-else {
-vErrors.push(err37);
 }
 errors++;
 }
@@ -34327,10 +34445,20 @@ var valid4 = true;
 }
 if(valid4){
 if(data.schema_version !== undefined){
-let data19 = data.schema_version;
-const _errs44 = errors;
-if(!((typeof data19 == "number") && (!(data19 % 1) && !isNaN(data19)))){
-const err38 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/2/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+let data15 = data.schema_version;
+const _errs40 = errors;
+if(!((typeof data15 == "number") && (!(data15 % 1) && !isNaN(data15)))){
+const err37 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/2/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err37];
+}
+else {
+vErrors.push(err37);
+}
+errors++;
+}
+if(!(data15 === 1)){
+const err38 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/2/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[2].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err38];
 }
@@ -34339,8 +34467,10 @@ vErrors.push(err38);
 }
 errors++;
 }
-if(!(data19 === 1)){
-const err39 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/2/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[2].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
+if(errors === _errs40){
+if(typeof data15 == "number"){
+if(data15 > 1 || isNaN(data15)){
+const err39 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/2/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
 if(vErrors === null){
 vErrors = [err39];
 }
@@ -34349,10 +34479,9 @@ vErrors.push(err39);
 }
 errors++;
 }
-if(errors === _errs44){
-if(typeof data19 == "number"){
-if(data19 > 1 || isNaN(data19)){
-const err40 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/2/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
+else {
+if(data15 < 1 || isNaN(data15)){
+const err40 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/2/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err40];
 }
@@ -34361,9 +34490,20 @@ vErrors.push(err40);
 }
 errors++;
 }
+}
+}
+}
+var valid4 = _errs40 === errors;
+}
 else {
-if(data19 < 1 || isNaN(data19)){
-const err41 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/2/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+var valid4 = true;
+}
+if(valid4){
+if(data.upstream_class !== undefined){
+let data16 = data.upstream_class;
+const _errs42 = errors;
+if(typeof data16 !== "string"){
+const err41 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/2/properties/upstream_class/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err41];
 }
@@ -34372,20 +34512,8 @@ vErrors.push(err41);
 }
 errors++;
 }
-}
-}
-}
-var valid4 = _errs44 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data.upstream_class !== undefined){
-let data20 = data.upstream_class;
-const _errs46 = errors;
-if(typeof data20 !== "string"){
-const err42 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/2/properties/upstream_class/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!(data16 === "nautilus_polymarket::models::PolymarketFeeModel")){
+const err42 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/2/properties/upstream_class/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[2].properties.upstream_class.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err42];
 }
@@ -34394,8 +34522,17 @@ vErrors.push(err42);
 }
 errors++;
 }
-if(!(data20 === "nautilus_execution::models::latency::StaticLatencyModel")){
-const err43 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/2/properties/upstream_class/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[2].properties.upstream_class.enum},message:"must be equal to one of the allowed values"};
+var valid4 = _errs42 === errors;
+}
+else {
+var valid4 = true;
+}
+if(valid4){
+if(data.upstream_version !== undefined){
+let data17 = data.upstream_version;
+const _errs44 = errors;
+if(typeof data17 !== "string"){
+const err43 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/2/properties/upstream_version/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err43];
 }
@@ -34404,17 +34541,8 @@ vErrors.push(err43);
 }
 errors++;
 }
-var valid4 = _errs46 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data.upstream_version !== undefined){
-let data21 = data.upstream_version;
-const _errs48 = errors;
-if(typeof data21 !== "string"){
-const err44 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/2/properties/upstream_version/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!(data17 === "0.63.0")){
+const err44 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/2/properties/upstream_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[2].properties.upstream_version.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err44];
 }
@@ -34423,17 +34551,7 @@ vErrors.push(err44);
 }
 errors++;
 }
-if(!(data21 === "0.63.0")){
-const err45 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/2/properties/upstream_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[2].properties.upstream_version.enum},message:"must be equal to one of the allowed values"};
-if(vErrors === null){
-vErrors = [err45];
-}
-else {
-vErrors.push(err45);
-}
-errors++;
-}
-var valid4 = _errs48 === errors;
+var valid4 = _errs44 === errors;
 }
 else {
 var valid4 = true;
@@ -34446,12 +34564,12 @@ var valid4 = true;
 }
 }
 else {
-const err46 = {instancePath,schemaPath:"#/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err45 = {instancePath,schemaPath:"#/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err46];
+vErrors = [err45];
 }
 else {
-vErrors.push(err46);
+vErrors.push(err45);
 }
 errors++;
 }
@@ -34469,12 +34587,25 @@ if(props0 !== true){
 props0 = true;
 }
 }
-const _errs50 = errors;
-if(errors === _errs50){
+const _errs46 = errors;
+if(errors === _errs46){
 if(data && typeof data == "object" && !Array.isArray(data)){
-let missing5;
-if((((((data.schema_version === undefined) && (missing5 = "schema_version")) || ((data.adapter_kind === undefined) && (missing5 = "adapter_kind"))) || ((data.upstream_class === undefined) && (missing5 = "upstream_class"))) || ((data.upstream_version === undefined) && (missing5 = "upstream_version"))) || ((data.parameters === undefined) && (missing5 = "parameters"))){
-const err47 = {instancePath,schemaPath:"#/oneOf/3/required",keyword:"required",params:{missingProperty: missing5},message:"must have required property '"+missing5+"'"};
+let missing4;
+if((((((data.schema_version === undefined) && (missing4 = "schema_version")) || ((data.adapter_kind === undefined) && (missing4 = "adapter_kind"))) || ((data.upstream_class === undefined) && (missing4 = "upstream_class"))) || ((data.upstream_version === undefined) && (missing4 = "upstream_version"))) || ((data.parameters === undefined) && (missing4 = "parameters"))){
+const err46 = {instancePath,schemaPath:"#/oneOf/3/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
+if(vErrors === null){
+vErrors = [err46];
+}
+else {
+vErrors.push(err46);
+}
+errors++;
+}
+else {
+const _errs48 = errors;
+for(const key6 in data){
+if(!(((((key6 === "adapter_kind") || (key6 === "parameters")) || (key6 === "schema_version")) || (key6 === "upstream_class")) || (key6 === "upstream_version"))){
+const err47 = {instancePath,schemaPath:"#/oneOf/3/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key6},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err47];
 }
@@ -34482,12 +34613,15 @@ else {
 vErrors.push(err47);
 }
 errors++;
+break;
 }
-else {
-const _errs52 = errors;
-for(const key6 in data){
-if(!(((((key6 === "adapter_kind") || (key6 === "parameters")) || (key6 === "schema_version")) || (key6 === "upstream_class")) || (key6 === "upstream_version"))){
-const err48 = {instancePath,schemaPath:"#/oneOf/3/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key6},message:"must NOT have additional properties"};
+}
+if(_errs48 === errors){
+if(data.adapter_kind !== undefined){
+let data18 = data.adapter_kind;
+const _errs49 = errors;
+if(typeof data18 !== "string"){
+const err48 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/3/properties/adapter_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err48];
 }
@@ -34495,15 +34629,9 @@ else {
 vErrors.push(err48);
 }
 errors++;
-break;
 }
-}
-if(_errs52 === errors){
-if(data.adapter_kind !== undefined){
-let data22 = data.adapter_kind;
-const _errs53 = errors;
-if(typeof data22 !== "string"){
-const err49 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/3/properties/adapter_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!(data18 === "NAUTILUS_STATIC_LATENCY")){
+const err49 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/3/properties/adapter_kind/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[3].properties.adapter_kind.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err49];
 }
@@ -34512,8 +34640,20 @@ vErrors.push(err49);
 }
 errors++;
 }
-if(!(data22 === "CLARABEL_QP")){
-const err50 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/3/properties/adapter_kind/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[3].properties.adapter_kind.enum},message:"must be equal to one of the allowed values"};
+var valid5 = _errs49 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data.parameters !== undefined){
+let data19 = data.parameters;
+const _errs51 = errors;
+if(errors === _errs51){
+if(data19 && typeof data19 == "object" && !Array.isArray(data19)){
+let missing5;
+if(((((data19.base_latency_ns === undefined) && (missing5 = "base_latency_ns")) || ((data19.insert_latency_ns === undefined) && (missing5 = "insert_latency_ns"))) || ((data19.update_latency_ns === undefined) && (missing5 = "update_latency_ns"))) || ((data19.cancel_latency_ns === undefined) && (missing5 = "cancel_latency_ns"))){
+const err50 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/3/properties/parameters/required",keyword:"required",params:{missingProperty: missing5},message:"must have required property '"+missing5+"'"};
 if(vErrors === null){
 vErrors = [err50];
 }
@@ -34522,20 +34662,11 @@ vErrors.push(err50);
 }
 errors++;
 }
-var valid6 = _errs53 === errors;
-}
 else {
-var valid6 = true;
-}
-if(valid6){
-if(data.parameters !== undefined){
-let data23 = data.parameters;
-const _errs55 = errors;
-if(errors === _errs55){
-if(data23 && typeof data23 == "object" && !Array.isArray(data23)){
-let missing6;
-if((((((data23.schema_version === undefined) && (missing6 = "schema_version")) || ((data23.risk_aversion === undefined) && (missing6 = "risk_aversion"))) || ((data23.max_iterations === undefined) && (missing6 = "max_iterations"))) || ((data23.solver_tolerance === undefined) && (missing6 = "solver_tolerance"))) || ((data23.accept_inaccurate === undefined) && (missing6 = "accept_inaccurate"))){
-const err51 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/3/properties/parameters/required",keyword:"required",params:{missingProperty: missing6},message:"must have required property '"+missing6+"'"};
+const _errs53 = errors;
+for(const key7 in data19){
+if(!((((key7 === "base_latency_ns") || (key7 === "cancel_latency_ns")) || (key7 === "insert_latency_ns")) || (key7 === "update_latency_ns"))){
+const err51 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/3/properties/parameters/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key7},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err51];
 }
@@ -34543,12 +34674,65 @@ else {
 vErrors.push(err51);
 }
 errors++;
+break;
+}
+}
+if(_errs53 === errors){
+if(data19.base_latency_ns !== undefined){
+const _errs54 = errors;
+if(!(validate58(data19.base_latency_ns, {instancePath:instancePath+"/parameters/base_latency_ns",parentData:data19,parentDataProperty:"base_latency_ns",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate58.errors : vErrors.concat(validate58.errors);
+errors = vErrors.length;
+}
+var valid6 = _errs54 === errors;
 }
 else {
+var valid6 = true;
+}
+if(valid6){
+if(data19.cancel_latency_ns !== undefined){
+const _errs55 = errors;
+if(!(validate58(data19.cancel_latency_ns, {instancePath:instancePath+"/parameters/cancel_latency_ns",parentData:data19,parentDataProperty:"cancel_latency_ns",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate58.errors : vErrors.concat(validate58.errors);
+errors = vErrors.length;
+}
+var valid6 = _errs55 === errors;
+}
+else {
+var valid6 = true;
+}
+if(valid6){
+if(data19.insert_latency_ns !== undefined){
+const _errs56 = errors;
+if(!(validate58(data19.insert_latency_ns, {instancePath:instancePath+"/parameters/insert_latency_ns",parentData:data19,parentDataProperty:"insert_latency_ns",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate58.errors : vErrors.concat(validate58.errors);
+errors = vErrors.length;
+}
+var valid6 = _errs56 === errors;
+}
+else {
+var valid6 = true;
+}
+if(valid6){
+if(data19.update_latency_ns !== undefined){
 const _errs57 = errors;
-for(const key7 in data23){
-if(!(((((((key7 === "accept_inaccurate") || (key7 === "cvar_confidence")) || (key7 === "max_iterations")) || (key7 === "risk_aversion")) || (key7 === "risk_budgeting")) || (key7 === "schema_version")) || (key7 === "solver_tolerance"))){
-const err52 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/3/properties/parameters/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key7},message:"must NOT have additional properties"};
+if(!(validate58(data19.update_latency_ns, {instancePath:instancePath+"/parameters/update_latency_ns",parentData:data19,parentDataProperty:"update_latency_ns",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate58.errors : vErrors.concat(validate58.errors);
+errors = vErrors.length;
+}
+var valid6 = _errs57 === errors;
+}
+else {
+var valid6 = true;
+}
+}
+}
+}
+}
+}
+}
+else {
+const err52 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/3/properties/parameters/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err52];
 }
@@ -34556,14 +34740,19 @@ else {
 vErrors.push(err52);
 }
 errors++;
-break;
 }
 }
-if(_errs57 === errors){
-if(data23.accept_inaccurate !== undefined){
+var valid5 = _errs51 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data.schema_version !== undefined){
+let data24 = data.schema_version;
 const _errs58 = errors;
-if(typeof data23.accept_inaccurate !== "boolean"){
-const err53 = {instancePath:instancePath+"/parameters/accept_inaccurate",schemaPath:"#/oneOf/3/properties/parameters/properties/accept_inaccurate/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+if(!((typeof data24 == "number") && (!(data24 % 1) && !isNaN(data24)))){
+const err53 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/3/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err53];
 }
@@ -34572,21 +34761,8 @@ vErrors.push(err53);
 }
 errors++;
 }
-var valid7 = _errs58 === errors;
-}
-else {
-var valid7 = true;
-}
-if(valid7){
-if(data23.cvar_confidence !== undefined){
-let data25 = data23.cvar_confidence;
-const _errs60 = errors;
-const _errs61 = errors;
-let valid8 = false;
-let passing1 = null;
-const _errs62 = errors;
-if(data25 !== null){
-const err54 = {instancePath:instancePath+"/parameters/cvar_confidence",schemaPath:"#/oneOf/3/properties/parameters/properties/cvar_confidence/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(!(data24 === 1)){
+const err54 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/3/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[3].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err54];
 }
@@ -34595,29 +34771,10 @@ vErrors.push(err54);
 }
 errors++;
 }
-var _valid1 = _errs62 === errors;
-if(_valid1){
-valid8 = true;
-passing1 = 0;
-}
-const _errs64 = errors;
-if(!(validate258(data25, {instancePath:instancePath+"/parameters/cvar_confidence",parentData:data23,parentDataProperty:"cvar_confidence",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate258.errors : vErrors.concat(validate258.errors);
-errors = vErrors.length;
-}
-var _valid1 = _errs64 === errors;
-if(_valid1 && valid8){
-valid8 = false;
-passing1 = [passing1, 1];
-}
-else {
-if(_valid1){
-valid8 = true;
-passing1 = 1;
-}
-}
-if(!valid8){
-const err55 = {instancePath:instancePath+"/parameters/cvar_confidence",schemaPath:"#/oneOf/3/properties/parameters/properties/cvar_confidence/oneOf",keyword:"oneOf",params:{passingSchemas: passing1},message:"must match exactly one schema in oneOf"};
+if(errors === _errs58){
+if(typeof data24 == "number"){
+if(data24 > 1 || isNaN(data24)){
+const err55 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/3/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
 if(vErrors === null){
 vErrors = [err55];
 }
@@ -34627,27 +34784,8 @@ vErrors.push(err55);
 errors++;
 }
 else {
-errors = _errs61;
-if(vErrors !== null){
-if(_errs61){
-vErrors.length = _errs61;
-}
-else {
-vErrors = null;
-}
-}
-}
-var valid7 = _errs60 === errors;
-}
-else {
-var valid7 = true;
-}
-if(valid7){
-if(data23.max_iterations !== undefined){
-let data26 = data23.max_iterations;
-const _errs65 = errors;
-if(!((typeof data26 == "number") && (!(data26 % 1) && !isNaN(data26)))){
-const err56 = {instancePath:instancePath+"/parameters/max_iterations",schemaPath:"#/oneOf/3/properties/parameters/properties/max_iterations/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(data24 < 1 || isNaN(data24)){
+const err56 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/3/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err56];
 }
@@ -34656,10 +34794,20 @@ vErrors.push(err56);
 }
 errors++;
 }
-if(errors === _errs65){
-if(typeof data26 == "number"){
-if(data26 > 100000 || isNaN(data26)){
-const err57 = {instancePath:instancePath+"/parameters/max_iterations",schemaPath:"#/oneOf/3/properties/parameters/properties/max_iterations/maximum",keyword:"maximum",params:{comparison: "<=", limit: 100000},message:"must be <= 100000"};
+}
+}
+}
+var valid5 = _errs58 === errors;
+}
+else {
+var valid5 = true;
+}
+if(valid5){
+if(data.upstream_class !== undefined){
+let data25 = data.upstream_class;
+const _errs60 = errors;
+if(typeof data25 !== "string"){
+const err57 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/3/properties/upstream_class/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err57];
 }
@@ -34668,9 +34816,8 @@ vErrors.push(err57);
 }
 errors++;
 }
-else {
-if(data26 < 1 || isNaN(data26)){
-const err58 = {instancePath:instancePath+"/parameters/max_iterations",schemaPath:"#/oneOf/3/properties/parameters/properties/max_iterations/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(!(data25 === "nautilus_execution::models::latency::StaticLatencyModel")){
+const err58 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/3/properties/upstream_class/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[3].properties.upstream_class.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err58];
 }
@@ -34679,9 +34826,17 @@ vErrors.push(err58);
 }
 errors++;
 }
+var valid5 = _errs60 === errors;
+}
 else {
-if(!(formats12.validate(data26))){
-const err59 = {instancePath:instancePath+"/parameters/max_iterations",schemaPath:"#/oneOf/3/properties/parameters/properties/max_iterations/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+var valid5 = true;
+}
+if(valid5){
+if(data.upstream_version !== undefined){
+let data26 = data.upstream_version;
+const _errs62 = errors;
+if(typeof data26 !== "string"){
+const err59 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/3/properties/upstream_version/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err59];
 }
@@ -34690,37 +34845,8 @@ vErrors.push(err59);
 }
 errors++;
 }
-}
-}
-}
-}
-var valid7 = _errs65 === errors;
-}
-else {
-var valid7 = true;
-}
-if(valid7){
-if(data23.risk_aversion !== undefined){
-const _errs67 = errors;
-if(!(validate258(data23.risk_aversion, {instancePath:instancePath+"/parameters/risk_aversion",parentData:data23,parentDataProperty:"risk_aversion",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate258.errors : vErrors.concat(validate258.errors);
-errors = vErrors.length;
-}
-var valid7 = _errs67 === errors;
-}
-else {
-var valid7 = true;
-}
-if(valid7){
-if(data23.risk_budgeting !== undefined){
-let data28 = data23.risk_budgeting;
-const _errs68 = errors;
-const _errs69 = errors;
-let valid9 = false;
-let passing2 = null;
-const _errs70 = errors;
-if(data28 !== null){
-const err60 = {instancePath:instancePath+"/parameters/risk_budgeting",schemaPath:"#/oneOf/3/properties/parameters/properties/risk_budgeting/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(!(data26 === "0.63.0")){
+const err60 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/3/properties/upstream_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[3].properties.upstream_version.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err60];
 }
@@ -34729,29 +34855,20 @@ vErrors.push(err60);
 }
 errors++;
 }
-var _valid2 = _errs70 === errors;
-if(_valid2){
-valid9 = true;
-passing2 = 0;
-}
-const _errs72 = errors;
-if(!(validate726(data28, {instancePath:instancePath+"/parameters/risk_budgeting",parentData:data23,parentDataProperty:"risk_budgeting",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate726.errors : vErrors.concat(validate726.errors);
-errors = vErrors.length;
-}
-var _valid2 = _errs72 === errors;
-if(_valid2 && valid9){
-valid9 = false;
-passing2 = [passing2, 1];
+var valid5 = _errs62 === errors;
 }
 else {
-if(_valid2){
-valid9 = true;
-passing2 = 1;
+var valid5 = true;
 }
 }
-if(!valid9){
-const err61 = {instancePath:instancePath+"/parameters/risk_budgeting",schemaPath:"#/oneOf/3/properties/parameters/properties/risk_budgeting/oneOf",keyword:"oneOf",params:{passingSchemas: passing2},message:"must match exactly one schema in oneOf"};
+}
+}
+}
+}
+}
+}
+else {
+const err61 = {instancePath,schemaPath:"#/oneOf/3/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err61];
 }
@@ -34760,203 +34877,8 @@ vErrors.push(err61);
 }
 errors++;
 }
-else {
-errors = _errs69;
-if(vErrors !== null){
-if(_errs69){
-vErrors.length = _errs69;
 }
-else {
-vErrors = null;
-}
-}
-}
-var valid7 = _errs68 === errors;
-}
-else {
-var valid7 = true;
-}
-if(valid7){
-if(data23.schema_version !== undefined){
-const _errs73 = errors;
-if(!(validate108(data23.schema_version, {instancePath:instancePath+"/parameters/schema_version",parentData:data23,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
-errors = vErrors.length;
-}
-var valid7 = _errs73 === errors;
-}
-else {
-var valid7 = true;
-}
-if(valid7){
-if(data23.solver_tolerance !== undefined){
-const _errs74 = errors;
-if(!(validate258(data23.solver_tolerance, {instancePath:instancePath+"/parameters/solver_tolerance",parentData:data23,parentDataProperty:"solver_tolerance",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate258.errors : vErrors.concat(validate258.errors);
-errors = vErrors.length;
-}
-var valid7 = _errs74 === errors;
-}
-else {
-var valid7 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err62 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/3/properties/parameters/type",keyword:"type",params:{type: "object"},message:"must be object"};
-if(vErrors === null){
-vErrors = [err62];
-}
-else {
-vErrors.push(err62);
-}
-errors++;
-}
-}
-var valid6 = _errs55 === errors;
-}
-else {
-var valid6 = true;
-}
-if(valid6){
-if(data.schema_version !== undefined){
-let data31 = data.schema_version;
-const _errs75 = errors;
-if(!((typeof data31 == "number") && (!(data31 % 1) && !isNaN(data31)))){
-const err63 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/3/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err63];
-}
-else {
-vErrors.push(err63);
-}
-errors++;
-}
-if(!(data31 === 1)){
-const err64 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/3/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[3].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
-if(vErrors === null){
-vErrors = [err64];
-}
-else {
-vErrors.push(err64);
-}
-errors++;
-}
-if(errors === _errs75){
-if(typeof data31 == "number"){
-if(data31 > 1 || isNaN(data31)){
-const err65 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/3/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
-if(vErrors === null){
-vErrors = [err65];
-}
-else {
-vErrors.push(err65);
-}
-errors++;
-}
-else {
-if(data31 < 1 || isNaN(data31)){
-const err66 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/3/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err66];
-}
-else {
-vErrors.push(err66);
-}
-errors++;
-}
-}
-}
-}
-var valid6 = _errs75 === errors;
-}
-else {
-var valid6 = true;
-}
-if(valid6){
-if(data.upstream_class !== undefined){
-let data32 = data.upstream_class;
-const _errs77 = errors;
-if(typeof data32 !== "string"){
-const err67 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/3/properties/upstream_class/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err67];
-}
-else {
-vErrors.push(err67);
-}
-errors++;
-}
-if(!(data32 === "clarabel::solver::DefaultSolver")){
-const err68 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/3/properties/upstream_class/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[3].properties.upstream_class.enum},message:"must be equal to one of the allowed values"};
-if(vErrors === null){
-vErrors = [err68];
-}
-else {
-vErrors.push(err68);
-}
-errors++;
-}
-var valid6 = _errs77 === errors;
-}
-else {
-var valid6 = true;
-}
-if(valid6){
-if(data.upstream_version !== undefined){
-let data33 = data.upstream_version;
-const _errs79 = errors;
-if(typeof data33 !== "string"){
-const err69 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/3/properties/upstream_version/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err69];
-}
-else {
-vErrors.push(err69);
-}
-errors++;
-}
-if(!(data33 === "0.11.1")){
-const err70 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/3/properties/upstream_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[3].properties.upstream_version.enum},message:"must be equal to one of the allowed values"};
-if(vErrors === null){
-vErrors = [err70];
-}
-else {
-vErrors.push(err70);
-}
-errors++;
-}
-var valid6 = _errs79 === errors;
-}
-else {
-var valid6 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err71 = {instancePath,schemaPath:"#/oneOf/3/type",keyword:"type",params:{type: "object"},message:"must be object"};
-if(vErrors === null){
-vErrors = [err71];
-}
-else {
-vErrors.push(err71);
-}
-errors++;
-}
-}
-var _valid0 = _errs50 === errors;
+var _valid0 = _errs46 === errors;
 if(_valid0 && valid0){
 valid0 = false;
 passing0 = [passing0, 3];
@@ -34969,12 +34891,197 @@ if(props0 !== true){
 props0 = true;
 }
 }
-const _errs81 = errors;
-if(errors === _errs81){
+const _errs64 = errors;
+if(errors === _errs64){
 if(data && typeof data == "object" && !Array.isArray(data)){
+let missing6;
+if((((((data.schema_version === undefined) && (missing6 = "schema_version")) || ((data.adapter_kind === undefined) && (missing6 = "adapter_kind"))) || ((data.upstream_class === undefined) && (missing6 = "upstream_class"))) || ((data.upstream_version === undefined) && (missing6 = "upstream_version"))) || ((data.parameters === undefined) && (missing6 = "parameters"))){
+const err62 = {instancePath,schemaPath:"#/oneOf/4/required",keyword:"required",params:{missingProperty: missing6},message:"must have required property '"+missing6+"'"};
+if(vErrors === null){
+vErrors = [err62];
+}
+else {
+vErrors.push(err62);
+}
+errors++;
+}
+else {
+const _errs66 = errors;
+for(const key8 in data){
+if(!(((((key8 === "adapter_kind") || (key8 === "parameters")) || (key8 === "schema_version")) || (key8 === "upstream_class")) || (key8 === "upstream_version"))){
+const err63 = {instancePath,schemaPath:"#/oneOf/4/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key8},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err63];
+}
+else {
+vErrors.push(err63);
+}
+errors++;
+break;
+}
+}
+if(_errs66 === errors){
+if(data.adapter_kind !== undefined){
+let data27 = data.adapter_kind;
+const _errs67 = errors;
+if(typeof data27 !== "string"){
+const err64 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/4/properties/adapter_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err64];
+}
+else {
+vErrors.push(err64);
+}
+errors++;
+}
+if(!(data27 === "CLARABEL_QP")){
+const err65 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/4/properties/adapter_kind/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[4].properties.adapter_kind.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err65];
+}
+else {
+vErrors.push(err65);
+}
+errors++;
+}
+var valid7 = _errs67 === errors;
+}
+else {
+var valid7 = true;
+}
+if(valid7){
+if(data.parameters !== undefined){
+let data28 = data.parameters;
+const _errs69 = errors;
+if(errors === _errs69){
+if(data28 && typeof data28 == "object" && !Array.isArray(data28)){
 let missing7;
-if((((((data.schema_version === undefined) && (missing7 = "schema_version")) || ((data.adapter_kind === undefined) && (missing7 = "adapter_kind"))) || ((data.upstream_class === undefined) && (missing7 = "upstream_class"))) || ((data.upstream_version === undefined) && (missing7 = "upstream_version"))) || ((data.parameters === undefined) && (missing7 = "parameters"))){
-const err72 = {instancePath,schemaPath:"#/oneOf/4/required",keyword:"required",params:{missingProperty: missing7},message:"must have required property '"+missing7+"'"};
+if((((((data28.schema_version === undefined) && (missing7 = "schema_version")) || ((data28.risk_aversion === undefined) && (missing7 = "risk_aversion"))) || ((data28.max_iterations === undefined) && (missing7 = "max_iterations"))) || ((data28.solver_tolerance === undefined) && (missing7 = "solver_tolerance"))) || ((data28.accept_inaccurate === undefined) && (missing7 = "accept_inaccurate"))){
+const err66 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/4/properties/parameters/required",keyword:"required",params:{missingProperty: missing7},message:"must have required property '"+missing7+"'"};
+if(vErrors === null){
+vErrors = [err66];
+}
+else {
+vErrors.push(err66);
+}
+errors++;
+}
+else {
+const _errs71 = errors;
+for(const key9 in data28){
+if(!(((((((key9 === "accept_inaccurate") || (key9 === "cvar_confidence")) || (key9 === "max_iterations")) || (key9 === "risk_aversion")) || (key9 === "risk_budgeting")) || (key9 === "schema_version")) || (key9 === "solver_tolerance"))){
+const err67 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/4/properties/parameters/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key9},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err67];
+}
+else {
+vErrors.push(err67);
+}
+errors++;
+break;
+}
+}
+if(_errs71 === errors){
+if(data28.accept_inaccurate !== undefined){
+const _errs72 = errors;
+if(typeof data28.accept_inaccurate !== "boolean"){
+const err68 = {instancePath:instancePath+"/parameters/accept_inaccurate",schemaPath:"#/oneOf/4/properties/parameters/properties/accept_inaccurate/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+if(vErrors === null){
+vErrors = [err68];
+}
+else {
+vErrors.push(err68);
+}
+errors++;
+}
+var valid8 = _errs72 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data28.cvar_confidence !== undefined){
+let data30 = data28.cvar_confidence;
+const _errs74 = errors;
+const _errs75 = errors;
+let valid9 = false;
+let passing1 = null;
+const _errs76 = errors;
+if(data30 !== null){
+const err69 = {instancePath:instancePath+"/parameters/cvar_confidence",schemaPath:"#/oneOf/4/properties/parameters/properties/cvar_confidence/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
+if(vErrors === null){
+vErrors = [err69];
+}
+else {
+vErrors.push(err69);
+}
+errors++;
+}
+var _valid1 = _errs76 === errors;
+if(_valid1){
+valid9 = true;
+passing1 = 0;
+}
+const _errs78 = errors;
+if(!(validate258(data30, {instancePath:instancePath+"/parameters/cvar_confidence",parentData:data28,parentDataProperty:"cvar_confidence",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate258.errors : vErrors.concat(validate258.errors);
+errors = vErrors.length;
+}
+var _valid1 = _errs78 === errors;
+if(_valid1 && valid9){
+valid9 = false;
+passing1 = [passing1, 1];
+}
+else {
+if(_valid1){
+valid9 = true;
+passing1 = 1;
+}
+}
+if(!valid9){
+const err70 = {instancePath:instancePath+"/parameters/cvar_confidence",schemaPath:"#/oneOf/4/properties/parameters/properties/cvar_confidence/oneOf",keyword:"oneOf",params:{passingSchemas: passing1},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err70];
+}
+else {
+vErrors.push(err70);
+}
+errors++;
+}
+else {
+errors = _errs75;
+if(vErrors !== null){
+if(_errs75){
+vErrors.length = _errs75;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid8 = _errs74 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data28.max_iterations !== undefined){
+let data31 = data28.max_iterations;
+const _errs79 = errors;
+if(!((typeof data31 == "number") && (!(data31 % 1) && !isNaN(data31)))){
+const err71 = {instancePath:instancePath+"/parameters/max_iterations",schemaPath:"#/oneOf/4/properties/parameters/properties/max_iterations/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err71];
+}
+else {
+vErrors.push(err71);
+}
+errors++;
+}
+if(errors === _errs79){
+if(typeof data31 == "number"){
+if(data31 > 100000 || isNaN(data31)){
+const err72 = {instancePath:instancePath+"/parameters/max_iterations",schemaPath:"#/oneOf/4/properties/parameters/properties/max_iterations/maximum",keyword:"maximum",params:{comparison: "<=", limit: 100000},message:"must be <= 100000"};
 if(vErrors === null){
 vErrors = [err72];
 }
@@ -34984,10 +35091,8 @@ vErrors.push(err72);
 errors++;
 }
 else {
-const _errs83 = errors;
-for(const key8 in data){
-if(!(((((key8 === "adapter_kind") || (key8 === "parameters")) || (key8 === "schema_version")) || (key8 === "upstream_class")) || (key8 === "upstream_version"))){
-const err73 = {instancePath,schemaPath:"#/oneOf/4/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key8},message:"must NOT have additional properties"};
+if(data31 < 1 || isNaN(data31)){
+const err73 = {instancePath:instancePath+"/parameters/max_iterations",schemaPath:"#/oneOf/4/properties/parameters/properties/max_iterations/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err73];
 }
@@ -34995,15 +35100,10 @@ else {
 vErrors.push(err73);
 }
 errors++;
-break;
 }
-}
-if(_errs83 === errors){
-if(data.adapter_kind !== undefined){
-let data34 = data.adapter_kind;
-const _errs84 = errors;
-if(typeof data34 !== "string"){
-const err74 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/4/properties/adapter_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+else {
+if(!(formats12.validate(data31))){
+const err74 = {instancePath:instancePath+"/parameters/max_iterations",schemaPath:"#/oneOf/4/properties/parameters/properties/max_iterations/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
 if(vErrors === null){
 vErrors = [err74];
 }
@@ -35012,8 +35112,37 @@ vErrors.push(err74);
 }
 errors++;
 }
-if(!(data34 === "FIXED_WEIGHTED_FORECAST")){
-const err75 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/4/properties/adapter_kind/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[4].properties.adapter_kind.enum},message:"must be equal to one of the allowed values"};
+}
+}
+}
+}
+var valid8 = _errs79 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data28.risk_aversion !== undefined){
+const _errs81 = errors;
+if(!(validate258(data28.risk_aversion, {instancePath:instancePath+"/parameters/risk_aversion",parentData:data28,parentDataProperty:"risk_aversion",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate258.errors : vErrors.concat(validate258.errors);
+errors = vErrors.length;
+}
+var valid8 = _errs81 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data28.risk_budgeting !== undefined){
+let data33 = data28.risk_budgeting;
+const _errs82 = errors;
+const _errs83 = errors;
+let valid10 = false;
+let passing2 = null;
+const _errs84 = errors;
+if(data33 !== null){
+const err75 = {instancePath:instancePath+"/parameters/risk_budgeting",schemaPath:"#/oneOf/4/properties/parameters/properties/risk_budgeting/oneOf/0/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err75];
 }
@@ -35022,19 +35151,29 @@ vErrors.push(err75);
 }
 errors++;
 }
-var valid10 = _errs84 === errors;
+var _valid2 = _errs84 === errors;
+if(_valid2){
+valid10 = true;
+passing2 = 0;
+}
+const _errs86 = errors;
+if(!(validate726(data33, {instancePath:instancePath+"/parameters/risk_budgeting",parentData:data28,parentDataProperty:"risk_budgeting",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate726.errors : vErrors.concat(validate726.errors);
+errors = vErrors.length;
+}
+var _valid2 = _errs86 === errors;
+if(_valid2 && valid10){
+valid10 = false;
+passing2 = [passing2, 1];
 }
 else {
-var valid10 = true;
+if(_valid2){
+valid10 = true;
+passing2 = 1;
 }
-if(valid10){
-if(data.parameters !== undefined){
-let data35 = data.parameters;
-const _errs86 = errors;
-if(errors === _errs86){
-if(data35 && typeof data35 == "object" && !Array.isArray(data35)){
-for(const key9 in data35){
-const err76 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/4/properties/parameters/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key9},message:"must NOT have additional properties"};
+}
+if(!valid10){
+const err76 = {instancePath:instancePath+"/parameters/risk_budgeting",schemaPath:"#/oneOf/4/properties/parameters/properties/risk_budgeting/oneOf",keyword:"oneOf",params:{passingSchemas: passing2},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err76];
 }
@@ -35042,7 +35181,54 @@ else {
 vErrors.push(err76);
 }
 errors++;
-break;
+}
+else {
+errors = _errs83;
+if(vErrors !== null){
+if(_errs83){
+vErrors.length = _errs83;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid8 = _errs82 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data28.schema_version !== undefined){
+const _errs87 = errors;
+if(!(validate108(data28.schema_version, {instancePath:instancePath+"/parameters/schema_version",parentData:data28,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
+errors = vErrors.length;
+}
+var valid8 = _errs87 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data28.solver_tolerance !== undefined){
+const _errs88 = errors;
+if(!(validate258(data28.solver_tolerance, {instancePath:instancePath+"/parameters/solver_tolerance",parentData:data28,parentDataProperty:"solver_tolerance",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate258.errors : vErrors.concat(validate258.errors);
+errors = vErrors.length;
+}
+var valid8 = _errs88 === errors;
+}
+else {
+var valid8 = true;
+}
+}
+}
+}
+}
+}
+}
+}
 }
 }
 else {
@@ -35056,12 +35242,12 @@ vErrors.push(err77);
 errors++;
 }
 }
-var valid10 = _errs86 === errors;
+var valid7 = _errs69 === errors;
 }
 else {
-var valid10 = true;
+var valid7 = true;
 }
-if(valid10){
+if(valid7){
 if(data.schema_version !== undefined){
 let data36 = data.schema_version;
 const _errs89 = errors;
@@ -35111,12 +35297,12 @@ errors++;
 }
 }
 }
-var valid10 = _errs89 === errors;
+var valid7 = _errs89 === errors;
 }
 else {
-var valid10 = true;
+var valid7 = true;
 }
-if(valid10){
+if(valid7){
 if(data.upstream_class !== undefined){
 let data37 = data.upstream_class;
 const _errs91 = errors;
@@ -35130,7 +35316,7 @@ vErrors.push(err82);
 }
 errors++;
 }
-if(!(data37 === "ndarray::ArrayBase::dot")){
+if(!(data37 === "clarabel::solver::DefaultSolver")){
 const err83 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/4/properties/upstream_class/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[4].properties.upstream_class.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err83];
@@ -35140,12 +35326,12 @@ vErrors.push(err83);
 }
 errors++;
 }
-var valid10 = _errs91 === errors;
+var valid7 = _errs91 === errors;
 }
 else {
-var valid10 = true;
+var valid7 = true;
 }
-if(valid10){
+if(valid7){
 if(data.upstream_version !== undefined){
 let data38 = data.upstream_version;
 const _errs93 = errors;
@@ -35159,7 +35345,7 @@ vErrors.push(err84);
 }
 errors++;
 }
-if(!(data38 === "0.17.1")){
+if(!(data38 === "0.11.1")){
 const err85 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/4/properties/upstream_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[4].properties.upstream_version.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err85];
@@ -35169,10 +35355,10 @@ vErrors.push(err85);
 }
 errors++;
 }
-var valid10 = _errs93 === errors;
+var valid7 = _errs93 === errors;
 }
 else {
-var valid10 = true;
+var valid7 = true;
 }
 }
 }
@@ -35192,7 +35378,7 @@ vErrors.push(err86);
 errors++;
 }
 }
-var _valid0 = _errs81 === errors;
+var _valid0 = _errs64 === errors;
 if(_valid0 && valid0){
 valid0 = false;
 passing0 = [passing0, 4];
@@ -35248,7 +35434,7 @@ vErrors.push(err89);
 }
 errors++;
 }
-if(!(data39 === "SAMPLE_COVARIANCE")){
+if(!(data39 === "FIXED_WEIGHTED_FORECAST")){
 const err90 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/5/properties/adapter_kind/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[5].properties.adapter_kind.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err90];
@@ -35269,9 +35455,8 @@ let data40 = data.parameters;
 const _errs100 = errors;
 if(errors === _errs100){
 if(data40 && typeof data40 == "object" && !Array.isArray(data40)){
-let missing9;
-if((data40.ddof === undefined) && (missing9 = "ddof")){
-const err91 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/5/properties/parameters/required",keyword:"required",params:{missingProperty: missing9},message:"must have required property '"+missing9+"'"};
+for(const key11 in data40){
+const err91 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/5/properties/parameters/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key11},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err91];
 }
@@ -35279,85 +35464,16 @@ else {
 vErrors.push(err91);
 }
 errors++;
+break;
+}
 }
 else {
-const _errs102 = errors;
-for(const key11 in data40){
-if(!(key11 === "ddof")){
-const err92 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/5/properties/parameters/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key11},message:"must NOT have additional properties"};
+const err92 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/5/properties/parameters/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err92];
 }
 else {
 vErrors.push(err92);
-}
-errors++;
-break;
-}
-}
-if(_errs102 === errors){
-if(data40.ddof !== undefined){
-let data41 = data40.ddof;
-const _errs103 = errors;
-if(!((typeof data41 == "number") && (!(data41 % 1) && !isNaN(data41)))){
-const err93 = {instancePath:instancePath+"/parameters/ddof",schemaPath:"#/oneOf/5/properties/parameters/properties/ddof/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err93];
-}
-else {
-vErrors.push(err93);
-}
-errors++;
-}
-if(errors === _errs103){
-if(typeof data41 == "number"){
-if(data41 > 1 || isNaN(data41)){
-const err94 = {instancePath:instancePath+"/parameters/ddof",schemaPath:"#/oneOf/5/properties/parameters/properties/ddof/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
-if(vErrors === null){
-vErrors = [err94];
-}
-else {
-vErrors.push(err94);
-}
-errors++;
-}
-else {
-if(data41 < 1 || isNaN(data41)){
-const err95 = {instancePath:instancePath+"/parameters/ddof",schemaPath:"#/oneOf/5/properties/parameters/properties/ddof/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err95];
-}
-else {
-vErrors.push(err95);
-}
-errors++;
-}
-else {
-if(!(formats12.validate(data41))){
-const err96 = {instancePath:instancePath+"/parameters/ddof",schemaPath:"#/oneOf/5/properties/parameters/properties/ddof/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
-if(vErrors === null){
-vErrors = [err96];
-}
-else {
-vErrors.push(err96);
-}
-errors++;
-}
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err97 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/5/properties/parameters/type",keyword:"type",params:{type: "object"},message:"must be object"};
-if(vErrors === null){
-vErrors = [err97];
-}
-else {
-vErrors.push(err97);
 }
 errors++;
 }
@@ -35369,10 +35485,75 @@ var valid11 = true;
 }
 if(valid11){
 if(data.schema_version !== undefined){
-let data42 = data.schema_version;
+let data41 = data.schema_version;
+const _errs103 = errors;
+if(!((typeof data41 == "number") && (!(data41 % 1) && !isNaN(data41)))){
+const err93 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/5/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err93];
+}
+else {
+vErrors.push(err93);
+}
+errors++;
+}
+if(!(data41 === 1)){
+const err94 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/5/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[5].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err94];
+}
+else {
+vErrors.push(err94);
+}
+errors++;
+}
+if(errors === _errs103){
+if(typeof data41 == "number"){
+if(data41 > 1 || isNaN(data41)){
+const err95 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/5/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
+if(vErrors === null){
+vErrors = [err95];
+}
+else {
+vErrors.push(err95);
+}
+errors++;
+}
+else {
+if(data41 < 1 || isNaN(data41)){
+const err96 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/5/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err96];
+}
+else {
+vErrors.push(err96);
+}
+errors++;
+}
+}
+}
+}
+var valid11 = _errs103 === errors;
+}
+else {
+var valid11 = true;
+}
+if(valid11){
+if(data.upstream_class !== undefined){
+let data42 = data.upstream_class;
 const _errs105 = errors;
-if(!((typeof data42 == "number") && (!(data42 % 1) && !isNaN(data42)))){
-const err98 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/5/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(typeof data42 !== "string"){
+const err97 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/5/properties/upstream_class/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err97];
+}
+else {
+vErrors.push(err97);
+}
+errors++;
+}
+if(!(data42 === "ndarray::ArrayBase::dot")){
+const err98 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/5/properties/upstream_class/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[5].properties.upstream_class.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err98];
 }
@@ -35381,8 +35562,17 @@ vErrors.push(err98);
 }
 errors++;
 }
-if(!(data42 === 1)){
-const err99 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/5/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[5].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
+var valid11 = _errs105 === errors;
+}
+else {
+var valid11 = true;
+}
+if(valid11){
+if(data.upstream_version !== undefined){
+let data43 = data.upstream_version;
+const _errs107 = errors;
+if(typeof data43 !== "string"){
+const err99 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/5/properties/upstream_version/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err99];
 }
@@ -35391,10 +35581,8 @@ vErrors.push(err99);
 }
 errors++;
 }
-if(errors === _errs105){
-if(typeof data42 == "number"){
-if(data42 > 1 || isNaN(data42)){
-const err100 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/5/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
+if(!(data43 === "0.17.1")){
+const err100 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/5/properties/upstream_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[5].properties.upstream_version.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err100];
 }
@@ -35403,97 +35591,25 @@ vErrors.push(err100);
 }
 errors++;
 }
-else {
-if(data42 < 1 || isNaN(data42)){
-const err101 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/5/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
-if(vErrors === null){
-vErrors = [err101];
-}
-else {
-vErrors.push(err101);
-}
-errors++;
-}
-}
-}
-}
-var valid11 = _errs105 === errors;
-}
-else {
-var valid11 = true;
-}
-if(valid11){
-if(data.upstream_class !== undefined){
-let data43 = data.upstream_class;
-const _errs107 = errors;
-if(typeof data43 !== "string"){
-const err102 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/5/properties/upstream_class/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err102];
-}
-else {
-vErrors.push(err102);
-}
-errors++;
-}
-if(!(data43 === "ndarray_stats::CorrelationExt::cov")){
-const err103 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/5/properties/upstream_class/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[5].properties.upstream_class.enum},message:"must be equal to one of the allowed values"};
-if(vErrors === null){
-vErrors = [err103];
-}
-else {
-vErrors.push(err103);
-}
-errors++;
-}
 var valid11 = _errs107 === errors;
 }
 else {
 var valid11 = true;
 }
-if(valid11){
-if(data.upstream_version !== undefined){
-let data44 = data.upstream_version;
-const _errs109 = errors;
-if(typeof data44 !== "string"){
-const err104 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/5/properties/upstream_version/type",keyword:"type",params:{type: "string"},message:"must be string"};
+}
+}
+}
+}
+}
+}
+}
+else {
+const err101 = {instancePath,schemaPath:"#/oneOf/5/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err104];
+vErrors = [err101];
 }
 else {
-vErrors.push(err104);
-}
-errors++;
-}
-if(!(data44 === "0.7.0")){
-const err105 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/5/properties/upstream_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[5].properties.upstream_version.enum},message:"must be equal to one of the allowed values"};
-if(vErrors === null){
-vErrors = [err105];
-}
-else {
-vErrors.push(err105);
-}
-errors++;
-}
-var valid11 = _errs109 === errors;
-}
-else {
-var valid11 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err106 = {instancePath,schemaPath:"#/oneOf/5/type",keyword:"type",params:{type: "object"},message:"must be object"};
-if(vErrors === null){
-vErrors = [err106];
-}
-else {
-vErrors.push(err106);
+vErrors.push(err101);
 }
 errors++;
 }
@@ -35511,18 +35627,325 @@ if(props0 !== true){
 props0 = true;
 }
 }
+const _errs109 = errors;
+if(errors === _errs109){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing9;
+if((((((data.schema_version === undefined) && (missing9 = "schema_version")) || ((data.adapter_kind === undefined) && (missing9 = "adapter_kind"))) || ((data.upstream_class === undefined) && (missing9 = "upstream_class"))) || ((data.upstream_version === undefined) && (missing9 = "upstream_version"))) || ((data.parameters === undefined) && (missing9 = "parameters"))){
+const err102 = {instancePath,schemaPath:"#/oneOf/6/required",keyword:"required",params:{missingProperty: missing9},message:"must have required property '"+missing9+"'"};
+if(vErrors === null){
+vErrors = [err102];
+}
+else {
+vErrors.push(err102);
+}
+errors++;
+}
+else {
+const _errs111 = errors;
+for(const key12 in data){
+if(!(((((key12 === "adapter_kind") || (key12 === "parameters")) || (key12 === "schema_version")) || (key12 === "upstream_class")) || (key12 === "upstream_version"))){
+const err103 = {instancePath,schemaPath:"#/oneOf/6/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key12},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err103];
+}
+else {
+vErrors.push(err103);
+}
+errors++;
+break;
+}
+}
+if(_errs111 === errors){
+if(data.adapter_kind !== undefined){
+let data44 = data.adapter_kind;
+const _errs112 = errors;
+if(typeof data44 !== "string"){
+const err104 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/6/properties/adapter_kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err104];
+}
+else {
+vErrors.push(err104);
+}
+errors++;
+}
+if(!(data44 === "SAMPLE_COVARIANCE")){
+const err105 = {instancePath:instancePath+"/adapter_kind",schemaPath:"#/oneOf/6/properties/adapter_kind/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[6].properties.adapter_kind.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err105];
+}
+else {
+vErrors.push(err105);
+}
+errors++;
+}
+var valid12 = _errs112 === errors;
+}
+else {
+var valid12 = true;
+}
+if(valid12){
+if(data.parameters !== undefined){
+let data45 = data.parameters;
+const _errs114 = errors;
+if(errors === _errs114){
+if(data45 && typeof data45 == "object" && !Array.isArray(data45)){
+let missing10;
+if((data45.ddof === undefined) && (missing10 = "ddof")){
+const err106 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/6/properties/parameters/required",keyword:"required",params:{missingProperty: missing10},message:"must have required property '"+missing10+"'"};
+if(vErrors === null){
+vErrors = [err106];
+}
+else {
+vErrors.push(err106);
+}
+errors++;
+}
+else {
+const _errs116 = errors;
+for(const key13 in data45){
+if(!(key13 === "ddof")){
+const err107 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/6/properties/parameters/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key13},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err107];
+}
+else {
+vErrors.push(err107);
+}
+errors++;
+break;
+}
+}
+if(_errs116 === errors){
+if(data45.ddof !== undefined){
+let data46 = data45.ddof;
+const _errs117 = errors;
+if(!((typeof data46 == "number") && (!(data46 % 1) && !isNaN(data46)))){
+const err108 = {instancePath:instancePath+"/parameters/ddof",schemaPath:"#/oneOf/6/properties/parameters/properties/ddof/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err108];
+}
+else {
+vErrors.push(err108);
+}
+errors++;
+}
+if(errors === _errs117){
+if(typeof data46 == "number"){
+if(data46 > 1 || isNaN(data46)){
+const err109 = {instancePath:instancePath+"/parameters/ddof",schemaPath:"#/oneOf/6/properties/parameters/properties/ddof/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
+if(vErrors === null){
+vErrors = [err109];
+}
+else {
+vErrors.push(err109);
+}
+errors++;
+}
+else {
+if(data46 < 1 || isNaN(data46)){
+const err110 = {instancePath:instancePath+"/parameters/ddof",schemaPath:"#/oneOf/6/properties/parameters/properties/ddof/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err110];
+}
+else {
+vErrors.push(err110);
+}
+errors++;
+}
+else {
+if(!(formats12.validate(data46))){
+const err111 = {instancePath:instancePath+"/parameters/ddof",schemaPath:"#/oneOf/6/properties/parameters/properties/ddof/format",keyword:"format",params:{format: "int32"},message:"must match format \""+"int32"+"\""};
+if(vErrors === null){
+vErrors = [err111];
+}
+else {
+vErrors.push(err111);
+}
+errors++;
+}
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+const err112 = {instancePath:instancePath+"/parameters",schemaPath:"#/oneOf/6/properties/parameters/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err112];
+}
+else {
+vErrors.push(err112);
+}
+errors++;
+}
+}
+var valid12 = _errs114 === errors;
+}
+else {
+var valid12 = true;
+}
+if(valid12){
+if(data.schema_version !== undefined){
+let data47 = data.schema_version;
+const _errs119 = errors;
+if(!((typeof data47 == "number") && (!(data47 % 1) && !isNaN(data47)))){
+const err113 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/6/properties/schema_version/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err113];
+}
+else {
+vErrors.push(err113);
+}
+errors++;
+}
+if(!(data47 === 1)){
+const err114 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/6/properties/schema_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[6].properties.schema_version.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err114];
+}
+else {
+vErrors.push(err114);
+}
+errors++;
+}
+if(errors === _errs119){
+if(typeof data47 == "number"){
+if(data47 > 1 || isNaN(data47)){
+const err115 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/6/properties/schema_version/maximum",keyword:"maximum",params:{comparison: "<=", limit: 1},message:"must be <= 1"};
+if(vErrors === null){
+vErrors = [err115];
+}
+else {
+vErrors.push(err115);
+}
+errors++;
+}
+else {
+if(data47 < 1 || isNaN(data47)){
+const err116 = {instancePath:instancePath+"/schema_version",schemaPath:"#/oneOf/6/properties/schema_version/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err116];
+}
+else {
+vErrors.push(err116);
+}
+errors++;
+}
+}
+}
+}
+var valid12 = _errs119 === errors;
+}
+else {
+var valid12 = true;
+}
+if(valid12){
+if(data.upstream_class !== undefined){
+let data48 = data.upstream_class;
+const _errs121 = errors;
+if(typeof data48 !== "string"){
+const err117 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/6/properties/upstream_class/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err117];
+}
+else {
+vErrors.push(err117);
+}
+errors++;
+}
+if(!(data48 === "ndarray_stats::CorrelationExt::cov")){
+const err118 = {instancePath:instancePath+"/upstream_class",schemaPath:"#/oneOf/6/properties/upstream_class/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[6].properties.upstream_class.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err118];
+}
+else {
+vErrors.push(err118);
+}
+errors++;
+}
+var valid12 = _errs121 === errors;
+}
+else {
+var valid12 = true;
+}
+if(valid12){
+if(data.upstream_version !== undefined){
+let data49 = data.upstream_version;
+const _errs123 = errors;
+if(typeof data49 !== "string"){
+const err119 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/6/properties/upstream_version/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err119];
+}
+else {
+vErrors.push(err119);
+}
+errors++;
+}
+if(!(data49 === "0.7.0")){
+const err120 = {instancePath:instancePath+"/upstream_version",schemaPath:"#/oneOf/6/properties/upstream_version/enum",keyword:"enum",params:{allowedValues: schema161.oneOf[6].properties.upstream_version.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err120];
+}
+else {
+vErrors.push(err120);
+}
+errors++;
+}
+var valid12 = _errs123 === errors;
+}
+else {
+var valid12 = true;
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+const err121 = {instancePath,schemaPath:"#/oneOf/6/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err121];
+}
+else {
+vErrors.push(err121);
+}
+errors++;
+}
+}
+var _valid0 = _errs109 === errors;
+if(_valid0 && valid0){
+valid0 = false;
+passing0 = [passing0, 6];
+}
+else {
+if(_valid0){
+valid0 = true;
+passing0 = 6;
+if(props0 !== true){
+props0 = true;
+}
+}
+}
 }
 }
 }
 }
 }
 if(!valid0){
-const err107 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+const err122 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
-vErrors = [err107];
+vErrors = [err122];
 }
 else {
-vErrors.push(err107);
+vErrors.push(err122);
 }
 errors++;
 validate716.errors = vErrors;
@@ -35682,26 +36105,114 @@ if(valid0){
 if(data.base_currency !== undefined){
 let data1 = data.base_currency;
 const _errs3 = errors;
+const _errs4 = errors;
+let valid1 = false;
+let passing0 = null;
+const _errs5 = errors;
 if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data1 === "AED") || (data1 === "AFN")) || (data1 === "ALL")) || (data1 === "AMD")) || (data1 === "AOA")) || (data1 === "ARS")) || (data1 === "AUD")) || (data1 === "AWG")) || (data1 === "AZN")) || (data1 === "BAM")) || (data1 === "BBD")) || (data1 === "BDT")) || (data1 === "BGN")) || (data1 === "BHD")) || (data1 === "BIF")) || (data1 === "BMD")) || (data1 === "BND")) || (data1 === "BOB")) || (data1 === "BOV")) || (data1 === "BRL")) || (data1 === "BSD")) || (data1 === "BTN")) || (data1 === "BWP")) || (data1 === "BYN")) || (data1 === "BZD")) || (data1 === "CAD")) || (data1 === "CDF")) || (data1 === "CHE")) || (data1 === "CHF")) || (data1 === "CHW")) || (data1 === "CLF")) || (data1 === "CLP")) || (data1 === "CNY")) || (data1 === "COP")) || (data1 === "COU")) || (data1 === "CRC")) || (data1 === "CUC")) || (data1 === "CUP")) || (data1 === "CVE")) || (data1 === "CZK")) || (data1 === "DJF")) || (data1 === "DKK")) || (data1 === "DOP")) || (data1 === "DZD")) || (data1 === "EGP")) || (data1 === "ERN")) || (data1 === "ETB")) || (data1 === "EUR")) || (data1 === "FJD")) || (data1 === "FKP")) || (data1 === "GBP")) || (data1 === "GEL")) || (data1 === "GHS")) || (data1 === "GIP")) || (data1 === "GMD")) || (data1 === "GNF")) || (data1 === "GTQ")) || (data1 === "GYD")) || (data1 === "HKD")) || (data1 === "HNL")) || (data1 === "HRK")) || (data1 === "HTG")) || (data1 === "HUF")) || (data1 === "IDR")) || (data1 === "ILS")) || (data1 === "INR")) || (data1 === "IQD")) || (data1 === "IRR")) || (data1 === "ISK")) || (data1 === "JMD")) || (data1 === "JOD")) || (data1 === "JPY")) || (data1 === "KES")) || (data1 === "KGS")) || (data1 === "KHR")) || (data1 === "KMF")) || (data1 === "KPW")) || (data1 === "KRW")) || (data1 === "KWD")) || (data1 === "KYD")) || (data1 === "KZT")) || (data1 === "LAK")) || (data1 === "LBP")) || (data1 === "LKR")) || (data1 === "LRD")) || (data1 === "LSL")) || (data1 === "LYD")) || (data1 === "MAD")) || (data1 === "MDL")) || (data1 === "MGA")) || (data1 === "MKD")) || (data1 === "MMK")) || (data1 === "MNT")) || (data1 === "MOP")) || (data1 === "MRU")) || (data1 === "MUR")) || (data1 === "MVR")) || (data1 === "MWK")) || (data1 === "MXN")) || (data1 === "MXV")) || (data1 === "MYR")) || (data1 === "MZN")) || (data1 === "NAD")) || (data1 === "NGN")) || (data1 === "NIO")) || (data1 === "NOK")) || (data1 === "NPR")) || (data1 === "NZD")) || (data1 === "OMR")) || (data1 === "PAB")) || (data1 === "PEN")) || (data1 === "PGK")) || (data1 === "PHP")) || (data1 === "PKR")) || (data1 === "PLN")) || (data1 === "PYG")) || (data1 === "QAR")) || (data1 === "RON")) || (data1 === "RSD")) || (data1 === "RUB")) || (data1 === "RWF")) || (data1 === "SAR")) || (data1 === "SBD")) || (data1 === "SCR")) || (data1 === "SDG")) || (data1 === "SEK")) || (data1 === "SGD")) || (data1 === "SHP")) || (data1 === "SLE")) || (data1 === "SLL")) || (data1 === "SOS")) || (data1 === "SRD")) || (data1 === "SSP")) || (data1 === "STN")) || (data1 === "SVC")) || (data1 === "SYP")) || (data1 === "SZL")) || (data1 === "THB")) || (data1 === "TJS")) || (data1 === "TMT")) || (data1 === "TND")) || (data1 === "TOP")) || (data1 === "TRY")) || (data1 === "TTD")) || (data1 === "TWD")) || (data1 === "TZS")) || (data1 === "UAH")) || (data1 === "UGX")) || (data1 === "USD")) || (data1 === "USN")) || (data1 === "UYI")) || (data1 === "UYU")) || (data1 === "UYW")) || (data1 === "UZS")) || (data1 === "VED")) || (data1 === "VES")) || (data1 === "VND")) || (data1 === "VUV")) || (data1 === "WST")) || (data1 === "XAD")) || (data1 === "XAF")) || (data1 === "XAG")) || (data1 === "XAU")) || (data1 === "XBA")) || (data1 === "XBB")) || (data1 === "XBC")) || (data1 === "XBD")) || (data1 === "XCD")) || (data1 === "XCG")) || (data1 === "XDR")) || (data1 === "XOF")) || (data1 === "XPD")) || (data1 === "XPF")) || (data1 === "XPT")) || (data1 === "XSU")) || (data1 === "XTS")) || (data1 === "XUA")) || (data1 === "XXX")) || (data1 === "YER")) || (data1 === "ZAR")) || (data1 === "ZMW")) || (data1 === "ZWG")) || (data1 === "ZWL"))){
-validate712.errors = [{instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/enum",keyword:"enum",params:{allowedValues: schema159.properties.base_currency.enum},message:"must be equal to one of the allowed values"}];
-return false;
+const err0 = {instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/oneOf/0/enum",keyword:"enum",params:{allowedValues: schema159.properties.base_currency.oneOf[0].enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err0];
 }
-if(errors === _errs3){
+else {
+vErrors.push(err0);
+}
+errors++;
+}
+if(errors === _errs5){
 if(typeof data1 === "string"){
 if(func2(data1) > 3){
-validate712.errors = [{instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"}];
-return false;
+const err1 = {instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/oneOf/0/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+if(vErrors === null){
+vErrors = [err1];
+}
+else {
+vErrors.push(err1);
+}
+errors++;
 }
 else {
 if(func2(data1) < 3){
-validate712.errors = [{instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"}];
-return false;
+const err2 = {instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/oneOf/0/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+if(vErrors === null){
+vErrors = [err2];
+}
+else {
+vErrors.push(err2);
+}
+errors++;
 }
 }
 }
 else {
-validate712.errors = [{instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+const err3 = {instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/oneOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err3];
+}
+else {
+vErrors.push(err3);
+}
+errors++;
+}
+}
+var _valid0 = _errs5 === errors;
+if(_valid0){
+valid1 = true;
+passing0 = 0;
+}
+const _errs7 = errors;
+if(typeof data1 !== "string"){
+const err4 = {instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err4];
+}
+else {
+vErrors.push(err4);
+}
+errors++;
+}
+if(!(((data1 === "USDC") || (data1 === "USDC.e")) || (data1 === "pUSD"))){
+const err5 = {instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema159.properties.base_currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err5];
+}
+else {
+vErrors.push(err5);
+}
+errors++;
+}
+var _valid0 = _errs7 === errors;
+if(_valid0 && valid1){
+valid1 = false;
+passing0 = [passing0, 1];
+}
+else {
+if(_valid0){
+valid1 = true;
+passing0 = 1;
+}
+}
+if(!valid1){
+const err6 = {instancePath:instancePath+"/base_currency",schemaPath:"#/properties/base_currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err6];
+}
+else {
+vErrors.push(err6);
+}
+errors++;
+validate712.errors = vErrors;
 return false;
+}
+else {
+errors = _errs4;
+if(vErrors !== null){
+if(_errs4){
+vErrors.length = _errs4;
+}
+else {
+vErrors = null;
+}
 }
 }
 var valid0 = _errs3 === errors;
@@ -35711,24 +36222,24 @@ var valid0 = true;
 }
 if(valid0){
 if(data.exposure_tolerance !== undefined){
-const _errs5 = errors;
+const _errs9 = errors;
 if(!(validate258(data.exposure_tolerance, {instancePath:instancePath+"/exposure_tolerance",parentData:data,parentDataProperty:"exposure_tolerance",rootData,dynamicAnchors}))){
 vErrors = vErrors === null ? validate258.errors : vErrors.concat(validate258.errors);
 errors = vErrors.length;
 }
-var valid0 = _errs5 === errors;
+var valid0 = _errs9 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.fee_model !== undefined){
-const _errs6 = errors;
+const _errs10 = errors;
 if(!(validate716(data.fee_model, {instancePath:instancePath+"/fee_model",parentData:data,parentDataProperty:"fee_model",rootData,dynamicAnchors}))){
 vErrors = vErrors === null ? validate716.errors : vErrors.concat(validate716.errors);
 errors = vErrors.length;
 }
-var valid0 = _errs6 === errors;
+var valid0 = _errs10 === errors;
 }
 else {
 var valid0 = true;
@@ -35736,8 +36247,8 @@ var valid0 = true;
 if(valid0){
 if(data.fee_rates !== undefined){
 let data4 = data.fee_rates;
-const _errs7 = errors;
-if(errors === _errs7){
+const _errs11 = errors;
+if(errors === _errs11){
 if(Array.isArray(data4)){
 if(data4.length > 256){
 validate712.errors = [{instancePath:instancePath+"/fee_rates",schemaPath:"#/properties/fee_rates/maxItems",keyword:"maxItems",params:{limit: 256},message:"must NOT have more than 256 items"}];
@@ -35749,16 +36260,16 @@ validate712.errors = [{instancePath:instancePath+"/fee_rates",schemaPath:"#/prop
 return false;
 }
 else {
-var valid1 = true;
+var valid2 = true;
 const len0 = data4.length;
 for(let i0=0; i0<len0; i0++){
-const _errs9 = errors;
+const _errs13 = errors;
 if(!(validate738(data4[i0], {instancePath:instancePath+"/fee_rates/" + i0,parentData:data4,parentDataProperty:i0,rootData,dynamicAnchors}))){
 vErrors = vErrors === null ? validate738.errors : vErrors.concat(validate738.errors);
 errors = vErrors.length;
 }
-var valid1 = _errs9 === errors;
-if(!valid1){
+var valid2 = _errs13 === errors;
+if(!valid2){
 break;
 }
 }
@@ -35770,55 +36281,55 @@ validate712.errors = [{instancePath:instancePath+"/fee_rates",schemaPath:"#/prop
 return false;
 }
 }
-var valid0 = _errs7 === errors;
-}
-else {
-var valid0 = true;
-}
-if(valid0){
-if(data.fill_model !== undefined){
-const _errs10 = errors;
-if(!(validate716(data.fill_model, {instancePath:instancePath+"/fill_model",parentData:data,parentDataProperty:"fill_model",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate716.errors : vErrors.concat(validate716.errors);
-errors = vErrors.length;
-}
-var valid0 = _errs10 === errors;
-}
-else {
-var valid0 = true;
-}
-if(valid0){
-if(data.latency_model !== undefined){
-const _errs11 = errors;
-if(!(validate716(data.latency_model, {instancePath:instancePath+"/latency_model",parentData:data,parentDataProperty:"latency_model",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate716.errors : vErrors.concat(validate716.errors);
-errors = vErrors.length;
-}
 var valid0 = _errs11 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
+if(data.fill_model !== undefined){
+const _errs14 = errors;
+if(!(validate716(data.fill_model, {instancePath:instancePath+"/fill_model",parentData:data,parentDataProperty:"fill_model",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate716.errors : vErrors.concat(validate716.errors);
+errors = vErrors.length;
+}
+var valid0 = _errs14 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.latency_model !== undefined){
+const _errs15 = errors;
+if(!(validate716(data.latency_model, {instancePath:instancePath+"/latency_model",parentData:data,parentDataProperty:"latency_model",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate716.errors : vErrors.concat(validate716.errors);
+errors = vErrors.length;
+}
+var valid0 = _errs15 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
 if(data.leverage !== undefined){
-const _errs12 = errors;
+const _errs16 = errors;
 if(!(validate258(data.leverage, {instancePath:instancePath+"/leverage",parentData:data,parentDataProperty:"leverage",rootData,dynamicAnchors}))){
 vErrors = vErrors === null ? validate258.errors : vErrors.concat(validate258.errors);
 errors = vErrors.length;
 }
-var valid0 = _errs12 === errors;
+var valid0 = _errs16 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.schema_version !== undefined){
-const _errs13 = errors;
+const _errs17 = errors;
 if(!(validate108(data.schema_version, {instancePath:instancePath+"/schema_version",parentData:data,parentDataProperty:"schema_version",rootData,dynamicAnchors}))){
 vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
 errors = vErrors.length;
 }
-var valid0 = _errs13 === errors;
+var valid0 = _errs17 === errors;
 }
 else {
 var valid0 = true;
@@ -35826,12 +36337,12 @@ var valid0 = true;
 if(valid0){
 if(data.snapshot_interval_ms !== undefined){
 let data10 = data.snapshot_interval_ms;
-const _errs14 = errors;
+const _errs18 = errors;
 if(!((typeof data10 == "number") && (!(data10 % 1) && !isNaN(data10)))){
 validate712.errors = [{instancePath:instancePath+"/snapshot_interval_ms",schemaPath:"#/properties/snapshot_interval_ms/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
-if(errors === _errs14){
+if(errors === _errs18){
 if(typeof data10 == "number"){
 if(data10 > 86400000 || isNaN(data10)){
 validate712.errors = [{instancePath:instancePath+"/snapshot_interval_ms",schemaPath:"#/properties/snapshot_interval_ms/maximum",keyword:"maximum",params:{comparison: "<=", limit: 86400000},message:"must be <= 86400000"}];
@@ -35851,19 +36362,19 @@ return false;
 }
 }
 }
-var valid0 = _errs14 === errors;
+var valid0 = _errs18 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.starting_capital !== undefined){
-const _errs16 = errors;
+const _errs20 = errors;
 if(!(validate258(data.starting_capital, {instancePath:instancePath+"/starting_capital",parentData:data,parentDataProperty:"starting_capital",rootData,dynamicAnchors}))){
 vErrors = vErrors === null ? validate258.errors : vErrors.concat(validate258.errors);
 errors = vErrors.length;
 }
-var valid0 = _errs16 === errors;
+var valid0 = _errs20 === errors;
 }
 else {
 var valid0 = true;
@@ -40260,7 +40771,7 @@ return errors === 0;
 }
 validate838.evaluated = {"dynamicProps":true,"dynamicItems":false};
 
-const schema178 = {"additionalProperties":false,"properties":{"currency":{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},"instrument_id":{"maxLength":200,"minLength":1,"type":"string"},"weight":{"$ref":"#/components/schemas/DecimalValue"}},"required":["instrument_id","currency","weight"],"type":"object"};
+const schema178 = {"additionalProperties":false,"properties":{"currency":{"oneOf":[{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},{"enum":["USDC","USDC.e","pUSD"],"type":"string"}]},"instrument_id":{"maxLength":200,"minLength":1,"type":"string"},"weight":{"$ref":"#/components/schemas/DecimalValue"}},"required":["instrument_id","currency","weight"],"type":"object"};
 
 function validate843(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
@@ -40292,26 +40803,114 @@ if(_errs1 === errors){
 if(data.currency !== undefined){
 let data0 = data.currency;
 const _errs2 = errors;
+const _errs3 = errors;
+let valid1 = false;
+let passing0 = null;
+const _errs4 = errors;
 if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data0 === "AED") || (data0 === "AFN")) || (data0 === "ALL")) || (data0 === "AMD")) || (data0 === "AOA")) || (data0 === "ARS")) || (data0 === "AUD")) || (data0 === "AWG")) || (data0 === "AZN")) || (data0 === "BAM")) || (data0 === "BBD")) || (data0 === "BDT")) || (data0 === "BGN")) || (data0 === "BHD")) || (data0 === "BIF")) || (data0 === "BMD")) || (data0 === "BND")) || (data0 === "BOB")) || (data0 === "BOV")) || (data0 === "BRL")) || (data0 === "BSD")) || (data0 === "BTN")) || (data0 === "BWP")) || (data0 === "BYN")) || (data0 === "BZD")) || (data0 === "CAD")) || (data0 === "CDF")) || (data0 === "CHE")) || (data0 === "CHF")) || (data0 === "CHW")) || (data0 === "CLF")) || (data0 === "CLP")) || (data0 === "CNY")) || (data0 === "COP")) || (data0 === "COU")) || (data0 === "CRC")) || (data0 === "CUC")) || (data0 === "CUP")) || (data0 === "CVE")) || (data0 === "CZK")) || (data0 === "DJF")) || (data0 === "DKK")) || (data0 === "DOP")) || (data0 === "DZD")) || (data0 === "EGP")) || (data0 === "ERN")) || (data0 === "ETB")) || (data0 === "EUR")) || (data0 === "FJD")) || (data0 === "FKP")) || (data0 === "GBP")) || (data0 === "GEL")) || (data0 === "GHS")) || (data0 === "GIP")) || (data0 === "GMD")) || (data0 === "GNF")) || (data0 === "GTQ")) || (data0 === "GYD")) || (data0 === "HKD")) || (data0 === "HNL")) || (data0 === "HRK")) || (data0 === "HTG")) || (data0 === "HUF")) || (data0 === "IDR")) || (data0 === "ILS")) || (data0 === "INR")) || (data0 === "IQD")) || (data0 === "IRR")) || (data0 === "ISK")) || (data0 === "JMD")) || (data0 === "JOD")) || (data0 === "JPY")) || (data0 === "KES")) || (data0 === "KGS")) || (data0 === "KHR")) || (data0 === "KMF")) || (data0 === "KPW")) || (data0 === "KRW")) || (data0 === "KWD")) || (data0 === "KYD")) || (data0 === "KZT")) || (data0 === "LAK")) || (data0 === "LBP")) || (data0 === "LKR")) || (data0 === "LRD")) || (data0 === "LSL")) || (data0 === "LYD")) || (data0 === "MAD")) || (data0 === "MDL")) || (data0 === "MGA")) || (data0 === "MKD")) || (data0 === "MMK")) || (data0 === "MNT")) || (data0 === "MOP")) || (data0 === "MRU")) || (data0 === "MUR")) || (data0 === "MVR")) || (data0 === "MWK")) || (data0 === "MXN")) || (data0 === "MXV")) || (data0 === "MYR")) || (data0 === "MZN")) || (data0 === "NAD")) || (data0 === "NGN")) || (data0 === "NIO")) || (data0 === "NOK")) || (data0 === "NPR")) || (data0 === "NZD")) || (data0 === "OMR")) || (data0 === "PAB")) || (data0 === "PEN")) || (data0 === "PGK")) || (data0 === "PHP")) || (data0 === "PKR")) || (data0 === "PLN")) || (data0 === "PYG")) || (data0 === "QAR")) || (data0 === "RON")) || (data0 === "RSD")) || (data0 === "RUB")) || (data0 === "RWF")) || (data0 === "SAR")) || (data0 === "SBD")) || (data0 === "SCR")) || (data0 === "SDG")) || (data0 === "SEK")) || (data0 === "SGD")) || (data0 === "SHP")) || (data0 === "SLE")) || (data0 === "SLL")) || (data0 === "SOS")) || (data0 === "SRD")) || (data0 === "SSP")) || (data0 === "STN")) || (data0 === "SVC")) || (data0 === "SYP")) || (data0 === "SZL")) || (data0 === "THB")) || (data0 === "TJS")) || (data0 === "TMT")) || (data0 === "TND")) || (data0 === "TOP")) || (data0 === "TRY")) || (data0 === "TTD")) || (data0 === "TWD")) || (data0 === "TZS")) || (data0 === "UAH")) || (data0 === "UGX")) || (data0 === "USD")) || (data0 === "USN")) || (data0 === "UYI")) || (data0 === "UYU")) || (data0 === "UYW")) || (data0 === "UZS")) || (data0 === "VED")) || (data0 === "VES")) || (data0 === "VND")) || (data0 === "VUV")) || (data0 === "WST")) || (data0 === "XAD")) || (data0 === "XAF")) || (data0 === "XAG")) || (data0 === "XAU")) || (data0 === "XBA")) || (data0 === "XBB")) || (data0 === "XBC")) || (data0 === "XBD")) || (data0 === "XCD")) || (data0 === "XCG")) || (data0 === "XDR")) || (data0 === "XOF")) || (data0 === "XPD")) || (data0 === "XPF")) || (data0 === "XPT")) || (data0 === "XSU")) || (data0 === "XTS")) || (data0 === "XUA")) || (data0 === "XXX")) || (data0 === "YER")) || (data0 === "ZAR")) || (data0 === "ZMW")) || (data0 === "ZWG")) || (data0 === "ZWL"))){
-validate843.errors = [{instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/enum",keyword:"enum",params:{allowedValues: schema178.properties.currency.enum},message:"must be equal to one of the allowed values"}];
-return false;
+const err0 = {instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/oneOf/0/enum",keyword:"enum",params:{allowedValues: schema178.properties.currency.oneOf[0].enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err0];
 }
-if(errors === _errs2){
+else {
+vErrors.push(err0);
+}
+errors++;
+}
+if(errors === _errs4){
 if(typeof data0 === "string"){
 if(func2(data0) > 3){
-validate843.errors = [{instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"}];
-return false;
+const err1 = {instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/oneOf/0/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+if(vErrors === null){
+vErrors = [err1];
+}
+else {
+vErrors.push(err1);
+}
+errors++;
 }
 else {
 if(func2(data0) < 3){
-validate843.errors = [{instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"}];
-return false;
+const err2 = {instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/oneOf/0/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+if(vErrors === null){
+vErrors = [err2];
+}
+else {
+vErrors.push(err2);
+}
+errors++;
 }
 }
 }
 else {
-validate843.errors = [{instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+const err3 = {instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/oneOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err3];
+}
+else {
+vErrors.push(err3);
+}
+errors++;
+}
+}
+var _valid0 = _errs4 === errors;
+if(_valid0){
+valid1 = true;
+passing0 = 0;
+}
+const _errs6 = errors;
+if(typeof data0 !== "string"){
+const err4 = {instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err4];
+}
+else {
+vErrors.push(err4);
+}
+errors++;
+}
+if(!(((data0 === "USDC") || (data0 === "USDC.e")) || (data0 === "pUSD"))){
+const err5 = {instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema178.properties.currency.oneOf[1].enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err5];
+}
+else {
+vErrors.push(err5);
+}
+errors++;
+}
+var _valid0 = _errs6 === errors;
+if(_valid0 && valid1){
+valid1 = false;
+passing0 = [passing0, 1];
+}
+else {
+if(_valid0){
+valid1 = true;
+passing0 = 1;
+}
+}
+if(!valid1){
+const err6 = {instancePath:instancePath+"/currency",schemaPath:"#/properties/currency/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err6];
+}
+else {
+vErrors.push(err6);
+}
+errors++;
+validate843.errors = vErrors;
 return false;
+}
+else {
+errors = _errs3;
+if(vErrors !== null){
+if(_errs3){
+vErrors.length = _errs3;
+}
+else {
+vErrors = null;
+}
 }
 }
 var valid0 = _errs2 === errors;
@@ -40322,8 +40921,8 @@ var valid0 = true;
 if(valid0){
 if(data.instrument_id !== undefined){
 let data1 = data.instrument_id;
-const _errs4 = errors;
-if(errors === _errs4){
+const _errs8 = errors;
+if(errors === _errs8){
 if(typeof data1 === "string"){
 if(func2(data1) > 200){
 validate843.errors = [{instancePath:instancePath+"/instrument_id",schemaPath:"#/properties/instrument_id/maxLength",keyword:"maxLength",params:{limit: 200},message:"must NOT have more than 200 characters"}];
@@ -40341,19 +40940,19 @@ validate843.errors = [{instancePath:instancePath+"/instrument_id",schemaPath:"#/
 return false;
 }
 }
-var valid0 = _errs4 === errors;
+var valid0 = _errs8 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.weight !== undefined){
-const _errs6 = errors;
+const _errs10 = errors;
 if(!(validate258(data.weight, {instancePath:instancePath+"/weight",parentData:data,parentDataProperty:"weight",rootData,dynamicAnchors}))){
 vErrors = vErrors === null ? validate258.errors : vErrors.concat(validate258.errors);
 errors = vErrors.length;
 }
-var valid0 = _errs6 === errors;
+var valid0 = _errs10 === errors;
 }
 else {
 var valid0 = true;
@@ -70949,7 +71548,7 @@ return errors === 0;
 validate1640.evaluated = {"dynamicProps":false,"dynamicItems":false};
 
 exports.nativeBaseCurrency = validate1641;
-const schema319 = {"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"};
+const schema319 = {"oneOf":[{"enum":["AED","AFN","ALL","AMD","AOA","ARS","AUD","AWG","AZN","BAM","BBD","BDT","BGN","BHD","BIF","BMD","BND","BOB","BOV","BRL","BSD","BTN","BWP","BYN","BZD","CAD","CDF","CHE","CHF","CHW","CLF","CLP","CNY","COP","COU","CRC","CUC","CUP","CVE","CZK","DJF","DKK","DOP","DZD","EGP","ERN","ETB","EUR","FJD","FKP","GBP","GEL","GHS","GIP","GMD","GNF","GTQ","GYD","HKD","HNL","HRK","HTG","HUF","IDR","ILS","INR","IQD","IRR","ISK","JMD","JOD","JPY","KES","KGS","KHR","KMF","KPW","KRW","KWD","KYD","KZT","LAK","LBP","LKR","LRD","LSL","LYD","MAD","MDL","MGA","MKD","MMK","MNT","MOP","MRU","MUR","MVR","MWK","MXN","MXV","MYR","MZN","NAD","NGN","NIO","NOK","NPR","NZD","OMR","PAB","PEN","PGK","PHP","PKR","PLN","PYG","QAR","RON","RSD","RUB","RWF","SAR","SBD","SCR","SDG","SEK","SGD","SHP","SLE","SLL","SOS","SRD","SSP","STN","SVC","SYP","SZL","THB","TJS","TMT","TND","TOP","TRY","TTD","TWD","TZS","UAH","UGX","USD","USN","UYI","UYU","UYW","UZS","VED","VES","VND","VUV","WST","XAD","XAF","XAG","XAU","XBA","XBB","XBC","XBD","XCD","XCG","XDR","XOF","XPD","XPF","XPT","XSU","XTS","XUA","XXX","YER","ZAR","ZMW","ZWG","ZWL"],"maxLength":3,"minLength":3,"type":"string"},{"enum":["USDC","USDC.e","pUSD"],"type":"string"}]};
 
 function validate1641(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
@@ -70961,26 +71560,114 @@ evaluated0.props = undefined;
 if(evaluated0.dynamicItems){
 evaluated0.items = undefined;
 }
+const _errs0 = errors;
+let valid0 = false;
+let passing0 = null;
+const _errs1 = errors;
 if(!(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((data === "AED") || (data === "AFN")) || (data === "ALL")) || (data === "AMD")) || (data === "AOA")) || (data === "ARS")) || (data === "AUD")) || (data === "AWG")) || (data === "AZN")) || (data === "BAM")) || (data === "BBD")) || (data === "BDT")) || (data === "BGN")) || (data === "BHD")) || (data === "BIF")) || (data === "BMD")) || (data === "BND")) || (data === "BOB")) || (data === "BOV")) || (data === "BRL")) || (data === "BSD")) || (data === "BTN")) || (data === "BWP")) || (data === "BYN")) || (data === "BZD")) || (data === "CAD")) || (data === "CDF")) || (data === "CHE")) || (data === "CHF")) || (data === "CHW")) || (data === "CLF")) || (data === "CLP")) || (data === "CNY")) || (data === "COP")) || (data === "COU")) || (data === "CRC")) || (data === "CUC")) || (data === "CUP")) || (data === "CVE")) || (data === "CZK")) || (data === "DJF")) || (data === "DKK")) || (data === "DOP")) || (data === "DZD")) || (data === "EGP")) || (data === "ERN")) || (data === "ETB")) || (data === "EUR")) || (data === "FJD")) || (data === "FKP")) || (data === "GBP")) || (data === "GEL")) || (data === "GHS")) || (data === "GIP")) || (data === "GMD")) || (data === "GNF")) || (data === "GTQ")) || (data === "GYD")) || (data === "HKD")) || (data === "HNL")) || (data === "HRK")) || (data === "HTG")) || (data === "HUF")) || (data === "IDR")) || (data === "ILS")) || (data === "INR")) || (data === "IQD")) || (data === "IRR")) || (data === "ISK")) || (data === "JMD")) || (data === "JOD")) || (data === "JPY")) || (data === "KES")) || (data === "KGS")) || (data === "KHR")) || (data === "KMF")) || (data === "KPW")) || (data === "KRW")) || (data === "KWD")) || (data === "KYD")) || (data === "KZT")) || (data === "LAK")) || (data === "LBP")) || (data === "LKR")) || (data === "LRD")) || (data === "LSL")) || (data === "LYD")) || (data === "MAD")) || (data === "MDL")) || (data === "MGA")) || (data === "MKD")) || (data === "MMK")) || (data === "MNT")) || (data === "MOP")) || (data === "MRU")) || (data === "MUR")) || (data === "MVR")) || (data === "MWK")) || (data === "MXN")) || (data === "MXV")) || (data === "MYR")) || (data === "MZN")) || (data === "NAD")) || (data === "NGN")) || (data === "NIO")) || (data === "NOK")) || (data === "NPR")) || (data === "NZD")) || (data === "OMR")) || (data === "PAB")) || (data === "PEN")) || (data === "PGK")) || (data === "PHP")) || (data === "PKR")) || (data === "PLN")) || (data === "PYG")) || (data === "QAR")) || (data === "RON")) || (data === "RSD")) || (data === "RUB")) || (data === "RWF")) || (data === "SAR")) || (data === "SBD")) || (data === "SCR")) || (data === "SDG")) || (data === "SEK")) || (data === "SGD")) || (data === "SHP")) || (data === "SLE")) || (data === "SLL")) || (data === "SOS")) || (data === "SRD")) || (data === "SSP")) || (data === "STN")) || (data === "SVC")) || (data === "SYP")) || (data === "SZL")) || (data === "THB")) || (data === "TJS")) || (data === "TMT")) || (data === "TND")) || (data === "TOP")) || (data === "TRY")) || (data === "TTD")) || (data === "TWD")) || (data === "TZS")) || (data === "UAH")) || (data === "UGX")) || (data === "USD")) || (data === "USN")) || (data === "UYI")) || (data === "UYU")) || (data === "UYW")) || (data === "UZS")) || (data === "VED")) || (data === "VES")) || (data === "VND")) || (data === "VUV")) || (data === "WST")) || (data === "XAD")) || (data === "XAF")) || (data === "XAG")) || (data === "XAU")) || (data === "XBA")) || (data === "XBB")) || (data === "XBC")) || (data === "XBD")) || (data === "XCD")) || (data === "XCG")) || (data === "XDR")) || (data === "XOF")) || (data === "XPD")) || (data === "XPF")) || (data === "XPT")) || (data === "XSU")) || (data === "XTS")) || (data === "XUA")) || (data === "XXX")) || (data === "YER")) || (data === "ZAR")) || (data === "ZMW")) || (data === "ZWG")) || (data === "ZWL"))){
-validate1641.errors = [{instancePath,schemaPath:"#/enum",keyword:"enum",params:{allowedValues: schema319.enum},message:"must be equal to one of the allowed values"}];
-return false;
+const err0 = {instancePath,schemaPath:"#/oneOf/0/enum",keyword:"enum",params:{allowedValues: schema319.oneOf[0].enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err0];
 }
-if(errors === 0){
+else {
+vErrors.push(err0);
+}
+errors++;
+}
+if(errors === _errs1){
 if(typeof data === "string"){
 if(func2(data) > 3){
-validate1641.errors = [{instancePath,schemaPath:"#/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"}];
-return false;
+const err1 = {instancePath,schemaPath:"#/oneOf/0/maxLength",keyword:"maxLength",params:{limit: 3},message:"must NOT have more than 3 characters"};
+if(vErrors === null){
+vErrors = [err1];
+}
+else {
+vErrors.push(err1);
+}
+errors++;
 }
 else {
 if(func2(data) < 3){
-validate1641.errors = [{instancePath,schemaPath:"#/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"}];
-return false;
+const err2 = {instancePath,schemaPath:"#/oneOf/0/minLength",keyword:"minLength",params:{limit: 3},message:"must NOT have fewer than 3 characters"};
+if(vErrors === null){
+vErrors = [err2];
+}
+else {
+vErrors.push(err2);
+}
+errors++;
 }
 }
 }
 else {
-validate1641.errors = [{instancePath,schemaPath:"#/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+const err3 = {instancePath,schemaPath:"#/oneOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err3];
+}
+else {
+vErrors.push(err3);
+}
+errors++;
+}
+}
+var _valid0 = _errs1 === errors;
+if(_valid0){
+valid0 = true;
+passing0 = 0;
+}
+const _errs3 = errors;
+if(typeof data !== "string"){
+const err4 = {instancePath,schemaPath:"#/oneOf/1/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err4];
+}
+else {
+vErrors.push(err4);
+}
+errors++;
+}
+if(!(((data === "USDC") || (data === "USDC.e")) || (data === "pUSD"))){
+const err5 = {instancePath,schemaPath:"#/oneOf/1/enum",keyword:"enum",params:{allowedValues: schema319.oneOf[1].enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err5];
+}
+else {
+vErrors.push(err5);
+}
+errors++;
+}
+var _valid0 = _errs3 === errors;
+if(_valid0 && valid0){
+valid0 = false;
+passing0 = [passing0, 1];
+}
+else {
+if(_valid0){
+valid0 = true;
+passing0 = 1;
+}
+}
+if(!valid0){
+const err6 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err6];
+}
+else {
+vErrors.push(err6);
+}
+errors++;
+validate1641.errors = vErrors;
 return false;
+}
+else {
+errors = _errs0;
+if(vErrors !== null){
+if(_errs0){
+vErrors.length = _errs0;
+}
+else {
+vErrors = null;
+}
 }
 }
 validate1641.errors = vErrors;

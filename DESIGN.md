@@ -1,5 +1,96 @@
 # QuaZonai 产品、领域与架构事实源
 
+## Polymarket 原生研究与组合
+
+原生 BinaryOption 研究使用 POLYMARKET、原 condition/token 身份、原抵押币和
+当时可见的资产定义。现有有界 BAR Alpha／组合流程复用这些资产；不得将
+第三方价格点伪装为成交 BAR，或把当前 Gamma 快照回填为历史资产定义。
+原生执行选择 CASH、long-only 和统一资金账户；不把 NO 买入当成裸卖空 YES。
+组合、独立研究和目标证据继续使用现有冻结输入与 Clarabel，不新增回测内核。
+Polymarket 的正式日收益统计使用 Nautilus 的 365 日年化配置；原有股票／外汇
+路径维持 252 日配置。日均收益不年化，指标保留实际 period、原生方法与缺值原因。
+Canonical 原始报告保持上游原样；正式 portfolio statistics 不使用其逐持仓兜底收益。
+
+NAUTILUS_POLYMARKET 引用锁定 PolymarketFeeModel；费用 schedule 必须存在，
+且符合原生 exponent=1/takerOnly 合同。缺失不等于免费；真实零费表可以为零。
+模拟普通订单仍由原生模型计算佣金。规划字段 maker=0、taker=rate+0.000005
+（rate=0 时为0）为保守费率上界，不是固定实际收费；仅在每次买卖实际成交
+名义金额至少为1原抵押币时有效。下单与成交均校验此研究下限，不冒充交易所
+最低金额规则。策略当前只发市价单，不计算未观察的 maker 奖励。
+
+到期／结算使用目录中的原生 InstrumentClose(ContractExpired)，独立于 BAR。
+预测器不查询结算标签。事件在实际 ts_init 到达原生引擎；到期后没有来源结算
+事件的跨到期研究返回 POLYMARKET_PENDING_RESOLUTION，不能按最后价格补0/1。
+0、1及50/50兑付由原生引擎处理；其生成的 EXPIRATION 原生平仓只作兑付，
+不额外收取交易佣金。既有投资决策订单的延迟和有效期检查仍独立有效。
+保留来源中的实际可用时间；该适配不自动代办链上赎回或估算未观察gas。
+未知赎回可用性不可据此被标成已验证真实资金占用。
+
+Runtime 镜像声明 polymarket-research/1，仅有效原生资产才广告市场；旧镜像
+不具备新能力。登记执行假设要求对应版本；现有许可、PIT、Sealed和目标交付
+边界不因该能力放开。新适配须以实际原生结算、共享资金和多Alpha测试验收。
+
+### 冻结结算来源与目标期限
+
+结算不是登记 BAR 后隐式授予的额外目录权限。原登记元数据的
+quality.datasets[].settlements 冻结完整 NativeSettlementGroupV1：condition_id、
+source_reference、恰好两个 outcomes；每项保留 instrument_id、close_price、
+ts_event 和 ts_init。价格使用 DecimalValue，纳秒使用 DbCounter。不同 token
+必须属于同一 condition，价格均在 [0,1] 并精确合计 1。单 token 研究也保留完整
+来源向量，但不会给未选 token 建仓。不完整档案只能作为未验证数据准备，不能
+通过缺项、重复 token 或零填充拼出完整结算。Sealed 质量元数据不公开兑付明细。
+
+NativeDatasetSelectionV1、NativeSimulationRequestV1 和 NativePortfolioStudyRequestV1
+分别冻结该 settlements；缺省空数组表示没有结算依据，不表示免费、零赔付或
+可跳过结算。Store 从原登记证据生成请求，Runtime 对比同目录版本的完整可见
+向量，Job 再核对原生 InstrumentClose 的价格、资产及两种时间；新增、缺失、
+变更和重复记录均失败。未进入持有窗口或实际尚不可用的事件不会提前释放现金。
+fresh DATA_VALIDATE 和组合质量产物保留原绑定，发布时复验。结算记录不作为
+Alpha BAR 特征，也不传入其八参数 Wasm ABI。无需新鉴权服务、回测内核或账本。
+
+所有二元目标要求 activation <= decision < expiration，且原 decision + TTL
+不超过每个入选合约的 expiration。超期直接拒绝，不静默裁剪策略 TTL。原生
+portfolio preparation、Runtime/Store 构建准入和 Candidate 发布使用同一规则；
+Release 沿用既有原来源复验。交易目标到期不等于持仓已经结算：已建仓可继续
+等待冻结来源的实际结算时点，但不能因此延长新交易权限。
+
+## Polymarket 研究抵押币
+
+研究的 base_currency 与模型账单 cost_currency 分开：前者接受原 ISO 4217
+及锁定 Nautilus 的 USDC、USDC.e、pUSD，后者仍仅接受原 ISO 4217。
+这些是不同资产的精确原生代码，不自动按 1:1 换算为 USD，也不能相互替换。
+数据源与原生资产定义仍需证明实际 collateral contract、历史版本和可用时点。
+资产货币、研究 Brief、执行假设、预测、组合、模拟结果与目标快照必须同币种。
+数据库原生 research currency 列扩为 text，保留现有数据及模型账单限制。
+接纳币种不是数据许可、PIT、费用或市场模拟能力通过，现有准入仍须逐项验证。
+
+## Polymarket 原生历史数据准备
+
+历史接入复用 Nautilus Rust 客户端、BinaryOption、TradeTick、QuoteTick、
+OrderBookDelta、Bar 与 ParquetDataCatalog，不重建 SDK、行情存储或撮合器。
+操作员显式启用 `job/polymarket-history` 构建独立 `polymarket-history` 工具；
+默认科学 job 不因此获得网络功能。该工具不是 HTTP/MCP 科学任务。
+
+本地交换文件使用 schema_version=1、source_reference、source_observed_at、
+source_metadata、instruments 及分别存放的 trades/quotes/deltas/bars/closes。
+写入按原生 instrument_id 分区，BAR 按完整 BarType 分区，不能混写不同资产的
+Parquet 元数据；同时间戳的盘口更新保持原始顺序。
+资产限定为原生 POLYMARKET BinaryOption；记录必须匹配资产，并满足原生价格、
+时间和身份约束。导入至全新目录：catalog 为原生数据，source-evidence.json
+保存原始输入，import-report.json 最后写入。失败不覆盖旧目录；缺最后报告是
+未完成导入，不能登记为完整数据。最多 256 资产、100 万行、128 MiB 本地输入。
+
+当前抓取的 Gamma 元数据不回填历史时点；终局/当前状态不写入历史 instrument.info。
+历史成交使用原生客户端，不从逐笔数据虚构深度或 OHLCV。锁定 0.63.0
+可能在 offset 上限返回部分记录，并合成同秒内的细分顺序；导入报告必须保留
+UNPROVEN coverage 和 UNVERIFIED availability，不自动登记 Dataset、赋予 PIT
+或科学资格。交易窗口采用本工具的秒级半开区间；原生调用和过滤保持该边界。
+
+这只是数据准备合同，不放宽现有 BAR 研究、执行费用、到期或组合准入。
+接通正式二元合约研究必须另有真实原生消费与回放证据，不能把此工具写入
+等价为完整 Polymarket Alpha/组合已交付。操作说明见
+[Polymarket 数据准备](docs/polymarket-history.md)。
+
 > 需求基线：2026-09-05，Issue #62 正文及附录 A（评论 5549224292）、B（评论 5549244417）。
 > 所有者修订：2026-09-05，PR #63 的执行要求——**优先 Rust，其次 Python；优先复用，其次造轮子**。
 > **状态：PR #63 已合并，Issue #62 的完整产品验收仍未完成。** 当前实现与证据入口见 [实现证据](docs/architecture/issue-62-execution.md)，本文保留完整目标合同，不把代码存在或 CI 通过当作生产验收。
@@ -2248,11 +2339,13 @@ Candidate、政策、数据版本和完整意图；缺少独立PORTFOLIO发表�
 Returns统计组（不读canonical的position fallback），scope固定portfolio：
 PORTFOLIO_DAILY_RETURN_MEAN对应Average (Return)/nautilus-analysis.ReturnsAverage，
 unit=RETURN_PER_DAY，annualization_factor=null；PORTFOLIO_RETURN_VOLATILITY对应
-Returns Volatility (252 days)/nautilus-analysis.ReturnsVolatility，
-unit=ANNUALIZED_RETURN_STDDEV，annualization_factor=252；PORTFOLIO_SHARPE_RATIO对应
-Sharpe Ratio (252 days)/nautilus-analysis.SharpeRatio，unit=RATIO，
-annualization_factor=252。三者method_version=0.63.0、frequency=UTC_DAY；
-252表示原生每年日数，不是再次乘到原值的系数。波动率/Sharpe由原生按UTC日
+Returns Volatility ({period} days)/nautilus-analysis.ReturnsVolatility，
+unit=ANNUALIZED_RETURN_STDDEV，annualization_factor=period；PORTFOLIO_SHARPE_RATIO对应
+Sharpe Ratio ({period} days)/nautilus-analysis.SharpeRatio，unit=RATIO，
+annualization_factor=period。NAUTILUS_POLYMARKET 的 period=365，原股票／外汇路径
+period=252；方法键必须与该请求实际选择的原生配置一致，不跨分支替换。三者
+method_version=0.63.0、frequency=UTC_DAY；period 表示原生每年日数，不是再次乘到
+原值的系数。日均收益不年化。波动率/Sharpe由原生按UTC日
 复利分箱、样本标准差(ddof=1)计算；Sharpe该路径不扣无风险利率。
 适配不重算统计、不补日历空档，observation_count是原日收益条数；period是
 原canonical实际模拟起止（纳秒向外取整到微秒），不是声明的更大输入窗口。

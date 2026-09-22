@@ -141,6 +141,11 @@ where
         }
         bindings.push(DatasetBinding {
             selection: NativeDatasetSelectionV1 {
+                settlements: domain::prediction::visible_settlements(
+                    &quality.settlements,
+                    &quality.instrument_ids,
+                    selection.decision_cutoff_ns,
+                ),
                 dataset_revision_id: id,
                 selection,
             },

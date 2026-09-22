@@ -487,6 +487,7 @@ where
         schema_version: SchemaV1,
         dataset_revision_id: dataset.selection.dataset_revision_id,
         request: Box::new(NativePortfolioStudyRequestV1 {
+            settlements: dataset.selection.settlements.clone(),
             schema_version: SchemaV1,
             source_selection: dataset.selection.selection,
             evaluation_start_ns: evaluation_start,

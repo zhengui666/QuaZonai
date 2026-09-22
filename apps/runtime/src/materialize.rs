@@ -134,6 +134,64 @@ pub async fn parameters(
             .ok_or(Failure::Invalid("catalog_binding"))?;
         let catalog = registered(catalogs, catalog.0, catalog.1)?;
         selection_scope(catalog, selection)?;
+        let supplied = match &parameters {
+            NativeTaskParametersV1::ValidateData { selections, .. } => selections
+                .iter()
+                .find(|s| s.dataset_revision_id == revision)
+                .map(|s| s.settlements.as_slice()),
+            NativeTaskParametersV1::SimulatePortfolio { request, .. }
+            | NativeTaskParametersV1::SimulateCandidate { request, .. }
+            | NativeTaskParametersV1::SimulatePortfolioSequence { request, .. } => {
+                Some(request.settlements.as_slice())
+            }
+            NativeTaskParametersV1::StudyPortfolio { request, .. } => {
+                Some(request.settlements.as_slice())
+            }
+            _ => None,
+        };
+        if let Some(supplied) = supplied {
+            let ids = selection
+                .bar_types
+                .iter()
+                .map(|name| {
+                    name.parse::<nautilus_model::data::BarType>()
+                        .map(|kind| kind.instrument_id().to_string())
+                        .map_err(|_| Failure::Invalid("catalog_bar_type_scope"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let registered = domain::prediction::visible_settlements(
+                &catalog.metadata.quality.datasets[0].settlements,
+                &ids,
+                selection.decision_cutoff_ns,
+            );
+            if supplied != registered.as_slice() {
+                return Err(Failure::Invalid("catalog_settlement_binding"));
+            }
+            domain::prediction::settlement_scope(supplied, &ids, selection)
+                .map_err(|_| Failure::Invalid("catalog_settlement_binding"))?;
+        }
+        if let NativeTaskParametersV1::BuildPortfolio { request, .. } = &parameters {
+            let until = request
+                .selection
+                .decision_cutoff_ns
+                .get()
+                .checked_add(
+                    u64::from(request.mandate.rebalance_schedule.target_ttl_seconds)
+                        * 1_000_000_000,
+                )
+                .ok_or(Failure::Invalid("catalog_target_lifetime"))?;
+            domain::prediction::target_window(
+                &catalog.metadata.universe.instrument_definitions,
+                &request
+                    .assets
+                    .iter()
+                    .map(|a| a.instrument_id.clone())
+                    .collect::<Vec<_>>(),
+                request.selection.decision_cutoff_ns.get(),
+                until,
+            )
+            .map_err(|_| Failure::Invalid("catalog_target_lifetime"))?;
+        }
         if let NativeTaskParametersV1::StudyPortfolio { request, .. } = &parameters {
             if request.calendar.as_ref().is_some_and(|binding| {
                 binding.calendar.calendar_ref != catalog.metadata.universe.calendar_ref

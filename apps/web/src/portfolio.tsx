@@ -125,7 +125,7 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
         <Form.Item name="runtime_id" label="Runtime 编号" rules={uuidRules}><Input /></Form.Item>
         <Form.Item name="expected_runtime_revision" label="Runtime 配置版本" rules={counterRules}><Input inputMode="numeric" /></Form.Item>
         {([['universe_version_id', '投资域版本编号'], ['required_evaluation_policy_id', '评估政策编号'], ['execution_assumptions_id', '执行假设编号']] as const).map(([name, label]) => <Form.Item key={name} name={['content', name]} label={label} rules={uuidRules}><Input /></Form.Item>)}
-        <Form.Item name={['content', 'base_currency']} label="基础币种" rules={[required, { validator: async (_, value) => { if (!validateBaseCurrency(value)) throw new Error('请选择有效 ISO 币种代码。'); } }]}><Input maxLength={3} /></Form.Item>
+        <Form.Item name={['content', 'base_currency']} label="基础币种" rules={[required, { validator: async (_, value) => { if (!validateBaseCurrency(value)) throw new Error('请选择服务器支持的研究币种。'); } }]}><Input maxLength={6} /></Form.Item>
         <Form.Item name={['content', 'capital_assumption']} label="资本假设" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
         <Form.Item name={['content', 'exposure_tolerance']} label="发布敞口容差" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
       </Card>

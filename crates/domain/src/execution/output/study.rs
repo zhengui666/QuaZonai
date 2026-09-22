@@ -151,7 +151,8 @@ pub fn binding(
     if let Some(replay) = &value.simulation_request {
         let mut selected = request.source_selection.clone();
         selected.event_start_ns = request.evaluation_start_ns;
-        if replay.selection != selected
+        if replay.settlements != request.settlements
+            || replay.selection != selected
             || serde_json::to_value(&replay.settings).map_err(|_| bad("study.settings"))?
                 != serde_json::to_value(&request.execution_settings)
                     .map_err(|_| bad("study.settings"))?

@@ -496,7 +496,7 @@ fn native_equities_rebalance_in_cash_and_margin_accounts_with_original_fees() {
 }
 
 #[test]
-fn native_binary_options_do_not_produce_portfolio_results_before_or_after_expiry() {
+fn binary_options_without_native_fee_contract_are_rejected_before_and_after_expiry() {
     use nautilus_model::{
         enums::AssetClass,
         instruments::{BinaryOption, Instrument, InstrumentAny},
@@ -555,8 +555,11 @@ fn native_binary_options_do_not_produce_portfolio_results_before_or_after_expiry
             job::simulation::simulate(directory.path(), &request)
                 .unwrap_err()
                 .to_string(),
-            "SIMULATION_MARKET_UNSUPPORTED"
+            "POLYMARKET_NATIVE_FEE_MODEL_REQUIRED"
         );
+        // A BinaryOption alone is not sufficient: the native venue, original
+        // collateral, fee schedule and lifecycle remain mandatory. Valid native
+        // Polymarket contracts are exercised separately in tests/polymarket.rs.
         let output = native::command(
             &[
                 "simulate".as_ref(),

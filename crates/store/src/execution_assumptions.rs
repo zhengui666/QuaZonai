@@ -194,6 +194,15 @@ impl Store {
                 domain::DomainError::CapabilityUnavailable("execution_assumption_models").into(),
             );
         }
+        if domain::prediction::uses_native_fee(&request.settings.fee_model)
+            && cap
+                .engine_versions
+                .get("polymarket-research")
+                .map(String::as_str)
+                != Some("1")
+        {
+            return Err(domain::DomainError::CapabilityUnavailable("polymarket_research").into());
+        }
         let image = cap
             .image_refs
             .iter()

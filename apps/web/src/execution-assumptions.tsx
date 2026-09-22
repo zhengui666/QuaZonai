@@ -5,6 +5,7 @@ import { api, dataOf, displayTime, Intent, isCounter, isDecimal } from './api';
 import type { Schema } from './api';
 import { uuidPattern } from './api';
 import { counterRules } from './budget-fields';
+import { validateBaseCurrency } from '@quazonai/web/response-contract';
 import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
 
 type View = Schema['ExecutionAssumptionsViewV1'];
@@ -12,6 +13,7 @@ type Settings = Schema['NativeSimulationSettingsV1'];
 type Fill = Extract<Schema['NativeModelRefV1'], { adapter_kind: 'NAUTILUS_DEFAULT_FILL' }>['parameters'];
 type Latency = Extract<Schema['NativeModelRefV1'], { adapter_kind: 'NAUTILUS_STATIC_LATENCY' }>['parameters'];
 type Fields = Omit<Schema['ExecutionAssumptionsCreateV1'], 'schema_version' | 'project_id' | 'settings'> & {
+  fee_kind?: 'NAUTILUS_MAKER_TAKER' | 'NAUTILUS_POLYMARKET';
   use_bar_liquidity?: boolean;
   use_rolling_liquidity?: boolean;
   settings: Omit<Settings, 'schema_version' | 'fee_model' | 'fill_model' | 'latency_model'>; fill: Fill; latency: Latency;
@@ -74,12 +76,14 @@ function Editor({ project, close }: { project: string; close: () => void }) {
   const useRollingLiquidity = Form.useWatch('use_rolling_liquidity', form);
   const client = useQueryClient(); const online = useOnline(); const { modal, message } = App.useApp();
   const mutation = useMutation({ mutationFn: async (values: Fields) => {
-    const { fill, latency, use_bar_liquidity, bar_liquidity, use_rolling_liquidity, rolling_liquidity, ...source } = values;
+    const { fee_kind, fill, latency, use_bar_liquidity, bar_liquidity, use_rolling_liquidity, rolling_liquidity, ...source } = values;
     const body: Schema['ExecutionAssumptionsCreateV1'] = { ...source, schema_version: 1, project_id: project,
       bar_liquidity: use_bar_liquidity && bar_liquidity ? { ...bar_liquidity, schema_version: 1 } : null,
       rolling_liquidity: use_rolling_liquidity && rolling_liquidity ? { ...rolling_liquidity, schema_version: 1 } : null,
       settings: { ...source.settings, schema_version: 1,
-      fee_model: { schema_version: 1, adapter_kind: 'NAUTILUS_MAKER_TAKER', upstream_class: 'nautilus_execution::models::fee::MakerTakerFeeModel', upstream_version: '0.63.0', parameters: {} },
+      fee_model: fee_kind === 'NAUTILUS_POLYMARKET'
+        ? { schema_version: 1, adapter_kind: 'NAUTILUS_POLYMARKET', upstream_class: 'nautilus_polymarket::models::PolymarketFeeModel', upstream_version: '0.63.0', parameters: {} }
+        : { schema_version: 1, adapter_kind: 'NAUTILUS_MAKER_TAKER', upstream_class: 'nautilus_execution::models::fee::MakerTakerFeeModel', upstream_version: '0.63.0', parameters: {} },
       fill_model: { schema_version: 1, adapter_kind: 'NAUTILUS_DEFAULT_FILL', upstream_class: 'nautilus_execution::models::fill::DefaultFillModel', upstream_version: '0.63.0', parameters: fill },
       latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.63.0', parameters: latency },
     } };
@@ -97,7 +101,7 @@ function Editor({ project, close }: { project: string; close: () => void }) {
   return <Drawer title="新建不可变执行假设" open width={800} onClose={dismiss} closable={!mutation.isPending} maskClosable={!mutation.isPending}>
     
     <ErrorNotice error={mutation.error} />
-    <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)} onFinish={values => mutation.mutate(values)} disabled={!online || mutation.isPending} initialValues={{ settings: { fee_rates: [{}] } }}>
+    <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)} onFinish={values => mutation.mutate(values)} disabled={!online || mutation.isPending} initialValues={{ fee_kind: 'NAUTILUS_MAKER_TAKER', settings: { fee_rates: [{}] } }}>
       {([['runtime_id', 'Runtime 编号'], ['input_set_id', '冻结输入编号'], ['dataset_revision_id', '数据版本编号']] as const).map(([name, label]) => <Form.Item key={name} name={name} label={label} rules={ids}><Input /></Form.Item>)}
       <Form.Item name="expected_runtime_revision" label="Runtime 配置版本" rules={counterRules}><Input inputMode="numeric" /></Form.Item>
       <Form.Item name="settlement_rule_ref" label="结算规则引用" rules={[required, { max: 200, whitespace: true }]}><Input /></Form.Item>
@@ -114,7 +118,7 @@ function Editor({ project, close }: { project: string; close: () => void }) {
         <Form.Item name={['bar_liquidity', 'maximum_age_seconds']} preserve={false} label="历史量最长年龄（秒）" rules={[required, { type: 'integer', min: 1, max: 4294967295 }]}><InputNumber min={1} max={4294967295} precision={0} /></Form.Item>
         <Form.Item name={['bar_liquidity', 'participation_limit']} preserve={false} label="单 BAR 参与率上限（大于 0 且不超过 1）" rules={decimals}><Input inputMode="decimal" /></Form.Item>
       </>}
-      <Form.Item name={['settings', 'base_currency']} label="基础币种" rules={[required, { pattern: /^[A-Z]{3}$/, message: '请输入 ISO 币种代码。' }]}><Input maxLength={3} /></Form.Item>
+      <Form.Item name={['settings', 'base_currency']} label="基础币种" rules={[required, { validator: async (_, value: unknown) => { if (!validateBaseCurrency(value)) throw new Error('请选择服务器支持的研究币种。'); } }]}><Input maxLength={6} /></Form.Item>
       <Form.Item name={['settings', 'account_kind']} label="模拟账户模型" rules={[required]}><Select options={[{ value: 'CASH', label: '现金' }, { value: 'MARGIN', label: '保证金' }]} /></Form.Item>
       {([['starting_capital', '资本假设'], ['leverage', '杠杆上限'], ['exposure_tolerance', '敞口容差']] as const).map(([name, label]) => <Form.Item key={name} name={['settings', name]} label={label} rules={decimals}><Input inputMode="decimal" /></Form.Item>)}
       <Form.Item name={['settings', 'snapshot_interval_ms']} label="快照间隔（毫秒）" rules={[required, { type: 'integer', min: 1, max: 86400000 }]}><InputNumber min={1} max={86400000} precision={0} /></Form.Item>
@@ -122,7 +126,11 @@ function Editor({ project, close }: { project: string; close: () => void }) {
       {([['prob_fill_on_limit', '限价成交概率'], ['prob_slippage', '滑点概率']] as const).map(([name, label]) => <Form.Item key={name} name={['fill', name]} label={`${label}（0 至 1）`} rules={decimals}><Input inputMode="decimal" /></Form.Item>)}
       <Form.Item name={['fill', 'random_seed']} label="随机种子" rules={counts}><Input inputMode="numeric" /></Form.Item>
       {([['base_latency_ns', '基础延迟'], ['insert_latency_ns', '插入附加延迟'], ['update_latency_ns', '更新附加延迟'], ['cancel_latency_ns', '取消附加延迟']] as const).map(([name, label]) => <Form.Item key={name} name={['latency', name]} label={`${label}（纳秒）`} rules={counts}><Input inputMode="numeric" /></Form.Item>)}
-      <Typography.Title level={2}>逐资产原生费用</Typography.Title>
+      <Form.Item name="fee_kind" label="费用模型" rules={[required]}><Select options={[
+        { value: 'NAUTILUS_MAKER_TAKER', label: 'Nautilus Maker / Taker' },
+        { value: 'NAUTILUS_POLYMARKET', label: 'Nautilus Polymarket' },
+      ]} /></Form.Item>
+      <Typography.Title level={2}>逐资产规划费率</Typography.Title>
       
       <Form.List name={['settings', 'fee_rates']}>{(fields, { add, remove }) => <>
         {fields.map(field => <Space key={field.key} orientation="vertical" className="full-width">

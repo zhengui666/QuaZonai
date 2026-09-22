@@ -1,6 +1,8 @@
 //! Real SQLite parameters with explicit synthetic source metadata. No network/OCI claim.
 #[path = "../../../tests/support/catalog_metadata.rs"]
 mod catalog_fixture;
+#[path = "../../job/tests/support/polymarket.rs"]
+mod prediction;
 use portfolio_config::execution_models;
 #[path = "../../../tests/support/portfolio.rs"]
 mod portfolio_config;
@@ -38,6 +40,31 @@ fn operation(
                 .current_weights
                 .weights
                 .truncate(request.assets.len());
+            // The allocation fixture's default asset IDs are not the registered
+            // catalog's IDs. Bind all three views to the actual native selection;
+            // unregistered selections still fail the independent catalog checks.
+            for ((asset, fee), name) in request
+                .assets
+                .iter_mut()
+                .zip(&mut request.execution_settings.fee_rates)
+                .zip(&request.selection.bar_types)
+            {
+                let id = name
+                    .parse::<nautilus_model::data::BarType>()
+                    .unwrap()
+                    .instrument_id()
+                    .to_string();
+                asset.instrument_id = id.clone();
+                fee.instrument_id = id;
+            }
+            for (weight, asset) in request
+                .current_weights
+                .weights
+                .iter_mut()
+                .zip(&request.assets)
+            {
+                weight.instrument_id = asset.instrument_id.clone();
+            }
             let one: contracts::DecimalValue = "1".parse().unwrap();
             let cash = request
                 .assets
@@ -65,6 +92,7 @@ fn operation(
                     schema_version: SchemaV1,
                     dataset_revision_id: dataset,
                     request: Box::new(NativePortfolioStudyRequestV1 {
+                        settlements: Vec::new(),
                         schema_version: SchemaV1,
                         source_selection: request.selection,
                         evaluation_start_ns: count(120_000_000_000),
@@ -88,6 +116,7 @@ fn operation(
         0 => NativeTaskParametersV1::ValidateData {
             schema_version: SchemaV1,
             selections: vec![NativeDatasetSelectionV1 {
+                settlements: Vec::new(),
                 dataset_revision_id: dataset,
                 selection,
             }],
@@ -155,6 +184,7 @@ fn operation(
             schema_version: SchemaV1,
             dataset_revision_id: dataset,
             request: Box::new(NativeSimulationRequestV1 {
+                settlements: Vec::new(),
                 schema_version: SchemaV1,
                 selection,
                 settings: NativeSimulationSettingsV1 {
@@ -195,13 +225,22 @@ async fn accepts(
     metadata: RuntimeCatalogMetadataV1,
     selection: NativeBarSelectionV1,
 ) -> bool {
+    accepts_with_settlements(kind, metadata, selection, Vec::new()).await
+}
+
+async fn accepts_with_settlements(
+    kind: u8,
+    metadata: RuntimeCatalogMetadataV1,
+    selection: NativeBarSelectionV1,
+    settlements: Vec<contracts::settlement::NativeSettlementGroupV1>,
+) -> bool {
     let root = tempfile::tempdir().unwrap();
     let journal = Journal::open(&root.path().join("journal.sqlite"), 64 * 1024 * 1024, 4)
         .await
         .unwrap();
     let dataset = Id::new();
     let model = Id::new();
-    let parameters = if matches!(kind, 6 | 7) {
+    let mut parameters = if matches!(kind, 6 | 7) {
         let mut actual = metadata.quality.datasets[0].selection.clone();
         actual.decision_cutoff_ns = actual.event_end_ns;
         let NativeTaskParametersV1::SimulatePortfolio { mut request, .. } =
@@ -244,6 +283,20 @@ async fn accepts(
     } else {
         operation(kind, dataset, model, selection)
     };
+    match &mut parameters {
+        NativeTaskParametersV1::ValidateData { selections, .. } => {
+            for selected in selections {
+                selected.settlements = settlements.clone();
+            }
+        }
+        NativeTaskParametersV1::SimulatePortfolio { request, .. }
+        | NativeTaskParametersV1::SimulateCandidate { request, .. }
+        | NativeTaskParametersV1::SimulatePortfolioSequence { request, .. } => {
+            request.settlements = settlements
+        }
+        NativeTaskParametersV1::StudyPortfolio { request, .. } => request.settlements = settlements,
+        _ => {}
+    }
     let parameter = Id::new();
     let encoded = serde_json::to_vec(&parameters).unwrap();
     journal.put_object(parameter, "1", &encoded).await.unwrap();
@@ -437,4 +490,52 @@ async fn all_data_operations_reject_unregistered_types_instruments_and_event_ran
         missing_member.universe.membership.clear();
         assert!(!accepts(kind, missing_member, selection).await);
     }
+}
+
+#[tokio::test]
+async fn frozen_settlement_vectors_cannot_be_replaced_under_the_same_registered_snapshot() {
+    let mut metadata = catalog_fixture::metadata();
+    let id = prediction::IDS[0];
+    metadata.universe.membership[0].instrument_id = id.into();
+    metadata.universe.instrument_definitions = prediction::instruments("0", 200_000_000_000)
+        .iter()
+        .map(|instrument| serde_json::to_value(instrument).unwrap())
+        .collect();
+    let quality = &mut metadata.quality.datasets[0];
+    quality.instrument_ids = vec![id.into()];
+    quality.selection.bar_types = vec![format!("{id}-1-MINUTE-LAST-EXTERNAL")];
+    quality.settlements =
+        prediction::settlement_groups(200_000_000_000, 230_000_000_000, ["1", "0"]);
+    let selected = quality.selection.clone();
+    let frozen = quality.settlements.clone();
+    domain::catalogs::metadata(&metadata, now()).unwrap();
+    assert!(accepts_with_settlements(0, metadata.clone(), selected.clone(), frozen.clone()).await);
+    assert!(!accepts(0, metadata.clone(), selected.clone()).await);
+    for mutation in 0..3 {
+        let mut replaced = frozen.clone();
+        match mutation {
+            0 => {
+                for o in &mut replaced[0].outcomes {
+                    o.close_price = "0.5".parse().unwrap();
+                }
+            }
+            1 => {
+                for o in &mut replaced[0].outcomes {
+                    o.ts_init = count(229_000_000_000);
+                }
+            }
+            _ => {
+                replaced[0].outcomes.pop();
+            }
+        }
+        assert!(!accepts_with_settlements(0, metadata.clone(), selected.clone(), replaced).await);
+    }
+    let mut restarted = metadata.clone();
+    for outcome in &mut restarted.quality.datasets[0].settlements[0].outcomes {
+        outcome.close_price = "0.5".parse().unwrap();
+    }
+    domain::catalogs::metadata(&restarted, now()).unwrap();
+    assert!(!accepts_with_settlements(0, restarted, selected.clone(), frozen).await);
+    // No outcome vector is introduced into the Alpha forecast request.
+    assert!(accepts(1, metadata, selected).await);
 }

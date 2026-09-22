@@ -1,0 +1,41 @@
+name: Polymarket history
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: polymarket-history-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  native-history:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      RUSTUP_TOOLCHAIN: '1.98.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source and native toolchain
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv
+          rustup run "$RUSTUP_TOOLCHAIN" cargo fmt --all -- --check
+      - name: Check operator-only native data preparation
+        run: |
+          set -euo pipefail
+          cargo clippy --locked -p job --features polymarket-history --bin polymarket-history -- -D warnings
+          cargo test --locked -p job --features polymarket-history --bin polymarket-history
+          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- --help
+          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- fetch --help
+          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- import --help
+          git diff --exit-code

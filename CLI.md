@@ -103,8 +103,11 @@ GET /api/v2/projects/{id}/releases，按原ID倒序分页，limit为1–100；�
 未知提交保持原请求/键重试；不能覆盖权重、有效期、来源或上传包绕过PORTFOLIO/PASS。
 完整原生成功链路和下游交付仍待验收。
 
-原生单币种模拟中 CurrencyPair 仅支持 MARGIN，Equity 支持 CASH/MARGIN；
-执行假设和实际运行共用锁定 Nautilus 0.63.0 的该限制，不自动转换旧配置。
+原生单币种模拟中 CurrencyPair 仅支持 MARGIN，Equity 支持 CASH/MARGIN。
+POLYMARKET BinaryOption 使用 CASH、原抵押币和 NAUTILUS_POLYMARKET 费用模型；
+需要 polymarket-research/1 镜像、原费用表及覆盖生命周期的来源记录，不自动转换旧配置。
+独立数据准备命令 `polymarket-history fetch/import` 的构建、参数、目录与限制见
+[Polymarket 历史数据与原生研究](docs/polymarket-history.md)。它不代替 Dataset 登记或研究准入。
 
 完整产品合同在 DESIGN。原生 `server client` 复用已实现 HTTP 控制面的同一 Rust 请求/响应合同；原生任务、认证、数据许可、研究准备与运行命令见下文。完整研究/组合/交付闭环仍须逐项验收，不提供绕过 API 的手工 SQL 业务路径。
 
