@@ -7,7 +7,6 @@ use contracts::Id;
 use serde_json::{json, Value};
 use sqlx::{ConnectOptions, PgPool};
 use std::process::Output;
-use store::Store;
 use time::{Duration, OffsetDateTime};
 use tower_sessions::{session::Record, SessionStore};
 use tower_sessions_sqlx_store::PostgresStore;
