@@ -824,12 +824,12 @@ SDK、stdio 子进程和 HTTP 故障服务；故障服务不等于实际 Postgre
 ## 原生组件与合同验证
 
 ```sh
-cargo run --locked -p job -- verify-native --output NEW_DIRECTORY
+cargo test --locked -p job --tests
 cargo run --locked -q -p contracts --example generate
 cargo run --locked -q -p server -- openapi
 ```
 
-`job` 命令只运行固定 Rust Clarabel/Nautilus/Arrow fixture，输出不可交付；不能生成正式资格或目标包。`contracts` 生成共享 DTO；`server openapi` 生成实际 HTTP 路由合同。原生 Codex 兼容性命令仍为 `cargo run --locked -p job --example codex_contract`，需 `CODEX_NATIVE_BIN` 与不存在的 `CODEX_PROBE_DIR`；不是完整模型工具循环。
+`job` 测试覆盖真实目录、预测、原生优化、共享资金模拟及 CLI。固定数值参考仅在测试中使用，不提供演示命令。`contracts` 生成共享 DTO；`server openapi` 生成实际 HTTP 路由合同。Codex 协议检查使用 `cargo run --locked -p job --example codex_contract`，需要 `CODEX_NATIVE_BIN` 与不存在的 `CODEX_PROBE_DIR`，检查原生进程的握手、模型分页和 Thread 创建。
 
 ## 开发测试
 

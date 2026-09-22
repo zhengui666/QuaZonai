@@ -306,11 +306,11 @@ DSR/PBO 默认不支持：未确认选定 skfolio 版本具备满足本项目的
 
 ## 4. 当前原生适配的准确边界
 
-`job verify-native --output NEW_DIRECTORY` 只接受不存在目录，0700 创建；一个任务一个进程。报告始终 `origin=FIXTURE`、`deliverable=false`，不能产生 Qualification/Release/Handoff。
+`job execute` 执行冻结的类型化计算任务，`job run-bounded` 管理原生进程期限。每个任务使用独立进程，从已登记目录、模型和请求读取输入。固定数值参考仅在隔离测试中使用，不提供演示命令或生产数据生成器。
 
-- `optimization.rs` 直接调用 Clarabel Rust `DefaultSolver`，原生二次锥规划最小方差；两资产协方差 diag(1,4)，long-only、预算1，独立手算参考0.8/0.2，容差1e-5。必须原生 `Solved`、有限权重和正确维度；无 Python 或生产兜底。
-- `backtest.rs` 直接调用 Nautilus Rust BacktestEngine 和上游 EmaCross，固定745个 synthetic quote、实际原生事件/订单/持仓计数，成功/失败均 dispose。计数来自引擎，不写死“成交成功”；fixture仍不是 target-weight 多Alpha组合模拟。
-- `arrow.rs` 使用 Apache Arrow Rust RecordBatch/FileWriter/FileReader，create_new 写入，回读检查 schema/元数据/每个值和行数；不是 PyArrow。不存在第二套 IPC 协议。
+- `optimization.rs` 使用原生 Clarabel 求解冻结组合输入，检查求解状态、精确目标和完整约束，无解不返回备用权重。两资产独立数值参考仅编译到单元测试。
+- `simulation.rs` 使用 Nautilus 共享资金账户处理真实目录与冻结目标，保留原生费用、成交和权益。`study.rs` 执行滚动组合评估。
+- `crates/contracts/src/portfolio_history.rs` 使用原生 Apache Arrow 保存组合历史合同。正式 Arrow 读写与数值回归保留，不依赖演示输出。
 - `report.rs` 完整序列化、换行、sync_all后使用同文件系统 hard_link create-if-absent 发布正式名，不覆盖。任何发布前失败无正式成功报告；不是目录级崩溃一致性或生产 Artifact Store。
 - Codex 探针沿用官方 pinned二进制 stdio initialize/initialized/account/read/完整model分页/thread启动；QZ只保留受控适配，不获取隐藏推理/凭据。无凭据测试不能当作真实账号推理；T07及T08账号部分按[第0.4节](#acceptance-scope)豁免，同Thread工具链验证仍保留。
 - 原生 PostgreSQL+PGMQ 事务探针保留；临时fixture表不是正式生产Store。

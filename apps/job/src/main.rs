@@ -30,11 +30,6 @@ enum Operation {
         #[arg(long, default_value = "/output")]
         output_root: PathBuf,
     },
-    /// Run native compatibility fixtures in a new private directory.
-    VerifyNative {
-        #[arg(long)]
-        output: PathBuf,
-    },
     /// Solve one frozen allocation request read from stdin.
     Allocate,
     /// Predict using one immutable native catalog and a bounded Wasm artifact.
@@ -176,23 +171,6 @@ fn run(operation: Operation) -> Result<()> {
                     .map_err(|error| anyhow::anyhow!(error.to_string()))
             })?)
         }
-        Operation::VerifyNative { output: directory } => {
-            let mut builder = fs::DirBuilder::new();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::DirBuilderExt;
-                builder.mode(0o700);
-            }
-            builder.create(&directory)?;
-            let report = job::probe(&directory)?;
-            job::write_probe_report(&directory, "native-probe.json", &report)?;
-            // Publication already committed; a closed output pipe does not undo it.
-            let _ = writeln!(
-                std::io::stdout(),
-                "native compatibility probe completed; origin=FIXTURE; deliverable=false"
-            );
-            Ok(())
-        }
     }
 }
 
@@ -202,5 +180,25 @@ fn main() {
         // No upstream tracebacks, host paths, input contents or secrets on this channel.
         eprintln!("QZ_NATIVE_JOB_FAILED");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Arguments;
+    use clap::Parser;
+
+    #[test]
+    fn executable_commands_exclude_the_removed_compatibility_probe() {
+        for command in ["allocate", "run-bounded", "execute"] {
+            assert!(Arguments::try_parse_from(["job", command]).is_ok());
+        }
+        assert!(Arguments::try_parse_from([
+            "job",
+            "verify-native",
+            "--output",
+            "unused-output-directory",
+        ])
+        .is_err());
     }
 }
