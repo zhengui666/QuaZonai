@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git ls-remote origin refs/heads/feat/polymarket-native-research | cut -f1)" = "$EXPECTED_HEAD"
-          for script in review-contracts.py review-native.py review-bindings.py review-tests.py review-docs.py; do
+          for script in review-contracts.py review-native.py review-bindings.py review-tests.py review-docs.py review-diagnostics.py; do
             python3 "../authored/.opensdlc/tasks/polymarket-native-research/$script"
           done
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
@@ -60,6 +60,7 @@ jobs:
       - name: Execute actual source and native catalog regressions
         run: |
           set -euo pipefail
+          cargo test --locked -p job --features polymarket-history --test polymarket portfolio_build_rejects_expired_and_cross_expiry_targets_before_publishing_weights -- --nocapture
           cargo test --locked -p contracts -p domain
           cargo test --locked -p job --features polymarket-history
           cargo test --locked -p runtime --test catalog_scope
