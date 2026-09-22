@@ -53,6 +53,68 @@ fn successful(output: &Output) -> Value {
 }
 
 #[test]
+fn documented_alpha_workflow_distinguishes_entity_version_id_and_version_number() {
+    const VERSION_ID: &str = "018fc823-8e40-7000-8000-000000000002";
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/quazonai/references/results.md");
+    let instructions = fs::read_to_string(path).unwrap();
+    for (command, route) in [
+        ("versions", format!("/api/v2/alphas/{ID}/versions")),
+        ("show", format!("/api/v2/alphas/{ID}/versions/7")),
+        (
+            "evaluations",
+            format!("/api/v2/alpha-versions/{VERSION_ID}/evaluations"),
+        ),
+        (
+            "qualifications",
+            format!("/api/v2/alpha-versions/{VERSION_ID}/qualifications"),
+        ),
+        (
+            "calibration",
+            format!("/api/v2/alpha-versions/{VERSION_ID}/calibration"),
+        ),
+    ] {
+        let prefix = format!("alpha {command} ");
+        let example = instructions
+            .split('`')
+            .enumerate()
+            .find_map(|(index, text)| (index % 2 == 1 && text.starts_with(&prefix)).then_some(text))
+            .unwrap_or_else(|| panic!("missing documented command: {command}"));
+        let identity = if matches!(command, "versions" | "show") {
+            "ALPHA_ID"
+        } else {
+            "ALPHA_VERSION_ID"
+        };
+        assert_eq!(example.split_whitespace().nth(2), Some(identity));
+        let args: Vec<_> = example
+            .split_whitespace()
+            .map(|argument| match argument {
+                "ALPHA_ID" => ID,
+                "ALPHA_VERSION_ID" => VERSION_ID,
+                "VERSION" => "7",
+                value => value,
+            })
+            .collect();
+        let output = preview_at("http://localhost:9", &args, None);
+        let value = successful(&output);
+        assert_eq!(value["route"], route, "{example}");
+        assert_eq!(value["method"], "GET");
+        assert_eq!(value["request_sent"], false);
+        let help = invoke(&["client", "alpha", command, "--help"], None);
+        assert!(help.status.success());
+        assert!(String::from_utf8(help.stdout)
+            .unwrap()
+            .contains(&format!("<{identity}>")));
+    }
+    let help = invoke(&["client", "alpha", "evaluate", "--help"], None);
+    assert!(help.status.success());
+    assert!(String::from_utf8(help.stdout)
+        .unwrap()
+        .contains("<ALPHA_VERSION_ID>"));
+    assert!(instructions.contains("`alpha evaluate ALPHA_VERSION_ID`"));
+}
+
+#[test]
 fn preview_sends_no_request_and_does_not_open_missing_credentials_or_echo_body_keys() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
