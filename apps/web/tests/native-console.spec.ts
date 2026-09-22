@@ -219,34 +219,40 @@ async ({ page, context }) => {
 // Both cases run before the controlled restart. The restart phase reuses only
 // the original persistent checkpoint; it does not recreate any project.
 if (config.phase === 'before-restart') {
-  test('all native pages remain accessible in three viewports', async ({ page, context }) => {
+  test('all native pages remain accessible in both themes and three viewports', async ({ page, context }) => {
     test.setTimeout(180_000);
     await page.goto('/');
     await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
     for (const cookie of await context.cookies()) rememberPrivateValue(config, cookie.value);
-    for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
-      await page.setViewportSize(viewport);
-      for (const label of ['研究', 'Alpha', '组合', '交付', '运行', '设置']) {
-        if (viewport.width < 992) {
-          await page.getByRole('button', { name: '打开主导航' }).click();
+    for (const mode of ['light', 'dark']) {
+      if (await page.locator('html').getAttribute('data-theme') !== mode) {
+        await page.getByRole('button', { name: mode === 'dark' ? '切换为深色主题' : '切换为浅色主题' }).click();
+      }
+      await expect(page.locator('html')).toHaveAttribute('data-theme', mode);
+      for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport);
+        for (const label of ['研究', 'Alpha', '组合', '交付', '运行', '设置']) {
+          if (viewport.width < 992) {
+            await page.getByRole('button', { name: '打开主导航' }).click();
+          }
+          await page.getByRole('menuitem', { name: label, exact: true }).click();
+          await expect(page.getByRole('heading', { level: 1, name: label, exact: true })).toBeVisible();
+          if (viewport.width < 992) {
+            await expect(page.getByRole('dialog', { name: '主导航', exact: true })).toBeHidden();
+          }
+          // Audit the completed real query, not a button's disabled-to-enabled
+          // transition. Wait on browser animation completion, not a fixed delay.
+          await expect(page.locator('.ant-select-loading:visible, .ant-skeleton:visible, .ant-spin-spinning:visible, .ant-btn-loading:visible')).toHaveCount(0);
+          await page.evaluate(async () => {
+            await Promise.all(document.getAnimations()
+              .filter(animation => animation.effect?.getTiming().iterations !== Infinity)
+              .map(animation => animation.finished.catch(() => {})));
+          });
+          await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+            .toBeLessThanOrEqual(viewport.width + 1);
+          const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+          expect.soft(result.violations, `${label} / ${mode} at ${viewport.width}px`).toEqual([]);
         }
-        await page.getByRole('menuitem', { name: label, exact: true }).click();
-        await expect(page.getByRole('heading', { level: 1, name: label, exact: true })).toBeVisible();
-        if (viewport.width < 992) {
-          await expect(page.getByRole('dialog', { name: '主导航', exact: true })).toBeHidden();
-        }
-        // Audit the completed real query, not a button's disabled-to-enabled
-        // transition. Wait on browser animation completion, not a fixed delay.
-        await expect(page.locator('.ant-select-loading:visible, .ant-skeleton:visible, .ant-spin-spinning:visible')).toHaveCount(0);
-        await page.evaluate(async () => {
-          await Promise.all(document.getAnimations()
-            .filter(animation => animation.effect?.getTiming().iterations !== Infinity)
-            .map(animation => animation.finished.catch(() => {})));
-        });
-        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth))
-          .toBeLessThanOrEqual(viewport.width + 1);
-        const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
-        expect.soft(result.violations, `${label} at ${viewport.width}px`).toEqual([]);
       }
     }
   });
