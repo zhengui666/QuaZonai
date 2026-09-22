@@ -7,6 +7,9 @@
 第三方价格点伪装为成交 BAR，或把当前 Gamma 快照回填为历史资产定义。
 原生执行选择 CASH、long-only 和统一资金账户；不把 NO 买入当成裸卖空 YES。
 组合、独立研究和目标证据继续使用现有冻结输入与 Clarabel，不新增回测内核。
+Polymarket 的正式日收益统计使用 Nautilus 的 365 日年化配置；原有股票／外汇
+路径维持 252 日配置。日均收益不年化，指标保留实际 period、原生方法与缺值原因。
+Canonical 原始报告保持上游原样；正式 portfolio statistics 不使用其逐持仓兜底收益。
 
 NAUTILUS_POLYMARKET 引用锁定 PolymarketFeeModel；费用 schedule 必须存在，
 且符合原生 exponent=1/takerOnly 合同。缺失不等于免费；真实零费表可以为零。
@@ -45,7 +48,9 @@ OrderBookDelta、Bar 与 ParquetDataCatalog，不重建 SDK、行情存储或撮
 默认科学 job 不因此获得网络功能。该工具不是 HTTP/MCP 科学任务。
 
 本地交换文件使用 schema_version=1、source_reference、source_observed_at、
-source_metadata、instruments 及分别存放的 trades/quotes/deltas/bars。
+source_metadata、instruments 及分别存放的 trades/quotes/deltas/bars/closes。
+写入按原生 instrument_id 分区，BAR 按完整 BarType 分区，不能混写不同资产的
+Parquet 元数据；同时间戳的盘口更新保持原始顺序。
 资产限定为原生 POLYMARKET BinaryOption；记录必须匹配资产，并满足原生价格、
 时间和身份约束。导入至全新目录：catalog 为原生数据，source-evidence.json
 保存原始输入，import-report.json 最后写入。失败不覆盖旧目录；缺最后报告是

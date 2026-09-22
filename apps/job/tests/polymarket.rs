@@ -248,5 +248,30 @@ fn two_original_alpha_members_run_through_native_portfolio_study() {
     let result: NativePortfolioStudyResultV1 = serde_json::from_slice(&output.stdout).unwrap();
     domain::execution::check_portfolio_study(&request, &result).unwrap();
     assert_eq!(result.frames.len(), 3);
+    let simulation_request = result.simulation_request.as_ref().unwrap();
+    let simulation = result.simulation.as_ref().unwrap();
+    let (metrics, _) = domain::execution::portfolio_simulation_metrics(
+        contracts::Id::new(),
+        contracts::Id::new(),
+        simulation_request,
+        simulation,
+    )
+    .unwrap();
+    assert_eq!(metrics[0].annualization_factor, None);
+    assert_eq!(metrics[1].annualization_factor, Some(365.0));
+    assert_eq!(metrics[2].annualization_factor, Some(365.0));
+    let original = simulation
+        .statistics
+        .iter()
+        .find(|s| {
+            s.group == NativeStatisticGroup::Returns
+                && s.native_key == "Returns Volatility (365 days)"
+        })
+        .unwrap();
+    assert_eq!(metrics[1].value, original.value);
+    assert!(!simulation
+        .statistics
+        .iter()
+        .any(|s| s.group == NativeStatisticGroup::Returns && s.native_key.ends_with("(252 days)")));
     assert!(result.consumed_fuel.get() > 0);
 }

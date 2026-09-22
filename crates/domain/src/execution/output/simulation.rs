@@ -26,6 +26,9 @@ pub fn metrics(
         .ok_or_else(|| bad("native_output.simulation_period"))?;
     let period_end = chrono::DateTime::from_timestamp_micros(end as i64)
         .ok_or_else(|| bad("native_output.simulation_period"))?;
+    let period = crate::prediction::portfolio_annualization_days(&request.settings.fee_model);
+    let volatility_key = format!("Returns Volatility ({period} days)");
+    let sharpe_key = format!("Sharpe Ratio ({period} days)");
     let mut records = Vec::with_capacity(3);
     let mut capabilities = Vec::with_capacity(3);
     for (code, key, method, unit, annualization, higher) in [
@@ -39,18 +42,18 @@ pub fn metrics(
         ),
         (
             "PORTFOLIO_RETURN_VOLATILITY",
-            "Returns Volatility (252 days)",
+            volatility_key.as_str(),
             "nautilus-analysis.ReturnsVolatility",
             "ANNUALIZED_RETURN_STDDEV",
-            Some(252.0),
+            Some(period as f64),
             false,
         ),
         (
             "PORTFOLIO_SHARPE_RATIO",
-            "Sharpe Ratio (252 days)",
+            sharpe_key.as_str(),
             "nautilus-analysis.SharpeRatio",
             "RATIO",
-            Some(252.0),
+            Some(period as f64),
             true,
         ),
     ] {
@@ -246,7 +249,7 @@ pub(super) fn binding(
         return Err(bad("native_output.simulation_parameters"));
     }
     let currency = &request.settings.base_currency;
-    if iso_currency::Currency::from_code(currency).is_none() {
+    if !contracts::research_currency::supported(currency) {
         return Err(bad("native_output.account_currency"));
     }
     for point in &request.target_points {

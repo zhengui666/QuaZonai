@@ -3,7 +3,13 @@ use crate::catalog::{load_catalog, NativeMarketData};
 use anyhow::{ensure, Result};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use contracts::{science::*, DbCounter, DecimalValue, SchemaV1};
-use nautilus_analysis::analyzer::PortfolioAnalyzer;
+use nautilus_analysis::{
+    analyzer::{PortfolioAnalyzer, Statistic},
+    statistics::{
+        returns_volatility::ReturnsVolatility, sharpe_ratio::SharpeRatio,
+        sortino_ratio::SortinoRatio,
+    },
+};
 use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
     engine::BacktestEngine,
@@ -544,7 +550,10 @@ fn validate_point(
 
 // The engine's preferred returns may fall back to per-position returns. Build
 // the native snapshot-only analyzer so that fallback cannot qualify a portfolio.
-fn portfolio_return_analysis(engine: &BacktestEngine) -> Result<PortfolioAnalyzer> {
+fn portfolio_return_analysis(
+    engine: &BacktestEngine,
+    settings: &NativeSimulationSettingsV1,
+) -> Result<PortfolioAnalyzer> {
     let accounts = engine.kernel().cache.borrow().accounts_all_owned();
     ensure!(accounts.len() == 1, "SIMULATION_ACCOUNT_COUNT_MISMATCH");
     let account_ids = accounts
@@ -557,6 +566,28 @@ fn portfolio_return_analysis(engine: &BacktestEngine) -> Result<PortfolioAnalyze
         .borrow()
         .snapshots(&account_ids[0]);
     let mut analyzer = PortfolioAnalyzer::default();
+    let period = domain::prediction::portfolio_annualization_days(&settings.fee_model);
+    if domain::prediction::uses_native_fee(&settings.fee_model) {
+        use std::sync::Arc;
+        let replacements: [(Statistic, Statistic); 3] = [
+            (
+                Arc::new(ReturnsVolatility::new(None)),
+                Arc::new(ReturnsVolatility::new(Some(period))),
+            ),
+            (
+                Arc::new(SharpeRatio::new(None)),
+                Arc::new(SharpeRatio::new(Some(period))),
+            ),
+            (
+                Arc::new(SortinoRatio::new(None)),
+                Arc::new(SortinoRatio::new(Some(period))),
+            ),
+        ];
+        for (original, replacement) in replacements {
+            analyzer.deregister_statistic(&original);
+            analyzer.register_statistic(replacement);
+        }
+    }
     analyzer.set_portfolio_returns_from_snapshots(&account_ids, &snapshots);
     Ok(analyzer)
 }
@@ -732,7 +763,7 @@ pub(crate) fn run(
                 ));
             }
         }
-        let daily = portfolio_return_analysis(&engine)?;
+        let daily = portfolio_return_analysis(&engine, &request.settings)?;
         for (group, values) in [
             (
                 NativeStatisticGroup::Returns,
