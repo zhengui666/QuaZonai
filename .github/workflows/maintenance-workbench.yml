@@ -31,6 +31,8 @@ jobs:
           PY
           python "$RUNNER_TEMP/production-cleanup.py"
           rm -rf .github/cleanup-payload
+          # Workflow changes are published separately through the authorized connector.
+          git restore --source=HEAD --worktree -- .github/workflows
           test ! -e docs
           test ! -e apps/web/demo
           git diff --check
