@@ -94,6 +94,10 @@ async fn native_rolling_study(prediction: bool) {
         let expiration = 4 * 86_400_000_000_000;
         polymarket::write_catalog(catalog.path(), 2 * 1440 + 20, "0", expiration, true);
         polymarket::settings(&mut request.execution_settings, "0", expiration);
+        // The same 40% participation limit must remain feasible at the actual
+        // sub-dollar prices. Do not relax capacity just to make this test pass.
+        request.mandate.capital_assumption = "1000000".parse().unwrap();
+        request.execution_settings.starting_capital = request.mandate.capital_assumption.clone();
         request.mandate.base_currency = "pUSD".into();
         request.source_selection.bar_types = polymarket::IDS
             .iter()
