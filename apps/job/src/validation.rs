@@ -38,7 +38,7 @@ pub fn predict_frozen_calibration(
         values.iter().all(|v| v.is_finite()),
         "CALIBRATION_PREDICTION_INVALID"
     );
-    Ok(values.to_vec())
+    Ok(values.into_raw_vec_and_offset().0)
 }
 
 pub use domain::execution::validation::{
@@ -51,6 +51,16 @@ pub use domain::execution::validation::{
 pub fn fixed_weighted_forecast(
     forecasts: &[Vec<f64>],
     weights: &[contracts::DecimalValue],
+) -> Result<Vec<f64>> {
+    weighted_forecast(
+        &forecasts.iter().map(Vec::as_slice).collect::<Vec<_>>(),
+        &weights.iter().collect::<Vec<_>>(),
+    )
+}
+
+fn weighted_forecast(
+    forecasts: &[&[f64]],
+    weights: &[&contracts::DecimalValue],
 ) -> Result<Vec<f64>> {
     use bigdecimal::ToPrimitive;
     let maximum = contracts::portfolio::MAX_ALLOCATION_ASSETS;
@@ -66,7 +76,7 @@ pub fn fixed_weighted_forecast(
                 .all(|row| row.len() == assets && row.iter().all(|v| v.is_finite())),
         "ENSEMBLE_FORECAST_INVALID"
     );
-    domain::portfolio::ensemble_weights(weights.iter())?;
+    domain::portfolio::ensemble_weights(weights.iter().copied())?;
     let weights = weights
         .iter()
         .map(|w| {
@@ -83,14 +93,17 @@ pub fn fixed_weighted_forecast(
         .collect::<Result<Vec<_>>>()?;
     let matrix = Array2::from_shape_vec(
         (forecasts.len(), assets),
-        forecasts.iter().flatten().copied().collect(),
+        forecasts
+            .iter()
+            .flat_map(|row| row.iter().copied())
+            .collect(),
     )?;
     let forecast = ndarray::ArrayView1::from(&weights).dot(&matrix);
     ensure!(
         forecast.iter().all(|v| v.is_finite()),
         "ENSEMBLE_RESULT_NONFINITE"
     );
-    Ok(forecast.to_vec())
+    Ok(forecast.into_raw_vec_and_offset().0)
 }
 
 /// Common ordering and metadata are checked before any aggregation. This does not
@@ -109,16 +122,16 @@ pub fn aligned_portfolio_forecast(
             ),
         "ENSEMBLE_BAR_CONTRACT_MISMATCH"
     );
-    fixed_weighted_forecast(
+    weighted_forecast(
         &input
             .members
             .iter()
-            .map(|member| member.forecasts.clone())
+            .map(|member| member.forecasts.as_slice())
             .collect::<Vec<_>>(),
         &input
             .members
             .iter()
-            .map(|member| member.ensemble_weight.clone())
+            .map(|member| &member.ensemble_weight)
             .collect::<Vec<_>>(),
     )
 }

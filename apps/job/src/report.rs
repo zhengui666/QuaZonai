@@ -64,46 +64,21 @@ mod tests {
     use super::{write_probe_report, write_with_sync};
     use std::fs;
     use std::io;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     use serde::{Serialize, Serializer};
     use serde_json::json;
 
-    struct TestDirectory(PathBuf);
-    impl TestDirectory {
-        fn new() -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            for _ in 0..100 {
-                let path = std::env::temp_dir().join(format!(
-                    "report-test-{}-{}",
-                    std::process::id(),
-                    NEXT.fetch_add(1, Ordering::Relaxed)
-                ));
-                if fs::create_dir(&path).is_ok() {
-                    return Self(path);
-                }
-            }
-            panic!("could not create isolated report test directory")
-        }
-    }
-    impl Drop for TestDirectory {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
     #[test]
     fn sync_failure_after_valid_json_does_not_publish_a_report() {
-        let directory = TestDirectory::new();
+        let directory = tempfile::tempdir().unwrap();
         let error = write_with_sync(
-            &directory.0,
+            directory.path(),
             "report.json",
             &json!({"origin": "FIXTURE"}),
             |_| Err(io::Error::other("injected disk synchronization failure")),
         );
         assert!(error.is_err());
-        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 
     #[test]
@@ -114,38 +89,40 @@ mod tests {
                 Err(serde::ser::Error::custom("injected serialization failure"))
             }
         }
-        let directory = TestDirectory::new();
-        assert!(write_probe_report(&directory.0, "report.json", &Invalid).is_err());
-        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+        let directory = tempfile::tempdir().unwrap();
+        assert!(write_probe_report(directory.path(), "report.json", &Invalid).is_err());
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 
     #[test]
     fn publication_never_overwrites_an_existing_report() {
-        let directory = TestDirectory::new();
-        let path = directory.0.join("report.json");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("report.json");
         fs::write(&path, "previous report").unwrap();
-        assert!(write_probe_report(&directory.0, "report.json", &json!({"new": true})).is_err());
+        assert!(
+            write_probe_report(directory.path(), "report.json", &json!({"new": true})).is_err()
+        );
         assert_eq!(fs::read_to_string(path).unwrap(), "previous report");
-        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
     #[test]
     fn successful_publication_is_complete_and_has_no_temporary_name() {
-        let directory = TestDirectory::new();
+        let directory = tempfile::tempdir().unwrap();
         let expected = json!({"origin": "FIXTURE", "deliverable": false});
-        write_probe_report(&directory.0, "report.json", &expected).unwrap();
-        let contents = fs::read_to_string(directory.0.join("report.json")).unwrap();
+        write_probe_report(directory.path(), "report.json", &expected).unwrap();
+        let contents = fs::read_to_string(directory.path().join("report.json")).unwrap();
         assert!(contents.ends_with('\n'));
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&contents).unwrap(),
             expected
         );
-        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
     #[test]
     fn publication_rejects_non_basename_paths() {
-        let directory = TestDirectory::new();
+        let directory = tempfile::tempdir().unwrap();
         for name in [
             "",
             ".",
@@ -154,8 +131,8 @@ mod tests {
             "/report.json",
             "nested/report.json",
         ] {
-            assert!(write_probe_report(&directory.0, name, &json!({})).is_err());
+            assert!(write_probe_report(directory.path(), name, &json!({})).is_err());
         }
-        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 }

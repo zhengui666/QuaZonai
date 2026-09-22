@@ -657,7 +657,7 @@ async fn concurrent_issuance_materializes_only_one_verifier_and_database_failure
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn native_machine_failures_are_bounded_without_blocking_local_sessions(pool: PgPool) {
+async fn machine_verification_is_bounded_without_persistent_owner_lockout(pool: PgPool) {
     let mut f = fixture(pool.clone()).await;
     let state = server::AppState::new(
         f.store.clone(),
@@ -684,7 +684,7 @@ async fn native_machine_failures_are_bounded_without_blocking_local_sessions(poo
         issued["public_token_id"].as_str().unwrap(),
         integrations::authentication::random_capability()
     );
-    for _ in 0..5 {
+    for _ in 0..6 {
         assert_eq!(
             command(
                 &f,
@@ -698,51 +698,25 @@ async fn native_machine_failures_are_bounded_without_blocking_local_sessions(poo
             StatusCode::UNAUTHORIZED
         );
     }
-    let denied = command(
+    let bearer = format!("Bearer {token}");
+    let accepted = command(
         &f,
         "GET",
         "/api/v2/auth/machine",
         Value::Null,
-        &[("authorization", &bad)],
+        &[("authorization", &bearer)],
     )
     .await;
-    assert_eq!(denied.status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(denied.body["code"], "AUTH_RATE_LIMITED");
-    assert!(denied.headers.contains_key("retry-after"));
-    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM app.machine_auth_rate_windows")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(rows, 2);
-    for _ in 0..3 {
-        let unknown = format!(
-            "Bearer qz2.{}.{}",
-            Id::new(),
-            integrations::authentication::random_capability()
-        );
-        assert_eq!(
-            command(
-                &f,
-                "GET",
-                "/api/v2/auth/machine",
-                Value::Null,
-                &[("authorization", &unknown)]
-            )
-            .await
-            .status,
-            StatusCode::UNAUTHORIZED
-        );
-    }
+    assert_eq!(accepted.status, StatusCode::OK, "{}", accepted.body);
+    // Old migrations remain immutable, but current requests never write rate windows.
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.machine_auth_rate_windows")
             .fetch_one(&pool)
             .await
             .unwrap(),
-        2
+        0
     );
-    sqlx::query("UPDATE app.machine_auth_rate_windows SET window_started_at=clock_timestamp()-interval '61 seconds'").execute(&pool).await.unwrap();
     let held = machine_slots.acquire_many_owned(2).await.unwrap();
-    let bearer = format!("Bearer {token}");
     let busy = command(
         &f,
         "GET",

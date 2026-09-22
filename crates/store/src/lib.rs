@@ -30,7 +30,6 @@ pub use historical_import::{HistoricalArtifactPublication, HistoricalImportSourc
 mod historical_rows;
 mod historical_source;
 pub mod lifecycle;
-pub mod machine_auth;
 mod migration;
 pub mod portfolio;
 mod recovery;
@@ -55,8 +54,6 @@ pub enum StoreError {
     AuthenticationRequired,
     #[error("authentication attempt rejected")]
     InvalidCredentials,
-    #[error("authentication rate limit exceeded")]
-    AuthRateLimited { retry_after_seconds: u32 },
     #[error("operation is not permitted for this identity")]
     Forbidden,
     #[error("object revision changed")]
@@ -99,22 +96,6 @@ impl Store {
     /// This is never exposed through an Agent tool or an HTTP/CLI data endpoint.
     pub fn native_pool(&self) -> PgPool {
         self.pool.clone()
-    }
-
-    pub async fn verify_runtime_role(&self) -> Result<(), StoreError> {
-        // Inspect native ownership/ACLs across the entire application schema,
-        // including authority reachable through inherited or SET ROLE grants.
-        // Checking one authentication table would miss destructive access to
-        // unrelated immutable research/evidence records.
-        let elevated: bool = sqlx::query_scalar(include_str!("runtime_role.sql"))
-            .fetch_one(&self.pool)
-            .await?;
-        if elevated {
-            return Err(StoreError::Invalid(
-                "runtime_role_must_be_non_owner_and_unprivileged",
-            ));
-        }
-        Ok(())
     }
 
     pub fn from_pool(pool: PgPool) -> Self {

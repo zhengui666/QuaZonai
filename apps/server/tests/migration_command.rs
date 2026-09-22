@@ -173,10 +173,6 @@ async fn committed_schema_matches_upstream_and_supports_native_crud_as_runtime(p
     )
     .await
     .unwrap();
-    Store::from_pool(runtime.clone())
-        .verify_runtime_role()
-        .await
-        .unwrap();
     let native = PostgresStore::new(runtime.clone());
     let mut record = Record {
         id: Default::default(),

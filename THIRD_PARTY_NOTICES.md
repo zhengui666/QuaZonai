@@ -36,34 +36,16 @@ contracts; the SDK owns protocol parsing and service lifecycle. The native
 `Cargo.lock` records the exact transitive graph. Protocol fixture tests do not
 establish a complete Codex research loop or a finished license audit.
 
-A dependency inventory is not a completed license audit. Before distribution, inspect the complete resolved graph's upstream license texts and NOTICE requirements and comply with LGPL redistribution/linking obligations, including applicable relinking/source requirements. The generated source inventory below supports that work but does not replace it. No license is changed by a directory rename or rewrite. The repository does not vendor Cargo dependencies or toolchains.
+A dependency inventory is not a completed license audit. Before distribution, inspect the complete resolved graph's upstream license texts and NOTICE requirements and comply with LGPL redistribution/linking obligations, including applicable relinking/source requirements. The committed lockfiles support that work but do not replace it. No license is changed by a directory rename or rewrite. The repository does not vendor Cargo dependencies or toolchains.
 
-## Generated source inventory
+## Dependency inventory
 
-The existing [CI Rust job](.github/workflows/ci.yml) generates
-`source-dependencies.syft.json` and `source-dependencies.spdx.json` from only the
-six committed application manifests/lockfiles named above. Retrieve the
-`native-evidence-<commit>` artifact from the successful run for the reviewed commit.
-Check `tested-commit.txt`, `syft-version.txt`, `sbom-scope.txt` and the original
-`dependency-inputs/` alongside both generated files. After extracting that artifact,
-this standard query displays the native findings without rewriting them:
-
-```sh
-jq '.artifacts[] | {name, version, type, metadata, licenses}' source-dependencies.syft.json
-```
-
-The inventory includes optional, development and other-platform lock entries; it
-is not a list of packages proven to be linked into the released executable or
-installed in a Docker image. Cargo.lock does not contain all license texts.
-Missing licenses remain unknown, and a successful scan is not automatic clearance.
-Preserve native metadata and the original locks when distinguishing Git sources
-from package coordinates converted to SPDX. CI tools, container base packages and
-host services are not covered by these six source files.
-
-The [reuse note](docs/research/source-dependencies.md) records the exact upstream
-tool/action pins and limits. No release assets, GitHub dependency snapshots,
-vulnerability thresholds or new licensing policy are created by this scan.
-A configured step alone is not an executed SBOM; actual run results are required.
+The committed Cargo/npm lockfiles identify resolved dependency versions. Use
+`cargo tree --locked` and the relevant npm lockfile to inspect a build's graph;
+verify upstream license texts and redistribution obligations before distribution.
+CI no longer generates duplicate Syft/SPDX inventories on every change. Existing
+license notices remain applicable; optional/development dependencies in a lockfile
+are not proof that they are linked into a particular executable.
 
 ## Native PostgreSQL session-schema adaptation
 

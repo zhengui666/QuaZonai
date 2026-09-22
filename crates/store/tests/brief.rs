@@ -431,7 +431,6 @@ async fn real_non_owner_can_replace_only_draft_bindings_with_deployment_grants(p
     .await
     .unwrap();
     let store = Store::from_pool(native.clone());
-    store.verify_runtime_role().await.unwrap();
     let created = store
         .create_brief(&actor, "nonowner-create", &request)
         .await

@@ -13,7 +13,7 @@ env:
   CARGO_PROFILE_DEV_DEBUG: '0'
 concurrency:
   group: web-console-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   web-console:
     name: Web / contracts, browser and real Rust API

@@ -1,57 +1,25 @@
-# QuaZonai — project context
+# QuaZonai project context
 
 <a id="purpose"></a>
 ## Purpose and architecture
-
-A self-hosted, single-user research workbench that produces traceable evidence and target-only portfolio packages. QZ does not own broker credentials or trading execution. [Architecture navigation](../docs/architecture.md) follows actual source; [DESIGN](../DESIGN.md) is authoritative. React → server/domain/Store → PostgreSQL/PGMQ and immutable artifacts; trusted Worker → native Codex/Runtime → bounded Rust scientific jobs.
+Single-user local research and target-only delivery. Read [architecture](../docs/architecture.md) for module boundaries and [DESIGN](../DESIGN.md) for contracts.
 
 <a id="commands"></a>
 ## Working commands
-
-From the repository root after [contributor setup](../CONTRIBUTING.md#set-up-a-checkout):
-
-| Command | Healthy result / boundary |
-| --- | --- |
-| `make demo-preview` | Synthetic UI at loopback port 4179; Ctrl+C stops it; no production evidence |
-| `make check-docs` | Local Markdown links/anchors and server CLI help succeed |
-| `make check-architecture` | Actual direct workspace dependency graph follows DESIGN |
-| `make check-unit` | Format/Clippy and non-Store/non-Server workspace tests pass |
-| `make check` | Full defined Make checks pass with disposable PostgreSQL/PGMQ and native prerequisites |
-| `make check-web` | Generated client unchanged, types/tests/build succeed |
-
-Detailed prerequisites, narrower targets and browser/native checks live in [CONTRIBUTING](../CONTRIBUTING.md#verify-the-change) and [CLI](../CLI.md#开发测试), not a second command catalog here.
+Use [CONTRIBUTING](../CONTRIBUTING.md#verify-the-change), the root Makefile and actual native CLI help. Do not maintain another command table here.
 
 <a id="conventions"></a>
-## Conventions and recurring mistakes
-
-Read [AGENTS](../AGENTS.md). Preserve dirty worktrees and verify ownership. Update DESIGN before contract changes; follow callers through the real flow. Generate contracts rather than editing output. Reuse Rust/native components; no legacy wrappers or speculative service layers. Missing prerequisites, synthetic fixtures and old-Head reviews are not current passes. Never put account secrets or hidden reasoning in artifacts. This task's CI/review acceptance does not certify an unrelated production release.
+## Conventions
+Reuse native components; keep one contract source. Preserve data, licenses and immutable migration history. Remove obsolete source and its dedicated tests rather than archiving them. See [AGENTS](../AGENTS.md).
 
 <a id="owners"></a>
 ## Responsibilities
-
-[@zhengui666](https://github.com/zhengui666) is the repository/code owner in [CODEOWNERS](../.github/CODEOWNERS) and the decision route for requirements, engineering, releases and service operation. For this delivery, the web assistant authors through connected file tools and existing GitHub Actions executes native checks; GitHub Codex supplies independent read-only review. [The owner amendment](../DESIGN.md#acceptance-scope) removes CodexPro and dedicated-account acceptance as blockers, without treating waived tests as executed. Product Operator/Reviewer/Downstream identities are distinct from development permissions.
+The repository owner is the sole user and requirements authority. Web ChatGPT authors; GitHub Actions executes; GitHub Codex reviews read-only. Product Mission/evaluator/downstream boundaries are not extra human users.
 
 <a id="sources"></a>
-## Authoritative sources
-
-| Subject | Source |
-| --- | --- |
-| Product, architecture, interfaces, UX, acceptance | [DESIGN](../DESIGN.md) |
-| Actual operations and commands | [OPERATIONS](../OPERATIONS.md), [CLI](../CLI.md) |
-| Coverage and unsupported acceptance | [Evidence index](../docs/architecture/issue-62-execution.md), [compatibility](../docs/architecture/compatibility-matrix.md) |
-| Contributor onboarding and development governance | [CONTRIBUTING](../CONTRIBUTING.md), [AGENTS](../AGENTS.md) |
-| Review, maintenance and agent behavior checks | [review](review.md), [operations](operations.md), [evaluations](evals/suite.md) |
-| Current personal-production delivery | [Active task](tasks/personal-production/task.md); [open-source foundation](tasks/open-source-foundation/task.md) remains supporting context |
+## Sources
+Product: DESIGN. Operation: OPERATIONS / CLI. Source navigation: docs/architecture.md. Task intent and actual results: `.opensdlc/tasks/<task-id>/task.md`. Current delivery policy: [review](review.md); maintenance response: [operations](operations.md).
 
 <a id="native"></a>
 ## Native integration points
-
-| Capability | Actual entry / observed discovery |
-| --- | --- |
-| Agent instructions | Root [AGENTS.md](../AGENTS.md), read in this task |
-| Service-operation skill | [skills/quazonai/SKILL.md](../skills/quazonai/SKILL.md) is for operating the running service, not contributor navigation; [installation](../docs/agent-operations.md) remains host-specific |
-| Build and test | [Makefile](../Makefile), Cargo workspace, [web package](../apps/web/package.json) |
-| CI | [.github/workflows](../.github/workflows); GitHub run results are canonical |
-| Contribution and ownership | [PR template](../.github/PULL_REQUEST_TEMPLATE.md), [Issue forms](../.github/ISSUE_TEMPLATE), [CODEOWNERS](../.github/CODEOWNERS) |
-
-No repository-managed host hooks, autonomous deployment trigger or scheduled model-evaluation runner is installed by this change. The [evaluation suite](evals/suite.md) defines the bounded manual adoption and follow-up cadence.
+Existing GitHub Issues, PRs, Actions and review comments hold delivery evidence. The operational Skill is [skills/quazonai](../skills/quazonai/SKILL.md), not a development harness.

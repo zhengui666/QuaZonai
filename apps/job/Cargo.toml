@@ -50,7 +50,7 @@ ndarray = "=0.17.1"
 ndarray-stats = "=0.7.0"
 linregress = "=0.5.4"
 # Explicit portable dispatch avoids relying on tail-call optimization in debug builds.
-wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "std", "validate", "deterministic", "extra-checks", "portable-dispatch"] }
+wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "std", "validate", "deterministic", "portable-dispatch"] }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

@@ -194,9 +194,9 @@ Origin 会在启动时明确报错，不猜测 API 地址。`MISSION_WORKSPACES`
 
 ### 应用认证与数据库
 
-依赖固定 Rust 工具链及 PostgreSQL18 + PGMQ1.10.0，使用独立的新数据库。由原生 PostgreSQL 管理工具创建不带超级用户、创建数据库、创建角色权限的应用登录角色，密码通过交互或受保护配置输入；迁移身份与应用身份分开。
+依赖固定 Rust 工具链及 PostgreSQL18 + PGMQ1.10.0，使用独立的新数据库。数据库账号由本机所有者选择，可同时用于迁移与运行；独立低权限账号是可选方案。密码只通过交互或受保护配置输入。
 
-CLI.md 中 `init-state → migrate → serve` 是实际可执行入口。`migrate --application-role NAME` 通过 SQLx 和 tower-sessions 原生迁移创建域表及会话存储，授权应用 DML；`serve` 不执行迁移，并拒绝高权限/owner 数据库连接。升级前暂停 HTTP/CLI/MCP 写命令和 Worker，并等待旧事务结束；只用 `cargo run --locked -p server -- migrate`，不要在活跃库上直接执行 SQLx CLI 或单条迁移 SQL。该命令先用原生迁移锁和应用表写冲突锁保护整个待应用批次，失败全部回滚；锁超时应排查旧事务后重试，不杀事务或放宽锁跳过验证。0006 安全升级会撤销已初始化实例的全部历史浏览器/设备和一次性 Operator 授权，本机迁移后自动建立新会话，旧审计记录保留。API 和网页代理仅监听 loopback；HTTPS 也不例外。默认地址为 `http://localhost:8081`，不对外提供免登录服务。
+CLI.md 中 `init-state → migrate → serve` 是实际可执行入口。`migrate` 通过 SQLx 和 tower-sessions 原生迁移创建域表及会话存储；仅当使用独立运行角色时提供 `--application-role NAME`。`serve` 不执行迁移，也不因连接拥有数据库而拒绝启动。升级前暂停 HTTP/CLI/MCP 写命令和 Worker，并等待旧事务结束；只用 `cargo run --locked -p server -- migrate`，不要在活跃库上直接执行 SQLx CLI 或单条迁移 SQL。该命令先用原生迁移锁和应用表写冲突锁保护整个待应用批次，失败全部回滚；锁超时应排查旧事务后重试，不杀事务或放宽锁跳过验证。0006 安全升级会撤销已初始化实例的全部历史浏览器/设备和一次性 Operator 授权，本机迁移后自动建立新会话，旧审计记录保留。API 和网页代理仅监听 loopback；HTTPS 也不例外。默认地址为 `http://localhost:8081`，不对外提供免登录服务。
 
 浏览器直接进入工作台。首次本机请求自动建立不透明会话，业务数据不需要初始化验证码。旧 bootstrap、验证码登录、重新验证、信任设备和注销入口不再提供。
 
@@ -218,7 +218,7 @@ Operator 可创建独立 CLI/AUTOMATION/DOWNSTREAM 主体，系统任务的 MISS
 
 人工 CLI 管理操作通过 `/auth/operator-command-grants` 提交封闭 operation、原始目标和完整请求，取得最长300秒的一次性授权；无需验证码。使用 `X-Operator-Grant` 提交。当前机器凭据必须有效且属于 CLI，Agent、AUTOMATION、MISSION、DOWNSTREAM 不得领取；作用域、撤销、过期和幂等检查保持不变。
 
-机器 capability 的原生 Argon2 校验前，PostgreSQL 原子预约60秒窗口：每凭据最多5个、全局最多32个失败或在途尝试。成功仅归还所属原窗口的占用，失败、取消和计算槽繁忙保留至窗口重置；429响应含 Retry-After。机器计算使用独立2个槽，与本机浏览器请求分离；多个实例共享数据库窗口。不要以增加实例绕过限流。
+机器 capability 仍由原生 Argon2 校验，使用独立两槽限制计算并发；槽满返回 CRYPTO_BUSY。没有数据库失败次数窗口、全局尝试计数或历史失败锁定。错误 Bearer 始终拒绝，不回退成本机会话；研究预算超限仍单独处理。
 
 ## 正式数据登记与集成管理
 
@@ -236,7 +236,7 @@ Operator 可创建独立 CLI/AUTOMATION/DOWNSTREAM 主体，系统任务的 MISS
 
 ## Worker、正式数据验证与025升级
 
-`server worker` 使用与API相同的非owner应用账号、私有状态卷和受信任的Runtime目标配置，作为独立常驻进程启动。它读取现有PGMQ任务，不在控制面运行Nautilus、编译研究模型或维护另一份队列；默认科学任务和已启用的Mission各最多2个在途驱动，`WORKER_PARALLELISM` 可设1–32并分别应用于两类容量。SIGINT/SIGTERM停止领取新任务并排空已开始的有界I/O，不把停止Worker等同于停止远端计算。
+`server worker` 使用与API相同的数据库账号、私有状态卷和受信任的Runtime目标配置，作为独立常驻进程启动。它读取现有PGMQ任务，不在控制面运行Nautilus、编译研究模型或维护另一份队列；默认科学任务和已启用的Mission各最多2个在途驱动，`WORKER_PARALLELISM` 可设1–32并分别应用于两类容量。SIGINT/SIGTERM停止领取新任务并排空已开始的有界I/O，不把停止Worker等同于停止远端计算。
 
 迁移 `202609110025_native_tasks.sql` 新增三个不可变原生关联表：`run_native_tasks` 保存和准入同事务冻结的任务定义，`run_native_attempts` 保存唯一首次派发的JobSpec，`run_native_outputs` 记录远端原生对象与本地生产者产物的精确映射。旧Run不回填或假造这些定义；部署停写并使用正式 `server migrate`，保留旧历史，不直接修改迁移记录或队列表。
 

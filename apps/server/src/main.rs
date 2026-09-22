@@ -79,7 +79,7 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Migrate a new database using a separate privileged migration identity.
+    /// Explicitly migrate the database; optional grants support a separate runtime role.
     Migrate {
         #[command(flatten)]
         database: Database,
@@ -422,7 +422,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             store
                 .migrate_with_application_role(application_role.as_deref())
                 .await?;
-            println!("Domain and native session migrations completed. Run serve with the non-owner application identity.");
+            println!("Domain and native session migrations completed.");
         }
         Command::RecoverAccess {
             database,
@@ -446,7 +446,6 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let downstream_targets =
                 parse_integration_targets(&downstream_targets, development_http)?;
             let store = Store::connect(&database.database_url).await?;
-            store.verify_runtime_role().await?;
             store.authentication_snapshot().await?;
             let codex = server::codex_profiles::CodexDeployment::discover(
                 store.local_codex_bindings().await?,
@@ -519,7 +518,6 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 parse_integration_targets(&downstream_targets, development_http)?;
             let (vault, key) = load_state(&state_dir)?;
             let store = Store::connect(&database.database_url).await?;
-            store.verify_runtime_role().await?;
             store.authentication_snapshot().await?;
             let codex = server::codex_profiles::CodexDeployment::discover(
                 store.local_codex_bindings().await?,

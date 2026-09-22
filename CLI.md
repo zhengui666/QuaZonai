@@ -196,7 +196,7 @@ watch以NDJSON输出 `schema_version/event_id/event`，最后输出 `watch_ended
 
 ## 可信 Worker 与正式数据验证
 
-`server worker` 与 `server serve` 是独立进程；二者连接同一正式数据库、使用同一已初始化 `STATE_DIR` 和明确的 `RUNTIME_TARGETS`。Worker 只驱动固定原生任务，不在控制面执行科学代码；不得使用数据库所有者账号启动。`--parallelism` / `WORKER_PARALLELISM` 默认2，范围1–32；每条消息有独立领取身份。
+`server worker` 与 `server serve` 是独立进程；二者连接同一正式数据库、使用同一已初始化 `STATE_DIR` 和明确的 `RUNTIME_TARGETS`。Worker 只驱动固定原生任务，不在控制面执行科学代码；可使用同一数据库所有者账号启动。`--parallelism` / `WORKER_PARALLELISM` 默认2，范围1–32；每条消息有独立领取身份。
 
 ```sh
 server worker --help
@@ -575,21 +575,18 @@ EVALUATOR_ONLY。Mission自动发起该阶段，并等待评估和原Thread回�
 # 目录必须不存在；生成私有 master.key、原生 session key 和加密 secrets 目录。
 cargo run --locked -p server -- init-state --state-dir ./var
 
-# DATABASE_URL 此时是独立的新库迁移身份。原生 PostgreSQL 管理预先创建
-# quazonai_app 登录角色；本命令只授予应用所需 DML，不创建或输出数据库密码。
-cargo run --locked -p server -- migrate --application-role quazonai_app
-
-# 将 DATABASE_URL 切换为非 owner、非 superuser 的应用身份。
-# 此本机命令显示一次15分钟有效的初始化 capability；没有远程发证接口。
+# DATABASE_URL 指向已准备的本机数据库，迁移与服务可使用同一账号。
+cargo run --locked -p server -- migrate
+# 可选：使用独立运行角色时，先创建角色再执行 migrate --application-role NAME。
 
 # PUBLIC_URL 必须是实际同源 HTTPS 入口。API 不在启动时执行 DDL。
 cargo run --locked -p server -- serve --state-dir ./var \
   --bind 127.0.0.1:8080 --public-url https://localhost
 ```
 
-`DATABASE_URL` 支持环境变量；不要把真实密码写到命令行、Git 或日志。默认启动拒绝具有 schema CREATE、表 TRUNCATE 或超级用户权限的应用角色。master key 必须独立于数据库和加密对象备份。
+`DATABASE_URL` 支持环境变量；不要把真实密码写到命令行、Git 或日志。不强制拆分迁移与运行角色；数据库账号由本机所有者选择。master key 必须独立于数据库和加密对象备份。
 
-本地开发可显式使用 `--development-http --public-url http://127.0.0.1:8080`，同时监听地址必须为 loopback。此选项只调整本地传输和 cookie 的 Secure 属性，不跳过会话撤销、Origin 或数据库角色校验。
+本地开发可显式使用 `--development-http --public-url http://127.0.0.1:8080`，同时监听地址必须为 loopback。此选项只调整本地传输和 cookie 的 Secure 属性，不跳过会话撤销、Origin 校验。
 
 本机维护：`cargo run --locked -p server -- prune-unpublished-verifiers --state-dir ./var` 在数据库发布锁下，只回收无任何历史凭据引用、原生用途认证为 MACHINE_VERIFIER 的孤儿。数据库错误时不删除；不提供远程/Agent删除密钥接口。详见 OPERATIONS。
 
@@ -777,7 +774,7 @@ Attempt；同一 Run 的所有历史上传累计占用冻结 output_bytes，不�
 `GET /api/v2/artifacts/{id}` 返回详情，`GET /api/v2/artifacts/{id}/content` 下载原生内容。
 机器读取需 RESEARCH_READ，只有同项目 RESEARCH 可见；EVALUATOR_ONLY 不由这些接口
 披露。下载为 attachment/application/octet-stream、no-store、nosniff，不直接运行 HTML。
-429须区分错误码：AUTH_RATE_LIMITED按原生Retry-After等待；BUDGET_EXHAUSTED的
+429须区分错误码：CRYPTO_BUSY表示当前原生验证槽已满，可稍后重试；BUDGET_EXHAUSTED的
 retryable=false且没有Retry-After，field_errors只返回安全资源标记（上传为artifact_output_bytes），
 不能自动重试或换Attempt绕过。503存储不可用或未知提交应保留同key核对，不能凭本地文件存在
 认定数据库已发表。生成Web客户端的该下载接口使用parseAs: 'blob'、'arrayBuffer'或'stream'，
@@ -856,7 +853,7 @@ DATABASE_URL=postgres://TEST_USER:TEST_PASSWORD@127.0.0.1:55432/postgres \
   cargo test --locked -p store -p server
 ```
 
-SQLx 创建独立测试数据库并执行提交的迁移；不要使用生产 DATABASE_URL。HTTP 测试运行真实 Axum、Argon2、AEAD、PostgreSQL Session Store，并另测非 owner 角色与 loopback TCP。它们不是完整研究/组合/交付的验收结果。
+SQLx 创建独立测试数据库并执行提交的迁移；不要使用生产 DATABASE_URL。HTTP 测试运行真实 Axum、Argon2、AEAD、PostgreSQL Session Store，并验证 owner 数据库连接与 loopback TCP。它们不是完整研究/组合/交付的验收结果。
 
 ### Cycle/Run 事务组合与 HTTP 合同回归
 
