@@ -14,7 +14,7 @@ env:
   CARGO_PROFILE_DEV_DEBUG: '0'
 concurrency:
   group: native-runtime-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   native-runtime:
     name: Runtime / real Docker, compile, recovery and isolation

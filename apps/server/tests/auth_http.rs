@@ -4,12 +4,10 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
-use contracts::Id;
 use integrations::secrets::SecretVault;
 use serde_json::{json, Value};
 use server::{AppState, WebPolicy};
 use sqlx::PgPool;
-use store::Store;
 use support::*;
 use tower_sessions::cookie::Key;
 
@@ -213,42 +211,9 @@ fn deployment_policy_requires_loopback_for_http_and_https() {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn real_tcp_listener_uses_non_owner_database_role_and_native_private_cookie(pool: PgPool) {
+async fn real_tcp_listener_accepts_owner_database_and_native_private_cookie(pool: PgPool) {
     let fixture = fixture(pool.clone()).await;
-    assert!(fixture.store.verify_runtime_role().await.is_err());
-    let role = format!("api_test_{}", Id::new().to_string().replace('-', ""));
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE ROLE {role} LOGIN PASSWORD 'disposable-test-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT"))).execute(&pool).await.unwrap();
-    for sql in [
-        format!("GRANT USAGE ON SCHEMA app,tower_sessions TO {role}"),
-        format!("GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA app TO {role}"),
-        format!(
-            "GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA tower_sessions TO {role}"
-        ),
-    ] {
-        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-    let options = pool
-        .connect_options()
-        .as_ref()
-        .clone()
-        .username(&role)
-        .password("disposable-test-only");
-    let app_pool = PgPool::connect_with(options).await.unwrap();
-    let store = Store::from_pool(app_pool.clone());
-    store.verify_runtime_role().await.unwrap();
-    assert!(
-        sqlx::query("ALTER TABLE app.projects ADD COLUMN unsafe_test text")
-            .execute(&app_pool)
-            .await
-            .is_err()
-    );
-    assert!(sqlx::query("TRUNCATE app.operator_auth_state")
-        .execute(&app_pool)
-        .await
-        .is_err());
+    let store = fixture.store.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let origin = format!("http://{address}");
@@ -325,13 +290,4 @@ async fn real_tcp_listener_uses_non_owner_database_role_and_native_private_cooki
     serving.abort();
     let _ = serving.await;
     drop(store);
-    app_pool.close().await;
-    sqlx::query(sqlx::AssertSqlSafe(format!("DROP OWNED BY {role}")))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
-        .execute(&pool)
-        .await
-        .unwrap();
 }

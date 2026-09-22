@@ -2,8 +2,8 @@
 //! This module has no WASI, host imports, file, network, clock or credential access.
 use anyhow::{ensure, Result};
 use wasmi::{
-    Config, EnforcedLimits, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder,
-    TypedFunc,
+    CompilationMode, Config, EnforcedLimits, Engine, Linker, Module, Store, StoreLimits,
+    StoreLimitsBuilder, TypedFunc,
 };
 
 pub const MAX_SIGNAL_MODULE_BYTES: usize = 2 * 1024 * 1024;
@@ -24,8 +24,15 @@ pub struct WasmSignal {
     failed: bool,
 }
 
-impl WasmSignal {
-    pub fn new(bytes: &[u8], max_predictions: u32, total_fuel: u64) -> Result<Self> {
+/// Task-local compiled code. Never shares globals, memory, failure state or fuel.
+/// Drop with the task rather than retaining an unbounded process-wide module cache.
+pub struct SignalModule {
+    engine: Engine,
+    module: Module,
+}
+
+impl SignalModule {
+    pub fn new(bytes: &[u8]) -> Result<Self> {
         ensure!(
             bytes.len() <= MAX_SIGNAL_MODULE_BYTES,
             "SIGNAL_MODULE_TOO_LARGE"
@@ -34,16 +41,12 @@ impl WasmSignal {
             bytes.starts_with(b"\0asm\x01\0\0\0"),
             "SIGNAL_REQUIRES_WASM_BINARY"
         );
-        ensure!(
-            (1..=MAX_SIGNAL_PREDICTIONS).contains(&max_predictions),
-            "SIGNAL_PREDICTION_LIMIT"
-        );
-        ensure!(
-            (1..=MAX_SIGNAL_FUEL).contains(&total_fuel),
-            "SIGNAL_FUEL_LIMIT"
-        );
         let mut config = Config::default();
+        // Lazy translation charges only the first caller of a shared function.
+        // Compile before instantiation so execution fuel never depends on cache warmth.
+        // Compilation remains bounded by module limits and the native job deadline.
         config
+            .compilation_mode(CompilationMode::Eager)
             .consume_fuel(true)
             .allow_start_fn(false)
             .ignore_custom_sections(true)
@@ -60,6 +63,11 @@ impl WasmSignal {
             module.imports().next().is_none(),
             "SIGNAL_IMPORTS_FORBIDDEN"
         );
+        Ok(Self { engine, module })
+    }
+
+    pub fn instantiate(&self, max_predictions: u32, total_fuel: u64) -> Result<WasmSignal> {
+        prediction_budget(max_predictions, total_fuel)?;
         let limits = StoreLimitsBuilder::new()
             .memory_size(MAX_SIGNAL_MEMORY_BYTES)
             .table_elements(4096)
@@ -68,24 +76,43 @@ impl WasmSignal {
             .memories(1)
             .trap_on_grow_failure(true)
             .build();
-        let mut store = Store::new(&engine, limits);
+        let mut store = Store::new(&self.engine, limits);
         store.limiter(|limits| limits);
         // Instantiation also uses the same total fuel budget; no free start work.
         store.set_fuel(total_fuel)?;
-        let instance = Linker::<StoreLimits>::new(&engine)
-            .instantiate_and_start(&mut store, &module)
+        let instance = Linker::<StoreLimits>::new(&self.engine)
+            .instantiate_and_start(&mut store, &self.module)
             .map_err(|_| anyhow::anyhow!("SIGNAL_INSTANTIATION_REJECTED"))?;
         let predict = instance
             .get_typed_func::<Arguments, f64>(&store, "predict")
             .map_err(|_| anyhow::anyhow!("SIGNAL_ABI_MISMATCH"))?;
         let remaining_fuel = store.get_fuel()?;
-        Ok(Self {
+        Ok(WasmSignal {
             store,
             predict,
             remaining_predictions: max_predictions,
             remaining_fuel,
             failed: false,
         })
+    }
+}
+
+fn prediction_budget(max_predictions: u32, total_fuel: u64) -> Result<()> {
+    ensure!(
+        (1..=MAX_SIGNAL_PREDICTIONS).contains(&max_predictions),
+        "SIGNAL_PREDICTION_LIMIT"
+    );
+    ensure!(
+        (1..=MAX_SIGNAL_FUEL).contains(&total_fuel),
+        "SIGNAL_FUEL_LIMIT"
+    );
+    Ok(())
+}
+
+impl WasmSignal {
+    pub fn new(bytes: &[u8], max_predictions: u32, total_fuel: u64) -> Result<Self> {
+        prediction_budget(max_predictions, total_fuel)?;
+        SignalModule::new(bytes)?.instantiate(max_predictions, total_fuel)
     }
 
     /// ABI order: close, previous_close, fast EMA, slow EMA, volume, open, high, low.

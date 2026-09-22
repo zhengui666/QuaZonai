@@ -197,8 +197,8 @@ pub(crate) fn prepare(
             .calibration_artifact_id
             .map(|id| read(id).and_then(|bytes| Ok(serde_json::from_slice(&bytes)?)))
             .transpose()?;
-        let result = crate::forecast::forecast(
-            catalog,
+        let result = crate::forecast::forecast_market(
+            &market,
             &NativeForecastRequestV1 {
                 schema_version: SchemaV1,
                 selection: selection.clone(),

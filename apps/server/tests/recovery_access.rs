@@ -395,7 +395,6 @@ async fn native_archive_restores_original_receipt_and_native_encryption(pool: Pg
         "pg_restore emitted a warning requiring investigation"
     );
     let owner = store::Store::from_pool(restored_pool.clone());
-    assert!(owner.verify_runtime_role().await.is_err());
     // Restore intentionally excludes global roles/ACLs. Reapply runtime grants via
     // the deployment migration command, then use a genuinely separate login.
     let role = format!("restored_app_{}", Id::new().to_string().replace('-', ""));
@@ -428,7 +427,6 @@ async fn native_archive_restores_original_receipt_and_native_encryption(pool: Pg
         .await
         .unwrap();
     let store = store::Store::from_pool(application_pool.clone());
-    store.verify_runtime_role().await.unwrap();
     assert!(matches!(
         store.invalidate_restored_access(Id::new()).await,
         Err(store::StoreError::Forbidden)

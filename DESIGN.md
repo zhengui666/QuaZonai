@@ -109,6 +109,19 @@ CLI 的 identity 读取现有机器会话合同；OpenAPI 的单 DTO 发现从�
 
 Skill 目录需由宿主安装/注册；仓库存在不等于已自动注入任意 Agent，亦不改变受限 Mission 原生配置。开发验证记录与调研不进入运行时 Skill。
 
+<a id="personal-lean"></a>
+## 0.6 单人本机精简与性能
+
+本项目仅有所有者一名人类用户。删除不承担当前功能的文档、测试、CI 与安全管理代码，不用企业式管理流程约束本机使用。本节覆盖下文旧部署/验证门槛；不改变研究和资金结果的正确性合同。
+
+API/Worker 可直接使用数据库所有者连接，不扫描角色委派闭包、ACL 或强制拆分迁移/运行账号。`migrate --application-role` 仅供保留分离角色的部署选用。显式迁移、事务、不可变记录、备份与恢复保持；已执行 SQLx 迁移不能改写或删除。
+
+机器请求不再创建或更新 PostgreSQL 失败次数窗口，也不因历史失败把所有者锁在门外。原生 Bearer 校验、精确作用域、撤销、到期和独立的两槽计算上限保留。loopback / Origin 保护本机免登录服务；研究沙箱、Sealed 数据隔离和预算保护科学结果及本机资源，不能当作多用户功能删除。
+
+Wasmi 的编译 Module 在一次任务内复用，每个品种/独立折/不连续块仍创建独立 Store、memory、globals 和 fuel。显式使用原生 Eager 编译：模块在创建时完成验证和翻译，不能让首次执行的延迟编译费用导致冷/热实例获得不同预测预算。fuel 计量实例化和执行，不计预编译；编译受模块结构/大小及整个原生任务的墙钟与进程资源限制。历史延迟编译任务的 consumed_fuel 原样保留，不宣称新旧计数等价、不重算旧回执。组合成员共享同一截止时点的已选目录，不跨任务/截止时点缓存数据。ndarray::dot 保持原模型身份，消除之前的成员深复制和结果副本。关闭非默认的 Wasmi extra-checks，保留原生 validate、确定性及执行资源限制。
+
+CI 不运行专属 CodeQL 或双格式 SBOM 生成，不保留只汇总其他结果的额外 job。PGMQ 合同在真实 Store 数据库 job 内执行一次；同一分支新提交可取消旧运行。锁定依赖、许可证、真实数据库/科学/接口/浏览器/恢复回归和当前 Head 独立 review 保留。数值相等/fuel/隔离是回归条件；计时只有观测值，不设易波动的速度门槛。
+
 ## 0. 所有者修订：语言与复用的决策顺序
 
 1. 优先寻找仓库已有实现、标准库、平台和成熟外部组件，随后才考虑新写代码。先验证实际接口、安全、许可证、维护性和目标行为，而不是按语言数量评价架构。
@@ -264,7 +277,7 @@ runtimes/              Codex 锁定依赖和原生镜像装配
 tests/                 共享合同、原生探针与跨包测试辅助
 docs/                  架构导航、实现证据、复用研究和真实截图
 .opensdlc/             开发上下文、任务、review、运维流程和 Agent 评估
-.github/               原生 CI、贡献模板和 CODEOWNERS
+.github/               原生 CI 与贡献模板
 ```
 
 生产及构建依赖遵守以下直接 workspace 依赖方向；测试辅助可以跨层复用，但不因此进入生产路径。`contracts` 不依赖其他第一方包；`domain` 与 `integrations` 只依赖 `contracts`；`store` 只依赖 `contracts/domain`；`job` 只依赖 `contracts/domain`；`runtime` 只依赖 `contracts/domain/integrations`；`server` 只依赖 `contracts/domain/store/integrations`。领域与合同层不直接依赖 HTTP、SQLx、OCI 客户端或 MCP 传输库。`make check-architecture` 用原生 Cargo metadata 检查当前图；新增包或改变方向先更新本节，不为通过检查添加 wrapper。具体入口与调用链导航见 [架构导览](docs/architecture.md)。
@@ -479,7 +492,7 @@ PWA 只缓存静态 shell；业务 API/认证/证据/审批/产物/SSE NetworkOn
 
 费用字段按原生域合同联合校验：UNAVAILABLE 要求金额/币种均为空；ESTIMATED 要求正的精确十进制金额和所锁 iso_currency 0.7.0 接受的币种。可选空字符串只在线协议转换处变 null，不 trim/浮点转换非空金额。浏览器使用从同一 Rust 原生币种表生成的 Ajv 字段校验器，不维护第二份 ISO 清单或把三字母正则当币种目录。用户明确切换到 UNAVAILABLE 时清空金额/币种；载入的历史不一致值不可静默删除，须提示并拒绝提交。只读冻结记录不因表单 effect 被改写。
 
-BUDGET_EXHAUSTED 作为独立 HTTP429 Problem 保留，field_errors 仅使用封闭的资源字段映射，未知内部标记不反射。冻结额度耗尽不标 retryable，也不编造 Retry-After；AUTH_RATE_LIMITED 的原有限流重试语义不变。客户端成功响应依据实际 OpenAPI 的 operation/status/media type 选择原生 JSON/Ajv、无内容或 binary/stream 处理；仅声明过的二进制操作可透传未消费的 Response。服务器返回错误媒体类型、未知成功状态或 JSON DTO 违约仍失败，不能以 parseAs=blob 或任意非JSON绕过响应合同。二进制错误响应继续按 Problem 处理与认证失效，不吞成下载成功。
+BUDGET_EXHAUSTED 作为独立 HTTP429 Problem 保留，field_errors 仅使用封闭的资源字段映射，未知内部标记不反射。冻结额度耗尽不标 retryable，也不编造 Retry-After；CRYPTO_BUSY 表示当前验证计算槽已满，可稍后重试；不再存在持久认证限流窗口。客户端成功响应依据实际 OpenAPI 的 operation/status/media type 选择原生 JSON/Ajv、无内容或 binary/stream 处理；仅声明过的二进制操作可透传未消费的 Response。服务器返回错误媒体类型、未知成功状态或 JSON DTO 违约仍失败，不能以 parseAs=blob 或任意非JSON绕过响应合同。二进制错误响应继续按 Problem 处理与认证失效，不吞成下载成功。
 
 长 Brief 抽屉的下拉菜单通过官方 ConfigProvider/getPopupContainer 锚定到可滚动表单内、相对定位的字段容器，而非固定到锁定滚动的 body。三视口验收使用真实鼠标操作字段和可见选项，不使用 force/DOM click/键盘绕过不可点击菜单来制造通过；费用、数据角色和访问边界须在滚动后仍可操作。依据：Ant Design Select 的 getPopupContainer 与 FAQ（https://ant.design/components/select/）。
 
@@ -533,9 +546,7 @@ Secret 文件格式使用 XChaCha20-Poly1305，随机 nonce 与明确 UUID/purpo
 
 本机迁移将实例置于直接可用状态并使认证epoch高于全部既有授权；新库与旧初始化库均可不输入验证码进入。实际测试覆盖首个GET/写命令、固定会话期限、撤销和epoch切换、错误Bearer、同源检查及真实API/代理重启，不用关闭断言替换原有认证测试。
 
-运行数据库身份检查包含 PostgreSQL 原生 ADMIN OPTION 委派闭包（即使 INHERIT/SET
-暂为 false），并拒绝可达的服务器文件读写/程序执行预定义角色，不能仅核对
-`rolsuper` 或单张表的 ACL。只有成员身份但无 INHERIT/SET/ADMIN 的边不产生权限。
+运行数据库身份由本机所有者选择；不实施角色权限扫描或强制分离账号。独立低权限角色仍可通过迁移命令的可选授权参数使用。
 
 机器/CLI 使用独立范围受限可撤销 token，不把浏览器 cookie 或历史认证材料当 API token；Agent MCP 不复用 Operator session。session/AEAD/随机 verifier 使用成熟库，不自制密码学。Secret仅受信任进程解析；UI只见configured/status/last_checked；日志不含auth文件、token、完整Provider/stderr/traceback。
 
@@ -1157,7 +1168,7 @@ NativeSimulationRequestV1用同一账户、NETTING、固定Nautilus0.63.0和明�
 
 第一条可执行研究代码路径使用Rust编译到 `wasm32-unknown-unknown` 的纯计算模块，复用Wasmi2.0.0解释执行；不新增脚本语言或Agent框架。唯一预测入口固定为 `predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64`，依次接收完整已可用观测的 close、previous_close、原生EMA快值、原生EMA慢值、volume、open、high、low。指标由Nautilus原生组件从当前及过去记录计算，模块拿不到未来标签；Score/ExpectedReturn单位仍由冻结Alpha合同和独立校准决定，不把分数直接当收益。
 
-模块必须是合法Wasm二进制，大小不超过2MiB，无任何导入、无start函数，无WASI、宿主文件/环境/时钟/网络函数。Wasmi显式启用stable与portable-dispatch，避免关闭default-features后在未优化构建中依赖宿主尾调用消除；同一生产/测试配置保留原生校验、deterministic、extra-checks、严格编译结构限制和fuel。2026-09-09原生无限循环回归暴露了旧配置的宿主栈溢出，不能通过增加线程栈、降低测试fuel或只测release绕过。采用上游已有portable loop dispatch，不修改解释器；其行为见 https://docs.rs/wasmi/2.0.0/wasmi/#crate-features 。每实例最多一个16MiB线性内存、一个4096项表、有限栈和调用深度；每次预测与整次任务有分开的原生fuel上限。trap、非有限输入/输出、超额或ABI不符直接失败，实例失效，不返回零信号或重新置零预算继续调用。每个instrument/fold/受隔离评估使用独立实例，不能复用一个带历史状态的实例跨验证边界。
+模块必须是合法Wasm二进制，大小不超过2MiB，无任何导入、无start函数，无WASI、宿主文件/环境/时钟/网络函数。Wasmi显式启用stable与portable-dispatch，避免关闭default-features后在未优化构建中依赖宿主尾调用消除；同一生产/测试配置保留原生校验、deterministic、严格编译结构限制和fuel（extra-checks 按第0.6节移除）。2026-09-09原生无限循环回归暴露了旧配置的宿主栈溢出，不能通过增加线程栈、降低测试fuel或只测release绕过。采用上游已有portable loop dispatch，不修改解释器；其行为见 https://docs.rs/wasmi/2.0.0/wasmi/#crate-features 。每实例最多一个16MiB线性内存、一个4096项表、有限栈和调用深度；每次预测与整次任务有分开的原生fuel上限。trap、非有限输入/输出、超额或ABI不符直接失败，实例失效，不返回零信号或重新置零预算继续调用。每个instrument/fold/受隔离评估使用独立实例，不能复用一个带历史状态的实例跨验证边界。
 
 编译用户Rust同样是执行不可信输入：由原生运行时的既有进程/文件系统隔离执行固定rustc参数，只读标准工具链、当前代码目录及本次独立输出目录；不挂载Codex home、DB、SecretVault、Docker socket、其他任务或Sealed数据。Wasmi的内存/fuel只保护预测执行，不替代编译、解析和整个job的原生cgroup/CPU/墙钟/输出限制。Wasm MODEL制品只能由绑定Run/Attempt的原生编译结果产生，不能以用户上传的标记自行声称可信执行或REAL数据来源；独立JSON校准MODEL沿用A4.4的原生拟合及正式Validation发布关联。此ABI适配不拥有资格/审批/交付权限。
 
@@ -3171,7 +3182,7 @@ Operator业务写命令统一先锁单一 operator_auth_state FOR UPDATE，再�
 
 控制面认证重试与密钥生命周期：人工CLI grant在真实机器认证、当前epoch和完整非秘密命令绑定检查后先读幂等回执；已有回执不延长期限或重复签发。新grant无需验证码，正式提交事务仍再读一次回执并复核当前CLI权限。Verifier签发在持有现有Operator命令事务并确认无回执后才写加密文件；并发重试不生成另一份Verifier。数据库失败/提交不明后，重新取得同一authority行锁并在主库确认无任何machine_credentials.verifier_ref引用，才允许按UUID删除已通过MACHINE_VERIFIER用途认证的文件并同步目录；无法判定则保留待对账。进程中断遗留物由本地prune-unpublished-verifiers命令在相同锁序下回收。禁止删除历史认证密文、SESSION_KEY或外部凭据；没有任意路径/HTTP删除接口。文件写入失败只清理本次成功create_new的对象。
 
-机器认证限流复用PostgreSQL原生原子窗口，不靠单进程内存。machine_auth_rate_windows的credential_id为nullable FK machine_credentials、UNIQUE NULLS NOT DISTINCT，NULL唯一全局窗口；window_started_at为Time、attempts为非负整数，全局上限32、每凭据上限5、窗口60秒。昂贵Argon2之前按全局→凭据顺序预约，任一超限全事务回滚并429/Retry-After；成功仅归还原窗口时间对应的一个占用，失败/取消保留到窗口重置。未知public_token_id不建立窗口。机器密码校验使用原有独立2槽；该限制针对失败及在途计算，不限制持续成功的普通请求总量。
+机器凭据复用原生 Argon2 校验和独立两槽计算上限；不维护失败次数窗口或持久锁定。旧 machine_auth_rate_windows 仅为不可改写的迁移历史，不被当前请求路径消费。
 
 首批OperatorCommandV1变体：PROJECT_CREATE(ProjectCreate)、PROJECT_UPDATE(ProjectUpdate)、PRINCIPAL_CREATE(PrincipalCreate)、PRINCIPAL_UPDATE(PrincipalUpdate)、CREDENTIAL_ISSUE(CredentialIssue)、CREDENTIAL_REVOKE(CredentialRevoke)。已记录的Release/Policy历史操作保留枚举，未提供真实端点前不允许新grant签发。后续B2命令以具体DTO扩展同一封闭union。CLI普通机器scope（含只读doctor）不会改变；单次grant是本机CLI用户这次请求的精确命令授权，不是Doctor或Agent取得持久Operator权限。MISSION/AUTOMATION/DOWNSTREAM不能取得该授权。
 
@@ -3532,7 +3543,7 @@ Mission 控制会话与科学任务的并发分别有界：每个 Cycle 同时�
 
 ### B5.0.1 原生任务定义、Worker 与 DATA_VALIDATE 正式入口
 
-`server worker` 使用现有非owner应用角色、ArtifactStore、SecretVault、显式RuntimeTargets与PGMQ；默认并发2、可配置1–32。每次消息的 claimant 都有唯一 worker_owner_id，不能让同进程的重投消息共享一个尚存租约的主动驱动。Worker与研究job隔离，科学任务只能经固定RuntimeTransport/JobSpec调用原生网关，不在Worker/API里执行科学引擎。AGENT_RESEARCH由原生Codex Mission驱动，不能塞入科学容器伪装完成。
+`server worker` 使用所有者选择的数据库账号、ArtifactStore、SecretVault、显式RuntimeTargets与PGMQ；默认并发2、可配置1–32。每次消息的 claimant 都有唯一 worker_owner_id，不能让同进程的重投消息共享一个尚存租约的主动驱动。Worker与研究job隔离，科学任务只能经固定RuntimeTransport/JobSpec调用原生网关，不在Worker/API里执行科学引擎。AGENT_RESEARCH由原生Codex Mission驱动，不能塞入科学容器伪装完成。
 
 增量原生关联：`run_native_tasks(run_id PK/FK run_admissions, parameters_artifact_id FK artifacts, input_bindings RuntimeInputV1[1..256], image_ref原生不可变镜像, cpu[1..1024], capability_snapshot_artifact_id FK, output_schemas RuntimeArtifactSchemaV1[1..64], origin, access_class RESEARCH|EVALUATOR_ONLY, created_at)`与首次Run/PGMQ同事务创建，禁止后补或改写。`run_native_attempts(attempt_id PK/FK,run_id FK run_native_tasks,spec_json JobSpecV1,created_at)`在当前fence、NOT_SENT下冻结一次；接管保留原始spec、owner_epoch及external_job_id，不因当前owner改变而重建远端身份或发送正文。`run_native_outputs(attempt_id,remote_storage_ref) PK,artifact_id UNIQUE/FK,created_at`记录远端原生对象与Store分配的本地对象关系；三个表均不可变，不新增队列、业务hash或独立研究状态机。
 
@@ -3879,33 +3890,13 @@ GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重�
 
 T16可用两资产独立手算最小方差/费用前后差，不维护第二生产优化器。T31/T42可用专门非交易验收下游接target，**不用真实下单**。Demo/fixture不能通过测试开关变生产可批；真实路径用可追溯有权数据，生产制品无跳过Gate后门。
 
-## B9. Required checks 与受保护验收
+## B9. Required checks 与验收
 
-| Check | 必须内容 |
-|---|---|
-| rust | cargo fmt --check、clippy deny warnings、locked build、nextest/unit/proptest |
-| db-domain | 真PostgreSQL+PGMQ、SQLx offline、新库迁移/约束/事务/并发 |
-| contracts | OpenAPI/TS/JSON/Arrow diff、Codex原生schema比对、兼容性 |
-| frontend | locked install、lint、typecheck、Vitest、production build |
-| e2e | Web/CLI、三视口/PWA、Playwright/axe/截图 |
-| native-runtime | 真Rust Nautilus/Clarabel/Arrow，以及有证据批准的必要科学适配、市场/数值golden |
-| codex-contract | 真pinned App Server+本地可控Provider fixture；protocol/model/list/工具循环/环境 |
-| security-isolation | 真实隔离越界、依赖漏洞/secret扫描、安全配置 |
-| recovery | kill/restart、ACK丢失、lease、cancel race、SSE、恢复/迁移 |
-| docs-smoke | README命令/CLI/Skill/链接/生成文档一致与真实能力矩阵 |
-| supply-chain | Cargo/前端/科学锁、镜像/action原生版本固定、许可证/SBOM |
-| protected-acceptance | 专用真实账号/付费推理部分按[第0.4节](#acceptance-scope)已豁免；真实remote、数据和非账号业务链仍按原范围验证 |
-| rewrite-complete | 汇总所有结果和交付矩阵，失败/取消/缺失/应运行而skip必须失败 |
+检查集中在当前源码的实际失败模式：Rust 格式/Clippy/locked build 与测试、真实 PostgreSQL/PGMQ 事务和恢复、生成接口一致性、前端构建与浏览器/PWA、原生 Codex/Runtime/科学计算及文档链接。配置和命令以 `.github/workflows` 与 Makefile 为准，不在这里复制另一张门禁清单。
 
-普通PR CI无生产密钥，本地Provider fixture不能代替T07或受保护真实链路。真实账号由Operator在同一受保护profile登录，经审查锁定Head最小权限执行。第0.4节的专用账号范围已授权关闭（NOT_RUN，不是通过）；其他未豁免的额度/数据/权限缺失仍为待处理/阻塞，不视通过；真实订阅集成不证明收益或Codex review。复用现成测试/coverage/license/SBOM工具，不另建Gate平台；不能删测试/全skip/关闭核心功能造绿。
+普通 PR 不使用生产秘密。删除功能时删除其专属测试，不删除数值、数据完整性或恢复回归来掩盖失败。缺失、取消和应执行却跳过不能算当前 Head 通过。历史代码扫描/SBOM 不是当前交付条件；依赖锁与许可证义务仍保留。当前 Head 适用检查和只读 review 按 AGENTS 执行。
 
-### B9.1 CodeQL 的语言迁移与精确源版本
-
-旧默认配置仍按 Python 扫描已删除 Python 的重写 Head，会因无源码失败；不能通过放回假 Python 文件、跳过 queries 或忽略该失败造绿。采用 GitHub 官方 CodeQL advanced setup，按 Git 对应 commit 的已跟踪文件决定 Rust、JavaScript/TypeScript、Actions、Python 的实际分析范围。PR 的 Head 与仍在使用旧代码的 main/base 分别检出和分析，上传各自精确 ref/sha；base 检查明确标为 base，不能冒充 Head 验证。Rust 用官方支持的 build-mode=none（仍需原生 rustup/cargo，RustAnalyzer可能执行构建脚本），普通PR不注入生产秘密。
-
-切换是一次受控的开发环境操作：先保存默认配置，确认已审阅工作流与提交、GitHub权限及本地完整验证，再解除 default setup 对 advanced upload 的原生互斥并推送同一PR。发布失败且未形成远端提交时恢复旧默认设置；不删除历史分析/告警、不撤销分支保护、不降低查询集。新工作流必须实际运行并上传成功后才算接通，配置写入不代表已扫描。默认主干仍为旧版本期间，PR附带真实base分析保留其Python等语言覆盖；合并后push/schedule继续分析实际main。最终交付仍要求适用检查无失败，不将旧默认配置的失败伪称通过。
-
-依据：GitHub 官方 [Rust 构建选项](https://docs.github.com/en/code-security/reference/code-scanning/codeql/build-options-for-compiled-languages)、[两种设置互斥](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/two-codeql-workflows)、以及固定 CodeQL Action `cdf488f595d80d6e07e03d4674febd5ab45fa938` 的原生 `languages/build-mode` 和 `ref/sha/category` 输入。工作流不复制扫描引擎或生成伪 SARIF。
+真实账号实测按[第0.4节](#acceptance-scope)豁免且记为 NOT_RUN；其余完整产品验收仍独立记录。局部 CI 或性能微基准不证明真实研究链或生产部署通过。
 
 ## B10. 交付映射与恢复证据
 

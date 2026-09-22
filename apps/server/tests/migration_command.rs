@@ -7,7 +7,6 @@ use contracts::Id;
 use serde_json::{json, Value};
 use sqlx::{ConnectOptions, PgPool};
 use std::process::Output;
-use store::Store;
 use time::{Duration, OffsetDateTime};
 use tower_sessions::{session::Record, SessionStore};
 use tower_sessions_sqlx_store::PostgresStore;
@@ -173,10 +172,6 @@ async fn committed_schema_matches_upstream_and_supports_native_crud_as_runtime(p
     )
     .await
     .unwrap();
-    Store::from_pool(runtime.clone())
-        .verify_runtime_role()
-        .await
-        .unwrap();
     let native = PostgresStore::new(runtime.clone());
     let mut record = Record {
         id: Default::default(),

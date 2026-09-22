@@ -7,7 +7,7 @@ This guide packages the real single-user application on a Linux x86_64 host usin
 
 **Release status:** this is a deployment candidate, not a statement that a production installation or the complete research/delivery/restore contract has passed. Check the [acceptance evidence](architecture/issue-62-execution.md#acceptance) before relying on results. Do not substitute process health, a mock peer or CI for that acceptance.
 
-Prepare the [supported build environment](../CONTRIBUTING.md#set-up-a-checkout), PostgreSQL 18 with PGMQ 1.10.0, an application database identity distinct from the migration owner, and a loopback browser origin. The default is `http://localhost:8081`; the API and Caddy bind only to loopback. There is no remote-login mode. Use the official Caddy package/service; the gateway regression uses Caddy 2.11.4. Native Missions additionally require Linux cgroup v2, `/usr/bin/systemd-run`, `/usr/bin/prlimit`, `/usr/bin/systemctl`, and the service account's running systemd **user** manager with its real `XDG_RUNTIME_DIR`; see [Mission resource prerequisites](../OPERATIONS.md#mission-原生资源前置条件). A system service merely using `User=quazonai` does not establish that execution boundary.
+Prepare the [supported build environment](../CONTRIBUTING.md#set-up-a-checkout), PostgreSQL 18 with PGMQ 1.10.0, a database account chosen by the local owner (a separate runtime role is optional), and a loopback browser origin. The default is `http://localhost:8081`; the API and Caddy bind only to loopback. There is no remote-login mode. Use the official Caddy package/service; the gateway regression uses Caddy 2.11.4. Native Missions additionally require Linux cgroup v2, `/usr/bin/systemd-run`, `/usr/bin/prlimit`, `/usr/bin/systemctl`, and the service account's running systemd **user** manager with its real `XDG_RUNTIME_DIR`; see [Mission resource prerequisites](../OPERATIONS.md#mission-原生资源前置条件). A system service merely using `User=quazonai` does not establish that execution boundary.
 
 <a id="workflow"></a>
 ## Install the real application
@@ -59,7 +59,7 @@ The command must fail when `current` already exists, whether it is a symlink, di
 
 ### 2. Prepare persistent state and database access
 
-Follow [the native initial setup](../OPERATIONS.md#首次启动认证服务) for the database roles, explicit migration and automatic local browser sessions. Schema changes are never run automatically by the long-running services.
+Follow [the native initial setup](../OPERATIONS.md#首次启动认证服务) for database access, explicit migration and automatic local browser sessions. Schema changes are never run automatically by the long-running services.
 
 The state initializer requires a **new, nonexistent** state directory. Create its parent, not the state directory itself:
 
@@ -75,7 +75,7 @@ sudoedit /etc/quazonai/quazonai.env
 
 Run `init-state` only for a new installation. On an existing installation retain its keys, references and files; never delete the directory to make this command succeed. Back up the master key through the separate procedure in [data and keys](../OPERATIONS.md#数据和密钥).
 
-Fill `DATABASE_URL` locally with the non-owner application identity and set `PUBLIC_URL` to the browser's exact loopback origin (default `http://localhost:8081`, with `DEVELOPMENT_HTTP=true`). The sample intentionally has no database password and cannot start unchanged. The unprivileged `quazonai` user manager must read this file. Keep it administrator-owned and readable by the dedicated group only (`root:quazonai`, mode 0640, directory 0750); root-only 0600 would prevent startup. Do not add unrelated users to that group. Do not `source` it: its syntax is systemd's `EnvironmentFile`, not a shell script.
+Fill `DATABASE_URL` locally with the chosen database identity; the migration owner is supported, or optionally use a separate runtime role, and set `PUBLIC_URL` to the browser's exact loopback origin (default `http://localhost:8081`, with `DEVELOPMENT_HTTP=true`). The sample intentionally has no database password and cannot start unchanged. The unprivileged `quazonai` user manager must read this file. Keep it administrator-owned and readable by the dedicated group only (`root:quazonai`, mode 0640, directory 0750); root-only 0600 would prevent startup. Do not add unrelated users to that group. Do not `source` it: its syntax is systemd's `EnvironmentFile`, not a shell script.
 
 Prepare authorized data and the separate Runtime through [OPERATIONS](../OPERATIONS.md) and [the native Runtime guide](../runtimes/native/README.md). Native Codex is discovered automatically from the service user's `PATH`, `HOME` and optional native `CODEX_HOME`. Run `codex login` in that same user's shell. If the user manager has an older PATH, import only the correct PATH with `systemctl --user import-environment PATH` before starting these units. The Worker reuses `PUBLIC_URL`. A separately configured Worker can use `MISSION_API_ORIGIN`; when both are present they must match exactly, including the proxy port. With a native installation available, a missing or invalid Origin fails startup rather than silently selecting another endpoint. Optional `MISSION_WORKSPACES` defaults to the private `STATE_DIR/missions`. Do not register a deployment JSON or copy an authentication file. Missing Codex, data or Runtime remains a real unavailable state.
 

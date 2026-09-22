@@ -4,13 +4,11 @@ Contributions that make research results easier to trust, reproduce and inspect 
 
 ## Choose a change
 
-Search [existing issues](https://github.com/zhengui666/QuaZonai/issues) and [pull requests](https://github.com/zhengui666/QuaZonai/pulls) before starting. Small documentation fixes and focused bug fixes can go straight to a PR. Discuss substantial features, new dependencies and architecture changes with the maintainer first. An owner's existing explicit authorization does not need to be repeated per file or command.
-
-Use the [bug or feature form](https://github.com/zhengui666/QuaZonai/issues/new/choose); include the commit, expected/actual result, smallest reproducer and sanitized diagnostics. Never post credentials, private market data, wallet material or hidden model reasoning. For private reports, use the owner's [profile contact route](https://github.com/zhengui666), initially without sensitive details. Keep discussion respectful and specific; review the change, not its author. Maintainers may moderate abuse.
+Work from the owner's concrete request or an existing Issue. No separate proposal, approval ledger or mandatory form is needed. Never post credentials, private data or hidden model reasoning.
 
 ## Set up a checkout
 
-Fork the repository, clone your fork, add the upstream below and create a branch from current main. If you already have a checkout, inspect its worktrees and preserve unrelated modifications before changing branches.
+Create a branch from current main; a fork is optional. If you already have a checkout, inspect its worktrees and preserve unrelated modifications before changing branches.
 
 ```sh
 git remote add upstream https://github.com/zhengui666/QuaZonai.git
@@ -68,7 +66,7 @@ cd apps/web
 node node_modules/@playwright/test/cli.js install chromium
 ```
 
-The native browser flow additionally needs an ordinary Linux user with a running systemd user manager, its actual `XDG_RUNTIME_DIR`, cgroup v2, `systemctl`/`journalctl`, and the built `target/debug/server`, production `apps/web/dist`, an explicitly supplied disposable loopback PostgreSQL administrator (`QUAZONAI_WEB_TEST_ADMIN_URL`), `psql`, and native Caddy (2.11.4 in CI; set `CADDY_BIN` to its path or install it on PATH). It copies the reviewed binary/build and both shipped `deploy/systemd/` units into its private release fixture. Runtime-only native links and path/environment-file drop-ins run the real API and Worker with their unchanged restart/stop policy. The test verifies their actual executable, subcommand, user, configuration and native properties, then observes an idle Worker's automatic restart after one unit-targeted SIGKILL. The actual `deploy/Caddyfile` stays online while the API unit stops normally and starts a new process; the second browser phase must retain the original session/project/command receipt. It does not use Vite preview, seed application rows, reinstall state or re-enroll. Cleanup stops only its own units, checks they are empty, and removes their runtime links before dropping its database and private state. Unverified shutdown or cleanup fails and retains private state; no failure screenshots are uploaded. Public TLS, host boot, active-job recovery and real research still require separate acceptance.
+The native browser checks require the actual systemd user manager, disposable PostgreSQL, Caddy and built server/web artifacts. Use the exact [Web workflow prerequisites](.github/workflows/web.yml), not a second setup copied here. The fixture runs real API/Worker/gateway services and checks restart, session and receipt persistence; it is not real market-research or host-boot acceptance.
 
 `check-unit` excludes Store/Server tests and is not the full suite. Architecture checks inspect normal/build dependencies, not transitive code or test-only helpers. Links/help/schema checks cannot execute account-dependent runbooks. State unrun checks and reasons; a skipped prerequisite never becomes a pass.
 
@@ -76,7 +74,7 @@ For a bug, establish the failing behavior before the fix and keep a focused regr
 
 ## Submit and maintain
 
-Use one `.opensdlc/tasks/<task-id>/task.md` for each nontrivial task: intent, specification, plan, actual verification, review, delivery and handoff. Continue this delivery in the existing [personal-production task](.opensdlc/tasks/personal-production/task.md); other work reuses its own relevant task instead of writing into the old onboarding record. Small corrections can keep the record short. New task prose/IDs use English unless `.opensdlc/config.json` explicitly selects `zh-CN`; preserve existing document languages. Do not generate empty release/incident files.
+Use one `.opensdlc/tasks/<task-id>/task.md` for each nontrivial task: intent, specification, plan, actual verification, review, delivery and handoff. Reuse the relevant task record; do not append new work to an unrelated historical task. Small corrections can keep the record short. New task prose/IDs use English unless `.opensdlc/config.json` explicitly selects `zh-CN`; preserve existing document languages. Do not generate empty release/incident files.
 
 Open a PR against `main` using the [existing template](.github/PULL_REQUEST_TEMPLATE.md). Describe the concrete problem, resulting behavior, relevant tests, contract/docs changes and remaining limits. Link the task and issue; do not automatically close broader unfinished scope. Authors using AI remain responsible for understanding and verifying every submitted change. GitHub Codex reviews; it is not the product-code author.
 

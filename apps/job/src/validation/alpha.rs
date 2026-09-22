@@ -3,7 +3,7 @@ use super::{validation_folds, ScoreCalibration, MAX_VALIDATION_FOLDS, MAX_VALIDA
 use crate::{
     catalog::{load_catalog, NativeBarSeries},
     forecast::features,
-    signals::WasmSignal,
+    signals::SignalModule,
 };
 use anyhow::{ensure, Result};
 use contracts::{
@@ -23,14 +23,14 @@ fn count(value: usize) -> Result<DbCounter> {
 
 /// Every disjoint block starts a new model; only the task's unspent fuel survives.
 fn predict(
-    module: &[u8],
+    module: &SignalModule,
     features: &[Option<[f64; 8]>],
     indices: &[usize],
     remaining: &mut u64,
 ) -> Result<Vec<f64>> {
     let mut result = Vec::with_capacity(indices.len());
     for block in indices.chunk_by(|a, b| *b == *a + 1) {
-        let mut model = WasmSignal::new(module, u32::try_from(block.len())?, *remaining)?;
+        let mut model = module.instantiate(u32::try_from(block.len())?, *remaining)?;
         for &ordinal in block {
             let input = features
                 .get(ordinal)
@@ -123,6 +123,7 @@ pub fn validate_alpha(
     let parameters = &forecast.parameters;
     let horizon = parameters.label_horizon_observations as usize;
     let market = load_catalog(root, &forecast.selection)?;
+    let module = SignalModule::new(module)?;
     let mut remaining = parameters.total_fuel.get();
     let mut folds = Vec::new();
     let mut index_count = 0_usize;
@@ -166,8 +167,8 @@ pub fn validate_alpha(
                     "VALIDATION_TRAIN_LABEL_FROM_FUTURE"
                 );
             }
-            let train_scores = predict(module, &features, &train, &mut remaining)?;
-            let test_scores = predict(module, &features, &test, &mut remaining)?;
+            let train_scores = predict(&module, &features, &train, &mut remaining)?;
+            let test_scores = predict(&module, &features, &test, &mut remaining)?;
             // The model has finished before these labels are read. Neither
             // training nor testing model state ever receives a future label.
             let train_labels = labels(&series, &train, horizon)?;

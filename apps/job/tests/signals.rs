@@ -1,6 +1,6 @@
 //! Actual Wasmi traps and limits; WAT is a dev-only native fixture compiler.
 //! This does not replace host-process/compiler filesystem isolation acceptance.
-use job::signals::{WasmSignal, MAX_SIGNAL_FUEL, MAX_SIGNAL_MODULE_BYTES};
+use job::signals::{SignalModule, WasmSignal, MAX_SIGNAL_FUEL, MAX_SIGNAL_MODULE_BYTES};
 
 const FEATURES: [f64; 8] = [110.0, 100.0, 105.0, 102.0, 25.0, 100.0, 112.0, 98.0];
 fn module(prefix: &str, body: &str) -> Vec<u8> {
@@ -120,8 +120,9 @@ fn nonfinite_inputs_and_results_never_become_zero_or_null_signals() {
 fn independent_instruments_and_folds_do_not_share_mutable_model_memory() {
     let prefix = "(global $counter (mut f64) (f64.const 0))";
     let body = "global.get $counter f64.const 1 f64.add global.set $counter global.get $counter";
-    let mut first = signal(prefix, body);
-    let mut second = signal(prefix, body);
+    let compiled = SignalModule::new(&module(prefix, body)).unwrap();
+    let mut first = compiled.instantiate(100, 1_000_000).unwrap();
+    let mut second = compiled.instantiate(100, 1_000_000).unwrap();
     assert_eq!(first.predict(FEATURES).unwrap(), 1.0);
     assert_eq!(first.predict(FEATURES).unwrap(), 2.0);
     assert_eq!(second.predict(FEATURES).unwrap(), 1.0);
@@ -139,5 +140,65 @@ fn byte_and_budget_limits_reject_untrusted_inputs_before_compilation() {
     let bytes = module("", "f64.const 1");
     for (calls, fuel) in [(0, 100), (1_000_001, 100), (1, 0), (1, MAX_SIGNAL_FUEL + 1)] {
         assert!(WasmSignal::new(&bytes, calls, fuel).is_err());
+    }
+}
+
+#[test]
+fn compiled_module_warmth_never_changes_prediction_or_fuel_limits() {
+    let bytes = module("", "local.get 0 local.get 1 f64.div f64.const 1 f64.sub");
+    let compiled = SignalModule::new(&bytes).unwrap();
+    for budget in [1, 64, 100_000] {
+        // Exercise both first use and already translated code, including exhaustion.
+        for instance in 0..3 {
+            let mut reused = compiled.instantiate(32, budget).unwrap();
+            let mut fresh = WasmSignal::new(&bytes, 32, budget).unwrap();
+            for ordinal in 0..33 {
+                let mut features = FEATURES;
+                features[0] += f64::from(ordinal);
+                let expected = fresh.predict(features);
+                let actual = reused.predict(features);
+                assert_eq!(
+                    actual.is_ok(),
+                    expected.is_ok(),
+                    "instance={instance} budget={budget} ordinal={ordinal}"
+                );
+                assert_eq!(
+                    reused.remaining_fuel(),
+                    fresh.remaining_fuel(),
+                    "instance={instance} budget={budget} ordinal={ordinal}"
+                );
+                match (actual, expected) {
+                    (Ok(actual), Ok(expected)) => assert_eq!(actual.to_bits(), expected.to_bits()),
+                    (Err(_), Err(_)) => {
+                        assert!(reused.predict(FEATURES).is_err());
+                        assert!(fresh.predict(FEATURES).is_err());
+                        break;
+                    }
+                    _ => unreachable!("success status checked above"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn reused_code_preserves_linear_memory_fuel_results_and_failure_isolation() {
+    let bytes = module(
+        "(memory 1)",
+        "i32.const 0 i32.const 0 f64.load f64.const 1 f64.add f64.store i32.const 0 f64.load",
+    );
+    let compiled = SignalModule::new(&bytes).unwrap();
+    let mut first = compiled.instantiate(3, 100_000).unwrap();
+    let mut second = compiled.instantiate(3, 100_000).unwrap();
+    let mut fresh = WasmSignal::new(&bytes, 3, 100_000).unwrap();
+    for expected in [1.0, 2.0, 3.0] {
+        assert_eq!(first.predict(FEATURES).unwrap(), expected);
+        assert_eq!(fresh.predict(FEATURES).unwrap(), expected);
+        assert_eq!(first.remaining_fuel(), fresh.remaining_fuel());
+    }
+    assert!(first.predict(FEATURES).is_err());
+    assert_eq!(second.predict(FEATURES).unwrap(), 1.0);
+    for (calls, fuel) in [(0, 100), (1_000_001, 100), (1, 0), (1, MAX_SIGNAL_FUEL + 1)] {
+        assert!(compiled.instantiate(calls, fuel).is_err());
     }
 }

@@ -58,10 +58,6 @@ impl FromRequestParts<AppState> for Authority {
                 .transpose()?;
             let vault = state.vault.clone();
             let reference = challenge.verifier_ref;
-            let attempt = state
-                .store
-                .reserve_machine_auth_attempt(challenge.credential_id)
-                .await?;
             let matches = auth::crypto_with_slots(state.machine_crypto_slots.clone(), move || {
                 let bytes = vault
                     .read(reference, "MACHINE_VERIFIER")
@@ -73,7 +69,6 @@ impl FromRequestParts<AppState> for Authority {
             if !matches {
                 return Err(ApiError::authentication());
             }
-            state.store.machine_auth_succeeded(attempt).await?;
             Ok(Self(challenge.verified_actor(grant)))
         } else {
             if parts.headers.contains_key("x-operator-grant") {

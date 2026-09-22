@@ -53,21 +53,3 @@ async fn frozen_budget_exhaustion_is_distinct_nonretryable_and_has_a_safe_resour
             .contains("DO_NOT_REFLECT"));
     }
 }
-
-#[tokio::test]
-async fn native_auth_rate_limit_keeps_its_retry_after_and_retryable_semantics() {
-    let response = ApiError::from(StoreError::AuthRateLimited {
-        retry_after_seconds: 7,
-    })
-    .into_response();
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(response.headers()["retry-after"], "7");
-    let body: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 16384).await.unwrap()).unwrap();
-    assert_eq!(body["code"], "AUTH_RATE_LIMITED");
-    assert_eq!(body["retryable"], true);
-    assert_eq!(
-        body["safe_next_actions"],
-        serde_json::json!(["RETRY_AFTER"])
-    );
-}

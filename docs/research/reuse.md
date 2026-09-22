@@ -227,8 +227,8 @@ PostgreSQL 授权记录校验；历史认证数据保留但无运行时登录入
 主密钥。这些密码学原生完整性不是研究资格或业务内容 hash。
 
 [PostgreSQL18角色属性](https://www.postgresql.org/docs/18/role-attributes.html)
-明确 superuser 绕过权限：运行服务必须使用非owner/non-superuser角色；migration
-在独立本机运维命令中执行，不能每次服务器启动自动以管理员建表。
+说明 superuser 的原生权限；本机所有者可自行选择数据库角色，不再由应用扫描或拒绝。
+migration 仍由显式运维命令执行，不在服务器启动时自动建表。
 
 
 ## Native authentication integration: versioned upstream boundary
@@ -350,29 +350,11 @@ CLI. Existing PostgreSQL, browser, OCI and cold-restore checks remain required.
 failed iterations. Compilation or this dependency fix is not complete T40/T42
 acceptance or an owner-host deployment.
 
-## PostgreSQL ADMIN OPTION 与证据来源边界（2026-09-06）
-
-依据 [PostgreSQL18 GRANT](https://www.postgresql.org/docs/18/sql-grant.html)、
-[角色成员关系](https://www.postgresql.org/docs/18/role-membership.html) 和
-[`pg_auth_members`](https://www.postgresql.org/docs/18/catalog-pg-auth-members.html)：
-ADMIN OPTION 的持有者可以重新授予 SET/INHERIT，即使当前两个选项均为 false。
-因此不能仅以 `pg_has_role(..., 'USAGE'|'SET')` 排除间接所有者权限。运行角色检测
-从 `current_user` 及 `session_user` 沿原生 INHERIT/SET/ADMIN 成员边进行闭包查询，
-再使用原生 catalog/ACL 判断数据库、服务 schema 和对象的危险权限；没有自行维护
-角色目录或密码学。无可用选项的纯成员边不视为权限，管理无危险权限的角色仍可使用。
-
-`runtime_role.rs` 新回归在真实 PostgreSQL 上先确认 ADMIN-only 的 USAGE/SET 均为
-false，再实际由该低权限登录重新授予自己 SET 并验证原生 TRUNCATE 权限；另覆盖多跳、
-SET ROLE 隐藏 session_user 和良性对照。测试中的对象/账号都是隔离、可丢弃的 fixture。
+## PostgreSQL 证据来源绑定
 
 新证据绑定复用 PostgreSQL 事务、触发器和原生 FK：评估报告、方法版本及指标产物必须
 来自精确项目/Run；审批必须使用已冻结且包含精确评估报告的本项目证据集合。新增迁移
 不改旧 checksum，不重标错误历史，也不据关系完整就判定科学有效或授予交付权限。
-
-[PostgreSQL18预定义角色](https://www.postgresql.org/docs/18/predefined-roles.html)
-明确 `pg_read_server_files`、`pg_write_server_files`、`pg_execute_server_program`
-可绕过数据库级检查并取得相当于超级用户的权限。因此同一运行角色检查也拒绝直接或
-可管理成员链上的这些原生角色；数据导入使用受限客户端协议而非授予服务器文件权限。
 
 ## Run 生命周期与持久 SSE（2026-09-06）
 
@@ -488,3 +470,11 @@ https://docs.rs/ndarray-stats/0.7.0/ndarray_stats/trait.DeviationExt.html
 The equity view reuses Apache ECharts (Apache-2.0), `echarts-for-react/lib/core` (MIT), native Nautilus total-equity snapshots and Ant Design controls. Exact versions are in `apps/web/package-lock.json`. Only Line, Grid, Tooltip, DataZoom, Aria and Canvas are registered; no competing chart engine or first-party renderer is added. View bucketing selects existing native observations and is never used for financial metrics. Rendering compatibility and performance are verified by repository tests, not inferred from upstream peer ranges or benchmark claims.
 
 Upstream references: [ECharts](https://github.com/apache/echarts), [React adapter](https://github.com/hustcc/echarts-for-react), [modular imports](https://echarts.apache.org/handbook/en/basics/import/).
+
+## Task-local computation reuse
+
+Use the already pinned [Wasmi 2.0.0](https://docs.rs/wasmi/2.0.0/wasmi/) Engine/Module for compiled code and a new Store for every instrument/fold/block. Select native [CompilationMode::Eager](https://docs.rs/wasmi/latest/wasmi/enum.CompilationMode.html): the default LazyTranslation charges translation fuel only on first use, so sharing its compiled function changes the budget of later instances. Eager compilation makes execution fuel independent of module warmth; compilation is still bounded by module limits and the enclosing job's wall-clock/process limits. Historical lazy counters are not rewritten or considered comparable. No global cache or content hash is introduced. The optional extra-checks feature duplicates executor checks and is disabled by default upstream; disabling it here does not remove module validation, deterministic execution, memory limits or fuel.
+
+Use existing [ndarray 0.17.1](https://docs.rs/ndarray/0.17.1/ndarray/) borrowed slices before the unchanged dot operation and consume its owned result buffer rather than cloning it. Portfolio preparation borrows its already selected immutable catalog for all members. No BLAS, Rayon, JIT, Python bridge or new scientific dependency is needed for these changes. Parallelizing folds is deliberately not mixed into this change because fuel is one ordered task budget.
+
+The native benchmark example compares compile-per-instance with compile-once, includes first compilation in both measurements and checks identical predictions and fuel. Its workload is a tiny synthetic Wasm model, not an end-to-end performance claim. Native run logs, not upstream overhead estimates, are the measurement source.

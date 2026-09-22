@@ -1,8 +1,8 @@
 //! Native catalog -> causal features -> bounded Wasm predictions, with separate labels.
 //! Labels in this result are restricted evaluation evidence, not a public Agent response.
 use crate::{
-    catalog::{load_catalog, NativeBarSeries},
-    signals::WasmSignal,
+    catalog::{load_catalog, NativeBarSeries, NativeMarketData},
+    signals::SignalModule,
 };
 use anyhow::{ensure, Result};
 use contracts::{science::*, DbCounter, SchemaV1};
@@ -50,22 +50,35 @@ pub fn forecast(
     request: &NativeForecastRequestV1,
     module: &[u8],
 ) -> Result<NativeForecastResultV1> {
-    let parameters = &request.parameters;
     domain::execution::forecast_request(request)?;
     let market = load_catalog(catalog_root, &request.selection)?;
+    forecast_market(&market, request, module)
+}
+
+/// Borrow the task's already selected catalog; callers must use the same selection.
+/// Models and cutoffs never share mutable execution state.
+pub(crate) fn forecast_market(
+    market: &NativeMarketData,
+    request: &NativeForecastRequestV1,
+    module: &[u8],
+) -> Result<NativeForecastResultV1> {
+    domain::execution::forecast_request(request)?;
+    let parameters = &request.parameters;
+    let module = SignalModule::new(module)?;
     let mut remaining = parameters.total_fuel.get();
     let mut points = Vec::with_capacity(market.rows);
     let mut prediction_count = 0_u64;
-    for series in market.series {
+    for series in &market.series {
         ensure!(
             series.bars.len() >= parameters.slow_period as usize,
             "FORECAST_INSUFFICIENT_WARMUP"
         );
-        let mut model = WasmSignal::new(module, u32::try_from(series.bars.len())?, remaining)?;
+        let mut model = module.instantiate(u32::try_from(series.bars.len())?, remaining)?;
+        let instrument_id = series.instrument.id().to_string();
         for (index, (bar, features)) in series
             .bars
             .iter()
-            .zip(features(&series, parameters))
+            .zip(features(series, parameters))
             .enumerate()
         {
             let close = bar.close.as_f64();
@@ -87,7 +100,7 @@ pub fn forecast(
             let label = future.map(|future| future.close.as_f64() / close - 1.0);
             ensure!(label.is_none_or(f64::is_finite), "FORECAST_LABEL_NONFINITE");
             points.push(NativeForecastPointV1 {
-                instrument_id: series.instrument.id().to_string(),
+                instrument_id: instrument_id.clone(),
                 ordinal: u32::try_from(index)?,
                 event_ns: counter(bar.ts_event.as_u64())?,
                 available_ns: counter(bar.ts_init.as_u64())?,

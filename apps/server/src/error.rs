@@ -11,7 +11,6 @@ pub struct ApiError {
     status: StatusCode,
     code: &'static str,
     detail: &'static str,
-    retry_after: Option<u32>,
     current_revision: Option<Revision>,
     field_errors: Vec<FieldError>,
 }
@@ -21,7 +20,6 @@ impl ApiError {
             status,
             code,
             detail,
-            retry_after: None,
             current_revision: None,
             field_errors: Vec::new(),
         }
@@ -68,7 +66,6 @@ impl IntoResponse for ApiError {
             field_errors: self.field_errors,
             safe_next_actions: match self.code {
                 "AUTH_REQUIRED" => vec!["RELOAD".into()],
-                "AUTH_RATE_LIMITED" => vec!["RETRY_AFTER".into()],
                 "REVISION_CONFLICT" => vec!["RELOAD".into()],
                 _ => Vec::new(),
             },
@@ -85,12 +82,6 @@ impl IntoResponse for ApiError {
             "x-request-id",
             HeaderValue::from_str(&request_id.to_string()).expect("UUID header"),
         );
-        if let Some(seconds) = self.retry_after {
-            response.headers_mut().insert(
-                header::RETRY_AFTER,
-                HeaderValue::from_str(&seconds.to_string()).expect("integer header"),
-            );
-        }
         response
     }
 }
@@ -118,17 +109,6 @@ impl From<StoreError> for ApiError {
                 "AUTHENTICATION_FAILED",
                 "机器凭据无效或已失效。",
             ),
-            StoreError::AuthRateLimited {
-                retry_after_seconds,
-            } => {
-                let mut error = Self::new(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "AUTH_RATE_LIMITED",
-                    "请求过于频繁，请稍后重试。",
-                );
-                error.retry_after = Some(retry_after_seconds);
-                error
-            }
             StoreError::Forbidden => Self::new(
                 StatusCode::FORBIDDEN,
                 "FORBIDDEN",
