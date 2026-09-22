@@ -1,0 +1,23 @@
+name: Maintenance workbench
+on:
+  push:
+    branches: [chore/production-only-20260922]
+    paths: [.github/workflows/maintenance-workbench.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Bundle tracked source for web-authored maintenance
+        run: git archive --format=tar HEAD -o "$RUNNER_TEMP/source.tar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: production-maintenance-source
+          path: ${{ runner.temp }}/source.tar
+          retention-days: 1
+          if-no-files-found: error
