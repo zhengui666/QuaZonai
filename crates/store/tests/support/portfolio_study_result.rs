@@ -130,6 +130,7 @@ pub(super) async fn complete(
         let mut selection = request.source_selection.clone();
         selection.event_start_ns = request.evaluation_start_ns;
         NativeSimulationRequestV1 {
+            settlements: Vec::new(),
             schema_version: SchemaV1,
             selection,
             settings: request.execution_settings.clone(),

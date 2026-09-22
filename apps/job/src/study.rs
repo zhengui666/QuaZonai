@@ -153,6 +153,7 @@ pub fn evaluate(
     let mut selection = request.source_selection.clone();
     selection.event_start_ns = request.evaluation_start_ns;
     let mut replay = NativeSimulationRequestV1 {
+        settlements: request.settlements.clone(),
         schema_version: SchemaV1,
         selection,
         settings: request.execution_settings.clone(),

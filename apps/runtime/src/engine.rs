@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-pub const NATIVE_STACK: &str = "rust/1.98.1;nautilus/0.63.0;clarabel/0.11.1;wasmi/2.0.0;solow-cv/0.7.3;ndarray-stats/0.7.0;linregress/0.5.4;alpha-validation/1;alpha-sealed/1;portfolio-ensemble/1;portfolio-models/4;portfolio-build-rolling/1;simulation-models/1;portfolio-weights/1;portfolio-variance-bound/1;portfolio-cvar/1;portfolio-risk-budget/1;portfolio-cvar-risk-budget/1;bar-notional/1;portfolio-liquidity/1;portfolio-cost-source/1;portfolio-slippage/1;candidate-simulation/2;portfolio-sequence/1;portfolio-study/6;portfolio-calendar/2;portfolio-rolling-liquidity/1;portfolio-history/1";
+pub const NATIVE_STACK: &str = "rust/1.98.1;nautilus/0.63.0;clarabel/0.11.1;wasmi/2.0.0;solow-cv/0.7.3;ndarray-stats/0.7.0;linregress/0.5.4;alpha-validation/1;alpha-sealed/1;portfolio-ensemble/1;portfolio-models/4;portfolio-build-rolling/1;simulation-models/1;portfolio-weights/1;portfolio-variance-bound/1;portfolio-cvar/1;portfolio-risk-budget/1;portfolio-cvar-risk-budget/1;bar-notional/1;portfolio-liquidity/1;portfolio-cost-source/1;portfolio-slippage/1;candidate-simulation/2;portfolio-sequence/1;portfolio-study/6;portfolio-calendar/2;portfolio-rolling-liquidity/1;portfolio-history/1;polymarket-research/1";
 pub const JOB_ENTRYPOINT: &str = "/usr/local/bin/job";
 
 #[derive(Clone)]
@@ -229,6 +229,7 @@ impl NativeEngine {
                 ("portfolio-calendar".into(), "2".into()),
                 ("portfolio-rolling-liquidity".into(), "1".into()),
                 ("portfolio-history".into(), "1".into()),
+                ("polymarket-research".into(), "1".into()),
                 ("linregress".into(), "0.5.4".into()),
             ]),
         })
@@ -281,7 +282,10 @@ impl NativeEngine {
                     else {
                         continue;
                     };
-                    if !matches!(class, "CurrencyPair" | "Equity") {
+                    if !(matches!(class, "CurrencyPair" | "Equity")
+                        || (class == "BinaryOption"
+                            && domain::prediction::instrument(definition).is_ok()))
+                    {
                         continue;
                     }
                     let Some(id) = definition.get("id").and_then(serde_json::Value::as_str) else {
@@ -318,9 +322,9 @@ impl NativeEngine {
                     .into_iter()
                     .map(|(venue, classes)| RuntimeVenueV1 {
                         venue,
+                        expiry_and_settlement: classes.contains("BinaryOption"),
                         instrument_classes: classes.into_iter().collect(),
                         data_kinds: vec![RuntimeDataKind::Bar],
-                        expiry_and_settlement: false,
                     })
                     .collect(),
                 label_interval_support: LabelIntervalSupportV1 {

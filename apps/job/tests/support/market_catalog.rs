@@ -135,6 +135,7 @@ pub fn market_direction(
     later[0].weight = "0.2".parse().unwrap();
     later[1].weight = "0.6".parse().unwrap();
     let request = NativeSimulationRequestV1 {
+        settlements: Vec::new(),
         schema_version: SchemaV1,
         selection,
         settings: NativeSimulationSettingsV1 {

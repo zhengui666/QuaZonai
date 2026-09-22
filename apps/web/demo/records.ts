@@ -336,6 +336,13 @@ record(`/api/v2/projects/${project.id}/portfolio-candidates`, '/api/v2/projects/
 record(`/api/v2/portfolio-candidates/${demoCandidate.id}/evaluations`, '/api/v2/portfolio-candidates/{id}/evaluations', page([demoEvaluation]));
 record(`/api/v2/evaluations/${demoEvaluation.id}`, '/api/v2/evaluations/{id}', demoEvaluation);
 record(`/api/v2/evaluations/${demoEvaluation.id}/metrics`, '/api/v2/evaluations/{id}/metrics', page([]));
+// This scene has presentation history but no executed simulation or equity snapshots.
+// Use the real unavailable-response contract rather than inventing an equity curve.
+record(`/api/v2/evaluations/${demoEvaluation.id}/equity-curve`, '/api/v2/evaluations/{id}/equity-curve', {
+  schema_version: 1, project_id: project.id, candidate_id: demoCandidate.id,
+  evaluation_id: demoEvaluation.id, run_id: demoEvaluation.run_id, origin: 'FIXTURE',
+  curve: { status: 'UNAVAILABLE', reason_code: 'NO_SIMULATION' },
+} satisfies Schema['EquityCurveV1']);
 record(`/api/v2/projects/${project.id}/releases`, '/api/v2/projects/{id}/releases', page([demoRelease]));
 record(`/api/v2/releases/${demoRelease.id}`, '/api/v2/releases/{id}', demoRelease);
 record(`/api/v2/releases/${demoRelease.id}/approvals`, '/api/v2/releases/{id}/approvals', page([]));

@@ -167,6 +167,7 @@ impl Store {
         selection.event_start_ns = source.available_ns;
         selection.event_end_ns = selection.event_end_ns.min(until);
         let native = NativeSimulationRequestV1 {
+            settlements: dataset.selection.settlements.clone(),
             schema_version: SchemaV1,
             selection,
             settings,

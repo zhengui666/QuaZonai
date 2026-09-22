@@ -58,8 +58,12 @@ Release详情的“原审批历史”可分页查看原授权、证据集合、�
 不能推迟既有最早生效时间。响应未知同请求/键重试，已领取事实保留。
 
 当前单基础币种 Nautilus 0.63.0 配置中，CurrencyPair 必须明确选择 MARGIN；
-Equity 支持 CASH 或 MARGIN。系统拒绝不支持的账户/资产类组合，不自动切换账户
-模型或改写旧执行假设；这只是模拟配置，不涉及真实券商账户。
+Equity 支持 CASH 或 MARGIN。POLYMARKET BinaryOption 选择 CASH、long-only、
+原 USDC／USDC.e／pUSD 和 NAUTILUS_POLYMARKET 费用模型，需要 polymarket-research/1
+镜像及原费用／生命周期证据。升级后重新探测 Runtime，并建立新执行假设；不能把
+旧探测、旧费用或 USD 配置当作新能力。系统不自动切换账户模型或改写旧执行假设。
+这些都是模拟配置，不涉及真实券商账户；[数据准备与使用边界](docs/polymarket-history.md)
+说明完整操作顺序。研究使用的抵押币与 Codex 费用预算的 ISO 法币分开。
 
 “组合”选择项目后，“评估政策”可分页查看原版本或填写新不可变政策。
 Validation、Sealed、组合阈值分别填写；未定义组合要求时保持null。所有数值、

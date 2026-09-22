@@ -15,6 +15,7 @@ pub const SAMPLE_COVARIANCE_CLASS: &str = "ndarray_stats::CorrelationExt::cov";
 pub const SAMPLE_COVARIANCE_VERSION: &str = "0.7.0";
 pub const NAUTILUS_EXECUTION_VERSION: &str = "0.63.0";
 pub const NAUTILUS_FILL_CLASS: &str = "nautilus_execution::models::fill::DefaultFillModel";
+pub const NAUTILUS_POLYMARKET_FEE_CLASS: &str = "nautilus_polymarket::models::PolymarketFeeModel";
 pub const NAUTILUS_FEE_CLASS: &str = "nautilus_execution::models::fee::MakerTakerFeeModel";
 pub const NAUTILUS_LATENCY_CLASS: &str = "nautilus_execution::models::latency::StaticLatencyModel";
 
@@ -404,6 +405,12 @@ pub enum NativeModelRefV1 {
         upstream_version: String,
         parameters: NautilusFeeParametersV1,
     },
+    NautilusPolymarket {
+        schema_version: SchemaV1,
+        upstream_class: String,
+        upstream_version: String,
+        parameters: NautilusFeeParametersV1,
+    },
     NautilusStaticLatency {
         schema_version: SchemaV1,
         upstream_class: String,
@@ -449,6 +456,12 @@ impl utoipa::PartialSchema for NativeModelRefV1 {
             (
                 "NAUTILUS_MAKER_TAKER",
                 NAUTILUS_FEE_CLASS,
+                NAUTILUS_EXECUTION_VERSION,
+                NautilusFeeParametersV1::schema(),
+            ),
+            (
+                "NAUTILUS_POLYMARKET",
+                NAUTILUS_POLYMARKET_FEE_CLASS,
                 NAUTILUS_EXECUTION_VERSION,
                 NautilusFeeParametersV1::schema(),
             ),
@@ -511,7 +524,7 @@ impl ToSchema for NativeModelRefV1 {
 pub struct AllocationAssetV1 {
     #[schema(min_length = 1, max_length = 200)]
     pub instrument_id: String,
-    #[schema(schema_with = crate::budget::currency_schema)]
+    #[schema(schema_with = crate::research_currency::schema)]
     pub currency: String,
     pub current_weight: DecimalValue,
     /// Frozen all-in cost per unit of traded notional, never an inferred zero.
@@ -550,7 +563,7 @@ pub struct AllocationInputV1 {
     pub forecasts: PortfolioForecastInputV1,
     pub objective: AllocationObjective,
     pub risk: AllocationRisk,
-    #[schema(schema_with = crate::budget::currency_schema)]
+    #[schema(schema_with = crate::research_currency::schema)]
     pub base_currency: String,
     pub capital_assumption: DecimalValue,
     pub current_cash_weight: DecimalValue,
@@ -577,7 +590,7 @@ pub enum SolverStatus {
 pub struct AllocationTargetV1 {
     #[schema(min_length = 1, max_length = 200)]
     pub instrument_id: String,
-    #[schema(schema_with = crate::budget::currency_schema)]
+    #[schema(schema_with = crate::research_currency::schema)]
     pub currency: String,
     pub weight: DecimalValue,
 }

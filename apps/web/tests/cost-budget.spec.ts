@@ -85,11 +85,11 @@ test('valid estimates preserve the exact decimal string in the dispatched reques
 
 test('nonexistent base currency and repeated dataset identity cannot submit', async ({ page }) => {
   const state = await editor(page);
-  await page.getByLabel('基础币种（ISO 4217）').fill('AAA');
+  await page.getByLabel('基础币种', { exact: true }).fill('AAA');
   await save(page).click();
   await expect(page.getByText('基础币种必须属于服务器原生币种表。', { exact: true })).toBeVisible();
   expect(state.commands).toHaveLength(0);
-  await page.getByLabel('基础币种（ISO 4217）').fill('USD');
+  await page.getByLabel('基础币种', { exact: true }).fill('USD');
   await page.getByRole('button', { name: '添加数据绑定', exact: true }).click();
   await page.getByLabel('数据集版本', { exact: true }).nth(1).fill(id(14));
   await save(page).click();
@@ -116,3 +116,16 @@ test('budget relationships revalidate both edited bounds without expanding limit
   await save(page).click();
   await expect.poll(() => state.commands.filter(command => command.method === 'PATCH').length).toBe(1);
 });
+
+for (const currency of ['USDC', 'USDC.e', 'pUSD']) {
+  test(`research collateral ${currency} survives browser dispatch without changing model billing`, async ({ page }) => {
+    const state = await editor(page, { ...initialBudget, cost_enforcement: 'ESTIMATED', max_cost_decimal: '12.50', cost_currency: 'USD' });
+    await page.getByLabel('基础币种', { exact: true }).fill(currency);
+    await expect(page.getByLabel('基础币种', { exact: true })).toHaveValue(currency);
+    await save(page).click();
+    await expect.poll(() => state.commands.filter(command => command.method === 'PATCH').length).toBe(1);
+    expect(state.commands.find(command => command.method === 'PATCH')?.body).toMatchObject({
+      content: { base_currency: currency, budget: { cost_enforcement: 'ESTIMATED', max_cost_decimal: '12.50', cost_currency: 'USD' } },
+    });
+  });
+}

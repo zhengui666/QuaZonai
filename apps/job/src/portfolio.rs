@@ -109,6 +109,20 @@ pub(crate) fn prepare(
     ensure!((2..=256).contains(&models.len()), "PORTFOLIO_MEMBERS");
     let market = crate::catalog::load_catalog(catalog, selection)?;
     crate::simulation::execution_market(&market, settings)?;
+    let until = selection
+        .decision_cutoff_ns
+        .get()
+        .checked_add(u64::from(mandate.rebalance_schedule.target_ttl_seconds) * 1_000_000_000)
+        .ok_or_else(|| anyhow::anyhow!("POLYMARKET_TARGET_TIME_RANGE"))?;
+    crate::prediction::target_window(
+        &market
+            .series
+            .iter()
+            .map(|s| s.instrument.clone())
+            .collect::<Vec<_>>(),
+        selection.decision_cutoff_ns.get(),
+        until,
+    )?;
     let horizon = models[0].parameters.label_horizon_observations as usize;
     let first = &market.series[0];
     let rows = first.bars.len();

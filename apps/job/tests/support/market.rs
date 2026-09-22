@@ -113,6 +113,7 @@ fn study_with_volume(volume: &str) -> (tempfile::TempDir, NativePortfolioStudyRe
     let (catalog, original, model) =
         portfolio_from_market(market_direction("0", 2900, 1.0, volume, false));
     let mut request = NativePortfolioStudyRequestV1 {
+        settlements: Vec::new(),
         schema_version: SchemaV1,
         source_selection: original.selection,
         evaluation_start_ns: instant(10),

@@ -5,27 +5,49 @@ use utoipa::PartialSchema;
 fn model_schema_preserves_exact_native_identity_and_closed_parameters() {
     let schema = serde_json::to_value(NativeModelRefV1::schema()).unwrap();
     let variants = schema["oneOf"].as_array().unwrap();
-    assert_eq!(variants.len(), 6);
-    for (variant, class, version) in [
+    let expected = [
         (
-            &variants[0],
+            "NAUTILUS_DEFAULT_FILL",
             NAUTILUS_FILL_CLASS,
             NAUTILUS_EXECUTION_VERSION,
         ),
-        (&variants[1], NAUTILUS_FEE_CLASS, NAUTILUS_EXECUTION_VERSION),
         (
-            &variants[2],
+            "NAUTILUS_MAKER_TAKER",
+            NAUTILUS_FEE_CLASS,
+            NAUTILUS_EXECUTION_VERSION,
+        ),
+        (
+            "NAUTILUS_POLYMARKET",
+            NAUTILUS_POLYMARKET_FEE_CLASS,
+            NAUTILUS_EXECUTION_VERSION,
+        ),
+        (
+            "NAUTILUS_STATIC_LATENCY",
             NAUTILUS_LATENCY_CLASS,
             NAUTILUS_EXECUTION_VERSION,
         ),
-        (&variants[3], CLARABEL_CLASS, CLARABEL_VERSION),
-        (&variants[4], FIXED_ENSEMBLE_CLASS, FIXED_ENSEMBLE_VERSION),
+        ("CLARABEL_QP", CLARABEL_CLASS, CLARABEL_VERSION),
         (
-            &variants[5],
+            "FIXED_WEIGHTED_FORECAST",
+            FIXED_ENSEMBLE_CLASS,
+            FIXED_ENSEMBLE_VERSION,
+        ),
+        (
+            "SAMPLE_COVARIANCE",
             SAMPLE_COVARIANCE_CLASS,
             SAMPLE_COVARIANCE_VERSION,
         ),
-    ] {
+    ];
+    assert_eq!(variants.len(), expected.len());
+    for (kind, class, version) in expected {
+        let matches = variants
+            .iter()
+            .filter(|variant| {
+                variant["properties"]["adapter_kind"]["enum"] == serde_json::json!([kind])
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(matches.len(), 1, "{kind}");
+        let variant = matches[0];
         assert_eq!(variant["additionalProperties"], false);
         assert_eq!(
             variant["properties"]["upstream_class"]["enum"],
@@ -41,4 +63,25 @@ fn model_schema_preserves_exact_native_identity_and_closed_parameters() {
         );
         assert_eq!(variant["required"].as_array().unwrap().len(), 5);
     }
+}
+
+#[test]
+fn polymarket_fee_wire_does_not_accept_extra_parameters_or_unknown_fields() {
+    let original = serde_json::json!({
+        "schema_version": 1,
+        "adapter_kind": "NAUTILUS_POLYMARKET",
+        "upstream_class": NAUTILUS_POLYMARKET_FEE_CLASS,
+        "upstream_version": NAUTILUS_EXECUTION_VERSION,
+        "parameters": {},
+    });
+    assert!(matches!(
+        serde_json::from_value::<NativeModelRefV1>(original.clone()).unwrap(),
+        NativeModelRefV1::NautilusPolymarket { .. }
+    ));
+    let mut changed = original.clone();
+    changed["parameters"]["fee_rate"] = serde_json::json!(0);
+    assert!(serde_json::from_value::<NativeModelRefV1>(changed).is_err());
+    let mut changed = original;
+    changed["wallet"] = serde_json::json!("not-a-supported-field");
+    assert!(serde_json::from_value::<NativeModelRefV1>(changed).is_err());
 }

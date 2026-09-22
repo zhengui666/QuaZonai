@@ -36,7 +36,9 @@ pub fn execution_account(
 ) -> Result<(), DomainError> {
     use contracts::science::NativeAccountKind;
     match (class, account) {
-        ("CurrencyPair", NativeAccountKind::Margin) | ("Equity", _) => Ok(()),
+        ("CurrencyPair", NativeAccountKind::Margin)
+        | ("Equity", _)
+        | ("BinaryOption", NativeAccountKind::Cash) => Ok(()),
         _ => Err(DomainError::CapabilityUnavailable(
             "execution_assumption_account_instrument",
         )),
@@ -76,17 +78,37 @@ pub fn execution_fees(
         execution_account(class, settings.account_kind)?;
         let currency = match *class {
             "CurrencyPair" => &value["quote_currency"],
-            "Equity" => &value["currency"],
+            "Equity" | "BinaryOption" => &value["currency"],
             _ => {
                 return Err(DomainError::CapabilityUnavailable(
                     "execution_assumption_instrument",
                 ))
             }
         };
-        let maker: contracts::DecimalValue = serde_json::from_value(value["maker_fee"].clone())
-            .map_err(|_| bad("execution_fees.maker"))?;
-        let taker: contracts::DecimalValue = serde_json::from_value(value["taker_fee"].clone())
-            .map_err(|_| bad("execution_fees.taker"))?;
+        let (maker, taker): (contracts::DecimalValue, contracts::DecimalValue) =
+            if *class == "BinaryOption" {
+                if !crate::prediction::uses_native_fee(&settings.fee_model) {
+                    return Err(DomainError::CapabilityUnavailable(
+                        "polymarket_native_fee_model",
+                    ));
+                }
+                (
+                    "0".parse().map_err(|_| bad("execution_fees.maker"))?,
+                    crate::prediction::planning_fee(value)?,
+                )
+            } else {
+                if crate::prediction::uses_native_fee(&settings.fee_model) {
+                    return Err(DomainError::CapabilityUnavailable(
+                        "polymarket_binary_instrument",
+                    ));
+                }
+                (
+                    serde_json::from_value(value["maker_fee"].clone())
+                        .map_err(|_| bad("execution_fees.maker"))?,
+                    serde_json::from_value(value["taker_fee"].clone())
+                        .map_err(|_| bad("execution_fees.taker"))?,
+                )
+            };
         if fill.prob_slippage.is_positive() {
             let tick: contracts::DecimalValue =
                 serde_json::from_value(value["price_increment"].clone())
@@ -179,6 +201,47 @@ pub fn metadata(
         return Err(bad("quality.sealed_bar_values"));
     }
     bar_notionals(quality)?;
+    crate::prediction::settlement_scope(
+        &quality.settlements,
+        &quality.instrument_ids,
+        &quality.selection,
+    )?;
+    if value.partition == contracts::research::DataPartition::Sealed
+        && !quality.settlements.is_empty()
+    {
+        return Err(bad("quality.sealed_settlement_values"));
+    }
+    for group in &quality.settlements {
+        for outcome in &group.outcomes {
+            if chrono::DateTime::from_timestamp_nanos(outcome.ts_init.get() as i64)
+                > value.available_through
+            {
+                return Err(bad("quality.settlement_availability"));
+            }
+            // The untraded sibling may have no BAR series. Its native definition is
+            // still required so one source cannot splice unrelated condition IDs.
+            let mut found = false;
+            for definition in &value.universe.instrument_definitions {
+                let (class, payload) = instrument_definition(definition)?;
+                if payload["id"].as_str() != Some(&outcome.instrument_id) {
+                    continue;
+                }
+                if found || class != "BinaryOption" {
+                    return Err(bad("quality.settlement_instrument"));
+                }
+                let (activation, _) = crate::prediction::instrument(payload)?;
+                if payload["info"]["condition_id"].as_str() != Some(&group.condition_id)
+                    || outcome.ts_event.get() < activation
+                {
+                    return Err(bad("quality.settlement_instrument"));
+                }
+                found = true;
+            }
+            if !found {
+                return Err(bad("quality.settlement_instrument"));
+            }
+        }
+    }
     if quality.row_count != value.row_count
         || quality.first_event_ns > quality.last_event_ns
         || quality.last_event_ns > quality.available_through_ns
