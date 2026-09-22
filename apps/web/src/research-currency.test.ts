@@ -12,7 +12,12 @@ describe('native research currency contracts', () => {
     expect(validateCostCurrency(currency)).toBe(true);
   });
 
-  it.each(['PUSD', 'usdc', 'USDT', 'USD ', ' USD', '', null, 1])('rejects an unsupported or ambiguous unit %s', (currency) => {
+  it('keeps an absent model-cost budget distinct from a required research unit', () => {
+    expect(validateBaseCurrency(null)).toBe(false);
+    expect(validateCostCurrency(null)).toBe(true);
+  });
+
+  it.each(['PUSD', 'usdc', 'USDT', 'USD ', ' USD', '', 1])('rejects an unsupported or ambiguous unit %s', (currency) => {
     expect(validateBaseCurrency(currency)).toBe(false);
     expect(validateCostCurrency(currency)).toBe(false);
   });
