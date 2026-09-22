@@ -29,7 +29,11 @@ Data acquisition, native catalog publication, research admission, scientific res
 
 ## Verification
 
-NOT_RUN. No production data, credentials, deployment, scientific run or complete research workflow has been executed by this task yet.
+Preparation run 35671282868 successfully compiled the native source, ran the contracts/domain library checks, native-history round-trip tests and Polymarket simulation/study tests, and generated API/web contracts. Native source head: 5f01c7a696c7af87ce37ae6b44980fd818297232; generated-contract head: e76a29be34a420d9da0e096accb909c03ff04d7b. This is scoped intermediate evidence, not final-head CI or production acceptance.
+
+The source fixes mixed native Parquet identities, accepts original research collateral through result binding, and selects native 365-day portfolio statistics for Polymarket while retaining the existing 252-day path. Additional Runtime/OCI and web currency regression checks must pass on the final head.
+
+No real historical archive coverage, trading account, wallet, deployment or real-market Alpha/portfolio acceptance is claimed. Synthetic native computation is executed; real data and end-to-end product qualification are separate unexecuted facts.
 
 ## Review and delivery
 

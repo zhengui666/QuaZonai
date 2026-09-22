@@ -4,6 +4,8 @@
 mod catalog_fixture;
 #[path = "../../job/tests/support/market.rs"]
 mod market;
+#[path = "../../job/tests/support/polymarket.rs"]
+mod polymarket;
 #[path = "support/oci.rs"]
 mod support;
 use bollard::{
@@ -69,13 +71,44 @@ async fn real_native_portfolio_sequence_consumes_all_original_target_files() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_native_rolling_study_uses_original_models_in_one_account() {
+    native_rolling_study(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_native_polymarket_study_preserves_collateral_and_calendar_year_metrics() {
+    native_rolling_study(true).await;
+}
+
+async fn native_rolling_study(prediction: bool) {
     use contracts::{
         execution::NativeTaskParametersV1,
         research::{ArtifactInputRole, DataPartition},
         science::NativePortfolioStudyResultV1,
         Revision,
     };
-    let (catalog, mut request, wasm) = market::study_liquidity("10000000", "0.4");
+    let (mut catalog, mut request, wasm) = market::study_liquidity("10000000", "0.4");
+    if prediction {
+        // Only source types change. The actual Runtime, OCI, original Wasm models,
+        // rolling liquidity, shared account and output-binding checks remain identical.
+        catalog = tempfile::tempdir().unwrap();
+        let expiration = 4 * 86_400_000_000_000;
+        polymarket::write_catalog(catalog.path(), 2 * 1440 + 20, "0", expiration, true);
+        polymarket::settings(&mut request.execution_settings, "0", expiration);
+        request.mandate.base_currency = "pUSD".into();
+        request.source_selection.bar_types = polymarket::IDS
+            .iter()
+            .map(|id| format!("{id}-1-MINUTE-LAST-EXTERNAL"))
+            .collect();
+        for (asset, fee) in request
+            .assets
+            .iter_mut()
+            .zip(&request.execution_settings.fee_rates)
+        {
+            asset.instrument_id = fee.instrument_id.clone();
+            asset.currency = "pUSD".into();
+            asset.transaction_cost_rate = fee.taker.clone();
+        }
+    }
     market::calendar_schedule(&mut request);
     let dataset = Id::new();
     let selection = &request.source_selection;
@@ -249,6 +282,15 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     assert_eq!(manifest.engine_versions["portfolio-rolling-liquidity"], "1");
     assert_eq!(manifest.engine_versions["portfolio-build-rolling"], "1");
     assert_eq!(manifest.engine_versions["portfolio-history"], "1");
+    if prediction {
+        assert_eq!(manifest.engine_versions["polymarket-research"], "1");
+        let capabilities: contracts::runtime::RuntimeCapabilitiesV1 = f
+            .json(Method::GET, &["capabilities"], None, &[StatusCode::OK])
+            .await;
+        assert!(capabilities.venues.iter().any(|v| v.venue == "POLYMARKET"
+            && v.instrument_classes.iter().any(|c| c == "BinaryOption")
+            && v.expiry_and_settlement));
+    }
     assert_eq!(manifest.artifacts.len(), 3);
     let mut outputs = Vec::new();
     for artifact in &manifest.artifacts {
@@ -323,10 +365,14 @@ async fn real_native_rolling_study_uses_original_models_in_one_account() {
     .unwrap();
     assert_eq!(metrics.len(), 3);
     assert_eq!(capabilities.len(), 3);
+    let period = if prediction { 365 } else { 252 };
+    assert_eq!(metrics[0].annualization_factor, None);
+    assert_eq!(metrics[1].annualization_factor, Some(f64::from(period)));
+    assert_eq!(metrics[2].annualization_factor, Some(f64::from(period)));
     for (metric, native_key) in metrics.iter().zip([
-        "Average (Return)",
-        "Returns Volatility (252 days)",
-        "Sharpe Ratio (252 days)",
+        "Average (Return)".to_owned(),
+        format!("Returns Volatility ({period} days)"),
+        format!("Sharpe Ratio ({period} days)"),
     ]) {
         let statistic = simulation
             .statistics

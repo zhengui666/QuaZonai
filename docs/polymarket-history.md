@@ -1,4 +1,4 @@
-# Polymarket 历史数据准备
+# Polymarket 历史数据与原生研究
 
 本工具复用锁定的 Nautilus Rust Polymarket 客户端和原生 ParquetDataCatalog。
 它提供操作员数据准备，不发送订单、不读取钱包、不启动研究、不登记 Dataset，
@@ -99,3 +99,44 @@ cargo clippy --locked -p job --features polymarket-history --bin polymarket-hist
 测试用原生 BinaryOption/TradeTick 和 Parquet 往返验证格式，不冒充真实市场数据。
 网络历史覆盖、完整费用与生命周期，以及 Alpha/组合研究另须实际证据。
 所有执行结论以对应 PR 最新 Head 的 CI 和日志为准。
+
+## 原生研究与组合
+
+数据准备和研究是两个入口。已经完成来源登记、许可、时点与冻结输入校验的
+原生 LAST/EXTERNAL BAR，可用于现有 Alpha 和多 Alpha 组合流程；资产保持
+POLYMARKET BinaryOption。TradeTick、QuoteTick 和 L2 能保存进原生目录，但本项目
+当前科学输入仍为 BAR。只有成交的公开抓取输出不会自动变成 BAR，也不会自动
+获取研究资格；供应商档案转换必须保留原始单位、覆盖和来源事实。
+
+操作顺序：准备原生目录和 Runtime 元数据 → 登记 DataSource、用途授权与数据版本
+→ 冻结研究输入 → 探测含 polymarket-research/1 的新 Runtime 镜像 → 在现有执行假设
+页面选择原抵押币、CASH 和 NAUTILUS_POLYMARKET → 沿用 Alpha 与组合研究入口。
+CLI 复用 `client portfolio assumptions create/list/show` 和现有研究命令，字段以
+[CLI](../CLI.md)和 Rust 生成合同为准。旧 Runtime 的历史探测不能替代新镜像的实际探测。
+
+费用引用固定为 `nautilus_polymarket::models::PolymarketFeeModel`、0.63.0。
+原 BinaryOption.info 必须有匹配的 condition_id、token_id、fee_schedule 和有效时间；
+当前来源不支持的费用参数会明确拒绝，而不是默认为免费。逐资产规划费率使用
+maker=0、taker=rate+0.000005（原 rate=0 时保持0），仅作保守优化输入。
+每笔买卖至少1单位原抵押币的研究下限保证这一上界；实际佣金仍由 Nautilus 根据
+成交价格和原费用模型计算。未观察的返佣、Gas、点差或容量不填0冒充数据支持。
+
+跨到期回放必须提供来源可验证的 InstrumentClose/ContractExpired；其 ts_init
+决定事件何时进入回放。正常0/1及50/50兑付均由原生引擎完成，缺失或尚未可用的
+结算不会按最后价格补齐。不能把计划到期日当作真实可赎回时点；没有资金可用性
+证据的样本仍保持该限制。工具和研究都不发送真实订单或赎回交易。
+
+组合使用至少两个不同 Alpha 的原模型和同一原生现金账户，不平均各自独立的
+净值曲线。正式 Polymarket 日收益波动率、Sharpe 和 Sortino 使用上游365日配置；
+原股票／外汇路径维持252日。Canonical 原始报告仍原样保留，正式发布的组合指标
+来自原生日度资金快照，不采用上游缺少快照时的逐持仓收益兜底。
+
+## 跨组件验证范围
+
+`cargo test --locked -p job --test polymarket` 验证原生费用、结算、共享现金、
+多 Alpha 和指标绑定；Runtime 的 native_oci 测试另经真实 OCI、数据挂载、任务
+输入、结果产物及发布校验重放组合。Web 币种合同测试证明研究抵押币不会进入
+模型账单预算。测试素材明确是合成边界样本，不是已验证的市场 Alpha。
+
+完整公开档案的覆盖、供应商字段转换、历史时点证据、真实数据研究与下游交付
+仍需单独验收；导入／注册／运行成功不等于这些验收均通过。
