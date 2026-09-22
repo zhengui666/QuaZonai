@@ -28,6 +28,20 @@ test('synthetic preview preserves native response contracts and denies every wri
   });
 });
 
+test('synthetic portfolio history exposes missing equity without inventing snapshots', () => {
+  const evaluation = records.get(`/api/v2/evaluations/${id(506)}`)!.value as import('./api').Schema['EvaluationView'];
+  const response = demoResponse('GET', `/api/v2/evaluations/${evaluation.id}/equity-curve`);
+  expect(response).toEqual({ status: 200, value: {
+    schema_version: 1, project_id: evaluation.project_id, candidate_id: evaluation.subject_candidate_id,
+    evaluation_id: evaluation.id, run_id: evaluation.run_id, origin: 'FIXTURE',
+    curve: { status: 'UNAVAILABLE', reason_code: 'NO_SIMULATION' },
+  } });
+  expect(validateResponse('/api/v2/evaluations/{id}/equity-curve', 'get', 200, response.value, 'application/json')).toBe(true);
+  for (const evaluationId of [id(999), ...demoSealedEvaluations.map(item => item.id)]) {
+    expect(demoResponse('GET', `/api/v2/evaluations/${evaluationId}/equity-curve`).status).toBe(404);
+  }
+});
+
 test('expired DEMO package uses the native package contract and original attachment bytes', () => {
   const ajv = new Ajv2020({ strict: false, inlineRefs: false });
   addFormats(ajv); ajv.addSchema(document, 'native');
