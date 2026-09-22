@@ -99,6 +99,12 @@ async fn native_rolling_study(prediction: bool) {
         request.mandate.capital_assumption = "1000000".parse().unwrap();
         request.execution_settings.starting_capital = request.mandate.capital_assumption.clone();
         request.mandate.base_currency = "pUSD".into();
+        // Ten million shares at about .4 provide about four million collateral
+        // units of bar notional. A 40% participation bound cannot invest the FX
+        // fixture's ten million capital. Use a feasible one-million account,
+        // retaining the original participation limit and all solver checks.
+        request.mandate.capital_assumption = "1000000".parse().unwrap();
+        request.execution_settings.starting_capital = request.mandate.capital_assumption.clone();
         request.source_selection.bar_types = polymarket::IDS
             .iter()
             .map(|id| format!("{id}-1-MINUTE-LAST-EXTERNAL"))

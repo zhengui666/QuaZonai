@@ -48,9 +48,17 @@ test('synthetic two-Alpha history keeps expired qualification and original portf
   for (const n of [0, 1]) await expect(candidate.getByRole('cell', { name: `01990000-0000-7000-8000-00000000041${n}`, exact: true })).toBeVisible();
   await expect(candidate.getByRole('cell', { name: '0.5', exact: true })).toHaveCount(2);
   await expect(candidate.getByRole('cell', { name: 'SYNTHETIC.EXAMPLE', exact: true })).toBeVisible();
+  const equityResponse = page.waitForResponse(response =>
+    new URL(response.url()).pathname === '/api/v2/evaluations/01990000-0000-7000-8000-000000000506/equity-curve');
   await candidate.getByRole('button', { name: '评估 00000506', exact: true }).click();
   const evaluation = page.getByRole('dialog', { name: '候选研究评估', exact: true });
   await expect(evaluation.getByText('PORTFOLIO', { exact: true })).toBeVisible();
+  const equity = await equityResponse;
+  expect(equity.status()).toBe(200);
+  expect(await equity.json()).toMatchObject({
+    origin: 'FIXTURE', curve: { status: 'UNAVAILABLE', reason_code: 'NO_SIMULATION' },
+  });
+  await expect(evaluation.getByText('本次研究未产生权益数据', { exact: true })).toBeVisible();
   await expect(evaluation.getByText('FIXTURE', { exact: true })).toBeVisible();
   await expect(evaluation.getByText('01990000-0000-7000-8000-000000000500', { exact: true })).toBeVisible();
   await expect(evaluation.getByText(/无有效期/)).toBeVisible();
