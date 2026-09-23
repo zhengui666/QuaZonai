@@ -107,6 +107,19 @@ sudo systemctl --machine=quazonai@.host --user show \
 
 确认两个单元均为 `ActiveState=inactive`、`SubState=dead` 后再迁移；停止命令失败或仍有活动单元时，先排查，不继续升级。不停止用户 manager 或其他站点的 Caddy。停止 API / Worker 不等于取消远端计算；按 Runtime 的原任务身份检查在途任务，并在备份前取得一致的静止恢复点。
 
+切换本机 Codex 版本还须保留可运行的旧版安装及服务用户原来的 `PATH`、`HOME`、`CODEX_HOME`。先保持旧版 API/Worker 运行，让所有 Mission Run 完成；需要取消时走正常 Run 取消入口，等待实际终态，`CANCEL_REQUESTED` 不是终态。按上面的命令停止两个单元并确认均 inactive 后，在主库使用受保护的维护连接只读检查：
+
+```sql
+SELECT r.id, r.state, m.role, s.codex_version
+FROM app.run_missions AS m
+JOIN app.runs AS r ON r.id = m.run_id
+LEFT JOIN app.codex_sessions AS s ON s.run_id = r.id
+WHERE r.finished_at IS NULL
+ORDER BY r.id;
+```
+
+只有返回零行才能正常切换服务用户 `PATH` 中的 Codex 并重启 API/Worker；有任一行就保持旧版，重启原服务继续完成或对账，再停止并复查。若已误切换，先停两个单元并核对上表各行的 `codex_version`；仅当未完成的已绑定会话都属于旧版、没有新版会话时，恢复服务用户原版 Codex 与原 `PATH`、`HOME`、`CODEX_HOME`，保留原生 Thread 历史和 Mission 工作区，再启动原服务等待真实终态。若新版也已有未完成会话，单一 `PATH` 无法同时恢复两个版本，应保持停机并逐版本制定对账方案；正常回退仍须零行。不直接改 `codex_sessions`、清除预约或把取消请求当作完成。
+
 准备新版本并停止服务后，保留原数据库、artifacts、状态目录及单独保管的 master key，再显式执行迁移。原生镜像、数据目录、JobSpec 与 Runtime journal 纳入同一恢复点。只有兼容当前 schema/协议时才切换旧二进制；需要数据恢复时，保留原副本并依照[数据和密钥](#数据和密钥)与 [Runtime 冷恢复](runtimes/native/README.md#recovery)恢复。
 
 选择新版本使用原子替换 current 链接，重启后重读同一项目、Run、原回执与任务身份。未知提交按原请求/幂等键对账；不能换 ID 重跑或删除状态目录来修复。浏览器新版本通过已有 PWA 提示确认更新，未保存编辑不强制刷新。
@@ -282,7 +295,7 @@ QZ 不读取／复制 `auth.json`，不改写 `config.toml`，认证由原生 `c
 “设置 → Codex → 模型设置”提供“本机默认”、模型和推理强度。
 开启本机默认保留已保存的覆盖值但不发送覆盖；关闭时只发送非空覆盖，
 模型目录、强度和可选加速来自原生检测，不猜测或静默替换。
-升级本机 Codex 并重启 API/Worker 后，在此页重新检测以刷新模型目录；检测会记录实际原生版本，
+按[停止服务、升级与恢复](#stop-services)排空并检查 Mission 后，升级本机 Codex 并重启 API/Worker，在此页重新检测以刷新模型目录；检测会记录实际原生版本，
 只在握手、账号、目录或 Thread 协议不兼容时报告不可用。普通连接检测不发送推理请求。
 
 Worker 复用 `PUBLIC_URL`，包含代理端口。独立 Worker 可显式提供

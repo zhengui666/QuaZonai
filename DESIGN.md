@@ -3107,7 +3107,7 @@ app.live_promotion_evidence 为自动 Live Approval 冻结按ID排序的完整�
 
 ### A8.0 原生 Codex 连接与会话适配
 
-Codex复用从同一 OS 用户 PATH 发现的官方原生 App Server，接受未来版本须以实际协议响应和有界能力校验为准。CI 的 0.156.1 夹具用于锁定协议回归；不从网页猜测本机版本的字段，也不把原生stdio握手、model/list或无账号thread/start当真实推理验收。QZ仅编写有界stdio关联、原生结果的非秘密投影、现有Turn账本与领域绑定，不嵌入或重写Codex工具循环、OAuth刷新和canonical聊天存储。
+Codex复用从同一 OS 用户 PATH 发现的官方原生 App Server，接受未来版本须以实际协议响应和有界能力校验为准。CI 的 0.156.1 夹具用于锁定协议回归；不从网页猜测本机版本的字段，也不把原生stdio握手、model/list或无账号thread/start当真实推理验收。QZ仅编写有界stdio关联、原生结果的非秘密投影、现有Turn账本与领域绑定，不嵌入或重写Codex工具循环、OAuth刷新和canonical聊天存储。Mission 会话冻结实际原生版本；恢复及取消对账只能使用该版本。切换本机 Codex 前须让所有 Mission Run 达到真实终态，并在 API/Worker 停止后确认无未完成 Mission；误切换时保留旧版安装、原生历史和工作区，按未完成会话的实际版本恢复对账，不改写会话版本或伪造取消。
 
 每个连接由可信启动方持有原生子进程、stdin/stdout和单个串行RPC锁；每帧最多2MiB，单次RPC有独立时限，连接只保留至多128条非秘密通知投影。EOF、半帧、超限、错误关联ID或超时都返回结果未知且废弃该连接，不能在相同调用里自动重发写RPC。持久化的Thread/Turn/Run身份与发送意图继续用于恢复。连接关闭只说明本机传输终止，不证明远端科学任务停止或ModelTurn尚未消费；现有Turn的确认和用量账本不得清零。
 

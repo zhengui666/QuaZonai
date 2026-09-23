@@ -1717,7 +1717,7 @@ async fn lost_native_send_ack_is_not_retried_and_expired_turn_persists_cancel(po
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn native_terminal_without_usage_preserves_first_observation_and_budget(pool: PgPool) {
+async fn native_terminal_without_usage_waits_for_replayed_native_usage(pool: PgPool) {
     let f = fixture(&pool).await;
     let mut connection = f
         .launcher
@@ -1862,10 +1862,18 @@ async fn native_terminal_without_usage_preserves_first_observation_and_budget(po
     );
     let recovered: (i64, i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.machine_credentials),(SELECT count(*) FROM app.codex_sessions),(SELECT count(*) FROM app.model_turn_receipts WHERE reservation_id=$1),(SELECT count(*) FROM pgmq.a_runs WHERE msg_id=$2)")
         .bind(reserved.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
-    assert_eq!(recovered, (credentials, 1, 0, 0));
+    assert_eq!(recovered, (credentials, 1, 1, 1));
+    let receipt: (String, i64, String) = sqlx::query_as(
+        "SELECT outcome, actual_tokens, usage_source FROM app.model_turn_receipts WHERE reservation_id=$1",
+    )
+    .bind(reserved.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(receipt, ("SUCCEEDED".into(), 12, "NATIVE_REPORT".into()));
     assert_eq!(
         f.store.get_run(&f.actor, run.id).await.unwrap().state,
-        RunState::CancelRequested
+        RunState::Cancelled
     );
 }
 
