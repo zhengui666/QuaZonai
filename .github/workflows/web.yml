@@ -48,6 +48,27 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
+      - name: Verify portable skill installation with the official Skills CLI
+        working-directory: .
+        env:
+          DISABLE_TELEMETRY: '1'
+        run: |
+          set -euo pipefail
+          sandbox=$(mktemp -d)
+          trap 'rm -rf "$sandbox"' EXIT
+          export HOME="$sandbox/home"
+          export XDG_CONFIG_HOME="$sandbox/config"
+          export CODEX_HOME="$HOME/.codex"
+          export CLAUDE_CONFIG_DIR="$HOME/.claude"
+          export npm_config_cache="$sandbox/npm-cache"
+          mkdir -p "$HOME" "$sandbox/project"
+          cd "$sandbox/project"
+          npx --yes skills@1.7.0 add "$GITHUB_WORKSPACE" --skill quazonai --agent codex claude-code --yes
+          diff -r "$GITHUB_WORKSPACE/skills/quazonai" .agents/skills/quazonai
+          diff -r "$GITHUB_WORKSPACE/skills/quazonai" .claude/skills/quazonai
+          npx --yes skills@1.7.0 add "https://github.com/${GITHUB_REPOSITORY}/tree/${EXPECTED_HEAD}/skills/quazonai" --skill quazonai --agent codex claude-code --global --copy --yes
+          diff -r "$GITHUB_WORKSPACE/skills/quazonai" "$CODEX_HOME/skills/quazonai"
+          diff -r "$GITHUB_WORKSPACE/skills/quazonai" "$CLAUDE_CONFIG_DIR/skills/quazonai"
       - name: Verify installation shell semantics with native Git and coreutils
         working-directory: .
         run: node --test deploy/install.test.mjs
