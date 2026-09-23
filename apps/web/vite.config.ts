@@ -68,5 +68,5 @@ export default defineConfig({
       },
     } },
   },
-  test: { include: ['src/**/*.test.ts'], environment: 'node', restoreMocks: true },
+  test: { include: ['src/**/*.test.ts'], environment: 'node' },
 });

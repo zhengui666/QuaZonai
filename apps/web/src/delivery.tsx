@@ -95,7 +95,7 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
     </QueryPanel>
     {item && !query.isError && <Button disabled={!online || query.isFetching || download.isPending} onClick={() => download.mutate()}>下载原始目标包</Button>}
     <ErrorNotice error={download.error} />
-    {item?.environment === 'DEMO' && <Alert showIcon type="warning" title="DEMO 目标包不能用于 Paper 或 Live 审批及交付。" />}
+    {item?.environment === 'DEMO' && <Alert showIcon type="warning" title="该历史记录的来源不满足交付条件。" />}
     {item && !query.isError && <Button disabled={!deliverableOrigin} onClick={() => setApproving(true)}>审批此目标包</Button>}
     {item && !query.isError && <Button onClick={() => setDeciding(true)}>人工拒绝与重新考虑</Button>}
     {deciding && item && <ReleaseDecision release={item} close={() => setDeciding(false)} />}

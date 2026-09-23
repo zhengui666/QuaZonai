@@ -48,6 +48,9 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
+      - name: Verify installation shell semantics with native Git and coreutils
+        working-directory: .
+        run: node --test deploy/install.test.mjs
       - name: Install locked dependencies without lifecycle hooks
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check native acceptance script syntax
@@ -77,10 +80,6 @@ jobs:
         run: node node_modules/vite/bin/vite.js build
       - name: Install Chromium and native browser dependencies
         run: node node_modules/@playwright/test/cli.js install --with-deps chromium
-      - name: Credential-free complete synthetic Demo
-        run: npm --ignore-scripts run test:demo
-      - name: Three-viewport presentation, accessibility and PWA tests
-        run: npm --ignore-scripts run test:e2e
       - name: Prepare the pinned native production gateway
         run: |
           set -euo pipefail
@@ -100,11 +99,11 @@ jobs:
           export XDG_RUNTIME_DIR="/run/user/$service_uid"
           systemctl --user show --property=Version
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-      - name: Real hosted user services, restart and browser acceptance
+      - name: Real hosted user services, restart, accessibility and PWA
         env:
           QUAZONAI_WEB_TEST_ADMIN_URL: postgresql://postgres:native-web-ci-only@127.0.0.1:55434/postgres
           CADDY_BIN: ${{ runner.temp }}/caddy
-        run: npm --ignore-scripts run test:e2e:native
+        run: npm --ignore-scripts run test:e2e
       - name: Require unchanged generated and handwritten source
         run: git diff --exit-code
       - name: Preserve sanitized native acceptance evidence

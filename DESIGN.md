@@ -89,15 +89,14 @@ UNPROVEN coverage 和 UNVERIFIED availability，不自动登记 Dataset、赋予
 这只是数据准备合同，不放宽现有 BAR 研究、执行费用、到期或组合准入。
 接通正式二元合约研究必须另有真实原生消费与回放证据，不能把此工具写入
 等价为完整 Polymarket Alpha/组合已交付。操作说明见
-[Polymarket 数据准备](docs/polymarket-history.md)。
+[Polymarket 数据准备](CLI.md#polymarket-history)。
 
 > 需求基线：2026-09-05，Issue #62 正文及附录 A（评论 5549224292）、B（评论 5549244417）。
 > 所有者修订：2026-09-05，PR #63 的执行要求——**优先 Rust，其次 Python；优先复用，其次造轮子**。
-> **状态：PR #63 已合并，Issue #62 的完整产品验收仍未完成。** 当前实现与证据入口见 [实现证据](docs/architecture/issue-62-execution.md)，本文保留完整目标合同，不把代码存在或 CI 通过当作生产验收。
 
 本文包含完整字段合同、API/CLI/MCP 映射、状态机、故障场景、T01–T42 和交付边界，是唯一完整架构事实源。Issue 是需求出处和验收追溯链接，不是运行时或离线审查必须另行读取的规范依赖；其后续编辑不会自动改变本文。任何新要求必须先通过版本控制更新本文，再实现。不得以摘要、局部绿色 CI、缺失能力清单或语言修订缩小核心范围。
 
-`AGENTS.md` 只定义治理；`OPERATIONS.md`、`CLI.md`、Skill、README 分别展开运行、命令、工作流和入口；`docs/architecture/issue-62-execution.md` 与兼容性矩阵只记录证据，不创造竞争架构。旧代码和过时设计从当前树删除；历史仅由 Git 保存，迁移以只读外部快照为输入。
+`AGENTS.md` 只定义治理；`OPERATIONS.md`、`CLI.md`、Skill、README 分别展开运行、命令、工作流和入口；具体变更的执行结果记录在对应 PR、CI 和任务记录，不创造竞争架构。旧代码和过时设计从当前树删除；历史仅由 Git 保存，迁移以只读外部快照为输入。
 
 ## 服务操作 Agent Skill
 
@@ -136,9 +135,9 @@ CI 不运行专属 CodeQL 或双格式 SBOM 生成，不保留只汇总其他结
 - 第一方目录不使用 `qz-` 前缀：`apps/job`、`apps/server`、`apps/runtime`、`crates/contracts`、`crates/domain`、`crates/store`、`crates/integrations`。包名/构建路径同步改名，不保留旧别名目录。
 - 旧代码没有兼容和保留义务。删除旧 Python 服务、旧前端、插件平台、旧专属测试/部署/文档及兼容层；Git 已提供代码历史，不在新树保留 legacy 副本。删除源码不是删除用户数据：不重置用户数据库/数据卷，不删除 LICENSE/NOTICE，迁移、导出及回滚仍是交付项。
 - 某组件有满足本项目能力和安全合同的 Rust 实现，就使用该实现。不能以现有桥接方便、旧工具链、版本解析失败、语言占比或赶工为理由选择 Python。
-- Python 例外须先提交 `docs/research/reuse.md` 中的具名能力证据：审查的 Rust 候选和具体版本/API、真实缺口/失败复现、采用的 Python API/版本、接口/权限/进程边界、测试和替换条件。检索不到不等于证明不存在；只批准必要范围，可由执行者依据证据自主决定。
+- Python 例外须先提交 本设计对应章节中的具名能力证据：审查的 Rust 候选和具体版本/API、真实缺口/失败复现、采用的 Python API/版本、接口/权限/进程边界、测试和替换条件。检索不到不等于证明不存在；只批准必要范围，可由执行者依据证据自主决定。
 - 已确认并实测：Nautilus `nautilus-backtest/model/trading 0.63.0`（官方 `v2.0.0rc4`）、Clarabel 0.11.1、Apache Arrow Rust 56.2.0；使用 Rust 1.98.0 满足上游 MSRV。第一方 job 不再通过 PyO3/CPython 调用这些能力。
-- 原生适配与分项测试不代表完整控制面/UX/研究/交付已就绪。删除旧测试不满足新系统 T01–T42；缺失检查仍阻塞产品验收。
+- 原生适配与控制面、UX、研究及交付保持同一合同；通过真实调用链核验受影响的 T01–T42 场景。
 
 ## 0.2 编译器补丁基线（2026-09-07）
 
@@ -170,7 +169,7 @@ CI 不运行专属 CodeQL 或双格式 SBOM 生成，不保留只汇总其他结
 
 豁免只改变本次验收范围，不改变运行时事实。未配置可用原生 Profile/认证时不能发起真实模型研究；空配置不变 READY，受控 Provider 不冒充真实模型，FIXTURE 不变 REAL，Demo 不授予资格或生产交付权限。账号操作示例仍可在将来有条件且明确授权时手工使用，本轮不在 Actions 中执行真实登录或注入生产秘密。
 
-所有非豁免的适用 CI 仍必须在最终 Head 成功，全部 Review 问题解决并取得明确干净的独立审查后才可合并，再核对 main。一次已授权范围关闭不能掩盖其他失败、缺失、取消或应运行却跳过的检查，也不代表整个 #62 或生产部署已完成。
+所有非豁免的适用 CI 仍必须在最终 Head 成功，全部 Review 问题解决并取得明确干净的独立审查后才可合并，再核对 main。一次已授权范围关闭不能掩盖其他失败、缺失、取消或应运行却跳过的检查。
 
 <a id="local-console"></a>
 ## 0.5 所有者修订：本机个人工作台（2026-09-20）
@@ -220,11 +219,11 @@ CI 不运行专属 CodeQL 或双格式 SBOM 生成，不保留只汇总其他结
 这是需求替换，不把旧 TOTP 测试删除当作新增测试通过，也不将账号豁免当成执行证据。
 第 0.4 节的 Actions-only 执行、只读 Review 和账号豁免仍适用。
 
-## 1. 当前实现与完整目标
+## 1. 生产系统仓库
 
-当前实现、实际测试入口、已合并基线及未完成验收统一记录在 [实现证据](docs/architecture/issue-62-execution.md)，README 只负责入口与使用说明，不另维护状态机或功能完成清单。
+本仓库直接维护可部署的个人生产系统，不提供演示服务、模拟业务后端或内存替代结果。README 是真实安装入口，根目录文档与操作 Skill 维护运行合同；不创建 docs 目录和重复的实现状态账本。源码的历史开发过程由 Git、Issue 和 PR 保存。
 
-[PR #63](https://github.com/zhengui666/QuaZonai/pull/63) 已合并至 main；其合并不证明本合同的全部目标已完成。后续修复通过新 PR 交付，[Issue #62](https://github.com/zhengui666/QuaZonai/issues/62) 继续承载 W0–W8/T01–T42 的全部完成责任。旧 Issue 不自动关闭，最终覆盖矩阵说明替代和独立保留关系。
+生产端到端验证复用真实 Rust 服务、数据库和原生计算组件。测试数据与故障注入限制在测试模块中；原始迁移和历史来源值保留读取与拒绝规则，绝不把旧演示产物改标为真实产物。具体检查报告保留实际结果，不从文案或代码存在推导通过。
 
 ## 2. 产品与所有权
 
@@ -259,7 +258,7 @@ React + TypeScript + antd → REST/SSE 生成合同 → qz API/Domain/Worker/CLI
                                                    / 已验证的原生统计与研究组件
 ```
 
-当前源码布局（模块存在不代表完整产品验收，不是一 crate 一微服务）：
+源码按实际职责划分；crate 边界不等于独立微服务：
 
 ```text
 Cargo.toml / Cargo.lock / rust-toolchain.toml
@@ -275,12 +274,11 @@ migrations/            显式 SQLx 迁移
 contracts/generated/   Rust 原生合同生成物，不手改
 runtimes/              Codex 锁定依赖和原生镜像装配
 tests/                 共享合同、原生探针与跨包测试辅助
-docs/                  架构导航、实现证据、复用研究和真实截图
 .opensdlc/             开发上下文、任务、review、运维流程和 Agent 评估
 .github/               原生 CI 与贡献模板
 ```
 
-生产及构建依赖遵守以下直接 workspace 依赖方向；测试辅助可以跨层复用，但不因此进入生产路径。`contracts` 不依赖其他第一方包；`domain` 与 `integrations` 只依赖 `contracts`；`store` 只依赖 `contracts/domain`；`job` 只依赖 `contracts/domain`；`runtime` 只依赖 `contracts/domain/integrations`；`server` 只依赖 `contracts/domain/store/integrations`。领域与合同层不直接依赖 HTTP、SQLx、OCI 客户端或 MCP 传输库。`make check-architecture` 用原生 Cargo metadata 检查当前图；新增包或改变方向先更新本节，不为通过检查添加 wrapper。具体入口与调用链导航见 [架构导览](docs/architecture.md)。
+生产及构建依赖遵守以下直接 workspace 依赖方向；测试辅助可以跨层复用，但不因此进入生产路径。`contracts` 不依赖其他第一方包；`domain` 与 `integrations` 只依赖 `contracts`；`store` 只依赖 `contracts/domain`；`job` 只依赖 `contracts/domain`；`runtime` 只依赖 `contracts/domain/integrations`；`server` 只依赖 `contracts/domain/store/integrations`。领域与合同层不直接依赖 HTTP、SQLx、OCI 客户端或 MCP 传输库。`make check-architecture` 用原生 Cargo metadata 检查当前图；新增包或改变方向先更新本节，不为通过检查添加 wrapper。入口按本节的模块职责和实际源码路径定位。
 
 | 成熟组件/对标 | 采用能力 | 禁止重复建设 |
 |---|---|---|
@@ -306,13 +304,30 @@ DSR/PBO 默认不支持：未确认选定 skfolio 版本具备满足本项目的
 
 默认不引入 Redis、Kafka、Temporal、向量/图数据库、通用 Workflow DSL、插件市场、第二实验记录平台或自建密钥平台。模块只为真实边界存在，不建立形式化 Repository/Factory/事件总线模板。保持 LICENSE/NOTICE/第三方声明，不擅自换许可证。
 
+<a id="cycle-startup"></a>
+### 3.1 研究启动调用链与回归入口
+
+`POST /api/v2/projects/{id}/cycles` 从用户请求到持久任务的路径如下；首个任务是 `DATA_VALIDATE`，HTTP 202 表示已提交排队记录，不表示研究完成。
+
+| 阶段 | 实现与职责 |
+|---|---|
+| HTTP | [apps/server/src/cycles.rs](apps/server/src/cycles.rs) 的 `start` 提取 `Authority`、路径、`CycleStartV1` 和 `Idempotency-Key`，组装 `CycleStartIntent`，向 Store 提供产物读写适配。HTTP 层不执行 SQL 或复制准入规则。 |
+| 事务与幂等 | [crates/store/src/cycles.rs](crates/store/src/cycles.rs) 的 `Store::start_cycle` 开启事务，调用 `commands::operator` 读取原幂等回执；新请求进入 `admit_cycle`，锁定项目并检查修订、ACTIVE 状态、冻结 Brief、输入与 Runtime，再写入 Cycle。 |
+| 领域判断 | [crates/domain/src/admission.rs](crates/domain/src/admission.rs) 的 `reserve_non_trial` 计算初始非试验任务的预算准入；[crates/domain/src/runtime.rs](crates/domain/src/runtime.rs) 的 `job_limits` 校验执行能力。Store 读取事实、持锁和应用结果，domain 保持无 SQL/HTTP 的规则层。 |
+| 持久任务与队列 | `admit_cycle` 通过 [crates/store/src/data_validation.rs](crates/store/src/data_validation.rs) 准备真实验证参数，然后调用 [crates/store/src/lifecycle.rs](crates/store/src/lifecycle.rs) 的 `enqueue_run_in_transaction`。后者在同一事务内预留预算、创建 QUEUED Run、追加事件，执行 `pgmq.send('runs', ...)` 并保存 `run_admissions`。 |
+| 提交与领取 | `admit_cycle` 绑定原生任务定义并保存 `cycle_startups`；`start_cycle` 重验权限、保存原 HTTP 回执后提交，HTTP 层才返回 202。提交后的消息由 [crates/store/src/lifecycle/queue.rs](crates/store/src/lifecycle/queue.rs) 通过 PGMQ 读取并领取。响应未知时按原请求与幂等键对账，不另建任务。 |
+
+回归从 [HTTP 启动测试](apps/server/tests/cycles_http.rs) 的 `authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_http_receipt`、[Store 启动测试](crates/store/tests/cycles.rs) 的 `cycle_run_event_admission_queue_and_receipt_are_created_once` 与 `failure_after_queue_enqueue_rolls_back_the_entire_official_start_command` 开始。[原子准入测试](crates/store/tests/atomic_cycle_admission.rs) 进一步检查提交前后可见性与取消回滚。
+
+依赖方向由 [architecture.rs](crates/contracts/tests/architecture.rs) 的 `workspace_dependencies_follow_design_boundaries` 检查：`domain` 的第一方生产/构建依赖仅允许 `contracts`，不能依赖 `store`。执行 `make check-architecture` 不需要数据库；执行 `cargo test --locked -p server --test cycles_http` 或 `cargo test --locked -p store --test cycles --test atomic_cycle_admission` 前，按 [开发检查](CONTRIBUTING.md) 配置可丢弃 PostgreSQL/PGMQ 及对应测试前置条件，不使用生产实例。
+
 ## 4. 当前原生适配的准确边界
 
-`job verify-native --output NEW_DIRECTORY` 只接受不存在目录，0700 创建；一个任务一个进程。报告始终 `origin=FIXTURE`、`deliverable=false`，不能产生 Qualification/Release/Handoff。
+`job execute` 执行冻结的类型化计算任务，`job run-bounded` 管理原生进程期限。每个任务使用独立进程，从已登记目录、模型和请求读取输入。固定数值参考仅在隔离测试中使用，不提供演示命令或生产数据生成器。
 
-- `optimization.rs` 直接调用 Clarabel Rust `DefaultSolver`，原生二次锥规划最小方差；两资产协方差 diag(1,4)，long-only、预算1，独立手算参考0.8/0.2，容差1e-5。必须原生 `Solved`、有限权重和正确维度；无 Python 或生产兜底。
-- `backtest.rs` 直接调用 Nautilus Rust BacktestEngine 和上游 EmaCross，固定745个 synthetic quote、实际原生事件/订单/持仓计数，成功/失败均 dispose。计数来自引擎，不写死“成交成功”；fixture仍不是 target-weight 多Alpha组合模拟。
-- `arrow.rs` 使用 Apache Arrow Rust RecordBatch/FileWriter/FileReader，create_new 写入，回读检查 schema/元数据/每个值和行数；不是 PyArrow。不存在第二套 IPC 协议。
+- `optimization.rs` 使用原生 Clarabel 求解冻结组合输入，检查求解状态、精确目标和完整约束，无解不返回备用权重。两资产独立数值参考仅编译到单元测试。
+- `simulation.rs` 使用 Nautilus 共享资金账户处理真实目录与冻结目标，保留原生费用、成交和权益。`study.rs` 执行滚动组合评估。
+- `crates/contracts/src/portfolio_history.rs` 使用原生 Apache Arrow 保存组合历史合同。正式 Arrow 读写与数值回归保留，不依赖演示输出。
 - `report.rs` 完整序列化、换行、sync_all后使用同文件系统 hard_link create-if-absent 发布正式名，不覆盖。任何发布前失败无正式成功报告；不是目录级崩溃一致性或生产 Artifact Store。
 - Codex 探针沿用官方 pinned二进制 stdio initialize/initialized/account/read/完整model分页/thread启动；QZ只保留受控适配，不获取隐藏推理/凭据。无凭据测试不能当作真实账号推理；T07及T08账号部分按[第0.4节](#acceptance-scope)豁免，同Thread工具链验证仍保留。
 - 原生 PostgreSQL+PGMQ 事务探针保留；临时fixture表不是正式生产Store。
@@ -397,7 +412,7 @@ Release 的 `package_artifact_id` 必须引用同 Candidate 项目的独立不�
 `media_type=application/json`、`schema_name=qz.target_package`、`schema_version=1`，
 Release 的 `package_schema_version` 同为 `1`，且 `byte_count>0`。不能引用 PARAMETERS、
 别的项目或不同版本的对象。REAL Release 要求该 Package 的 origin=REAL 且
-access_class=DELIVERY；DEMO 也要使用真实的 PACKAGE 类型记录，而不能用任意测试参数充数。
+access_class=DELIVERY；历史非真实来源也必须保留原 PACKAGE 类型记录，不得改标或伪造来源。
 **DEMO Release 永远不能产生 PAPER/LIVE Approval 或 Handoff Offer。** 这些原生元数据
 约束不替代产物内容校验、真实输入来源、多 Alpha、独立评估和完整交付授权。
 
@@ -486,7 +501,7 @@ Operator回执。Study登记和执行成功均不能代替正式独立Evaluation
 
 PWA 只缓存静态 shell；业务 API/认证/证据/审批/产物/SSE NetworkOnly。离线禁止 mutation。新版本由 Service Worker 生命周期检测并提示用户确认；未保存表单/审批对话框不强刷，不循环刷新。浏览器断线不取消运行。
 
-浏览器验收分离两种证据：三视口/axe/PWA故障展示用受控HTTP fixture；真实入口验收必须启动当前 `server` 原生二进制、PostgreSQL18/PGMQ1.10的新库和独立非owner应用角色，执行原生迁移、真实本机直接进入、项目写入、丢ACK同键重放、跨源拒绝、会话/原回执跨API重启保留，并确认旧验证码入口不存在。不能用页面文案或mock响应代替数据库事务。原生Playwright使用单独配置，不混入fixture测试；原始error-context等输出只放本次私有临时目录并清理，公开证据仅包含脱敏摘要。浏览器/Vite子进程只获得环境白名单，禁止继承管理员URL、数据库密码和GitHub/模型令牌；Vite关闭隐式.env加载。收到终止信号后先终止并等待本次子进程，再清理本次库/角色，脱敏清单失败不得阻止资源清理或发布原始日志。Web CI必须与Rust基线一致：固定1.98.1、仓库实际server包、固定PG18/PGMQ镜像、精确PR Head和生成合同无差异。此验收覆盖本机会话及研究组织入口，不冒充T42的Alpha/组合/交付全链路。
+浏览器回归只有真实服务入口：启动当前 server 二进制、PostgreSQL18/PGMQ1.10 的新库、Worker 与正式 Caddy 配置，执行原生迁移、本机访问、项目写入、丢 ACK 同键重放、跨源拒绝和重启持久化。三视口、主题、无障碍和 PWA 检查也使用同一真实服务，不另建假 API、预览后端或成功响应替身。Playwright 由 native-browser 启动并使用唯一配置，原始输出仅存本次私有临时目录；公开产物保留脱敏摘要。子进程不继承数据库管理密码或模型令牌，Vite 不加载隐式 .env。清理只回收本次测试资源。Web CI 固定 Rust1.98.1、精确提交和原生数据库镜像，并检查生成合同无差异。
 
 ### 9.1 已知不可提交选项与开发文件边界
 
@@ -606,10 +621,11 @@ POST /migrations/import 只接收受信任导出注册引用和 dry_run，不能
 
 旧 API/db/Alembic/jobs/harness/auth/science/portfolio/remote/plugin/前端路径逐项标记复用或替换；保留已发布旧迁移语义和只读导出，Git 保存代码历史。删除自研投递、重复 LLM/OAuth、伪指标、错误 execution-control、在线插件市场、Radix/重复图表及过时永久 PASS 文档；删除旧代码同时删除仅适用于旧系统的测试；不能把剩余测试绿色当完整新系统验收。
 
-README 对标 uv 的清晰定位/快速使用、Nautilus 的架构与支持边界、Qlib 的数据准备/实际流程、RD-Agent 的可运行研究示例、Ant Design 的文档/生态导航；不借用上游性能/收益/全部功能当本项目已交付。中文为主，英文状态同步。最终结构：一句话是什么/不是什么；真实 E2E 截图/短演示；已验证能力与限制；真实架构图；无付费凭据 Demo；原生登录/数据/远端/预算真实启动；流程与证据；开发测试；部署备份升级故障安全；路线图贡献许可证/第三方。
+README 描述实际产品、安装入口、运行方式和许可证；安装与恢复只维护 OPERATIONS，命令只维护 CLI，模块与字段边界只维护本文件。服务 Agent 操作沿用 SKILL，不复制领域状态机。不提供独立演示后端、内存业务模式或测试数据启动入口。
 
-Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；真实模式不依赖测试 seed/手工 SQL。所有 Quickstart、CLI Help、配置/Skill 示例和生成合同进入 smoke；不存在命令就不能写“一键可用”。截图来自真实界面，不用概念图冒充。README/Skill 不复制领域状态机，实际 CI/Review 链接替代永久 RELEASE READY 声明。文档维护复用原生链接检查、CLI help 回归和生成合同差异检查；本地文件/标题链接损坏或命令帮助失败应使 CI 失败。需要真实账号、数据或数据库的示例由对应验收覆盖，不自动执行 Markdown 中任意 Shell，也不把静态检查等同完整 T41。
+运行入口仅连接真实服务，不依赖测试 seed 或手工 SQL。Quickstart、CLI Help、配置和 Skill 示例与实际命令保持一致；截图来自真实运行界面。使用原生链接检查、CLI help 回归和生成合同差异检查，不自动执行 Markdown 中任意 Shell。具体执行结果记录在对应 PR 和 CI。
 
+<a id="delivery-completion"></a>
 ## 12. 工作包与完成边界
 
 | 工作包 | 必须输出 | 证明 |
@@ -621,7 +637,7 @@ Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；
 | W4 | PIT、分区、科学调用、trial ledger、独立评估 | 时间泄漏/缺数据/过拟合/非泄漏 golden |
 | W5 | 多 Alpha 原生优化、共享资金、Paper/Live、Forward/Wake | 数值参考、竞态、去重与自动闭环 |
 | W6 | 六域官方 antd、移动/PWA/状态/配置 | 三视口 Playwright/axe、截图 |
-| W7 | 备份恢复、升级/切换、迁移、README/CLI/Skill、清理 | 冷启动/恢复演练、docs smoke、残留检查 |
+| W7 | 备份恢复、升级/切换、迁移、README/CLI/Skill、清理 | 冷启动/恢复演练、安装与命令回归、残留检查 |
 | W8 | 全部 T01–T42、检查族、Review、合并后证据 | 最新 Head/merge/main 可复核 |
 
 新增选择先说明消除哪些第一方代码、增加哪些运维成本。核心缺口仍属于 Issue #62 的交付范围，不用空实现、永久关闭 Feature Flag、缩小范围或 Future Work 跳过。覆盖率不是正确性；相同 fixture 可共享但不能空断言。
@@ -632,7 +648,7 @@ Demo 一条文档命令启动，synthetic/fixture 明显且不能生产领取；
 
 # 附录 A：完整字段级数据模型
 
-以下是正式目标合同，不声称数据库已经实现。逻辑记录不意味着同等数量的服务/页面/框架。字段可在一致迁移中统一命名，但语义、必填性、约束和权限不得缺失。所有本地引用为真实 FK，未标 `?` 的字段必填；类型别名和共有字段按 A0。本文包含源附录 B 的 SQL 补充，不需到外部 Issue 补全。
+以下定义领域字段、关系与约束。逻辑记录不意味着同等数量的服务/页面/框架。字段可在一致迁移中统一命名，但语义、必填性、约束和权限不得缺失。所有本地引用为真实 FK，未标 `?` 的字段必填；类型别名和共有字段按 A0。本文包含源附录 B 的 SQL 补充，不需到外部 Issue 补全。
 
 ## A0. 类型、共有字段与写入
 
@@ -3077,7 +3093,7 @@ Web 与 CLI 必须能够沿原 Forward Observation → Wake → Cycle 查看事�
 
 研究上下文从原 Candidate 生产 Run 的 Cycle/startup 继承，Brief 必须仍为项目当前冻结版本；两个 Profile 的 ID/版本必须与同项目同 Brief 的真实人工 CYCLE_START 原回执及启动记录一致。自动产生的后代 Cycle 可以继承同一人工上下文，不伪造 Operator 会话、grant 或命令回执，不猜选新 Brief/模型/运行时。缺失原生上下文不创建 Cycle；变更上下文需新的人工研究事实。原 AutomationPolicy 的非 MANUAL 有效授权允许该范围内的受限重新研究，不授予审批/交付权限。
 
-沿用原冻结 Brief 的 min_cycle_interval_seconds 和 max_cycles_per_day；所有人工/自动 Cycle 都计入该项目的冷却参照与 UTC 日额度，失败/取消不退款。暂未满足条件时 PENDING 延至冷却截止或下一 UTC 日；不加永久睡眠或第二队列。共用人工启动的 Profile、数据许可、原生 Runtime 和预算校验，首个 Run 仍为 DATA_VALIDATE，随后由既有 Worker 启动有界 Mission。Cycle(trigger=DEGRADATION,wake_id)、预算预约、原生任务、PGMQ、startup 与 Wake(CONSUMED,consumed_cycle_id) 同事务提交；并发/重放只能得到一个原 Cycle。对象发布之后、提交之前再次核验原 Wake 授权和期限，失败整体回滚并按原项目锁清理未引用对象。入队与受控协议测试不是多日真实反馈或生产模型验收。
+沿用原冻结 Brief 的 min_cycle_interval_seconds 和 max_cycles_per_day；所有人工/自动 Cycle 都计入该项目的冷却参照与 UTC 日额度，失败/取消不退款。暂未满足条件时 PENDING 延至冷却截止或下一 UTC 日；不加永久睡眠或第二队列。共用人工启动的 Profile、数据许可、原生 Runtime 和预算校验，首个 Run 仍为 DATA_VALIDATE，随后由既有 Worker 启动有界 Mission。Cycle(trigger=DEGRADATION,wake_id)、预算预约、原生任务、PGMQ、startup 与 Wake(CONSUMED,consumed_cycle_id) 同事务提交；并发/重放只能得到一个原 Cycle。对象发布之后、提交之前再次核验原 Wake 授权和期限，失败整体回滚并按原项目锁清理未引用对象。反馈与模型执行状态按原始观测和任务回执记录。
 
 ### A7.11 自动 Live 的原始晋级证据
 
@@ -3228,7 +3244,7 @@ Mission 凭据的 `issuer_attempt_id` 与 `issuer_owner_epoch` 必须由受信�
 
 Runtime 与 Downstream 配置使用明确的 `/api/v2/integrations/runtimes`、`/downstreams` 集合和 `/{id}`，不开放任意表操作。create/update 分别进入同一 OperatorCommand union；更新要求 expected_revision。Runtime 非秘密配置为 name/endpoint/tls_policy/allowed_capabilities/enabled/development_http，protocol_version 固定当前原生合同1；Downstream 为 name/endpoint/accepted_package_versions/environments/enabled/development_http。配置写入必须验证 SecretVault 引用的精确用途；PINNED_CA 必须有有效原生 PEM CA 引用，SYSTEM_CA 不能混带自选 CA。更新不传新的 credential_ref 表示保留当前版本；转 SYSTEM_CA 明确清除 CA 绑定但不删除旧加密对象。仅部署显式 development-http 且 literal loopback 的端点可以使用 HTTP，生产默认 HTTPS；URL 不接受 userinfo/query/fragment。保存配置不发起网络请求，enabled/声明的 capability 不等于 readiness；后续 probe 必须经部署允许列表与原生 TLS/DNS 绑定，按精确配置 revision 采纳真实结果。
 
-公开配置 DTO 不回传 credential_ref/CA 存储位置，只显示 credential_configured/ca_configured 和实际非秘密配置。Operator 可读配置；DOCTOR_READ 的 CLI/AUTOMATION 只读同一无秘密诊断 DTO，不获得管理或原生对象读取能力。写权限仍为本机Operator或一次性完整意图CLI grant。旧不可变会话/Run 保存其原配置版本，配置更新不能改写已派发任务；当前检查/新准入必须重新判断 revision 与能力有效期。URI 语法、字段/类型/未知字段、原生凭据用途、幂等/CAS、撤销/锁等待、真实 HTTP/数据库和原始命令回执均需回归。此管理入口不是 Runtime 网络或生产完整链路已验收的声明。
+公开配置 DTO 不回传 credential_ref/CA 存储位置，只显示 credential_configured/ca_configured 和实际非秘密配置。Operator 可读配置；DOCTOR_READ 的 CLI/AUTOMATION 只读同一无秘密诊断 DTO，不获得管理或原生对象读取能力。写权限仍为本机Operator或一次性完整意图CLI grant。旧不可变会话/Run 保存其原配置版本，配置更新不能改写已派发任务；当前检查/新准入必须重新判断 revision 与能力有效期。URI 语法、字段/类型/未知字段、原生凭据用途、幂等/CAS、撤销/锁等待、真实 HTTP/数据库和原始命令回执均需回归。运行状态来自独立的原生 Runtime 探测和任务回执。
 
 ### A8.3 Codex Profile 管理与原生目录观测
 
@@ -3414,7 +3430,7 @@ origin 只能是无userinfo/query/fragment/额外路径的 HTTPS origin；HTTP �
 
 Attempt fencing 不得只在 Artifact 写入或 MCP 配置层实施：统一 `authority::machine` 按 A8.1 的 Project→Run→Attempt→Principal→Credential 原生锁顺序，检查 `runs.active_attempt_id` 与不可变发行绑定 `issuer_attempt_id`、`issuer_owner_epoch`，并在锁等待后以数据库实时钟验证当前租约。所有 MISSION scope 都要求当前 Attempt 与发行 Attempt 非空且相同、当前 owner_epoch 与发行 owner_epoch 相同且租约未到期；同一 Attempt 的接管也令旧进程的读取、自省和写入失效，不能通过普通 HTTP 绕开 MCP。历史缺少任何绑定的签发原样保留审计，但不构成当前授权，不推断回填当前 Attempt/owner；可信任务服务为当前有效租约重新签发。CLI/AUTOMATION/DOWNSTREAM 的非 Mission 语义不改变，公开 DTO 不暴露内部发行绑定或秘密。
 
-首批实际接入的工具是 `research.get_brief{brief_id}` 与 `run.get{run_id}`：请求严格拒绝未知字段，Id 的 JSON Schema 直接复用 `contracts::Id` 的原生 schema。Brief 只能是启动绑定的同项目版本，state=FROZEN 且 frozen_at 存在；不能以 DRAFT 或另一个有效 Brief 代替已冻结任务。Run 只能读取绑定 Mission，返回现有 RunSnapshotV1，不能替客户端猜百分比或任务成功。工具只返回已反序列化的公开 DTO，未知字段/合同版本不兼容明确失败。未完成的 B3 工具不登记为假成功/空实现；本入口不是完整 W2/W3/T01–T42 的验收替代，实验提交、科学任务、证据披露、原生 Codex 闭环及其全部隔离仍必须在同一 PR 完成。
+首批实际接入的工具是 `research.get_brief{brief_id}` 与 `run.get{run_id}`：请求严格拒绝未知字段，Id 的 JSON Schema 直接复用 `contracts::Id` 的原生 schema。Brief 只能是启动绑定的同项目版本，state=FROZEN 且 frozen_at 存在；不能以 DRAFT 或另一个有效 Brief 代替已冻结任务。Run 只能读取绑定 Mission，返回现有 RunSnapshotV1，不能替客户端猜百分比或任务成功。工具只返回已反序列化的公开 DTO，未知字段/合同版本不兼容明确失败。未完成的 B3 工具不登记为假成功/空实现；实验提交、科学任务、证据披露与原生 Codex 闭环由各自实际服务入口处理。
 
 回归必须包括官方 SDK client 的实际 stdio/duplex 初始化与 tools/list/call、未知工具与未知字段、非UUIDv7、错 Mission/项目/周期/Attempt、非冻结 Brief、撤销后下一调用失败、截止时间、并发上限、响应超额、重定向不跟随与无秘密错误。协议/HTTP故障测试可以使用有明确标记的测试服务，但不能称为 PostgreSQL授权或原生 Codex生产闭环证明；真正授权链另外以实际 Axum/原生 PostgreSQL/Mission issuance 测试验证。依赖锁与生成物只能由原生工具产生后检查，禁止手造 registry checksum。
 
@@ -3846,7 +3862,7 @@ GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重�
 | ID | 场景 | 必须证明 |
 |---|---|---|
 | T01 | Rust/Nautilus/Clarabel/Arrow冷启动 | pinned镜像实际安装/导入/运行，真实版本/结果；科学解释器不在API进程，语言取舍按第0节 |
-| T02 | 无凭据Demo | 一条文档命令完整UI演示；synthetic/fixture明显且不能生产领取 |
+| T02 | 原生工作台启动 | 按安装命令运行真实 API、Worker、PostgreSQL/PGMQ 与 Caddy；网页直接进入，不使用内存业务后端或预置演示数据 |
 | T03 | 原生Codex SYSTEM | 空QZ URL/key不覆盖native配置；真实stdio使用既有profile，无自动删/复制auth.json |
 | T04 | SYSTEM+effort | model=null、合法非空effort生效，来源不变，default开关保留保存值 |
 | T05 | 本机 Codex 配置唯一所有权 | 自动发现同一 OS 用户的 PATH/HOME/CODEX_HOME；拒绝项目内 Provider/URL/key/目录注册，不注入环境中的服务凭据，不复制 auth.json 或改写 config.toml；两原生角色独立身份且共享账号操作正确协调；无凭据回归必执行，不属账号豁免 |
@@ -3888,7 +3904,7 @@ GET /api/v2/releases/{id}与client release show返回原ReleaseViewV1，不重�
 | T41 | README/CLI/Skill | 全部quickstart/help/示例实际执行，真实截图，能力矩阵与测试相符 |
 | T42 | Web/CLI双入口完整闭环 | 新实例分别达研究/Alpha/组合/Paper/Forward/晋级或劣化唤醒，无手工SQL |
 
-T16可用两资产独立手算最小方差/费用前后差，不维护第二生产优化器。T31/T42可用专门非交易验收下游接target，**不用真实下单**。Demo/fixture不能通过测试开关变生产可批；真实路径用可追溯有权数据，生产制品无跳过Gate后门。
+T16可用两资产独立手算最小方差/费用前后差，不维护第二生产优化器。T31/T42可用专门非交易验收下游接target，**不用真实下单**。历史非真实来源及测试样本不能通过开关变成可交付记录；真实路径用可追溯有权数据，生产制品无跳过Gate后门。
 
 ## B9. Required checks 与验收
 

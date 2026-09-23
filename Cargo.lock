@@ -4717,8 +4717,6 @@ version = "2.0.0-dev.1"
 dependencies = [
  "anyhow",
  "arrow-array 56.2.0",
- "arrow-ipc 56.2.0",
- "arrow-schema 56.2.0",
  "bigdecimal",
  "chrono",
  "clap",
@@ -5563,7 +5561,6 @@ dependencies = [
  "nautilus-common",
  "nautilus-core",
  "nautilus-execution",
- "nautilus-indicators",
  "nautilus-model",
  "nautilus-portfolio",
  "rust_decimal",

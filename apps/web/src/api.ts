@@ -38,11 +38,29 @@ export async function responseFailure(response: Response, schemaPath: string, me
   return new ApiFailure('HTTP_CONTRACT_ERROR', `响应无效（HTTP ${response.status}）`, response.status);
 }
 
-export function makeClient(baseUrl: string, fetcher: typeof fetch = fetch) {
+export async function validateSuccessfulResponse(response: Response, schemaPath: string, method: string): Promise<Response> {
+  const kind = responseKind(schemaPath, method, response.status, response.headers.get('content-type'));
+  if (kind === undefined) {
+    throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应格式不兼容', response.status);
+  }
+  // Only a declared operation/status/media combination may retain its body.
+  // openapi-fetch, not this middleware, owns parseAs for bytes and streams.
+  if (kind === 'binary' || kind === 'event-stream') return response;
+  let value: unknown;
+  if (kind === 'json') {
+    try { value = await response.clone().json(); }
+    catch { throw new ApiFailure('HTTP_CONTRACT_ERROR', 'JSON 响应无效'); }
+  }
+  if (!validateResponse(schemaPath, method, response.status, value, response.headers.get('content-type'))) {
+    throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应数据不兼容');
+  }
+  return response;
+}
+
+export function makeClient(baseUrl: string) {
   const origin = new URL(baseUrl).origin;
   const client = createClient<paths>({
     baseUrl: origin, credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-    fetch: fetcher,
   });
   client.use({
     onRequest({ request }) {
@@ -55,24 +73,7 @@ export function makeClient(baseUrl: string, fetcher: typeof fetch = fetch) {
       return request;
     },
     async onResponse({ response, request, schemaPath }) {
-      if (response.ok) {
-        const kind = responseKind(schemaPath, request.method, response.status, response.headers.get('content-type'));
-        if (kind === undefined) {
-          throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应格式不兼容', response.status);
-        }
-        // Only a declared operation/status/media combination may retain its body.
-        // openapi-fetch, not this middleware, owns parseAs for bytes and streams.
-        if (kind === 'binary' || kind === 'event-stream') return response;
-        let value: unknown;
-        if (kind === 'json') {
-          try { value = await response.clone().json(); }
-          catch { throw new ApiFailure('HTTP_CONTRACT_ERROR', 'JSON 响应无效'); }
-        }
-        if (!validateResponse(schemaPath, request.method, response.status, value, response.headers.get('content-type'))) {
-          throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应数据不兼容');
-        }
-        return response;
-      }
+      if (response.ok) return validateSuccessfulResponse(response, schemaPath, request.method);
       const failure = await responseFailure(response, schemaPath, request.method);
       throw failure;
     },

@@ -1,6 +1,6 @@
 # Engineering operations
 
-Production procedures live in [OPERATIONS](../OPERATIONS.md) and the [hosting guide](../docs/user-guide.md).
+Production procedures live in [OPERATIONS](../OPERATIONS.md).
 
 <a id="controls"></a>
 ## Action boundaries

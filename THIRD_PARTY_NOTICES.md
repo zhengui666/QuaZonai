@@ -6,7 +6,7 @@ The selected components below explain integration and attribution. The generated
 
 | Component | Upstream license | Use |
 |---|---|---|
-| Nautilus Rust 0.63.0 | LGPL-3.0-only | Native BacktestEngine/model/trading; apps/job/src/backtest.rs adapts the official v2.0.0rc4 engine_ema_cross example and retains its copyright/license header |
+| Nautilus Rust 0.63.0 | LGPL-3.0-only | Native BacktestEngine, model, trading, analysis, persistence and Polymarket adapters; upstream copyright and LGPL license apply |
 | Clarabel.rs 0.11.1 | Apache-2.0 | Native convex solver, not a QZ-owned numerical implementation |
 | Apache Arrow Rust 56.2.0 / 59.3.0 | Apache-2.0 | Native arrays/schema/IPC; both versions occur in the resolved source graph |
 | Serde, UUID, Chrono, BigDecimal, utoipa, thiserror, proptest | Resolved upstream license texts | Wire types, standard scalar implementations, schema and testing |

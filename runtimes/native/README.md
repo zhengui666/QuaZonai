@@ -8,7 +8,7 @@ Arrow合同共同用于job写入/回读与采纳；全部行/列/元数据必须
 portfolio-rolling-liquidity/1从原PARAMETERS政策和每截止目录前缀测量BAR估值，
 复用DATA_VALIDATE的原生估值，按实际模拟权益和参与率约束调仓并再次检查年龄。
 portfolio-build-rolling/1将同一原政策/原生测量用于单截止Build，报告保留bar_notionals，
-结果核对原资产、时点、币种、年龄与精确名义量；Store 已在 Build 准入、Candidate 发布及 Release 冻结时重验原滚动来源，完整市场数据验收见[证据索引](../../docs/architecture/issue-62-execution.md#acceptance)。
+结果核对原资产、时点、币种、年龄与精确名义量；Store 已在 Build 准入、Candidate 发布及 Release 冻结时重验原滚动来源。
 不复用过期单次快照，不声称真实深度。支持固定间隔或原参数manual_cutoffs_ns手动截止，
 共用原帧数/fuel/范围/TTL覆盖检查。portfolio-calendar/2另绑定原完整会话PARAMETERS
 文件，逐值匹配目录原元数据登记的完整会话表，截止取原收盘加偏移；不自造节假日规则或抓取URL。
@@ -167,3 +167,43 @@ rustup run 1.98.1 cargo test --locked -p runtime --features native-oci --test na
 ```
 
 该套件需要含CI专用isolation-probe的实际构建镜像。缺镜像、Docker或cgroup前提会失败，没有“缺环境则跳过”的成功分支。它验证真实Rust→Wasm编译、唯一提交与不可变结果、Gateway崩溃后的同身份恢复、脱离Gateway的墙钟限制、取消的晚到CREATE/START屏障，以及真实UID/网络/文件/内存/PID限制。控制面的研究→独立评估→多Alpha→目标交付与全部T01–T42仍必须另外完成；不能用这份Runtime验收替代整个Issue62。
+
+<a id="recovery"></a>
+## 冷备份与恢复
+
+暂停控制面新任务与 Worker，先核对实际远端任务终态，再停止唯一 Runtime 写入者。备份整个原生状态目录，包括 SQLite/WAL、对象、manifest、实例身份和取消记录；同时保留控制库、私有产物、master key、Runtime 配置、原镜像与原生数据目录。状态目录示例按实际安装替换，备份父目录须预先存在。
+
+```sh
+set -eu
+umask 077
+state=/srv/quazonai-runtime/state
+backup_parent=/srv/quazonai-runtime/backups
+test -d "$state" && test ! -L "$state"
+test -d "$backup_parent" && test ! -L "$backup_parent"
+checkpoint=$(mktemp -d "$backup_parent/runtime-XXXXXXXX")
+: > "$checkpoint/state.tar"
+sudo tar --create --numeric-owner --file "$checkpoint/state.tar" --directory "$state" .
+sudo tar --compare --numeric-owner --file "$checkpoint/state.tar" --directory "$state"
+```
+
+检查并明确选择恢复点，不自动选择最新目录。保留原目录，以原路径恢复整个 checkpoint；不能混合多个备份中的 SQLite/WAL/对象。以下两个 REPLACE_WITH 值必须先替换为已核对的目录，retained 使用未占用的同级目录。
+
+```sh
+set -eu
+umask 077
+state=/srv/quazonai-runtime/state
+checkpoint=/srv/quazonai-runtime/backups/REPLACE_WITH_SELECTED_CHECKPOINT
+retained=/srv/quazonai-runtime/REPLACE_WITH_UNUSED_RETAINED_DIRECTORY
+test -s "$checkpoint/state.tar"
+test -d "$state" && test ! -L "$state"
+test ! -e "$retained" && test ! -L "$retained"
+mv --no-target-directory --no-clobber -- "$state" "$retained"
+mkdir -m 0700 -- "$state"
+sudo tar --extract --numeric-owner --same-owner --preserve-permissions \
+  --file "$checkpoint/state.tar" --directory "$state"
+sudo tar --compare --numeric-owner --file "$checkpoint/state.tar" --directory "$state"
+```
+
+恢复与原副本不得同时启动。使用原用户、配置及路径启动 Runtime，重读原任务的身份、状态、时间、manifest 和输出字节，验证取消记录与同键重放保持一致；缺镜像、数据或输出时明确报错。Worker 用原 Attempt/外部 ID 对账，不能重启原容器冒充恢复。确认原记录后，执行一个有界新任务并读取原数据，随后恢复正常任务接纳。原目录及 checkpoint 按现有保留策略处理。
+
+原生冷恢复与控制面联合恢复测试分别为 [native_restore](../../apps/runtime/tests/native_restore.rs) 和 [native_control_restore](../../apps/runtime/tests/native_control_restore.rs)，由 [Native Runtime CI](../../.github/workflows/native-runtime.yml) 使用真实镜像、数据库和 Worker 运行。测试使用独立临时资源，不能传入生产数据库。

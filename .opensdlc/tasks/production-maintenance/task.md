@@ -3,12 +3,12 @@
 <a id="intent"></a>
 ## Intent
 
-The owner requested a project whose code and documentation stay maintainable and can reach production acceptance. They explicitly authorized local source/document edits and removal of the web-only authorship restriction on 2026-09-16.
+The owner requested a maintainable production system repository. They explicitly authorized local source/document edits and removal of the web-only authorship restriction on 2026-09-16.
 
 <a id="spec"></a>
 ## Requirements and design
 
-Keep [DESIGN](../../../DESIGN.md) authoritative. Preserve user data, credentials, licenses and unrelated work. Remove obsolete author restrictions and delivery claims, consolidate duplicated guidance, and reuse native checks to detect drift. Complete the cleanup scope in a reviewed PR; production acceptance remains the full [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62) contract and must not be inferred from maintenance CI.
+Keep [DESIGN](../../../DESIGN.md) authoritative. Preserve user data, credentials, licenses and unrelated work. Remove obsolete author restrictions and delivery claims, consolidate duplicated guidance, and reuse native checks to detect drift. Deliver this cleanup through its reviewed PR; use the separate [product-completion criteria](../../../DESIGN.md#delivery-completion) for [Issue #62](https://github.com/zhengui666/QuaZonai/issues/62).
 
 <a id="plan"></a>
 ## Implementation plan

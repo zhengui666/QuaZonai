@@ -9,8 +9,8 @@ import test from 'node:test';
 // Execute the actual guide snippets with native Git/coreutils in disposable paths.
 // Compilation is an explicit fixture; sudo executes as the current user. This
 // verifies shell semantics, not a QZ build, privileged installation or deployment.
-const guide = await readFile(new URL('../docs/user-guide.md', import.meta.url), 'utf8');
-const section = guide.split('### 1. Build a reviewed revision\n')[1]?.split('### 2.')[0];
+const guide = await readFile(new URL('../OPERATIONS.md', import.meta.url), 'utf8');
+const section = guide.split('<a id="build-release"></a>')[1]?.split('<a id="initialize-state"></a>')[0];
 assert.ok(section, 'Release installation section must exist');
 const blocks = [...section.matchAll(/```sh\n([\s\S]*?)\n```/g)].map(match => match[1]);
 assert.equal(blocks.length, 2, 'Inspect changed build/install and first-selection snippets');

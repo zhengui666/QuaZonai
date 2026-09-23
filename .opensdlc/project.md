@@ -2,7 +2,7 @@
 
 <a id="purpose"></a>
 ## Purpose and architecture
-Single-user local research and target-only delivery. Read [architecture](../docs/architecture.md) for module boundaries and [DESIGN](../DESIGN.md) for contracts.
+Single-user local research and target-only delivery. Read [DESIGN](../DESIGN.md) for module boundaries and contracts.
 
 <a id="commands"></a>
 ## Working commands
@@ -18,7 +18,7 @@ The repository owner is the sole user and requirements authority. Web ChatGPT au
 
 <a id="sources"></a>
 ## Sources
-Product: DESIGN. Operation: OPERATIONS / CLI. Source navigation: docs/architecture.md. Task intent and actual results: `.opensdlc/tasks/<task-id>/task.md`. Current delivery policy: [review](review.md); maintenance response: [operations](operations.md).
+Product: DESIGN. Operation: OPERATIONS / CLI. Source navigation: DESIGN and the native workspace packages. Task intent and actual results: `.opensdlc/tasks/<task-id>/task.md`. Current delivery policy: [review](review.md); maintenance response: [operations](operations.md).
 
 <a id="native"></a>
 ## Native integration points

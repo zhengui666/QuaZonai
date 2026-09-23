@@ -1,17 +1,17 @@
-.PHONY: check check-unit check-store check-http check-docs check-links check-cli check-architecture check-web require-test-database native demo-preview
+.PHONY: check check-unit check-store check-http check-docs check-links check-cli check-architecture check-web require-test-database
 
 # Use the repository pin even when a distribution cargo precedes rustup in PATH.
 RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)
 CARGO := rustup run $(RUST_TOOLCHAIN) cargo
 LYCHEE ?= lychee
 
-# Full check fails closed when a disposable test database was not provided.
+# Full check requires a disposable test database.
 check: require-test-database check-docs
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy --locked --workspace --all-targets --features server/native-codex,runtime/native-oci -- -D warnings
 	$(CARGO) test --locked --workspace --features server/native-codex
 
-# Explicitly narrower entrypoint; it is not full Store/product acceptance.
+# Unit and native computation tests without a PostgreSQL instance.
 check-unit:
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy --locked --workspace --all-targets --features server/native-codex,runtime/native-oci -- -D warnings
@@ -45,12 +45,3 @@ check-web:
 
 require-test-database:
 	@test -n "$$DATABASE_URL" || { printf '%s\n' 'DATABASE_URL is required: use only a disposable PostgreSQL18 + PGMQ1.10.0 test instance.' >&2; exit 1; }
-
-native:
-	@test -n "$(OUTPUT)" || { printf '%s\n' 'OUTPUT must name a new directory.' >&2; exit 1; }
-	$(CARGO) run --locked -p job -- verify-native --output "$(OUTPUT)"
-
-# Isolated synthetic preview; no database or account configuration is consumed.
-demo-preview:
-	npm --prefix apps/web ci --ignore-scripts --no-audit --no-fund
-	npm --prefix apps/web run demo:preview

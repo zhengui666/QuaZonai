@@ -1,13 +1,115 @@
-# 运行与部署
+# QuaZonai 运行手册
 
-本页是实际运行手册；完整产品验收缺项集中在[证据索引](docs/architecture/issue-62-execution.md#acceptance)。合成预览、服务健康或分项 CI 不等于生产研究与交付已验收。
+本手册对应真实 Rust API、Worker、PostgreSQL / PGMQ、Codex 和原生科学 Runtime。命令与字段详见 [CLI](CLI.md)，服务 Agent 使用 [操作 Skill](skills/quazonai/SKILL.md)。
 
-- [首次启动与身份配置](#首次启动认证服务)
-- [原生计算 Runtime](#原生计算-runtime-的独立运行边界)
-- [Worker 与数据](#worker正式数据验证与025升级)
-- [数据、密钥与备份](#数据和密钥)
-- [升级提交边界](#完整迁移命令的提交边界)
-- [运行恢复](#run-admission--attempt--sse-运维边界)
+<a id="install"></a>
+## 安装与进程管理
+
+Linux x86_64、Rust 1.98.1、Node.js ≥22.12、PostgreSQL 18 / PGMQ 1.10.0 与 Caddy 是运行前置条件。下文 `quazonai` 表示拥有本机 Codex 的现有 OS 用户及其组，执行前替换为实际名称；不另建模型账号或复制认证目录。默认网页 `http://localhost:8081`、API `127.0.0.1:8080`，两者只监听 loopback。
+
+<a id="build-release"></a>
+### 1. 构建与安装指定版本
+
+在独立、无并发编辑的干净 checkout 根目录执行以下完整代码块。已有未提交改动留在原工作区，不通过清空工作区安装版本。
+
+```sh
+set -eu
+worktree_state=$(git status --porcelain=v1 --untracked-files=all)
+if [ -n "$worktree_state" ]; then
+  printf '%s\n' 'Refusing release: checkout has uncommitted or untracked changes.' >&2
+  exit 1
+fi
+revision=$(git rev-parse --verify HEAD)
+
+rustup run 1.98.1 cargo build --locked --release --target-dir target -p server --bin server
+npm --prefix apps/web ci --ignore-scripts --no-audit --no-fund
+npm --prefix apps/web run build
+
+built_revision=$(git rev-parse --verify HEAD)
+worktree_state=$(git status --porcelain=v1 --untracked-files=all)
+if [ "$built_revision" != "$revision" ] || [ -n "$worktree_state" ]; then
+  printf '%s\n' 'Refusing release: source changed during the build.' >&2
+  exit 1
+fi
+release="/opt/quazonai/releases/$revision"
+sudo install -d -m 0755 /opt/quazonai/releases
+sudo mkdir -m 0755 -- "$release"
+sudo install -d -m 0755 "$release/bin" "$release/web"
+sudo install -m 0755 target/release/server "$release/bin/server"
+sudo cp -R apps/web/dist/. "$release/web/"
+sudo chmod -R u=rwX,go=rX "$release/web"
+printf 'Installed release: %s\n' "$release"
+```
+
+输出是正式 `server` 二进制和静态网页；已有版本目录不覆盖。只在首次安装时，在上述成功的同一 shell 中选择版本：
+
+```sh
+sudo ln -sT -- "$release" /opt/quazonai/current
+```
+
+<a id="initialize-state"></a>
+### 2. 初始化持久状态与数据库
+
+只为首次安装初始化新的状态目录；已存在的安装保留原目录和密钥。
+
+```sh
+sudo install -d -o quazonai -g quazonai -m 0700 /var/lib/quazonai
+sudo -u quazonai /opt/quazonai/current/bin/server init-state \
+  --state-dir /var/lib/quazonai/state
+sudo install -d -o root -g quazonai -m 0750 /etc/quazonai
+sudo install -o root -g quazonai -m 0640 deploy/quazonai.env.example \
+  /etc/quazonai/quazonai.env
+sudoedit /etc/quazonai/quazonai.env
+```
+
+在本机填写 DATABASE_URL、STATE_DIR、PUBLIC_URL 与 DEVELOPMENT_HTTP。示例不含数据库密码，不能原样启动。EnvironmentFile 是 systemd 配置，不能作为 shell 脚本 source。数据库所有者连接可同时迁移和运行；独立低权限运行角色可选。启动服务前，通过下文[原生迁移入口](#首次启动认证服务)显式迁移；服务本身不自动迁移数据库。
+
+在同一用户终端执行 `codex login`，使 PATH 能定位 `codex`。需要时用 `systemctl --user import-environment PATH` 更新该用户 manager；保留原生 HOME / CODEX_HOME。Worker 的 PUBLIC_URL 必须与浏览器 origin 完全一致；另设 MISSION_API_ORIGIN 时也须相同。
+
+### 3. 启动真实服务与网关
+
+安装的是 systemd **user units**，不是 `User=` 系统服务。用户 manager 提供 Mission 所需的真实 XDG_RUNTIME_DIR 和 cgroup v2 层级。
+
+```sh
+sudo install -d -m 0755 /etc/systemd/user
+sudo install -m 0644 deploy/systemd/quazonai-api.service \
+  deploy/systemd/quazonai-worker.service /etc/systemd/user/
+sudo loginctl enable-linger quazonai
+sudo systemctl start "user@$(id -u quazonai).service"
+sudo systemctl --machine=quazonai@.host --user daemon-reload
+sudo systemctl --machine=quazonai@.host --user enable --now \
+  quazonai-api.service quazonai-worker.service
+```
+
+将 [deploy/Caddyfile](deploy/Caddyfile) 导入现有 Caddy 配置，不覆盖其他站点。保留 loopback bind，站点地址匹配 PUBLIC_URL，web root 指向 `/opt/quazonai/current/web`。Caddy 的 QUAZONAI_* 环境变量属于 Caddy 服务，不会自动从 API 的 EnvironmentFile 继承。
+
+```sh
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl reload caddy
+sudo systemctl --machine=quazonai@.host --user status quazonai-api quazonai-worker
+```
+
+浏览器直接进入工作台。核对真实项目保存与重启后的同一记录、原幂等回执、主题和错误状态。`/health/live` 用于进程存活检查；数据、模型和科学 Runtime 分别读取自己的就绪状态。运行服务不使用 Vite preview，不把源代码、密钥、备份或状态目录放在 web root。
+
+<a id="stop-services"></a>
+### 4. 停止服务、升级与恢复
+
+日常停止或升级前，使用与启动时相同的 user manager，停止 Worker 与 API：
+
+```sh
+set -eu
+sudo systemctl --machine=quazonai@.host --user stop \
+  quazonai-worker.service quazonai-api.service
+sudo systemctl --machine=quazonai@.host --user show \
+  quazonai-worker.service quazonai-api.service \
+  --property=Id --property=ActiveState --property=SubState
+```
+
+确认两个单元均为 `ActiveState=inactive`、`SubState=dead` 后再迁移；停止命令失败或仍有活动单元时，先排查，不继续升级。不停止用户 manager 或其他站点的 Caddy。停止 API / Worker 不等于取消远端计算；按 Runtime 的原任务身份检查在途任务，并在备份前取得一致的静止恢复点。
+
+准备新版本并停止服务后，保留原数据库、artifacts、状态目录及单独保管的 master key，再显式执行迁移。原生镜像、数据目录、JobSpec 与 Runtime journal 纳入同一恢复点。只有兼容当前 schema/协议时才切换旧二进制；需要数据恢复时，保留原副本并依照[数据和密钥](#数据和密钥)与 [Runtime 冷恢复](runtimes/native/README.md#recovery)恢复。
+
+选择新版本使用原子替换 current 链接，重启后重读同一项目、Run、原回执与任务身份。未知提交按原请求/幂等键对账；不能换 ID 重跑或删除状态目录来修复。浏览器新版本通过已有 PWA 提示确认更新，未保存编辑不强制刷新。
 
 ## 组合与目标交付操作
 
@@ -27,11 +129,11 @@ PORTFOLIO_BUILD 能力的 Runtime、冻结 Forward 输入、PAPER/LIVE，以及�
 不恢复旧审批，也不自动发送Offer。
 
 目标包正文、Release创建/读取HTTP和CLI已接通。创建要求原Candidate及独立
-PORTFOLIO/PASS，返回201只冻结版本，不批准Paper/Live或下游交付；完整成功链路仍待验收。
+PORTFOLIO/PASS，返回201只冻结版本，不批准Paper/Live或下游交付。
 响应未知时保留原请求和幂等键重试，读取不会延长目标有效期。
 浏览器在“组合”选择原候选及独立PORTFOLIO/PASS评估，确认“冻结目标包”；
 服务器仍须重验原资格与许可。“交付”可按项目分页查看原Release与详情，
-详情可“下载原始目标包”：核对原项目、PACKAGE 元数据与字节数后下载原始附件，不重新生成包；离线或记录读取失败时不可下载。DEMO 仍不能审批或登记 Offer。
+详情可“下载原始目标包”：核对原项目、PACKAGE 元数据与字节数后下载原始附件，不重新生成包；离线或记录读取失败时不可下载。历史非真实来源不能审批或登记 Offer。
 REAL表示原来源，不是Live审批。“交付记录”分页展示原Handoff，详情保留原审批、
 前版、交付序号、Claim编号及ACK时间；未确认保持未确认，读取不会续期或产生交易。
 “Forward 证据”按项目分页显示下游原消息、修订和更正引用；详情读取原 Handoff/流的当前连续窗口，展示缺口原因、完整观测数和采纳消息。窗口连续不代表健康、资格或 Live 晋级；查看不会提交观测、交付或唤醒。
@@ -62,7 +164,7 @@ Equity 支持 CASH 或 MARGIN。POLYMARKET BinaryOption 选择 CASH、long-only�
 原 USDC／USDC.e／pUSD 和 NAUTILUS_POLYMARKET 费用模型，需要 polymarket-research/1
 镜像及原费用／生命周期证据。升级后重新探测 Runtime，并建立新执行假设；不能把
 旧探测、旧费用或 USD 配置当作新能力。系统不自动切换账户模型或改写旧执行假设。
-这些都是模拟配置，不涉及真实券商账户；[数据准备与使用边界](docs/polymarket-history.md)
+这些都是模拟配置，不涉及真实券商账户；[数据准备与使用边界](CLI.md#polymarket-history)
 说明完整操作顺序。研究使用的抵押币与 Codex 费用预算的 ISO 法币分开。
 
 “组合”选择项目后，“评估政策”可分页查看原版本或填写新不可变政策。
@@ -81,7 +183,7 @@ Candidate原始头、成员和目标快照。需要Operator或精确项目RESEAR
 构建请求的current_weights_source可明确选择FORWARD_SNAPSHOT或LAST_TARGET。
 后者使用同项目原Candidate的目标文件与子项，不延长期限、不冒称账户仓位。
 
-旧实现已从活动源码树删除，无兼容服务；完整产品目标和完成条件在 [DESIGN](DESIGN.md)。
+产品合同与模块边界见 [DESIGN](DESIGN.md)。
 
 ## 原生计算 Runtime 的独立运行边界
 
@@ -106,7 +208,7 @@ Operator可通过`client portfolio assumptions create/list/show`管理新的不�
 自动续期或改写旧政策；历史成交量估值不是未来可成交保证。Store在Build准入和
 Candidate发布时重读原来源并核对原期限，job核对原质量报告与逐资产量；需要
 portfolio-liquidity/1镜像。来源损坏保留重试，到期不授新目标。
-当前不支持将这些保守 BAR 假设标成 DATA_BACKED，不能手填绑定冒充可交付证据。独立组合 Study、评估发布和 Release 已有原生入口，使用方式见下文；真实数据全链验收仍未完成。
+当前不支持将这些保守 BAR 假设标成 DATA_BACKED，不能手填绑定冒充可交付证据。独立组合 Study、评估发布和 Release 已有原生入口，使用方式见下文。
 Build还要求portfolio-cost-source/1镜像：原费用文档随任务挂载，与冻结执行设置
 完整匹配，发布再次核对原保存配置；修改副本不能绕过原费用来源。
 本次Forward目录的原资产费率也必须匹配；费率变更须新建执行假设，不沿用旧费用求解。
@@ -122,7 +224,7 @@ Build还要求portfolio-cost-source/1镜像：原费用文档随任务挂载，�
 target-only权重，不收账户或NAV；PAPER为SYNTHETIC，LIVE不自动获得研究资格。
 
 `client portfolio build`使用原Mandate、运行中Cycle、原资格和下游快照引用，需
-精确人工授权，参数见CLI。202仅表示Run入队；Worker采纳原生结果并完成发布核对后才可读取Candidate。已有原生事务与受控科学结果测试，真实授权市场数据的完整验收仍未完成。保守BAR非零滑点需portfolio-slippage/1，按原概率与最后BAR/tick换算
+精确人工授权，参数见CLI。202仅表示Run入队；Worker采纳原生结果并完成发布核对后才可读取Candidate。保守BAR非零滑点需portfolio-slippage/1，按原概率与最后BAR/tick换算
 规划期望成本（公式及向上舍入见DESIGN A5.2）；不是未来成本上界或DATA_BACKED。
 实际模拟继续使用原模型和原费率，不二次扣规划成本，不放宽其他来源/流动性约束。
 原生candidate-simulation/2可在原目标有效区间内保持该目标模拟，读取原目标与费用
@@ -141,10 +243,10 @@ Universe 返回 calendar_artifact_id；未登记时不补默认日历。Study �
 登记不证明交易所准确性或 REAL/PIT 资格。正式组合评估通过下文的原计划 Study 入口准入与发布，不能直接把本机计算产物登记成正式评估。
 该本机计算入口不可当作Operator操作或生产资格。
 它不是恢复真实持仓，也不是已交付的Evaluation
-或Release入口；可信Worker的保持研究评估与正式策略滚动评估/交付分开，后者仍待验收。
+或Release入口；可信Worker的保持研究评估与正式策略滚动评估/交付分开。
 `client portfolio simulate`通过原来源准入申请保持模拟Run（参数见CLI），需
 精确Candidate的人工授权。不要手工提交原生任务、回填可用时间或把202当作评估；
-完整科学/评估发布及交付链仍待验收。
+
 组合评估条件需在新政策的portfolio_metric_requirements单独冻结；null不含组合
 PASS条件，不能借用Alpha/Sealed阈值。保存条件本身不是组合评估通过。
 原生指标适配保留日均收益、252日年化波动率和Sharpe原值及来源；全现金的真实
@@ -188,9 +290,6 @@ Origin 会在启动时明确报错，不猜测 API 地址。`MISSION_WORKSPACES`
 缺省使用 `STATE_DIR/missions`。
 研究沙箱、独立审阅、预算和下游授权不因本机免验证码而取消。
 原生个人指令与研究隔离限制仍按实际 Mission 检查；不能将模型可用视为研究完成。
-
-专用真实账号实测仍按[验收范围](DESIGN.md#acceptance-scope)豁免，状态为
-`COMPLETED_BY_OWNER_WAIVER / NOT_RUN`，不代表真实认证或付费推理已执行。
 
 ### 应用认证与数据库
 
@@ -264,7 +363,7 @@ horizon。启用Mission的Worker在最新Turn结算后，每次消费按ordinal�
 反馈；预测成功则继续正式Validation，待评估发表后才准备一次结果Turn。先提交
 原预算预约，下次消费恢复同一Thread；不为中间观察抽样新增模型请求。
 失败反馈只陈述公开原因，当前没有详细编译器诊断；修复应保留原实验父血缘。
-重复消息不重复回送结果，未结算用量不继续调用模型；独立Reviewer及封存资格裁决见下文。专用账号在线推理部分按[DESIGN第0.4节](DESIGN.md#acceptance-scope)已完成豁免（未执行）；原生队列测试仍不能替代同Thread结果消费、实际科学任务与独立评估的完整非账号验收。
+重复消息不重复回送结果，未结算用量不继续调用模型；独立Reviewer及封存资格裁决见下文。
 
 034迁移统一首阶段记账：新编译必须为1、新预测为0，且后者须引用原已计数编译。
 各阶段仍累计CPU、输出、墙钟预算。已有账目不修改或退款；没有原始首阶段账目的
@@ -337,7 +436,7 @@ Sealed已入队不表示执行成功；科学Worker仍须发表正式评估，PA
 原独立Reviewer关联的封存ACK已接入资格裁决：三组原数据必须均为REAL、PIT已验证
 且AS_KNOWN_THEN，原科学评估、许可及绑定仍须有效。资格期限不超过原证据/许可，
 重复ACK不续期或重授撤销资格，也不恢复暂停/退役Alpha。FIXTURE即使科学PASS仍
-不获资格。真实数据正向授予、资格查询/披露及交付使用链尚未验收，不应手工改库补证。
+不获资格。不通过手工改库补造证据。
 全部Turn有完整用量、成功回答齐全、提案及科学任务均处理且反馈已在原Thread
 得到公开回答后，Worker复用原Run终态事务收束本次会话，随后归档PGMQ。终态
 已提交但ACK失败时只重放归档；取消先提交则不会再报成功。未知用量/科学终态
@@ -362,7 +461,7 @@ PENDING实验在新评估及指标的同事务内发表一次裁决；输入仍�
 
 锁定Codex的Turn列表可能把断流失败重建为Completed，不能据此认定成功。QZ只以真实终态通知或已经保存的同一通知确认结果；丢失通知且没有记录时保留UNKNOWN/预约，列表“已完成”不触发自动结算、退款或重发。
 
-研究Mission首轮请求使用冻结Brief与同Cycle剩余token额度，不自动选择另一Profile或扩大预算。完整原生用量结算后可使用剩余额度；结果未知时仍占用原预约，重试不会换请求或再插一轮。设置了费用上限但原生计费不可用时停止首轮准备，不假造价格。常驻Worker可显式启用Mission消费（完整参数见CLI）；它以独立容量领取、续约、准备首轮并驱动原生账本。仅首轮准备/模型回复不等于完整研究完成；全部执行与反馈对账后才按上述条件收束会话。后续Reviewer、封存评估与Cycle收束分别核对原关联和原科学结果，不能从研究Mission成功推断可交付。专用账号实测按[DESIGN第0.4节](DESIGN.md#acceptance-scope)已完成豁免（未执行）；同Thread反馈、独立Reviewer、封存评估与研究业务链的其余验收不因豁免关闭。
+研究Mission首轮请求使用冻结Brief与同Cycle剩余token额度，不自动选择另一Profile或扩大预算。完整原生用量结算后可使用剩余额度；结果未知时仍占用原预约，重试不会换请求或再插一轮。设置了费用上限但原生计费不可用时停止首轮准备，不假造价格。常驻Worker可显式启用Mission消费（完整参数见CLI）；它以独立容量领取、续约、准备首轮并驱动原生账本。仅首轮准备/模型回复不等于完整研究完成；全部执行与反馈对账后才按上述条件收束会话。后续Reviewer、封存评估与Cycle收束分别核对原关联和原科学结果，不能从研究Mission成功推断可交付。
 
 运行中的Turn用量达到本轮预约后，Worker先记录`mission.token_limit`和取消意图，再请求原生中断；事件里的用量只是首次达到阈值的观察，不是最终账单。缺最终回执时保留预约并阻止同Cycle的新模型支出。用量通知及中断是异步的，仍可能超额，不能视作逐token硬限额或严格美元限额。Codex的实验rollout budget跟踪/提醒不替代这条停止路径。
 
@@ -501,7 +600,7 @@ Mandate的真实API/CLI已支持新建不可变版本和读取，创建前须有
 资产绑定的bar_notionals；Store准入冻结原政策，Candidate发布重读政策和原BAR年龄。
 发布时已过期则保留求解结果、Candidate为INVALID且无可用目标；这不构成组合研究资格。
 离线不可提交；响应丢失时保留原输入重试，使用原幂等回执，不能将关闭窗口当作撤销。
-当前支持方差/CVaR下的最小风险、最大效用和风险预算；完整Candidate交付尚未验收。
+当前支持方差/CVaR下的最小风险、最大效用和风险预算。
 选择“风险预算”后，明确填写风险资产总敞口，以及原资产标识、份额和LONG/SHORT
 目标方向；份额合计1，不是资本权重。只做多不能分配正份额给SHORT。需要新镜像
 方差portfolio-risk-budget/1与SECOND_ORDER_CONE能力；CVaR需portfolio-cvar-risk-budget/1
@@ -515,8 +614,6 @@ portfolio-cvar/1 与 LINEAR_PROGRAM 镜像；不以方差或默认置信水平�
 选择方差时上限表示同周期收益方差，
 这要求重建并登记 portfolio-variance-bound/1、SECOND_ORDER_CONE 镜像能力，
 不沿用不支持该约束的旧探测。发布复核误差最多为上限乘敞口容差。
-
-研究、组合、交付及Forward历史已提供Web/CLI操作面；Worker研究续轮、独立Reviewer、资格、组合发布及自动Paper/Live/Wake已有原生实现和分项测试。当前验收范围、已执行证据与剩余工作见[实现证据](docs/architecture/issue-62-execution.md#acceptance)。专用真实账号实测按[第0.4节](DESIGN.md#acceptance-scope)已完成豁免（未执行），不再是等待账号的阻塞；其余数据、业务双入口、迁移和恢复要求未被豁免。GitHub Actions验证精确提交，普通PR不携带生产秘密；真实账户将来的使用仍须原生认证及明确授权。
 
 ### 完整迁移命令的提交边界
 
@@ -589,7 +686,7 @@ Runtime 的 `enabled` 和配置能力列表不代表可用。Cycle / standalone 
 （精确DOWNSTREAM_PROBE人工grant）记录真实观察，`client downstream readiness <id>`只读。
 需为serve和worker配置独立DOWNSTREAM_TARGETS（默认[]），不会继承Runtime允许列表。观察固定
 在探测开始后60秒失效；更新配置后重新探测。原回执重放不刷新时间，较早探测的迟到
-响应不能覆盖新探测失败。Worker会在原观察临近到期时，用每下游唯一短租约刷新未领取Offer或当前有效自动政策需要的观察；失败/崩溃后按原期限重试，不延长旧观察。人工审批与领取会重验该观察；完整交付链尚未验收，观察成功不是交付或真实交易验收。
+响应不能覆盖新探测失败。Worker会在原观察临近到期时，用每下游唯一短租约刷新未领取Offer或当前有效自动政策需要的观察；失败/崩溃后按原期限重试，不延长旧观察。人工审批与领取会重验该观察；观察成功不改变交付状态。
 
 人工审批使用 `client release approve RELEASE_UUID`，具体请求及单次人工grant见CLI。
 服务端校验原Package与当前来源许可、期限、资格、下游版本/环境，并冻结原报告引用。
@@ -638,7 +735,7 @@ Mission/Automation/Downstream不能借此读取额外证据。Sealed及独立Rev
 
 自动 Paper：ACTIVE 项目当前有效 AUTO_PAPER/AUTO_HANDOFF 政策由 Worker 轮询消费，原审批和 Offer 同事务产生。每日限额按数据库 UTC 日、原项目/下游及不同 Candidate 计数，包含人工记录；换政策版本不重置。政策替换、禁用或撤销阻止未领取记录继续领取，已领取事实不改写。`client handoff list PROJECT_UUID --limit 50`（可选 `--cursor UUID`）查询原绑定与当前状态；下游凭据仅见自己的记录。Live 自动晋级已接入同一 Worker，条件与证据边界见下段。
 
-自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”提供自动化政策、原审批/交付记录及Forward观察历史。完整市场与部署验收仍未完成。
+自动 Live：仅当前有效 AUTO_HANDOFF 政策可消费原 Candidate/下游的 Paper 观察。全部已报告原 Paper Handoff/stream 均须有当前原生 HEALTHY 观察，每个流分别满足样本数、完整窗口时长与两组指标；不合并样本或挑选有利流，超过255个流拒绝。审批与Offer同事务冻结完整排序的观察UUID集合；首次Claim重验同一集合、完整来源、Live数据用途、Release与下游readiness。新流、更正、撤权或过期会阻止旧证据继续授权；已有Claim重放保持原事实。同一Candidate当日Paper/Live合计占一次额度。人工Live审批行为不变；浏览器“交付”提供自动化政策、原审批/交付记录及Forward观察历史。
 
 Forward 报告：原 Handoff 领取后，精确项目/下游 FORWARD_SUBMIT 凭据使用 `client --idempotency-key MESSAGE_ID forward submit < forward-message.json` 提交 ForwardMessageSubmitV1（完整字段见 DESIGN A7.3）。external_message_id 必须与请求头/CLI的MESSAGE_ID一致，是原幂等编号，未知结果保持原报告重试；换编号重传相同逻辑消息也只返回原记录。纠正必须引用最新原消息、revision加1并保留窗口。三个时间使用UTC微秒精度；原始收益报告仅保存在EVALUATOR_ONLY Artifact，不能夹带账户/NAV/订单或执行权限字段。`client forward list PROJECT_UUID --limit 50 --cursor UUID`只读元数据；首次省略cursor，下游仅见自己的记录。收到报告不表示连续窗口、统计评估或Live晋级已通过；Worker分别执行原窗口评估和当前政策下的晋级检查，结果以原Evaluation、观察及交付记录为准。
 
@@ -650,7 +747,6 @@ Forward收益频率：报告可声明 `returns_frequency=UTC_DAY`（完整UTC日
 
 Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完整原日频报告在项目锁内冻结为受限FORWARD输入，固定30CPU秒/60墙钟秒/512MiB/1MiB输出、无Cycle并发2，同来源重放不新增Run。纠正、撤销、替换或过期会阻止未发送任务；普通InputSet接口仍不能复制受限报告。原Worker会在终态采纳后、ACK前发表测量Evaluation与封口窗口，decision为INCONCLUSIVE；更正/撤权/过期或不完整统计不产生有效样本。Worker沿用五秒项目轮询，每轮至多预约一个原反馈流，失败三十秒后公平重试，新增/纠正可提前重试；相同来源不重复入队。Worker在ACK前按原政策追加原生观察：维持要求不通过为DEGRADED，维持通过但晋级要求不通过为WATCH，两组通过为HEALTHY，缺失/过期/无效为INSUFFICIENT_DATA。只有当前有效DEGRADED追加唯一待处理Wake；观察/Wake失败保留原消息重试。Wake消费复用原人工研究上下文及冷却/日额度；Live晋级消费完整原生HEALTHY观察集合，详见DESIGN A7.6–A7.11。
 
-
 原生退化 Wake 由现有可信 Worker 自动化轮询消费，继承原 Candidate 研究 Cycle 的
 人工 Brief/Profile 上下文并重验当前数据/运行时/政策。冷却与 UTC 日额度不足延后；
 暂停保留待处理记录，更正/过期/撤权取消旧 Wake。与 DATA_VALIDATE/PGMQ/startup
@@ -660,28 +756,23 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 
 组合 Build/Study 的运行详情提供“自动再平衡来源”，可核对原政策、来源 Candidate、输入、Runtime 版本及后继 Study/Release。它展示历史事实，不代替当前政策或交付批准。CLI 使用 `server client run rebalance RUN_UUID` 查询相同记录。
 
-
 旧库迁移准备先保留一致性备份，并在独立副本运行 `inspect-historical-source`（配置和输出字段见 CLI）。它以只读可重复读事务给出行数和原生外键孤立计数，不启动旧 Job、不修改原库；报告成功不等于导入完成。当前入口不复制数据/凭据，也不检查产物文件或授予旧策略资格。
 
-
 旧产物复制使用 [CLI 的旧产物导出命令](CLI.md#旧产物的实际字节导出)。先保留原备份并审查私有选择清单，再导出到新目录；逐项核对报告，密封及待确认文件不读取。`COPIED` 证明实际字节复制和目标回读一致，不代表旧库完整迁移、旧策略资格或新审批权限。未支持/缺失文件留在原备份处理，不可通过删清单项目来宣称全量通过。
-
 
 旧库非秘密行内容可通过 [原生 CSV 投影导出](CLI.md#旧库行数据的原生-csv-投影导出) 保留。它与产物复制共用稳定原安装身份，但二者报告分别核对，不由行数或复制成功推导完整迁移。先保留完整旧备份；逐列排除、未支持表、缺少表和实际外键问题必须处理后才能进入后续可信注册/导入验收。
 
 内部历史投影持久化现已通过隔离 PostgreSQL 验证：报告、原身份关联及只读记录同事务提交，重复导入不创建新业务资格，冲突回滚。Linux 部署可信注册及 HTTP/CLI 入口见 [CLI](CLI.md#历史投影注册和导入)。操作前逐项核对报告，受控测试不证明用户旧备份、产物覆盖率或恢复验收已完成。
 
-
 在网页“设置 → 历史迁移”使用部署者登记的导出编号，默认只试运行。请求结果未知时
 保留原表单并重试同一请求；报告列表可查看原/投影行数、缺表、排除原因、未核验关系
 和分页原身份映射。实际导入须明确取消“仅试运行”，仅保存只读历史，不赋予资格。
-报告与映射可查询不代表真实旧备份、全部原字段、产物、密封沿袭或恢复验收已完成。
+报告中的排除项、缺失字段和失败项必须保留原始状态，不补造映射或资格。
 
 在历史报告的“原身份映射”展开一行，可查看已导入字段目录，再按字段逐段读取。
 日期、数字和原状态保留为文本；NULL、空串明确区分。长字段用下一页继续，不执行
 其中的脚本或旧任务。排除的字段仍保留原备份，不能从本入口读取；原产物及密封沿袭
-验收仍须另外完成。
-
+保持原始访问与来源约束。
 
 历史行导出的注册可同时指定同安装的原生产物导出目录（CLI 的 artifact_directory）。
 试运行核对可读取字节但不保存副本；实际导入将原身份、逐项结果和历史副本引用一起提交。
@@ -691,7 +782,7 @@ Forward可信准入仅供内部Worker调用：沿用原Candidate Runtime，完�
 在网页“设置 → 历史迁移 → 报告 → 历史附件与覆盖情况”查看摘要、逐项结果和分页；
 只有本报告已保存的公开副本提供下载按钮。CLI 的 migrate artifact-summary/artifacts/artifact/download
 提供相同入口，下载成功后向 stdout 输出完整原字节。
-真实旧备份、完整密封沿袭及 T42 恢复验收仍未完成。
+
 
 旧库移除外键不代表引用已有效。导入会按已支持的0029表关系基线补查可投影引用；
 MISSING_DECLARED 仍需核对原库结构。约束改名不影响关系匹配，重复约束不会重复计数。

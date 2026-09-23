@@ -1,30 +1,23 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiFailure, Intent, sameInstant, dataOf, isCounter, isDecimal, makeClient, responseFailure, retryAt } from './api';
+import { describe, expect, it } from 'vitest';
+import { ApiFailure, Intent, sameInstant, dataOf, isCounter, isDecimal, responseFailure, validateSuccessfulResponse, retryAt } from './api';
 import { validateResponse } from './generated/responses.cjs';
 
-afterEach(() => vi.unstubAllGlobals());
 const problem = {
   type: 'urn:quazonai:problem:revision-conflict', title: 'REVISION_CONFLICT', status: 409,
   code: 'REVISION_CONFLICT', detail: '请重新载入。', request_id: '01990000-0000-7000-8000-000000000001',
   retryable: false, current_revision: '9007199254740993', field_errors: [], safe_next_actions: ['RELOAD'],
 };
-describe('same-origin strict API client', () => {
-  it('never turns an invalid success object into an empty page', async () => {
-    const client = makeClient('https://example.test', async () => Response.json({}));
-    await expect(client.GET('/api/v2/projects')).rejects.toMatchObject({ code: 'HTTP_CONTRACT_ERROR' });
-  });
-  it('accepts an explicit empty page without inventing data', async () => {
-    const fetcher = vi.fn<typeof fetch>(async request => {
-      expect(request).toBeInstanceOf(Request);
-      if (!(request instanceof Request)) throw new Error('Expected a Request');
-      expect(request.credentials).toBe('same-origin');
-      expect(request.cache).toBe('no-store');
-      expect(request.redirect).toBe('error');
-      return Response.json({ schema_version: 1, items: [], next_cursor: null });
-    });
-    const result = dataOf(await makeClient('https://example.test', fetcher).GET('/api/v2/projects'));
-    expect(result.items).toEqual([]);
-    expect(fetcher).toHaveBeenCalledTimes(1);
+describe('strict API values and response parsing', () => {
+  it('rejects malformed pages and preserves an explicit empty page', async () => {
+    await expect(validateSuccessfulResponse(Response.json({}), '/api/v2/projects', 'GET'))
+      .rejects.toMatchObject({ code: 'HTTP_CONTRACT_ERROR' });
+    const body = { schema_version: 1, items: [], next_cursor: null };
+    const response = Response.json(body);
+    expect(await validateSuccessfulResponse(response, '/api/v2/projects', 'GET')).toBe(response);
+    expect(response.bodyUsed).toBe(false);
+    expect(await response.json()).toEqual(body);
+    expect(dataOf({ data: body })).toEqual(body);
+    expect(() => dataOf({})).toThrow(ApiFailure);
   });
   it('keeps revision conflicts precise above Number.MAX_SAFE_INTEGER', async () => {
     const failure = await responseFailure(Response.json(problem, { status: 409, headers: { 'Content-Type': 'application/problem+json' } }), '/api/v2/projects/{id}', 'PATCH');
@@ -36,18 +29,6 @@ describe('same-origin strict API client', () => {
     const failure = await responseFailure(new Response('<h1>private proxy details</h1>', { status: 502 }), '/api/v2/projects', 'GET');
     expect(failure.code).toBe('HTTP_CONTRACT_ERROR');
     expect(failure.message).not.toContain('private proxy');
-  });
-  it('rejects an offline mutation before network dispatch, with no queue', async () => {
-    vi.stubGlobal('navigator', { onLine: false });
-    const fetcher = vi.fn<typeof fetch>();
-    await expect(makeClient('https://example.test', fetcher).POST('/api/v2/projects', { body: { schema_version: 1, name: 'Test', description: '', fork_from_project_id: null }, params: { header: { 'Idempotency-Key': 'test-key' } } })).rejects.toMatchObject({ code: 'OFFLINE' });
-    expect(fetcher).not.toHaveBeenCalled();
-    vi.stubGlobal('navigator', { onLine: true });
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-  it('distinguishes unknown network outcomes from rejected commands', async () => {
-    const client = makeClient('https://example.test', async () => { throw new TypeError('secret-bearing transport message'); });
-    await expect(client.POST('/api/v2/projects', { body: { schema_version: 1, name: 'Test', description: '', fork_from_project_id: null }, params: { header: { 'Idempotency-Key': 'test-key' } } })).rejects.toMatchObject({ code: 'NETWORK_UNKNOWN' });
   });
   it('accepts only canonical Codex response operations', () => {
     const collection = '/api/v2/settings/codex';

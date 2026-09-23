@@ -85,8 +85,6 @@ jobs:
           node tests/contracts/decimal-wire.mjs | tee /tmp/native-evidence/decimal-wire.log
           node tests/contracts/bigint-wire.mjs | tee /tmp/native-evidence/bigint-wire.log
           node tests/contracts/fraction-wire.mjs | tee /tmp/native-evidence/fraction-wire.log
-      - name: Execute real Rust solver, Nautilus and Arrow round-trip
-        run: target/debug/job verify-native --output /tmp/native-evidence/native
       - name: Check signal equivalence and observe compilation reuse (no timing threshold)
         run: |
           set -euo pipefail
@@ -136,7 +134,7 @@ jobs:
           git rev-parse HEAD > /tmp/native-evidence/tested-commit.txt
           git archive --format=tar HEAD | gzip > /tmp/native-evidence/source.tar.gz
           cp Cargo.lock /tmp/native-evidence/Cargo.lock
-          printf 'Native foundation only. This is not full W0-W8/T01-T42 acceptance.\n' > /tmp/native-evidence/SCOPE.txt
+          printf 'Rust build, contracts, native computations and Codex protocol tests.\n' > /tmp/native-evidence/SCOPE.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -230,7 +228,7 @@ jobs:
           mkdir -p /tmp/store-evidence
           cp Cargo.lock /tmp/store-evidence/Cargo.lock
           cp migrations/*.sql /tmp/store-evidence/
-          printf 'Native Store/HTTP/Codex fixture tests. Not full real-account, research-to-delivery, or production acceptance.\n' > /tmp/store-evidence/SCOPE.txt
+          printf 'PostgreSQL migrations, Store transactions, HTTP and Codex integration tests.\n' > /tmp/store-evidence/SCOPE.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

@@ -1,4 +1,4 @@
-//! Native Clarabel compatibility golden; no handwritten optimization algorithm.
+//! Native Clarabel allocation over frozen portfolio inputs.
 use anyhow::{ensure, Result};
 use clarabel::{algebra::CscMatrix, solver::*};
 mod cvar_risk_budgeting;
@@ -6,6 +6,7 @@ mod risk_budgeting;
 #[cfg(test)]
 mod risk_budgeting_test;
 
+#[cfg(test)]
 fn verify_weights(weights: &[f64]) -> Result<()> {
     ensure!(weights.len() == 2, "NATIVE_RESULT_DIMENSION");
     ensure!(
@@ -21,6 +22,7 @@ fn verify_weights(weights: &[f64]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn native_minimum_variance() -> Result<Vec<f64>> {
     let p = CscMatrix::from(&[[2.0, 0.0], [0.0, 8.0]]);
     let q = [0.0, 0.0];
@@ -115,7 +117,7 @@ fn native_outcome(native: &DefaultSolution<f64>, accept_inaccurate: bool) -> All
         dual_residual: finite(native.r_dual),
     }
 }
-/// Execute a frozen input using the same Clarabel linked by the compatibility probe.
+/// Execute a frozen portfolio input using native Clarabel.
 /// The caller still owns provenance, qualification, independent simulation and approval.
 pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     domain::portfolio::allocation_input(input)?;

@@ -1,23 +1,35 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
+import { dirname, isAbsolute, resolve } from 'node:path';
+
+const origin = process.env.QUAZONAI_WEB_E2E_ORIGIN;
+const fixture = process.env.QUAZONAI_WEB_E2E_FIXTURE;
+if (!origin || !fixture || !isAbsolute(fixture)) {
+  throw new Error('Run npm run test:e2e; a fresh private Rust/PostgreSQL fixture is required');
+}
+const url = new URL(origin);
+if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port
+  || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+  throw new Error('Native browser acceptance requires its own loopback HTTP origin');
+}
 
 export default defineConfig({
-  testDir: './tests', testIgnore: ['**/native-console.spec.ts', '**/demo-complete.spec.ts'],
-  fullyParallel: true, forbidOnly: !!process.env.CI,
-  retries: 0, workers: 2, timeout: 30_000, expect: { timeout: 10_000 },
-  reporter: [['list'], ['json', { outputFile: 'test-results/results.json' }]],
+  testDir: './tests',
+  testMatch: '**/native-console.spec.ts',
+  // Playwright can emit error-context.md even with screenshots/trace disabled.
+  // Keep every raw failure artifact inside the harness-owned private directory.
+  outputDir: resolve(dirname(fixture), 'playwright-output'),
+  fullyParallel: false,
+  workers: 1,
+  retries: 0,
+  forbidOnly: Boolean(process.env.CI),
+  timeout: 120_000,
+  expect: { timeout: 20_000 },
+  reporter: [['list']],
   use: {
-    baseURL: 'http://127.0.0.1:4173', browserName: 'chromium', locale: 'zh-CN',
-    timezoneId: 'UTC', reducedMotion: 'reduce', serviceWorkers: 'block',
+    ...devices['Desktop Chrome'],
+    baseURL: url.origin,
+    viewport: { width: 1440, height: 1000 },
     trace: 'off', screenshot: 'off', video: 'off',
   },
-  projects: [
-    { name: 'desktop-1440', use: { viewport: { width: 1440, height: 900 } } },
-    { name: 'tablet-768', use: { viewport: { width: 768, height: 1024 } } },
-    { name: 'mobile-390', use: { viewport: { width: 390, height: 844 } } },
-  ],
-  webServer: [
-    { command: 'npm run preview', url: 'http://127.0.0.1:4173', reuseExistingServer: false, timeout: 30_000 },
-    { command: 'node tests/pwa-server.mjs', url: 'http://127.0.0.1:4180/__fixture__/health', reuseExistingServer: false, timeout: 30_000 },
-    { command: 'npm run demo:preview', url: 'http://127.0.0.1:4179', reuseExistingServer: false, timeout: 30_000 },
-  ],
+  projects: [{ name: 'real-rust-postgres', use: { browserName: 'chromium' } }],
 });

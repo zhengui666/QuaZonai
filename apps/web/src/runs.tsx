@@ -2,7 +2,7 @@ import { Button, Card, Descriptions, Drawer, Modal, Select, Space, Table, Timeli
 import { ReloadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentPropsWithRef } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent, responseFailure, terminal } from './api';
 import { responseKind } from '@quazonai/web/response-contract';
 import type { Schema } from './api';
@@ -10,6 +10,10 @@ import { decodeRunEvent } from './run-events';
 import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';
 
 type Run = Schema['RunSnapshotV1'];
+// Keep the native table keyboard-reachable even when no row contains an action.
+function RunTable(props: ComponentPropsWithRef<'table'>) {
+  return <table {...props} aria-label="运行记录" tabIndex={0} />;
+}
 export function Runs({ projectId }: { projectId?: string }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const [state, setState] = useState<Schema['RunState']>();
@@ -26,7 +30,7 @@ export function Runs({ projectId }: { projectId?: string }) {
       <Button icon={<ReloadOutlined aria-hidden />} aria-label="刷新运行" aria-busy={query.isFetching} loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新运行</Button>
     </Space>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Run> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }} locale={{ emptyText: <NoData text="当前筛选下没有运行记录。" /> }} columns={[
+      <Table<Run> components={{ table: RunTable }} rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }} locale={{ emptyText: <NoData text="当前筛选下没有运行记录。" /> }} columns={[
         { title: '运行', key: 'id', render: (_, run) => <Button type="link" className="table-title" onClick={() => setSelected(run.id)}>{run.kind} · {run.id.slice(-8)}</Button> },
         { title: '状态', key: 'state', render: (_, run) => <StateTag value={run.state} /> },
         { title: '尝试次数', dataIndex: 'current_attempt_no' },
