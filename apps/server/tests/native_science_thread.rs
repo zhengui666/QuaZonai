@@ -119,19 +119,29 @@ fn output<'a>(request: &'a Value, kind: &str, call: &str) -> &'a Value {
 }
 
 fn mcp_document(value: &Value) -> Value {
-    // Pinned McpToolOutput adds a wall-time/Output presentation header to its
-    // serialized plain MCP content. Decode the original body, not that header.
-    let text = value.as_str().expect("native MCP text output");
-    let body = text
-        .strip_prefix("Wall time: ")
-        .and_then(|wrapped| wrapped.split_once(" seconds\nOutput:\n"))
-        .map(|(_, body)| body)
-        .expect("pinned native MCP Output header required");
-    let content: Value = serde_json::from_str(body).expect("original MCP content JSON");
-    let items = content.as_array().expect("native MCP content array");
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["type"], "text");
-    serde_json::from_str(items[0]["text"].as_str().unwrap())
+    // Codex may send MCP text as a serialized content array or as separate
+    // function-call output items. In both forms, inspect the original receipt.
+    let receipt = if let Some(wrapped) = value.as_str() {
+        let body = wrapped
+            .strip_prefix("Wall time: ")
+            .and_then(|wrapped| wrapped.split_once(" seconds\nOutput:\n"))
+            .map(|(_, body)| body)
+            .expect("native MCP Output header required");
+        let content: Value = serde_json::from_str(body).expect("original MCP content JSON");
+        let items = content.as_array().expect("native MCP content array");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["type"], "text");
+        items[0]["text"].as_str().unwrap().to_owned()
+    } else {
+        let items = value.as_array().expect("native MCP output items");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["type"], "input_text");
+        let header = items[0]["text"].as_str().unwrap();
+        assert!(header.starts_with("Wall time: ") && header.ends_with(" seconds\nOutput:"));
+        assert_eq!(items[1]["type"], "input_text");
+        items[1]["text"].as_str().unwrap().to_owned()
+    };
+    serde_json::from_str(&receipt)
         .expect("the actual MCP tool must return its original HTTP receipt")
 }
 
@@ -536,4 +546,7 @@ fn native_mcp_presentation_retains_the_original_receipt() {
     let content = json!([{"type":"text","text":receipt.to_string()}]);
     let wrapped = json!(format!("Wall time: 0.0100 seconds\nOutput:\n{content}"));
     assert_eq!(mcp_document(&wrapped), receipt);
+    let items = json!([{"type":"input_text","text":"Wall time: 0.0100 seconds\nOutput:"},
+        {"type":"input_text","text":receipt.to_string()}]);
+    assert_eq!(mcp_document(&items), receipt);
 }
