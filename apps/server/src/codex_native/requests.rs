@@ -4,6 +4,7 @@ use super::{
     projection::{self, Sandbox, Thread},
     NativeFailure, Result, CLIENT,
 };
+use serde::{de::IgnoredAny, Deserialize};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -125,6 +126,33 @@ impl ThreadOptions {
         Ok(request)
     }
 
+    /// Only this explicit status path suppresses tool startup. Ephemeral research
+    /// threads and normal Mission threads keep their own native configuration.
+    fn probe_params(&self, servers: &BTreeMap<String, IgnoredAny>) -> Result<Value> {
+        if !self.ephemeral || self.mission.is_some() {
+            return Err(NativeFailure::Configuration);
+        }
+        if servers.len() > 64 {
+            return Err(NativeFailure::ObservationLimit);
+        }
+        let mut request = self.start_params()?;
+        if request.get("config").is_none() {
+            request["config"] = json!({});
+        }
+        let config = &mut request["config"];
+        for name in servers.keys() {
+            projection::text(name, 200)?;
+            config["mcp_servers"][name] = json!({"enabled":false,"required":false});
+        }
+        config["features"] = json!({
+            "apps":false,"plugins":false,"hooks":false,"codex_hooks":false,
+            "plugin_hooks":false,"shell_snapshot":false
+        });
+        config["project_doc_max_bytes"] = json!(0);
+        config["skills"] = json!({"include_instructions":false});
+        Ok(request)
+    }
+
     pub fn resume_params(&self, thread_id: &str) -> Result<Value> {
         projection::text(thread_id, 200)?;
         let mut request = self.start_params()?;
@@ -175,6 +203,41 @@ impl ThreadOptions {
             return Err(NativeFailure::ModelUnavailable);
         }
         Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+struct ProbeConfiguration {
+    config: ProbeServers,
+}
+
+#[derive(Deserialize)]
+struct ProbeServers {
+    // Retain names only, never credentials, commands, environments or provider
+    // configuration. The native process remains the configuration authority.
+    #[serde(default)]
+    mcp_servers: BTreeMap<String, IgnoredAny>,
+}
+
+impl super::Client {
+    /// Observe effective settings without waiting for MCP or session-start hooks.
+    /// Overrides are request-local: no native file is read or changed by QZ, and
+    /// model/provider/auth defaults are still resolved by the official process.
+    pub async fn probe_thread(&mut self, options: &ThreadOptions) -> Result<Thread> {
+        if !options.ephemeral || options.mission.is_some() {
+            return Err(NativeFailure::Configuration);
+        }
+        let native: ProbeConfiguration = self
+            .call(
+                "config/read",
+                json!({"includeLayers":false,"cwd":options.working_directory}),
+            )
+            .await?;
+        let response: Thread = self
+            .call("thread/start", options.probe_params(&native.config.mcp_servers)?)
+            .await?;
+        options.validate_response(&response)?;
+        Ok(response)
     }
 }
 
@@ -231,5 +294,46 @@ mod tests {
         let input = turn("reserved-correlation", "known-thread", "A bounded request").unwrap();
         assert_eq!(input["clientUserMessageId"], "reserved-correlation");
         assert!(input.get("idempotencyKey").is_none());
+    }
+    #[test]
+    fn probe_overrides_do_not_leak_into_native_settings_or_normal_threads() {
+        let root = tempfile::tempdir().unwrap();
+        let mut options = ThreadOptions::read_only(root.path().to_path_buf());
+        let native: ProbeConfiguration = serde_json::from_value(json!({"config":{
+            "mcp_servers":{"slow":{"env":{"TOKEN":"ignored"},"required":true}},
+            "model_provider":"ignored"
+        }}))
+        .unwrap();
+        assert_eq!(
+            options.probe_params(&native.config.mcp_servers).unwrap_err(),
+            NativeFailure::Configuration
+        );
+        options.ephemeral = true;
+        let defaults = options.probe_params(&native.config.mcp_servers).unwrap();
+        for key in ["model", "modelProvider", "serviceTier"] {
+            assert!(defaults.get(key).is_none());
+        }
+        assert!(defaults["config"].get("model_reasoning_effort").is_none());
+        assert!(options.start_params().unwrap().get("config").is_none());
+        options.reasoning_effort = Some("native-effort".into());
+        options.service_tier = Some("native-tier".into());
+        let probe = options.probe_params(&native.config.mcp_servers).unwrap();
+        assert_eq!(probe["config"]["model_reasoning_effort"], "native-effort");
+        assert_eq!(probe["serviceTier"], "native-tier");
+        assert_eq!(
+            probe["config"]["mcp_servers"]["slow"],
+            json!({"enabled":false,"required":false})
+        );
+        assert_eq!(probe["config"]["features"]["hooks"], false);
+        assert_eq!(probe["config"]["features"]["plugins"], false);
+        let ordinary = options.start_params().unwrap();
+        assert!(ordinary["config"].get("mcp_servers").is_none());
+        assert!(ordinary["config"].get("features").is_none());
+        assert!(!probe.to_string().contains("ignored"));
+        let too_many = (0..65).map(|i| (format!("server-{i}"), IgnoredAny)).collect();
+        assert_eq!(
+            options.probe_params(&too_many).unwrap_err(),
+            NativeFailure::ObservationLimit
+        );
     }
 }
