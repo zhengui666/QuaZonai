@@ -50,7 +50,7 @@ async fn status_refresh_skips_stalled_mcp_and_preserves_native_model_settings() 
                 "schema_version":1,"use_default_model_settings":true,
                 "saved_model":null,"saved_reasoning_effort":null,"saved_fast_mode":false
             },
-            "revision":1,"created_at":chrono::Utc::now(),"updated_at":chrono::Utc::now()
+            "revision":"1","created_at":chrono::Utc::now(),"updated_at":chrono::Utc::now()
         }))
         .unwrap(),
     };
