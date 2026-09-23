@@ -2,7 +2,7 @@
 
 **面向个人、本机、自托管使用的生产级量化研究系统。** Rust 负责科学计算，Codex 组织研究，React / Ant Design 提供 Web / PWA。系统保存可追溯的 Alpha、组合回测与 target-only 目标包；不持有券商凭据、不发送真实订单。
 
-[部署与运行](OPERATIONS.md) · [Agent 操作](skills/quazonai/SKILL.md) · [CLI](CLI.md) · [架构与合同](DESIGN.md)
+[部署与运行](OPERATIONS.md) · [安装 Agent Skill](#agent-skill) · [CLI](CLI.md) · [架构与合同](DESIGN.md)
 
 [![CI](https://github.com/zhengui666/QuaZonai/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/zhengui666/QuaZonai/actions/workflows/ci.yml)
 
@@ -21,6 +21,30 @@ cd QuaZonai
 先在运行服务的用户终端执行 `codex login`。系统自动发现该用户的 `PATH`、`HOME` / `CODEX_HOME` 与原生配置；设置页只选择模型和推理强度，“本机默认”沿用原生设置。右上角切换浅色／深色主题。
 
 研究前登记真实数据及许可、探测计算 Runtime，并冻结输入和预算。数据、模型、数据库或计算端不可用时显示实际错误，不生成替代结果。升级与恢复保留原数据库、状态目录、密钥和任务身份。
+
+<a id="agent-skill"></a>
+## 安装 Agent Skill
+
+使用 [skills.sh 的官方 CLI](https://skills.sh/docs/cli)，准备 Git 和 Node.js ≥22.20（推荐 Node.js 24），在需要使用 Skill 的项目目录执行：
+
+```sh
+npx skills add zhengui666/QuaZonai --skill quazonai
+```
+
+按提示选择 Agent，默认安装到当前项目。全局安装到 Codex 和 Claude Code：
+
+```sh
+npx skills add zhengui666/QuaZonai --skill quazonai --agent codex claude-code --global --yes
+```
+
+仅使用一个 Agent 时只保留对应名称。查看或更新全局安装：
+
+```sh
+npx skills list --global
+npx skills update quazonai --global
+```
+
+安装器从仓库发现 `skills/quazonai/SKILL.md`，安装整个目录及 `references/`；无需手动克隆源码、复制文件或另行发布 npm 包。此 Skill 用于操作已有服务，不安装或启动 QuaZonai，也不创建凭据或 MCP 连接。宿主仍须提供匹配的 `server` CLI 和已有机器连接，或已绑定的 Mission MCP；连接要求见[包内说明](skills/quazonai/references/connection.md)。
 
 ## 结构
 
