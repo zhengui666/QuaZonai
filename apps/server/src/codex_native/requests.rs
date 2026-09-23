@@ -234,7 +234,10 @@ impl super::Client {
             )
             .await?;
         let response: Thread = self
-            .call("thread/start", options.probe_params(&native.config.mcp_servers)?)
+            .call(
+                "thread/start",
+                options.probe_params(&native.config.mcp_servers)?,
+            )
             .await?;
         options.validate_response(&response)?;
         Ok(response)
@@ -305,7 +308,9 @@ mod tests {
         }}))
         .unwrap();
         assert_eq!(
-            options.probe_params(&native.config.mcp_servers).unwrap_err(),
+            options
+                .probe_params(&native.config.mcp_servers)
+                .unwrap_err(),
             NativeFailure::Configuration
         );
         options.ephemeral = true;
@@ -330,7 +335,9 @@ mod tests {
         assert!(ordinary["config"].get("mcp_servers").is_none());
         assert!(ordinary["config"].get("features").is_none());
         assert!(!probe.to_string().contains("ignored"));
-        let too_many = (0..65).map(|i| (format!("server-{i}"), IgnoredAny)).collect();
+        let too_many = (0..65)
+            .map(|i| (format!("server-{i}"), IgnoredAny))
+            .collect();
         assert_eq!(
             options.probe_params(&too_many).unwrap_err(),
             NativeFailure::ObservationLimit

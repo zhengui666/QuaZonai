@@ -90,15 +90,28 @@ async fn status_refresh_skips_stalled_mcp_and_preserves_native_model_settings() 
             settings.saved_reasoning_effort =
                 Some(selected.capability.default_reasoning_effort.clone());
         } else {
-            assert_eq!(Some(effective.model), snapshot.profile.model_settings.saved_model);
+            assert_eq!(
+                Some(effective.model),
+                snapshot.profile.model_settings.saved_model
+            );
             assert_eq!(
                 effective.reasoning_effort,
                 snapshot.profile.model_settings.saved_reasoning_effort
             );
         }
-        assert!(!marker.exists(), "a status-only probe launched an MCP process");
-        assert_eq!(provider.request_count(), 0, "status refresh started inference");
-        assert_eq!(std::fs::read_to_string(&configuration_path).unwrap(), configuration);
+        assert!(
+            !marker.exists(),
+            "a status-only probe launched an MCP process"
+        );
+        assert_eq!(
+            provider.request_count(),
+            0,
+            "status refresh started inference"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&configuration_path).unwrap(),
+            configuration
+        );
         assert!(!root.path().join("auth.json").exists());
     }
 }
