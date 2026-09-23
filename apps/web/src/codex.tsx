@@ -146,7 +146,10 @@ function ProfileDetails({ id }: { id: string }) {
     return dataOf(await api.POST('/api/v2/codex/probe', { body, params: { header: intent.current.headers('POST','/api/v2/codex/probe',body) } }));
   }, onSuccess: async () => {
     intent.current.clear();
-    await client.invalidateQueries({ queryKey: ['codex','observation',id], exact: true });
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ['codex','profile',id], exact: true }),
+      client.invalidateQueries({ queryKey: ['codex','observation',id], exact: true }),
+    ]);
   } });
   const profile = query.data; const view = observation.data; const native = view?.observation;
   const valid = !query.isError && !observation.isError && fresh(view, profile, now);
