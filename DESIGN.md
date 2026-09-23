@@ -329,10 +329,10 @@ DSR/PBO 默认不支持：未确认选定 skfolio 版本具备满足本项目的
 - `simulation.rs` 使用 Nautilus 共享资金账户处理真实目录与冻结目标，保留原生费用、成交和权益。`study.rs` 执行滚动组合评估。
 - `crates/contracts/src/portfolio_history.rs` 使用原生 Apache Arrow 保存组合历史合同。正式 Arrow 读写与数值回归保留，不依赖演示输出。
 - `report.rs` 完整序列化、换行、sync_all后使用同文件系统 hard_link create-if-absent 发布正式名，不覆盖。任何发布前失败无正式成功报告；不是目录级崩溃一致性或生产 Artifact Store。
-- Codex 探针沿用官方 pinned二进制 stdio initialize/initialized/account/read/完整model分页/thread启动；QZ只保留受控适配，不获取隐藏推理/凭据。无凭据测试不能当作真实账号推理；T07及T08账号部分按[第0.4节](#acceptance-scope)豁免，同Thread工具链验证仍保留。
+- Codex 探针沿用从 PATH 发现的官方本机二进制 stdio initialize/initialized/account/read/完整model分页/thread启动；QZ只保留受控适配，不获取隐藏推理/凭据。无凭据测试不能当作真实账号推理；T07及T08账号部分按[第0.4节](#acceptance-scope)豁免，同Thread工具链验证仍保留。
 - 原生 PostgreSQL+PGMQ 事务探针保留；临时fixture表不是正式生产Store。
 
-Rust 1.98.1，Nautilus Rust crates0.63.0（Python2.0.0rc4发布族），Clarabel0.11.1，Arrow56.2.0，Codex0.144.4，PGMQ1.10.0；Linux x86_64。Cargo.lock来自原生Cargo，所有验收 locked，不现场生成锁。没有任何生产Python例外被此处批准；旧science requirements/lock/checker随旧桥接删除，供应链改由Cargo原生锁验证。
+Rust 1.98.1，Nautilus Rust crates0.63.0（Python2.0.0rc4发布族），Clarabel0.11.1，Arrow56.2.0，PGMQ1.10.0；Linux x86_64。Codex 0.156.1 仅是锁定的 CI 协议夹具；运行时使用同一 OS 用户 PATH 中实际安装的 Codex。Cargo.lock来自原生Cargo，所有验收 locked，不现场生成锁。没有任何生产Python例外被此处批准；旧science requirements/lock/checker随旧桥接删除，供应链改由Cargo原生锁验证。
 
 Nautilus2.0发布族仍为release candidate，不能隐瞒预发行风险或仅因为版本较新宣称稳定；正式目标组合、目录、结算、隔离/资源/取消必须单独验收。原生引擎日志的NaN不能直接当正式指标，正式Metric wire层拒绝非有限值。
 
@@ -372,7 +372,7 @@ Worker 优先复用 `PUBLIC_URL`；单独提供 `MISSION_API_ORIGIN` 时须是�
 有效 loopback Origin，同时配置两者必须完全相同；不猜测默认后台端口。
 原生 Codex 负责本机配置与认证。QZ 没有自定义 Provider、URL、凭据或目录注册接口；历史自定义连接不列为活动配置，已冻结任务不静默改绑。缺安装、原生目录或认证时报告真实不可用，不自动切连接/模型/effort。
 
-由锁定 Codex 二进制生成协议 schema，稳定 stdio initialize → initialized。model/list 遍历全部 cursor，模型 ID、支持 effort、默认值来自原生能力，不硬编码型号或 high/xhigh 集合。default 开关开启时省略 model/effort/Fast 覆盖但保留保存值；关闭时只传实际配置非空项。本机连接 + model=null + 合法 effort 非空必须可用；unsupported 报错不降档。requested 与原生可观察 actual 分开，未观察到的 actual=unknown。
+CI 由锁定的 Codex 夹具生成协议 schema；运行时对已安装版本验证 stdio initialize → initialized、account/read、model/list 与 Thread 响应，不按 CI 版本号拒绝未来版本。记录实际观测版本；model/list 遍历全部 cursor，模型 ID、支持 effort、默认值来自原生能力，不硬编码型号或 high/xhigh 集合。default 开关开启时省略 model/effort/Fast 覆盖但保留保存值；关闭时只传实际配置非空项。本机连接 + model=null + 合法 effort 非空必须可用；unsupported 报错不降档。requested 与原生可观察 actual 分开，未观察到的 actual=unknown。
 
 本机认证由同一 OS 用户执行原生 `codex login` 管理。现有受控账号协议适配与内部独立测试仍由 Codex 承担 device code/start/cancel/logout 和凭据刷新，不维护 DB OAuth token 刷新器，不依赖 experimental external-token。模型设置页不提供账号目录、Provider 或凭据配置。V1 不以 experimental WebSocket/dynamicTools/project environments 为必需能力。
 
@@ -380,7 +380,7 @@ Worker 优先复用 `PUBLIC_URL`；单独提供 `MISSION_API_ORIGIN` 时须是�
 
 Mission 默认独占临时 Git worktree、独立 App Server child、workspace-write、network disabled、approvalPolicy=never，仅允许 worktree root。Agent 不访问 QZ 源仓库/其他项目/Sealed/Secret/DB/Docker socket，不通过 Git 操作绕过工作区管理。所需数据与实验经 mission-scoped stdio MCP。受信任 App Server 可访问模型服务/Provider 凭据，不等于 Agent shell 可获得该文件系统/环境权限。随机名 sentinel、auth.json、DB、master key、sealed、socket 等真实越界测试是硬要求；过滤 KEY/TOKEN 变量名不是隔离。
 
-Mission复用锁定版本的原生named permissions及stdio MCP，不依赖dynamicTools。沿用已选模型/认证来源，Mission工具边界由受信任启动器覆盖：只允许专用工作区读写、原生最小系统文件及已锁定Codex二进制的只读访问；shell不继承服务环境，MCP能力只传入已绑定Run/Attempt的专属子进程。原生config/read只投影MCP名称并禁用其他服务器，不持久化或展示原始配置/环境值；启动与恢复重新应用同一边界。不加载个人插件、记忆、浏览器、跨Agent、无限Goal或登录shell能力。0.144.4的全局AGENTS由host独立加载，不受project_doc_max_bytes控制且无stdio关闭开关；共享本机profile仍须满足原生研究隔离限制：若CODEX_HOME存在AGENTS.md/AGENTS.override.md或配置含个人instructions/developer_instructions/model_instructions_file，在发送Thread请求前明确拒绝，不读取文件内容、修改/删除用户文件、复制认证或暗换profile。不要求重新登记或复制账号；有冲突的个人指令会使研究不可用，不能把目录探测成功当成研究就绪。项目文档自动注入关闭，任务材料由冻结Brief和受限MCP提供。原生发行版的权限/stdio运行必须实际验证，不用新版文档中而锁定协议没有的字段冒充已生效。
+Mission仅复用已安装版本实际支持并经验证的原生named permissions及stdio MCP，不依赖dynamicTools。沿用已选模型/认证来源，Mission工具边界由受信任启动器覆盖：只允许专用工作区读写、原生最小系统文件及已发现Codex二进制的只读访问；shell不继承服务环境，MCP能力只传入已绑定Run/Attempt的专属子进程。原生config/read只投影MCP名称并禁用其他服务器，不持久化或展示原始配置/环境值；启动与恢复重新应用同一边界。不加载个人插件、记忆、浏览器、跨Agent、无限Goal或登录shell能力。0.144.4的全局AGENTS由host独立加载，不受project_doc_max_bytes控制且无stdio关闭开关；共享本机profile仍须满足原生研究隔离限制：若CODEX_HOME存在AGENTS.md/AGENTS.override.md或配置含个人instructions/developer_instructions/model_instructions_file，在发送Thread请求前明确拒绝，不读取文件内容、修改/删除用户文件、复制认证或暗换profile。不要求重新登记或复制账号；有冲突的个人指令会使研究不可用，不能把目录探测成功当成研究就绪。项目文档自动注入关闭，任务材料由冻结Brief和受限MCP提供。原生发行版的权限/stdio运行必须实际验证，不用文档中而当前安装版本未支持的字段冒充已生效。
 
 取消或到期后的Mission恢复只允许重连已登记Thread，对账原已发送Turn；不创建Thread、
 签发Mission凭据、启用MCP或准备新Turn。使用原资源上限及至多110秒的独立清理窗口，
@@ -1284,12 +1284,12 @@ scope/method/version/unit/frequency精确选择，保留原值/null、状态、�
 
 ### A3.9 原生公开回答记录
 
-研究者公开回答只通过锁定Codex的`thread/turns/list {itemsView:"summary"}`读取。
+研究者公开回答只通过已安装Codex的`thread/turns/list {itemsView:"summary"}`读取。
 0.144.4原生实现只保留首条userMessage及最后一条agentMessage；QZ忽略userMessage，
 不请求full/items列表、不启用推理通知、不读取rollout文件。每页一轮，仍有限页数/
 帧大小和原Mission墙钟；只选择原Session中精确native_turn_id。原生列表状态不能
 代替先前真实turn/completed终态观察，公开回答也不替代完整usage回执或领域结论。
-依据为锁定版本thread_processor.rs的apply_thread_turns_items_view及官方
+0.144.4 行为的依据为该版本thread_processor.rs的apply_thread_turns_items_view及官方
 https://learn.chatgpt.com/docs/app-server 的agentMessage/item生命周期合同。
 
 `model_turn_summaries`按reservation_id保存唯一不可变的REPORT引用及原生item ID；
@@ -3107,7 +3107,7 @@ app.live_promotion_evidence 为自动 Live Approval 冻结按ID排序的完整�
 
 ### A8.0 原生 Codex 连接与会话适配
 
-Codex固定复用官方0.144.4原生App Server。协议以该版本实际二进制 `app-server generate-json-schema --experimental` 的产物为准；不从新版网页猜测旧版字段，也不把原生stdio握手、model/list或无账号thread/start当真实推理验收。QZ仅编写有界stdio关联、原生结果的非秘密投影、现有Turn账本与领域绑定，不嵌入或重写Codex工具循环、OAuth刷新和canonical聊天存储。
+Codex复用从同一 OS 用户 PATH 发现的官方原生 App Server，接受未来版本须以实际协议响应和有界能力校验为准。CI 的 0.156.1 夹具用于锁定协议回归；不从网页猜测本机版本的字段，也不把原生stdio握手、model/list或无账号thread/start当真实推理验收。QZ仅编写有界stdio关联、原生结果的非秘密投影、现有Turn账本与领域绑定，不嵌入或重写Codex工具循环、OAuth刷新和canonical聊天存储。Mission 会话冻结实际原生版本；恢复及取消对账只能使用该版本。切换本机 Codex 前须让所有 Mission Run 达到真实终态，并在 API/Worker 停止后确认无未完成 Mission；误切换时保留旧版安装、原生历史和工作区，按未完成会话的实际版本恢复对账，不改写会话版本或伪造取消。
 
 每个连接由可信启动方持有原生子进程、stdin/stdout和单个串行RPC锁；每帧最多2MiB，单次RPC有独立时限，连接只保留至多128条非秘密通知投影。EOF、半帧、超限、错误关联ID或超时都返回结果未知且废弃该连接，不能在相同调用里自动重发写RPC。持久化的Thread/Turn/Run身份与发送意图继续用于恢复。连接关闭只说明本机传输终止，不证明远端科学任务停止或ModelTurn尚未消费；现有Turn的确认和用量账本不得清零。
 
@@ -3252,7 +3252,7 @@ Runtime 与 Downstream 配置使用明确的 `/api/v2/integrations/runtimes`、`
 
 当前Codex请求不接受base_url/credential_ref或自定义Provider。保存语法有效的模型/effort不代表其当前可运行；default=true保留但不执行保存值。模型目录、实际生效model/provider/effort/service_tier与用户保存值分别保留，不把保存成功当作探测成功。
 
-`POST /codex/probe` 明确携带 profile_id/expected_revision，本机 Operator 或绑定完整意图的 CLI grant 可调用。准备事务完成后才启动实际 pinned App Server，读取 account/read 与完整 model/list，并通过无推理 ephemeral Thread 观察原生实际默认配置；显式设置再由原生目录校验及 Thread 响应确认。Fast 仅选择目录实际公告的 priority（或该锁定版本仍公告的 fast）service tier；没有公告则拒绝，不用 isDefault 或字符串相似匹配猜测。default=true 不注入 tier。探测不得发 turn/start、执行研究或触发登录，也不是账号真实推理证明。
+`POST /codex/probe` 明确携带 profile_id/expected_revision，本机 Operator 或绑定完整意图的 CLI grant 可调用。准备事务完成后才启动实际安装的 App Server，读取 account/read 与完整 model/list，并通过无推理 ephemeral Thread 观察原生实际默认配置；显式设置再由原生目录校验及 Thread 响应确认。Fast 仅选择目录实际公告的 priority（或当前安装版本实际公告的 fast）service tier；没有公告则拒绝，不用 isDefault 或字符串相似匹配猜测。default=true 不注入 tier。探测不得发 turn/start、执行研究或触发登录，也不是账号真实推理证明。
 
 探测返回后在原命令幂等事务内再次核对 Profile revision、授权和120秒总期限，写入唯一不可变 codex_profile_observations（id/profile_id/profile_revision/observed_at/valid_until/严格非秘密outcome）与完整命令回执；无原生I/O发生在持锁事务内。Available 目录最多4096个唯一ID，各项有一致 revision/fetched_at；有效期最多60秒。Unavailable 保留明确原因，不制造默认目录；重试同键返回原响应，不再探测。`GET /codex/models?profile_id=...`、`GET /codex/account?profile_id=...` 只读取当前revision最近观测，返回 freshness 与原始 observed_at，不隐式刷新、启动模型进程或把旧成功覆盖最新失败。
 
@@ -3266,7 +3266,7 @@ CLI 的 codex list/show/models/account 只读正式非秘密HTTP视图，不隐�
 
 ### A8.5 原生 Codex 账号操作
 
-`POST /codex/login/start` 与 `POST /codex/logout` 接收 schema_version/profile_id/expected_revision，均需本机 Operator 或完整命令绑定的单次 CLI grant，只允许 SYSTEM Profile。当前无自定义Provider入口，也不能借原生账号协议激活历史自定义连接。先在原有 Operator 幂等事务登记账号操作及202接受回执，再由可信进程取得唯一发送许可并调用 pinned Codex 的 account/login/start(chatgptDeviceCode) 或 account/logout。JSON-RPC ID 不是重试保证；同键重放只读原接受回执，不再次启动登录或注销。
+`POST /codex/login/start` 与 `POST /codex/logout` 接收 schema_version/profile_id/expected_revision，均需本机 Operator 或完整命令绑定的单次 CLI grant，只允许 SYSTEM Profile。当前无自定义Provider入口，也不能借原生账号协议激活历史自定义连接。先在原有 Operator 幂等事务登记账号操作及202接受回执，再由可信进程取得唯一发送许可并调用已安装 Codex 的 account/login/start(chatgptDeviceCode) 或 account/logout。JSON-RPC ID 不是重试保证；同键重放只读原接受回执，不再次启动登录或注销。
 
 `codex_account_operations` 保存本项目人工操作的 id、profile_id/profile_revision、action=LOGIN|LOGOUT、state=REQUESTED|WAITING|CANCEL_REQUESTED|SUCCEEDED|CANCELLED|FAILED|UNKNOWN、created_at/updated_at/revision、deadline_at、dispatch_started_at?、native_login_id?、cancel_requested_at?、cancel_dispatch_started_at?、finished_at?、reason_code?、account_snapshot?。接受引用与期限不可变，唯一活动 Profile 操作约束避免同时改变一个账号目录。原生 OAuth、token、邮箱、device userCode 与 canonical history 不入库。只有实际原生结果可形成成功/取消；UNKNOWN 不表示账号未变化，也不允许自动重发。
 

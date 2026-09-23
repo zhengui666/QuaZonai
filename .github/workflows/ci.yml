@@ -94,7 +94,7 @@ jobs:
           set -euo pipefail
           npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
           export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
-          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.144.4'
+          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.156.1'
           mkdir /tmp/codex-schema-home
           CODEX_HOME=/tmp/codex-schema-home "$CODEX_NATIVE_BIN" app-server generate-json-schema --out /tmp/native-evidence/codex-schema
           export CODEX_PROBE_DIR=/tmp/codex-probe
@@ -193,7 +193,7 @@ jobs:
           rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv > /tmp/store-evidence/rustc.txt
           npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
           export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
-          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.144.4'
+          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.156.1'
           # Allow the pinned sandbox launcher to use Ubuntu's restricted user namespaces.
           sysctl -n kernel.apparmor_restrict_unprivileged_userns > /tmp/store-evidence/userns-restriction.txt
           cat > /tmp/store-evidence/quazonai-ci-codex.apparmor <<EOF

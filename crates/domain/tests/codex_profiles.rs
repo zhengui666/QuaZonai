@@ -49,7 +49,7 @@ fn model(at: chrono::DateTime<Utc>) -> CodexAdvertisedModelV1 {
 }
 fn available(at: chrono::DateTime<Utc>) -> CodexProbeOutcomeV1 {
     CodexProbeOutcomeV1::Available {
-        native_version: "0.144.4".into(),
+        native_version: "0.156.1".into(),
         account: CodexAccountV1 {
             requires_openai_auth: false,
             authentication_kind: None,
@@ -131,6 +131,20 @@ fn default_mode_retains_dormant_values_and_never_confuses_catalog_default_with_e
         at
     )
     .is_ok());
+    let mut future = available(at);
+    let CodexProbeOutcomeV1::Available { native_version, .. } = &mut future else {
+        unreachable!()
+    };
+    *native_version = "0.999.0-alpha.9+local".into();
+    assert!(probe_outcome(
+        &future,
+        &defaults(),
+        ConnectionMode::System,
+        Revision::INITIAL,
+        at,
+        at
+    )
+    .is_ok());
     let mut explicit = defaults();
     explicit.use_default_model_settings = false;
     assert!(probe_outcome(
@@ -182,7 +196,7 @@ fn incomplete_wrong_revision_stale_duplicate_or_unadvertised_catalogs_cannot_rep
             7 => effective.reasoning_effort = Some("not-advertised".into()),
             8 => effective.service_tier = Some("not-advertised".into()),
             9 => account.requires_openai_auth = true,
-            10 => *native_version = "0.144.40".into(),
+            10 => *native_version = "0.156.1/other".into(),
             _ => account.plan_type = Some("account-does-not-have-chatgpt-auth".into()),
         }
         assert!(

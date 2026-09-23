@@ -119,19 +119,29 @@ fn output<'a>(request: &'a Value, kind: &str, call: &str) -> &'a Value {
 }
 
 fn mcp_document(value: &Value) -> Value {
-    // Pinned McpToolOutput adds a wall-time/Output presentation header to its
-    // serialized plain MCP content. Decode the original body, not that header.
-    let text = value.as_str().expect("native MCP text output");
-    let body = text
-        .strip_prefix("Wall time: ")
-        .and_then(|wrapped| wrapped.split_once(" seconds\nOutput:\n"))
-        .map(|(_, body)| body)
-        .expect("pinned native MCP Output header required");
-    let content: Value = serde_json::from_str(body).expect("original MCP content JSON");
-    let items = content.as_array().expect("native MCP content array");
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["type"], "text");
-    serde_json::from_str(items[0]["text"].as_str().unwrap())
+    // Codex may send MCP text as a serialized content array or as separate
+    // function-call output items. In both forms, inspect the original receipt.
+    let receipt = if let Some(wrapped) = value.as_str() {
+        let body = wrapped
+            .strip_prefix("Wall time: ")
+            .and_then(|wrapped| wrapped.split_once(" seconds\nOutput:\n"))
+            .map(|(_, body)| body)
+            .expect("native MCP Output header required");
+        let content: Value = serde_json::from_str(body).expect("original MCP content JSON");
+        let items = content.as_array().expect("native MCP content array");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["type"], "text");
+        items[0]["text"].as_str().unwrap().to_owned()
+    } else {
+        let items = value.as_array().expect("native MCP output items");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["type"], "input_text");
+        let header = items[0]["text"].as_str().unwrap();
+        assert!(header.starts_with("Wall time: ") && header.ends_with(" seconds\nOutput:"));
+        assert_eq!(items[1]["type"], "input_text");
+        items[1]["text"].as_str().unwrap().to_owned()
+    };
+    serde_json::from_str(&receipt)
         .expect("the actual MCP tool must return its original HTTP receipt")
 }
 
@@ -321,7 +331,12 @@ fn launch(home: &Path, work: &Path) -> Launch {
     }
 }
 
-async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts {
+async fn completed(
+    client: &mut Client,
+    thread: &str,
+    turn: &str,
+    settled_prior: Option<&str>,
+) -> TokenCounts {
     tokio::time::timeout(Duration::from_secs(60), async {
         let mut terminal = false;
         let mut usage = None;
@@ -337,6 +352,9 @@ async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts
                         turn: actual,
                     } => {
                         assert_eq!(thread_id, thread);
+                        if Some(actual.id.as_str()) == settled_prior {
+                            continue;
+                        }
                         assert_eq!(actual.id, turn);
                         assert_eq!(actual.status, TurnStatus::Completed);
                         assert!(!actual.has_error);
@@ -348,8 +366,21 @@ async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts
                         total,
                     } => {
                         assert_eq!(thread_id, thread);
+                        if Some(turn_id.as_str()) == settled_prior {
+                            continue;
+                        }
                         assert_eq!(turn_id, turn);
                         usage = Some(total);
+                    }
+                    Observation::TurnStarted {
+                        thread_id,
+                        turn: started,
+                    } => {
+                        assert_eq!(thread_id, thread);
+                        if Some(started.id.as_str()) == settled_prior {
+                            continue;
+                        }
+                        assert_eq!(started.id, turn);
                     }
                     _ => {}
                 }
@@ -402,7 +433,7 @@ async fn native_science_outputs_are_published_and_consumed_in_one_resumable_thre
         )
         .await
         .unwrap();
-    let initial_usage = completed(&mut client, &thread.thread.id, &initial.id).await;
+    let initial_usage = completed(&mut client, &thread.thread.id, &initial.id, None).await;
     let first_summary = client
         .public_summary(&thread.thread.id, &initial.id)
         .await
@@ -428,7 +459,13 @@ async fn native_science_outputs_are_published_and_consumed_in_one_resumable_thre
         )
         .await
         .unwrap();
-    let cumulative = completed(&mut resumed_client, &thread.thread.id, &next.id).await;
+    let cumulative = completed(
+        &mut resumed_client,
+        &thread.thread.id,
+        &next.id,
+        Some(&initial.id),
+    )
+    .await;
     let second_summary = resumed_client
         .public_summary(&thread.thread.id, &next.id)
         .await
@@ -536,4 +573,7 @@ fn native_mcp_presentation_retains_the_original_receipt() {
     let content = json!([{"type":"text","text":receipt.to_string()}]);
     let wrapped = json!(format!("Wall time: 0.0100 seconds\nOutput:\n{content}"));
     assert_eq!(mcp_document(&wrapped), receipt);
+    let items = json!([{"type":"input_text","text":"Wall time: 0.0100 seconds\nOutput:"},
+        {"type":"input_text","text":receipt.to_string()}]);
+    assert_eq!(mcp_document(&items), receipt);
 }

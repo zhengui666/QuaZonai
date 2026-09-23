@@ -11,7 +11,7 @@ The selected components below explain integration and attribution. The generated
 | Apache Arrow Rust 56.2.0 / 59.3.0 | Apache-2.0 | Native arrays/schema/IPC; both versions occur in the resolved source graph |
 | Serde, UUID, Chrono, BigDecimal, utoipa, thiserror, proptest | Resolved upstream license texts | Wire types, standard scalar implementations, schema and testing |
 | iso_currency 0.7.0 | Upstream license and versioned data attribution | ISO-code membership; not an online authoritative ISO service |
-| OpenAI Codex 0.144.4 | Apache-2.0 | Native App Server binary/protocol; no copied Agent loop |
+| OpenAI Codex 0.156.1 (CI fixture) | Apache-2.0 | Native App Server binary/protocol; runtime discovers the installed binary from PATH; no copied Agent loop |
 | PostgreSQL / PGMQ | PostgreSQL License / PGMQ upstream license | Native application persistence, transactions and durable work delivery |
 | axum-0.8.9 | MIT | Rust authentication / HTTP / persistence / CLI integration |
 | tower-sessions-0.15.0 | MIT | Rust authentication / HTTP / persistence / CLI integration |

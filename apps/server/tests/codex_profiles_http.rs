@@ -1,5 +1,5 @@
 //! Real native authentication/Vault/HTTP/PostgreSQL profile boundaries. Native
-//! probe tests additionally run the pinned official App Server, never a fake client.
+//! probe tests additionally run the official App Server, never a fake client.
 #[cfg(feature = "native-codex")]
 #[path = "support/codex_responses.rs"]
 // This HTTP suite probes catalogs, not the shared turn-completion helpers.
@@ -218,7 +218,7 @@ async fn explicit_probe_observes_actual_system_configuration_without_any_model_r
     let home = tempfile::tempdir().unwrap();
     let provider = responses::Provider::start(home.path()).await;
     let binary =
-        PathBuf::from(std::env::var_os("CODEX_NATIVE_BIN").expect("pinned native binary required"));
+        PathBuf::from(std::env::var_os("CODEX_NATIVE_BIN").expect("native binary required"));
     let (f, cookie) = configured(pool.clone(), home.path(), binary).await;
     let view = local_profile(&f, &cookie).await;
     let id = view["id"].as_str().unwrap();
@@ -234,10 +234,11 @@ async fn explicit_probe_observes_actual_system_configuration_without_any_model_r
     .await;
     assert_eq!(checked.status, StatusCode::OK);
     assert_eq!(checked.body["resource"]["outcome"]["status"], "AVAILABLE");
-    assert_eq!(
-        checked.body["resource"]["outcome"]["native_version"],
-        "0.144.4"
-    );
+    assert!(domain::codex::valid_codex_version(
+        checked.body["resource"]["outcome"]["native_version"]
+            .as_str()
+            .unwrap()
+    ));
     assert_eq!(
         checked.body["resource"]["outcome"]["effective"]["provider"],
         "local_fixture"

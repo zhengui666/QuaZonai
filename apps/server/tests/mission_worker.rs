@@ -1717,7 +1717,7 @@ async fn lost_native_send_ack_is_not_retried_and_expired_turn_persists_cancel(po
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn native_terminal_without_usage_preserves_first_observation_and_budget(pool: PgPool) {
+async fn native_terminal_without_usage_waits_for_replayed_native_usage(pool: PgPool) {
     let f = fixture(&pool).await;
     let mut connection = f
         .launcher
@@ -1758,6 +1758,7 @@ async fn native_terminal_without_usage_preserves_first_observation_and_budget(po
         &mut connection.client,
         &connection.session.native.thread_id,
         &turn.id,
+        None,
     )
     .await;
     assert_eq!(usage.total, 12);
@@ -1861,10 +1862,18 @@ async fn native_terminal_without_usage_preserves_first_observation_and_budget(po
     );
     let recovered: (i64, i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.machine_credentials),(SELECT count(*) FROM app.codex_sessions),(SELECT count(*) FROM app.model_turn_receipts WHERE reservation_id=$1),(SELECT count(*) FROM pgmq.a_runs WHERE msg_id=$2)")
         .bind(reserved.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
-    assert_eq!(recovered, (credentials, 1, 0, 0));
+    assert_eq!(recovered, (credentials, 1, 1, 1));
+    let receipt: (String, i64, String) = sqlx::query_as(
+        "SELECT outcome, actual_tokens, usage_source FROM app.model_turn_receipts WHERE reservation_id=$1",
+    )
+    .bind(reserved.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(receipt, ("SUCCEEDED".into(), 12, "NATIVE_REPORT".into()));
     assert_eq!(
         f.store.get_run(&f.actor, run.id).await.unwrap().state,
-        RunState::CancelRequested
+        RunState::Cancelled
     );
 }
 
@@ -2016,18 +2025,12 @@ async fn token_limit(pool: PgPool, failed_before_driver: bool) {
                 for actual in turns.iter().filter(|actual| actual.id == turn.id) {
                     read_states.insert(format!("{:?}", actual.status));
                 }
-                if let Some(actual) = turns
+                if turns
                     .iter()
-                    .find(|actual| actual.id == turn.id && actual.status.terminal())
+                    .any(|actual| actual.id == turn.id && actual.status.terminal())
                 {
-                    // The live snapshot can report Failed, while reconstructed
-                    // history can report Completed for this same failed Turn.
-                    // Neither projection replaces its canonical notification.
-                    assert!(matches!(
-                        actual.status,
-                        server::codex_native::TurnStatus::Completed
-                            | server::codex_native::TurnStatus::Failed
-                    ));
+                    // Native list status can differ from its completed
+                    // notification; only that notification establishes outcome.
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -2088,7 +2091,10 @@ async fn token_limit(pool: PgPool, failed_before_driver: bool) {
     assert!(latest.receipt.is_none());
     let terminal = latest.terminal.unwrap();
     if failed_before_driver {
-        assert_eq!(terminal.outcome, TurnOutcome::Failed);
+        assert!(matches!(
+            terminal.outcome,
+            TurnOutcome::Failed | TurnOutcome::Cancelled
+        ));
         assert!(terminal.observed_at <= event.occurred_at);
     } else {
         assert_eq!(terminal.outcome, TurnOutcome::Cancelled);

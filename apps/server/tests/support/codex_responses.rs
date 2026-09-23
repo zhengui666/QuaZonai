@@ -622,7 +622,12 @@ fn science_item(
     }
 }
 
-pub async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts {
+pub async fn completed(
+    client: &mut Client,
+    thread: &str,
+    turn: &str,
+    settled_prior: Option<&str>,
+) -> TokenCounts {
     tokio::time::timeout(Duration::from_secs(30), async {
         let mut terminal = false;
         let mut usage = None;
@@ -638,6 +643,9 @@ pub async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCo
                         turn: completed,
                     } => {
                         assert_eq!(thread_id, thread);
+                        if Some(completed.id.as_str()) == settled_prior {
+                            continue;
+                        }
                         assert_eq!(completed.id, turn);
                         assert_eq!(completed.status, TurnStatus::Completed);
                         assert!(!completed.has_error);
@@ -649,6 +657,9 @@ pub async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCo
                         total,
                     } => {
                         assert_eq!(thread_id, thread);
+                        if Some(turn_id.as_str()) == settled_prior {
+                            continue;
+                        }
                         assert_eq!(turn_id, turn);
                         usage = Some(total);
                     }
@@ -657,6 +668,9 @@ pub async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCo
                         turn: started,
                     } => {
                         assert_eq!(thread_id, thread);
+                        if Some(started.id.as_str()) == settled_prior {
+                            continue;
+                        }
                         assert_eq!(started.id, turn);
                     }
                     _ => panic!("unexpected native fixture observation"),

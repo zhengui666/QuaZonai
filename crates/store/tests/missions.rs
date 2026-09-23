@@ -177,7 +177,7 @@ async fn reviewer_turn_and_summary_keep_original_role_without_general_sealed_acc
         .begin_run_dispatch(lease.run.id, &lease.fence)
         .await
         .unwrap();
-    store
+    let session = store
         .bind_mission_session(lease.run.id, &lease.fence, &native_thread())
         .await
         .unwrap();
@@ -215,6 +215,10 @@ async fn reviewer_turn_and_summary_keep_original_role_without_general_sealed_acc
         .bind_native_turn(reserved.id, &lease.fence, "controlled-review-turn")
         .await
         .unwrap();
+    assert!(!store
+        .settled_native_turn(session.id, "controlled-review-turn")
+        .await
+        .unwrap());
     store
         .observe_mission_turn_terminal(
             reserved.id,
@@ -238,6 +242,18 @@ async fn reviewer_turn_and_summary_keep_original_role_without_general_sealed_acc
         )
         .await
         .unwrap();
+    assert!(store
+        .settled_native_turn(session.id, "controlled-review-turn")
+        .await
+        .unwrap());
+    assert!(!store
+        .settled_native_turn(session.id, "unknown-turn")
+        .await
+        .unwrap());
+    assert!(!store
+        .settled_native_turn(Id::new(), "controlled-review-turn")
+        .await
+        .unwrap());
     let message = NativePublicSummary {
         schema_version: SchemaV1,
         native_turn_id: "controlled-review-turn".into(),

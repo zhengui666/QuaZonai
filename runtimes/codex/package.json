@@ -2,6 +2,6 @@
   "name": "quazonai-native-codex",
   "version": "2.0.0-dev.1",
   "private": true,
-  "description": "Pinned upstream Codex executable, not a custom Agent runtime",
-  "dependencies": {"@openai/codex": "0.144.4"}
+  "description": "Pinned official Codex CI fixture; runtime discovers the local executable from PATH",
+  "dependencies": {"@openai/codex": "0.156.1"}
 }

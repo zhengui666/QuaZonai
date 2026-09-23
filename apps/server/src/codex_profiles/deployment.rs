@@ -434,7 +434,7 @@ async fn inspect(
     };
     Ok((
         CodexProbeOutcomeV1::Available {
-            native_version: native::VERSION.into(),
+            native_version: client.version().to_owned(),
             account,
             effective: CodexEffectiveSettingsV1 {
                 model: effective.model,

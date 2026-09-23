@@ -219,7 +219,12 @@ fn launch(home: &Path, work: &Path, canary: &str) -> Launch {
         )]),
     }
 }
-async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts {
+async fn completed(
+    client: &mut Client,
+    thread: &str,
+    turn: &str,
+    settled_prior: Option<&str>,
+) -> TokenCounts {
     tokio::time::timeout(Duration::from_secs(45), async {
         let mut terminal = false;
         let mut usage = None;
@@ -235,6 +240,9 @@ async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts
                         turn: actual,
                     } => {
                         assert_eq!(thread_id, thread);
+                        if Some(actual.id.as_str()) == settled_prior {
+                            continue;
+                        }
                         assert_eq!(actual.id, turn);
                         assert_eq!(actual.status, TurnStatus::Completed);
                         assert!(!actual.has_error);
@@ -246,8 +254,21 @@ async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts
                         total,
                     } => {
                         assert_eq!(thread_id, thread);
+                        if Some(turn_id.as_str()) == settled_prior {
+                            continue;
+                        }
                         assert_eq!(turn_id, turn);
                         usage = Some(total);
+                    }
+                    Observation::TurnStarted {
+                        thread_id,
+                        turn: started,
+                    } => {
+                        assert_eq!(thread_id, thread);
+                        if Some(started.id.as_str()) == settled_prior {
+                            continue;
+                        }
+                        assert_eq!(started.id, turn);
                     }
                     _ => {}
                 }
@@ -330,7 +351,8 @@ async fn native_mission_owns_mcp_dispatch_and_resumes_without_exposing_credentia
         )
         .await
         .unwrap();
-    let initial_usage = completed(&mut first, &thread.thread.id, &turn.id).await;
+    let initial_usage = completed(&mut first, &thread.thread.id, &turn.id, None).await;
+    let settled_prior = turn.id.clone();
     // Four real native model requests within one Turn, not the last request's 12.
     assert_eq!(initial_usage.total, 48);
     assert_eq!(
@@ -354,7 +376,13 @@ async fn native_mission_owns_mcp_dispatch_and_resumes_without_exposing_credentia
         )
         .await
         .unwrap();
-    let cumulative = completed(&mut second, &thread.thread.id, &turn.id).await;
+    let cumulative = completed(
+        &mut second,
+        &thread.thread.id,
+        &turn.id,
+        Some(&settled_prior),
+    )
+    .await;
     assert_eq!(cumulative.since(initial_usage).unwrap().total, 12);
     second.close().await.unwrap();
     let seen = provider.seen.lock().unwrap();
