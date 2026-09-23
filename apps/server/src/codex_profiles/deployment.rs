@@ -282,7 +282,10 @@ impl CodexDeployment {
     }
 
     pub async fn probe(&self, snapshot: &CodexProfileSnapshot) -> CodexProbeOutcomeV1 {
-        match tokio::time::timeout(Duration::from_secs(110), self.observe(snapshot)).await {
+        // One deadline includes waiting for the home, native initialization,
+        // catalog/settings reads and cleanup; individual RPCs cannot stack into
+        // a nearly two-minute status refresh. This never retries a paid turn.
+        match tokio::time::timeout(Duration::from_secs(20), self.observe(snapshot)).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(reason)) => CodexProbeOutcomeV1::Unavailable { reason },
             Err(_) => CodexProbeOutcomeV1::Unavailable {
@@ -394,7 +397,7 @@ async fn inspect(
     let mut options = ThreadOptions::read_only(working_directory.to_path_buf());
     options.ephemeral = true;
     let default = client
-        .start_thread(&options)
+        .probe_thread(&options)
         .await
         .map_err(native_failure)?;
     let overrides = resolve_overrides(
@@ -426,7 +429,7 @@ async fn inspect(
         || options.service_tier.is_some()
     {
         client
-            .start_thread(&options)
+            .probe_thread(&options)
             .await
             .map_err(native_failure)?
     } else {
