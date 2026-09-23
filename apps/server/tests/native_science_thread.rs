@@ -331,7 +331,12 @@ fn launch(home: &Path, work: &Path) -> Launch {
     }
 }
 
-async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts {
+async fn completed(
+    client: &mut Client,
+    thread: &str,
+    turn: &str,
+    settled_prior: Option<&str>,
+) -> TokenCounts {
     tokio::time::timeout(Duration::from_secs(60), async {
         let mut terminal = false;
         let mut usage = None;
@@ -347,6 +352,9 @@ async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts
                         turn: actual,
                     } => {
                         assert_eq!(thread_id, thread);
+                        if Some(actual.id.as_str()) == settled_prior {
+                            continue;
+                        }
                         assert_eq!(actual.id, turn);
                         assert_eq!(actual.status, TurnStatus::Completed);
                         assert!(!actual.has_error);
@@ -358,8 +366,21 @@ async fn completed(client: &mut Client, thread: &str, turn: &str) -> TokenCounts
                         total,
                     } => {
                         assert_eq!(thread_id, thread);
+                        if Some(turn_id.as_str()) == settled_prior {
+                            continue;
+                        }
                         assert_eq!(turn_id, turn);
                         usage = Some(total);
+                    }
+                    Observation::TurnStarted {
+                        thread_id,
+                        turn: started,
+                    } => {
+                        assert_eq!(thread_id, thread);
+                        if Some(started.id.as_str()) == settled_prior {
+                            continue;
+                        }
+                        assert_eq!(started.id, turn);
                     }
                     _ => {}
                 }
@@ -412,7 +433,7 @@ async fn native_science_outputs_are_published_and_consumed_in_one_resumable_thre
         )
         .await
         .unwrap();
-    let initial_usage = completed(&mut client, &thread.thread.id, &initial.id).await;
+    let initial_usage = completed(&mut client, &thread.thread.id, &initial.id, None).await;
     let first_summary = client
         .public_summary(&thread.thread.id, &initial.id)
         .await
@@ -438,7 +459,13 @@ async fn native_science_outputs_are_published_and_consumed_in_one_resumable_thre
         )
         .await
         .unwrap();
-    let cumulative = completed(&mut resumed_client, &thread.thread.id, &next.id).await;
+    let cumulative = completed(
+        &mut resumed_client,
+        &thread.thread.id,
+        &next.id,
+        Some(&initial.id),
+    )
+    .await;
     let second_summary = resumed_client
         .public_summary(&thread.thread.id, &next.id)
         .await
