@@ -21,7 +21,7 @@ The Codex profile probe must accept future native versions when their actual ini
 
 Codex 0.156.1 also replays a prior Turn start notification after Thread resume. The current Mission driver may ignore it only when the Turn belongs to the same persisted Session and already has an immutable settlement receipt; an unknown Turn or a different Thread remains a correlation failure.
 
-The current source rejects any version except 0.144.4 in the App Server client and domain probe validation. The current host CLI is 0.156.1; the running QuaZonai processes use UID 951, whose PATH and native account state are separate from the desktop user's. Production account and PATH alignment must be checked under UID 951 after deployment.
+Before this task, the source rejected any version except 0.144.4 in the App Server client and domain probe validation. The current host CLI is 0.156.1; the running QuaZonai processes use UID 951, whose PATH and native account state are separate from the desktop user's. Production account and PATH alignment must be checked under UID 951 after deployment.
 
 <a id="plan"></a>
 ## Implementation plan
@@ -38,16 +38,16 @@ The main risk is a future native protocol or sandbox change. QuaZonai accepts ne
 
 Before the fix, the native server test using the host's official 0.156.1 binary failed at `Client::start` with `NativeFailure::Version` (exit 101). Direct isolated 0.156.1 App Server checks returned all three GPT-6 models and accepted the existing Thread and Mission request shapes without paid inference. This does not prove UID 951's account catalog.
 
-After the fix, `cargo test --locked -p server --features native-codex --test codex_native` passed 6/6 with the official local 0.156.1 binary, including GPT-6 catalog and persisted Thread recovery. `cargo test --locked -p domain --test codex_profiles` passed 6/6; `cargo test --locked -p domain --lib codex::native_version` passed 2/2. The CI fixture lock was regenerated for 0.156.1 and `npm ci --dry-run --prefix runtimes/codex --ignore-scripts --no-audit --no-fund` succeeded. PostgreSQL-backed Mission/Store checks and current-head CI are pending.
+After the fix, `cargo test --locked -p server --features native-codex --test codex_native` passed 6/6 with the official local 0.156.1 binary, including GPT-6 catalog and persisted Thread recovery. `cargo test --locked -p domain --test codex_profiles` passed 6/6; `cargo test --locked -p domain --lib codex::native_version` passed 2/2. The CI fixture lock was regenerated for 0.156.1 and `npm ci --dry-run --prefix runtimes/codex --ignore-scripts --no-audit --no-fund` succeeded. PostgreSQL-backed Mission/Store and final-head CI evidence is recorded in [PR #108](https://github.com/zhengui666/QuaZonai/pull/108).
 
-`cargo test --locked -p store --test missions --no-run` compiled the new database predicate test. `make check-web` regenerated contracts without a diff and passed TypeScript checking; Vitest passed 527/528 cases, with one unrelated request-schema case exceeding its 5-second timeout during concurrent Rust compilation. An isolated rerun is pending.
+`cargo test --locked -p store --test missions --no-run` compiled the new database predicate test. An isolated `make check-web` rerun regenerated contracts without a diff, passed TypeScript checking, passed all 528 Vitest cases, and built the production Vite/PWA bundle. The native Runtime and Store fixtures were updated for observed 0.156.1 MCP output, settled-Turn replay, and interrupted Turn snapshots; their PostgreSQL execution is part of PR #108 CI.
 
 <a id="review"></a>
 ## Review
 
-Pending PR and current-head review.
+[PR #108](https://github.com/zhengui666/QuaZonai/pull/108) is the review record. Merge requires explicit clean `@codex review` on its final Head, all review threads resolved, and all applicable CI passing at that Head.
 
 <a id="delivery"></a>
 ## Delivery
 
-Pending PR, merge, and post-merge verification. The running service needs a separately authorized release installation before its behavior can change.
+[PR #108](https://github.com/zhengui666/QuaZonai/pull/108) is the delivery record. Merge and post-merge verification follow the final-head gate above. The running service needs a separately authorized release installation before its behavior can change.
