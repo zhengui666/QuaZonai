@@ -1,4 +1,4 @@
-//! Thin client for the pinned official Codex App Server. Codex owns its tool loop,
+//! Thin client for the official Codex App Server. Codex owns its tool loop,
 //! authentication and canonical history; QZ owns only bounded transport and bindings.
 mod mission;
 mod projection;
@@ -22,7 +22,6 @@ use std::{collections::BTreeSet, fmt, time::Duration};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use wire::{RequestId, Wire};
 
-pub const VERSION: &str = "0.144.4";
 pub const MAX_FRAME: usize = 2 * 1024 * 1024;
 const CLIENT: &str = "quazonai_native";
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
@@ -46,7 +45,7 @@ impl fmt::Display for NativeFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Configuration => "native Codex deployment configuration is invalid",
-            Self::Version => "native Codex version differs from the pinned contract",
+            Self::Version => "native Codex did not identify a valid version",
             Self::Unavailable => {
                 "native Codex connection is unavailable; request outcome may be unknown"
             }
@@ -71,6 +70,7 @@ pub struct Client {
     wire: Wire<ChildStdout, ChildStdin>,
     binary: std::path::PathBuf,
     codex_home: std::path::PathBuf,
+    version: String,
     rpc_timeout: Duration,
 }
 
@@ -99,6 +99,7 @@ impl Client {
             wire: Wire::new(output, input),
             binary,
             codex_home,
+            version: String::new(),
             rpc_timeout: if limits.is_some() {
                 Duration::from_secs(60)
             } else {
@@ -107,8 +108,9 @@ impl Client {
         };
         let initialized: projection::Initialized =
             client.call("initialize", requests::initialize()).await?;
-        domain::codex::verified_codex_version(&initialized.user_agent, CLIENT, VERSION)
-            .map_err(|_| NativeFailure::Version)?;
+        client.version = domain::codex::verified_codex_version(&initialized.user_agent, CLIENT)
+            .map_err(|_| NativeFailure::Version)?
+            .to_owned();
         if let Some(limits) = limits {
             client.group =
                 Some(limits.capture(client.child.id().ok_or(NativeFailure::Unavailable)?)?);
@@ -119,6 +121,10 @@ impl Client {
 
     pub fn is_closed(&self) -> bool {
         self.wire.closed()
+    }
+
+    pub fn version(&self) -> &str {
+        &self.version
     }
 
     async fn call<T: DeserializeOwned>(

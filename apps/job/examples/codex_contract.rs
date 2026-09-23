@@ -1,4 +1,4 @@
-//! Test-only stdio compatibility probe against the pinned native Codex binary.
+//! Test-only stdio compatibility probe against the selected native Codex binary.
 //! No model inference, authentication, mutation API, or Agent loop is implemented.
 //! This does not replace the protected real-account and same-thread tool tests.
 use std::collections::BTreeSet;
@@ -129,7 +129,7 @@ fn probe() -> Result<()> {
         .get("userAgent")
         .and_then(Value::as_str)
         .ok_or("MISSING_NATIVE_VERSION")?;
-    let observed_version = job::verified_codex_version(user_agent, "qz_w0_contract", "0.144.4")?;
+    let observed_version = job::verified_codex_version(user_agent, "qz_w0_contract")?;
     server.send(json!({"method": "initialized"}))?;
     let account = server.request("account/read", json!({"refreshToken": false}))?;
     // An isolated fixture HOME must not silently inherit a real credential.

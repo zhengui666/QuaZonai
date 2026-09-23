@@ -8,7 +8,7 @@ use contracts::{
 use crate::DomainError;
 
 mod native_version;
-pub use native_version::verified_codex_version;
+pub use native_version::{valid_codex_version, verified_codex_version};
 pub mod settings;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

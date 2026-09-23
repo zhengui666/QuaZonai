@@ -107,6 +107,7 @@ async fn run(args: Arguments) -> Result<()> {
         "cli_auth_credentials_store = \"file\"\nforced_login_method = \"chatgpt\"\n",
     )?;
     let mut client = Client::start(launch(&args.codex_binary, root.path())).await?;
+    let native_version = client.version().to_owned();
     let result = exercise(&mut client, args.cancel_only).await;
     // Stop the process that owned the login before cleanup. Even an uncertain
     // cancellation cannot write a late authentication result after this close.
@@ -144,7 +145,7 @@ async fn run(args: Arguments) -> Result<()> {
     }
     root.close()?;
     result?;
-    println!("native_version={} start_cancel=passed empty_account_logout={} logout_restart={} full_login={} temporary_profile_removed=true", server::codex_native::VERSION, if args.cancel_only { "passed" } else { "not_run" }, if args.cancel_only { "not_run" } else { "passed" }, if args.cancel_only { "not_run" } else { "passed" });
+    println!("native_version={} start_cancel=passed empty_account_logout={} logout_restart={} full_login={} temporary_profile_removed=true", native_version, if args.cancel_only { "passed" } else { "not_run" }, if args.cancel_only { "not_run" } else { "passed" }, if args.cancel_only { "not_run" } else { "passed" });
     Ok(())
 }
 

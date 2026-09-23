@@ -1758,6 +1758,7 @@ async fn native_terminal_without_usage_preserves_first_observation_and_budget(po
         &mut connection.client,
         &connection.session.native.thread_id,
         &turn.id,
+        None,
     )
     .await;
     assert_eq!(usage.total, 12);

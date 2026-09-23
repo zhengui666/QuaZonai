@@ -220,7 +220,13 @@ impl MissionConnection {
                 match event {
                     Observation::TurnStarted { thread_id, turn }
                     | Observation::TurnCompleted { thread_id, turn } => {
-                        if thread_id != *thread || turn.id != actual.id {
+                        if thread_id != *thread {
+                            return Err(native(NativeFailure::Correlation));
+                        }
+                        if turn.id != actual.id {
+                            if store.settled_native_turn(self.session.id, &turn.id).await? {
+                                continue;
+                            }
                             return Err(native(NativeFailure::Correlation));
                         }
                         if confirmed_terminal && turn.status != actual.status {
@@ -254,7 +260,13 @@ impl MissionConnection {
                         turn_id,
                         total,
                     } => {
-                        if thread_id != *thread || turn_id != actual.id {
+                        if thread_id != *thread {
+                            return Err(native(NativeFailure::Correlation));
+                        }
+                        if turn_id != actual.id {
+                            if store.settled_native_turn(self.session.id, &turn_id).await? {
+                                continue;
+                            }
                             return Err(native(NativeFailure::Correlation));
                         }
                         let cumulative = u64::try_from(total.total)

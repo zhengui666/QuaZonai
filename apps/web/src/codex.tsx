@@ -11,7 +11,7 @@ type Values = Schema['SavedModelSettingsV1'];
 const failures: Record<Schema['CodexProbeFailureV1'], string> = {
   DEPLOYMENT_UNAVAILABLE: '未找到本机 Codex，请安装并登录后重启服务',
   NATIVE_UNAVAILABLE: 'Codex 连接失败，请重试',
-  VERSION_UNSUPPORTED: 'Codex 版本不兼容',
+  VERSION_UNSUPPORTED: '无法验证 Codex 版本信息',
   CONTRACT_UNSUPPORTED: 'Codex 响应不兼容',
   AUTHENTICATION_REQUIRED: '请先在本机执行 codex login',
   MODEL_SETTINGS_UNSUPPORTED: '模型设置不可用，请恢复本机默认',

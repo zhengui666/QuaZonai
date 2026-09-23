@@ -1,4 +1,4 @@
-//! Exact official Codex subprocess compatibility. Empty HOME means no account,
+//! Official Codex subprocess compatibility. Empty HOME means no account,
 //! inference or OAuth completion is claimed by these native protocol checks.
 #![cfg(feature = "native-codex")]
 use server::codex_native::{Client, Launch, ThreadOptions};
@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 fn launch(root: &std::path::Path) -> Launch {
     let binary = PathBuf::from(
         std::env::var_os("CODEX_NATIVE_BIN")
-            .expect("native-codex acceptance requires the pinned binary"),
+            .expect("native-codex acceptance requires an official binary"),
     );
     Launch {
         binary,
@@ -55,6 +55,7 @@ async fn official_account_operations_respect_native_login_policy() {
 async fn official_stdio_initialization_catalog_and_default_thread_are_native_not_mocked() {
     let root = tempfile::tempdir().unwrap();
     let mut client = Client::start(launch(root.path())).await.unwrap();
+    assert!(domain::codex::valid_codex_version(client.version()));
     let account = client.account().await.unwrap();
     assert!(
         account.account.is_none(),
@@ -62,6 +63,11 @@ async fn official_stdio_initialization_catalog_and_default_thread_are_native_not
     );
     let models = client.models().await.unwrap();
     assert!(!models.is_empty());
+    if client.version() == "0.156.1" {
+        for id in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
+            assert!(models.iter().any(|model| model.model == id), "missing {id}");
+        }
+    }
     let mut options = ThreadOptions::read_only(root.path().to_path_buf());
     options.ephemeral = true;
     let thread = client.start_thread(&options).await.unwrap();
@@ -90,8 +96,8 @@ async fn native_empty_thread_is_not_misrepresented_as_a_resumable_persisted_sess
     let mut client = Client::start(launch(root.path())).await.unwrap();
     let options = ThreadOptions::read_only(root.path().to_path_buf());
     let started = client.start_thread(&options).await.unwrap();
-    // Upstream rust-v0.144.4 tests/suite/v2/thread_resume.rs explicitly rejects
-    // resume before the first user message materializes native rollout storage.
+    // The official binary rejects resume before the first user message
+    // materializes native rollout storage.
     // Preserve that observation instead of creating a replacement thread/history.
     assert!(matches!(
         client.resume_thread(&started.thread.id, &options).await,
@@ -122,7 +128,8 @@ async fn native_completed_turn_survives_process_restart_and_results_return_to_th
         )
         .await
         .unwrap();
-    let initial_usage = responses::completed(&mut first, &thread.thread.id, &initial.id).await;
+    let initial_usage =
+        responses::completed(&mut first, &thread.thread.id, &initial.id, None).await;
     assert_eq!(initial_usage.total, 12);
     assert_eq!(provider.request_count(), 1);
     first.close().await.unwrap();
@@ -161,7 +168,8 @@ async fn native_completed_turn_survives_process_restart_and_results_return_to_th
         )
         .await
         .unwrap();
-    let cumulative = responses::completed(&mut second, &thread.thread.id, &next.id).await;
+    let cumulative =
+        responses::completed(&mut second, &thread.thread.id, &next.id, Some(&initial.id)).await;
     assert_eq!(cumulative.since(initial_usage).unwrap().total, 12);
     let turns = second.turns(&thread.thread.id).await.unwrap();
     assert_eq!(turns.len(), 2);

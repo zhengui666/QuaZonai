@@ -400,4 +400,20 @@ impl Store {
             accounted_tokens,
         })
     }
+
+    /// A resumed native Thread may replay notifications for an earlier Turn.
+    /// Only a Turn with an immutable QZ receipt can be ignored by the current driver.
+    pub async fn settled_native_turn(
+        &self,
+        session_id: Id,
+        native_turn_id: &str,
+    ) -> Result<bool, StoreError> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM app.model_turn_bindings b JOIN app.model_turn_receipts r USING(reservation_id) WHERE b.session_id=$1 AND b.native_turn_id=$2)",
+        )
+        .bind(session_id.as_uuid())
+        .bind(native_turn_id)
+        .fetch_one(&self.pool)
+        .await?)
+    }
 }

@@ -89,7 +89,7 @@ jobs:
           set -euo pipefail
           npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
           export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
-          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.144.4'
+          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.156.1'
           echo "CODEX_NATIVE_BIN=$CODEX_NATIVE_BIN" >> "$GITHUB_ENV"
           uid=$(id -u)
           sudo loginctl enable-linger "$uid"

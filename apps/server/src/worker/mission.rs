@@ -501,7 +501,7 @@ impl MissionLauncher {
             })?;
         if let Some(session) = &job.session {
             let requested = &session.requested_settings;
-            if session.native.codex_version != native::VERSION
+            if session.native.codex_version != client.version()
                 || session.native.protocol_schema_version != "v2"
                 || options.model != requested.model
                 || options.reasoning_effort != requested.reasoning_effort
@@ -553,7 +553,7 @@ impl MissionLauncher {
         };
         let receipt = NativeSessionReceipt {
             thread_id: thread.thread.id,
-            codex_version: native::VERSION.into(),
+            codex_version: client.version().to_owned(),
             protocol_schema_version: "v2".into(),
             requested_service_tier: options.service_tier,
             effective: CodexEffectiveSettingsV1 {

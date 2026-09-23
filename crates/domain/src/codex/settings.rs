@@ -65,7 +65,7 @@ pub fn profile_update(value: &CodexProfileUpdateV1) -> Result<(), DomainError> {
     Ok(())
 }
 
-/// Supported by the pinned upstream's native service-tier contract. Selection
+/// Supported by the native service-tier contract. Selection
 /// still requires this exact tier to be advertised by the actual chosen model.
 pub fn fast_tier(model: &CodexAdvertisedModelV1) -> Result<String, DomainError> {
     ["priority", "fast"]
@@ -96,7 +96,7 @@ pub fn probe_outcome(
         return Ok(());
     };
     if mode != ConnectionMode::System
-        || native_version != "0.144.4"
+        || !super::valid_codex_version(native_version)
         || !(1..=4096).contains(&models.len())
     {
         return Err(bad("native_catalog"));
