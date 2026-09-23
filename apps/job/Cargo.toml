@@ -32,7 +32,7 @@ nautilus-persistence = { version = "=0.63.0", default-features = false }
 nautilus-indicators = { version = "=0.63.0", default-features = false }
 nautilus-polymarket = { version = "=0.63.0", default-features = false }
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"], optional = true }
-rust_decimal = "=1.42.1"
+rust_decimal = "=1.43.0"
 nautilus-model = { version = "=0.63.0", default-features = false }
 nautilus-trading = { version = "=0.63.0", default-features = false }
 anyhow = "=1.0.104"
