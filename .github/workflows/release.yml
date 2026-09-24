@@ -1,0 +1,97 @@
+name: Release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_run:
+    workflows: [CI, Web console, Native Runtime, Polymarket history]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing version tag to retry, or empty to scan all merged versions.
+        type: string
+        required: false
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: quazonai-versioned-release
+  cancel-in-progress: false
+jobs:
+  select:
+    if: github.repository == 'zhengui666/QuaZonai'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      any: ${{ steps.select.outputs.any }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read current tags and main
+        run: git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/*:refs/tags/*'
+      - name: Select merged versions with successful exact-source CI
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.version }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B deploy/docker/release.py select
+  publish:
+    needs: select
+    if: needs.select.outputs.any == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    env:
+      VERSION: ${{ matrix.version }}
+      REVISION: ${{ matrix.revision }}
+      LOCAL_IMAGE: quazonai-release:${{ matrix.revision }}
+      IMAGE: ghcr.io/zhengui666/quazonai
+      GH_TOKEN: ${{ github.token }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ matrix.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact tagged source
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/*:refs/tags/*'
+          python3 -B deploy/docker/release.py verify --version "$VERSION" --revision "$REVISION"
+      - uses: ./.github/actions/container
+        with:
+          image: ${{ env.LOCAL_IMAGE }}
+          revision: ${{ matrix.revision }}
+          version: ${{ matrix.version }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the image already exercised by the deployment checks
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/*:refs/tags/*'
+          python3 -B deploy/docker/release.py verify --version "$VERSION" --revision "$REVISION"
+          test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
+          docker tag "$LOCAL_IMAGE" "$IMAGE:$VERSION"
+          docker push "$IMAGE:$VERSION"
+          digest=$(docker image inspect "$IMAGE:$VERSION" --format '{{index .RepoDigests 0}}')
+          docker pull "$digest"
+          test "$(docker image inspect "$digest" --format '{{.Id}}')" = "$(docker image inspect "$LOCAL_IMAGE" --format '{{.Id}}')"
+          python3 -B deploy/docker/release.py bundle --version "$VERSION" --revision "$REVISION" --image "$digest" --output "$RUNNER_TEMP/quazonai-release"
+          python3 -B deploy/docker/release.py publish --output "$RUNNER_TEMP/quazonai-release"

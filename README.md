@@ -9,7 +9,9 @@
 <a id="quickstart"></a>
 ## 安装与启动
 
-准备 Linux x86_64、Rust 1.98.1、Node.js ≥22.12、PostgreSQL 18 / PGMQ 1.10.0 和 Caddy。API、Worker 与原生 Codex 使用同一操作系统用户。
+版本化容器部署：从 [GitHub Releases](https://github.com/zhengui666/QuaZonai/releases) 下载指定版本的 `quazonai-deploy.tar.gz`，解压后运行 `bash deploy.sh`。脚本同时部署前后端镜像、PostgreSQL / PGMQ 和网络，并安装同版本原生 Worker。部署机无需 Rust / Node.js；平台前提、更新与恢复见[容器部署](OPERATIONS.md#container-install)。
+
+从源码安装则准备 Linux x86_64、Rust 1.98.1、Node.js ≥22.12、PostgreSQL 18 / PGMQ 1.10.0 和 Caddy。API、Worker 与原生 Codex 使用同一操作系统用户。
 
 ```sh
 git clone https://github.com/zhengui666/QuaZonai.git

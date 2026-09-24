@@ -31,7 +31,7 @@ services:
     environment:
       DATABASE_URL: postgresql://quazonai:${DATABASE_PASSWORD:?}@database:5432/quazonai
       STATE_DIR: ${INSTALL_DIR:?}/data/state
-      HOME: ${NATIVE_HOME:?}
+      HOME: /home/quazonai
       CODEX_HOME: ${NATIVE_CODEX_HOME:?}
       BIND: 127.0.0.1:8080
       PUBLIC_URL: http://localhost:${WEB_PORT:?}

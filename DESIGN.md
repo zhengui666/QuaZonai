@@ -1,5 +1,24 @@
 # QuaZonai 产品、领域与架构事实源
 
+<a id="container-release"></a>
+## 版本化镜像与部署合同
+
+正式分发复用 GitHub Actions、GHCR、Docker 多阶段构建、Docker Compose 和 systemd user manager；不引入新容器控制面、认证系统、发布服务或后台自动更新代理。前端产物、Rust API、Caddy 和锁定官方 Codex 同镜像发布；Worker 从该镜像提取同源二进制在宿主 user manager 运行。原因是现有 Mission 明确依赖真实 `/user.slice/`、systemd scope 与 `cgroup.kill`，不能将普通容器存活当作其兼容证据。科学 Runtime 的镜像、catalog、journal 和数据许可继续独立登记，不由本部署捏造就绪。
+
+发布名为 `vMAJOR.MINOR.PATCH[-prerelease]`，不接受前导零、build metadata 或浮动 latest。tag 解引用至精确 commit，须为当前 main 祖先；不以分支名、PR 标题或字符串相等代替 ancestry。main push / tag push / CI 完成均重算尚未发布版本，覆盖两种推送先后顺序；squash/rebase 不搬移旧 tag。该 SHA 的 CI、Web console、Native Runtime 和 Polymarket history 最新运行须成功，发布 job 再构建并验证同源镜像，然后直接推送被验证的镜像而非重建另一份。普通 PR 仅只读验证；只有发布 job 使用 packages/contents 写权限。Release 最后由 draft 变为 published，标记预发布、不推动 latest；已有完整版本不覆盖。
+
+公开 `release.json` 的字段：`schema_version` 固定整数 1；`version` 为完整 tag；`revision` 为 40 位源 SHA；`image` 为 `ghcr.io/zhengui666/quazonai@sha256:<64hex>`；`database_image` 为本版支持的 PostgreSQL18/PGMQ 镜像 digest。测试可在临时部署包使用实际本地镜像的 content-addressed ID，公开 Release 不使用该形式。包内固定包含 manifest、manage.py、deploy.sh、update.sh、compose.yaml、README.md；不同版本的管理器和 Compose 随版本一起切换。
+
+主机私有 `installation.json` 保存 manifest 字段以及原始 `root/uid/gid/home/codex_home/path/unit_directory`、`port/database_port`、随机数据库 `password`、稳定 Compose `project`、当前 `bundle` 和可选 `runtime_targets/downstream_targets` 数组；不上传到 Release/CI artifact。密码和安装身份在创建数据库前持久化，重复安装不重新生成。`pending.json` 表示安装或升级的中断，升级同时绑定 `previous/target/backup`；同目标重试保留最初备份，不用失败后的部分迁移库覆盖恢复点。`current` 仅在 HTTP 与 Worker 进程启动检查成功后切换。原 CODEX_HOME 只挂载、不读取或复制原生认证；原生账号可用性独立于 liveness。
+
+Compose 建立 bridge application 网络，app 通过服务名 database 连接 PostgreSQL，数据库卷挂载 `/var/lib/postgresql`，应用状态绑定安装目录下 `data`。API 仍监听容器 loopback，Caddy 接收只映射到宿主 loopback 的网页端口。数据库额外绑定宿主 loopback，供原生 Worker 使用。同一状态路径、UID、PUBLIC_URL 和原生版本由脚本统一设置，不靠容器 loopback 访问宿主科学 Runtime；需要时显式挂载原 Runtime socket/目录。
+
+更新顺序为获取目标包/镜像并检查 ABI → 确认所有 Run 终结 → 停止本安装 API/Worker → 再查静止点 → PostgreSQL 原生 pg_dump 与状态备份 → 显式 migrate → 启动目标 API/Worker并验证 → 激活。迁移前备份失败可恢复旧进程；迁移后失败必须保留原库/状态/密钥/恢复点和 pending，不盲目回滚旧程序、删除卷或改任务终态。数据库大版本升级和冷恢复仍是显式操作。数据库密码、master key 与原生认证不得进入源码、日志或公开包。
+
+部署工具的 Python 例外仅限主机端包管理脚本：复用 stdlib 的 JSON/tar/原子文件与 flock，以及 subprocess 调用现有 Docker/systemd/pg_dump；不增加 Python 服务、领域合同或计算实现。相较新 Rust 安装器可避免引入独立发布二进制/部署编译器，相较 Shell+多个外部解析工具保留单一 manifest 解析与失败状态。现有 Rust serve/worker/migrate/init-state 仍是唯一产品入口。验证复用同一 composite action，覆盖真实安装、版本切换、失败后重试、重启保持数据/密钥和 pg_restore；纯函数/故障注入测试不代替真实链路。
+
+运行命令见 [OPERATIONS](OPERATIONS.md#container-install)，部署包独立说明见 [deploy/docker/README](deploy/docker/README.md)。执行结果只记 PR、CI 与单一任务记录，不在本合同虚报已发布镜像。
+
 ## Polymarket 原生研究与组合
 
 原生 BinaryOption 研究使用 POLYMARKET、原 condition/token 身份、原抵押币和

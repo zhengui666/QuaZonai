@@ -4,6 +4,7 @@ WORKDIR /build
 COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
 RUN npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
 COPY apps/web ./apps/web
+COPY contracts/generated ./contracts/generated
 RUN npm --prefix apps/web run build
 
 FROM node:22-bookworm-slim AS codex
@@ -12,7 +13,7 @@ COPY runtimes/codex/package.json runtimes/codex/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund \
  && mkdir /bin-release \
  && cp node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/* /bin-release/ \
- && cp node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/path/* /bin-release/ \
+ && cp node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path/* /bin-release/ \
  && /bin-release/codex --version
 
 FROM rust:1.98.1-bookworm AS server
@@ -29,7 +30,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM caddy:2.10.2 AS caddy
 FROM debian:bookworm-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl git tini libssl3 libstdc++6 \
+ && apt-get install -y --no-install-recommends ca-certificates curl git ripgrep tini libssl3 libstdc++6 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 1000 --create-home quazonai
 COPY --from=server /out/server /opt/quazonai/bin/server
