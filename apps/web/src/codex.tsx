@@ -136,7 +136,7 @@ function ModelDialog({ original, observation, close }: { original: Profile; obse
   </Modal>;
 }
 function ProfileDetails({ id }: { id: string }) {
-  const online = useOnline(); const now = useClock(); const refresh = useRefresh(); const intent = useRef(new Intent());
+  const online = useOnline(); const now = useClock(); const client = useQueryClient(); const intent = useRef(new Intent());
   const [editing, setEditing] = useState<Profile>(); const attempted = useRef<string | undefined>(undefined);
   const query = useQuery({ queryKey: ['codex','profile',id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/settings/codex/{id}', { params: { path: { id } }, signal })) });
   const observation = useQuery({ queryKey: ['codex','observation',id], refetchInterval: online ? 15_000 : false,
@@ -144,7 +144,13 @@ function ProfileDetails({ id }: { id: string }) {
   const probe = useMutation({ mutationFn: async (profile: Profile) => {
     const body: Schema['CodexProbeRequestV1'] = { schema_version: 1, profile_id: id, expected_revision: profile.revision };
     return dataOf(await api.POST('/api/v2/codex/probe', { body, params: { header: intent.current.headers('POST','/api/v2/codex/probe',body) } }));
-  }, onSuccess: async () => { intent.current.clear(); await refresh(); } });
+  }, onSuccess: async () => {
+    intent.current.clear();
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ['codex','profile',id], exact: true }),
+      client.invalidateQueries({ queryKey: ['codex','observation',id], exact: true }),
+    ]);
+  } });
   const profile = query.data; const view = observation.data; const native = view?.observation;
   const valid = !query.isError && !observation.isError && fresh(view, profile, now);
   const mutate = probe.mutate;
