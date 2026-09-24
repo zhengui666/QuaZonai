@@ -35,8 +35,6 @@ jobs:
       EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       APP_IMAGE: quazonai-ci:${{ github.event.pull_request.head.sha || github.sha }}
       DATABASE_IMAGE: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
-      INSTALL_DIR: ${{ runner.temp }}/quazonai-container
-      NATIVE_CODEX_HOME: ${{ runner.temp }}/quazonai-native-home
       WEB_PORT: '18081'
       DATABASE_PORT: '55439'
       COMPOSE_PROJECT_NAME: quazonai-ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -52,10 +50,14 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           bash -n deploy/docker/entrypoint.sh
+          INSTALL_DIR="$RUNNER_TEMP/quazonai-container"
+          NATIVE_CODEX_HOME="$RUNNER_TEMP/quazonai-native-home"
           mkdir -m 700 -p "$INSTALL_DIR/data" "$NATIVE_CODEX_HOME"
           password=$(openssl rand -hex 32)
           echo "::add-mask::$password"
           {
+            echo "INSTALL_DIR=$INSTALL_DIR"
+            echo "NATIVE_CODEX_HOME=$NATIVE_CODEX_HOME"
             echo "DATABASE_PASSWORD=$password"
             echo "HOST_UID=$(id -u)"
             echo "HOST_GID=$(id -g)"
