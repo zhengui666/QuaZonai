@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -70,7 +71,7 @@ class ManifestTests(unittest.TestCase):
             source.mkdir()
             (source / "release.json").write_text(json.dumps(metadata()))
             args = argparse.Namespace(port=18081, database_port=55432, codex_home=str(root / "native"))
-            with patch.object(manage, "BUNDLE", source), patch.object(manage, "preflight"), patch.object(
+            with patch.object(manage, "BUNDLE", source), patch.object(manage, "preflight"), patch.object(manage, "validate_ports"), patch.object(
                 manage, "prepare", side_effect=ValueError("test download failure")
             ):
                 with self.assertRaises(ValueError):
@@ -79,6 +80,51 @@ class ManifestTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     manage.deploy(root / "installation", args)
                 self.assertEqual(manage.configuration(root / "installation"), before)
+
+
+class InstallationInputTests(unittest.TestCase):
+    def test_occupied_ports_do_not_persist_an_installation(self):
+        with tempfile.TemporaryDirectory() as temporary, socket.socket() as busy, socket.socket() as free:
+            root = Path(temporary)
+            busy.bind(("127.0.0.1", 0))
+            busy.listen()
+            free.bind(("127.0.0.1", 0))
+            occupied, available = busy.getsockname()[1], free.getsockname()[1]
+            free.close()
+            for index, pair in enumerate(((occupied, available), (available, occupied))):
+                installation = root / str(index)
+                args = argparse.Namespace(port=pair[0], database_port=pair[1], codex_home=str(root / "native"))
+                with self.subTest(pair=pair), patch.object(manage, "manifest", return_value=metadata()), patch.object(
+                    manage, "preflight"
+                ), patch.object(manage, "prepare") as prepare, self.assertRaisesRegex(ValueError, "port.*unavailable"):
+                    manage.deploy(installation, args)
+                prepare.assert_not_called()
+                self.assertFalse((installation / "installation.json").exists())
+                self.assertFalse((installation / "pending.json").exists())
+
+    def test_port_ranges_and_distinctness(self):
+        for pair in ((1023, 55432), (8081, 65536), (8081, 8081), (True, 55432)):
+            with self.subTest(pair=pair), self.assertRaises(ValueError):
+                manage.validate_ports(*pair)
+        manage.validate_ports(1024, 65535)
+
+    def test_systemd_paths_are_literal_but_exec_is_quoted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'installation with spaces %n $HOME "quoted"'
+            root.mkdir()
+            config = {**metadata(), "root": str(root), "project": "release-unit-test", "password": os.urandom(16).hex(),
+                      "database_port": 55432, "port": 8081, "home": str(root), "codex_home": str(root / "native"),
+                      "path": "/usr/bin", "unit_directory": str(root / "units")}
+            with patch.object(manage, "run"), patch.object(manage, "verify_worker"):
+                manage.start_worker(config)
+            content = (root / "units/release-unit-test.service").read_text()
+            self.assertIn(f"WorkingDirectory={str(root).replace('%', '%%')}/data\n", content)
+            self.assertIn(f"EnvironmentFile={str(root).replace('%', '%%')}/worker.env\n", content)
+            self.assertIn('ExecStart=:"', content)
+            self.assertIn('PUBLIC_URL="http://localhost:8081"\n', (root / "worker.env").read_text())
+            for path in (Path("relative"), Path("/bad\npath")):
+                with self.assertRaises(ValueError):
+                    manage.unit_path(path)
 
 
 class GitSelectionTests(unittest.TestCase):

@@ -5,6 +5,7 @@ COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
 RUN npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
 COPY apps/web ./apps/web
 COPY contracts/generated ./contracts/generated
+COPY tests/contracts ./tests/contracts
 RUN npm --prefix apps/web run build
 
 FROM node:22-bookworm-slim AS codex

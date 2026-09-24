@@ -13,6 +13,9 @@
 !migrations/**
 !contracts/
 !contracts/**
+!tests/
+!tests/contracts/
+!tests/contracts/**
 !skills/
 !skills/**
 !runtimes/

@@ -21,7 +21,11 @@ PR #110：版本 tag 指向已合并 main 的提交时，自动构建、验证�
 
 取证 handoff 请求 `gpt-5.6-luna`，执行从 06:04:56Z 到 06:08:43Z，exit 0；仅 Git/GitHub 读取和准备隔离工作树。读取到 main `0add52dc4cc92e70f971e4f4b6536032ec063c9b`，PR110 open/draft。旧 Head 六项 CI 成功，Container run `35943721872` 因 Dockerfile cp 不存在的 Codex path 目录失败；后续容器测试当时未运行。
 
-本次新增源码、脚本、测试和文档由网页端作者完成。以下待本次实际执行后更新，不能以写入成功当作运行通过：
+源码、脚本、测试和文档由网页端作者完成。后续交接记录确认提交 `6eabed5de88f5611a6d6624c28668bce9a309f0a` 已推送 PR110 并关联 Issue111，13 项定向测试与三个 Shell 语法检查通过。
+
+2026-09-24 07:24:50Z 的本轮取证执行器请求 `gpt-5.6-luna`，实际 adapter exit 0；PR Head 仍为 `6eabed5`，六项 CI 成功，Container run `35965508432` / job `107523083725` 在前端编译时因缺少 `tests/contracts/data-registry-keys.json` 失败。原生数据库部署验收在该运行中尚未执行。当前审查另指出 systemd 路径错误引用、首次安装端口检查和发布登录 action 的版本固定问题。
+
+网页端已补全容器构建所需测试合同（不进入最终镜像）、按 systemd 原生单路径语义修复 WorkingDirectory/EnvironmentFile、在首次保存配置前检查端口范围/占用、固定 login-action v3.7.0 的确切提交。新增真实 socket 占用与路径回归测试，真实部署验收改用含空格、百分号和美元符号的路径；逐个检查 Shell 脚本而不是把后续文件误作第一个脚本的参数。上述新修改仍需以下当前源码验证：
 
 - [ ] Python 定向测试、Shell 语法、差异检查。
 - [ ] 当前 Head 的 Container 构建、真实安装/升级/故障恢复/数据库恢复。

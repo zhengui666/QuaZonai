@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -117,6 +118,21 @@ def preflight() -> None:
     run(["systemd-run", "--user", "--scope", "--quiet", "--collect", "/usr/bin/true"])
 
 
+def validate_ports(web: int, database: int, *, available: bool = False) -> None:
+    if any(type(port) is not int or not 1024 <= port <= 65535 for port in (web, database)) or web == database:
+        raise ValueError("Select distinct web/database ports between 1024 and 65535.")
+    if available:
+        # Check both sockets before persisting a new installation's port choices.
+        # Docker still owns the final bind: a later race remains a visible error.
+        with contextlib.ExitStack() as stack:
+            for label, port in (("Web", web), ("Database", database)):
+                sock = stack.enter_context(socket.socket())
+                try:
+                    sock.bind(("127.0.0.1", port))
+                except OSError as error:
+                    raise ValueError(f"{label} port {port} is unavailable; select another port before installing.") from error
+
+
 def compose(config: dict, *args: str, capture: bool = False, output=None) -> str:
     env = {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
     env.update({
@@ -197,6 +213,16 @@ def unit(config: dict) -> str:
     return config["project"] + ".service"
 
 
+def unit_path(path: Path) -> str:
+    value = str(path)
+    if not path.is_absolute() or any(x in value for x in "\n\r\x00"):
+        raise ValueError("systemd paths must be absolute single-line paths.")
+    # WorkingDirectory and EnvironmentFile parse one literal path, not shell
+    # words. Only systemd specifiers are expanded; quoting would become part of
+    # the filename. ExecStart and EnvironmentFile contents use quote instead.
+    return value.replace("%", "%%")
+
+
 def start_worker(config: dict) -> None:
     root = Path(config["root"])
     binary = root / "releases" / config["version"] / "bin/server"
@@ -217,8 +243,8 @@ def start_worker(config: dict) -> None:
     (units / unit(config)).write_text(
         "[Unit]\nDescription=QuaZonai native Worker for the container deployment\n"
         "[Service]\nType=simple\nUMask=0077\n"
-        f"WorkingDirectory={quote(str(root / 'data'))}\n"
-        f"EnvironmentFile={quote(str(root / 'worker.env'))}\n"
+        f"WorkingDirectory={unit_path(root / 'data')}\n"
+        f"EnvironmentFile={unit_path(root / 'worker.env')}\n"
         f"ExecStart=:{quote(str(binary))} worker\n"
         "Restart=on-failure\nRestartSec=3\nTimeoutStopSec=90\n"
         "[Install]\nWantedBy=default.target\n"
@@ -311,6 +337,7 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
         else:
             if any((root / name).exists() for name in ("data", "current", "releases")):
                 raise ValueError("Existing deployment files have no installation manifest; restore it rather than reinitialize.")
+            validate_ports(args.port, args.database_port, available=True)
             home = Path.home()
             codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME", str(home / ".codex"))).expanduser().resolve()
             codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -437,8 +464,10 @@ def main() -> None:
     root = args.directory.expanduser().resolve()
     if root in {Path("/"), Path.home().resolve()}:
         parser.error("Select a dedicated installation directory.")
-    if not (1024 <= args.port <= 65535 and 1024 <= args.database_port <= 65535) or args.port == args.database_port:
-        parser.error("Select distinct web/database ports between 1024 and 65535.")
+    try:
+        validate_ports(args.port, args.database_port)
+    except ValueError as error:
+        parser.error(str(error))
     if args.command == "deploy":
         deploy(root, args)
     elif args.command == "apply-update":

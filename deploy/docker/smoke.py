@@ -47,7 +47,7 @@ def fingerprint(root: Path) -> str:
 
 
 def exercise(root: Path, image: str, revision: str) -> None:
-    installation = root / "installation"
+    installation = root / "installation with spaces %n $HOME"
     web_port, database_port = ports()
     one = make_bundle(root, "v0.0.0-ci.1", revision, image)
     two = make_bundle(root, "v0.0.0-ci.2", revision, image)
