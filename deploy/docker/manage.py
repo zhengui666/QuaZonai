@@ -396,6 +396,11 @@ def activate(root: Path, config: dict) -> None:
     link.unlink(missing_ok=True)
     link.symlink_to(root / "releases" / config["version"], target_is_directory=True)
     os.replace(link, root / "current")
+    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
     # Worker boot recovery must exist before the app can resume admissions on reboot.
     run(["systemctl", "--user", "enable", unit(config)])
     configure_app_restarts(config, True)
@@ -415,6 +420,15 @@ def backup(config: dict) -> Path:
     save(destination / "installation.json", config)
     print(f"Recovery point: {destination}; move a copy of master.key to separate protected storage.")
     return destination
+
+
+def resume_existing_services(config: dict) -> None:
+    # Recovery of an unchanged, already-migrated installation must not recreate
+    # a live app container or rewrite/restart a Worker that owns active Runs.
+    try:
+        compose(config, 'up', '-d', '--no-recreate', '--wait', '--wait-timeout', '120', 'app')
+    finally:
+        run(['systemctl', '--user', 'enable', '--now', unit(config)])
 
 
 def deploy(root: Path, args: argparse.Namespace) -> None:
@@ -437,6 +451,13 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
                 save(pending, {"operation": "install", "version": release["version"]})
             if json.loads(pending.read_text())["operation"] != "install":
                 raise ValueError("An update is pending; retry that target with update.sh.")
+            if (root / 'current').is_symlink():
+                # current is written only after migration and startup checks.
+                # A surviving install marker therefore needs activation, not DDL.
+                resume_existing_services(config)
+                verify_worker(config)
+                activate(root, config)
+                return
         else:
             if any((root / name).exists() for name in ("data", "current", "releases")):
                 raise ValueError("Existing deployment files have no installation manifest; restore it rather than reinitialize.")
@@ -504,16 +525,19 @@ def apply_update(root: Path) -> None:
         phase = pending.get('phase', 'migrating') if pending else 'preparing'
         if phase not in ('preparing', 'migrating'):
             raise ValueError('Unknown pending update phase; preserve its recovery record.')
+        if pending and phase == 'preparing':
+            # An interrupted shutdown may have left old processors stopped.
+            # Resume, but never recreate or restart already-running processors.
+            resume_existing_services(old)
+            configure_app_restarts(old, True)
+        # Every retry checks before shutdown, including preparing retries whose
+        # old app may have admitted Runs while the installer was absent.
+        require_idle(old)
         if not pending:
-            require_idle(old)
             pending = {'operation': 'update', 'phase': 'preparing', 'previous': old,
                        'target': candidate, 'backup': None}
             # save() fsyncs the file and parent before any restart policy changes.
             save(pending_file, pending)
-        elif phase == 'migrating':
-            # Activation may have enabled both services immediately before a
-            # crash. Leave their active Runs alone rather than stopping processors.
-            require_idle(old)
         try:
             configure_app_restarts(old, False)
             compose(old, 'stop', 'app')
@@ -525,10 +549,7 @@ def apply_update(root: Path) -> None:
             if phase == 'preparing':
                 # This phase never attempts DDL. Preserve the intent if recovery
                 # also fails, and enable the Worker before app boot recovery.
-                try:
-                    compose(old, 'up', '-d', '--wait', '--wait-timeout', '120', 'app')
-                finally:
-                    run(['systemctl', '--user', 'enable', '--now', unit(old)])
+                resume_existing_services(old)
                 configure_app_restarts(old, True)
                 pending_file.unlink()
             raise

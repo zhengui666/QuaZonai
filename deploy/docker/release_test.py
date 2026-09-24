@@ -392,7 +392,7 @@ class UpdateTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, args)
         with patch.object(manage, 'run', side_effect=command), self.assertRaises(subprocess.CalledProcessError):
             manage.apply_update(self.root)
-        self.assertIn((self.old['version'], 'up', '-d', '--wait', '--wait-timeout', '120', 'app'), self.events)
+        self.assertIn((self.old['version'], 'up', '-d', '--no-recreate', '--wait', '--wait-timeout', '120', 'app'), self.events)
         self.assertIn(('systemctl', '--user', 'enable', '--now', manage.unit(self.old)), self.events)
         self.assertIn(('app-restarts', self.old['version'], True), self.events)
         self.backup_call.assert_not_called()
@@ -565,17 +565,58 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(json.loads((self.root / 'pending.json').read_text()), pending)
         self.backup_call.assert_not_called()
 
-    def test_preparing_retry_with_racing_run_restores_old_processors(self):
-        manage.save(self.root / 'pending.json', {'operation': 'update', 'phase': 'preparing',
-                                               'previous': self.old, 'target': self.new, 'backup': None})
+    def test_preparing_retry_with_racing_run_does_not_stop_processors(self):
+        pending = {'operation': 'update', 'phase': 'preparing',
+                   'previous': self.old, 'target': self.new, 'backup': None}
+        manage.save(self.root / 'pending.json', pending)
         self.idle.side_effect = ValueError('old run admitted before interrupted shutdown')
         with self.assertRaises(ValueError):
             manage.apply_update(self.root)
         self.assertIn(('systemctl', '--user', 'enable', '--now', manage.unit(self.old)), self.events)
+        self.assertIn((self.old['version'], 'up', '-d', '--no-recreate', '--wait', '--wait-timeout', '120', 'app'), self.events)
         self.assertIn(('app-restarts', self.old['version'], True), self.events)
-        self.assertFalse(any('migrate' in event for event in self.events))
-        self.assertFalse((self.root / 'pending.json').exists())
+        self.assertFalse(any('migrate' in event or 'stop' in event or 'disable' in event for event in self.events))
+        self.assertNotIn(('app-restarts', self.old['version'], False), self.events)
+        self.assertEqual(json.loads((self.root / 'pending.json').read_text()), pending)
         self.backup_call.assert_not_called()
+
+    def test_activated_install_marker_is_finalized_without_migration(self):
+        manage.save(self.root / 'pending.json', {'operation': 'install', 'version': self.old['version']})
+        (self.root / 'current').symlink_to(self.root / 'releases' / self.old['version'], target_is_directory=True)
+        with patch.object(manage, 'manifest', return_value=metadata(self.old['version'])), patch.object(
+            manage, 'verify_worker'
+        ), patch.object(manage, 'initialize_state') as initialize:
+            manage.deploy(self.root, argparse.Namespace())
+        initialize.assert_not_called()
+        manage.prepare.assert_not_called()
+        self.idle.assert_not_called()
+        self.assertNotIn('worker-start', self.events)
+        self.assertFalse(any('migrate' in event or 'stop' in event or 'disable' in event for event in self.events))
+        self.assertIn((self.old['version'], 'up', '-d', '--no-recreate', '--wait', '--wait-timeout', '120', 'app'), self.events)
+        self.assertEqual(manage.configuration(self.root), self.old)
+        self.assertFalse((self.root / 'pending.json').exists())
+
+    def test_activated_install_recovery_failure_keeps_marker_without_ddl(self):
+        pending = {'operation': 'install', 'version': self.old['version']}
+        manage.save(self.root / 'pending.json', pending)
+        (self.root / 'current').symlink_to(self.root / 'releases' / self.old['version'], target_is_directory=True)
+        with patch.object(manage, 'manifest', return_value=metadata(self.old['version'])), patch.object(
+            manage, 'verify_worker', side_effect=ValueError('original Worker not healthy')
+        ), self.assertRaises(ValueError):
+            manage.deploy(self.root, argparse.Namespace())
+        manage.prepare.assert_not_called()
+        self.assertFalse(any('migrate' in event or 'stop' in event or 'disable' in event for event in self.events))
+        self.assertNotIn(('app-restarts', self.old['version'], True), self.events)
+        self.assertEqual(json.loads((self.root / 'pending.json').read_text()), pending)
+        self.assertEqual(manage.configuration(self.root), self.old)
+
+    def test_every_container_build_base_has_an_exact_digest(self):
+        bases = [line.split()[1] for line in (manage.BUNDLE / 'Dockerfile').read_text().splitlines()
+                 if line.startswith('FROM ')]
+        self.assertEqual(len(bases), 5)
+        for image in bases:
+            self.assertRegex(image, r'^[^ ]+@sha256:[a-f0-9]{64}\Z')
+        self.assertEqual(bases[0], bases[1])
 
 
 if __name__ == "__main__":

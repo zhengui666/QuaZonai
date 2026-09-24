@@ -32,7 +32,30 @@
 
 `602426550c9b59381a4a091b32a06594d65a51df` 的七项 CI 已全部成功（Container run `36019202971`），17 条先前有效审查线程已处理。新的只读审查 `5307080794` 明确针对该提交，提出两个断电窗口：`4095827865` 要求先启用 Worker 再启用应用自动重启；`4095827874` 要求停止服务前先持久化恢复意图。该提交不能记作审查无问题或已合并。
 
-网页作者已按原生重启语义调整激活顺序，并在原 pending.json 增加 preparing/migrating 阶段，不增加服务或独立发布控制面。preparing 在停服务前原子持久化；备份后才持久化 migrating 并执行迁移；失败恢复旧服务成功后才删除 preparing 标记。旧的无 phase 恢复点按可能已迁移处理。新测试覆盖意图写失败、异常退出后重试、恢复失败保留标记、迁移阶段写失败不执行 DDL、激活顺序及正在处理 Run 的重试保护。Container 验收增加对真实 Docker 重启策略修改后的安装器进程强制退出与同目标恢复。本节描述修改和验证入口，不将尚未执行的新测试记为通过；新提交的实际验证和审查结果记录在 PR 中。
+网页作者已按原生重启语义调整激活顺序，并在原 pending.json 增加 preparing/migrating 阶段，不增加服务或独立发布控制面。preparing 在停服务前原子持久化；备份后才持久化 migrating 并执行迁移；失败恢复旧服务成功后才删除 preparing 标记。旧的无 phase 恢复点按可能已迁移处理。新测试覆盖意图写失败、异常退出后重试、恢复失败保留标记、迁移阶段写失败不执行 DDL、激活顺序及正在处理 Run 的重试保护。Container 验收增加对真实 Docker 重启策略修改后的安装器进程强制退出与同目标恢复。2026-09-24T16:30:45Z，提交 `1e9d8bd614f41f7deb80ca3cc27da0ff405b5dfa` 对应源码已实际通过 40/40 项单元测试、三个 Shell 语法检查及差异检查。该结果是本地逻辑验证，不等于其后的 Container CI 或独立 Review 已通过。
+
+后续 Review 的 `4096060881`、`4096060888`、`4096060898`、`4096060904` 已分别落实为：preparing 重试也在停机前检查活动 Run，并仅恢复而不替换原处理器；补录本任务的真实本地结果；current 已建立而 install 标记仍在时只补完激活，不重复 DDL 或重写 Worker；五个 FROM 全部固定已通过 Container run `36019202971` 的四个基础镜像摘要，不升级依赖。current 链接在启用开机恢复前同步落盘。真实 Container 检查增加遗留安装标记恢复后的 Worker PID 和应用容器 ID 保持不变。
+
+## 本次源码的实际验证
+
+2026-09-24T17:04:37Z，在基线 `1e9d8bd` 的隔离工作树加本次修改上实际执行：
+
+| 命令 | 结果 |
+| --- | --- |
+| `python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v` | exit 0，43/43 通过 |
+| `bash -n deploy/docker/entrypoint.sh` | exit 0 |
+| `bash -n deploy/docker/deploy.sh` | exit 0 |
+| `bash -n deploy/docker/update.sh` | exit 0 |
+| `git diff --check` | exit 0 |
+
+被测文件指纹（任务记录由网页作者在读取执行回执后补录，不改变以下被测源码）：
+
+- `manage.py`：`69c9e22ebc2e33e543f296a4b92bbd7dee1b04e768771dc3ee246e3835c02862`。
+- `release_test.py`：`82cf3019f112568f29be89588264b767c24cf6ce3728eb3833c48589e27abb06`。
+- `smoke.py`：`554cead606bb41d40f7f15ef17bc6463a7f96f29db2821ea8c2dab7014455f6c`。
+- `Dockerfile`：`6e78dc315e43fb74ca4c058af48937d72778c23ec894f96e065f67cb943c6793`。
+
+本次未在本机运行 Docker、数据库或真实容器验收；基础镜像摘要来自真实成功 CI 日志，本机缺少 buildx，未独立执行 registry inspection。新提交的真实镜像构建、安装/重试/恢复、全部适用 CI、独立审查和合并结果须在 PR #110 读取其实际结果，不能复用旧 Head 绿灯。
 
 ## 完成边界
 

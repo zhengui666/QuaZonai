@@ -155,6 +155,20 @@ def exercise(root: Path, image: str, revision: str) -> None:
         assert manage.configuration(installation)["password"] == original["password"]
         assert fingerprint(installation) == key
 
+        # A crash can leave the initial-install marker after current and both
+        # services are active. Retrying must finalize, not rerun migration or
+        # replace either live processor.
+        worker_pid = manage.run(['systemctl', '--user', 'show', manage.unit(original),
+                                 '--property=MainPID', '--value'], capture=True)
+        app_id = manage.compose(original, 'ps', '-q', 'app', capture=True)
+        manage.save(installation / 'pending.json', {'operation': 'install', 'version': original['version']})
+        invoke(one, 'deploy', installation)
+        assert not (installation / 'pending.json').exists()
+        assert manage.run(['systemctl', '--user', 'show', manage.unit(original),
+                           '--property=MainPID', '--value'], capture=True) == worker_pid
+        assert manage.compose(original, 'ps', '-q', 'app', capture=True) == app_id
+        assert fingerprint(installation) == key
+
         verify_interrupted_shutdown(two, installation)
         invoke(two, "apply-update", installation)
         updated = manage.configuration(installation)

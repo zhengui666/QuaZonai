@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:22-bookworm-slim AS web
+FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS web
 WORKDIR /build
 COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
 RUN npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
@@ -8,7 +8,7 @@ COPY contracts/generated ./contracts/generated
 COPY tests/contracts ./tests/contracts
 RUN npm --prefix apps/web run build
 
-FROM node:22-bookworm-slim AS codex
+FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS codex
 WORKDIR /build
 COPY runtimes/codex/package.json runtimes/codex/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund \
@@ -20,7 +20,7 @@ RUN npm ci --ignore-scripts --no-audit --no-fund \
  && /bin-release/codex-resources/bwrap --version \
  && /bin-release/codex --version
 
-FROM rust:1.98.1-bookworm AS server
+FROM rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS server
 ENV RUSTUP_TOOLCHAIN=1.98.1 CARGO_BUILD_JOBS=2
 WORKDIR /build
 COPY . .
@@ -31,8 +31,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  && install -Dm755 target/release/server /out/server \
  && strip /out/server
 
-FROM caddy:2.10.2 AS caddy
-FROM debian:bookworm-slim
+FROM caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb AS caddy
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git ripgrep tini libssl3 libstdc++6 \
  && rm -rf /var/lib/apt/lists/* \
