@@ -430,7 +430,8 @@ class UpdateTests(unittest.TestCase):
                 manage.sys.stdout.close()
         self.assertEqual(manage.configuration(self.root), self.new)
         self.assertFalse((self.root / 'pending.json').exists())
-        self.assertEqual(self.events[-1], ('systemctl', '--user', 'enable', manage.unit(self.new)))
+        self.assertEqual(self.events[-1], ('app-restarts', self.new['version'], True))
+        self.assertIn(('systemctl', '--user', 'enable', manage.unit(self.new)), self.events)
         manage.subprocess.run.assert_not_called()
 
     def test_downgrade_targets_leave_the_active_installation_untouched(self):
@@ -474,6 +475,107 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(self.backup_call.call_count, 1)
         self.assertIn("worker-start", self.events)
         self.assertGreater(self.events.index(('systemctl', '--user', 'enable', manage.unit(self.new))), self.events.index('worker-start'))
+
+    def test_activation_enables_worker_before_app_boot_recovery(self):
+        manage.apply_update(self.root)
+        worker = ('systemctl', '--user', 'enable', manage.unit(self.new))
+        app = ('app-restarts', self.new['version'], True)
+        self.assertLess(self.events.index(worker), self.events.index(app))
+        self.assertFalse((self.root / 'pending.json').exists())
+
+    def test_activation_enable_failure_keeps_app_non_restarting(self):
+        def command(args, **kwargs):
+            self.events.append(tuple(args))
+            if args[2] == 'enable' and '--now' not in args:
+                raise subprocess.CalledProcessError(1, args)
+        with patch.object(manage, 'run', side_effect=command), self.assertRaises(subprocess.CalledProcessError):
+            manage.apply_update(self.root)
+        self.assertNotIn(('app-restarts', self.new['version'], True), self.events)
+        self.assertIn(('app-restarts', self.new['version'], False), self.events)
+        pending = json.loads((self.root / 'pending.json').read_text())
+        self.assertEqual(pending['phase'], 'migrating')
+        self.assertEqual(pending['previous'], self.old)
+
+    def test_shutdown_intent_survives_abrupt_exit_and_retry(self):
+        def crash(config, enabled):
+            self.assertFalse(enabled)
+            intent = json.loads((self.root / 'pending.json').read_text())
+            self.assertEqual(intent['phase'], 'preparing')
+            self.assertIsNone(intent['backup'])
+            self.assertEqual(intent['previous'], self.old)
+            self.assertEqual(intent['target'], self.new)
+            raise KeyboardInterrupt('deployer stopped without exception cleanup')
+        with patch.object(manage, 'configure_app_restarts', side_effect=crash), self.assertRaises(KeyboardInterrupt):
+            manage.apply_update(self.root)
+        self.assertEqual(self.events, [])
+        self.assertEqual(manage.configuration(self.root), self.old)
+        self.backup_call.assert_not_called()
+        manage.apply_update(self.root)
+        self.assertEqual(manage.configuration(self.root), self.new)
+        self.assertEqual(self.backup_call.call_count, 1)
+        self.assertFalse((self.root / 'pending.json').exists())
+
+    def test_shutdown_intent_write_failure_does_not_change_services(self):
+        with patch.object(manage, 'save', side_effect=OSError('intent write failed')), self.assertRaises(OSError):
+            manage.apply_update(self.root)
+        self.assertEqual(self.events, [])
+        self.backup_call.assert_not_called()
+        self.assertEqual(manage.configuration(self.root), self.old)
+        self.assertFalse((self.root / 'pending.json').exists())
+
+    def test_failed_preparing_restore_retains_recovery_marker(self):
+        self.backup_call.side_effect = OSError('backup failed')
+        def command(args, **kwargs):
+            self.events.append(tuple(args))
+            if args[2:4] == ['enable', '--now']:
+                raise subprocess.CalledProcessError(1, args)
+        with patch.object(manage, 'run', side_effect=command), self.assertRaises(subprocess.CalledProcessError):
+            manage.apply_update(self.root)
+        self.assertEqual(json.loads((self.root / 'pending.json').read_text())['phase'], 'preparing')
+        self.assertNotIn(('app-restarts', self.old['version'], True), self.events)
+        self.assertFalse(any('migrate' in event for event in self.events))
+        self.backup_call.side_effect = None
+        manage.apply_update(self.root)
+        self.assertEqual(manage.configuration(self.root), self.new)
+        self.assertFalse((self.root / 'pending.json').exists())
+
+    def test_migration_intent_write_failure_stays_stopped_without_ddl(self):
+        save = manage.save
+        def fail_transition(path, value):
+            if path.name == 'pending.json' and value.get('phase') == 'migrating':
+                raise OSError('migration intent not durable')
+            save(path, value)
+        with patch.object(manage, 'save', side_effect=fail_transition), self.assertRaises(OSError):
+            manage.apply_update(self.root)
+        self.assertEqual(json.loads((self.root / 'pending.json').read_text())['phase'], 'preparing')
+        self.assertFalse(any('migrate' in event or 'up' in event for event in self.events))
+        self.assertFalse(any('enable' in event for event in self.events))
+        self.assertEqual(manage.configuration(self.root), self.old)
+        manage.apply_update(self.root)
+        self.assertEqual(manage.configuration(self.root), self.new)
+
+    def test_pending_active_runs_leave_working_services_untouched(self):
+        pending = {'operation': 'update', 'phase': 'migrating', 'previous': self.old,
+                   'target': self.new, 'backup': str(self.backup)}
+        manage.save(self.root / 'pending.json', pending)
+        self.idle.side_effect = ValueError('candidate is processing a run')
+        with self.assertRaises(ValueError):
+            manage.apply_update(self.root)
+        self.assertEqual(self.events, [])
+        self.assertEqual(json.loads((self.root / 'pending.json').read_text()), pending)
+        self.backup_call.assert_not_called()
+
+    def test_preparing_retry_with_racing_run_restores_old_processors(self):
+        manage.save(self.root / 'pending.json', {'operation': 'update', 'phase': 'preparing',
+                                               'previous': self.old, 'target': self.new, 'backup': None})
+        self.idle.side_effect = ValueError('old run admitted before interrupted shutdown')
+        with self.assertRaises(ValueError):
+            manage.apply_update(self.root)
+        self.assertIn(('systemctl', '--user', 'enable', '--now', manage.unit(self.old)), self.events)
+        self.assertIn(('app-restarts', self.old['version'], True), self.events)
+        self.assertFalse(any('migrate' in event for event in self.events))
+        self.assertFalse((self.root / 'pending.json').exists())
+        self.backup_call.assert_not_called()
 
 
 if __name__ == "__main__":

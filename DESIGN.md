@@ -9,7 +9,7 @@
 
 公开 `release.json` 的字段：`schema_version` 固定整数 1；`version` 为完整 tag；`revision` 为 40 位源 SHA；`image` 为 `ghcr.io/zhengui666/quazonai@sha256:<64hex>`；`database_image` 为本版支持的 PostgreSQL18/PGMQ 镜像 digest。测试可在临时部署包使用实际本地镜像的 content-addressed ID，公开 Release 不使用该形式。包内固定包含 manifest、manage.py、deploy.sh、update.sh、compose.yaml、README.md；不同版本的管理器和 Compose 随版本一起切换。
 
-主机私有 `installation.json` 保存 manifest 字段以及原始 `root/uid/gid/home/codex_home/path/unit_directory`、`port/database_port`、随机数据库 `password`、稳定 Compose `project`、当前 `bundle` 和可选 `runtime_targets/downstream_targets` 数组；不上传到 Release/CI artifact。密码和安装身份在创建数据库前持久化，重复安装不重新生成。`pending.json` 表示安装或升级的中断，升级同时绑定 `previous/target/backup`；同目标重试保留最初备份，不用失败后的部分迁移库覆盖恢复点。`current` 仅在 HTTP 与 Worker 进程启动检查成功后切换。原 CODEX_HOME 只挂载、不读取或复制原生认证；原生账号可用性独立于 liveness。
+主机私有 `installation.json` 保存 manifest 字段以及原始 `root/uid/gid/home/codex_home/path/unit_directory`、`port/database_port`、随机数据库 `password`、稳定 Compose `project`、当前 `bundle` 和可选 `runtime_targets/downstream_targets` 数组；不上传到 Release/CI artifact。密码和安装身份在创建数据库前持久化，重复安装不重新生成。`pending.json` 表示安装或升级的中断，升级同时绑定 `previous/target/backup/phase`：先持久化 `phase=preparing` 和 `backup=null`，再关闭自动重启或停止服务；静止点备份成功后，持久化 `phase=migrating` 与备份路径，才允许显式迁移。旧的缺省 phase 记录按可能已迁移处理。preparing 阶段可恢复旧服务，只有恢复成功才清除标记；migrating 阶段不启动旧程序，同目标重试保留最初备份，不用失败后的部分迁移库覆盖恢复点。`current` 仅在 HTTP 与 Worker 进程启动检查成功后切换；随后先启用 Worker 开机恢复，再开启应用容器自动重启，最后清除 pending。激活中断后若两服务正在处理 Run，重试在停服务前拒绝，保留处理器完成原任务。原 CODEX_HOME 只挂载、不读取或复制原生认证；原生账号可用性独立于 liveness。
 
 Compose 建立 bridge application 网络，app 通过服务名 database 连接 PostgreSQL，数据库卷挂载 `/var/lib/postgresql`，应用状态绑定安装目录下 `data`。API 仍监听容器 loopback，Caddy 接收只映射到宿主 loopback 的网页端口。数据库额外绑定宿主 loopback，供原生 Worker 使用。同一状态路径、UID、PUBLIC_URL 和原生版本由脚本统一设置，不靠容器 loopback 访问宿主科学 Runtime；需要时显式挂载原 Runtime socket/目录。
 

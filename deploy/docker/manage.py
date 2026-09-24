@@ -396,8 +396,9 @@ def activate(root: Path, config: dict) -> None:
     link.unlink(missing_ok=True)
     link.symlink_to(root / "releases" / config["version"], target_is_directory=True)
     os.replace(link, root / "current")
-    configure_app_restarts(config, True)
+    # Worker boot recovery must exist before the app can resume admissions on reboot.
     run(["systemctl", "--user", "enable", unit(config)])
+    configure_app_restarts(config, True)
     (root / "pending.json").unlink(missing_ok=True)
     announce(f'Active release {config["version"]}: http://localhost:{config["port"]}')
 
@@ -498,28 +499,43 @@ def apply_update(root: Path) -> None:
             return
         if pending and candidate != pending['target']:
             raise ValueError('Pending target changed; preserve its original deployment bundle and configuration.')
+        # Missing phase denotes an older recovery point which may already have
+        # been migrated. Only an explicit preparing phase permits old-code recovery.
+        phase = pending.get('phase', 'migrating') if pending else 'preparing'
+        if phase not in ('preparing', 'migrating'):
+            raise ValueError('Unknown pending update phase; preserve its recovery record.')
         if not pending:
             require_idle(old)
+            pending = {'operation': 'update', 'phase': 'preparing', 'previous': old,
+                       'target': candidate, 'backup': None}
+            # save() fsyncs the file and parent before any restart policy changes.
+            save(pending_file, pending)
+        elif phase == 'migrating':
+            # Activation may have enabled both services immediately before a
+            # crash. Leave their active Runs alone rather than stopping processors.
+            require_idle(old)
         try:
-            # Disable native automatic restarts before stopping admissions and
-            # the Worker. A failed shutdown belongs to pre-migration recovery.
             configure_app_restarts(old, False)
             compose(old, 'stop', 'app')
             run(['systemctl', '--user', 'disable', '--now', unit(old)])
             require_idle(old)
-            if not pending:
+            if phase == 'preparing':
                 recovery = backup(old)
-                save(pending_file, {'operation': 'update', 'previous': old, 'target': candidate, 'backup': str(recovery)})
         except Exception:
-            if not pending:
-                # No migration was attempted by this operation. Try to restore
-                # both old processes even if one restoration step also fails.
+            if phase == 'preparing':
+                # This phase never attempts DDL. Preserve the intent if recovery
+                # also fails, and enable the Worker before app boot recovery.
                 try:
                     compose(old, 'up', '-d', '--wait', '--wait-timeout', '120', 'app')
-                    configure_app_restarts(old, True)
                 finally:
                     run(['systemctl', '--user', 'enable', '--now', unit(old)])
+                configure_app_restarts(old, True)
+                pending_file.unlink()
             raise
+        if phase == 'preparing':
+            # A failure to persist the transition leaves services stopped with
+            # their prior durable intent; do not attempt a migration without it.
+            save(pending_file, {**pending, 'phase': 'migrating', 'backup': str(recovery)})
         try:
             compose(candidate, "run", "--rm", "--no-deps", "app", "migrate")
             compose(candidate, "up", "-d", "--wait", "--wait-timeout", "120", "app")

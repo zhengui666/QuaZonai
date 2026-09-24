@@ -92,6 +92,36 @@ def verify_app_restart(config: dict, expected: str) -> None:
     assert policy == expected, (policy, expected)
 
 
+def verify_interrupted_shutdown(bundle: Path, installation: Path) -> None:
+    # Terminate a separate installer process after the real Docker policy change,
+    # without exception cleanup. Its durable pre-migration intent must survive.
+    program = '''
+import os
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import manage
+change_policy = manage.configure_app_restarts
+def interrupt(config, enabled):
+    change_policy(config, enabled)
+    if not enabled:
+        os._exit(99)
+manage.configure_app_restarts = interrupt
+manage.apply_update(Path(sys.argv[2]))
+'''
+    before = fingerprint(installation)
+    result = subprocess.run([sys.executable, '-B', '-c', program, str(bundle), str(installation)],
+                            check=False, timeout=120)
+    assert result.returncode == 99, result.returncode
+    pending = json.loads((installation / 'pending.json').read_text())
+    assert pending['phase'] == 'preparing' and pending['backup'] is None
+    assert pending['previous']['version'] == 'v0.0.0-ci.1'
+    assert pending['target']['version'] == 'v0.0.0-ci.2'
+    assert manage.configuration(installation)['version'] == 'v0.0.0-ci.1'
+    verify_app_restart(pending['previous'], 'no')
+    assert fingerprint(installation) == before
+
+
 def exercise(root: Path, image: str, revision: str) -> None:
     installation = root / "installation with spaces [native] %n $HOME"
     web_port, database_port = ports()
@@ -125,6 +155,7 @@ def exercise(root: Path, image: str, revision: str) -> None:
         assert manage.configuration(installation)["password"] == original["password"]
         assert fingerprint(installation) == key
 
+        verify_interrupted_shutdown(two, installation)
         invoke(two, "apply-update", installation)
         updated = manage.configuration(installation)
         assert updated["version"] == "v0.0.0-ci.2"
@@ -152,6 +183,7 @@ def exercise(root: Path, image: str, revision: str) -> None:
         override.write_text("services:\n  app:\n    environment:\n      DATABASE_URL: postgresql://quazonai:unusable@database:5432/missing\n")
         invoke(three, "apply-update", installation, succeeds=False)
         pending = json.loads((installation / "pending.json").read_text())
+        assert pending['phase'] == 'migrating'
         recovery = pending["backup"]
         assert manage.configuration(installation)["version"] == "v0.0.0-ci.2"
         assert fingerprint(installation) == key
