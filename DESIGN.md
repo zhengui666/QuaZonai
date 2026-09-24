@@ -23,6 +23,8 @@ Compose 建立 bridge application 网络，app 通过服务名 database 连接 P
 
 首次保存安装身份前拒绝 systemd 无法执行或 PATH 无法表达的目录（控制字符、冒号、双引号、反斜杠）。允许空格、Unicode、百分号和方括号：WorkingDirectory 使用原生路径，EnvironmentFile 另做 glob 字符转义，ExecStart 沿用原生参数引用。对提取后的候选版本先执行 `systemd-analyze --user verify`，不在停止旧版本后才发现无效单元。升级前停止并禁用旧 Worker，迁移后失败保持禁用，避免主机重启自动拉起旧代码访问新 schema；迁移前备份失败恢复原服务及启用状态，候选只在启动检查通过的激活阶段重新启用。
 
+分发脚本只支持不做 userns-remap 的本机 rootful Docker daemon；容器进程仍使用原非 root UID/GID。首次保存安装身份前读取该 Compose project 标签的容器、卷及网络，存在遗留资源而缺主机 manifest 时要求恢复原身份，不重建密码或 master key。更新入口和目标管理器均按 SemVer 2.0 比较已验证 tag，旧目标在下载/停机前拒绝，同版本仅验证现有安装；不把降级当成应用更新。成功通知属于非关键输出，stdout 断管或关闭不得导致已激活服务被停掉，也不得丢失其恢复路径。
+
 ## Polymarket 原生研究与组合
 
 原生 BinaryOption 研究使用 POLYMARKET、原 condition/token 身份、原抵押币和

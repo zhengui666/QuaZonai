@@ -1,46 +1,33 @@
 # 版本化容器发布
 
-## 目标与合同
+## 目标与范围
 
-PR #110：版本 tag 指向已合并 main 的提交时，自动构建、验证并发布前后端生产镜像到 GHCR，附 GitHub Release 部署包。部署应用、PostgreSQL/PGMQ、持久存储和网络；更新保留数据、密码、master key、原生会话和任务身份。字段及运行边界见 [DESIGN](../../../DESIGN.md#container-release)，命令见 [OPERATIONS](../../../OPERATIONS.md#container-install)。
+[PR #110](https://github.com/zhengui666/QuaZonai/pull/110) / [Issue #111](https://github.com/zhengui666/QuaZonai/issues/111)：版本 tag 的精确提交进入 main 后，自动构建并验证前后端生产镜像，发布到 GHCR 与 GitHub Release；部署包同时配置 PostgreSQL/PGMQ、网络、持久状态和同版本 Worker，并支持保留数据的更新。
 
-继续基线为 `5e63c5721b6e7ee8fa96b0a200c5b294c80676d9`；只修改独立 worktree，不混入原根目录未提交变更。不擅自创建正式版本 tag，不操作现有数据库/产品服务。
+字段与模块合同见 [DESIGN](../../../DESIGN.md#container-release)，实际命令见 [OPERATIONS](../../../OPERATIONS.md#container-install)。只修改独立工作树中的本任务文件，不混入根工作树的既有改动，不操作用户现有服务、数据库或认证。不自行选择正式版本 tag。
 
-## 实现
+## 实现与审查修复
 
-- 修复官方 Codex 锁定包不存在 `path/*` 的打包错误，复用 bin 与发行版 ripgrep。前端产物、Rust release API、Caddy、Codex 同镜像交付。
-- Compose 为应用/数据库建立独立 bridge 网络与持久状态，宿主端口仅 loopback。Worker 从同镜像提取并运行于原用户 systemd manager，保留 Mission cgroup 合同。
-- release.py / release.yml 处理严格版本、轻量/附注 tag、main 祖先、exact SHA 最新 CI、两种合并顺序、重复发布和 prerelease。直接发布实际被测镜像，拉回 digest 比较；附件先进入 draft 后发布。
-- manage.py / deploy.sh / update.sh 包含首次安装、同身份重试、指定版本下载、原生迁移、静止点、备份、失败停机/恢复、同目标继续、真实 HTTP/Worker 启动检查。密码不输出，安装/升级不自动删卷或重建 key；数据库升级保持独立。
-- PR / Release 复用一个 Container composite，定向测试与真实安装→升级→故障→重试→重启→pg_restore 验证分开记录。生产代码没有 Demo/Mock 入口。
-- README、OPERATIONS、DESIGN 与独立部署包 README 对齐。
+- 多阶段镜像包含前端静态产物、Rust release API、Caddy、锁定官方 Codex 及完整 codex-resources。Caddy 去除不需要的 file capability；容器验证使用与部署相同的权限条件，官方沙箱验证不调用模型或真实账户。
+- Compose 管理应用、PGMQ 数据库、独立 bridge 网络和持久卷；Worker 从同镜像提取，在原用户 systemd manager 中运行。原生科学 Runtime 的数据目录和 journal 保持独立。
+- 发布复用一个 Container composite，按 tag 精确 SHA 检查 main 祖先、最新适用 CI、同源镜像身份；覆盖合并前后两种打 tag 顺序，先上传 draft 附件再发布，不维护浮动 latest。
+- 首次安装在持久化身份前检查端口、可表达的原生路径、Docker UID/GID 映射和该 Compose project 的遗留资源；缺原 manifest 的旧卷不能与新密码或密钥混用。
+- 候选 unit 在停旧服务前经过 systemd 原生校验。更新检查静止点、备份并显式迁移，期间禁用 Worker 开机启动；迁移后失败保持停止/禁用，成功激活才启用。重试保留原恢复点。
+- 更新拒绝 SemVer 降级，同版本保持幂等；成功输出发生断管不再停止已激活服务。真实回归包含遗留卷拒绝、降级不改变 Worker PID、沙箱、升级失败重试、数据库恢复及密钥保持。
 
-## 已观察的执行
+## 已观察的验证事实
 
-2026-09-24：CodexPro 读取工作区正常；嵌套 workspace selection 没有跨请求保留，改为默认根目录下的完整相对路径读写。新的完整部署管理器已实际写入，不再是缺失文件。
+| 来源 | 实际结果 |
+| --- | --- |
+| `c0f2986c2ea2600629abec14cba4a846cc93778d` | 七项 GitHub CI 成功；Codex 评论 `5814340841` 对该提交给出无新增问题反馈。此结果不替代后续提交的审查。 |
+| `348bae80a2f417e11c93034b14620f149e7ca72f` | 提交前 21 项 Python 测试、三个脚本的独立语法检查及差异检查通过，已实际提交并非强制推送。Container run `36008645043` 已成功执行安装、沙箱、更新、失败重试和恢复。 |
+| 2026-09-24 14:14:04Z 的远端快照 | `348bae80` 六项 CI 成功，store-postgres 当时仍运行；当前提交审查 `5305487729` 提出新的输出、遗留卷、UID/GID 映射、任务记录及降级问题，不能记作 clean review。 |
+| 2026-09-24 22:29:17 +08:00，本次提交前的源码 | `python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v`：26/26 通过；分别 `bash -n` 检查 entrypoint.sh、deploy.sh、update.sh：全部 exit 0；`git diff --check`：exit 0。 |
 
-取证 handoff 请求 `gpt-5.6-luna`，执行从 06:04:56Z 到 06:08:43Z，exit 0；仅 Git/GitHub 读取和准备隔离工作树。读取到 main `0add52dc4cc92e70f971e4f4b6536032ec063c9b`，PR110 open/draft。旧 Head 六项 CI 成功，Container run `35943721872` 因 Dockerfile cp 不存在的 Codex path 目录失败；后续容器测试当时未运行。
-
-源码、脚本、测试和文档由网页端作者完成。后续交接记录确认提交 `6eabed5de88f5611a6d6624c28668bce9a309f0a` 已推送 PR110 并关联 Issue111，13 项定向测试与三个 Shell 语法检查通过。
-
-2026-09-24 07:24:50Z 的本轮取证执行器请求 `gpt-5.6-luna`，实际 adapter exit 0；PR Head 仍为 `6eabed5`，六项 CI 成功，Container run `35965508432` / job `107523083725` 在前端编译时因缺少 `tests/contracts/data-registry-keys.json` 失败。原生数据库部署验收在该运行中尚未执行。当前审查另指出 systemd 路径错误引用、首次安装端口检查和发布登录 action 的版本固定问题。
-
-网页端已补全容器构建所需测试合同（不进入最终镜像）、按 systemd 原生单路径语义修复 WorkingDirectory/EnvironmentFile、在首次保存配置前检查端口范围/占用、固定 login-action v3.7.0 的确切提交。新增真实 socket 占用与路径回归测试，真实部署验收改用含空格、百分号和美元符号的路径；逐个检查 Shell 脚本而不是把后续文件误作第一个脚本的参数。上述新修改仍需以下当前源码验证：
-
-2026-09-24 13:42:01Z 的实际 GitHub 回执确认 `c0f2986c2ea2600629abec14cba4a846cc93778d` 全部七项 CI 成功，包括 Container run `36000319770` 的安装/更新/恢复；Codex 评论 `5814340841` 对该 SHA 给出无新增问题结果。但四个旧审查线程尚未解决，原审查 SHA 是 `285f8f3`，不能把重新定位后的评论 SHA 误记为新的审查。
-
-本轮补齐四项原缺陷：固定 composite 中两个 Docker action 的上游提交；保存安装身份前拒绝 systemd 不可执行的目录并在停旧服务前原生校验候选 unit；更新期间禁用 Worker，避免迁移失败后重启拉起旧版本；保留完整 codex-resources 并对提取出的官方 Codex 执行实际沙箱命令。回归覆盖路径/缺资源/原生校验失败、升级前置失败不触碰服务、升级失败 unit 已禁用。真实 smoke 同时覆盖带方括号的目录和无账号沙箱执行。仅修改本任务文件，主机原服务、数据库和根工作树未改。
-
-以下清单针对上述新源码；`c0f2986` 的成功不替代新 Head 验证。本轮写入后尚未运行测试、提交或推送：
-
-- [ ] Python 定向测试、Shell 语法、差异检查。
-- [ ] 当前 Head 的 Container 构建、真实安装/升级/故障恢复/数据库恢复。
-- [ ] 其他适用 GitHub CI。
-- [ ] 当前 Head 独立 Codex Review 明确无问题，处理全部有效反馈。
-- [ ] 条件满足后 merge main，并记录 exact merge commit。
+本次 26 项单元测试覆盖 manage.py / release.py 的逻辑，新增覆盖 SemVer 顺序/降级拒绝、遗留 Docker 资源、重映射 daemon 及输出断管；smoke.py 在本次本地检查中只解析语法，不记作真实容器执行；任务记录在读取该执行回执后更新，未由执行器代写产品文件。主机 Docker 构建不作为本地证据，实际容器验收在 GitHub Actions 执行。新 Head 的 CI、Review、线程处理和合并结果以 PR #110 的实际记录为准；旧 Head 的成功不跨版本复用。
 
 ## 完成边界
 
-1. 完整实现提出 PR 并关联需求 Issue。
-2. 相关 PR 当前 Head 全部适用 CI 通过，Review 问题解决且 `@codex review` 明确无问题。
-3. 满足第2项后 PR merged 到 main 才完成代码交付。首个镜像实际发布另以版本 tag 的 Release workflow、GHCR digest 和 Release 附件为准，不虚报已发布。
+1. 完整实现提出 PR，并关联需求 Issue。
+2. 相关 PR 当前 Head 全部适用 CI 成功，所有有效审查问题已处理，且 `@codex review` 对当前 Head 明确无问题。
+3. 满足第 2 项后 PR merged 到 main，才完成代码交付。首个镜像实际发布以版本 tag 的 Release workflow、GHCR digest 和 Release 附件为独立证据，不将工作流已写入或 PR 已合并等同于镜像已发布。

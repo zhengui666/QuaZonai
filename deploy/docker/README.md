@@ -8,7 +8,7 @@ Native Missions use Linux systemd user scopes and cgroup v2. The installer extra
 
 Use the existing Linux x86_64 user who owns Codex. Install local Docker Engine, Docker Compose 2.20+, Python 3.10+, systemd (including `systemd-analyze`), Git, ripgrep and util-linux (`prlimit`). Host executables must support the image's Debian 12 ABI, including glibc 2.36+ and OpenSSL 3. The installer checks extracted executables, the bundled `codex-resources/bwrap` helper and the generated user unit before stopping an installed release. Native Codex sandbox execution also requires Linux user namespace support; installing successfully is not an account or scientific Runtime readiness result. Rust and Node.js are not required on the deployment host.
 
-Docker must be available to that user through a local Unix socket. A remote Docker context or Docker Desktop VM cannot share the native user manager/cgroup paths. Enable the persistent user manager once:
+Docker must be available to that user through a local Unix socket. This release requires a rootful daemon without `userns-remap`; the application still runs as the existing non-root user. Rootless/remapped daemons are rejected before creating installation state because their container UID/GID mapping cannot access these owner-only host bind mounts. A remote Docker context or Docker Desktop VM cannot share the native user manager/cgroup paths. Enable the persistent user manager once:
 
 ```sh
 loginctl enable-linger "$USER"
@@ -35,6 +35,8 @@ bash deploy.sh --directory "$HOME/.local/share/quazonai" \
 
 The script pulls the manifest's digest, starts the database, initializes new private state, explicitly runs native migrations, starts the web/API container, installs the Worker, and checks the actual HTTP and Worker processes. Repeating the same installation checks the existing services without generating another password or state key. An interrupted installation reuses the saved installation identity and credentials. An existing incomplete state directory is preserved, never silently reinitialized.
 
+If Docker resources still carry this installation's Compose project label but its host directory/manifest was lost, deployment stops before saving a new password or key. Restore the original manifest and state from backup; an orphaned database volume is not a new installation.
+
 The native Codex directory is mounted at its original absolute path. Authenticate with the bundled version when needed:
 
 ```sh
@@ -52,7 +54,7 @@ Finish all Runs first, or request cancellation in the application and wait for t
 bash "$HOME/.local/share/quazonai/current/deployment/update.sh" v2.0.1
 ```
 
-For a non-default directory, append `--directory /absolute/installation/path`. The updater downloads the target release's manager and Compose file, pulls its pinned image, checks for unfinished Runs before and after stopping admissions/Worker, creates a recovery point, explicitly migrates, and activates the new version only after HTTP and Worker checks succeed. PostgreSQL is not upgraded or recreated as part of an application update. There is no floating `latest` image or automatic schema downgrade.
+For a non-default directory, append `--directory /absolute/installation/path`. The updater downloads the target release's manager and Compose file, pulls its pinned image, checks for unfinished Runs before and after stopping admissions/Worker, creates a recovery point, explicitly migrates, and activates the new version only after HTTP and Worker checks succeed. PostgreSQL is not upgraded or recreated as part of an application update. Targets older than the installed release are rejected using SemVer precedence before download or stopping services; repeating the same version remains an idempotent check. Downgrades require an explicit cold restore of a matching recovery point. There is no floating `latest` image or automatic schema downgrade.
 
 `installation.json` contains local private configuration, including the generated database password. Keep its original root path, UID, project name, ports, credentials and native home. `current` selects the active release; older release executables remain available. Do not move the installation directory, remove its manifest, run `down --volumes`, or regenerate its master key to fix an update.
 

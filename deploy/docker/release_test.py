@@ -2,6 +2,7 @@
 import argparse
 import ast
 import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -71,7 +72,7 @@ class ManifestTests(unittest.TestCase):
             source.mkdir()
             (source / "release.json").write_text(json.dumps(metadata()))
             args = argparse.Namespace(port=18081, database_port=55432, codex_home=str(root / "native"))
-            with patch.object(manage, "BUNDLE", source), patch.object(manage, "preflight"), patch.object(manage, "validate_ports"), patch.object(
+            with patch.object(manage, "BUNDLE", source), patch.object(manage, "preflight"), patch.object(manage, "validate_ports"), patch.object(manage, 'require_new_docker_project'), patch.object(
                 manage, "prepare", side_effect=ValueError("test download failure")
             ):
                 with self.assertRaises(ValueError):
@@ -125,6 +126,43 @@ class InstallationInputTests(unittest.TestCase):
             for path in (Path("relative"), Path("/bad\npath")):
                 with self.assertRaises(ValueError):
                     manage.unit_path(path)
+
+
+class DeploymentBoundaryTests(unittest.TestCase):
+    def test_semver_precedence_handles_numeric_and_prerelease_components(self):
+        ordered = ['v1.0.0-alpha', 'v1.0.0-alpha.1', 'v1.0.0-alpha.beta', 'v1.0.0-beta',
+                   'v1.0.0-beta.2', 'v1.0.0-beta.11', 'v1.0.0-rc.1', 'v1.0.0',
+                   'v1.9.0', 'v1.10.0', 'v2.0.0-rc.1', 'v2.0.0']
+        self.assertEqual(sorted(reversed(ordered), key=manage.version_precedence), ordered)
+
+    def test_remapped_daemons_are_rejected(self):
+        manage.validate_docker_mapping(['name=seccomp,profile=builtin', 'name=apparmor', 'name=cgroupns'])
+        manage.validate_docker_mapping([])
+        for options in (['name=rootless'], ['name=userns'], ['rootless'], None, [1]):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                manage.validate_docker_mapping(options)
+
+    def test_orphaned_project_resources_preserve_the_missing_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for resource in ('container', 'volume', 'network'):
+                installation = root / resource
+                args = argparse.Namespace(port=18081, database_port=55432, codex_home=str(root / 'native'))
+                def listing(command, **kwargs):
+                    self.assertEqual(command[0], 'docker')
+                    self.assertEqual(command[2], 'ls')
+                    self.assertIn('--filter', command)
+                    self.assertTrue(command[command.index('--filter') + 1].startswith('label=com.docker.compose.project=quazonai-'))
+                    return 'preserved-resource' if command[1] == resource else ''
+                with self.subTest(resource=resource), patch.object(manage, 'manifest', return_value=metadata()), patch.object(
+                    manage, 'preflight'
+                ), patch.object(manage, 'validate_ports'), patch.object(manage, 'run', side_effect=listing), patch.object(manage, 'prepare') as prepare:
+                    with self.assertRaisesRegex(ValueError, 'Existing Docker resources'):
+                        manage.deploy(installation, args)
+                    prepare.assert_not_called()
+                self.assertFalse((installation / 'installation.json').exists())
+                self.assertFalse((installation / 'pending.json').exists())
+                self.assertFalse((root / 'native').exists())
 
 
 class NativeDeploymentTests(unittest.TestCase):
@@ -298,6 +336,32 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse((self.root / "pending.json").exists())
         self.assertIn(('systemctl', '--user', 'disable', '--now', manage.unit(self.old)), self.events)
         self.assertIn(('systemctl', '--user', 'enable', '--now', manage.unit(self.old)), self.events)
+
+    def test_broken_success_output_does_not_stop_an_activated_release(self):
+        with patch.object(manage, 'print', side_effect=BrokenPipeError(), create=True), patch.object(manage.sys, 'stdout', io.StringIO()):
+            try:
+                manage.apply_update(self.root)
+            finally:
+                manage.sys.stdout.close()
+        self.assertEqual(manage.configuration(self.root), self.new)
+        self.assertFalse((self.root / 'pending.json').exists())
+        self.assertEqual(self.events[-1], ('systemctl', '--user', 'enable', manage.unit(self.new)))
+        manage.subprocess.run.assert_not_called()
+
+    def test_downgrade_targets_leave_the_active_installation_untouched(self):
+        for target in ('v0.9.9', 'v1.0.0-rc.9', 'v1.0.0-alpha'):
+            with self.subTest(target=target), patch.object(manage, 'manifest', return_value=metadata(target)), patch.object(manage, 'prepare') as prepare:
+                with self.assertRaisesRegex(ValueError, 'cannot downgrade'):
+                    manage.apply_update(self.root)
+                prepare.assert_not_called()
+            with patch.object(manage.urllib.request, 'urlopen') as download:
+                with self.assertRaisesRegex(ValueError, 'cannot downgrade'):
+                    manage.download_update(self.root, target)
+                download.assert_not_called()
+            self.assertEqual(self.events, [])
+            self.assertEqual(manage.configuration(self.root), self.old)
+            self.assertFalse((self.root / 'pending.json').exists())
+        self.backup_call.assert_not_called()
 
     def test_prepare_failure_keeps_existing_services_and_backup_untouched(self):
         with patch.object(manage, 'prepare', side_effect=ValueError('invalid future user unit')):

@@ -37,6 +37,18 @@ def version(value: str) -> str:
     return value
 
 
+def version_precedence(value: str) -> tuple:
+    match = SEMVER.fullmatch(version(value))
+    assert match is not None
+    core = tuple(int(match[index]) for index in (1, 2, 3))
+    prerelease = match[4]
+    # SemVer 2.0: numeric identifiers sort below text; a release sorts above
+    # its prereleases. The existing parser already rejects build metadata.
+    identifiers = tuple((0, int(part)) if part.isdigit() else (1, part)
+                        for part in prerelease.split('.')) if prerelease else ()
+    return (*core, 1 if prerelease is None else 0, identifiers)
+
+
 def validate_manifest(value: dict) -> dict:
     if value.get("schema_version") != 1:
         raise ValueError("Unsupported deployment manifest schema.")
@@ -93,6 +105,36 @@ def configuration(root: Path) -> dict:
     return value
 
 
+def validate_docker_mapping(options: object) -> None:
+    if not isinstance(options, list) or any(not isinstance(item, str) for item in options):
+        raise ValueError('Docker did not report its user namespace configuration.')
+    names = {part.removeprefix('name=') for item in options for part in item.split(',')}
+    if names & {'rootless', 'userns'}:
+        raise ValueError('This deployment needs a rootful Docker daemon without userns-remap so bind mounts retain the host UID/GID.')
+
+
+def require_new_docker_project(project: str) -> None:
+    # Compose labels identify only this installation. Never attach an old volume
+    # to a new password/master key after its host-side manifest was removed.
+    label = 'label=com.docker.compose.project=' + project
+    for resource in ('container', 'volume', 'network'):
+        args = ['docker', resource, 'ls', '--quiet', '--filter', label]
+        if resource == 'container':
+            args.append('--all')
+        if run(args, capture=True):
+            raise ValueError('Existing Docker resources belong to this installation path. Restore its original manifest and keys; no new identity was created.')
+
+
+def announce(message: str) -> None:
+    try:
+        print(message, flush=True)
+    except (OSError, ValueError):
+        # A closed output consumer cannot roll back an already activated release.
+        # Replace the broken stream so interpreter shutdown does not flush it again.
+        with contextlib.suppress(OSError):
+            sys.stdout = open(os.devnull, 'w')
+
+
 def preflight() -> None:
     if sys.platform != "linux" or os.getuid() == 0:
         raise ValueError("Run as the Linux user who owns Codex, not with sudo.")
@@ -108,6 +150,7 @@ def preflight() -> None:
     architecture = run(["docker", "info", "--format", "{{.OSType}}/{{.Architecture}}"], capture=True)
     if architecture not in {"linux/x86_64", "linux/amd64"}:
         raise ValueError("This native release supports Linux x86_64.")
+    validate_docker_mapping(json.loads(run(['docker', 'info', '--format', '{{json .SecurityOptions}}'], capture=True)))
     compose_version = run(["docker", "compose", "version", "--short"], capture=True)
     match = re.match(r"v?(\d+)\.(\d+)", compose_version)
     if not match or tuple(map(int, match.groups())) < (2, 20):
@@ -338,7 +381,7 @@ def activate(root: Path, config: dict) -> None:
     os.replace(link, root / "current")
     run(["systemctl", "--user", "enable", unit(config)])
     (root / "pending.json").unlink(missing_ok=True)
-    print(f'Active release {config["version"]}: http://localhost:{config["port"]}')
+    announce(f'Active release {config["version"]}: http://localhost:{config["port"]}')
 
 
 def backup(config: dict) -> Path:
@@ -389,6 +432,7 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
                 "project": "quazonai-" + hashlib.sha256(str(root).encode()).hexdigest()[:12],
             }
             validate_configuration_paths(config)
+            require_new_docker_project(config['project'])
             codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
             # Persist ownership and credentials before downloading or creating any state.
             config["bundle"] = str(BUNDLE)
@@ -421,6 +465,8 @@ def apply_update(root: Path) -> None:
             if pending["operation"] != "update" or pending["target"]["version"] != manifest(BUNDLE)["version"]:
                 raise ValueError("Retry the interrupted installation or the original pending update target.")
             old = pending["previous"]
+        if version_precedence(manifest(BUNDLE)['version']) < version_precedence(old['version']):
+            raise ValueError('Application updates cannot downgrade a release. Use an explicit cold restore with the matching database and state.')
         candidate = prepare(BUNDLE, old)
         if old["database_image"] != candidate["database_image"]:
             raise ValueError("Application updates do not upgrade PostgreSQL; use a database upgrade procedure.")
@@ -481,7 +527,9 @@ def unpack(data: bytes, destination: Path) -> None:
 
 def download_update(root: Path, target: str) -> None:
     target = version(target)
-    configuration(root)
+    current = configuration(root)
+    if version_precedence(target) < version_precedence(current['version']):
+        raise ValueError('Application updates cannot downgrade a release. Use an explicit cold restore with the matching database and state.')
     url = f"https://github.com/{REPOSITORY}/releases/download/{target}/quazonai-deploy.tar.gz"
     with urllib.request.urlopen(url, timeout=60) as response:
         data = response.read(3_000_001)

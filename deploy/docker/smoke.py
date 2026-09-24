@@ -68,12 +68,30 @@ def verify_native_sandbox(root: Path, config: dict) -> None:
             raise AssertionError(f'Packaged Codex sandbox failed: {result.returncode}')
 
 
+def verify_orphaned_volume(root: Path, bundle: Path) -> None:
+    installation = root / 'orphaned-installation'
+    project = 'quazonai-' + hashlib.sha256(str(installation).encode()).hexdigest()[:12]
+    volume = project + '_postgres'
+    web, database = ports()
+    manage.run(['docker', 'volume', 'create', '--label', 'com.docker.compose.project=' + project, volume], capture=True)
+    try:
+        invoke(bundle, 'deploy', installation, '--port', str(web), '--database-port', str(database),
+               '--codex-home', str(root / 'orphan-native-home'), succeeds=False)
+        assert not (installation / 'installation.json').exists()
+        assert not (installation / 'data').exists()
+        manage.run(['docker', 'volume', 'inspect', volume], capture=True)
+    finally:
+        # Only the unused volume created by this test is removed.
+        manage.run(['docker', 'volume', 'rm', volume], capture=True)
+
+
 def exercise(root: Path, image: str, revision: str) -> None:
     installation = root / "installation with spaces [native] %n $HOME"
     web_port, database_port = ports()
     one = make_bundle(root, "v0.0.0-ci.1", revision, image)
     two = make_bundle(root, "v0.0.0-ci.2", revision, image)
     three = make_bundle(root, "v0.0.0-ci.3", revision, image)
+    verify_orphaned_volume(root, one)
     try:
         invoke(one, "deploy", installation, "--port", str(web_port), "--database-port", str(database_port),
                "--codex-home", str(root / "native-home"))
@@ -103,6 +121,13 @@ def exercise(root: Path, image: str, revision: str) -> None:
         assert manage.sql(updated, "SELECT value FROM public.container_release_smoke") == "persisted"
         backups = list((installation / "backups").iterdir())
         assert len(backups) == 1
+        pid = manage.run(['systemctl', '--user', 'show', manage.unit(updated), '--property=MainPID', '--value'], capture=True)
+        invoke(one, 'apply-update', installation, succeeds=False)
+        assert manage.configuration(installation)['version'] == 'v0.0.0-ci.2'
+        assert not (installation / 'pending.json').exists()
+        assert len(list((installation / 'backups').iterdir())) == 1
+        assert manage.run(['systemctl', '--user', 'show', manage.unit(updated), '--property=MainPID', '--value'], capture=True) == pid
+        manage.verify_console(updated)
         with tarfile.open(backups[0] / "data.tar.gz") as archive:
             assert "data/state/master.key" not in archive.getnames()
             assert "data/state/session-key.ref" in archive.getnames()
