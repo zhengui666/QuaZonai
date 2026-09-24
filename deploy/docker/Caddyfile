@@ -1,0 +1,40 @@
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8081 {
+	root * /opt/quazonai/web
+	route {
+		@backend path /api /api/* /health /health/*
+		handle @backend {
+			reverse_proxy 127.0.0.1:8080 {
+				flush_interval -1
+			}
+		}
+		header {
+			Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+			X-Content-Type-Options nosniff
+			X-Frame-Options DENY
+			Referrer-Policy no-referrer
+			Permissions-Policy "camera=(), microphone=(), geolocation=()"
+			Cache-Control no-cache
+		}
+		@assets path /assets /assets/* *.js *.css *.webmanifest *.svg *.png *.ico *.json *.map *.woff *.woff2
+		handle @assets {
+			file_server
+		}
+		@navigation {
+			method GET HEAD
+			header Accept *text/html*
+		}
+		handle @navigation {
+			try_files {path} /index.html
+			file_server
+		}
+		handle {
+			file_server
+		}
+	}
+}
