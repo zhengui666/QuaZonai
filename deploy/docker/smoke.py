@@ -122,6 +122,52 @@ manage.apply_update(Path(sys.argv[2]))
     assert fingerprint(installation) == before
 
 
+def processor_identity(config: dict) -> tuple[str, str]:
+    pid = manage.run(['systemctl', '--user', 'show', manage.unit(config),
+                      '--property=MainPID', '--value'], capture=True)
+    container = manage.compose(config, 'ps', '--quiet', 'app', capture=True)
+    assert pid.isdigit() and pid != '0' and container
+    return pid, container
+
+
+def faulted_invoke(bundle: Path, mode: str, command: str, installation: Path, *args: str) -> None:
+    # Only the installer boundary is interrupted. Docker, systemd, PostgreSQL,
+    # the real server and migrations remain the actual release implementations.
+    program = '''
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+import manage
+mode = sys.argv[2]
+if mode == 'before-activation':
+    manage.activate = lambda *args: os._exit(99)
+elif mode == 'resume-without-ddl':
+    original = manage.compose
+    def compose(config, *args, **kwargs):
+        assert 'migrate' not in args, 'starting retry repeated DDL'
+        return original(config, *args, **kwargs)
+    def configure(config):
+        raise AssertionError('starting retry rewrote the Worker')
+    manage.compose, manage.configure_worker = compose, configure
+elif mode == 'race-after-admissions-close':
+    original_idle = manage.require_idle
+    calls = 0
+    def idle(config):
+        global calls
+        original_idle(config)
+        calls += 1
+        if calls == 2:
+            raise ValueError('test interruption at the post-admission idle boundary')
+    manage.require_idle = idle
+sys.argv = ['manage.py', sys.argv[3], '--directory', sys.argv[4], *sys.argv[5:]]
+manage.main()
+'''
+    result = subprocess.run([sys.executable, '-B', '-c', program, str(bundle), mode, command,
+                             str(installation), *args], check=False, timeout=240)
+    expected = {'before-activation': 99, 'resume-without-ddl': 0, 'race-after-admissions-close': 1}[mode]
+    assert result.returncode == expected, (mode, result.returncode)
+
+
 def exercise(root: Path, image: str, revision: str) -> None:
     installation = root / "installation with spaces [native] %n $HOME"
     web_port, database_port = ports()
@@ -135,9 +181,16 @@ def exercise(root: Path, image: str, revision: str) -> None:
     assert not (overlapping / 'installation.json').exists()
     assert not (overlapping / 'data').exists()
     try:
-        invoke(one, "deploy", installation, "--port", str(web_port), "--database-port", str(database_port),
-               "--codex-home", str(root / "native-home"))
+        faulted_invoke(one, 'before-activation', 'deploy', installation,
+                       '--port', str(web_port), '--database-port', str(database_port),
+                       '--codex-home', str(root / 'native-home'))
         original = manage.configuration(installation)
+        assert json.loads((installation / 'pending.json').read_text())['phase'] == 'starting'
+        assert not (installation / 'current').is_symlink()
+        initial_processors = processor_identity(original)
+        faulted_invoke(one, 'resume-without-ddl', 'deploy', installation)
+        assert processor_identity(original) == initial_processors
+        assert not (installation / 'pending.json').exists()
         verify_app_restart(original, 'unless-stopped')
         verify_native_sandbox(root, original)
         key = fingerprint(installation)
@@ -169,8 +222,21 @@ def exercise(root: Path, image: str, revision: str) -> None:
         assert manage.compose(original, 'ps', '-q', 'app', capture=True) == app_id
         assert fingerprint(installation) == key
 
+        # Inject only the boundary observation after the real API stops. The
+        # existing Worker must keep its actual PID while the API is restored.
+        before_race = processor_identity(original)
+        faulted_invoke(two, 'race-after-admissions-close', 'apply-update', installation)
+        assert processor_identity(original) == before_race
+        assert not (installation / 'pending.json').exists()
+        manage.verify_console(original)
+
         verify_interrupted_shutdown(two, installation)
-        invoke(two, "apply-update", installation)
+        faulted_invoke(two, 'before-activation', 'apply-update', installation)
+        starting = json.loads((installation / 'pending.json').read_text())
+        assert starting['phase'] == 'starting' and starting['backup']
+        candidate_processors = processor_identity(starting['target'])
+        faulted_invoke(two, 'resume-without-ddl', 'apply-update', installation)
+        assert processor_identity(starting['target']) == candidate_processors
         updated = manage.configuration(installation)
         assert updated["version"] == "v0.0.0-ci.2"
         assert updated["password"] == original["password"]

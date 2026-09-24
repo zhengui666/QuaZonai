@@ -74,25 +74,65 @@ def run(args: list[str], *, capture: bool = False, env=None, output=None) -> str
     return result.stdout.strip() if capture else ""
 
 
-def save(path: Path, value: dict) -> None:
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
-        os.chmod(temporary, 0o600)
-        json.dump(value, stream, indent=2)
-        stream.write("\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temporary, path)
-    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+def sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        os.fsync(fd)
+        os.fsync(descriptor)
     finally:
-        os.close(fd)
+        os.close(descriptor)
+
+
+def durable_directory(path: Path, *, exist_ok: bool = True) -> None:
+    if not path.parent.exists():
+        durable_directory(path.parent)
+    path.mkdir(mode=0o700, exist_ok=exist_ok)
+    sync_directory(path)
+    sync_directory(path.parent)
+
+
+def atomic_text(path: Path, text: str) -> None:
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix='.' + path.name + '.', delete=False) as stream:
+            temporary = Path(stream.name)
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        sync_directory(path.parent)
+    finally:
+        if temporary is not None:
+            with contextlib.suppress(OSError):
+                temporary.unlink(missing_ok=True)
+
+
+def save(path: Path, value: dict) -> None:
+    atomic_text(path, json.dumps(value, indent=2) + '\n')
+
+
+def sync_tree(path: Path) -> None:
+    # Only our prepared release, initialized state or recovery directory is used;
+    # never walk the native Codex home or follow links outside that tree.
+    def fail(error):
+        raise error
+    for directory, _, files in os.walk(path, topdown=False, onerror=fail, followlinks=False):
+        for name in files:
+            child = Path(directory) / name
+            if child.is_symlink():
+                continue
+            if not child.is_file():
+                raise ValueError('A deployment recovery file is not a regular file.')
+            with child.open('rb') as stream:
+                os.fsync(stream.fileno())
+        sync_directory(Path(directory))
+    sync_directory(path.parent)
 
 
 @contextlib.contextmanager
 def locked(root: Path):
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    durable_directory(root)
     with (root / ".deployment.lock").open("a") as stream:
         fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
@@ -225,7 +265,7 @@ def prepare(bundle: Path, config: dict) -> dict:
     stored = destination / "deployment"
     if (stored / "release.json").exists() and manifest(stored) != release:
         raise ValueError("An installed release version cannot be replaced with different content.")
-    destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+    durable_directory(destination)
     if stored.resolve() != bundle.resolve():
         stored.mkdir(mode=0o700, exist_ok=True)
         # The manifest is copied last, so interrupted bundle copies can be retried.
@@ -257,6 +297,7 @@ def prepare(bundle: Path, config: dict) -> dict:
         verify_native_binaries(binaries)
     candidate = {**config, **release, "bundle": str(stored)}
     verify_worker_unit(candidate)
+    sync_tree(destination)
     return candidate
 
 
@@ -330,7 +371,7 @@ def verify_native_binaries(directory: Path) -> None:
     run([str(helper), "--version"])
 
 
-def start_worker(config: dict) -> None:
+def configure_worker(config: dict) -> None:
     root = Path(config["root"])
     binary = root / "releases" / config["version"] / "bin/server"
     environment = {
@@ -341,17 +382,15 @@ def start_worker(config: dict) -> None:
         "RUNTIME_TARGETS": json.dumps(config.get("runtime_targets", [])),
         "DOWNSTREAM_TARGETS": json.dumps(config.get("downstream_targets", [])),
     }
-    with (root / "worker.env").open("w") as stream:
-        os.chmod(stream.name, 0o600)
-        for name, value in environment.items():
-            stream.write(name + "=" + quote(value, specifiers=False) + "\n")
-    units = Path(config["unit_directory"])
-    units.mkdir(parents=True, exist_ok=True)
-    (units / unit(config)).write_text(worker_unit_text(config))
-    run(["systemctl", "--user", "daemon-reload"])
-    # Activation enables boot-time startup only after the candidate checks pass.
-    run(["systemctl", "--user", "start", unit(config)])
-    verify_worker(config)
+    text = ''.join(name + '=' + quote(value, specifiers=False) + '\n'
+                   for name, value in environment.items())
+    units = Path(config['unit_directory'])
+    durable_directory(units)
+    atomic_text(root / 'worker.env', text)
+    atomic_text(units / unit(config), worker_unit_text(config))
+    # Neither file is truncated in place. Both files and their directory entries
+    # are durable before the native manager observes or starts this version.
+    run(['systemctl', '--user', 'daemon-reload'])
 
 
 def verify_worker(config: dict) -> None:
@@ -387,6 +426,7 @@ def initialize_state(config: dict) -> None:
         (state / name).is_dir() for name in ("secrets", "artifacts")
     ):
         raise ValueError("State initialization is incomplete. Preserve it and recover the original keys; initialization was not repeated.")
+    sync_tree(state)
 
 
 def activate(root: Path, config: dict) -> None:
@@ -396,39 +436,74 @@ def activate(root: Path, config: dict) -> None:
     link.unlink(missing_ok=True)
     link.symlink_to(root / "releases" / config["version"], target_is_directory=True)
     os.replace(link, root / "current")
-    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+    sync_directory(root)
     # Worker boot recovery must exist before the app can resume admissions on reboot.
     run(["systemctl", "--user", "enable", unit(config)])
     configure_app_restarts(config, True)
     (root / "pending.json").unlink(missing_ok=True)
+    sync_directory(root)
     announce(f'Active release {config["version"]}: http://localhost:{config["port"]}')
 
 
 def backup(config: dict) -> Path:
     root = Path(config["root"])
     destination = root / "backups" / (time.strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(3))
-    destination.mkdir(mode=0o700, parents=True)
+    durable_directory(destination, exist_ok=False)
     with (destination / "database.dump").open("xb") as stream:
         compose(config, "exec", "-T", "database", "pg_dump", "-U", "quazonai", "-d", "quazonai", "-Fc", output=stream)
     shutil.copyfile(root / "data/state/master.key", destination / "master.key")
     with tarfile.open(destination / "data.tar.gz", "w:gz") as archive:
         archive.add(root / "data", arcname="data", filter=lambda x: None if x.name == "data/state/master.key" else x)
     save(destination / "installation.json", config)
-    print(f"Recovery point: {destination}; move a copy of master.key to separate protected storage.")
+    # Closing pg_dump/tar output is not a durability barrier. Publish this path
+    # only after every recovery file and its directory entries have been synced.
+    sync_tree(destination)
+    announce(f"Recovery point: {destination}; move a copy of master.key to separate protected storage.")
     return destination
 
 
-def resume_existing_services(config: dict) -> None:
+def resume_existing_services(config: dict, *, enable_boot: bool = True) -> None:
     # Recovery of an unchanged, already-migrated installation must not recreate
     # a live app container or rewrite/restart a Worker that owns active Runs.
     try:
         compose(config, 'up', '-d', '--no-recreate', '--wait', '--wait-timeout', '120', 'app')
     finally:
-        run(['systemctl', '--user', 'enable', '--now', unit(config)])
+        action = ['enable', '--now'] if enable_boot else ['start']
+        run(['systemctl', '--user', *action, unit(config)])
+
+
+def start_prepared_release(root: Path, config: dict) -> None:
+    # This path is entered only after the migration and complete Worker files
+    # have a durable starting marker. Failures keep that marker and the same
+    # processors for retry, never repeat DDL or stop an already-admitted Run.
+    resume_existing_services(config, enable_boot=False)
+    verify_worker(config)
+    activate(root, config)
+
+
+def require_install_stopped(config: dict) -> None:
+    # Legacy installs have no starting phase. Do not infer DDL safety merely
+    # from the absence of current when an old installation may still be live.
+    container = compose(config, 'ps', '--all', '--quiet', 'app', capture=True)
+    if container:
+        if '\n' in container:
+            raise ValueError('Ambiguous application containers prevent initial-install DDL.')
+        observation = json.loads(run(['docker', 'inspect', '--format',
+                                      '{"state":{{json .State}},"restart":{{json .HostConfig.RestartPolicy.Name}}}',
+                                      container], capture=True))
+        state = observation['state']
+        if (state.get('Status') != 'created' or state.get('Running') or state.get('Restarting')
+                or observation['restart'] != 'no'):
+            raise ValueError('Existing application containers have no completed-migration marker; preserve and reconcile this installation before DDL.')
+    observed = run(['systemctl', '--user', 'show', unit(config), '--property=LoadState',
+                    '--property=ActiveState', '--property=UnitFileState'], capture=True)
+    properties = dict(line.split('=', 1) for line in observed.splitlines() if '=' in line)
+    if properties.get('LoadState') == 'not-found':
+        return
+    if (properties.get('LoadState') != 'loaded'
+            or properties.get('ActiveState') not in ('inactive', 'failed')
+            or properties.get('UnitFileState') != 'disabled'):
+        raise ValueError('An existing Worker is not stopped and disabled; initial-install DDL was not repeated.')
 
 
 def deploy(root: Path, args: argparse.Namespace) -> None:
@@ -448,15 +523,16 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
                     return
                 # The first manifest may have committed immediately before a crash.
                 # Resume its identity rather than generating a new password.
-                save(pending, {"operation": "install", "version": release["version"]})
-            if json.loads(pending.read_text())["operation"] != "install":
-                raise ValueError("An update is pending; retry that target with update.sh.")
-            if (root / 'current').is_symlink():
-                # current is written only after migration and startup checks.
-                # A surviving install marker therefore needs activation, not DDL.
-                resume_existing_services(config)
-                verify_worker(config)
-                activate(root, config)
+                save(pending, {"operation": "install", "phase": "migrating", "version": release["version"]})
+            intent = json.loads(pending.read_text())
+            if intent['operation'] != 'install':
+                raise ValueError('An update is pending; retry that target with update.sh.')
+            if intent.get('phase', 'migrating') not in ('migrating', 'starting'):
+                raise ValueError('Unknown initial-install phase; preserve its recovery record.')
+            if intent.get('phase') == 'starting' or (root / 'current').is_symlink():
+                # starting is durable before either processor can admit work.
+                # current also supports already-activated older install markers.
+                start_prepared_release(root, config)
                 return
         else:
             if any((root / name).exists() for name in ("data", "current", "releases")):
@@ -477,25 +553,20 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
             # Persist ownership and credentials before downloading or creating any state.
             config["bundle"] = str(BUNDLE)
             save(root / "installation.json", config)
-            save(pending, {"operation": "install", "version": release["version"]})
+            save(pending, {"operation": "install", "phase": "migrating", "version": release["version"]})
         config = prepare(BUNDLE, config)
         save(root / "installation.json", config)
-        (root / "data").mkdir(mode=0o700, exist_ok=True)
-        compose(config, "up", "-d", "--wait", "--wait-timeout", "120", "database")
+        durable_directory(root / 'data')
+        compose(config, 'up', '-d', '--wait', '--wait-timeout', '120', 'database')
+        require_install_stopped(config)
         initialize_state(config)
-        compose(config, "run", "--rm", "--no-deps", "app", "migrate")
-        try:
-            compose(config, "up", "-d", "--wait", "--wait-timeout", "120", "app")
-            start_worker(config)
-            activate(root, config)
-        except Exception:
-            # Keep a partial installation and its credentials available for retry.
-            try:
-                configure_app_restarts(config, False)
-            finally:
-                subprocess.run(["systemctl", "--user", "disable", "--now", unit(config)], check=False)
-                compose(config, "stop", "app")
-            raise
+        compose(config, 'run', '--rm', '--no-deps', 'app', 'migrate')
+        configure_worker(config)
+        compose(config, 'up', '--no-start', '--no-deps', 'app')
+        # No application process is started until its migration and complete
+        # native configuration are represented by this durable recovery phase.
+        save(pending, {'operation': 'install', 'phase': 'starting', 'version': config['version']})
+        start_prepared_release(root, config)
 
 
 def apply_update(root: Path) -> None:
@@ -523,8 +594,11 @@ def apply_update(root: Path) -> None:
         # Missing phase denotes an older recovery point which may already have
         # been migrated. Only an explicit preparing phase permits old-code recovery.
         phase = pending.get('phase', 'migrating') if pending else 'preparing'
-        if phase not in ('preparing', 'migrating'):
+        if phase not in ('preparing', 'migrating', 'starting'):
             raise ValueError('Unknown pending update phase; preserve its recovery record.')
+        if phase == 'starting':
+            start_prepared_release(root, candidate)
+            return
         if pending and phase == 'preparing':
             # An interrupted shutdown may have left old processors stopped.
             # Resume, but never recreate or restart already-running processors.
@@ -541,6 +615,9 @@ def apply_update(root: Path) -> None:
         try:
             configure_app_restarts(old, False)
             compose(old, 'stop', 'app')
+            # Closing admissions can finish a request which raced the first
+            # observation. Discover its Run before stopping its Worker.
+            require_idle(old)
             run(['systemctl', '--user', 'disable', '--now', unit(old)])
             require_idle(old)
             if phase == 'preparing':
@@ -552,25 +629,22 @@ def apply_update(root: Path) -> None:
                 resume_existing_services(old)
                 configure_app_restarts(old, True)
                 pending_file.unlink()
+                sync_directory(root)
             raise
         if phase == 'preparing':
-            # A failure to persist the transition leaves services stopped with
-            # their prior durable intent; do not attempt a migration without it.
-            save(pending_file, {**pending, 'phase': 'migrating', 'backup': str(recovery)})
-        try:
-            compose(candidate, "run", "--rm", "--no-deps", "app", "migrate")
-            compose(candidate, "up", "-d", "--wait", "--wait-timeout", "120", "app")
-            start_worker(candidate)
-            activate(root, candidate)
-        except Exception:
-            # A forward migration may have committed. Never automatically run old
-            # binaries against that schema, overwrite keys, or delete data volumes.
-            try:
-                configure_app_restarts(candidate, False)
-            finally:
-                subprocess.run(["systemctl", "--user", "disable", "--now", unit(candidate)], check=False)
-                compose(candidate, "stop", "app")
-            raise
+            # backup() synchronizes all artifacts before this durable transition.
+            # Failure leaves processors stopped with the prior preparing intent.
+            pending = {**pending, 'phase': 'migrating', 'backup': str(recovery)}
+            save(pending_file, pending)
+        # Processors remain stopped on any DDL/configuration failure. Never
+        # enable old executables against a possibly forward-migrated schema.
+        compose(candidate, 'run', '--rm', '--no-deps', 'app', 'migrate')
+        configure_worker(candidate)
+        # Replace the stopped old container with the target image/config without
+        # starting it. Starting-phase retries can then preserve this exact one.
+        compose(candidate, 'up', '--no-start', '--no-deps', 'app')
+        save(pending_file, {**pending, 'phase': 'starting'})
+        start_prepared_release(root, candidate)
 
 
 def unpack(data: bytes, destination: Path) -> None:

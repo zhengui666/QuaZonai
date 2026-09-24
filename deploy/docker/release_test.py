@@ -7,7 +7,9 @@ import json
 import os
 from pathlib import Path
 import socket
+import stat
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -117,7 +119,7 @@ class InstallationInputTests(unittest.TestCase):
                       "database_port": 55432, "port": 8081, "home": str(root), "codex_home": str(root / "native"),
                       "path": "/usr/bin", "unit_directory": str(root / "units")}
             with patch.object(manage, "run"), patch.object(manage, "verify_worker"):
-                manage.start_worker(config)
+                manage.configure_worker(config)
             content = (root / "units/release-unit-test.service").read_text()
             self.assertIn(f"WorkingDirectory={str(root).replace('%', '%%')}/data\n", content)
             self.assertIn(f"EnvironmentFile={str(root).replace('%', '%%')}/worker.env\n", content)
@@ -276,6 +278,144 @@ class NativeDeploymentTests(unittest.TestCase):
             self.assertEqual(list(root.iterdir()), [])
 
 
+class DurabilityTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.config = {**metadata(), 'root': str(self.root), 'project': 'durability-test',
+                       'password': os.urandom(16).hex(), 'database_port': 55432, 'port': 18081,
+                       'home': str(self.root), 'codex_home': str(self.root.parent / 'native'),
+                       'path': '/usr/bin', 'unit_directory': str(self.root / 'units/user')}
+
+    def test_atomic_text_syncs_file_before_replace_and_directory_after(self):
+        target = self.root / 'worker.env'
+        target.write_text('previous complete value')
+        synced = []
+        fsync, replace = os.fsync, os.replace
+        def synchronize(descriptor):
+            synced.append('directory' if stat.S_ISDIR(os.fstat(descriptor).st_mode) else 'file')
+            fsync(descriptor)
+        def publish(source, destination):
+            self.assertEqual(target.read_text(), 'previous complete value')
+            self.assertEqual(synced, ['file'])
+            synced.append('replace')
+            replace(source, destination)
+        with patch.object(manage.os, 'fsync', side_effect=synchronize), patch.object(manage.os, 'replace', side_effect=publish):
+            manage.atomic_text(target, 'new complete value\n')
+        self.assertEqual(synced, ['file', 'replace', 'directory'])
+        self.assertEqual(target.read_text(), 'new complete value\n')
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+        self.assertEqual(list(self.root.iterdir()), [target])
+
+    def test_file_sync_failure_preserves_old_atomic_file(self):
+        target = self.root / 'worker.env'
+        target.write_text('old complete value')
+        with patch.object(manage.os, 'fsync', side_effect=OSError('file sync failed')), self.assertRaises(OSError):
+            manage.atomic_text(target, 'replacement must not be published')
+        self.assertEqual(target.read_text(), 'old complete value')
+        self.assertEqual(list(self.root.iterdir()), [target])
+
+    def test_worker_files_are_complete_and_synced_before_manager_reload(self):
+        published = []
+        write = manage.atomic_text
+        def durable(path, text):
+            write(path, text)
+            published.append(path)
+        def manager(args):
+            self.assertEqual(args, ['systemctl', '--user', 'daemon-reload'])
+            self.assertEqual(published, [self.root / 'worker.env', Path(self.config['unit_directory']) / manage.unit(self.config)])
+            self.assertEqual(published[1].read_text(), manage.worker_unit_text(self.config))
+            self.assertTrue((self.root / 'worker.env').read_text().endswith('\n'))
+        with patch.object(manage, 'atomic_text', side_effect=durable), patch.object(manage, 'run', side_effect=manager) as command:
+            manage.configure_worker(self.config)
+        self.assertEqual(command.call_count, 1)
+
+    def test_unit_sync_failure_never_truncates_or_reloads_previous_unit(self):
+        units = Path(self.config['unit_directory'])
+        units.mkdir(parents=True)
+        target = units / manage.unit(self.config)
+        target.write_text('previous complete unit')
+        fsync = os.fsync
+        def fail_unit(descriptor):
+            path = Path(os.readlink(f'/proc/self/fd/{descriptor}'))
+            if stat.S_ISREG(os.fstat(descriptor).st_mode) and path.parent == units:
+                raise OSError('unit sync failed')
+            fsync(descriptor)
+        with patch.object(manage.os, 'fsync', side_effect=fail_unit), patch.object(manage, 'run') as command, self.assertRaises(OSError):
+            manage.configure_worker(self.config)
+        self.assertEqual(target.read_text(), 'previous complete unit')
+        self.assertEqual(list(units.iterdir()), [target])
+        command.assert_not_called()
+
+    def test_backup_syncs_all_artifacts_and_directory_before_returning(self):
+        state = self.root / 'data/state'
+        state.mkdir(parents=True)
+        (state / 'master.key').write_bytes(os.urandom(32))
+        (state / 'session-key.ref').write_text('test-only reference')
+        synced = []
+        fsync = os.fsync
+        def synchronize(descriptor):
+            synced.append(Path(os.readlink(f'/proc/self/fd/{descriptor}')))
+            fsync(descriptor)
+        def dump(config, *args, output=None, **kwargs):
+            self.assertIn('pg_dump', args)
+            # Filesystem ordering only; real pg_dump/pg_restore runs in Container CI.
+            output.write(b'test-only dump bytes')
+        with patch.object(manage, 'compose', side_effect=dump), patch.object(manage.os, 'fsync', side_effect=synchronize):
+            recovery = manage.backup(self.config)
+        for name in ('database.dump', 'master.key', 'data.tar.gz', 'installation.json'):
+            self.assertIn(recovery / name, synced)
+            self.assertLess(synced.index(recovery / name), len(synced) - 1)
+        self.assertEqual(synced[-2:], [recovery, recovery.parent])
+        self.assertIn(self.root, synced)
+        with tarfile.open(recovery / 'data.tar.gz') as archive:
+            self.assertNotIn('data/state/master.key', archive.getnames())
+            self.assertIn('data/state/session-key.ref', archive.getnames())
+
+    def test_backup_artifact_sync_failure_does_not_return_a_recovery_point(self):
+        state = self.root / 'data/state'
+        state.mkdir(parents=True)
+        original = os.urandom(32)
+        (state / 'master.key').write_bytes(original)
+        fsync = os.fsync
+        def fail_key(descriptor):
+            path = Path(os.readlink(f'/proc/self/fd/{descriptor}'))
+            if path.name == 'master.key' and path.parent.parent.name == 'backups':
+                raise OSError('recovery file sync failed')
+            fsync(descriptor)
+        def dump(config, *args, output=None, **kwargs):
+            output.write(b'test-only dump bytes')
+        with patch.object(manage, 'compose', side_effect=dump), patch.object(manage.os, 'fsync', side_effect=fail_key):
+            with self.assertRaisesRegex(OSError, 'recovery file sync failed'):
+                manage.backup(self.config)
+        self.assertEqual((state / 'master.key').read_bytes(), original)
+        self.assertFalse((self.root / 'pending.json').exists())
+
+    def test_legacy_install_guard_rejects_containers_or_active_worker(self):
+        active = {'state': {'Status': 'running', 'Running': True}, 'restart': 'no'}
+        with patch.object(manage, 'compose', return_value='existing-container'), patch.object(
+            manage, 'run', return_value=json.dumps(active)
+        ) as command:
+            with self.assertRaises(ValueError):
+                manage.require_install_stopped(self.config)
+            self.assertEqual(command.call_count, 1)
+        created = {'state': {'Status': 'created', 'Running': False, 'Restarting': False}, 'restart': 'no'}
+        with patch.object(manage, 'compose', return_value='created-container'), patch.object(
+            manage, 'run', side_effect=[json.dumps(created), 'LoadState=not-found']
+        ):
+            manage.require_install_stopped(self.config)
+        observations = ['LoadState=loaded\nActiveState=active\nUnitFileState=disabled',
+                        'LoadState=loaded\nActiveState=inactive\nUnitFileState=enabled', '']
+        with patch.object(manage, 'compose', return_value=''):
+            for value in observations:
+                with self.subTest(value=value), patch.object(manage, 'run', return_value=value), self.assertRaises(ValueError):
+                    manage.require_install_stopped(self.config)
+            for value in ('LoadState=not-found', 'LoadState=loaded\nActiveState=inactive\nUnitFileState=disabled'):
+                with patch.object(manage, 'run', return_value=value):
+                    manage.require_install_stopped(self.config)
+
+
 class GitSelectionTests(unittest.TestCase):
     def test_lightweight_annotated_and_both_push_orders(self):
         previous = Path.cwd()
@@ -354,7 +494,8 @@ class UpdateTests(unittest.TestCase):
         self.stack.enter_context(patch.object(manage, "prepare", return_value=self.new))
         self.stack.enter_context(patch.object(manage, "manifest", return_value=metadata("v1.0.1")))
         self.stack.enter_context(patch.object(manage, "verify_console"))
-        self.stack.enter_context(patch.object(manage, "start_worker", side_effect=lambda c: self.events.append("worker-start")))
+        self.stack.enter_context(patch.object(manage, "verify_worker"))
+        self.stack.enter_context(patch.object(manage, "configure_worker", side_effect=lambda c: self.events.append("worker-configure")))
         self.stack.enter_context(patch.object(manage, 'configure_app_restarts', side_effect=lambda c, enabled: self.events.append(('app-restarts', c['version'], enabled))))
         self.stack.enter_context(patch.object(manage, "run", side_effect=lambda *a, **k: self.events.append(tuple(a[0]))))
         self.stack.enter_context(patch.object(manage.subprocess, "run"))
@@ -417,7 +558,7 @@ class UpdateTests(unittest.TestCase):
                                                'target': self.new, 'backup': str(self.backup)})
         with patch.object(manage, 'run', side_effect=subprocess.CalledProcessError(1, ['systemctl', 'disable'])), self.assertRaises(subprocess.CalledProcessError):
             manage.apply_update(self.root)
-        self.assertFalse(any('up' in event or 'worker-start' == event for event in self.events))
+        self.assertFalse(any('up' in event or 'worker-configure' == event for event in self.events))
         self.assertNotIn(('app-restarts', self.old['version'], True), self.events)
         self.assertTrue((self.root / 'pending.json').exists())
         self.backup_call.assert_not_called()
@@ -461,7 +602,7 @@ class UpdateTests(unittest.TestCase):
         self.fail_migration = True
         with self.assertRaises(subprocess.CalledProcessError):
             manage.apply_update(self.root)
-        self.assertNotIn("worker-start", self.events)
+        self.assertNotIn("worker-configure", self.events)
         self.assertFalse(any("up" in event for event in self.events))
         self.assertEqual(manage.configuration(self.root), self.old)
         self.assertTrue((self.root / "pending.json").exists())
@@ -473,8 +614,8 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(manage.configuration(self.root), self.new)
         self.assertFalse((self.root / "pending.json").exists())
         self.assertEqual(self.backup_call.call_count, 1)
-        self.assertIn("worker-start", self.events)
-        self.assertGreater(self.events.index(('systemctl', '--user', 'enable', manage.unit(self.new))), self.events.index('worker-start'))
+        self.assertIn("worker-configure", self.events)
+        self.assertGreater(self.events.index(('systemctl', '--user', 'enable', manage.unit(self.new))), self.events.index('worker-configure'))
 
     def test_activation_enables_worker_before_app_boot_recovery(self):
         manage.apply_update(self.root)
@@ -491,10 +632,11 @@ class UpdateTests(unittest.TestCase):
         with patch.object(manage, 'run', side_effect=command), self.assertRaises(subprocess.CalledProcessError):
             manage.apply_update(self.root)
         self.assertNotIn(('app-restarts', self.new['version'], True), self.events)
-        self.assertIn(('app-restarts', self.new['version'], False), self.events)
         pending = json.loads((self.root / 'pending.json').read_text())
-        self.assertEqual(pending['phase'], 'migrating')
+        self.assertEqual(pending['phase'], 'starting')
         self.assertEqual(pending['previous'], self.old)
+        started = self.events.index(('systemctl', '--user', 'start', manage.unit(self.new)))
+        self.assertFalse(any('stop' in event or 'disable' in event for event in self.events[started:]))
 
     def test_shutdown_intent_survives_abrupt_exit_and_retry(self):
         def crash(config, enabled):
@@ -590,7 +732,7 @@ class UpdateTests(unittest.TestCase):
         initialize.assert_not_called()
         manage.prepare.assert_not_called()
         self.idle.assert_not_called()
-        self.assertNotIn('worker-start', self.events)
+        self.assertNotIn('worker-configure', self.events)
         self.assertFalse(any('migrate' in event or 'stop' in event or 'disable' in event for event in self.events))
         self.assertIn((self.old['version'], 'up', '-d', '--no-recreate', '--wait', '--wait-timeout', '120', 'app'), self.events)
         self.assertEqual(manage.configuration(self.root), self.old)
@@ -617,6 +759,97 @@ class UpdateTests(unittest.TestCase):
         for image in bases:
             self.assertRegex(image, r'^[^ ]+@sha256:[a-f0-9]{64}\Z')
         self.assertEqual(bases[0], bases[1])
+
+    def test_run_admitted_during_app_shutdown_keeps_worker_running(self):
+        self.idle.side_effect = [None, ValueError('run admitted while API was closing')]
+        with self.assertRaises(ValueError):
+            manage.apply_update(self.root)
+        self.assertIn((self.old['version'], 'stop', 'app'), self.events)
+        self.assertNotIn(('systemctl', '--user', 'disable', '--now', manage.unit(self.old)), self.events)
+        self.assertIn(('systemctl', '--user', 'enable', '--now', manage.unit(self.old)), self.events)
+        self.assertFalse(any('migrate' in event for event in self.events))
+        self.backup_call.assert_not_called()
+        self.assertFalse((self.root / 'pending.json').exists())
+
+    def test_initial_pre_current_interruption_retries_without_ddl_or_worker_rewrite(self):
+        manage.prepare.return_value = self.old
+        with patch.object(manage, 'manifest', return_value=metadata(self.old['version'])), patch.object(
+            manage, 'require_install_stopped'
+        ) as stopped, patch.object(manage, 'initialize_state') as initialize:
+            with patch.object(manage, 'activate', side_effect=KeyboardInterrupt('stopped before current')), self.assertRaises(KeyboardInterrupt):
+                manage.deploy(self.root, argparse.Namespace())
+            pending = json.loads((self.root / 'pending.json').read_text())
+            self.assertEqual(pending['phase'], 'starting')
+            self.assertFalse((self.root / 'current').exists())
+            self.assertEqual(sum('migrate' in event for event in self.events), 1)
+            self.assertEqual(self.events.count('worker-configure'), 1)
+            self.events.clear()
+            manage.deploy(self.root, argparse.Namespace())
+            self.assertFalse(any('migrate' in event or 'disable' in event or 'stop' in event for event in self.events))
+            self.assertNotIn('worker-configure', self.events)
+            initialize.assert_called_once()
+            stopped.assert_called_once()
+            manage.prepare.assert_called_once()
+        self.assertFalse((self.root / 'pending.json').exists())
+        self.assertEqual(manage.configuration(self.root), self.old)
+
+    def test_legacy_initial_processors_block_ddl_before_initialization(self):
+        manage.prepare.return_value = self.old
+        with patch.object(manage, 'manifest', return_value=metadata(self.old['version'])), patch.object(
+            manage, 'require_install_stopped', side_effect=ValueError('legacy Worker is live')
+        ), patch.object(manage, 'initialize_state') as initialize, self.assertRaises(ValueError):
+            manage.deploy(self.root, argparse.Namespace())
+        initialize.assert_not_called()
+        self.assertFalse(any('migrate' in event or 'stop' in event or 'disable' in event for event in self.events))
+        self.assertNotIn('worker-configure', self.events)
+        self.assertTrue((self.root / 'pending.json').exists())
+
+    def test_starting_intent_is_durable_before_any_candidate_start(self):
+        save = manage.save
+        def fail_starting(path, value):
+            if path.name == 'pending.json' and value.get('phase') == 'starting':
+                raise OSError('starting intent not durable')
+            save(path, value)
+        with patch.object(manage, 'save', side_effect=fail_starting), self.assertRaises(OSError):
+            manage.apply_update(self.root)
+        pending = json.loads((self.root / 'pending.json').read_text())
+        self.assertEqual(pending['phase'], 'migrating')
+        self.assertEqual(pending['backup'], str(self.backup))
+        self.assertFalse(any('start' in event or 'enable' in event or ('up' in event and '--no-start' not in event)
+                             for event in self.events))
+        self.assertIn((self.new['version'], 'up', '--no-start', '--no-deps', 'app'), self.events)
+        self.assertIn('worker-configure', self.events)
+        self.assertEqual(manage.configuration(self.root), self.old)
+
+    def test_candidate_configuration_failure_stays_stopped_with_original_backup(self):
+        with patch.object(manage, 'configure_worker', side_effect=OSError('unit file sync failed')), self.assertRaises(OSError):
+            manage.apply_update(self.root)
+        pending = json.loads((self.root / 'pending.json').read_text())
+        self.assertEqual(pending['phase'], 'migrating')
+        self.assertEqual(pending['backup'], str(self.backup))
+        self.assertFalse(any('start' in event or 'up' in event or 'enable' in event for event in self.events))
+        manage.apply_update(self.root)
+        self.backup_call.assert_called_once()
+        self.assertEqual(manage.configuration(self.root), self.new)
+
+    def test_starting_update_retry_preserves_candidate_processors_without_ddl(self):
+        with patch.object(manage, 'activate', side_effect=KeyboardInterrupt('before current switch')), self.assertRaises(KeyboardInterrupt):
+            manage.apply_update(self.root)
+        pending = json.loads((self.root / 'pending.json').read_text())
+        self.assertEqual(pending['phase'], 'starting')
+        self.assertEqual(pending['backup'], str(self.backup))
+        self.assertEqual(pending['target'], self.new)
+        self.assertFalse((self.root / 'current').exists())
+        self.events.clear()
+        self.idle.reset_mock()
+        self.idle.side_effect = ValueError('candidate is already processing work')
+        manage.apply_update(self.root)
+        self.idle.assert_not_called()
+        self.assertFalse(any('migrate' in event or 'stop' in event or 'disable' in event for event in self.events))
+        self.assertNotIn('worker-configure', self.events)
+        self.backup_call.assert_called_once()
+        self.assertEqual(manage.configuration(self.root), self.new)
+        self.assertFalse((self.root / 'pending.json').exists())
 
 
 if __name__ == "__main__":
