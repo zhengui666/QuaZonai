@@ -25,6 +25,8 @@ Compose 建立 bridge application 网络，app 通过服务名 database 连接 P
 
 分发脚本只支持不做 userns-remap 的本机 rootful Docker daemon；容器进程仍使用原非 root UID/GID。首次保存安装身份前读取该 Compose project 标签的容器、卷及网络，存在遗留资源而缺主机 manifest 时要求恢复原身份，不重建密码或 master key。更新入口和目标管理器均按 SemVer 2.0 比较已验证 tag，旧目标在下载/停机前拒绝，同版本仅验证现有安装；不把降级当成应用更新。成功通知属于非关键输出，stdout 断管或关闭不得导致已激活服务被停掉，也不得丢失其恢复路径。
 
+初始/待恢复应用的 Compose restart policy 为 `no`；部署管理器在激活验证成功后使用 Docker 原生 update 修改该容器为 `unless-stopped`，失败清理再次关闭自动重启，数据库策略独立不变。停止应用、禁用并停止 Worker、静止点复核及备份均属于迁移前恢复范围；其中任一步失败，在本次尚未尝试迁移的条件下尝试恢复两个旧进程及自动启动。已有 pending 的重试不得恢复旧程序。原 CODEX_HOME 与托管安装根目录必须相互独立，先解析符号链接后拒绝任何祖先/后代重叠，再创建目录或持久化身份。
+
 ## Polymarket 原生研究与组合
 
 原生 BinaryOption 研究使用 POLYMARKET、原 condition/token 身份、原抵押币和

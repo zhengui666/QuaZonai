@@ -184,6 +184,8 @@ def compose(config: dict, *args: str, capture: bool = False, output=None) -> str
         "WEB_PORT": str(config["port"]), "DATABASE_PORT": str(config["database_port"]),
         "HOST_UID": str(config["uid"]), "HOST_GID": str(config["gid"]),
         "NATIVE_CODEX_HOME": config["codex_home"],
+        "APP_RESTART_POLICY": 'unless-stopped' if (Path(config['root']) / 'current').is_symlink()
+        and not (Path(config['root']) / 'pending.json').exists() else 'no',
         "RUNTIME_TARGETS": json.dumps(config.get("runtime_targets", [])),
         "DOWNSTREAM_TARGETS": json.dumps(config.get("downstream_targets", [])),
     })
@@ -193,6 +195,17 @@ def compose(config: dict, *args: str, capture: bool = False, output=None) -> str
     if override.is_file():
         command += ["-f", str(override)]
     return run(command + list(args), capture=capture, env=env, output=output)
+
+
+def configure_app_restarts(config: dict, enabled: bool) -> None:
+    # Update the actual existing container without recreating it or changing its
+    # data mounts. Compose's pending-state default also protects new candidates.
+    containers = compose(config, 'ps', '--all', '--quiet', 'app', capture=True).splitlines()
+    if enabled and len(containers) != 1:
+        raise ValueError('Activation requires exactly one application container.')
+    if containers:
+        policy = 'unless-stopped' if enabled else 'no'
+        run(['docker', 'update', '--restart=' + policy, *containers], capture=True)
 
 
 def sql(config: dict, statement: str) -> str:
@@ -277,6 +290,10 @@ def validate_configuration_paths(config: dict) -> None:
         unit_path(Path(config[name]))
     if any(x in config["root"] for x in (':', '"', '\\')):
         raise ValueError("Installation directory cannot contain colon, double quote or backslash; PATH and systemd cannot represent its executable location.")
+    root = Path(config['root']).resolve()
+    codex_home = Path(config['codex_home']).resolve()
+    if codex_home.is_relative_to(root) or root.is_relative_to(codex_home):
+        raise ValueError('CODEX_HOME must be separate from the managed installation directory, including its state and backups.')
     for name in ("home", "codex_home", "path"):
         quote(config[name], specifiers=False)
 
@@ -379,6 +396,7 @@ def activate(root: Path, config: dict) -> None:
     link.unlink(missing_ok=True)
     link.symlink_to(root / "releases" / config["version"], target_is_directory=True)
     os.replace(link, root / "current")
+    configure_app_restarts(config, True)
     run(["systemctl", "--user", "enable", unit(config)])
     (root / "pending.json").unlink(missing_ok=True)
     announce(f'Active release {config["version"]}: http://localhost:{config["port"]}')
@@ -450,8 +468,11 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
             activate(root, config)
         except Exception:
             # Keep a partial installation and its credentials available for retry.
-            subprocess.run(["systemctl", "--user", "disable", "--now", unit(config)], check=False)
-            compose(config, "stop", "app")
+            try:
+                configure_app_restarts(config, False)
+            finally:
+                subprocess.run(["systemctl", "--user", "disable", "--now", unit(config)], check=False)
+                compose(config, "stop", "app")
             raise
 
 
@@ -475,28 +496,30 @@ def apply_update(root: Path) -> None:
             verify_worker(old)
             print(f'Already active: {old["version"]}')
             return
+        if pending and candidate != pending['target']:
+            raise ValueError('Pending target changed; preserve its original deployment bundle and configuration.')
         if not pending:
             require_idle(old)
-        # Stop admissions first, then the worker, then repeat the observation.
-        compose(old, "stop", "app")
-        # A stopped but enabled old Worker would restart on reboot against a
-        # possibly forward-migrated database. Keep this installation disabled
-        # until the candidate reaches successful activation.
-        run(["systemctl", "--user", "disable", "--now", unit(old)])
-        if not pending:
-            try:
-                require_idle(old)
+        try:
+            # Disable native automatic restarts before stopping admissions and
+            # the Worker. A failed shutdown belongs to pre-migration recovery.
+            configure_app_restarts(old, False)
+            compose(old, 'stop', 'app')
+            run(['systemctl', '--user', 'disable', '--now', unit(old)])
+            require_idle(old)
+            if not pending:
                 recovery = backup(old)
-            except Exception:
-                compose(old, "up", "-d", "--wait", "--wait-timeout", "120", "app")
-                run(["systemctl", "--user", "enable", "--now", unit(old)])
-                raise
-            pending = {"operation": "update", "previous": old, "target": candidate, "backup": str(recovery)}
-            save(pending_file, pending)
-        else:
-            if candidate != pending["target"]:
-                raise ValueError("Pending target changed; preserve its original deployment bundle and configuration.")
-            require_idle(old)
+                save(pending_file, {'operation': 'update', 'previous': old, 'target': candidate, 'backup': str(recovery)})
+        except Exception:
+            if not pending:
+                # No migration was attempted by this operation. Try to restore
+                # both old processes even if one restoration step also fails.
+                try:
+                    compose(old, 'up', '-d', '--wait', '--wait-timeout', '120', 'app')
+                    configure_app_restarts(old, True)
+                finally:
+                    run(['systemctl', '--user', 'enable', '--now', unit(old)])
+            raise
         try:
             compose(candidate, "run", "--rm", "--no-deps", "app", "migrate")
             compose(candidate, "up", "-d", "--wait", "--wait-timeout", "120", "app")
@@ -505,8 +528,11 @@ def apply_update(root: Path) -> None:
         except Exception:
             # A forward migration may have committed. Never automatically run old
             # binaries against that schema, overwrite keys, or delete data volumes.
-            subprocess.run(["systemctl", "--user", "disable", "--now", unit(candidate)], check=False)
-            compose(candidate, "stop", "app")
+            try:
+                configure_app_restarts(candidate, False)
+            finally:
+                subprocess.run(["systemctl", "--user", "disable", "--now", unit(candidate)], check=False)
+                compose(candidate, "stop", "app")
             raise
 
 

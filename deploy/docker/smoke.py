@@ -85,6 +85,13 @@ def verify_orphaned_volume(root: Path, bundle: Path) -> None:
         manage.run(['docker', 'volume', 'rm', volume], capture=True)
 
 
+def verify_app_restart(config: dict, expected: str) -> None:
+    container = manage.compose(config, 'ps', '--all', '--quiet', 'app', capture=True)
+    assert container and '\n' not in container
+    policy = manage.run(['docker', 'inspect', '--format', '{{.HostConfig.RestartPolicy.Name}}', container], capture=True)
+    assert policy == expected, (policy, expected)
+
+
 def exercise(root: Path, image: str, revision: str) -> None:
     installation = root / "installation with spaces [native] %n $HOME"
     web_port, database_port = ports()
@@ -92,10 +99,16 @@ def exercise(root: Path, image: str, revision: str) -> None:
     two = make_bundle(root, "v0.0.0-ci.2", revision, image)
     three = make_bundle(root, "v0.0.0-ci.3", revision, image)
     verify_orphaned_volume(root, one)
+    overlapping = root / 'overlapping-installation'
+    invoke(one, 'deploy', overlapping, '--port', str(web_port), '--database-port', str(database_port),
+           '--codex-home', str(overlapping / 'data/state/native'), succeeds=False)
+    assert not (overlapping / 'installation.json').exists()
+    assert not (overlapping / 'data').exists()
     try:
         invoke(one, "deploy", installation, "--port", str(web_port), "--database-port", str(database_port),
                "--codex-home", str(root / "native-home"))
         original = manage.configuration(installation)
+        verify_app_restart(original, 'unless-stopped')
         verify_native_sandbox(root, original)
         key = fingerprint(installation)
         assert manage.sql(original, "SELECT extversion FROM pg_extension WHERE extname='pgmq'") == "1.10.0"
@@ -147,9 +160,16 @@ def exercise(root: Path, image: str, revision: str) -> None:
         assert active.returncode != 0
         enabled = subprocess.run(['systemctl', '--user', 'is-enabled', manage.unit(updated)], capture_output=True, text=True, check=False)
         assert enabled.returncode != 0 and enabled.stdout.strip() == 'disabled'
+        verify_app_restart(updated, 'no')
         override.unlink()
+        # Reproduce the window after a candidate starts but before activation.
+        # It must not gain daemon-start/automatic restart behavior while pending.
+        manage.compose(pending['target'], 'up', '-d', '--wait', '--wait-timeout', '120', 'app')
+        verify_app_restart(pending['target'], 'no')
+        manage.compose(pending['target'], 'stop', 'app')
         invoke(three, "apply-update", installation)
         latest = manage.configuration(installation)
+        verify_app_restart(latest, 'unless-stopped')
         assert latest["version"] == "v0.0.0-ci.3"
         assert not (installation / "pending.json").exists()
         assert len(list((installation / "backups").iterdir())) == 2

@@ -22,7 +22,7 @@ services:
   app:
     image: ${APP_IMAGE:?release manifest is required}
     user: "${HOST_UID:?}:${HOST_GID:?}"
-    restart: unless-stopped
+    restart: ${APP_RESTART_POLICY:-no}
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

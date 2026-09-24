@@ -165,6 +165,53 @@ class DeploymentBoundaryTests(unittest.TestCase):
                 self.assertFalse((root / 'native').exists())
 
 
+class RestartAndLayoutTests(unittest.TestCase):
+    def test_codex_home_overlap_is_rejected_before_identity_or_state_creation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            root = parent / 'installation'
+            alias = parent / 'native-alias'
+            alias.symlink_to(root / 'data/state/native')
+            for native in (root, root / 'data/state', root / 'data/state/native', root / 'backups/native', parent, alias):
+                args = argparse.Namespace(port=18081, database_port=55432, codex_home=str(native))
+                with self.subTest(native=native), patch.object(manage, 'manifest', return_value=metadata()), patch.object(
+                    manage, 'preflight'
+                ), patch.object(manage, 'validate_ports'), patch.object(manage, 'require_new_docker_project') as project:
+                    with self.assertRaisesRegex(ValueError, 'CODEX_HOME must be separate'):
+                        manage.deploy(root, args)
+                    project.assert_not_called()
+                self.assertFalse((root / 'installation.json').exists())
+                self.assertFalse((root / 'pending.json').exists())
+                self.assertFalse((root / 'data').exists())
+                self.assertFalse((root / 'backups').exists())
+
+    def test_compose_disables_restarts_for_initial_or_pending_candidates(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(manage, 'run', return_value='') as command:
+            root = Path(temporary)
+            config = {**metadata(), 'root': str(root), 'project': 'restart-test', 'password': os.urandom(16).hex(),
+                      'port': 18081, 'database_port': 55432, 'uid': os.getuid(), 'gid': os.getgid(),
+                      'codex_home': str(root.parent / 'native'), 'bundle': str(root / 'bundle')}
+            manage.compose(config, 'config', '--quiet')
+            self.assertEqual(command.call_args.kwargs['env']['APP_RESTART_POLICY'], 'no')
+            (root / 'current').symlink_to(root / 'releases/v1.2.3')
+            manage.compose(config, 'config', '--quiet')
+            self.assertEqual(command.call_args.kwargs['env']['APP_RESTART_POLICY'], 'unless-stopped')
+            manage.save(root / 'pending.json', {'operation': 'update'})
+            manage.compose(config, 'config', '--quiet')
+            self.assertEqual(command.call_args.kwargs['env']['APP_RESTART_POLICY'], 'no')
+
+    def test_restart_policy_changes_only_the_selected_app_container(self):
+        with patch.object(manage, 'compose', return_value='app-container-id') as compose, patch.object(manage, 'run') as command:
+            manage.configure_app_restarts({}, False)
+            command.assert_called_with(['docker', 'update', '--restart=no', 'app-container-id'], capture=True)
+            manage.configure_app_restarts({}, True)
+            command.assert_called_with(['docker', 'update', '--restart=unless-stopped', 'app-container-id'], capture=True)
+            compose.assert_called_with({}, 'ps', '--all', '--quiet', 'app', capture=True)
+            compose.return_value = ''
+            with self.assertRaisesRegex(ValueError, 'exactly one'):
+                manage.configure_app_restarts({}, True)
+
+
 class NativeDeploymentTests(unittest.TestCase):
     def test_environment_file_path_escapes_globs_only(self):
         path = Path(r'/tmp/部署 [one]*?\part %n $HOME/worker.env')
@@ -308,6 +355,7 @@ class UpdateTests(unittest.TestCase):
         self.stack.enter_context(patch.object(manage, "manifest", return_value=metadata("v1.0.1")))
         self.stack.enter_context(patch.object(manage, "verify_console"))
         self.stack.enter_context(patch.object(manage, "start_worker", side_effect=lambda c: self.events.append("worker-start")))
+        self.stack.enter_context(patch.object(manage, 'configure_app_restarts', side_effect=lambda c, enabled: self.events.append(('app-restarts', c['version'], enabled))))
         self.stack.enter_context(patch.object(manage, "run", side_effect=lambda *a, **k: self.events.append(tuple(a[0]))))
         self.stack.enter_context(patch.object(manage.subprocess, "run"))
         self.stack.enter_context(patch.object(manage, "compose", side_effect=self.compose))
@@ -336,6 +384,43 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse((self.root / "pending.json").exists())
         self.assertIn(('systemctl', '--user', 'disable', '--now', manage.unit(self.old)), self.events)
         self.assertIn(('systemctl', '--user', 'enable', '--now', manage.unit(self.old)), self.events)
+
+    def test_worker_shutdown_failure_restores_old_services_before_migration(self):
+        def command(args, **kwargs):
+            self.events.append(tuple(args))
+            if args[2:4] == ['disable', '--now']:
+                raise subprocess.CalledProcessError(1, args)
+        with patch.object(manage, 'run', side_effect=command), self.assertRaises(subprocess.CalledProcessError):
+            manage.apply_update(self.root)
+        self.assertIn((self.old['version'], 'up', '-d', '--wait', '--wait-timeout', '120', 'app'), self.events)
+        self.assertIn(('systemctl', '--user', 'enable', '--now', manage.unit(self.old)), self.events)
+        self.assertIn(('app-restarts', self.old['version'], True), self.events)
+        self.backup_call.assert_not_called()
+        self.assertFalse(any('migrate' in event for event in self.events))
+        self.assertFalse((self.root / 'pending.json').exists())
+        self.assertEqual(manage.configuration(self.root), self.old)
+
+    def test_app_shutdown_failure_also_restores_both_old_services(self):
+        def operation(config, *args, **kwargs):
+            if args == ('stop', 'app'):
+                raise subprocess.CalledProcessError(1, ['docker', 'compose', 'stop', 'app'])
+            return self.compose(config, *args, **kwargs)
+        with patch.object(manage, 'compose', side_effect=operation), self.assertRaises(subprocess.CalledProcessError):
+            manage.apply_update(self.root)
+        self.assertIn(('systemctl', '--user', 'enable', '--now', manage.unit(self.old)), self.events)
+        self.assertIn(('app-restarts', self.old['version'], True), self.events)
+        self.assertFalse(any('migrate' in event for event in self.events))
+        self.backup_call.assert_not_called()
+
+    def test_pending_shutdown_failure_never_restarts_the_old_release(self):
+        manage.save(self.root / 'pending.json', {'operation': 'update', 'previous': self.old,
+                                               'target': self.new, 'backup': str(self.backup)})
+        with patch.object(manage, 'run', side_effect=subprocess.CalledProcessError(1, ['systemctl', 'disable'])), self.assertRaises(subprocess.CalledProcessError):
+            manage.apply_update(self.root)
+        self.assertFalse(any('up' in event or 'worker-start' == event for event in self.events))
+        self.assertNotIn(('app-restarts', self.old['version'], True), self.events)
+        self.assertTrue((self.root / 'pending.json').exists())
+        self.backup_call.assert_not_called()
 
     def test_broken_success_output_does_not_stop_an_activated_release(self):
         with patch.object(manage, 'print', side_effect=BrokenPipeError(), create=True), patch.object(manage.sys, 'stdout', io.StringIO()):
