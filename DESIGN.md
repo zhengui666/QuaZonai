@@ -19,6 +19,10 @@ Compose 建立 bridge application 网络，app 通过服务名 database 连接 P
 
 运行命令见 [OPERATIONS](OPERATIONS.md#container-install)，部署包独立说明见 [deploy/docker/README](deploy/docker/README.md)。执行结果只记 PR、CI 与单一任务记录，不在本合同虚报已发布镜像。
 
+原生 Codex 发布保持可执行文件相邻的 `codex-resources/` 完整资源目录，包含锁定上游的 `bwrap`；主机提取同样保留该布局。版本字符串不证明沙箱可运行，Container 验收须在空 HOME/CODEX_HOME 和不含系统 bwrap 的 PATH 下，用实际发布二进制运行无模型调用的沙箱命令。只为 CI 临时路径加载 userns 测试策略并在退出时移除，不改用户主机安全策略、不新增产品权限系统。
+
+首次保存安装身份前拒绝 systemd 无法执行或 PATH 无法表达的目录（控制字符、冒号、双引号、反斜杠）。允许空格、Unicode、百分号和方括号：WorkingDirectory 使用原生路径，EnvironmentFile 另做 glob 字符转义，ExecStart 沿用原生参数引用。对提取后的候选版本先执行 `systemd-analyze --user verify`，不在停止旧版本后才发现无效单元。升级前停止并禁用旧 Worker，迁移后失败保持禁用，避免主机重启自动拉起旧代码访问新 schema；迁移前备份失败恢复原服务及启用状态，候选只在启动检查通过的激活阶段重新启用。
+
 ## Polymarket 原生研究与组合
 
 原生 BinaryOption 研究使用 POLYMARKET、原 condition/token 身份、原抵押币和

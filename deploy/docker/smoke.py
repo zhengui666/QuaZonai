@@ -46,8 +46,30 @@ def fingerprint(root: Path) -> str:
     return hashlib.sha256((root / "data/state/master.key").read_bytes()).hexdigest()
 
 
+def verify_native_sandbox(root: Path, config: dict) -> None:
+    binaries = Path(config['root']) / 'releases' / config['version'] / 'bin'
+    with tempfile.TemporaryDirectory(prefix='sandbox-probe-', dir=root) as temporary:
+        home = Path(temporary)
+        (home / 'codex-home').mkdir()
+        # An empty native home and a PATH without system bwrap force the packaged
+        # helper to be exercised. This executes no model and uses no real account.
+        environment = {
+            'HOME': str(home), 'CODEX_HOME': str(home / 'codex-home'),
+            'PATH': str(binaries), 'LANG': 'C.UTF-8',
+        }
+        result = subprocess.run(
+            [str(binaries / 'codex'), '--disable', 'use_legacy_landlock',
+             '-c', 'sandbox_mode="read-only"', 'sandbox', '--', '/usr/bin/true'],
+            cwd=home, env=environment, capture_output=True, text=True, timeout=60, check=False,
+        )
+        if result.returncode != 0:
+            print(result.stdout[-8000:], file=sys.stderr)
+            print(result.stderr[-8000:], file=sys.stderr)
+            raise AssertionError(f'Packaged Codex sandbox failed: {result.returncode}')
+
+
 def exercise(root: Path, image: str, revision: str) -> None:
-    installation = root / "installation with spaces %n $HOME"
+    installation = root / "installation with spaces [native] %n $HOME"
     web_port, database_port = ports()
     one = make_bundle(root, "v0.0.0-ci.1", revision, image)
     two = make_bundle(root, "v0.0.0-ci.2", revision, image)
@@ -56,6 +78,7 @@ def exercise(root: Path, image: str, revision: str) -> None:
         invoke(one, "deploy", installation, "--port", str(web_port), "--database-port", str(database_port),
                "--codex-home", str(root / "native-home"))
         original = manage.configuration(installation)
+        verify_native_sandbox(root, original)
         key = fingerprint(installation)
         assert manage.sql(original, "SELECT extversion FROM pg_extension WHERE extname='pgmq'") == "1.10.0"
         manage.sql(original, "CREATE TABLE public.container_release_smoke (value text PRIMARY KEY); "
@@ -97,6 +120,8 @@ def exercise(root: Path, image: str, revision: str) -> None:
         assert manage.compose(updated, "ps", "--status", "running", "-q", "app", capture=True) == ""
         active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", manage.unit(updated)], check=False)
         assert active.returncode != 0
+        enabled = subprocess.run(['systemctl', '--user', 'is-enabled', manage.unit(updated)], capture_output=True, text=True, check=False)
+        assert enabled.returncode != 0 and enabled.stdout.strip() == 'disabled'
         override.unlink()
         invoke(three, "apply-update", installation)
         latest = manage.configuration(installation)
@@ -149,7 +174,7 @@ def main() -> None:
     args = parser.parse_args()
     os.umask(0o077)
     image = manage.run(["docker", "image", "inspect", "--format", "{{.Id}}", args.image], capture=True)
-    with tempfile.TemporaryDirectory(prefix="quazonai-container-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="quazonai-container-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         exercise(Path(temporary), image, args.revision)
 
 

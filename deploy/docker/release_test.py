@@ -110,7 +110,7 @@ class InstallationInputTests(unittest.TestCase):
 
     def test_systemd_paths_are_literal_but_exec_is_quoted(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / 'installation with spaces %n $HOME "quoted"'
+            root = Path(temporary) / 'installation with spaces %n $HOME'
             root.mkdir()
             config = {**metadata(), "root": str(root), "project": "release-unit-test", "password": os.urandom(16).hex(),
                       "database_port": 55432, "port": 8081, "home": str(root), "codex_home": str(root / "native"),
@@ -125,6 +125,70 @@ class InstallationInputTests(unittest.TestCase):
             for path in (Path("relative"), Path("/bad\npath")):
                 with self.assertRaises(ValueError):
                     manage.unit_path(path)
+
+
+class NativeDeploymentTests(unittest.TestCase):
+    def test_environment_file_path_escapes_globs_only(self):
+        path = Path(r'/tmp/部署 [one]*?\part %n $HOME/worker.env')
+        self.assertEqual(manage.unit_path(path), str(path).replace('%', '%%'))
+        self.assertEqual(
+            manage.unit_path(path, environment_file=True),
+            r'/tmp/部署 \[one\]\*\?\\part %%n $HOME/worker.env',
+        )
+
+    def test_invalid_paths_fail_before_installation_identity_is_saved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ('bad\npath', 'bad\tpath', 'bad:path', 'bad"path', 'bad\\path'):
+                installation = root / name
+                args = argparse.Namespace(port=18081, database_port=55432, codex_home=str(root / 'native'))
+                with self.subTest(name=name), patch.object(manage, 'manifest', return_value=metadata()), patch.object(
+                    manage, 'preflight'
+                ), patch.object(manage, 'validate_ports'), patch.object(manage, 'prepare') as prepare:
+                    with self.assertRaises(ValueError):
+                        manage.deploy(installation, args)
+                    prepare.assert_not_called()
+                self.assertFalse((installation / 'installation.json').exists())
+                self.assertFalse((installation / 'pending.json').exists())
+                self.assertFalse((root / 'native').exists())
+
+    def test_native_package_requires_executable_sandbox_resource(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(manage, 'run') as command:
+            binaries = Path(temporary)
+            helper = binaries / 'codex-resources/bwrap'
+            with self.assertRaisesRegex(ValueError, 'sandbox resource'):
+                manage.verify_native_binaries(binaries)
+            command.assert_not_called()
+            helper.parent.mkdir()
+            helper.write_bytes(b'test-only package entry; never executed')
+            helper.chmod(0o600)
+            with self.assertRaisesRegex(ValueError, 'sandbox resource'):
+                manage.verify_native_binaries(binaries)
+            command.assert_not_called()
+            helper.chmod(0o755)
+            manage.verify_native_binaries(binaries)
+            self.assertEqual([call.args[0] for call in command.call_args_list], [
+                [str(binaries / 'server'), '--version'], [str(binaries / 'codex'), '--version'],
+                [str(helper), '--version'],
+            ])
+
+    def test_native_unit_validation_uses_exact_future_unit_without_installing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = {**metadata(), 'root': str(root / 'install [one]'), 'project': 'unit-validation-test'}
+            observed = []
+            def inspect(args):
+                self.assertEqual(args[:3], ['systemd-analyze', '--user', 'verify'])
+                path = Path(args[3])
+                self.assertEqual(path.name, manage.unit(config))
+                self.assertEqual(path.read_text(), manage.worker_unit_text(config))
+                observed.append(path)
+                raise subprocess.CalledProcessError(1, args)
+            with patch.object(manage, 'run', side_effect=inspect), self.assertRaises(subprocess.CalledProcessError):
+                manage.verify_worker_unit(config)
+            self.assertEqual(len(observed), 1)
+            self.assertFalse(observed[0].exists())
+            self.assertEqual(list(root.iterdir()), [])
 
 
 class GitSelectionTests(unittest.TestCase):
@@ -232,6 +296,16 @@ class UpdateTests(unittest.TestCase):
         self.assertTrue(any("up" in event for event in self.events))
         self.assertFalse(any("migrate" in event for event in self.events))
         self.assertFalse((self.root / "pending.json").exists())
+        self.assertIn(('systemctl', '--user', 'disable', '--now', manage.unit(self.old)), self.events)
+        self.assertIn(('systemctl', '--user', 'enable', '--now', manage.unit(self.old)), self.events)
+
+    def test_prepare_failure_keeps_existing_services_and_backup_untouched(self):
+        with patch.object(manage, 'prepare', side_effect=ValueError('invalid future user unit')):
+            with self.assertRaises(ValueError):
+                manage.apply_update(self.root)
+        self.assertEqual(self.events, [])
+        self.backup_call.assert_not_called()
+        self.assertEqual(manage.configuration(self.root), self.old)
 
     def test_migration_failure_stays_stopped_and_retry_keeps_original_backup(self):
         self.fail_migration = True
@@ -241,12 +315,16 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse(any("up" in event for event in self.events))
         self.assertEqual(manage.configuration(self.root), self.old)
         self.assertTrue((self.root / "pending.json").exists())
+        disabled = ('systemctl', '--user', 'disable', '--now', manage.unit(self.old))
+        self.assertLess(self.events.index(disabled), next(i for i, event in enumerate(self.events) if 'migrate' in event))
+        self.assertFalse(any('enable' in event for event in self.events))
         self.fail_migration = False
         manage.apply_update(self.root)
         self.assertEqual(manage.configuration(self.root), self.new)
         self.assertFalse((self.root / "pending.json").exists())
         self.assertEqual(self.backup_call.call_count, 1)
         self.assertIn("worker-start", self.events)
+        self.assertGreater(self.events.index(('systemctl', '--user', 'enable', manage.unit(self.new))), self.events.index('worker-start'))
 
 
 if __name__ == "__main__":

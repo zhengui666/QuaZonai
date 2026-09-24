@@ -15,6 +15,9 @@ RUN npm ci --ignore-scripts --no-audit --no-fund \
  && mkdir /bin-release \
  && cp node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/* /bin-release/ \
  && cp node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path/* /bin-release/ \
+ && cp -R node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-resources /bin-release/codex-resources \
+ && test -x /bin-release/codex-resources/bwrap \
+ && /bin-release/codex-resources/bwrap --version \
  && /bin-release/codex --version
 
 FROM rust:1.98.1-bookworm AS server

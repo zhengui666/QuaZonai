@@ -98,7 +98,7 @@ def preflight() -> None:
         raise ValueError("Run as the Linux user who owns Codex, not with sudo.")
     if not Path("/sys/fs/cgroup/cgroup.controllers").is_file():
         raise ValueError("Native Missions require cgroup v2.")
-    for binary in ("docker", "systemctl", "systemd-run", "prlimit", "git", "rg"):
+    for binary in ("docker", "systemctl", "systemd-run", "systemd-analyze", "prlimit", "git", "rg"):
         if not shutil.which(binary):
             raise ValueError(f"Required executable is missing: {binary}")
     host = os.environ.get("DOCKER_HOST")
@@ -163,6 +163,7 @@ def require_idle(config: dict) -> None:
 
 
 def prepare(bundle: Path, config: dict) -> dict:
+    validate_configuration_paths(config)
     release = manifest(bundle)
     destination = Path(config["root"]) / "releases" / release["version"]
     stored = destination / "deployment"
@@ -192,12 +193,15 @@ def prepare(bundle: Path, config: dict) -> dict:
             run(["docker", "cp", f"{container}:/opt/quazonai/bin/.", str(temporary)])
             # Run before stopping the old release: host shared-library incompatibility
             # must not take an existing installation offline.
-            run([str(temporary / "server"), "--version"])
-            run([str(temporary / "codex"), "--version"])
+            verify_native_binaries(temporary)
             temporary.rename(binaries)
         finally:
             run(["docker", "rm", container], capture=True)
-    return {**config, **release, "bundle": str(stored)}
+    else:
+        verify_native_binaries(binaries)
+    candidate = {**config, **release, "bundle": str(stored)}
+    verify_worker_unit(candidate)
+    return candidate
 
 
 def quote(value: str, *, specifiers: bool = True) -> str:
@@ -213,14 +217,57 @@ def unit(config: dict) -> str:
     return config["project"] + ".service"
 
 
-def unit_path(path: Path) -> str:
+def unit_path(path: Path, *, environment_file: bool = False) -> str:
     value = str(path)
-    if not path.is_absolute() or any(x in value for x in "\n\r\x00"):
-        raise ValueError("systemd paths must be absolute single-line paths.")
-    # WorkingDirectory and EnvironmentFile parse one literal path, not shell
-    # words. Only systemd specifiers are expanded; quoting would become part of
-    # the filename. ExecStart and EnvironmentFile contents use quote instead.
-    return value.replace("%", "%%")
+    if not path.is_absolute() or any(ord(x) < 32 or ord(x) == 127 for x in value):
+        raise ValueError("systemd paths must be absolute and contain no control characters.")
+    # These directives do not strip shell quotes. EnvironmentFile additionally
+    # expands globs; escape metacharacters there without changing WorkingDirectory.
+    value = value.replace("%", "%%")
+    if environment_file:
+        value = "".join("\\" + x if x in "\\*?[]" else x for x in value)
+    return value
+
+
+def validate_configuration_paths(config: dict) -> None:
+    for name in ("root", "home", "codex_home", "unit_directory"):
+        unit_path(Path(config[name]))
+    if any(x in config["root"] for x in (':', '"', '\\')):
+        raise ValueError("Installation directory cannot contain colon, double quote or backslash; PATH and systemd cannot represent its executable location.")
+    for name in ("home", "codex_home", "path"):
+        quote(config[name], specifiers=False)
+
+
+def worker_unit_text(config: dict) -> str:
+    root = Path(config["root"])
+    binary = root / "releases" / config["version"] / "bin/server"
+    return (
+        "[Unit]\nDescription=QuaZonai native Worker for the container deployment\n"
+        "[Service]\nType=simple\nUMask=0077\n"
+        f"WorkingDirectory={unit_path(root / 'data')}\n"
+        f"EnvironmentFile={unit_path(root / 'worker.env', environment_file=True)}\n"
+        f"ExecStart=:{quote(str(binary))} worker\n"
+        "Restart=on-failure\nRestartSec=3\nTimeoutStopSec=90\n"
+        "[Install]\nWantedBy=default.target\n"
+    )
+
+
+def verify_worker_unit(config: dict) -> None:
+    # Parse the exact future unit before any running release is stopped. This
+    # writes only a temporary file; it neither installs nor starts a user service.
+    with tempfile.TemporaryDirectory(prefix="quazonai-unit-") as temporary:
+        path = Path(temporary) / unit(config)
+        path.write_text(worker_unit_text(config))
+        run(["systemd-analyze", "--user", "verify", str(path)])
+
+
+def verify_native_binaries(directory: Path) -> None:
+    helper = directory / "codex-resources/bwrap"
+    if not helper.is_file() or not os.access(helper, os.X_OK):
+        raise ValueError("Native release is missing the executable Codex sandbox resource.")
+    run([str(directory / "server"), "--version"])
+    run([str(directory / "codex"), "--version"])
+    run([str(helper), "--version"])
 
 
 def start_worker(config: dict) -> None:
@@ -240,17 +287,10 @@ def start_worker(config: dict) -> None:
             stream.write(name + "=" + quote(value, specifiers=False) + "\n")
     units = Path(config["unit_directory"])
     units.mkdir(parents=True, exist_ok=True)
-    (units / unit(config)).write_text(
-        "[Unit]\nDescription=QuaZonai native Worker for the container deployment\n"
-        "[Service]\nType=simple\nUMask=0077\n"
-        f"WorkingDirectory={unit_path(root / 'data')}\n"
-        f"EnvironmentFile={unit_path(root / 'worker.env')}\n"
-        f"ExecStart=:{quote(str(binary))} worker\n"
-        "Restart=on-failure\nRestartSec=3\nTimeoutStopSec=90\n"
-        "[Install]\nWantedBy=default.target\n"
-    )
+    (units / unit(config)).write_text(worker_unit_text(config))
     run(["systemctl", "--user", "daemon-reload"])
-    run(["systemctl", "--user", "enable", "--now", unit(config)])
+    # Activation enables boot-time startup only after the candidate checks pass.
+    run(["systemctl", "--user", "start", unit(config)])
     verify_worker(config)
 
 
@@ -296,6 +336,7 @@ def activate(root: Path, config: dict) -> None:
     link.unlink(missing_ok=True)
     link.symlink_to(root / "releases" / config["version"], target_is_directory=True)
     os.replace(link, root / "current")
+    run(["systemctl", "--user", "enable", unit(config)])
     (root / "pending.json").unlink(missing_ok=True)
     print(f'Active release {config["version"]}: http://localhost:{config["port"]}')
 
@@ -340,7 +381,6 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
             validate_ports(args.port, args.database_port, available=True)
             home = Path.home()
             codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME", str(home / ".codex"))).expanduser().resolve()
-            codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
             config = {
                 **release, "root": str(root), "uid": os.getuid(), "gid": os.getgid(),
                 "home": str(home), "codex_home": str(codex_home), "path": os.environ.get("PATH", os.defpath),
@@ -348,6 +388,8 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
                 "port": args.port, "database_port": args.database_port, "password": secrets.token_hex(32),
                 "project": "quazonai-" + hashlib.sha256(str(root).encode()).hexdigest()[:12],
             }
+            validate_configuration_paths(config)
+            codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
             # Persist ownership and credentials before downloading or creating any state.
             config["bundle"] = str(BUNDLE)
             save(root / "installation.json", config)
@@ -364,7 +406,7 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
             activate(root, config)
         except Exception:
             # Keep a partial installation and its credentials available for retry.
-            subprocess.run(["systemctl", "--user", "stop", unit(config)], check=False)
+            subprocess.run(["systemctl", "--user", "disable", "--now", unit(config)], check=False)
             compose(config, "stop", "app")
             raise
 
@@ -391,14 +433,17 @@ def apply_update(root: Path) -> None:
             require_idle(old)
         # Stop admissions first, then the worker, then repeat the observation.
         compose(old, "stop", "app")
-        run(["systemctl", "--user", "stop", unit(old)])
+        # A stopped but enabled old Worker would restart on reboot against a
+        # possibly forward-migrated database. Keep this installation disabled
+        # until the candidate reaches successful activation.
+        run(["systemctl", "--user", "disable", "--now", unit(old)])
         if not pending:
             try:
                 require_idle(old)
                 recovery = backup(old)
             except Exception:
                 compose(old, "up", "-d", "--wait", "--wait-timeout", "120", "app")
-                run(["systemctl", "--user", "start", unit(old)])
+                run(["systemctl", "--user", "enable", "--now", unit(old)])
                 raise
             pending = {"operation": "update", "previous": old, "target": candidate, "backup": str(recovery)}
             save(pending_file, pending)
@@ -414,7 +459,7 @@ def apply_update(root: Path) -> None:
         except Exception:
             # A forward migration may have committed. Never automatically run old
             # binaries against that schema, overwrite keys, or delete data volumes.
-            subprocess.run(["systemctl", "--user", "stop", unit(candidate)], check=False)
+            subprocess.run(["systemctl", "--user", "disable", "--now", unit(candidate)], check=False)
             compose(candidate, "stop", "app")
             raise
 

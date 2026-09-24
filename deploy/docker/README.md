@@ -6,7 +6,7 @@ Native Missions use Linux systemd user scopes and cgroup v2. The installer extra
 
 ## Prerequisites
 
-Use the existing Linux x86_64 user who owns Codex. Install local Docker Engine, Docker Compose 2.20+, Python 3.10+, systemd, Git, ripgrep and util-linux (`prlimit`). Host executables must support the image's Debian 12 ABI, including glibc 2.36+ and OpenSSL 3. The installer checks the extracted executables before stopping an installed release. Rust and Node.js are not required on the deployment host.
+Use the existing Linux x86_64 user who owns Codex. Install local Docker Engine, Docker Compose 2.20+, Python 3.10+, systemd (including `systemd-analyze`), Git, ripgrep and util-linux (`prlimit`). Host executables must support the image's Debian 12 ABI, including glibc 2.36+ and OpenSSL 3. The installer checks extracted executables, the bundled `codex-resources/bwrap` helper and the generated user unit before stopping an installed release. Native Codex sandbox execution also requires Linux user namespace support; installing successfully is not an account or scientific Runtime readiness result. Rust and Node.js are not required on the deployment host.
 
 Docker must be available to that user through a local Unix socket. A remote Docker context or Docker Desktop VM cannot share the native user manager/cgroup paths. Enable the persistent user manager once:
 
@@ -26,7 +26,7 @@ bash deploy.sh
 
 The default directory is `$HOME/.local/share/quazonai`, browser address is `http://localhost:8081`, and database port is `127.0.0.1:55432`. Both published ports are bound to host loopback. The image contains the compiled frontend and Caddy; it does not run Vite or compile sources at startup.
 
-Override only the initial installation parameters when needed:
+Override only the initial installation parameters when needed. The installation path may contain spaces, Unicode, percent signs and brackets, but cannot contain control characters, colons, double quotes or backslashes: systemd executable paths and PATH cannot represent those locations reliably. Invalid paths are rejected before installation identity or credentials are saved.
 
 ```sh
 bash deploy.sh --directory "$HOME/.local/share/quazonai" \
@@ -66,6 +66,6 @@ For initial-installation failures before `current` exists, run the extracted bun
 
 Before migration, the updater writes a new `backups/<timestamp>-<id>/` directory containing `database.dump`, `data.tar.gz`, `installation.json` and the separate `master.key`. Copy backups to another storage device, and keep the master-key copy in separate protected storage; separate files on the same disk are not independent disaster recovery. Native Codex history/authentication and independent Runtime catalogs/journals remain in their original locations and need their own coordinated backups.
 
-A backup failure before migration restarts the previous application/Worker. A migration or startup failure after the recovery point leaves application processes stopped and records `pending.json`; the database, original recovery point and keys remain. Correct the cause and retry the **same target version**. Never start an older executable against a possibly newer schema. Restoring a previous schema requires an explicit cold restore of its matching database, application state and key, followed by the repository's native access/session reconciliation procedure.
+A backup failure before migration restarts the previous application/Worker and restores its boot-time startup. Before migration, the old Worker unit is stopped and disabled so a host reboot cannot launch it against a forward-migrated database. A migration or startup failure after the recovery point leaves application processes stopped, the Worker disabled and `pending.json` present; the database, original recovery point and keys remain. The candidate Worker is enabled again only during successful activation after its startup checks. Correct the cause and retry the **same target version**. Never start an older executable against a possibly newer schema. Restoring a previous schema requires an explicit cold restore of its matching database, application state and key, followed by the repository's native access/session reconciliation procedure.
 
 Deployment-specific Runtime/downstream target arrays can be stored as `runtime_targets` and `downstream_targets` in the private installation manifest. A local `compose.override.yaml` is retained across version updates for concrete runtime socket/catalog mounts. Preserve the original absolute paths and endpoint contracts. Container loopback is not host loopback: host-native Runtime sockets must be mounted into the app, or use a genuinely reachable configured endpoint. Empty target arrays do not provision a scientific Runtime or imply scientific readiness.
