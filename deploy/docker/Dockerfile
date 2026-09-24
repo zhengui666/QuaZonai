@@ -38,7 +38,11 @@ COPY --from=server /out/server /opt/quazonai/bin/server
 COPY --from=codex /bin-release/ /opt/quazonai/bin/
 COPY --from=codex /build/node_modules/@openai/codex/ /usr/share/doc/quazonai/codex/
 COPY --from=web /build/apps/web/dist/ /opt/quazonai/web/
-COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
+COPY --from=caddy /usr/bin/caddy /tmp/caddy
+# The upstream Caddy image grants its binary a privileged-port file capability.
+# Compose deliberately uses no-new-privileges, so install a plain executable copy;
+# QuaZonai only listens on unprivileged port 8081 and does not need that capability.
+RUN install -m 0755 /tmp/caddy /usr/bin/caddy && rm /tmp/caddy
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/quazonai/
 COPY deploy/docker/Caddyfile /opt/quazonai/Caddyfile
 COPY --chmod=755 deploy/docker/entrypoint.sh /opt/quazonai/entrypoint.sh
