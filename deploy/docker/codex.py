@@ -97,6 +97,24 @@ def build(config: dict, target: str, bundle: Path) -> str:
                     '--security-opt', 'no-new-privileges:true', candidate, '--version', capture=True)
     if actual != 'codex-cli ' + target:
         raise ValueError('The built Codex executable does not match the requested version.')
+    uid, gid = config.get('uid', 1000), config.get('gid', 1000)
+    try:
+        # Exercise the actual nested namespace sandbox, not just its version.
+        # No native home, account, host workspace or provider request is involved.
+        docker(config, 'run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+               '--security-opt', 'no-new-privileges:true', '--security-opt', 'seccomp=unconfined',
+               '--security-opt', 'apparmor=unconfined', '--user', f'{uid}:{gid}',
+               '--pids-limit', '128', '--memory', '512m', '--memory-swap', '512m',
+               '--tmpfs', f'/home/codex:rw,nosuid,nodev,mode=700,uid={uid},gid={gid},size=64m',
+               '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m', '--env', 'CODEX_HOME=/home/codex',
+               '--entrypoint', '/usr/bin/timeout', candidate, '--signal=KILL', '30',
+               '/opt/codex/bin/codex', '--disable', 'use_legacy_landlock',
+               '-c', 'sandbox_mode="read-only"', 'sandbox', '--', '/usr/bin/true')
+    except subprocess.CalledProcessError as error:
+        raise ValueError('Candidate Codex sandbox failed; the installed image/version was not changed. '
+                         'On hosts restricting user namespaces with AppArmor, have an administrator install '
+                         'and load this bundle\'s codex.apparmor as described in README.md, then retry. '
+                         'Do not disable host-wide user-namespace policy or the Codex sandbox.') from error
     return candidate
 
 

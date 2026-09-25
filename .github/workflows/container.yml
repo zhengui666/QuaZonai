@@ -50,6 +50,7 @@ jobs:
       - name: Execute the packaged native sandbox without credentials or model calls
         run: |
           set -euo pipefail
+          sudo apparmor_parser -r deploy/docker/codex.apparmor
           docker run --rm --cap-drop ALL --security-opt no-new-privileges \
             --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
             --tmpfs /home/codex/.codex:uid=1000,gid=1000,mode=700 \
@@ -64,7 +65,9 @@ jobs:
           cargo test --locked -p server --features codex-container --test codex_container -- --test-threads=1
       - name: Remove only this test image's remaining containers
         if: always()
-        run: docker ps --all --quiet --filter "label=io.quazonai.codex.image=$CODEX_CONTAINER_TEST_IMAGE" | xargs --no-run-if-empty docker rm --force
+        run: |
+          docker ps --all --quiet --filter "label=io.quazonai.codex.image=$CODEX_CONTAINER_TEST_IMAGE" | xargs --no-run-if-empty docker rm --force
+          sudo apparmor_parser -R deploy/docker/codex.apparmor
   build-smoke:
     name: Container / install, update and recovery
     runs-on: ubuntu-24.04

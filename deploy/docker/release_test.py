@@ -46,6 +46,8 @@ class ManifestTests(unittest.TestCase):
             manage.unpack((root / "assets/quazonai-deploy.tar.gz").read_bytes(), root / "unpacked")
             self.assertEqual({x.name for x in (root / "unpacked").iterdir()}, manage.BUNDLE_FILES)
             self.assertEqual(manage.manifest(root / "unpacked"), metadata())
+            self.assertEqual((root / 'unpacked/codex.apparmor').read_text(),
+                             (manage.BUNDLE / 'codex.apparmor').read_text())
 
     def test_scripts_parse(self):
         for path in manage.BUNDLE.glob("*.py"):

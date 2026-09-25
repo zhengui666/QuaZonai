@@ -78,6 +78,12 @@ mounts, old deployment-bundle migration, and release gating. Reuse the deploymen
 lock for the short startup critical section; do not create a new coordinator.
 Exact-head GitHub review and real Docker CI remain required before merge.
 
+The first real-container CI built and verified Codex 0.157.0, then exposed Ubuntu's
+AppArmor restriction on capabilities inside an unprivileged user namespace.
+Reuse the repository's existing narrowly attached `userns` profile pattern and
+add the same native sandbox preflight before candidate image switching. Keep
+non-root execution, dropped capabilities and no-new-privileges unchanged.
+
 <a id="delivery"></a>
 ## Delivery
 

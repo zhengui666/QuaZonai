@@ -73,6 +73,30 @@ class CodexTests(unittest.TestCase):
             ('image', 'tag', 'old-image', self.config['codex_image']),
         ])
 
+    def test_sandbox_failure_does_not_activate_a_version_only_candidate(self):
+        before = self.env.read_text()
+        image = 'sha256:' + 'a' * 64
+        def docker(config, *args, **kwargs):
+            if args[0] == 'build':
+                Path(args[args.index('--iidfile') + 1]).write_text(image)
+                return ''
+            if args[-1] == '--version':
+                return 'codex-cli 0.157.0'
+            self.assertIn('sandbox', args)
+            self.assertEqual(args[-1], '/usr/bin/true')
+            self.assertIn('no-new-privileges:true', args)
+            self.assertIn('--cap-drop', args)
+            self.assertNotIn('--privileged', args)
+            self.assertNotIn('--mount', args)
+            self.assertNotIn('--volume', args)
+            raise subprocess.CalledProcessError(1, ['docker', 'run'])
+        with patch.object(manage, 'configuration', return_value=self.config), patch.object(
+            codex, 'docker', side_effect=docker
+        ), patch.object(codex, 'switch') as switch, self.assertRaisesRegex(ValueError, 'codex.apparmor'):
+            codex.update(self.root, '0.157.0')
+        switch.assert_not_called()
+        self.assertEqual(self.env.read_text(), before)
+
     def test_unchanged_build_failure_does_not_reach_the_switch(self):
         before = self.env.read_text()
         with patch.object(manage, 'configuration', return_value=self.config), patch.object(

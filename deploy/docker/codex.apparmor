@@ -1,0 +1,8 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# Permit the official executable's own user-namespace sandbox on hosts that
+# restrict unprivileged user namespaces through AppArmor (for example Ubuntu 24.04).
+profile quazonai-codex /opt/codex/bin/codex flags=(unconfined) {
+  userns,
+}

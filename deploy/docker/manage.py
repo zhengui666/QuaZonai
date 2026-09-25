@@ -26,7 +26,7 @@ REPOSITORY = "zhengui666/QuaZonai"
 DATABASE_IMAGE = "ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6"
 BUNDLE = Path(__file__).resolve().parent
 BUNDLE_FILES = {"manage.py", "deploy.sh", "update.sh", "compose.yaml", "release.json", "README.md",
-                "codex.py", "codex-update.sh", "codex-login.sh", "Codex.Dockerfile", ".env.example"}
+                "codex.py", "codex-update.sh", "codex-login.sh", "Codex.Dockerfile", "codex.apparmor", ".env.example"}
 SEMVER = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 
 

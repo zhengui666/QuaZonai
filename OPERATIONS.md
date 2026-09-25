@@ -16,6 +16,8 @@ bash deploy.sh
 
 部署机使用 Linux x86_64、本机 Docker Engine / Compose ≥2.20、Python ≥3.10、systemd user manager / cgroup v2、Git、ripgrep 和 util-linux；以拥有 Codex 的现有用户运行，不使用 sudo。镜像中的原生 Worker 会安装至宿主机，需兼容 Debian 12 ABI（glibc ≥2.36、OpenSSL 3）；脚本在停旧服务前检查二进制。无需部署机安装 Rust 或 Node.js。私有 GHCR 包先执行 `docker login ghcr.io`，不要将凭据写入部署包。
 
+Ubuntu 等限制非特权 user namespace 的主机需由管理员加载部署包中限定 Codex 路径的 AppArmor profile；操作见[部署前置条件](deploy/docker/README.md#prerequisites)。候选镜像在切换前执行真实 sandbox 预检，权限不足会保留现用版本并报错，不关闭全局 user namespace 限制。
+
 脚本按 Release 中的 image digest 部署编译好的前端、Rust API、Caddy 和 PostgreSQL 18 / PGMQ；建立 Compose bridge 网络、持久数据库卷和独立状态目录。API/Caddy 同容器，Worker 使用同镜像提取的 server，以原用户 systemd 服务运行。Codex 按 `.env` 的版本从 Debian 基础镜像单独构建，API 登录／探测和 Worker Mission 都在独立 Codex 容器中运行，不使用宿主 Codex。默认目录 `$HOME/.local/share/quazonai`，网页 `http://localhost:8081`；网页和数据库端口只发布到宿主 loopback。独立科学 Runtime 及目录仍按其原运行合同配置。
 
 ChatGPT 登录通过部署包的设备码登录入口启动，在浏览器完成授权；完整 `CODEX_HOME` 独立持久保存，凭据由 Codex 自行写入和刷新。Codex 镜像可单独更新至最新或指定版本，不必发布整个 QuaZonai；使用[部署手册中的登录和更新入口](deploy/docker/README.md)，先结束所有 Run 与登录会话。升级不会删除登录目录，版本检查或无凭据 CI 不代表已完成真实账号授权。
