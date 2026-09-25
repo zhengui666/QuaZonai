@@ -1,23 +1,33 @@
-# QuaZonai 开发约定
+# QuaZonai
 
-## 产品定位与事实源
+## 定位
 
-本仓库是面向所有者本人、本机使用的生产级系统代码仓库。交付真实功能，不保留 Demo 模式、Mock 后端、演示数据入口或假成功降级。README 和运行界面描述实际安装、操作和运行结果；具体执行结果只记在对应 PR、CI 和任务记录，不能虚报通过。
+单人本机量化研究与 target-only 交付。后端 Rust，前端 React / TypeScript / 官方 Ant Design。复用 Codex、NautilusTrader、Clarabel、Arrow 和 PostgreSQL/PGMQ 的原生能力。
 
-`DESIGN.md` 定义产品、领域、接口和模块边界；`OPERATIONS.md` / `CLI.md` 展开实际运行。`skills/quazonai/SKILL.md` 供操作运行中服务的 Agent 使用，不是开发文档。不创建 `docs/` 或旧代码归档；根目录文档各自维护一份事实，历史由 Git 保存。
+## 按任务定位
 
-## 实现原则
+| 改动 | 入口 |
+| --- | --- |
+| 领域、API、数据、组合、Worker、Runtime | [.opensdlc/architecture.md](.opensdlc/architecture.md) 的对应章节与源码链接 |
+| 开发环境、合同生成、检查命令 | [.opensdlc/project.md](.opensdlc/project.md#commands) |
+| 镜像发布、运行故障与恢复 | [.opensdlc/operations.md](.opensdlc/operations.md) |
+| 用户安装与更新 | [部署包手册](deploy/docker/README.md) |
+| 操作已有服务 | [服务 Skill](skills/quazonai/SKILL.md)，不是开发工作流 |
 
-复用现有代码、标准库和成熟组件，Rust 优先；例外和具体能力缺口记录在 DESIGN 的对应章节。前端使用 React / TypeScript / 官方 Ant Design。不重建数值优化、撮合、Agent Harness、队列或容器平台；不引入无实际需要的抽象、重复验证和企业式管理门禁。
+## 实现边界
 
-删除失去用途的实现及专属测试，保留用户数据、旧迁移、备份、许可证及并发有效改动。测试数据只在测试边界使用，不打包进产品、不作为真实来源。端到端检查使用真实服务；纯函数样本和对实际操作的故障注入不替代端到端检查。
+Wire 类型属于 `contracts`，纯规则属于 `domain`，事务属于 `store`，传输与编排属于应用入口。依赖方向见[架构](.opensdlc/architecture.md#modules)。生成文件从原始合同生成，不手改 `contracts/generated/` 或 `apps/web/src/generated/`。
 
-## 正确性边界
+保留冻结输入、PIT、Sealed 隔离、独立评估、试验账本、预算、回执和防重复执行。缺失数据不补零，计算成功不等于证据通过；本地进程退出不等于远端取消。QZ 不持有券商账户、不发送真实订单。
 
-QZ 只研究和交付目标，不操作真实订单或券商账户。保留数据时点、Sealed 隔离、独立评估、冻结版本、预算、账本、回执、恢复与防重复执行。历史非真实来源不能改标为真实来源。取消必须以实际远端结果为准；缺失数据不补零、依赖失败不补造输出。只记录可观察调用和结果，不索取模型隐藏推理。
+保留用户数据、迁移、备份、许可证和无关改动。凭据不进入源码、日志或模型上下文。不增加无实际用途的抽象、多用户管理或安全门禁；不以演示数据或假成功代替真实行为。
 
-## 开发与交付
+## 文件与执行
 
-网页 ChatGPT 亲自编写源码、测试、配置、脚本与文档；GitHub Actions 执行原生构建、格式化、生成和验证。不使用 CodexPro / 本机 Codex。GitHub Codex 只做只读 review，不得实现、修复、提交或推送。普通 PR 不使用生产秘密，不操作既有数据库、服务或无关进程。
+网页 ChatGPT 编写源码、测试、配置、脚本和文档。本机 Codex 仅通过 CodexPro handoff 执行授权的 Shell、验证、Git/GitHub 和环境操作，请求模型固定为 `gpt-5.6-luna`；不得代写或修复文件。网页端不直接调用项目 bash。编辑、验证、发布串行，失败交回作者修复。
 
-读取相关合同与调用链 → 最小实现 → 原生验证 → 独立 review。一个任务只维护 `.opensdlc/tasks/<task-id>/task.md`，记录目标、变更和实际结果。新改动用新 PR；当前 Head 的适用 CI 通过、review 问题解决且 `@codex review` 明确无问题后合并。不把未执行、失败、取消或旧 Head 的结果记为当前通过。
+任务入口为 `.opensdlc/tasks/<task-id>/task.md`，链接实际 Issue/PR。仅记录本任务必要信息；共享合同维护在 `.opensdlc`，历史由 Git 保留。
+
+## Code Review Rules
+
+按 [.opensdlc/review.md](.opensdlc/review.md) 检查改变的行为、接口与恢复边界。GitHub Codex 只读 review。最终 Head 的适用 CI 全部通过、review 问题解决且 Codex 明确无问题后才能合并；未执行、旧 Head 或仅写入交接配置不算验证通过。
