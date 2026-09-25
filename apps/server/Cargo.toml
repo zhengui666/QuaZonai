@@ -10,10 +10,14 @@ publish = false
 [features]
 # Explicit native-binary acceptance; CI installs and executes the pinned binary.
 native-codex = []
+# Real Docker-backed Codex acceptance; unavailable Docker is a test failure.
+codex-container = []
 # Integration requiring the separately built production Job executable.
 native-science = ["native-codex"]
 
 [dependencies]
+bollard = { version = "=0.21.1", default-features = false, features = ["pipe"] }
+tokio-util = { version = "=0.7.19", features = ["io"] }
 futures-util = "=0.3.34"
 contracts = { path = "../../crates/contracts" }
 domain = { path = "../../crates/domain" }

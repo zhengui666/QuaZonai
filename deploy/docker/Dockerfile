@@ -8,18 +8,6 @@ COPY contracts/generated ./contracts/generated
 COPY tests/contracts ./tests/contracts
 RUN npm --prefix apps/web run build
 
-FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS codex
-WORKDIR /build
-COPY runtimes/codex/package.json runtimes/codex/package-lock.json ./
-RUN npm ci --ignore-scripts --no-audit --no-fund \
- && mkdir /bin-release \
- && cp node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/* /bin-release/ \
- && cp node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path/* /bin-release/ \
- && cp -R node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-resources /bin-release/codex-resources \
- && test -x /bin-release/codex-resources/bwrap \
- && /bin-release/codex-resources/bwrap --version \
- && /bin-release/codex --version
-
 FROM rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS server
 ENV RUSTUP_TOOLCHAIN=1.98.1 CARGO_BUILD_JOBS=2
 WORKDIR /build
@@ -38,8 +26,6 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 1000 --create-home quazonai
 COPY --from=server /out/server /opt/quazonai/bin/server
-COPY --from=codex /bin-release/ /opt/quazonai/bin/
-COPY --from=codex /build/node_modules/@openai/codex/ /usr/share/doc/quazonai/codex/
 COPY --from=web /build/apps/web/dist/ /opt/quazonai/web/
 COPY --from=caddy /usr/bin/caddy /tmp/caddy
 # The upstream Caddy image grants its binary a privileged-port file capability.

@@ -22,6 +22,7 @@ services:
   app:
     image: ${APP_IMAGE:?release manifest is required}
     user: "${HOST_UID:?}:${HOST_GID:?}"
+    group_add: ["${DOCKER_SOCKET_GID:?}"]
     restart: ${APP_RESTART_POLICY:-no}
     read_only: true
     cap_drop: [ALL]
@@ -33,6 +34,9 @@ services:
       STATE_DIR: ${INSTALL_DIR:?}/data/state
       HOME: /home/quazonai
       CODEX_HOME: ${NATIVE_CODEX_HOME:?}
+      CODEX_IMAGE: ${CODEX_IMAGE:?}
+      CODEX_DOCKER_SOCKET: ${CODEX_DOCKER_SOCKET:?}
+      CODEX_LOCK_FILE: ${INSTALL_DIR:?}/.deployment.lock
       BIND: 127.0.0.1:8080
       PUBLIC_URL: http://localhost:${WEB_PORT:?}
       DEVELOPMENT_HTTP: 'true'
@@ -48,6 +52,14 @@ services:
       - type: bind
         source: ${NATIVE_CODEX_HOME:?}
         target: ${NATIVE_CODEX_HOME:?}
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${CODEX_DOCKER_SOCKET:?}
+        target: ${CODEX_DOCKER_SOCKET:?}
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${INSTALL_DIR:?}/.deployment.lock
+        target: ${INSTALL_DIR:?}/.deployment.lock
         bind: {create_host_path: false}
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=128m

@@ -4,7 +4,7 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_run:
-    workflows: [CI, Web console, Native Runtime, Polymarket history]
+    workflows: [CI, Web console, Native Runtime, Polymarket history, Container]
     types: [completed]
   workflow_dispatch:
     inputs:

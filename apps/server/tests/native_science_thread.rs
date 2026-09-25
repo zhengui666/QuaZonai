@@ -320,6 +320,7 @@ async fn respond(
 
 fn launch(home: &Path, work: &Path) -> Launch {
     Launch {
+        container: None,
         binary: std::env::var_os("CODEX_NATIVE_BIN")
             .expect("pinned Codex required")
             .into(),

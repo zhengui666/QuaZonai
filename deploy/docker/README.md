@@ -2,11 +2,11 @@
 
 This release bundle installs the production web/API image and PostgreSQL 18 / PGMQ on one Docker Compose bridge network. Database storage uses a named volume. Application artifacts, encrypted secrets and Mission workspaces use the installation's persistent `data` directory.
 
-Native Missions use Linux systemd user scopes and cgroup v2. The installer extracts the **same image's** server and Codex executables into the version directory and installs its Worker as a systemd **user** service. It does not use a privileged container, mount the Docker socket, or copy `auth.json`. Scientific Runtime services and their catalogs remain independent deployments.
+The installer extracts the **same application image's** server executable into the version directory and installs its Worker as a systemd **user** service. Codex is built separately from pinned Node/Debian base images and runs in one nonprivileged container per App Server session. Missions have independent container CPU, memory, process and deadline limits. Scientific Runtime services and their catalogs remain independent deployments.
 
 ## Prerequisites
 
-Use the existing Linux x86_64 user who owns Codex. Install local Docker Engine, Docker Compose 2.20+, Python 3.10+, systemd (including `systemd-analyze`), Git, ripgrep and util-linux (`prlimit`). Host executables must support the image's Debian 12 ABI, including glibc 2.36+ and OpenSSL 3. The installer checks extracted executables, the bundled `codex-resources/bwrap` helper and the generated user unit before stopping an installed release. Native Codex sandbox execution also requires Linux user namespace support; installing successfully is not an account or scientific Runtime readiness result. Rust and Node.js are not required on the deployment host.
+Use a non-root Linux x86_64 installation owner. Install local Docker Engine, Docker Compose 2.20+, Python 3.10+, Git and systemd (including `systemd-analyze`). The host Worker uses Git to initialize Mission workspaces and requires the application's Debian 12 ABI, including glibc 2.36+ and OpenSSL 3. The installer checks that executable and its generated user unit before stopping an installed release. Codex, Rust and Node.js are not installed on the host. Building Codex needs access to the base-image registries, Debian packages and the public npm registry. Installing successfully is not an account or scientific Runtime readiness result.
 
 Docker must be available to that user through a local Unix socket. This release requires a rootful daemon without `userns-remap`; the application still runs as the existing non-root user. Rootless/remapped daemons are rejected before creating installation state because their container UID/GID mapping cannot access these owner-only host bind mounts. A remote Docker context or Docker Desktop VM cannot share the native user manager/cgroup paths. Enable the persistent user manager once:
 
@@ -14,15 +14,30 @@ Docker must be available to that user through a local Unix socket. This release 
 loginctl enable-linger "$USER"
 ```
 
+The trusted API receives the Docker socket and its group ID; the host Worker uses the same socket. Docker access grants host-level container control, so neither API ingress nor this installation may be delegated to untrusted users. Codex containers never receive the socket, application state/key directories, or the operator's entire home. Their deployment-fixed mounts contain the persistent Codex home and session workspace; Missions also receive only the server executable needed for their scoped MCP child. Host networking preserves the existing loopback API origin.
+
 Do not run deployment scripts with `sudo`. For private GHCR packages, first authenticate with `docker login ghcr.io`. Repository visibility does not automatically make a newly created GHCR package public; the package owner can change its visibility in GitHub package settings. Never put a registry token or Codex credential in this bundle.
+
+The Codex build checks its actual read-only sandbox with an empty temporary home and no account before activating the image. Hosts that restrict unprivileged user namespaces through AppArmor, including Ubuntu 24.04, can reject its nested sandbox with `Operation not permitted` (including `bwrap: loopback: Failed RTM_NEWADDR`). If that host policy blocks the check, an administrator must install and load the included executable-specific profile once:
+
+```sh
+sudo install -m 0644 codex.apparmor /etc/apparmor.d/quazonai-codex
+sudo apparmor_parser -r /etc/apparmor.d/quazonai-codex
+```
+
+Then rerun the original deployment or Codex update command as the installation owner. The profile matches only `/opt/codex/bin/codex` and grants its user-namespace permission; it does not disable the host policy globally. Containers retain dropped capabilities, `no-new-privileges`, read-only roots and Codex's own sandbox. A failed preflight leaves the selected image and `.env` unchanged. Hosts without this AppArmor restriction do not need the profile.
 
 ## Install
 
 Download `quazonai-deploy.tar.gz` from an existing GitHub Release and extract it into an empty directory. `release.json` is generated by the release workflow, not copied from a development checkout.
 
 ```sh
+cp .env.example .env
+# Set CODEX_VERSION to the exact npm release to install, for example 0.157.0.
 bash deploy.sh
 ```
+
+`.env` accepts one `CODEX_VERSION=<exact npm version>` assignment and comments; it is data, never sourced as shell code. A pre-existing `<installation>/.env` takes precedence. The installer saves the selected version there and builds `quazonai-codex:<installation-project>` using `Codex.Dockerfile`. The build context contains no application sources, credentials or history. Application release updates preserve this independent Codex version.
 
 The default directory is `$HOME/.local/share/quazonai`, browser address is `http://localhost:8081`, and database port is `127.0.0.1:55432`. Both published ports are bound to host loopback. The image contains the compiled frontend and Caddy; it does not run Vite or compile sources at startup.
 
@@ -30,24 +45,48 @@ Override only the initial installation parameters when needed. The installation 
 
 ```sh
 bash deploy.sh --directory "$HOME/.local/share/quazonai" \
-  --port 8081 --database-port 55432 --codex-home "${CODEX_HOME:-$HOME/.codex}"
+  --port 8081 --database-port 55432
 ```
 
 The script pulls the manifest's digest, starts the database, initializes new private state and explicitly runs native migrations. It then durably installs the Worker configuration, creates the web/API container without starting it, records the starting phase, starts both processors and checks their actual HTTP and process state. Repeating the same installation checks the existing services without generating another password or state key. An interrupted installation reuses the saved installation identity and credentials. An existing incomplete state directory is preserved, never silently reinitialized.
 
 If Docker resources still carry this installation's Compose project label but its host directory/manifest was lost, deployment stops before saving a new password or key. Restore the original manifest and state from backup; an orphaned database volume is not a new installation.
 
-The native Codex directory is mounted at its original absolute path. It must be separate from the installation directory: neither directory may contain the other, including through symlinks. In particular, do not place `CODEX_HOME` under `data/state` or `backups`; overlap is rejected before state or installation identity is created. Authenticate with the bundled version when needed:
+New installations use `<installation>-codex` as their private persistent Codex home. Existing installations retain their original directory. `--codex-home /absolute/path` selects another directory, mounted at the same absolute path. It must be separate from the installation directory: neither may contain the other, including through symlinks. Authenticate with the installed image:
 
 ```sh
-"$HOME/.local/share/quazonai/current/bin/codex" login
+bash "$HOME/.local/share/quazonai/current/deployment/codex-login.sh"
+# Later, verify the login from another fresh container:
+bash "$HOME/.local/share/quazonai/current/deployment/codex-login.sh" --status
 ```
 
-Use the original `CODEX_HOME` environment for a non-default directory. Close other native sessions before changing Codex versions; do not run different Codex versions concurrently against the same native home. The installer does not kill unrelated sessions. Codex account availability and scientific Runtime readiness are separate from web/API startup.
+Follow the native device-code URL in that private terminal and complete ChatGPT authorization in your browser. Login uses Codex's file credential store in the persistent home; scripts do not read or copy `auth.json`. Both commands accept `--directory /absolute/installation/path`. They hold the deployment lock and require idle Runs/sessions, so do not leave the login command waiting while expecting new Missions to start. Device-code authorization must be enabled for the ChatGPT account/workspace. Browser login, MFA and account policy are human steps; CI uses no real account.
+
+An explicitly reused home must not have other desktop/native Codex sessions running during login or version changes. The updater detects this installation's containers, not unrelated host processes. Do not run different versions against the same home. Account availability and scientific Runtime readiness remain separate from web/API startup.
+
+## Update Codex independently
+
+```sh
+# Resolve npm's current latest tag to an exact version, build, verify and switch:
+bash "$HOME/.local/share/quazonai/current/deployment/codex-update.sh"
+# Or select an exact published version:
+bash "$HOME/.local/share/quazonai/current/deployment/codex-update.sh" 0.157.0
+```
+
+Append `--directory /absolute/installation/path` for a non-default installation. The candidate is built and its actual `codex --version` and read-only sandbox checked before any shared setting changes. The updater then holds the same lock used by session launchers, requires all Runs and Codex containers to be stopped, switches the installation's image tag and atomically writes the exact version to `.env`. New sessions resolve the tag to its immutable image ID; no API/Worker restart is needed. Reported switch failures restore the old tag and configuration. An interrupted process can leave those two stores mismatched; retry the same explicit version to reconcile them. Native authentication/history stay in their original directory. Old image IDs are left available for deliberate rollback with an explicit version; no image pruning is performed.
 
 ## Update
 
 Finish all Runs first, or request cancellation in the application and wait for their actual terminal state. A cancellation request alone is not completion. Downloading the target version happens before the old processes are stopped.
+
+For the first upgrade from a release that bundled native Codex, download and extract the **new target release's** deployment bundle, then run its manager directly against the existing installation:
+
+```sh
+# Run inside the freshly extracted target release bundle.
+python3 manage.py apply-update --directory "$HOME/.local/share/quazonai"
+```
+
+The old installed updater has a six-file archive allowlist and cannot unpack the new Codex tools; it must not be used for this first transition. The new manager preserves the original installation identity, database, state and `codex_home`, builds the separate Codex image, then follows the normal idle/backup/migrate/activate sequence. Close unrelated native Codex sessions sharing that existing home before this transition. Once a container-Codex release is installed, use its installed updater normally:
 
 ```sh
 # Replace this example with an existing published version tag.

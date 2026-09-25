@@ -3,11 +3,11 @@
 <a id="container-release"></a>
 ## 版本化镜像与部署合同
 
-正式分发复用 GitHub Actions、GHCR、Docker 多阶段构建、Docker Compose 和 systemd user manager；不引入新容器控制面、认证系统、发布服务或后台自动更新代理。前端产物、Rust API、Caddy 和锁定官方 Codex 同镜像发布；Worker 从该镜像提取同源二进制在宿主 user manager 运行。原因是现有 Mission 明确依赖真实 `/user.slice/`、systemd scope 与 `cgroup.kill`，不能将普通容器存活当作其兼容证据。科学 Runtime 的镜像、catalog、journal 和数据许可继续独立登记，不由本部署捏造就绪。
+正式分发复用 GitHub Actions、GHCR、Docker 多阶段构建、Docker Compose 和 systemd user manager；不引入新容器控制面、认证系统、发布服务或后台自动更新代理。前端产物、Rust API 与 Caddy 同镜像发布；Worker 从该镜像提取同源 server 二进制在宿主 user manager 运行。Codex 使用单独的自建 Debian 基础镜像，由部署前 `.env` 的 `CODEX_VERSION` 选择官方 npm 版本，不使用预制 Codex 镜像，不安装到宿主。API 的账号／模型探测与 Worker Mission 均通过本机 Docker API 启动该镜像中的原生 App Server。科学 Runtime 的镜像、catalog、journal 和数据许可继续独立登记，不由本部署捏造就绪。
 
-发布名为 `vMAJOR.MINOR.PATCH[-prerelease]`，不接受前导零、build metadata 或浮动 latest。tag 解引用至精确 commit，须为当前 main 祖先；不以分支名、PR 标题或字符串相等代替 ancestry。main push / tag push / CI 完成均重算尚未发布版本，覆盖两种推送先后顺序；squash/rebase 不搬移旧 tag。该 SHA 的 CI、Web console、Native Runtime 和 Polymarket history 最新运行须成功，发布 job 再构建并验证同源镜像，然后直接推送被验证的镜像而非重建另一份。普通 PR 仅只读验证；只有发布 job 使用 packages/contents 写权限。Release 最后由 draft 变为 published，标记预发布、不推动 latest；已有完整版本不覆盖。
+发布名为 `vMAJOR.MINOR.PATCH[-prerelease]`，不接受前导零、build metadata 或浮动 latest。tag 解引用至精确 commit，须为当前 main 祖先；不以分支名、PR 标题或字符串相等代替 ancestry。main push / tag push / CI 完成均重算尚未发布版本，覆盖两种推送先后顺序；squash/rebase 不搬移旧 tag。该 SHA 的 CI、Web console、Native Runtime、Polymarket history 和 Container 最新运行须成功，发布 job 再构建并验证同源镜像，然后直接推送被验证的镜像而非重建另一份。普通 PR 仅只读验证；只有发布 job 使用 packages/contents 写权限。Release 最后由 draft 变为 published，标记预发布、不推动 latest；已有完整版本不覆盖。
 
-公开 `release.json` 的字段：`schema_version` 固定整数 1；`version` 为完整 tag；`revision` 为 40 位源 SHA；`image` 为 `ghcr.io/zhengui666/quazonai@sha256:<64hex>`；`database_image` 为本版支持的 PostgreSQL18/PGMQ 镜像 digest。测试可在临时部署包使用实际本地镜像的 content-addressed ID，公开 Release 不使用该形式。包内固定包含 manifest、manage.py、deploy.sh、update.sh、compose.yaml、README.md；不同版本的管理器和 Compose 随版本一起切换。
+公开 `release.json` 的字段：`schema_version` 固定整数 1；`version` 为完整 tag；`revision` 为 40 位源 SHA；`image` 为 `ghcr.io/zhengui666/quazonai@sha256:<64hex>`；`database_image` 为本版支持的 PostgreSQL18/PGMQ 镜像 digest。测试可在临时部署包使用实际本地镜像的 content-addressed ID，公开 Release 不使用该形式。包内固定包含 manifest、manage.py、deploy.sh、update.sh、compose.yaml、README.md，以及 Codex.Dockerfile、codex.py、codex-update.sh、codex-login.sh、.env.example；不同版本的管理器和 Compose 随版本一起切换。旧六文件部署包首次迁移使用新版解压目录的 `manage.py apply-update`，不声称旧下载器能解包新格式。
 
 主机私有 `installation.json` 保存 manifest 字段以及原始 `root/uid/gid/home/codex_home/path/unit_directory`、`port/database_port`、随机数据库 `password`、稳定 Compose `project`、当前 `bundle` 和可选 `runtime_targets/downstream_targets` 数组；不上传到 Release/CI artifact。密码和安装身份在创建数据库前持久化，重复安装不重新生成。`pending.json` 表示安装或升级的中断，升级同时绑定 `previous/target/backup/phase`：先持久化 `phase=preparing` 和 `backup=null`，再关闭自动重启或停止服务；静止点备份成功后，持久化 `phase=migrating` 与备份路径，才允许显式迁移。旧的缺省 phase 记录按可能已迁移处理。preparing 重试先以不重建容器、不重启运行中 Worker 的方式恢复原处理器，再在任何停机前检查 Run；关闭 API 后、停止 Worker 前再次检查，发现竞争准入的 Run 就恢复 API，保持 Worker 处理原任务。停机或备份失败后的旧服务恢复成功才清除 preparing 标记。migrating 阶段不启动旧程序，同目标重试保留最初备份，不用失败后的部分迁移库覆盖恢复点。迁移和原子 Worker 配置完成后，先持久化 starting 阶段再启动 API/Worker；starting 重试只恢复同版本候选并完成激活，不重复 DDL、不重写 Worker 单元、不因健康检查失败停止已处理任务的服务。`current` 仅在 HTTP 与 Worker 进程启动检查成功后切换；随后先启用 Worker 开机恢复，再开启应用容器自动重启，最后清除 pending。旧 migrating 恢复点若已存在活动 Run，重试在停服务前拒绝；新的 starting 恢复点直接恢复原候选，均保留处理器完成原任务。原 CODEX_HOME 只挂载、不读取或复制原生认证；原生账号可用性独立于 liveness。
 
@@ -21,7 +21,11 @@ Compose 建立 bridge application 网络，app 通过服务名 database 连接 P
 
 运行命令见 [OPERATIONS](OPERATIONS.md#container-install)，部署包独立说明见 [deploy/docker/README](deploy/docker/README.md)。执行结果只记 PR、CI 与单一任务记录，不在本合同虚报已发布镜像。
 
-原生 Codex 发布保持可执行文件相邻的 `codex-resources/` 完整资源目录，包含锁定上游的 `bwrap`；主机提取同样保留该布局。版本字符串不证明沙箱可运行，Container 验收须在空 HOME/CODEX_HOME 和不含系统 bwrap 的 PATH 下，用实际发布二进制运行无模型调用的沙箱命令。只为 CI 临时路径加载 userns 测试策略并在退出时移除，不改用户主机安全策略、不新增产品权限系统。
+独立 Codex 镜像保持可执行文件相邻的 `codex-resources/` 完整资源目录，包含上游 `bwrap`。版本字符串不证明沙箱可运行，Container 验收须在空 HOME/CODEX_HOME 下使用实际镜像运行无模型调用的沙箱命令。原生认证由 Codex 自身按 file 存储写入持久可写 CODEX_HOME；镜像、部署脚本与 QZ 不读取或复制 `auth.json`，不实现 OAuth 刷新。
+
+每个 App Server 会话拥有自己的容器，研究员与独立审阅员不共用进程。Mission 的 CPU 速率、内存、swap 和进程数由 Docker 限制，容器内原生 timeout 约束剩余墙钟，即使 Worker 退出也不会重置期限。工作区与 CODEX_HOME 按同一绝对路径挂载，MCP 仅挂载本版本 server 可执行文件；Linux host 网络保留现有 loopback API origin。容器不挂 Docker socket、不使用 privileged；API/Worker 是本机 Docker 的可信所有者。取消持有实际 container ID 并核实停止，不能将 Docker 客户端退出当成 Codex 停止，更不能据此推断远端模型调用未执行。
+
+专门的 Codex 更新入口默认解析 npm latest 为精确版本，也接受指定版本。先构建并校验候选；取得本安装部署锁、确认 Run 与原生会话已静止后才切换安装专用镜像引用并保存 `.env`。启动器从镜像解析至容器启动也短期独占同一锁，防止升级检查与新会话竞争；运行中的会话不持锁。已取得锁后可清理本安装在创建期间崩溃遗留的 CREATED 容器，仍在运行的容器必须保留并拒绝更新。失败保持旧镜像、认证目录与版本记录；不把更新 Codex 当作数据库迁移或应用版本发布。显式本机 Launch 保留为开发／原生协议验收路径；配置容器后连接失败不得回退宿主 Codex。
 
 首次保存安装身份前拒绝 systemd 无法执行或 PATH 无法表达的目录（控制字符、冒号、双引号、反斜杠）。允许空格、Unicode、百分号和方括号：WorkingDirectory 使用原生路径，EnvironmentFile 另做 glob 字符转义，ExecStart 沿用原生参数引用。对提取后的候选版本先执行 `systemd-analyze --user verify`，不在停止旧版本后才发现无效单元。升级前停止并禁用旧 Worker，迁移后失败保持禁用，避免主机重启自动拉起旧代码访问新 schema；迁移前备份失败恢复原服务及启用状态，候选只在启动检查通过的激活阶段重新启用。
 
@@ -219,7 +223,7 @@ CI 不运行专属 CodeQL 或双格式 SBOM 生成，不保留只汇总其他结
   保留 Host、Origin 与机器 Bearer 的原生校验。错误 Bearer 不能回退成浏览器身份。
   CLI 的精确命令授权不再要求验证码，但仍只允许有效 CLI 能力、原始请求、
   原始目标及原有有效期；Agent、Mission、Automation 不获得 Operator 权限。
-- **本机 Codex**：从当前进程 PATH 探测可执行 Codex，使用 OS 用户 HOME 与
+- **Codex**：版本化部署遵循[独立容器合同](#container-release)。源码开发的显式本机路径从当前进程 PATH 探测可执行 Codex，使用 OS 用户 HOME 与
   `CODEX_HOME`（缺省 `~/.codex`），由原生 Codex 读取自身配置和认证。
   QZ 不读取／复制 `auth.json`，不写本机配置、不注入 Provider URL/API Key，
   不接受自定义 Codex 配置文件、第三方 Provider 或配置目录注册。

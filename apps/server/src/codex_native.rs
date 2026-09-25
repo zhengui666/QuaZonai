@@ -1,5 +1,6 @@
 //! Thin client for the official Codex App Server. Codex owns its tool loop,
 //! authentication and canonical history; QZ owns only bounded transport and bindings.
+pub(crate) mod container;
 mod mission;
 mod projection;
 #[cfg(test)]
@@ -8,6 +9,7 @@ mod requests;
 mod resources;
 mod wire;
 
+pub use container::ContainerBackend;
 pub use mission::MissionOptions;
 pub use projection::{
     Account, AccountState, DeviceLogin, LoginCancellation, LoginCancellationStatus, NativeEffort,
@@ -19,7 +21,7 @@ pub use resources::MissionProcess;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, fmt, time::Duration};
-use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::process::Child;
 use wire::{RequestId, Wire};
 
 pub const MAX_FRAME: usize = 2 * 1024 * 1024;
@@ -66,8 +68,9 @@ impl std::error::Error for NativeFailure {}
 /// profile/session owners serialize access, and never spawn a second tool driver.
 pub struct Client {
     group: Option<resources::ProcessGroup>,
-    child: Child,
-    wire: Wire<ChildStdout, ChildStdin>,
+    child: Option<Child>,
+    container: Option<container::Container>,
+    wire: Wire<container::Reader, container::Writer>,
     binary: std::path::PathBuf,
     codex_home: std::path::PathBuf,
     version: String,
@@ -84,23 +87,41 @@ impl Client {
     }
 
     async fn start_process(launch: Launch, limits: Option<MissionProcess>) -> Result<Self> {
-        let binary =
-            std::fs::canonicalize(&launch.binary).map_err(|_| NativeFailure::Configuration)?;
         let codex_home = launch.codex_home.clone();
-        if let Some(limits) = &limits {
-            limits.wait_released().await?;
-        }
-        let mut child = launch.spawn(limits.as_ref())?;
-        let input = child.stdin.take().ok_or(NativeFailure::Unavailable)?;
-        let output = child.stdout.take().ok_or(NativeFailure::Unavailable)?;
+        let mission = limits.is_some();
+        let (binary, child, container, input, output, native_limits) = if launch.container.is_some()
+        {
+            let (container, output, input) = container::start(launch, limits).await?;
+            (
+                std::path::PathBuf::from(container::BINARY),
+                None,
+                Some(container),
+                input,
+                output,
+                None,
+            )
+        } else {
+            let binary =
+                std::fs::canonicalize(&launch.binary).map_err(|_| NativeFailure::Configuration)?;
+            if let Some(limits) = &limits {
+                limits.wait_released().await?;
+            }
+            let mut child = launch.spawn(limits.as_ref())?;
+            let input: container::Writer =
+                Box::pin(child.stdin.take().ok_or(NativeFailure::Unavailable)?);
+            let output: container::Reader =
+                Box::pin(child.stdout.take().ok_or(NativeFailure::Unavailable)?);
+            (binary, Some(child), None, input, output, limits)
+        };
         let mut client = Self {
             group: None,
             child,
+            container,
             wire: Wire::new(output, input),
             binary,
             codex_home,
             version: String::new(),
-            rpc_timeout: if limits.is_some() {
+            rpc_timeout: if mission {
                 Duration::from_secs(60)
             } else {
                 RPC_TIMEOUT
@@ -111,9 +132,16 @@ impl Client {
         client.version = domain::codex::verified_codex_version(&initialized.user_agent, CLIENT)
             .map_err(|_| NativeFailure::Version)?
             .to_owned();
-        if let Some(limits) = limits {
-            client.group =
-                Some(limits.capture(client.child.id().ok_or(NativeFailure::Unavailable)?)?);
+        if let Some(limits) = native_limits {
+            client.group = Some(
+                limits.capture(
+                    client
+                        .child
+                        .as_ref()
+                        .and_then(Child::id)
+                        .ok_or(NativeFailure::Unavailable)?,
+                )?,
+            );
         }
         client.wire.notify("initialized").await?;
         Ok(client)
@@ -374,14 +402,14 @@ impl Client {
     /// claims that an upstream model turn or a scientific Runtime job did not run.
     pub async fn close(mut self) -> Result<()> {
         self.wire.shutdown().await;
-        let result = match tokio::time::timeout(Duration::from_secs(2), self.child.wait()).await {
+        if let Some(container) = &mut self.container {
+            return container.close().await;
+        }
+        let child = self.child.as_mut().ok_or(NativeFailure::Unavailable)?;
+        let result = match tokio::time::timeout(Duration::from_secs(2), child.wait()).await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(_)) => Err(NativeFailure::Unavailable),
-            Err(_) => self
-                .child
-                .kill()
-                .await
-                .map_err(|_| NativeFailure::Unavailable),
+            Err(_) => child.kill().await.map_err(|_| NativeFailure::Unavailable),
         };
         if let Some(group) = &mut self.group {
             group.close().await?;
