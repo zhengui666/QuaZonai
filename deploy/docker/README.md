@@ -5,7 +5,7 @@ The release bundle runs Web/API/Caddy and PostgreSQL 18/PGMQ with Docker Compose
 <a id="prerequisites"></a>
 ## Prerequisites
 
-Use a non-root Linux x86_64 owner with local Docker Engine, Compose 2.20+, Python 3.10+, Git and systemd (including `systemd-analyze`). The host Worker requires glibc 2.36+ and OpenSSL 3. Rust, Node.js and Codex are not needed on the host. Building Codex needs the base-image registries, Debian packages and npm.
+Use a non-root Linux x86_64 owner with local Docker Engine, Compose 2.20+, Python 3.10+, Git, systemd (including `systemd-analyze`) and cgroup v2. The host Worker requires glibc 2.36+ and OpenSSL 3. Rust, Node.js and Codex are not needed on the host. Building Codex needs the base-image registries, Debian packages and npm.
 
 Docker must use a local Unix socket and a rootful daemon without `userns-remap`. Docker Desktop, remote contexts and rootless/remapped daemons are unsupported. API and Worker use the owner's Docker access; Codex containers do not receive the socket. Keep the application on its default local interface.
 

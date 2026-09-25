@@ -11,7 +11,7 @@
 <a id="quickstart"></a>
 ## 安装
 
-需要 Linux x86_64、本机 Docker Engine、Docker Compose 2.20+、Python 3.10+、Git 和 systemd。Worker 需要 glibc 2.36+、OpenSSL 3；不支持 Docker Desktop、远程 Docker、rootless 或 userns-remap。完整前提见[部署手册](deploy/docker/README.md#prerequisites)。
+需要 Linux x86_64、本机 Docker Engine、Docker Compose 2.20+、Python 3.10+、Git、systemd 和 cgroup v2。Worker 需要 glibc 2.36+、OpenSSL 3；不支持 Docker Desktop、远程 Docker、rootless 或 userns-remap。完整前提见[部署手册](deploy/docker/README.md#prerequisites)。
 
 从 [GitHub Releases](https://github.com/zhengui666/QuaZonai/releases) 选择提供 `quazonai-deploy.tar.gz` 的版本，下载后执行：
 
@@ -29,7 +29,7 @@ loginctl enable-linger "$USER"
 bash deploy.sh
 ```
 
-打开 **http://localhost:8081**。默认数据目录为 `$HOME/.local/share/quazonai`。
+打开 **http://localhost:8081**。默认安装目录为 `$HOME/.local/share/quazonai`。
 
 部署包拉取 Web/API 镜像，启动 PostgreSQL，并从同一镜像安装 systemd Worker；Codex 单独构建为容器。宿主机无需安装 Rust、Node.js 或 Codex。科学 Runtime 和数据目录需要另外登记。
 
