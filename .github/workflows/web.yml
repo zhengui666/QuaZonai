@@ -102,6 +102,8 @@ jobs:
         run: node node_modules/vite/bin/vite.js build
       - name: Install Chromium and native browser dependencies
         run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: ChatGPT browser interaction contracts (synthetic, no OAuth account)
+        run: npm --ignore-scripts run test:auth-ui
       - name: Prepare the pinned native production gateway
         run: |
           set -euo pipefail

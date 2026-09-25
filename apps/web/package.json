@@ -16,6 +16,7 @@
     "build": "npm run generate && npm run typecheck && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "test": "vitest run",
+    "test:auth-ui": "playwright test --config playwright.auth.config.ts",
     "test:e2e": "node --test scripts/native-cleanup.test.mjs && node scripts/native-browser.mjs"
   },
   "dependencies": {

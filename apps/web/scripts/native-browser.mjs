@@ -303,6 +303,9 @@ async function main() {
   await userServices.install({
     DATABASE_URL: applicationUrl, STATE_DIR: state, BIND: `127.0.0.1:${backendPort}`,
     PUBLIC_URL: baseUrl, DEVELOPMENT_HTTP: 'true', WORKER_PARALLELISM: '1',
+    // An explicit unavailable deployment prevents discovery of the host owner's
+    // native Codex account during browser login fault-injection tests.
+    CODEX_IMAGE: 'quazonai-web-test-unavailable:missing',
     RUNTIME_TARGETS: '[]', DOWNSTREAM_TARGETS: '[]', RUST_LOG: 'warn',
   });
   const first = await userServices.start('api');
@@ -352,8 +355,10 @@ async function main() {
   await userServices.assertRunning('worker', restartedWorker);
   for (const mode of ['light', 'dark']) {
     for (const width of [1440, 768, 390]) {
-      const name = `projects-${mode}-${width}.png`;
-      screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
+      for (const surface of ['projects', 'codex']) {
+        const name = `${surface}-${mode}-${width}.png`;
+        screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
+      }
     }
   }
 }

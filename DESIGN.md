@@ -407,7 +407,7 @@ Worker 优先复用 `PUBLIC_URL`；单独提供 `MISSION_API_ORIGIN` 时须是�
 
 CI 由锁定的 Codex 夹具生成协议 schema；运行时对已安装版本验证 stdio initialize → initialized、account/read、model/list 与 Thread 响应，不按 CI 版本号拒绝未来版本。记录实际观测版本；model/list 遍历全部 cursor，模型 ID、支持 effort、默认值来自原生能力，不硬编码型号或 high/xhigh 集合。default 开关开启时省略 model/effort/Fast 覆盖但保留保存值；关闭时只传实际配置非空项。本机连接 + model=null + 合法 effort 非空必须可用；unsupported 报错不降档。requested 与原生可观察 actual 分开，未观察到的 actual=unknown。
 
-本机认证由同一 OS 用户执行原生 `codex login` 管理。现有受控账号协议适配与内部独立测试仍由 Codex 承担 device code/start/cancel/logout 和凭据刷新，不维护 DB OAuth token 刷新器，不依赖 experimental external-token。模型设置页不提供账号目录、Provider 或凭据配置。V1 不以 experimental WebSocket/dynamicTools/project environments 为必需能力。
+设置页的 Codex 区域直接提供 ChatGPT Auth 登录、取消、退出与账号状态；命令行原生登录仍可使用。复用现有 `/api/v2/codex/login/start`、`/login`、`/login/cancel`、`/logout` 和原生 App Server 的 device-code 流程，用户在 OpenAI 页面完成授权，前端轮询实际操作结果并刷新账号／模型观测。两个角色共用认证；进行中的账号操作暂停模型编辑与自动探测。202 只表示受理，取消请求和本地等待超时不冒充原生取消或登录失败。网络结果未知时使用原请求与幂等键重试；授权码只在发起页面内存中显示，可手工复制，不进入浏览器持久存储、查询缓存、日志或 QZ 数据库。刷新页面只恢复公开操作状态；需要授权码时回到原页面，或取消后重启登录。凭据持久化和刷新仍完全由 Codex 管理，不维护 DB OAuth token 刷新器，不依赖 experimental external-token，不提供账号目录、Provider 或凭据配置。V1 不以 experimental WebSocket/dynamicTools/project environments 为必需能力。
 
 一个 Mission 对应一个 durable Thread，不使用无限长 Program Thread；真实 Job/Evaluation 结果回该 Thread 后才结论。Reviewer 有独立 Thread、权限和输入清单，不是同聊天换角色。QZ 只编排有限业务阶段，不另造 Agent DAG/规划/记忆/工具循环；并行使用验证过的原生机制或独立受控会话，不固定凑七个角色。
 

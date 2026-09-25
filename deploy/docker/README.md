@@ -52,7 +52,11 @@ The script pulls the manifest's digest, starts the database, initializes new pri
 
 If Docker resources still carry this installation's Compose project label but its host directory/manifest was lost, deployment stops before saving a new password or key. Restore the original manifest and state from backup; an orphaned database volume is not a new installation.
 
-New installations use `<installation>-codex` as their private persistent Codex home. Existing installations retain their original directory. `--codex-home /absolute/path` selects another directory, mounted at the same absolute path. It must be separate from the installation directory: neither may contain the other, including through symlinks. Authenticate with the installed image:
+New installations use `<installation>-codex` as their private persistent Codex home. Existing installations retain their original directory. `--codex-home /absolute/path` selects another directory, mounted at the same absolute path. It must be separate from the installation directory: neither may contain the other, including through symlinks.
+
+Open **Settings → Codex → ChatGPT Auth → 登录 ChatGPT** in QuaZonai. Copy the displayed code, open the authorization link, and complete authorization on OpenAI's page. QuaZonai observes completion and refreshes account/model status automatically. Both roles share the account. The page also supports cancellation and confirmed logout. A refreshed page can recover operation status but not its code; finish in the initiating page, or cancel and start again. A connection error offers a retry of the same operation. Tokens remain in the persistent native home, not the web application.
+
+Alternatively, authenticate from a private terminal with the installed image:
 
 ```sh
 bash "$HOME/.local/share/quazonai/current/deployment/codex-login.sh"

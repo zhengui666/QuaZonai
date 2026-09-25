@@ -1,9 +1,10 @@
 import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Select, Slider, Space, Switch, Tag, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, Intent } from './api';
 import type { Schema } from './api';
-import { ErrorNotice, NoData, QueryPanel, useClock, useGuard, useOnline } from './ui';
+import { ErrorNotice, GuardContext, NoData, QueryPanel, useClock, useGuard, useOnline } from './ui';
+import { ChatgptAuth } from './chatgpt-auth';
 
 type Profile = Schema['CodexProfileViewV1'];
 type Observation = Schema['CodexObservationV1'];
@@ -13,7 +14,7 @@ const failures: Record<Schema['CodexProbeFailureV1'], string> = {
   NATIVE_UNAVAILABLE: 'Codex 连接失败，请重试',
   VERSION_UNSUPPORTED: '无法验证 Codex 版本信息',
   CONTRACT_UNSUPPORTED: 'Codex 响应不兼容',
-  AUTHENTICATION_REQUIRED: '请先按部署手册登录 ChatGPT',
+  AUTHENTICATION_REQUIRED: '请登录 ChatGPT',
   MODEL_SETTINGS_UNSUPPORTED: '模型设置不可用，请恢复本机默认',
 };
 const states: Record<Schema['CodexObservationStateV1'], string> = {
@@ -137,7 +138,12 @@ function ModelDialog({ original, observation, close }: { original: Profile; obse
 }
 function ProfileDetails({ id }: { id: string }) {
   const online = useOnline(); const now = useClock(); const client = useQueryClient(); const intent = useRef(new Intent());
+  const [accountBusy, setAccountBusy] = useState(true);
   const [editing, setEditing] = useState<Profile>(); const attempted = useRef<string | undefined>(undefined);
+  const accountChanged = useCallback(async () => {
+    attempted.current = undefined; intent.current.clear();
+    await client.invalidateQueries({ queryKey: ['codex'] });
+  }, [client]);
   const query = useQuery({ queryKey: ['codex','profile',id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/settings/codex/{id}', { params: { path: { id } }, signal })) });
   const observation = useQuery({ queryKey: ['codex','observation',id], refetchInterval: online ? 15_000 : false,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/codex/models', { params: { query: { profile_id: id } }, signal })) });
@@ -152,22 +158,24 @@ function ProfileDetails({ id }: { id: string }) {
     ]);
   } });
   const profile = query.data; const view = observation.data; const native = view?.observation;
-  const valid = !query.isError && !observation.isError && fresh(view, profile, now);
+  const valid = !accountBusy && !query.isError && !observation.isError && fresh(view, profile, now);
   const mutate = probe.mutate;
   useEffect(() => {
-    if (!online || !profile || !view || query.isError || observation.isError || editing || probe.isPending) return;
+    if (!online || !profile || !view || query.isError || observation.isError || query.isFetching || observation.isFetching || accountBusy || editing || probe.isPending) return;
     const version = `${profile.id}:${profile.revision}`;
     if (attempted.current === version || (view.state !== 'NEVER_PROBED' && view.state !== 'STALE')) return;
     attempted.current = version;
     mutate(profile);
-  }, [online, profile, view, query.isError, observation.isError, editing, probe.isPending, mutate]);
+  }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching, accountBusy, editing, probe.isPending, mutate]);
   useGuard(probe.isPending);
   return <Card title={profile?.name ?? 'Codex'}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!profile} reload={() => { void query.refetch(); }}>
       {profile && <Space orientation="vertical" className="full-width">
+        <ChatgptAuth profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
+          disabled={query.isError || probe.isPending || !!editing} onBusy={setAccountBusy} onChanged={accountChanged} />
         <Space wrap>
-          <Button disabled={!online || query.isError || probe.isPending} onClick={() => setEditing(profile)}>模型设置</Button>
-          <Button loading={probe.isPending} disabled={!online || query.isError} onClick={() => probe.mutate(profile)}>刷新</Button>
+          <Button disabled={!online || query.isError || probe.isPending || accountBusy} onClick={() => setEditing(profile)}>模型设置</Button>
+          <Button loading={probe.isPending} disabled={!online || query.isError || accountBusy} onClick={() => probe.mutate(profile)}>刷新</Button>
           {view && <Tag>{view.state === 'AVAILABLE' && !valid ? states.STALE : states[view.state]}</Tag>}
         </Space>
         <Descriptions column={1} items={[
@@ -193,11 +201,12 @@ function ProfileDetails({ id }: { id: string }) {
 }
 export function CodexSettings() {
   const [selected, setSelected] = useState<string>();
+  const { blocked } = useContext(GuardContext);
   const query = useQuery({ queryKey: ['codex','profiles'], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/settings/codex', { params: { query: { limit: 100 } }, signal })) });
   const profile = query.data?.items.find(item => item.id === selected) ?? query.data?.items[0];
   return <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
     {profile ? <Space orientation="vertical" className="full-width" size="large">
-      <Select aria-label="Codex 角色" className="full-width" value={profile.id} onChange={setSelected}
+      <Select aria-label="Codex 角色" className="full-width" value={profile.id} disabled={blocked} onChange={setSelected}
         options={query.data?.items.map(item => ({ value: item.id, label: item.name }))} />
       <ProfileDetails key={profile.id} id={profile.id} />
     </Space> : <NoData text="Codex 尚未就绪" />}
