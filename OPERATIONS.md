@@ -2,8 +2,45 @@
 
 本手册对应真实 Rust API、Worker、PostgreSQL / PGMQ、Codex 和原生科学 Runtime。命令与字段详见 [CLI](CLI.md)，服务 Agent 使用 [操作 Skill](skills/quazonai/SKILL.md)。
 
+<a id="container-install"></a>
+## 版本化容器部署
+
+从 [GitHub Releases](https://github.com/zhengui666/QuaZonai/releases) 下载所选版本的 `quazonai-deploy.tar.gz`，解压到空目录后执行：
+
+```sh
+loginctl enable-linger "$USER"
+bash deploy.sh
+```
+
+部署机使用 Linux x86_64、本机 Docker Engine / Compose ≥2.20、Python ≥3.10、systemd user manager / cgroup v2、Git、ripgrep 和 util-linux；以拥有 Codex 的现有用户运行，不使用 sudo。镜像中的原生 Worker 会安装至宿主机，需兼容 Debian 12 ABI（glibc ≥2.36、OpenSSL 3）；脚本在停旧服务前检查二进制。无需部署机安装 Rust 或 Node.js。私有 GHCR 包先执行 `docker login ghcr.io`，不要将凭据写入部署包。
+
+脚本按 Release 中的 image digest 部署编译好的前端、Rust API、Caddy 和 PostgreSQL 18 / PGMQ；建立 Compose bridge 网络、持久数据库卷和独立状态目录。API/Caddy 同容器，Worker 使用从同镜像提取的二进制，以原用户 systemd 服务运行，保留原生 Mission 所需的 cgroup。默认目录 `$HOME/.local/share/quazonai`，网页 `http://localhost:8081`；网页和数据库端口只发布到宿主 loopback。独立科学 Runtime 及目录仍按其原运行合同配置。
+
+更新使用已发布的明确版本，替换下面的示例版本号：
+
+```sh
+bash "$HOME/.local/share/quazonai/current/deployment/update.sh" v2.0.1
+```
+
+更新下载目标版本脚本/Compose 和镜像，确认没有未终结 Run，停止本安装的 API/Worker，再次确认静止点，备份 PostgreSQL 和状态，显式迁移后切换。保留数据库卷、密码、master key、原生会话和任务身份。迁移后失败不自动回退旧程序或清空卷；保留原备份和 pending 状态，修复原因后重试同一目标。应用更新不升级 PostgreSQL。参数、状态、独立备份和恢复操作统一见[随版本交付的部署手册](deploy/docker/README.md)。
+
+<a id="container-release"></a>
+### 维护者发布
+
+将已合并进 main 的提交打为 `vMAJOR.MINOR.PATCH[-prerelease]` 后推送 tag。以下只是操作模板，不是已存在的版本：
+
+```sh
+git fetch origin main
+git tag -a v2.0.1 origin/main -m 'QuaZonai v2.0.1'
+git push origin refs/tags/v2.0.1
+```
+
+[Release 工作流](.github/workflows/release.yml)同时观察 main push、版本 tag push 和原有 CI 完成事件。只有 tag 解引用后的精确 commit 已包含在 main、该来源适用 CI 通过且同镜像安装/更新验证通过时才发布。先打 tag 后合并也会在合并后重新判断；squash/rebase 后身份不同的旧 tag 不自动搬移。不要移动已发布 tag；单次不要推送超过三个 tag，以免 GitHub 不产生对应 push 事件。
+
+镜像为 `ghcr.io/zhengui666/quazonai:<tag>`；Release 同时提供 `release.json` 与部署压缩包，部署以 digest 为准。预发布保留 prerelease 标记，不发布浮动 latest 镜像。已完整发布的版本重复触发不覆盖；中断的 draft 可重试。新包默认可见性需在 GitHub Packages 核对，公开仓库不代表新 GHCR 包已经公开。没有版本 tag 的普通 main push 不创建新版本。
+
 <a id="install"></a>
-## 安装与进程管理
+## 从源码安装与进程管理
 
 Linux x86_64、Rust 1.98.1、Node.js ≥22.12、PostgreSQL 18 / PGMQ 1.10.0 与 Caddy 是运行前置条件。下文 `quazonai` 表示拥有本机 Codex 的现有 OS 用户及其组，执行前替换为实际名称；不另建模型账号或复制认证目录。默认网页 `http://localhost:8081`、API `127.0.0.1:8080`，两者只监听 loopback。
 

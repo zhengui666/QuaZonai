@@ -1,5 +1,34 @@
 # QuaZonai 产品、领域与架构事实源
 
+<a id="container-release"></a>
+## 版本化镜像与部署合同
+
+正式分发复用 GitHub Actions、GHCR、Docker 多阶段构建、Docker Compose 和 systemd user manager；不引入新容器控制面、认证系统、发布服务或后台自动更新代理。前端产物、Rust API、Caddy 和锁定官方 Codex 同镜像发布；Worker 从该镜像提取同源二进制在宿主 user manager 运行。原因是现有 Mission 明确依赖真实 `/user.slice/`、systemd scope 与 `cgroup.kill`，不能将普通容器存活当作其兼容证据。科学 Runtime 的镜像、catalog、journal 和数据许可继续独立登记，不由本部署捏造就绪。
+
+发布名为 `vMAJOR.MINOR.PATCH[-prerelease]`，不接受前导零、build metadata 或浮动 latest。tag 解引用至精确 commit，须为当前 main 祖先；不以分支名、PR 标题或字符串相等代替 ancestry。main push / tag push / CI 完成均重算尚未发布版本，覆盖两种推送先后顺序；squash/rebase 不搬移旧 tag。该 SHA 的 CI、Web console、Native Runtime 和 Polymarket history 最新运行须成功，发布 job 再构建并验证同源镜像，然后直接推送被验证的镜像而非重建另一份。普通 PR 仅只读验证；只有发布 job 使用 packages/contents 写权限。Release 最后由 draft 变为 published，标记预发布、不推动 latest；已有完整版本不覆盖。
+
+公开 `release.json` 的字段：`schema_version` 固定整数 1；`version` 为完整 tag；`revision` 为 40 位源 SHA；`image` 为 `ghcr.io/zhengui666/quazonai@sha256:<64hex>`；`database_image` 为本版支持的 PostgreSQL18/PGMQ 镜像 digest。测试可在临时部署包使用实际本地镜像的 content-addressed ID，公开 Release 不使用该形式。包内固定包含 manifest、manage.py、deploy.sh、update.sh、compose.yaml、README.md；不同版本的管理器和 Compose 随版本一起切换。
+
+主机私有 `installation.json` 保存 manifest 字段以及原始 `root/uid/gid/home/codex_home/path/unit_directory`、`port/database_port`、随机数据库 `password`、稳定 Compose `project`、当前 `bundle` 和可选 `runtime_targets/downstream_targets` 数组；不上传到 Release/CI artifact。密码和安装身份在创建数据库前持久化，重复安装不重新生成。`pending.json` 表示安装或升级的中断，升级同时绑定 `previous/target/backup/phase`：先持久化 `phase=preparing` 和 `backup=null`，再关闭自动重启或停止服务；静止点备份成功后，持久化 `phase=migrating` 与备份路径，才允许显式迁移。旧的缺省 phase 记录按可能已迁移处理。preparing 重试先以不重建容器、不重启运行中 Worker 的方式恢复原处理器，再在任何停机前检查 Run；关闭 API 后、停止 Worker 前再次检查，发现竞争准入的 Run 就恢复 API，保持 Worker 处理原任务。停机或备份失败后的旧服务恢复成功才清除 preparing 标记。migrating 阶段不启动旧程序，同目标重试保留最初备份，不用失败后的部分迁移库覆盖恢复点。迁移和原子 Worker 配置完成后，先持久化 starting 阶段再启动 API/Worker；starting 重试只恢复同版本候选并完成激活，不重复 DDL、不重写 Worker 单元、不因健康检查失败停止已处理任务的服务。`current` 仅在 HTTP 与 Worker 进程启动检查成功后切换；随后先启用 Worker 开机恢复，再开启应用容器自动重启，最后清除 pending。旧 migrating 恢复点若已存在活动 Run，重试在停服务前拒绝；新的 starting 恢复点直接恢复原候选，均保留处理器完成原任务。原 CODEX_HOME 只挂载、不读取或复制原生认证；原生账号可用性独立于 liveness。
+
+Compose 建立 bridge application 网络，app 通过服务名 database 连接 PostgreSQL，数据库卷挂载 `/var/lib/postgresql`，应用状态绑定安装目录下 `data`。API 仍监听容器 loopback，Caddy 接收只映射到宿主 loopback 的网页端口。数据库额外绑定宿主 loopback，供原生 Worker 使用。同一状态路径、UID、PUBLIC_URL 和原生版本由脚本统一设置，不靠容器 loopback 访问宿主科学 Runtime；需要时显式挂载原 Runtime socket/目录。
+
+更新顺序为获取目标包/镜像并检查 ABI → 确认所有 Run 终结 → 停止本安装 API/Worker → 再查静止点 → PostgreSQL 原生 pg_dump 与状态备份 → 显式 migrate → 启动目标 API/Worker并验证 → 激活。迁移前备份失败可恢复旧进程；迁移后失败必须保留原库/状态/密钥/恢复点和 pending，不盲目回滚旧程序、删除卷或改任务终态。数据库大版本升级和冷恢复仍是显式操作。数据库密码、master key 与原生认证不得进入源码、日志或公开包。
+
+首次安装的 install 标记在迁移及 Worker 单元准备后、任何 API/Worker 启动前写入 `phase=starting`；即使 `current` 还不存在，starting 重试也只以 `--no-recreate` 恢复既有容器和原 Worker 并补完激活，不再初始化、迁移或重写单元。旧 install 标记已有 current 时沿用同一恢复路径；其余旧标记在执行 DDL 前须确认没有运行中处理器，否则保留现场并拒绝迁移。Worker 环境与单元复用原子临时文件、文件 fsync、替换和目录 fsync，在 daemon-reload/start 前完成；版本文件、状态初始化及恢复点全部文件和目录先同步落盘，恢复点成功返回后才记录 migrating。Node、Rust、Caddy、Debian 的全部 FROM 固定至已通过 Container 构建的 registry digest；更新这些构建输入需修改 Dockerfile 并重新验证，不引入额外发布服务或专项安全门禁。
+
+部署工具的 Python 例外仅限主机端包管理脚本：复用 stdlib 的 JSON/tar/原子文件与 flock，以及 subprocess 调用现有 Docker/systemd/pg_dump；不增加 Python 服务、领域合同或计算实现。相较新 Rust 安装器可避免引入独立发布二进制/部署编译器，相较 Shell+多个外部解析工具保留单一 manifest 解析与失败状态。现有 Rust serve/worker/migrate/init-state 仍是唯一产品入口。验证复用同一 composite action，覆盖真实安装、版本切换、失败后重试、重启保持数据/密钥和 pg_restore；纯函数/故障注入测试不代替真实链路。
+
+运行命令见 [OPERATIONS](OPERATIONS.md#container-install)，部署包独立说明见 [deploy/docker/README](deploy/docker/README.md)。执行结果只记 PR、CI 与单一任务记录，不在本合同虚报已发布镜像。
+
+原生 Codex 发布保持可执行文件相邻的 `codex-resources/` 完整资源目录，包含锁定上游的 `bwrap`；主机提取同样保留该布局。版本字符串不证明沙箱可运行，Container 验收须在空 HOME/CODEX_HOME 和不含系统 bwrap 的 PATH 下，用实际发布二进制运行无模型调用的沙箱命令。只为 CI 临时路径加载 userns 测试策略并在退出时移除，不改用户主机安全策略、不新增产品权限系统。
+
+首次保存安装身份前拒绝 systemd 无法执行或 PATH 无法表达的目录（控制字符、冒号、双引号、反斜杠）。允许空格、Unicode、百分号和方括号：WorkingDirectory 使用原生路径，EnvironmentFile 另做 glob 字符转义，ExecStart 沿用原生参数引用。对提取后的候选版本先执行 `systemd-analyze --user verify`，不在停止旧版本后才发现无效单元。升级前停止并禁用旧 Worker，迁移后失败保持禁用，避免主机重启自动拉起旧代码访问新 schema；迁移前备份失败恢复原服务及启用状态，候选只在启动检查通过的激活阶段重新启用。
+
+分发脚本只支持不做 userns-remap 的本机 rootful Docker daemon；容器进程仍使用原非 root UID/GID。首次保存安装身份前读取该 Compose project 标签的容器、卷及网络，存在遗留资源而缺主机 manifest 时要求恢复原身份，不重建密码或 master key。更新入口和目标管理器均按 SemVer 2.0 比较已验证 tag，旧目标在下载/停机前拒绝，同版本仅验证现有安装；不把降级当成应用更新。成功通知属于非关键输出，stdout 断管或关闭不得导致已激活服务被停掉，也不得丢失其恢复路径。
+
+初始/待恢复应用的 Compose restart policy 为 `no`；部署管理器在激活验证成功后使用 Docker 原生 update 修改该容器为 `unless-stopped`，失败清理再次关闭自动重启，数据库策略独立不变。停止应用、禁用并停止 Worker、静止点复核及备份均属于迁移前恢复范围；其中任一步失败，在本次尚未尝试迁移的条件下尝试恢复两个旧进程及自动启动。已有 pending 的重试不得恢复旧程序。原 CODEX_HOME 与托管安装根目录必须相互独立，先解析符号链接后拒绝任何祖先/后代重叠，再创建目录或持久化身份。
+
 ## Polymarket 原生研究与组合
 
 原生 BinaryOption 研究使用 POLYMARKET、原 condition/token 身份、原抵押币和

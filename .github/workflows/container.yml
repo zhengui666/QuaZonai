@@ -1,0 +1,57 @@
+name: Container
+on:
+  pull_request:
+    paths:
+      - 'deploy/docker/**'
+      - '.github/actions/container/**'
+      - '.github/workflows/container.yml'
+      - '.github/workflows/release.yml'
+      - 'apps/**'
+      - 'crates/**'
+      - 'migrations/**'
+      - 'contracts/**'
+      - 'skills/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - 'runtimes/codex/**'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'THIRD_PARTY_NOTICES.md'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/docker/**'
+      - '.github/actions/container/**'
+      - '.github/workflows/container.yml'
+      - '.github/workflows/release.yml'
+      - 'apps/**'
+      - 'crates/**'
+      - 'migrations/**'
+      - 'contracts/**'
+      - 'skills/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - 'runtimes/codex/**'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'THIRD_PARTY_NOTICES.md'
+permissions:
+  contents: read
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-smoke:
+    name: Container / install, update and recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/container
+        with:
+          image: quazonai-ci:${{ github.event.pull_request.head.sha || github.sha }}
+          revision: ${{ github.event.pull_request.head.sha || github.sha }}
+          version: ci

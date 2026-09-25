@@ -1,0 +1,73 @@
+name: Verify production container
+description: Build one exact-source image and exercise its real deployment lifecycle.
+inputs:
+  image:
+    description: Local image name to build and test.
+    required: true
+  revision:
+    description: Exact checked-out source SHA.
+    required: true
+  version:
+    description: OCI version label.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Check release helpers and native host prerequisites
+      shell: bash
+      env:
+        EXPECTED_HEAD: ${{ inputs.revision }}
+        PYTHONDONTWRITEBYTECODE: '1'
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+        for script in deploy/docker/entrypoint.sh deploy/docker/deploy.sh deploy/docker/update.sh; do
+          bash -n "$script"
+        done
+        python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
+        if ! command -v rg >/dev/null; then
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+        fi
+        uid=$(id -u)
+        sudo loginctl enable-linger "$uid"
+        sudo systemctl start "user@$uid.service"
+        export XDG_RUNTIME_DIR="/run/user/$uid"
+        systemctl --user show --property=Version
+        echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+    - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+    - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+      with:
+        context: .
+        file: deploy/docker/Dockerfile
+        platforms: linux/amd64
+        load: true
+        push: false
+        tags: ${{ inputs.image }}
+        build-args: |
+          VERSION=${{ inputs.version }}
+          REVISION=${{ inputs.revision }}
+        cache-from: type=gha,scope=quazonai-container
+        cache-to: type=gha,mode=max,scope=quazonai-container
+    - name: Verify real installation, upgrade, failure retry and database restore
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        REVISION: ${{ inputs.revision }}
+        PYTHONDONTWRITEBYTECODE: '1'
+      run: |
+        set -euo pipefail
+        docker run --rm "$IMAGE" --version
+        docker run --rm --cap-drop ALL --security-opt no-new-privileges --entrypoint /usr/bin/caddy "$IMAGE" validate --config /opt/quazonai/Caddyfile --adapter caddyfile
+        docker run --rm --entrypoint /opt/quazonai/bin/codex-resources/bwrap "$IMAGE" --version
+        profile="$RUNNER_TEMP/quazonai-container-codex.apparmor"
+        cat > "$profile" <<EOF
+        abi <abi/4.0>,
+        include <tunables/global>
+        profile quazonai-ci-container-codex "$RUNNER_TEMP/quazonai-container-*/**/bin/codex" flags=(unconfined) {
+          userns,
+        }
+        EOF
+        sudo apparmor_parser -r "$profile"
+        trap 'sudo apparmor_parser -R "$profile"' EXIT
+        python3 -B deploy/docker/smoke.py --image "$IMAGE" --revision "$REVISION"
