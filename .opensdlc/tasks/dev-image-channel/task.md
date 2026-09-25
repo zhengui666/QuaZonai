@@ -14,7 +14,8 @@ The existing primary worktree and installed services remain outside this task.
 A manually dispatched workflow accepts only a same-repository branch name under
 `refs/heads/`; tags, arbitrary SHAs and synthetic PR refs are not inputs. Checkout
 resolves it once. A read-only build uses the workflow's trusted container action
-against a separate source checkout. An isolated publisher accepts its artifact,
+against a separate source checkout. A separate default-branch `workflow_run` publisher accepts only successful manual
+builds dispatched from main, then accepts the exact run/attempt artifact,
 checks the image ID, OCI labels and run-specific dev tag, and pushes the tested
 image as `ghcr.io/zhengui666/quazonai:dev-<full-sha>-<run-id>-<build-attempt>`.
 Rebuilding creates a new tag; retrying only the publisher reuses the original
@@ -29,8 +30,8 @@ Contracts: [DESIGN](../../../DESIGN.md#container-release). Usage:
 <a id="plan"></a>
 ## Implementation plan
 
-1. Add `.github/workflows/dev-image.yml`, reusing pinned actions and the container
-   composite action. Add its path to Container PR selection.
+1. Add `.github/workflows/dev-image.yml` and `dev-image-publish.yml`, reusing pinned
+   actions and the container composite action. Add their paths to Container PR selection.
 2. Run the new read-only build on workflow/action PR changes, exercising a separate
    checkout and OCI identity checks. Document dispatch and dev artifacts in DESIGN, OPERATIONS and README. Keep
    `release.py` and versioned deployment manifests unchanged.
@@ -56,3 +57,10 @@ synthetic fork PR refs. The updated workflow isolates build from publisher, load
 the action from the workflow checkout, constrains publisher tags, and narrows input
 to repository branches. PR runs exercise build/export with no publishing permission.
 New-head CI and clean re-review are required; earlier checks are not reused.
+
+The additional review on `d1f2ae36` found that dispatch could select an untrusted
+workflow revision, and a job retry could rerun its build dependency. Publishing now
+lives in a separate default-branch `workflow_run` definition restricted to successful
+manual main runs of the exact build workflow. Its own retry has no build dependency;
+it reuses the original event's artifact and derives tags from that build ID/attempt.
+See [GitHub's native event semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).

@@ -59,7 +59,9 @@ gh workflow run dev-image.yml --repo zhengui666/QuaZonai --ref main \
   -f source_branch=your-development-branch
 ```
 
-工作流固定实际检出的 SHA，运行现有容器构建与真实安装/更新/恢复检查，成功后发布 `ghcr.io/zhengui666/quazonai:dev-<完整SHA>-<run-id>-<build-attempt>`。运行 Summary 提供来源 SHA、镜像 tag 和拉回核验过的 digest；后续拉取使用其中的完整 digest。重新构建产生不同标签；只重试 publisher 时复用原构建的镜像归档和标签（归档保留 7 天，过期后重新运行整个工作流）。开发分支继续提交不改变已有构建的来源。私有 GHCR 包仍需 Docker 登录。
+工作流固定实际检出的 SHA，运行现有容器构建与真实安装/更新/恢复检查，成功后发布 `ghcr.io/zhengui666/quazonai:dev-<完整SHA>-<run-id>-<build-attempt>`。等待 **Dev image** 和随后自动触发的 **Dev image publish** 都成功；后者的 Summary 提供来源 SHA、镜像 tag 和拉回核验过的 digest，后续拉取使用其中的完整 digest。重新构建产生不同标签；发布失败时对 **Dev image publish** 的运行编号执行 `gh run rerun <发布运行编号> --failed`，会复用原构建归档和标签，不重跑独立的构建工作流（归档保留 7 天，过期后重新运行 Dev image）。重跑 Dev image 会重新解析分支并构建。开发分支继续提交不改变已有构建的来源。私有 GHCR 包仍需 Docker 登录。
+
+发布器由 GitHub 从默认分支加载，只接受从 main 发起的成功手动构建。选择其他工作流分支或 PR 验证只会构建，不会发布。
 
 这是独立的开发镜像通道，不需要先 merge main，也不创建版本 tag、GitHub Release 或 `quazonai-deploy.tar.gz`。正式安装/更新命令继续使用上面的版本化部署包；不将 dev 标签传给 `update.sh`，工作流也不会切换现有安装。
 

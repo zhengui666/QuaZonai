@@ -1,9 +1,9 @@
 name: Dev image
-run-name: Dev image / ${{ inputs.source_branch || github.head_ref }}
 on:
   pull_request:
     paths:
       - '.github/workflows/dev-image.yml'
+      - '.github/workflows/dev-image-publish.yml'
       - '.github/actions/container/**'
   workflow_dispatch:
     inputs:
@@ -18,11 +18,6 @@ jobs:
     if: github.repository == 'zhengui666/QuaZonai'
     runs-on: ubuntu-24.04
     timeout-minutes: 55
-    outputs:
-      revision: ${{ steps.source.outputs.revision }}
-      version: ${{ steps.source.outputs.version }}
-      image_id: ${{ steps.image.outputs.id }}
-      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - name: Check out the workflow's container action
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -56,7 +51,6 @@ jobs:
           revision: ${{ steps.source.outputs.revision }}
           version: ${{ steps.source.outputs.version }}
       - name: Export the tested image for the separate publisher
-        id: image
         env:
           LOCAL_IMAGE: quazonai-dev:${{ steps.source.outputs.version }}
           REVISION: ${{ steps.source.outputs.revision }}
@@ -66,61 +60,14 @@ jobs:
           test "$(git -C source rev-parse HEAD)" = "$REVISION"
           test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
           test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
-          echo "id=$(docker image inspect "$LOCAL_IMAGE" --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
-          docker save --output "$RUNNER_TEMP/dev-image.tar" "$LOCAL_IMAGE"
+          mkdir -p "$RUNNER_TEMP/dev-image"
+          printf '%s\n' "$REVISION" > "$RUNNER_TEMP/dev-image/revision"
+          docker image inspect "$LOCAL_IMAGE" --format '{{.Id}}' > "$RUNNER_TEMP/dev-image/image-id"
+          docker save --output "$RUNNER_TEMP/dev-image/dev-image.tar" "$LOCAL_IMAGE"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        id: upload
         with:
           name: dev-image-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/dev-image.tar
+          path: ${{ runner.temp }}/dev-image/
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
-  publish:
-    needs: build
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: write
-    env:
-      IMAGE: ghcr.io/zhengui666/quazonai
-      REVISION: ${{ needs.build.outputs.revision }}
-      VERSION: ${{ needs.build.outputs.version }}
-      IMAGE_ID: ${{ needs.build.outputs.image_id }}
-      LOCAL_IMAGE: quazonai-dev:${{ needs.build.outputs.version }}
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          artifact-ids: ${{ needs.build.outputs.artifact_id }}
-          path: ${{ runner.temp }}/dev-image
-          merge-multiple: true
-      - name: Verify the archive and constrain the publication to this run's dev tag
-        run: |
-          set -euo pipefail
-          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$VERSION" =~ ^dev-${REVISION}-${GITHUB_RUN_ID}-[1-9][0-9]*$ ]]
-          [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
-          docker load --input "$RUNNER_TEMP/dev-image/dev-image.tar"
-          test "$(docker image inspect "$LOCAL_IMAGE" --format '{{.Id}}')" = "$IMAGE_ID"
-          test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
-          test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish and read back the tested dev image
-        run: |
-          set -euo pipefail
-          docker tag "$LOCAL_IMAGE" "$IMAGE:$VERSION"
-          docker push "$IMAGE:$VERSION"
-          digest=$(docker image inspect "$IMAGE:$VERSION" --format '{{index .RepoDigests 0}}')
-          docker pull "$digest"
-          test "$(docker image inspect "$digest" --format '{{.Id}}')" = "$IMAGE_ID"
-          {
-            echo '### Published dev image (linux/amd64)'
-            printf '\nSource: `%s`\n\nTag: `%s:%s`\n\nDigest: `%s`\n' "$REVISION" "$IMAGE" "$VERSION" "$digest"
-            echo 'This development image has no versioned deployment bundle or GitHub Release.'
-          } >> "$GITHUB_STEP_SUMMARY"

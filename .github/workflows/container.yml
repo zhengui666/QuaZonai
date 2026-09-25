@@ -7,6 +7,7 @@ on:
       - '.github/workflows/container.yml'
       - '.github/workflows/release.yml'
       - '.github/workflows/dev-image.yml'
+      - '.github/workflows/dev-image-publish.yml'
       - 'apps/**'
       - 'crates/**'
       - 'migrations/**'
