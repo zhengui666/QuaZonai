@@ -31,7 +31,7 @@ bash deploy.sh
 
 打开 **http://localhost:8081**。默认安装目录为 `$HOME/.local/share/quazonai`。
 
-部署包拉取 Web/API 镜像，启动 PostgreSQL，并从同一镜像安装 systemd Worker；Codex 单独构建为容器。宿主机无需安装 Rust、Node.js 或 Codex。科学 Runtime 和数据目录需要另外登记。
+部署包拉取 Web/API 镜像，启动 PostgreSQL，并从同一镜像安装 systemd Worker；Codex 单独构建为容器。宿主机无需安装 Rust、Node.js 或 Codex。[科学 Runtime 与数据目录](deploy/docker/README.md#scientific-runtime)需要另外配置。
 
 <a id="usage"></a>
 ## 开始研究
@@ -45,7 +45,7 @@ bash deploy.sh
 <a id="agent-skill"></a>
 ## 通过 Agent 操作
 
-在使用 Agent 的环境中安装操作 Skill：
+在 Agent 所在环境准备 Git 和 Node.js 22.20+（含 npm/npx），然后安装操作 Skill：
 
 ```sh
 npx skills add zhengui666/QuaZonai --skill quazonai

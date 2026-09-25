@@ -33,6 +33,52 @@ The read-only build uses the workflow's [container action](../.github/actions/co
 
 Use the digest in the publisher's successful Summary. A publisher retry reuses the same build artifact/tag; rerunning the build resolves the branch again. Build artifacts expire after seven days. Both workflows must succeed. This channel creates no Release or deployment bundle and never switches an installation; dev tags are not inputs to `update.sh`.
 
+<a id="scientific-runtime"></a>
+## Scientific Runtime
+
+The application bundle does not provision the scientific gateway, job image or catalogs. Scientific jobs run in the native Docker image; the gateway is a host process that owns its journal and Docker connection. Use the matching [image build](project.md#runtime-image-build) and gateway binary from the application's source revision.
+
+Use a Linux x86_64 Runtime owner with local Docker Engine/cgroup v2 and the gateway's native ABI libraries. Choose absolute, owner-managed paths and write a private `runtime.json` matching [RuntimeConfig](../apps/runtime/src/config.rs). Replace every example path and image placeholder before use:
+
+```json
+{
+  "schema_version": 1,
+  "state_dir": "/srv/quazonai-runtime/state",
+  "credential_file": "/srv/quazonai-runtime/runtime-credential",
+  "docker_socket": "/var/run/docker.sock",
+  "bind": "127.0.0.1:8790",
+  "images": [
+    {"job_kind": "DATA_VALIDATE", "image_ref": "REPLACE_WITH_NATIVE_IMAGE_ID"},
+    {"job_kind": "ALPHA_EVALUATE", "image_ref": "REPLACE_WITH_NATIVE_IMAGE_ID"},
+    {"job_kind": "PORTFOLIO_BUILD", "image_ref": "REPLACE_WITH_NATIVE_IMAGE_ID"},
+    {"job_kind": "PORTFOLIO_SIMULATE", "image_ref": "REPLACE_WITH_NATIVE_IMAGE_ID"}
+  ],
+  "catalogs": [],
+  "max_cpu": 2,
+  "max_memory_mib": 4096,
+  "max_wall_seconds": 3600,
+  "max_output_bytes": 67108864,
+  "max_parallel_jobs": 2,
+  "max_pending_jobs": 64,
+  "storage_quota_bytes": 10737418240
+}
+```
+
+The state parent belongs to the Runtime owner; the state directory is mode 0700. Provision a mode-0600 regular credential file for that owner containing 32–8192 printable, non-whitespace ASCII bytes, optionally ending with one newline. Bind the same credential through the control plane's Runtime settings; do not put it in the JSON, URL, command arguments, repository or logs. Keep existing credentials and state when restarting or upgrading.
+
+Each catalog registration is `{ "root": "/absolute/immutable/catalog", "metadata_file": "/absolute/catalog-metadata.json" }`. The metadata must satisfy [RuntimeCatalogMetadataV1](../crates/contracts/src/catalogs.rs), including the original snapshot/version, partition, instruments, historical membership, quality and availability provenance. Roots must not overlap each other or the state, credential or Docker socket. Empty catalogs permit configuration inspection, not a research dataset; missing data remains missing.
+
+From the matching build directory, check and start the gateway using the edited configuration:
+
+```sh
+target/release/runtime doctor --config /absolute/runtime.json
+target/release/runtime serve --config /absolute/runtime.json
+```
+
+`runtime doctor` checks the real Docker/image/resource prerequisites. `runtime serve` uses the original state directory; its existing-task status remains available during a Docker outage, but new execution cannot succeed without Docker. Use the same owner, binary/configuration and paths when supervising or restarting it. Neither command replaces execution/cancellation/restore tests.
+
+The gateway accepts only a loopback listener. Expose it through an existing same-host trusted HTTPS reverse proxy whose origin is reachable from both the Docker API container and host Worker. Their `runtime_targets` entries contain the exact `origin` and allowed `addresses` (`IP:port`), as defined in [RuntimeTarget](../apps/server/src/runtime_transport.rs); register that endpoint and matching credential with the service, then probe readiness before importing/using catalogs. Inside the API container, `127.0.0.1` is not the host, and the gateway has no Unix-socket HTTP listener. Do not substitute a fabricated socket or disable certificate validation. After configuration changes, probe the new capabilities; existing jobs retain their original launch and remote identity.
+
 <a id="recovery"></a>
 ## Recovery
 

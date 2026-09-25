@@ -57,7 +57,14 @@ bash "$HOME/.local/share/quazonai/current/deployment/codex-login.sh"
 bash "$HOME/.local/share/quazonai/current/deployment/codex-login.sh" --status
 ```
 
-These commands require idle Runs/sessions and hold the deployment lock. Credentials stay in the native home; application updates do not remove them. Register real data and a reachable scientific Runtime before starting research. API startup and account login do not provision those inputs.
+These commands require idle Runs/sessions and hold the deployment lock. Credentials stay in the native home; application updates do not remove them. [Configure a scientific Runtime](#scientific-runtime) and real data before starting research. API startup and account login do not provision those inputs.
+
+<a id="scientific-runtime"></a>
+## Scientific Runtime and data
+
+The application release bundle does not contain the scientific gateway or its job image. Follow [Runtime configuration and startup](https://github.com/zhengui666/QuaZonai/blob/main/.opensdlc/operations.md#scientific-runtime), which links the native Docker image build, configuration fields, catalog registration, `runtime doctor` and `runtime serve`. Use the instructions and matching binaries from the application's `revision` recorded in `release.json`.
+
+The gateway is a separate host process; scientific jobs run in its registered Docker image. Its loopback listener needs an existing trusted HTTPS reverse proxy reachable from both the API container and host Worker. Container-local `127.0.0.1` does not reach the host. Register the endpoint, permitted socket addresses and matching Runtime credential, probe readiness, then register the actual catalogs. A successful probe or empty catalog list is not research data.
 
 <a id="codex-update"></a>
 ## Update Codex
@@ -99,7 +106,7 @@ python3 "$HOME/.local/share/quazonai/current/deployment/manage.py" status
 
 Before `current` exists, use the extracted bundle's `manage.py status`. Commands accept `--directory /absolute/installation/path` for a non-default installation.
 
-Keep `installation.json`, the data directory, `master.key`, `.env`, original ports and Compose project identity. Runtime/downstream settings use the manifest's `runtime_targets` and `downstream_targets`; a local `compose.override.yaml` survives updates. A host Runtime socket must be mounted into the API container, or its configured endpoint must actually be reachable. Empty target lists do not create a Runtime.
+Keep `installation.json`, the data directory, `master.key`, `.env`, original ports and Compose project identity. Runtime/downstream settings use the manifest's `runtime_targets` and `downstream_targets`; a local `compose.override.yaml` survives updates. Runtime targets must be reachable through their configured HTTP transport as described [above](#scientific-runtime); the native gateway does not listen on a Unix HTTP socket. Empty target lists do not create a Runtime.
 
 <a id="recovery"></a>
 ## Backups and recovery

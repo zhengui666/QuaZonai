@@ -18,6 +18,7 @@ npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 | Change | Check from the repository root | Required result / prerequisite |
 | --- | --- | --- |
 | Markdown and CLI/Skill documentation | `make check-docs` | Links, native help and Skill contracts pass; requires the CI-pinned lychee and Rust dependencies |
+| README or Docker deployment guide | `make check-links` and `node --test deploy/install.test.mjs` | Run both: the latter checks Bash examples and native helper help with Node, Bash and Python; it does not install services and is not included in `make check-docs` |
 | Markdown links only | `make check-links` | All tracked Markdown, including `.opensdlc`, resolves; this does not run CLI checks |
 | Package ownership | `make check-architecture` | Allowed production/build dependency directions |
 | Rust logic | `make check-unit` | Formatting, Clippy and non-Store/non-Server tests; not the full suite |
@@ -34,6 +35,22 @@ Store/HTTP tests use PostgreSQL 18 with PGMQ 1.10.0. [CI](../.github/workflows/c
 For a contract change, edit Rust DTOs/handlers, run the relevant native schema export from CI, then `npm --prefix apps/web run generate`. Commit the source and generated diff together. `server openapi --list-schemas` and `server openapi --schema ArtifactCreate` inspect an installed binary offline; they do not query a running server's version.
 
 `npm --prefix apps/web run dev` is a development UI proxy for a real local API. Browser behavior is verified by the native harness, not a substitute backend. Scientific samples belong to tests, not product entrypoints.
+
+<a id="runtime-image-build"></a>
+### Scientific Runtime image build
+
+The native job image and its matching gateway are separate from the application release bundle. Build them from the selected application's source revision on Linux x86_64 with local Docker Engine/cgroup v2, Node.js, Git, GNU `timeout`, `ldd`, a native compiler/linker and the pinned Rust toolchain. Work from the repository root:
+
+```sh
+rustup toolchain install 1.98.1 --profile minimal --target wasm32-unknown-unknown
+rustup run 1.98.1 cargo build --locked --release -p job -p runtime
+assembly_parent=$(mktemp -d)
+node runtimes/native/build-native-image.mjs --profile release --output-dir "$assembly_parent/image"
+```
+
+[build-native-image.mjs](../runtimes/native/build-native-image.mjs) assembles a new directory outside the checkout. It includes the built job, pinned Rust/Wasm tooling, GNU timeout and their actual native libraries, not the working tree or private configuration. Its `image-id.txt` contains Docker's full `sha256:<64 lowercase hex digits>` image identity. Register that value; use native `docker image save` / `docker image load` or a registry digest when transferring the image. Keep the matching gateway binary and its host ABI dependencies.
+
+Configure catalogs, credentials, resources and the gateway using [Runtime operations](operations.md#scientific-runtime). Rebuild the image after changing scientific code. Production images omit `--isolation-probe`; the [native workflow](../.github/workflows/native-runtime.yml) adds that CI-only executable for real execution, cancellation, limits and restore checks. Image assembly or `--version` alone is not those checks.
 
 <a id="conventions"></a>
 ## Conventions
