@@ -76,7 +76,7 @@ async fn fixture_with_selection(
     candidates: u16,
     origin: DataOrigin,
 ) -> Fixture {
-    fixture_with_trigger(pool, priced, candidates, origin, false).await
+    fixture_with_trigger(pool, priced, candidates, origin, false, None).await
 }
 
 async fn fixture_with_trigger(
@@ -85,6 +85,7 @@ async fn fixture_with_trigger(
     candidates: u16,
     origin: DataOrigin,
     wake: bool,
+    speed: Option<bool>,
 ) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     for name in ["native", "workspaces", "secrets"] {
@@ -164,6 +165,16 @@ async fn fixture_with_trigger(
         },
     )
     .await;
+    if let Some(fast) = speed {
+        // Initialize the test profile before Cycle admission freezes its revision.
+        sqlx::query("UPDATE app.codex_profiles SET use_default_model_settings=false,saved_fast_mode=$2 WHERE id=$1")
+            .bind(data.researcher_profile.profile_id.as_uuid()).bind(fast).execute(pool).await.unwrap();
+        data.researcher_profile.expected_revision = store
+            .codex_profile(&actor, data.researcher_profile.profile_id)
+            .await
+            .unwrap()
+            .revision;
+    }
     if candidates == 1 {
         // Explicit same Profile is allowed; independent native Thread is still
         // mandatory and checked below. No second HOME or account is invented.
@@ -230,6 +241,17 @@ async fn fixture_with_trigger(
     };
     let home = root.path().join("native");
     let provider = responses::Provider::start(&home).await;
+    if speed.is_some() {
+        let path = home.join("config.toml");
+        fs::write(
+            &path,
+            format!(
+                "service_tier = \"fast\"\n{}",
+                fs::read_to_string(&path).unwrap()
+            ),
+        )
+        .unwrap();
+    }
     let profile = store
         .codex_profile(&actor, data.researcher_profile.profile_id)
         .await
@@ -2164,20 +2186,26 @@ async fn native_interrupt_follows_committed_deadline_and_does_not_invent_usage(p
 async fn bootstrap_mints_one_credential_binds_before_turn_and_resumes_the_original_native_thread(
     pool: PgPool,
 ) {
-    bootstrap_and_resume(pool, false).await;
+    bootstrap_and_resume(pool, false, None).await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn worker_wake_starts_original_native_mission_and_resumes_it(pool: PgPool) {
-    bootstrap_and_resume(pool, true).await;
+    bootstrap_and_resume(pool, true, None).await;
 }
 
-async fn bootstrap_and_resume(pool: PgPool, wake: bool) {
-    let f = if wake {
-        fixture_with_trigger(&pool, false, 2, DataOrigin::Fixture, true).await
-    } else {
-        fixture(&pool).await
-    };
+#[sqlx::test(migrations = "../../migrations")]
+async fn custom_standard_speed_binds_and_resumes_over_a_native_fast_default(pool: PgPool) {
+    bootstrap_and_resume(pool, false, Some(false)).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn custom_fast_speed_binds_and_resumes_the_same_native_thread(pool: PgPool) {
+    bootstrap_and_resume(pool, false, Some(true)).await;
+}
+
+async fn bootstrap_and_resume(pool: PgPool, wake: bool, speed: Option<bool>) {
+    let f = fixture_with_trigger(&pool, false, 2, DataOrigin::Fixture, wake, speed).await;
     let mut connection = f
         .launcher
         .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
@@ -2188,7 +2216,17 @@ async fn bootstrap_and_resume(pool: PgPool, wake: bool) {
     assert_eq!(session.native.effective.provider, "local_fixture");
     assert!(session.requested_settings.model.is_none());
     assert!(session.requested_settings.reasoning_effort.is_none());
-    assert!(session.requested_settings.service_tier.is_none());
+    let expected_tier = speed.map(|fast| if fast { "priority" } else { "default" });
+    assert_eq!(
+        session.requested_settings.service_tier.as_deref(),
+        expected_tier
+    );
+    if speed.is_some() {
+        assert_eq!(
+            session.native.effective.service_tier.as_deref(),
+            expected_tier
+        );
+    }
     assert_eq!(f.provider.request_count(), 0);
     assert_eq!(
         f.store

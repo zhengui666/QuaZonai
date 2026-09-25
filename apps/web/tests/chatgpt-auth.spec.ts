@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 import type { Schema } from '../src/api';
 
 // UI-only contract fixtures: no native account, OAuth traffic or backend success.
-async function setup(page: Page) {
+async function setup(page: Page, ready = false) {
   const now = new Date().toISOString();
   const profile: Schema['CodexProfileViewV1'] = {
     id: '01990000-0000-7000-8000-000000000001', name: '研究员', revision: '9007199254740993',
@@ -14,22 +14,53 @@ async function setup(page: Page) {
     schema_version: 1, id: '01990000-0000-7000-8000-000000000002', profile_id: profile.id, profile_revision: profile.revision,
     observed_at: now, valid_until: new Date(Date.now() + 60_000).toISOString(), outcome: { status: 'UNAVAILABLE', reason: 'AUTHENTICATION_REQUIRED' },
   };
+  const profiles = [profile, { ...structuredClone(profile), id: '01990000-0000-7000-8000-000000000004', name: '独立审阅员' }];
+  function observed(current: Schema['CodexProfileViewV1']): Schema['CodexProbeViewV1'] {
+    return { ...view, profile_id: current.id, profile_revision: current.revision,
+      outcome: ready ? { status: 'AVAILABLE', native_version: '0.156.1', native_default_model: 'research-model',
+        account: { requires_openai_auth: true, authentication_kind: 'CHATGPT', plan_type: 'test-only' },
+        effective: { model: current.model_settings.saved_model ?? 'research-model', provider: 'openai',
+          reasoning_effort: current.model_settings.saved_reasoning_effort ?? 'low',
+          service_tier: current.model_settings.saved_fast_mode ? 'priority' : 'default' },
+        models: ['research-model', 'review-model'].map(model => ({
+          capability: { schema_version: 1, id: model, model, display_name: model, hidden: false, is_default: false,
+            profile_revision: current.revision, fetched_at: now, default_reasoning_effort: 'low',
+            supported_reasoning_efforts: ['low', 'high'].map(reasoning_effort => ({ reasoning_effort, description: 'Test only' })) },
+          service_tiers: [{ id: 'priority', name: '加速', description: 'Test only' }], default_service_tier: null,
+        })) } : view.outcome,
+    };
+  }
+  const views = new Map(profiles.map(current => [current.id, observed(current)]));
   const state = {
     operation: null as Schema['CodexAccountOperationV1'] | null,
     starts: [] as { key: string | undefined; body: unknown }[], cancels: [] as { key: string | undefined; body: unknown }[],
     probes: 0, dropStart: false, dropCancel: false, stale: false,
+    saves: [] as { id: string; body: Schema['CodexProfileUpdateV1'] }[],
   };
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const reply = (json: unknown, status = 200) => route.fulfill({ status, body: JSON.stringify(json), contentType: 'application/json' });
     if (path === '/api/v2/projects') return reply({ schema_version: 1, items: [], next_cursor: null });
-    if (path === '/api/v2/settings/codex') return reply({ schema_version: 1, items: [profile], next_cursor: null });
-    if (path === `/api/v2/settings/codex/${profile.id}`) return reply(profile);
-    if (path === '/api/v2/codex/models') return reply({ schema_version: 1, profile_id: profile.id,
-      profile_revision: profile.revision, state: state.stale ? 'STALE' : 'UNAVAILABLE', observation: view });
+    if (path === '/api/v2/settings/codex') return reply({ schema_version: 1, items: profiles, next_cursor: null });
+    const current = profiles.find(item => path === `/api/v2/settings/codex/${item.id}`);
+    if (current) {
+      if (request.method() !== 'PATCH') return reply(current);
+      const body: Schema['CodexProfileUpdateV1'] = request.postDataJSON();
+      state.saves.push({ id: current.id, body });
+      current.model_settings = body.model_settings; current.revision = (BigInt(current.revision) + 1n).toString();
+      return reply({ schema_version: 1, replayed: false, resource: current });
+    }
+    if (path === '/api/v2/codex/models') {
+      const selected = profiles.find(item => item.id === new URL(request.url()).searchParams.get('profile_id'))!;
+      const observation = views.get(selected.id)!;
+      return reply({ schema_version: 1, profile_id: selected.id, profile_revision: selected.revision,
+        state: state.stale || observation.profile_revision !== selected.revision ? 'STALE' : ready ? 'AVAILABLE' : 'UNAVAILABLE', observation });
+    }
     if (path === '/api/v2/codex/probe') {
       state.probes++; state.stale = false;
-      return reply({ schema_version: 1, replayed: false, resource: view });
+      const selected = profiles.find(item => item.id === request.postDataJSON().profile_id)!;
+      const observation = observed(selected); views.set(selected.id, observation);
+      return reply({ schema_version: 1, replayed: false, resource: observation });
     }
     if (path === '/api/v2/codex/login') return reply(state.operation);
     if (path === '/api/v2/codex/login/start') {
@@ -56,8 +87,58 @@ async function setup(page: Page) {
   };
   await open();
   await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeEnabled();
-  return { state, open };
+  return { state, open, profiles };
 }
+
+test('one shared account keeps model, reasoning and speed independent for each role', async ({ page }, testInfo) => {
+  const { state, open, profiles } = await setup(page, true);
+  await expect(page.getByText('共享 ChatGPT 账号', { exact: true })).toBeVisible();
+  await expect(page.getByText('已登录 ChatGPT', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toHaveCount(1);
+  const originalReviewer = structuredClone(profiles[1]);
+  for (const [index, name, model, effort, fast] of [
+    [0, '研究员', 'research-model', 'high', true],
+    [1, '独立审阅员', 'review-model', 'low', false],
+  ] as const) {
+    if (index) {
+      await page.getByRole('combobox', { name: 'Codex 角色' }).click();
+      await page.getByText(name, { exact: true }).last().click();
+    }
+    await page.getByRole('button', { name: '模型设置', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: `${name} · 模型设置`, exact: true });
+    await dialog.getByRole('switch', { name: '本机默认', exact: true }).click();
+    await dialog.getByRole('combobox', { name: '模型', exact: true }).click();
+    await page.getByText(model, { exact: true }).last().click();
+    const slider = dialog.getByRole('slider', { name: '推理强度' });
+    await slider.focus(); await slider.press('Home');
+    await slider.press(effort === 'high' ? 'End' : 'ArrowRight');
+    const speed = dialog.getByRole('switch', { name: '速度', exact: true });
+    await expect(speed).not.toBeChecked();
+    if (fast) await speed.click();
+    await dialog.getByRole('button', { name: '保存', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(() => state.saves.length).toBe(index + 1);
+    expect(state.saves[index]).toEqual({ id: profiles[index]!.id, body: {
+      schema_version: 1, expected_revision: '9007199254740993',
+      model_settings: { schema_version: 1, use_default_model_settings: false, saved_model: model, saved_reasoning_effort: effort, saved_fast_mode: fast },
+    } });
+    if (!index) expect(profiles[1]).toEqual(originalReviewer);
+  }
+  await open();
+  await expect(page.getByText('research-model / high', { exact: true })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Codex 角色' }).click();
+  await page.getByText('独立审阅员', { exact: true }).last().click();
+  await expect(page.getByText('review-model / low', { exact: true })).toBeVisible();
+  await expect(page.getByText('已登录 ChatGPT', { exact: true })).toBeVisible();
+  expect(state.starts).toHaveLength(0);
+  expect(profiles[0]!.model_settings.saved_fast_mode).toBe(true);
+  expect(profiles[1]!.model_settings.saved_fast_mode).toBe(false);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: testInfo.outputPath(`synthetic-shared-roles-${width}.png`), animations: 'disabled' });
+  }
+});
 
 test('lost login ACK reuses the original identity; success clears the code and refreshes models', async ({ page }, testInfo) => {
   const { state } = await setup(page); state.dropStart = true;

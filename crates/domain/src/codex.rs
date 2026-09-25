@@ -50,7 +50,7 @@ pub fn resolve_overrides(
     }
     if saved.saved_model.is_none() && saved.saved_reasoning_effort.is_none() {
         return Ok(ModelOverrides {
-            fast_mode: saved.saved_fast_mode.then_some(true),
+            fast_mode: Some(saved.saved_fast_mode),
             ..Default::default()
         });
     }
@@ -94,6 +94,6 @@ pub fn resolve_overrides(
     Ok(ModelOverrides {
         model: saved.saved_model.clone(),
         reasoning_effort: saved.saved_reasoning_effort.clone(),
-        fast_mode: saved.saved_fast_mode.then_some(true),
+        fast_mode: Some(saved.saved_fast_mode),
     })
 }

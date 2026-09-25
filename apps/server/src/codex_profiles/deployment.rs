@@ -486,6 +486,10 @@ async fn inspect(
         options.service_tier = Some(
             rules::fast_tier(model).map_err(|_| CodexProbeFailureV1::ModelSettingsUnsupported)?,
         );
+    } else if overrides.fast_mode == Some(false) {
+        // Omitting this would inherit a shared native fast preference. Standard
+        // is built into App Server and is not an optional model catalog tier.
+        options.service_tier = Some("default".into());
     }
     let native_default_model = Some(default.model.clone());
     let effective = if options.model.is_some()

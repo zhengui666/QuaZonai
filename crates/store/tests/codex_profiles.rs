@@ -660,6 +660,92 @@ async fn durable_probe_rows_are_immutable_and_unsupported_settings_never_overrid
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn shared_account_roles_save_model_effort_and_speed_independently(pool: PgPool) {
+    let (store, actor, _) = setup(&pool).await;
+    let roles = store
+        .codex_profiles(
+            &actor,
+            &ListQuery {
+                limit: 100,
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap()
+        .items;
+    assert_eq!(roles.len(), 2);
+    let mut saved = Vec::new();
+    for (index, role) in roles.iter().enumerate() {
+        let ticket = prepare(&store, &actor, role, &format!("role-catalog-{index}")).await;
+        let mut outcome = available(role, ticket.started_at);
+        let CodexProbeOutcomeV1::Available { models, .. } = &mut outcome else {
+            unreachable!()
+        };
+        models[0].service_tiers.push(CodexServiceTierV1 {
+            id: "priority".into(),
+            name: "Fast".into(),
+            description: String::new(),
+        });
+        let mut alternate = models[0].clone();
+        alternate.capability.id = "other-id".into();
+        alternate.capability.model = "other-model".into();
+        alternate.capability.default_reasoning_effort = "other-effort".into();
+        alternate.capability.supported_reasoning_efforts[0].reasoning_effort =
+            "other-effort".into();
+        models.push(alternate);
+        store.complete_codex_probe(ticket, outcome).await.unwrap();
+        let mut request = update(role);
+        request.model_settings.use_default_model_settings = false;
+        request.model_settings.saved_model = Some(
+            if index == 0 {
+                "fixture-model"
+            } else {
+                "other-model"
+            }
+            .into(),
+        );
+        request.model_settings.saved_reasoning_effort = Some(
+            if index == 0 {
+                "fixture-effort"
+            } else {
+                "other-effort"
+            }
+            .into(),
+        );
+        request.model_settings.saved_fast_mode = index == 0;
+        let result = store
+            .update_codex_profile(
+                &actor,
+                &format!("save-role-{index}"),
+                role.id,
+                &request,
+                verified,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.resource.model_settings, request.model_settings);
+        assert_eq!(result.resource.revision, role.revision.next().unwrap());
+        saved.push(result.resource);
+        let other = store
+            .codex_profile(&actor, roles[1 - index].id)
+            .await
+            .unwrap();
+        let expected = if index == 0 { &roles[1] } else { &saved[0] };
+        assert_eq!(other.revision, expected.revision);
+        assert_eq!(other.model_settings, expected.model_settings);
+    }
+    let mut defaults = update(&saved[0]);
+    defaults.model_settings.use_default_model_settings = true;
+    store
+        .update_codex_profile(&actor, "restore-one-role", saved[0].id, &defaults, verified)
+        .await
+        .unwrap();
+    let other = store.codex_profile(&actor, saved[1].id).await.unwrap();
+    assert_eq!(other.revision, saved[1].revision);
+    assert_eq!(other.model_settings, saved[1].model_settings);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn local_roles_share_account_admission_and_invalidate_both_observations(pool: PgPool) {
     use store::codex_profiles::account::{
         CodexAccountCompletion as Completion, CodexAccountPreparation as Prepared,

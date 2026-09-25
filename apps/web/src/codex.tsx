@@ -78,8 +78,8 @@ function ModelControls({ form, observation, profile, disabled }: {
         {effort && <Button disabled={disabled || defaults} onClick={() => setEffort(null)}>恢复默认强度</Button>}
       </Space>
     </Form.Item>
-    <Form.Item name="saved_fast_mode" label="加速" valuePropName="checked">
-      <Switch disabled={disabled || defaults || ((!valid || !fastSupported) && !savedFast)} />
+    <Form.Item name="saved_fast_mode" label="速度" valuePropName="checked">
+      <Switch checkedChildren="加速" unCheckedChildren="标准" disabled={disabled || defaults || ((!valid || !fastSupported) && !savedFast)} />
     </Form.Item>
   </>;
 }
@@ -121,7 +121,7 @@ function ModelDialog({ original, observation, close }: { original: Profile; obse
     });
     else close();
   }
-  return <Modal open title="模型设置" width={680} maskClosable={false} closable={!pending} onCancel={cancel}
+  return <Modal open title={`${original.name} · 模型设置`} width={680} maskClosable={false} closable={!pending} onCancel={cancel}
     onOk={() => { if (online && !pending) { if (unknown && saveValues) mutation.mutate(saveValues); else if (valid) form.submit(); } }}
     okText={unknown ? '重试保存' : '保存'} cancelText="取消" confirmLoading={pending} okButtonProps={{ disabled: !online || (!unknown && !valid) }}>
     {unknown && <Alert type="warning" showIcon title="保存结果未知，请重试当前操作" />}
@@ -136,8 +136,9 @@ function ModelDialog({ original, observation, close }: { original: Profile; obse
     </Form>
   </Modal>;
 }
-function ProfileDetails({ id }: { id: string }) {
+function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Profile[]; onSelect: (id: string) => void }) {
   const online = useOnline(); const now = useClock(); const client = useQueryClient(); const intent = useRef(new Intent());
+  const { blocked } = useContext(GuardContext);
   const [accountBusy, setAccountBusy] = useState(true);
   const [editing, setEditing] = useState<Profile>(); const attempted = useRef<string | undefined>(undefined);
   const accountChanged = useCallback(async () => {
@@ -158,6 +159,10 @@ function ProfileDetails({ id }: { id: string }) {
     ]);
   } });
   const profile = query.data; const view = observation.data; const native = view?.observation;
+  const detected = native?.outcome.status === 'AVAILABLE' ? native.outcome : undefined;
+  const tier = detected?.effective.service_tier;
+  const speed = !tier || tier === 'default' ? '标准'
+    : detected?.models.find(item => item.capability.model === detected.effective.model)?.service_tiers.find(item => item.id === tier)?.name ?? tier;
   const valid = !accountBusy && !query.isError && !observation.isError && fresh(view, profile, now);
   const mutate = probe.mutate;
   useEffect(() => {
@@ -168,47 +173,51 @@ function ProfileDetails({ id }: { id: string }) {
     mutate(profile);
   }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching, accountBusy, editing, probe.isPending, mutate]);
   useGuard(probe.isPending);
-  return <Card title={profile?.name ?? 'Codex'}>
-    <QueryPanel pending={query.isPending} error={query.error} stale={!!profile} reload={() => { void query.refetch(); }}>
-      {profile && <Space orientation="vertical" className="full-width">
-        <ChatgptAuth profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
-          disabled={query.isError || probe.isPending || !!editing} onBusy={setAccountBusy} onChanged={accountChanged} />
-        <Space wrap>
-          <Button disabled={!online || query.isError || probe.isPending || accountBusy} onClick={() => setEditing(profile)}>模型设置</Button>
-          <Button loading={probe.isPending} disabled={!online || query.isError || accountBusy} onClick={() => probe.mutate(profile)}>刷新</Button>
-          {view && <Tag>{view.state === 'AVAILABLE' && !valid ? states.STALE : states[view.state]}</Tag>}
-        </Space>
-        <Descriptions column={1} items={[
-          { key: 'defaults', label: '设置', children: profile.model_settings.use_default_model_settings ? '本机默认' : '自定义模型' },
-          { key: 'saved', label: '模型 / 推理强度', children: `${profile.model_settings.saved_model ?? '默认'} / ${profile.model_settings.saved_reasoning_effort ?? '默认'}` },
-        ]} />
-        <ErrorNotice error={probe.error} />
-      </Space>}
-    </QueryPanel>
-    <QueryPanel pending={observation.isPending} error={observation.error} stale={!!view} reload={() => { void observation.refetch(); }}>
-      {native?.outcome.status === 'UNAVAILABLE' && <Alert type="warning" showIcon title={failures[native.outcome.reason]} />}
-      {native?.outcome.status === 'AVAILABLE' && <>
-        {!valid && <Alert type="warning" showIcon title="检测结果已过期" />}
-        <Descriptions column={1} items={[
-          { key: 'native', label: '版本', children: native.outcome.native_version },
-          { key: 'model', label: '当前模型', children: native.outcome.effective.model },
-          { key: 'effort', label: '当前推理强度', children: native.outcome.effective.reasoning_effort ?? '默认' },
-        ]} />
-      </>}
-    </QueryPanel>
-    {editing && <ModelDialog original={editing} observation={query.isError || observation.isError ? undefined : view} close={() => setEditing(undefined)} />}
-  </Card>;
+  return <Space orientation="vertical" className="full-width" size="large">
+    {profile && <ChatgptAuth profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
+      disabled={query.isError || probe.isPending || !!editing} onBusy={setAccountBusy} onChanged={accountChanged} />}
+    <Card title="角色模型设置">
+      <Space orientation="vertical" className="full-width">
+        <Typography.Text type="secondary">模型、推理强度和速度按角色独立保存。</Typography.Text>
+        <Select aria-label="Codex 角色" className="full-width" value={id} disabled={blocked} onChange={onSelect}
+          options={profiles.map(item => ({ value: item.id, label: item.name }))} />
+        <QueryPanel pending={query.isPending} error={query.error} stale={!!profile} reload={() => { void query.refetch(); }}>
+          {profile && <Space orientation="vertical" className="full-width">
+            <Space wrap>
+              <Button disabled={!online || query.isError || probe.isPending || accountBusy} onClick={() => setEditing(profile)}>模型设置</Button>
+              <Button loading={probe.isPending} disabled={!online || query.isError || accountBusy} onClick={() => probe.mutate(profile)}>刷新</Button>
+              {view && <Tag>{view.state === 'AVAILABLE' && !valid ? states.STALE : states[view.state]}</Tag>}
+            </Space>
+            <Descriptions column={1} items={[
+              { key: 'defaults', label: '设置', children: profile.model_settings.use_default_model_settings ? '本机默认' : '自定义模型' },
+              { key: 'saved', label: '模型 / 推理强度', children: `${profile.model_settings.saved_model ?? '默认'} / ${profile.model_settings.saved_reasoning_effort ?? '默认'}` },
+              { key: 'speed', label: '速度', children: profile.model_settings.use_default_model_settings ? '本机默认' : profile.model_settings.saved_fast_mode ? '加速' : '标准' },
+            ]} />
+            <ErrorNotice error={probe.error} />
+          </Space>}
+        </QueryPanel>
+        <QueryPanel pending={observation.isPending} error={observation.error} stale={!!view} reload={() => { void observation.refetch(); }}>
+          {native?.outcome.status === 'UNAVAILABLE' && <Alert type="warning" showIcon title={failures[native.outcome.reason]} />}
+          {native?.outcome.status === 'AVAILABLE' && <>
+            {!valid && <Alert type="warning" showIcon title="检测结果已过期" />}
+            <Descriptions column={1} items={[
+              { key: 'native', label: '版本', children: native.outcome.native_version },
+              { key: 'model', label: '当前模型', children: native.outcome.effective.model },
+              { key: 'effort', label: '当前推理强度', children: native.outcome.effective.reasoning_effort ?? '默认' },
+              { key: 'speed', label: '当前速度', children: speed },
+            ]} />
+          </>}
+        </QueryPanel>
+        {editing && <ModelDialog original={editing} observation={query.isError || observation.isError ? undefined : view} close={() => setEditing(undefined)} />}
+      </Space>
+    </Card>
+  </Space>;
 }
 export function CodexSettings() {
   const [selected, setSelected] = useState<string>();
-  const { blocked } = useContext(GuardContext);
   const query = useQuery({ queryKey: ['codex','profiles'], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/settings/codex', { params: { query: { limit: 100 } }, signal })) });
   const profile = query.data?.items.find(item => item.id === selected) ?? query.data?.items[0];
   return <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-    {profile ? <Space orientation="vertical" className="full-width" size="large">
-      <Select aria-label="Codex 角色" className="full-width" value={profile.id} disabled={blocked} onChange={setSelected}
-        options={query.data?.items.map(item => ({ value: item.id, label: item.name }))} />
-      <ProfileDetails key={profile.id} id={profile.id} />
-    </Space> : <NoData text="Codex 尚未就绪" />}
+    {profile ? <ProfileDetails key={profile.id} id={profile.id} profiles={query.data?.items ?? []} onSelect={setSelected} /> : <NoData text="Codex 尚未就绪" />}
   </QueryPanel>;
 }

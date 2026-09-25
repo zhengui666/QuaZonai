@@ -43,7 +43,12 @@ fn requested(
 ) -> Result<EffectiveCodexRequest, StoreError> {
     let saved = &profile.model_settings;
     let defaults = saved.use_default_model_settings;
-    if tier.is_some() != (!defaults && saved.saved_fast_mode) {
+    if !matches!(
+        (defaults, saved.saved_fast_mode, tier.as_deref()),
+        (true, _, None)
+            | (false, false, Some("default"))
+            | (false, true, Some("priority" | "fast"))
+    ) {
         return Err(StoreError::Invalid("native_service_tier_override"));
     }
     Ok(EffectiveCodexRequest {
@@ -476,4 +481,57 @@ pub(super) async fn admit_role<'a>(
         Err(error) => return Err(error),
     }
     Ok((tx, true))
+}
+
+#[cfg(test)]
+mod requested_settings_tests {
+    use super::*;
+
+    #[test]
+    fn native_speed_receipt_matches_the_frozen_role_settings() {
+        let mut profile: CodexProfileViewV1 = serde_json::from_value(json!({
+            "id":Id::new(),"name":"Role fixture","home_binding":"test-role",
+            "profile_origin":"OPERATOR_MOUNT","connection_mode":"SYSTEM",
+            "model_settings":{"schema_version":1,"use_default_model_settings":false,
+                "saved_model":"saved-model","saved_reasoning_effort":"saved-effort","saved_fast_mode":false},
+            "revision":"1","created_at":Utc::now(),"updated_at":Utc::now()
+        })).unwrap();
+        for defaults in [false, true] {
+            for fast in [false, true] {
+                profile.model_settings.use_default_model_settings = defaults;
+                profile.model_settings.saved_fast_mode = fast;
+                for tier in [
+                    None,
+                    Some("default"),
+                    Some("priority"),
+                    Some("fast"),
+                    Some("unrecognized"),
+                ] {
+                    let expected = matches!(
+                        (defaults, fast, tier),
+                        (true, _, None)
+                            | (false, false, Some("default"))
+                            | (false, true, Some("priority" | "fast"))
+                    );
+                    let result = requested(&profile, &tier.map(str::to_owned));
+                    assert_eq!(
+                        result.is_ok(),
+                        expected,
+                        "defaults={defaults}, fast={fast}, tier={tier:?}"
+                    );
+                    if let Ok(result) = result {
+                        assert_eq!(result.service_tier.as_deref(), tier);
+                        assert_eq!(
+                            result.model.as_deref(),
+                            if defaults { None } else { Some("saved-model") }
+                        );
+                        assert_eq!(
+                            result.reasoning_effort.as_deref(),
+                            if defaults { None } else { Some("saved-effort") }
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
