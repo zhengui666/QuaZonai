@@ -186,11 +186,9 @@ pub fn probe_outcome(
             .supported_reasoning_efforts
             .iter()
             .any(|effort| effort.reasoning_effort == *value)
-    }) || effective
-        .service_tier
-        .as_ref()
-        .is_some_and(|value| !observed.service_tiers.iter().any(|tier| tier.id == *value))
-    {
+    }) || effective.service_tier.as_ref().is_some_and(|value| {
+        value != "default" && !observed.service_tiers.iter().any(|tier| tier.id == *value)
+    }) {
         return Err(bad("effective"));
     }
     if !settings.use_default_model_settings
@@ -203,7 +201,12 @@ pub fn probe_outcome(
                 .as_ref()
                 .is_some_and(|effort| Some(effort) != effective.reasoning_effort.as_ref())
             || (settings.saved_fast_mode
-                && effective.service_tier.as_ref() != Some(&fast_tier(observed)?)))
+                && effective.service_tier.as_ref() != Some(&fast_tier(observed)?))
+            || (!settings.saved_fast_mode
+                && effective
+                    .service_tier
+                    .as_deref()
+                    .is_some_and(|tier| tier != "default")))
     {
         return Err(DomainError::CapabilityUnavailable(
             "codex_settings_not_honored",

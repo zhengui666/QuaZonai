@@ -730,14 +730,14 @@ fn invalid_metric_is_not_missing_evidence() {
     assert!(gate.reasons.iter().any(|r| r.ends_with("INVALID_INPUT")));
 }
 #[test]
-fn standard_tier_is_an_absent_fast_override() {
+fn custom_speed_is_explicit_and_native_defaults_omit_the_override() {
     let models = [model()];
     let mut saved = settings();
     assert_eq!(
         resolve_overrides(&saved, &catalog(&models))
             .unwrap()
             .fast_mode,
-        None
+        Some(false)
     );
     saved.saved_fast_mode = true;
     assert_eq!(
@@ -748,6 +748,13 @@ fn standard_tier_is_an_absent_fast_override() {
     );
     saved.saved_reasoning_effort = None;
     saved.saved_fast_mode = false;
+    assert_eq!(
+        resolve_overrides(&saved, &catalog(&models))
+            .unwrap()
+            .fast_mode,
+        Some(false)
+    );
+    saved.use_default_model_settings = true;
     assert_eq!(
         resolve_overrides(&saved, &catalog(&models))
             .unwrap()

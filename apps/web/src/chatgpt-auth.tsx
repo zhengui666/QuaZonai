@@ -108,8 +108,9 @@ export function ChatgptAuth({ profile, account, disabled, onBusy, onChanged }: {
     setChallenge(undefined); cancel.reset(); start.mutate(action);
   }
   const unavailable = !online || disabled || pending || latest.isPending || latest.isError;
-  return <Card title="ChatGPT Auth" size="small">
+  return <Card title="共享 ChatGPT 账号" size="small">
     <Space orientation="vertical" className="full-width">
+      <Typography.Text type="secondary">研究员与独立审阅员共用此账号，只需登录一次。退出登录会影响所有角色。</Typography.Text>
       <Descriptions size="small" column={1} items={[
         { key: 'status', label: '账号', children: active ? '登录状态正在更新' : account?.authentication_kind === 'CHATGPT' ? '已登录 ChatGPT'
           : account?.authentication_kind ? '当前使用其他认证方式' : account ? '未登录 ChatGPT' : '待检测' },

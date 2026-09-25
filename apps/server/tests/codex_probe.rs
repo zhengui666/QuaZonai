@@ -18,7 +18,7 @@ async fn status_refresh_skips_stalled_mcp_and_preserves_native_model_settings() 
     let configuration_path = root.path().join("config.toml");
     let marker = root.path().join("mcp-was-started");
     let configuration = format!(
-        "{}\n[projects.{}]\ntrust_level = \"trusted\"\n\
+        "service_tier = \"fast\"\n{}\n[projects.{}]\ntrust_level = \"trusted\"\n\
          [mcp_servers.slow_status_probe]\ncommand = \"/bin/sh\"\n\
          args = [\"-c\", 'printf started > \"$1\"; exec sleep 60', \"probe\", {}]\n\
          enabled = true\nrequired = true\nstartup_timeout_sec = 60\n",
@@ -54,7 +54,7 @@ async fn status_refresh_skips_stalled_mcp_and_preserves_native_model_settings() 
         }))
         .unwrap(),
     };
-    for iteration in 0..2 {
+    for iteration in 0..4 {
         let started = std::time::Instant::now();
         let outcome = tokio::time::timeout(Duration::from_secs(10), deployment.probe(&snapshot))
             .await
@@ -74,14 +74,16 @@ async fn status_refresh_skips_stalled_mcp_and_preserves_native_model_settings() 
         assert!(account.authentication_kind.is_none());
         assert_eq!(effective.provider, "local_fixture");
         assert_eq!(native_default_model.as_deref(), Some("gpt-5.4"));
-        if iteration == 0 {
+        if snapshot.profile.model_settings.use_default_model_settings {
             assert_eq!(effective.model, "gpt-5.4");
+            assert_eq!(effective.service_tier.as_deref(), Some("priority"));
             let selected = models
                 .iter()
                 .find(|model| {
                     model.capability.model != effective.model
                         && !model.capability.hidden
                         && !model.capability.supported_reasoning_efforts.is_empty()
+                        && model.service_tiers.iter().any(|tier| tier.id == "priority")
                 })
                 .expect("the native catalog must advertise another selectable model");
             let settings = &mut snapshot.profile.model_settings;
@@ -91,6 +93,14 @@ async fn status_refresh_skips_stalled_mcp_and_preserves_native_model_settings() 
                 Some(selected.capability.default_reasoning_effort.clone());
         } else {
             assert_eq!(
+                effective.service_tier.as_deref(),
+                Some(if iteration == 1 {
+                    "default"
+                } else {
+                    "priority"
+                })
+            );
+            assert_eq!(
                 Some(effective.model),
                 snapshot.profile.model_settings.saved_model
             );
@@ -98,6 +108,10 @@ async fn status_refresh_skips_stalled_mcp_and_preserves_native_model_settings() 
                 effective.reasoning_effort,
                 snapshot.profile.model_settings.saved_reasoning_effort
             );
+            snapshot.profile.model_settings.saved_fast_mode = true;
+            if iteration == 2 {
+                snapshot.profile.model_settings.use_default_model_settings = true;
+            }
         }
         assert!(
             !marker.exists(),

@@ -256,6 +256,28 @@ fn fast_tier_requires_exact_native_advertisement_and_custom_cannot_fall_back_to_
         at
     )
     .is_ok());
+    saved.saved_fast_mode = false;
+    assert!(probe_outcome(
+        &observation,
+        &saved,
+        ConnectionMode::System,
+        Revision::INITIAL,
+        at,
+        at
+    )
+    .is_err());
+    if let CodexProbeOutcomeV1::Available { effective, .. } = &mut observation {
+        effective.service_tier = Some("default".into());
+    }
+    assert!(probe_outcome(
+        &observation,
+        &saved,
+        ConnectionMode::System,
+        Revision::INITIAL,
+        at,
+        at
+    )
+    .is_ok());
 }
 
 #[test]
