@@ -2117,7 +2117,8 @@ async fn token_limit(pool: PgPool, failed_before_driver: bool) {
             terminal.outcome,
             TurnOutcome::Failed | TurnOutcome::Cancelled
         ));
-        assert!(terminal.observed_at >= event.occurred_at);
+        // Usage and completion can be drained together or separately, so their
+        // persisted timestamps have no stable relative order.
     } else {
         assert_eq!(terminal.outcome, TurnOutcome::Cancelled);
         assert!(terminal.observed_at >= run.cancellation_requested_at.unwrap());

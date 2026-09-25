@@ -19,9 +19,9 @@
 <a id="spec"></a>
 ## Requirements and design
 
-**Expected behavior and observable acceptance:** In `failed_native_turns_late_partial_usage_still_closes_spending`, the buffered token-limit event precedes persistence of the failed turn terminal. The test keeps checking cancellation, the exact token-limit payload, no receipt, and a failed or cancelled terminal.
+**Expected behavior and observable acceptance:** In `failed_native_turns_late_partial_usage_still_closes_spending`, over-budget partial usage records the exact token-limit event and cancellation without settling usage; the actual terminal is failed or cancelled. The asynchronous Usage and TurnCompleted notifications have no required relative persistence timestamp.
 
-**Relevant interface, data, UX, permissions, errors and compatibility:** The driver persists `mission.token_limit` when it consumes the Usage notification and persists the terminal when it consumes TurnCompleted; timestamps reflect that observation order.
+**Relevant interface, data, UX, permissions, errors and compatibility:** The driver may receive Usage and TurnCompleted together or separately; it persists the token-limit event and native terminal without a cross-event ordering contract.
 
 <a id="plan"></a>
 ## Implementation plan
@@ -30,7 +30,7 @@
 
 **Ordered changes, exact paths and checks:** Correct the timestamp expectation in the existing regression test; run the CI job and review the exact PR head.
 
-**Risks, alternatives and engineering decision:** CI logs show Usage was consumed before TurnCompleted. Keep the ordering check and align it to the observed protocol sequence rather than removing it.
+**Risks, alternatives and engineering decision:** The first fix reversed the original timestamp comparison. Current-head Codex review showed that same-batch notification draining can persist the terminal first, so the relative timestamp assertion is invalid; keep the behavioral assertions instead.
 
 <a id="verification"></a>
 ## Verification
@@ -46,9 +46,9 @@
 <a id="review"></a>
 ## Review
 
-**PR / reviewer and review scope:** Pending PR to `dev`.
+**PR / reviewer and review scope:** [PR #119](https://github.com/zhengui666/QuaZonai/pull/119), current-head Code and Security review.
 
-**Findings, resolutions, re-review and current CI:** Pending.
+**Findings, resolutions, re-review and current CI:** Initial Codex review found that reversing the timestamp assertion still flakes when both notifications are drained together. The timestamp comparison is removed; behavioral assertions remain. Re-review and CI for the new head are pending.
 
 **Outstanding findings and actual human approval / pending decision:** None known; current-head gates are pending.
 
