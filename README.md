@@ -1,78 +1,58 @@
+<p align="center">
+  <img src="apps/web/public/icon.svg" alt="QuaZonai" width="96" height="96">
+</p>
+
 # QuaZonai
 
-**面向个人、本机、自托管使用的生产级量化研究系统。** Rust 负责科学计算，Codex 组织研究，React / Ant Design 提供 Web / PWA。系统保存可追溯的 Alpha、组合回测与 target-only 目标包；不持有券商凭据、不发送真实订单。
+个人量化研究工作台。从研究假设出发，组织 Alpha 实验、组合回测和目标组合交付，保存输入、过程与结果。支持浏览器和 PWA，不发送真实交易订单。
 
-[部署与运行](OPERATIONS.md) · [安装 Agent Skill](#agent-skill) · [CLI](CLI.md) · [架构与合同](DESIGN.md)
-
-[![CI](https://github.com/zhengui666/QuaZonai/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/zhengui666/QuaZonai/actions/workflows/ci.yml)
+[安装](#quickstart) · [使用](#usage) · [更新与恢复](deploy/docker/README.md#update) · [Agent Skill](#agent-skill)
 
 <a id="quickstart"></a>
-## 安装与启动
+## 安装
 
-版本化容器部署：从 [GitHub Releases](https://github.com/zhengui666/QuaZonai/releases) 下载指定版本的 `quazonai-deploy.tar.gz`，解压后复制 `.env.example` 为 `.env`，设置 `CODEX_VERSION`，再运行 `bash deploy.sh`。脚本部署前后端、PostgreSQL / PGMQ、同版本 Worker，并从 Debian 基础镜像单独构建 Codex。部署机无需 Rust / Node.js 或宿主 Codex；平台前提、更新与恢复见[容器部署](OPERATIONS.md#container-install)。
+需要 Linux x86_64、本机 Docker Engine、Docker Compose 2.20+、Python 3.10+、Git 和 systemd。Worker 需要 glibc 2.36+、OpenSSL 3；不支持 Docker Desktop、远程 Docker、rootless 或 userns-remap。完整前提见[部署手册](deploy/docker/README.md#prerequisites)。
 
-开发分支可通过 [Dev image](OPERATIONS.md#dev-image) 手动构建并发布 dev 镜像，无需先合并 main；运行结果提供精确 SHA、独立 dev 标签和镜像 digest。
-
-从源码安装则准备 Linux x86_64、Rust 1.98.1、Node.js ≥22.12、PostgreSQL 18 / PGMQ 1.10.0 和 Caddy。API、Worker 与原生 Codex 使用同一操作系统用户。
+从 [GitHub Releases](https://github.com/zhengui666/QuaZonai/releases) 选择提供 `quazonai-deploy.tar.gz` 的版本，下载后执行：
 
 ```sh
-git clone https://github.com/zhengui666/QuaZonai.git
-cd QuaZonai
+mkdir quazonai-install
+tar -xzf quazonai-deploy.tar.gz -C quazonai-install
+cd quazonai-install
+cp .env.example .env
 ```
 
-按[安装步骤](OPERATIONS.md#install)构建正式静态资源和 Rust 二进制，初始化状态目录、显式迁移数据库，并启动 API、Worker 与网关。默认访问 `http://localhost:8081`；页面直接进入工作台，不需要账号、验证码或设备信任。API 和网页只监听 loopback。
+将 `.env` 中的 `CODEX_VERSION` 设为要使用的 Codex 精确版本，再以普通用户执行：
 
-容器部署通过部署包的 ChatGPT 设备码登录入口授权，登录信息保存在独立的持久 `CODEX_HOME` 中，重建或更新 Codex 镜像后继续使用。登录和专用升级命令见[部署手册](deploy/docker/README.md)。设置页选择模型和推理强度，“本机默认”沿用原生设置。源码开发的本机协议验收仍可使用 `codex login` 与当前用户的原生安装。右上角切换浅色／深色主题。
+```sh
+loginctl enable-linger "$USER"
+bash deploy.sh
+```
 
-研究前登记真实数据及许可、探测计算 Runtime，并冻结输入和预算。数据、模型、数据库或计算端不可用时显示实际错误，不生成替代结果。升级与恢复保留原数据库、状态目录、密钥和任务身份。
+打开 **http://localhost:8081**。默认数据目录为 `$HOME/.local/share/quazonai`。
+
+部署包拉取 Web/API 镜像，启动 PostgreSQL，并从同一镜像安装 systemd Worker；Codex 单独构建为容器。宿主机无需安装 Rust、Node.js 或 Codex。科学 Runtime 和数据目录需要另外登记。
+
+<a id="usage"></a>
+## 开始研究
+
+在「设置 → Codex → ChatGPT Auth」登录 ChatGPT，按页面提示完成授权，再为研究员和审阅员选择模型与推理强度。登录信息保存在独立目录，应用更新后继续使用。
+
+登记真实数据与可用 Runtime，创建项目并冻结研究问题、输入和预算，启动研究周期。在运行详情查看进度与失败原因，在 Alpha 与组合详情检查评估、历史价值曲线和交付记录。
+
+右上角可切换浅色、深色主题。浏览器支持时可安装为 PWA；检测到新版本后按提示更新。
 
 <a id="agent-skill"></a>
-## 安装 Agent Skill
+## 通过 Agent 操作
 
-使用 [skills.sh 的官方 CLI](https://skills.sh/docs/cli)，准备 Git 和 Node.js ≥22.20（推荐 Node.js 24），在需要使用 Skill 的项目目录执行：
+在使用 Agent 的环境中安装操作 Skill：
 
 ```sh
 npx skills add zhengui666/QuaZonai --skill quazonai
 ```
 
-按提示选择 Agent，默认安装到当前项目。全局安装到 Codex 和 Claude Code：
+Skill 操作已有 QuaZonai 服务；连接方式见[连接说明](skills/quazonai/references/connection.md)。
 
-```sh
-npx skills add zhengui666/QuaZonai --skill quazonai --agent codex claude-code --global --yes
-```
+## 许可
 
-仅使用一个 Agent 时只保留对应名称。查看或更新全局安装：
-
-```sh
-npx skills list --global
-npx skills update quazonai --global
-```
-
-安装器从仓库发现 `skills/quazonai/SKILL.md`，安装整个目录及 `references/`；无需手动克隆源码、复制文件或另行发布 npm 包。此 Skill 用于操作已有服务，不安装或启动 QuaZonai，也不创建凭据或 MCP 连接。宿主仍须提供匹配的 `server` CLI 和已有机器连接，或已绑定的 Mission MCP；连接要求见[包内说明](skills/quazonai/references/connection.md)。
-
-## 结构
-
-Web / CLI / MCP → Rust API → PostgreSQL / PGMQ → Worker → Codex / 独立 Runtime。
-
-科学任务复用 NautilusTrader、Wasmi、Clarabel、Arrow 与 ndarray。QZ 负责研究规则、任务编排和结果关联，不重写撮合、优化器或 Agent 工具循环。
-
-| 需要 | 入口 |
-| --- | --- |
-| 安装、配置、备份和恢复 | [OPERATIONS](OPERATIONS.md) |
-| 服务 Agent 与命令接口 | [操作 Skill](skills/quazonai/SKILL.md)、[CLI](CLI.md)、`server --help` |
-| 字段、状态机与模块边界 | [DESIGN](DESIGN.md) |
-| 开发和验证 | [CONTRIBUTING](CONTRIBUTING.md)、[AGENTS](AGENTS.md) |
-
-## 开发
-
-按[贡献指南](CONTRIBUTING.md#verify-the-change)选择对应检查。浏览器回归使用真实 Rust API、PostgreSQL、Worker 和 Caddy；科学回归使用原生引擎。编译复用的手动微基准：
-
-```sh
-cargo run --locked --release -p job --example benchmark_signals
-```
-
-基准同时核对结果和 fuel；计时不设置通过阈值。
-
-## License
-
-原创代码：[AGPL-3.0-only](LICENSE)。第三方许可与版权：[NOTICE](NOTICE)、[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。
+[AGPL-3.0-only](LICENSE) · [NOTICE](NOTICE) · [第三方声明](THIRD_PARTY_NOTICES.md)
