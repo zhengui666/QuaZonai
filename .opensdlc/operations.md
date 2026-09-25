@@ -77,7 +77,93 @@ target/release/runtime serve --config /absolute/runtime.json
 
 `runtime doctor` checks the real Docker/image/resource prerequisites. `runtime serve` uses the original state directory; its existing-task status remains available during a Docker outage, but new execution cannot succeed without Docker. Use the same owner, binary/configuration and paths when supervising or restarting it. Neither command replaces execution/cancellation/restore tests.
 
-The gateway accepts only a loopback listener. Expose it through an existing same-host trusted HTTPS reverse proxy whose origin is reachable from both the Docker API container and host Worker. Their `runtime_targets` entries contain the exact `origin` and allowed `addresses` (`IP:port`), as defined in [RuntimeTarget](../apps/server/src/runtime_transport.rs); register that endpoint and matching credential with the service, then probe readiness before importing/using catalogs. Inside the API container, `127.0.0.1` is not the host, and the gateway has no Unix-socket HTTP listener. Do not substitute a fabricated socket or disable certificate validation. After configuration changes, probe the new capabilities; existing jobs retain their original launch and remote identity.
+The gateway accepts only a loopback listener. Expose it through an existing same-host trusted HTTPS reverse proxy whose origin is reachable from both the Docker API container and host Worker. Inside the API container, `127.0.0.1` is not the host, and the gateway has no Unix-socket HTTP listener. Preserve certificate/Host validation. After configuration changes, probe the new capabilities; existing jobs retain their original launch and remote identity.
+
+<a id="runtime-targets"></a>
+### Apply control-plane targets
+
+`runtime_targets` in the private `installation.json` is an array of [RuntimeTarget](../apps/server/src/runtime_transport.rs): each `origin` is the exact HTTPS origin and `addresses` lists reachable `IP:port` destinations with the same port. Create a separate `runtime-targets.json` containing the complete desired array; replace this example with the actual proxy hostname and address:
+
+```json
+[
+  {"origin": "https://runtime.example.org", "addresses": ["192.168.1.20:443"]}
+]
+```
+
+Editing the manifest alone, restarting only the Worker, or rerunning the same release's installer does not apply both environments. Finish all Runs and login sessions. As the installation owner, run the following maintenance command from the directory containing `runtime-targets.json`. It uses the **installed** manager, holds its deployment lock, preserves the old manifest, closes admissions and rechecks idle state before rewriting either environment. It recreates only the app container; it does not migrate, change images or touch the database volume.
+
+```sh
+python3 - "$HOME/.local/share/quazonai" "$PWD/runtime-targets.json" <<'PY'
+import json, os, sys, tempfile
+from pathlib import Path
+root, source = (Path(value).resolve() for value in sys.argv[1:])
+sys.path.insert(0, str(root / 'current/deployment'))
+import manage as m
+import codex
+os.umask(0o077)
+targets = json.loads(source.read_text())
+if not isinstance(targets, list):
+    raise ValueError('runtime-targets.json must contain an array')
+m.preflight()
+with m.locked(root):
+    if (root / 'pending.json').exists():
+        raise ValueError('Complete the recorded installation/update first')
+    old = m.configuration(root)
+    candidate = {**old, 'runtime_targets': targets}
+    m.require_idle(old)
+    codex.require_stopped(old, recover_created=True)
+    m.durable_directory(root / 'backups')
+    checkpoint = Path(tempfile.mkdtemp(prefix='runtime-config-', dir=root / 'backups'))
+    m.save(checkpoint / 'installation.json', old)
+    print('Configuration checkpoint:', checkpoint, flush=True)
+    m.configure_app_restarts(old, False)
+    try:
+        m.compose(old, 'stop', 'app')
+        m.require_idle(old)
+        codex.require_stopped(old, recover_created=True)
+    except Exception:
+        m.resume_existing_services(old)
+        m.configure_app_restarts(old, True)
+        raise
+    m.run(['systemctl', '--user', 'disable', '--now', m.unit(old)])
+    m.require_idle(old)
+    m.save(root / 'installation.json', candidate)
+    m.configure_worker(candidate)
+    m.compose(candidate, 'up', '--no-start', '--no-deps', 'app')
+    m.configure_app_restarts(candidate, False)
+    print('Configuration prepared; starting the original installation', flush=True)
+    m.resume_existing_services(candidate, enable_boot=False)
+    m.verify_worker(candidate)
+    m.verify_console(candidate)
+    m.run(['systemctl', '--user', 'enable', m.unit(candidate)])
+    m.configure_app_restarts(candidate, True)
+PY
+```
+
+Change the first argument for a non-default installation. Native server startup validates the target entries; a startup failure is not a successful apply. Do not edit other installation fields or use a Compose override that replaces `RUNTIME_TARGETS` with different values. After both processes start, register the same endpoint and credential through Runtime settings, run its probe, and register the real catalogs.
+
+If interrupted **before** the prepared message, correct the cause and rerun the same apply command; its idle check prevents replacing processors that acquired work. To undo the target edit, use the selected checkpoint's `runtime_targets` array as the next input and repeat the idle maintenance procedure. This is configuration recovery, not a database restore.
+
+If either prepared processor may already be running, resume without recreating containers or rewriting files. This also restores boot recovery after the checks succeed:
+
+```sh
+python3 - "$HOME/.local/share/quazonai" <<'PY'
+import sys
+from pathlib import Path
+root = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root / 'current/deployment'))
+import manage as m
+with m.locked(root):
+    if (root / 'pending.json').exists():
+        raise ValueError('Use the recorded installation/update recovery instead')
+    config = m.configuration(root)
+    m.resume_existing_services(config, enable_boot=False)
+    m.verify_worker(config)
+    m.verify_console(config)
+    m.run(['systemctl', '--user', 'enable', m.unit(config)])
+    m.configure_app_restarts(config, True)
+PY
+```
 
 <a id="recovery"></a>
 ## Recovery
@@ -88,7 +174,47 @@ For a cold restore, stop admissions and the original Worker, reconcile actual re
 
 After restoring the control database and ending old transactions, the migration owner runs the matching server's `recover-access --recovery-id UUIDv7`. Save one recovery ID for the operation; unknown outcomes replay that ID, while a different restore gets a new one. This cuts over access, not data or external execution. Preserve original ciphertext/key material, reissue required machine connections, and reconcile old remote identities before resuming work. Native checks: [recovery_access](../apps/server/tests/recovery_access.rs) and [native_control_restore](../apps/runtime/tests/native_control_restore.rs).
 
-Runtime cold backups include the complete stopped state directory, SQLite/WAL, manifests, objects, cancellation records and instance identity. Do not copy a live directory as a consistent backup. [native_restore](../apps/runtime/tests/native_restore.rs) checks archive/ownership behavior with disposable files. A Runtime-only restore is not a coordinated control-plane restore.
+<a id="runtime-recovery"></a>
+### Runtime cold backup and restore
+
+First stop scheduling and admissions, finish/cancel Runs and reconcile their actual remote terminal state. Stop the original control-plane Worker. Stop the foreground `runtime serve` with Ctrl-C, or stop its actual supervisor unit and disable its restart policy; confirm that no Runtime writer remains. Keep the same source revision, image, configuration, credential and catalog snapshots alongside the coordinated control-plane backup. A running directory copy is not a consistent checkpoint.
+
+The following archive preserves the complete stopped state, including SQLite/WAL, objects, manifests, instance identity and cancellation records. Replace paths with the actual Runtime state and an existing, owner-managed backup parent. Only archive ownership operations need administrator permission:
+
+```sh
+set -eu
+umask 077
+state=/srv/quazonai-runtime/state
+backup_parent=/srv/quazonai-runtime/backups
+test -d "$state" && test ! -L "$state"
+test -d "$backup_parent" && test ! -L "$backup_parent"
+checkpoint=$(mktemp -d "$backup_parent/runtime-XXXXXXXX")
+: > "$checkpoint/state.tar"
+sudo tar --create --numeric-owner --file "$checkpoint/state.tar" --directory "$state" .
+sudo tar --compare --numeric-owner --file "$checkpoint/state.tar" --directory "$state"
+```
+
+Check and explicitly select the recovery point; do not automatically select the latest directory. Keep all writers stopped. Restore the entire checkpoint to the original path, preserving the previous directory at an unused sibling path. Replace both `REPLACE_WITH` values before executing:
+
+```sh
+set -eu
+umask 077
+state=/srv/quazonai-runtime/state
+checkpoint=/srv/quazonai-runtime/backups/REPLACE_WITH_SELECTED_CHECKPOINT
+retained=/srv/quazonai-runtime/REPLACE_WITH_UNUSED_RETAINED_DIRECTORY
+test -s "$checkpoint/state.tar"
+test -d "$state" && test ! -L "$state"
+test ! -e "$retained" && test ! -L "$retained"
+mv --no-target-directory --no-clobber -- "$state" "$retained"
+mkdir -m 0700 -- "$state"
+sudo tar --extract --numeric-owner --same-owner --preserve-permissions \
+  --file "$checkpoint/state.tar" --directory "$state"
+sudo tar --compare --numeric-owner --file "$checkpoint/state.tar" --directory "$state"
+```
+
+Do not mix SQLite/WAL/objects from different checkpoints or start the retained and restored instances together. Start `runtime serve --config /absolute/runtime.json` with the original owner, binary and paths; use the matching control-plane restore above when its database was restored too. Re-read original job identities, state, timestamps, manifests and output bytes. Verify cancellation tombstones and same-key replay before accepting new work; the Worker must reconcile the original Attempt/external ID rather than restart an old container or submit replacements. Then perform one bounded new task using the original data and reopen scheduling/admissions. Keep the checkpoint and retained directory until verification completes. Missing original images, catalogs or outputs are recovery failures, not permission to regenerate evidence.
+
+[native_restore](../apps/runtime/tests/native_restore.rs) and [native_control_restore](../apps/runtime/tests/native_control_restore.rs) exercise the archive/ownership and coordinated recovery boundaries with disposable resources. A Runtime-only restore is not a coordinated control-plane restore.
 
 <a id="observe"></a>
 ## Observe and diagnose

@@ -9,6 +9,8 @@ import test from 'node:test';
 const bundle = fileURLToPath(new URL('./docker/', import.meta.url));
 const guide = await readFile(join(bundle, 'README.md'), 'utf8');
 const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+const operations = await readFile(new URL('../.opensdlc/operations.md', import.meta.url), 'utf8');
+const documents = [readme, guide, operations];
 
 function succeeds(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 10_000, ...options });
@@ -18,11 +20,19 @@ function succeeds(command, args, options = {}) {
   return result.stdout;
 }
 
-test('documented Docker commands have valid Bash syntax', () => {
-  for (const text of [readme, guide]) {
+test('documented deployment and maintenance commands have valid Bash syntax', () => {
+  for (const text of documents) {
     const blocks = [...text.matchAll(/```sh\n([\s\S]*?)\n```/g)];
     assert.ok(blocks.length > 0, 'The guide must contain executable examples');
     for (const [, script] of blocks) succeeds('bash', ['-n'], { input: script });
+  }
+});
+
+test('embedded Python maintenance examples compile without executing operations', () => {
+  const scripts = documents.flatMap(text => [...text.matchAll(/python3[^\n]*<<'PY'\n([\s\S]*?)\nPY/g)]);
+  assert.ok(scripts.length > 0, 'Expected revision lookup and maintenance examples');
+  for (const [, script] of scripts) {
+    succeeds('python3', ['-B', '-c', 'import sys; compile(sys.stdin.read(), "<documented-python>", "exec")'], { input: script });
   }
 });
 

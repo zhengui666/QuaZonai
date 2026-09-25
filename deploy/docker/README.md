@@ -62,9 +62,25 @@ These commands require idle Runs/sessions and hold the deployment lock. Credenti
 <a id="scientific-runtime"></a>
 ## Scientific Runtime and data
 
-The application release bundle does not contain the scientific gateway or its job image. Follow [Runtime configuration and startup](https://github.com/zhengui666/QuaZonai/blob/main/.opensdlc/operations.md#scientific-runtime), which links the native Docker image build, configuration fields, catalog registration, `runtime doctor` and `runtime serve`. Use the instructions and matching binaries from the application's `revision` recorded in `release.json`.
+The application release bundle does not contain the scientific gateway or its job image. From this bundle directory, print the setup, configuration-apply and recovery guides pinned to the exact `release.json.revision`:
 
-The gateway is a separate host process; scientific jobs run in its registered Docker image. Its loopback listener needs an existing trusted HTTPS reverse proxy reachable from both the API container and host Worker. Container-local `127.0.0.1` does not reach the host. Register the endpoint, permitted socket addresses and matching Runtime credential, probe readiness, then register the actual catalogs. A successful probe or empty catalog list is not research data.
+```sh
+python3 - <<'PY'
+import json, re
+from pathlib import Path
+revision = json.loads(Path('release.json').read_text())['revision']
+if not re.fullmatch(r'[0-9a-f]{40}', revision):
+    raise ValueError('Invalid release revision')
+base = f'https://github.com/zhengui666/QuaZonai/blob/{revision}/.opensdlc'
+for path in ('project.md#runtime-image-build', 'operations.md#scientific-runtime',
+             'operations.md#runtime-targets', 'operations.md#runtime-recovery'):
+    print(f'{base}/{path}')
+PY
+```
+
+For an installed copy, its bundle is `<installation>/current/deployment`. Open the printed revision-specific guides and use the matching gateway/image build. The gateway is a separate host process; scientific jobs run in its registered Docker image. Its loopback listener needs an existing trusted HTTPS reverse proxy reachable from both the API container and host Worker. Container-local `127.0.0.1` does not reach the host.
+
+Follow `runtime-targets` to set the exact HTTPS `origin` and reachable `addresses`, close admissions, preserve configuration and apply both the API and Worker environments using the installed manager. Editing `installation.json` alone or repeating a same-version deployment is insufficient. Then register the matching endpoint and credential in Runtime settings, probe readiness, and register actual catalogs. A successful probe or empty catalog list is not research data.
 
 <a id="codex-update"></a>
 ## Update Codex
@@ -111,7 +127,7 @@ Keep `installation.json`, the data directory, `master.key`, `.env`, original por
 <a id="recovery"></a>
 ## Backups and recovery
 
-Before migration, the updater saves `backups/<timestamp>-<id>/` with `database.dump`, `data.tar.gz`, `installation.json` and a separate `master.key`. Copy backups off the installation disk and keep the key separately protected. Codex home and independent Runtime catalogs/journals need coordinated backups of their own.
+Before migration, the updater saves `backups/<timestamp>-<id>/` with `database.dump`, `data.tar.gz`, `installation.json` and a separate `master.key`. Copy backups off the installation disk and keep the key separately protected. Back up Codex home separately and use the revision-pinned `runtime-recovery` guide [above](#scientific-runtime) for stopped scientific catalogs/journals and ownership-preserving recovery.
 
 If install/update stops with an error, retain `pending.json`, the original state and recovery point. Correct the cause and retry the **same target version**. A `preparing` failure can restore the old processors; `migrating` may already have changed the schema; `starting` resumes the same candidate without repeating migration. Do not delete the marker, regenerate identity/key material, remove volumes or start an older binary to bypass the failure.
 
