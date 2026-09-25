@@ -3,6 +3,8 @@
 <a id="container-release"></a>
 ## 版本化镜像与部署合同
 
+开发镜像使用独立的 [Dev image 工作流](.github/workflows/dev-image.yml)，由维护者手动指定同仓库分支、tag 或完整 SHA，无需先合并 main 或创建版本 tag。checkout 后固定实际 SHA，复用来源中的容器 composite action 构建并完成真实安装/更新/恢复检查，然后直接推送经过验证的同一镜像；来源必须包含现有容器构建及部署文件。镜像为 `ghcr.io/zhengui666/quazonai:dev-<完整SHA>-<run-id>-<attempt>`，OCI revision/version 与来源及标签一致，推送后按 digest 拉回并核对镜像身份。每次运行及重试使用新标签，不更新浮动 dev/latest 或正式版本标签，不创建 GitHub Release、部署包或自动部署。该手动 job 仅使用 contents 读与 packages 写权限；正式版本仍遵守下述 main ancestry、版本 tag 和完整 CI 门禁。操作见 [dev 镜像](OPERATIONS.md#dev-image)。
+
 正式分发复用 GitHub Actions、GHCR、Docker 多阶段构建、Docker Compose 和 systemd user manager；不引入新容器控制面、认证系统、发布服务或后台自动更新代理。前端产物、Rust API 与 Caddy 同镜像发布；Worker 从该镜像提取同源 server 二进制在宿主 user manager 运行。Codex 使用单独的自建 Debian 基础镜像，由部署前 `.env` 的 `CODEX_VERSION` 选择官方 npm 版本，不使用预制 Codex 镜像，不安装到宿主。API 的账号／模型探测与 Worker Mission 均通过本机 Docker API 启动该镜像中的原生 App Server。科学 Runtime 的镜像、catalog、journal 和数据许可继续独立登记，不由本部署捏造就绪。
 
 发布名为 `vMAJOR.MINOR.PATCH[-prerelease]`，不接受前导零、build metadata 或浮动 latest。tag 解引用至精确 commit，须为当前 main 祖先；不以分支名、PR 标题或字符串相等代替 ancestry。main push / tag push / CI 完成均重算尚未发布版本，覆盖两种推送先后顺序；squash/rebase 不搬移旧 tag。该 SHA 的 CI、Web console、Native Runtime、Polymarket history 和 Container 最新运行须成功，发布 job 再构建并验证同源镜像，然后直接推送被验证的镜像而非重建另一份。普通 PR 仅只读验证；只有发布 job 使用 packages/contents 写权限。Release 最后由 draft 变为 published，标记预发布、不推动 latest；已有完整版本不覆盖。

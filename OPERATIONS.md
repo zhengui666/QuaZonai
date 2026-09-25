@@ -49,6 +49,20 @@ git push origin refs/tags/v2.0.1
 
 镜像为 `ghcr.io/zhengui666/quazonai:<tag>`；Release 同时提供 `release.json` 与部署压缩包，部署以 digest 为准。预发布保留 prerelease 标记，不发布浮动 latest 镜像。已完整发布的版本重复触发不覆盖；中断的 draft 可重试。新包默认可见性需在 GitHub Packages 核对，公开仓库不代表新 GHCR 包已经公开。没有版本 tag 的普通 main push 不创建新版本。
 
+<a id="dev-image"></a>
+### 从开发分支发布 dev 镜像
+
+在 Actions → **Dev image** → **Run workflow** 中保持工作流分支为 `main`，在 `source_ref` 填入已推送到本仓库的开发分支、tag 或完整 commit SHA。源码无需包含 dev 工作流本身，但必须已有容器 action 和部署文件。也可执行以下命令，将示例分支替换为实际分支：
+
+```sh
+gh workflow run dev-image.yml --repo zhengui666/QuaZonai --ref main \
+  -f source_ref=your-development-branch
+```
+
+工作流固定实际检出的 SHA，运行现有容器构建与真实安装/更新/恢复检查，成功后发布 `ghcr.io/zhengui666/quazonai:dev-<完整SHA>-<run-id>-<attempt>`。运行 Summary 提供来源 SHA、镜像 tag 和拉回核验过的 digest；后续拉取使用其中的完整 digest。重复运行及重试产生不同标签，开发分支继续提交不改变已完成运行的来源。私有 GHCR 包仍需 Docker 登录。
+
+这是独立的开发镜像通道，不需要先 merge main，也不创建版本 tag、GitHub Release 或 `quazonai-deploy.tar.gz`。正式安装/更新命令继续使用上面的版本化部署包；不将 dev 标签传给 `update.sh`，工作流也不会切换现有安装。
+
 <a id="install"></a>
 ## 从源码安装与进程管理
 

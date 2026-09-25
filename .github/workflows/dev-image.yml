@@ -1,0 +1,71 @@
+name: Dev image
+run-name: Dev image from ${{ inputs.source_ref }}
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Same-repository branch, tag or full commit SHA to build (need not be merged).
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  publish:
+    if: github.repository == 'zhengui666/QuaZonai'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/zhengui666/quazonai
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+      - name: Freeze source revision and unique dev tag
+        id: source
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          version="dev-${revision}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/container
+        with:
+          image: quazonai-dev:${{ steps.source.outputs.version }}
+          revision: ${{ steps.source.outputs.revision }}
+          version: ${{ steps.source.outputs.version }}
+      - name: Verify the tested image identifies the selected source
+        env:
+          LOCAL_IMAGE: quazonai-dev:${{ steps.source.outputs.version }}
+          REVISION: ${{ steps.source.outputs.revision }}
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$REVISION"
+          test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
+          test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish and read back the tested dev image
+        env:
+          LOCAL_IMAGE: quazonai-dev:${{ steps.source.outputs.version }}
+          REVISION: ${{ steps.source.outputs.revision }}
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker tag "$LOCAL_IMAGE" "$IMAGE:$VERSION"
+          docker push "$IMAGE:$VERSION"
+          digest=$(docker image inspect "$IMAGE:$VERSION" --format '{{index .RepoDigests 0}}')
+          docker pull "$digest"
+          test "$(docker image inspect "$digest" --format '{{.Id}}')" = "$(docker image inspect "$LOCAL_IMAGE" --format '{{.Id}}')"
+          {
+            echo '### Published dev image (linux/amd64)'
+            printf '\nSource: `%s`\n\nTag: `%s:%s`\n\nDigest: `%s`\n' "$REVISION" "$IMAGE" "$VERSION" "$digest"
+            echo 'This development image has no versioned deployment bundle or GitHub Release.'
+          } >> "$GITHUB_STEP_SUMMARY"

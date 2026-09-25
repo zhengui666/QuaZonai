@@ -11,6 +11,8 @@
 
 版本化容器部署：从 [GitHub Releases](https://github.com/zhengui666/QuaZonai/releases) 下载指定版本的 `quazonai-deploy.tar.gz`，解压后复制 `.env.example` 为 `.env`，设置 `CODEX_VERSION`，再运行 `bash deploy.sh`。脚本部署前后端、PostgreSQL / PGMQ、同版本 Worker，并从 Debian 基础镜像单独构建 Codex。部署机无需 Rust / Node.js 或宿主 Codex；平台前提、更新与恢复见[容器部署](OPERATIONS.md#container-install)。
 
+开发分支可通过 [Dev image](OPERATIONS.md#dev-image) 手动构建并发布 dev 镜像，无需先合并 main；运行结果提供精确 SHA、独立 dev 标签和镜像 digest。
+
 从源码安装则准备 Linux x86_64、Rust 1.98.1、Node.js ≥22.12、PostgreSQL 18 / PGMQ 1.10.0 和 Caddy。API、Worker 与原生 Codex 使用同一操作系统用户。
 
 ```sh
