@@ -73,7 +73,8 @@ if not re.fullmatch(r'[0-9a-f]{40}', revision):
     raise ValueError('Invalid release revision')
 base = f'https://github.com/zhengui666/QuaZonai/blob/{revision}/.opensdlc'
 for path in ('project.md#runtime-image-build', 'operations.md#scientific-runtime',
-             'operations.md#runtime-targets', 'operations.md#runtime-recovery'):
+             'operations.md#runtime-targets', 'operations.md#runtime-recovery',
+             'operations.md#access-cutover'):
     print(f'{base}/{path}')
 PY
 ```
@@ -131,7 +132,7 @@ Before migration, the updater saves `backups/<timestamp>-<id>/` with `database.d
 
 If install/update stops with an error, retain `pending.json`, the original state and recovery point. Correct the cause and retry the **same target version**. A `preparing` failure can restore the old processors; `migrating` may already have changed the schema; `starting` resumes the same candidate without repeating migration. Do not delete the marker, regenerate identity/key material, remove volumes or start an older binary to bypass the failure.
 
-A cold restore requires a matching database, application state, key, installation identity, runtime state and release. Stop all writers and reconcile remote work first; restore original paths/ownership. After restoring the control database, run the matching server's `recover-access --recovery-id UUIDv7` as the database migration owner, retaining one recovery ID for retries. Reissue needed machine connections and reconcile original remote tasks before resuming. Restoring a database alone is not a complete recovery.
+A cold restore requires a matching database, application state, key, installation identity, runtime state and release. Stop all writers and reconcile remote work first; restore original paths/ownership. With API/Worker stopped and old database transactions ended, follow the revision-pinned `access-cutover` guide printed [above](#scientific-runtime). It invokes the matching `<installation>/releases/<version>/bin/server`, privately obtains the restored database's migration-owner `DATABASE_URL`, creates and saves one UUIDv7 using `uuidgen --time-v7`, and checks/saves the native receipt. Unknown outcomes reuse that record; each distinct database restore gets a new record. Reissue needed machine connections and reconcile original remote tasks before resuming. Restoring a database alone is not a complete recovery.
 
 <a id="troubleshooting"></a>
 ## Troubleshooting

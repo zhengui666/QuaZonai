@@ -1,4 +1,4 @@
-//! Keep DESIGN's package ownership executable without another dependency tool.
+//! Keep .opensdlc/architecture.md package ownership executable without another dependency tool.
 use serde_json::Value;
 use std::{path::Path, process::Command};
 
@@ -41,7 +41,9 @@ fn workspace_dependencies_follow_design_boundaries() {
             "store" | "job" => &["contracts", "domain"],
             "runtime" => &["contracts", "domain", "integrations"],
             "server" => &["contracts", "domain", "store", "integrations"],
-            _ => panic!("Document ownership of new workspace package {name} in DESIGN first"),
+            _ => panic!(
+                "Document ownership of new workspace package {name} in .opensdlc/architecture.md first"
+            ),
         };
         for dependency in package["dependencies"].as_array().unwrap() {
             // Native scientific/HTTP fixtures intentionally share test helpers.

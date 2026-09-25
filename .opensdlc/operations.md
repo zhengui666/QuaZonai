@@ -115,18 +115,19 @@ with m.locked(root):
     m.durable_directory(root / 'backups')
     checkpoint = Path(tempfile.mkdtemp(prefix='runtime-config-', dir=root / 'backups'))
     m.save(checkpoint / 'installation.json', old)
+    m.sync_directory(root / 'backups')
     print('Configuration checkpoint:', checkpoint, flush=True)
-    m.configure_app_restarts(old, False)
     try:
+        m.configure_app_restarts(old, False)
         m.compose(old, 'stop', 'app')
         m.require_idle(old)
         codex.require_stopped(old, recover_created=True)
+        m.run(['systemctl', '--user', 'disable', '--now', m.unit(old)])
+        m.require_idle(old)
     except Exception:
         m.resume_existing_services(old)
         m.configure_app_restarts(old, True)
         raise
-    m.run(['systemctl', '--user', 'disable', '--now', m.unit(old)])
-    m.require_idle(old)
     m.save(root / 'installation.json', candidate)
     m.configure_worker(candidate)
     m.compose(candidate, 'up', '--no-start', '--no-deps', 'app')
@@ -142,7 +143,7 @@ PY
 
 Change the first argument for a non-default installation. Native server startup validates the target entries; a startup failure is not a successful apply. Do not edit other installation fields or use a Compose override that replaces `RUNTIME_TARGETS` with different values. After both processes start, register the same endpoint and credential through Runtime settings, run its probe, and register the real catalogs.
 
-If interrupted **before** the prepared message, correct the cause and rerun the same apply command; its idle check prevents replacing processors that acquired work. To undo the target edit, use the selected checkpoint's `runtime_targets` array as the next input and repeat the idle maintenance procedure. This is configuration recovery, not a database restore.
+If interrupted **before** the prepared message, correct the cause and rerun the same apply command; its idle check prevents replacing processors that acquired work. To undo the target edit, use the selected checkpoint's `runtime_targets` array as the next input and repeat the idle maintenance procedure. When the original manifest omits `runtime_targets`, the rollback input is `[]`, not `null`; that restores the default empty allowlist. This is configuration recovery, not a database restore.
 
 If either prepared processor may already be running, resume without recreating containers or rewriting files. This also restores boot recovery after the checks succeed:
 
@@ -172,7 +173,63 @@ Application update/retry/backup procedures are maintained in the [deployment bun
 
 For a cold restore, stop admissions and the original Worker, reconcile actual remote tasks, then stop every writer. Preserve the matching database, application artifacts, `master.key`, private installation manifest, original image/configuration, Codex home and independent Runtime journals/catalogs. Restore original absolute paths and ownership. Never replace an original backup with a partly migrated database or start an old executable against a newer schema.
 
-After restoring the control database and ending old transactions, the migration owner runs the matching server's `recover-access --recovery-id UUIDv7`. Save one recovery ID for the operation; unknown outcomes replay that ID, while a different restore gets a new one. This cuts over access, not data or external execution. Preserve original ciphertext/key material, reissue required machine connections, and reconcile old remote identities before resuming work. Native checks: [recovery_access](../apps/server/tests/recovery_access.rs) and [native_control_restore](../apps/runtime/tests/native_control_restore.rs).
+<a id="access-cutover"></a>
+### Restored database access cutover
+
+After restoring the control database, keep API/Worker stopped and end old transactions. The database migration owner, not a restricted application role, runs the matching `server recover-access`. It invalidates restored access, not data or remote execution. Preserve original ciphertext/key material and use a private interactive terminal; the connection URL must name the restored database with its migration-owner role.
+
+The command below uses `<installation>/releases/<restored-version>/bin/server`, selected from the restored `installation.json`, not a binary on PATH or a newer `current` target. The restored manifest's `bundle` must point to that same preserved release. Install a util-linux `uuidgen` that supports `--time-v7`; the command calls it only when creating a new operation record. Select an unused record filename inside an existing mode-0700 owner directory for each distinct restore; retries use the same file. Replace `/absolute/restore-record.json` before running:
+
+```sh
+python3 - "$HOME/.local/share/quazonai" /absolute/restore-record.json <<'PY'
+import getpass, json, os, subprocess, sys, uuid
+from pathlib import Path
+root, record = (Path(value).resolve() for value in sys.argv[1:])
+config = json.loads((root / 'installation.json').read_text())
+sys.path.insert(0, config['bundle'])
+import manage as m
+os.umask(0o077)
+with m.locked(root):
+    config = m.configuration(root)
+    binary = root / 'releases' / config['version'] / 'bin/server'
+    if not binary.is_file():
+        raise ValueError('Restore the matching release binary first')
+    binding = {'root': str(root), 'version': config['version'], 'revision': config['revision']}
+    if record.exists():
+        saved = json.loads(record.read_text())
+        if any(saved.get(key) != value for key, value in binding.items()):
+            raise ValueError('Recovery record belongs to a different installation or release')
+        recovery_id = saved['recovery_id']
+    else:
+        recovery_id = subprocess.check_output(['uuidgen', '--time-v7'], text=True).strip()
+        if uuid.UUID(recovery_id).version != 7:
+            raise ValueError('uuidgen must produce a UUIDv7')
+        m.save(record, {**binding, 'recovery_id': recovery_id})
+    database_url = getpass.getpass('Restored migration-owner DATABASE_URL (hidden): ')
+    if not database_url:
+        raise ValueError('A migration-owner connection is required')
+    result = subprocess.run(
+        [str(binary), 'recover-access', '--recovery-id', recovery_id],
+        env={**os.environ, 'DATABASE_URL': database_url},
+        capture_output=True, text=True)
+    if result.returncode != 0:
+        m.atomic_text(record.with_suffix('.error.log'), result.stderr)
+        raise RuntimeError('Cutover not confirmed; inspect the private error file and retry this record')
+    receipt = json.loads(result.stdout)
+    if (receipt.get('schema_version') != 1 or receipt.get('recovery_id') != recovery_id
+            or int(receipt['new_epoch']) <= int(receipt['previous_epoch'])):
+        raise ValueError('Unexpected receipt; retain this recovery record for reconciliation')
+    receipt_path = record.with_suffix('.receipt.json')
+    if receipt_path.exists() and json.loads(receipt_path.read_text()) != receipt:
+        raise ValueError('Receipt differs from the saved outcome; do not create a replacement ID')
+    m.save(receipt_path, receipt)
+    print('Access cutover receipt:', receipt_path)
+PY
+```
+
+The URL is read without echo and passed only in the child environment, not command arguments, saved records or printed output. Keep the recovery record and receipt: verify `schema_version`, the original `recovery_id`, increasing `previous_epoch`/`new_epoch` and decimal-string `revoked_machine_credentials`. A timeout, nonzero exit or missing receipt is an unknown/failed outcome, not completed recovery; replay the same command and record. A separate database restore needs a new record/ID, even if it restores the same backup.
+
+Reissue required machine connections and reconcile the original remote task identities before resuming. Do not regenerate the original master key or interpret cutover as data restoration or remote cancellation. Native checks: [recovery_access](../apps/server/tests/recovery_access.rs) and [native_control_restore](../apps/runtime/tests/native_control_restore.rs).
 
 <a id="runtime-recovery"></a>
 ### Runtime cold backup and restore
