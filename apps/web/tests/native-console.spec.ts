@@ -219,6 +219,63 @@ async ({ page, context }) => {
 // Both cases run before the controlled restart. The restart phase reuses only
 // the original persistent checkpoint; it does not recreate any project.
 if (config.phase === 'before-restart') {
+  test('ChatGPT login uses the real account receipt across a lost acknowledgement and reload', async ({ page, context }) => {
+    await page.goto('/');
+    await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+    const login = page.getByRole('button', { name: '登录 ChatGPT', exact: true });
+    await expect(login).toBeEnabled();
+    for (const cookie of await context.cookies()) rememberPrivateValue(config, cookie.value);
+    const profiles: Schema['Page_CodexProfileViewV1'] = await (await page.request.get('/api/v2/settings/codex?limit=100')).json();
+    expect(profiles.items).toHaveLength(2);
+    const profile = profiles.items[0]!;
+    const latestPath = `/api/v2/codex/login?profile_id=${profile.id}`;
+    expect(await (await page.request.get(latestPath)).json()).toBeNull();
+    await context.setOffline(true);
+    await expect(login).toBeDisabled();
+    await context.setOffline(false);
+    await expect(login).toBeEnabled();
+    let requestKey: string | undefined;
+    let requestBody: unknown;
+    let accepted: Schema['CodexAccountStartV1'] | undefined;
+    await page.route('**/api/v2/codex/login/start', async route => {
+      requestKey = route.request().headers()['idempotency-key'];
+      requestBody = route.request().postDataJSON();
+      const response = await route.fetch({ maxRetries: 0 });
+      expect(response.status()).toBe(202);
+      accepted = await response.json();
+      // Real unavailable deployment, never fabricated OAuth/native success.
+      expect(accepted?.device_code == null).toBe(true);
+      expect(accepted?.current.state).toBe('FAILED');
+      expect(accepted?.current.reason).toBe('DEPLOYMENT_UNAVAILABLE');
+      await response.dispose();
+      await route.abort('failed');
+    });
+    await login.click();
+    await expect(page.getByRole('button', { name: '重试当前操作' })).toBeVisible();
+    await expect(login).toBeDisabled();
+    await page.unroute('**/api/v2/codex/login/start');
+    const replayed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/codex/login/start');
+    await page.getByRole('button', { name: '重试当前操作' }).click();
+    const response = await replayed;
+    expect(response.status()).toBe(202);
+    expect(response.request().headers()['idempotency-key']).toBe(requestKey);
+    expect(response.request().postDataJSON()).toEqual(requestBody);
+    const replay: Schema['CodexAccountStartV1'] = await response.json();
+    expect(replay.acceptance).toEqual({ ...accepted!.acceptance, replayed: true });
+    await expect(login).toBeEnabled();
+    await expect(page.getByLabel('ChatGPT 授权码')).toHaveCount(0);
+    await expect(page.getByText('ChatGPT 登录成功', { exact: true })).toHaveCount(0);
+    for (const role of profiles.items) {
+      const latest = await (await page.request.get(`/api/v2/codex/login?profile_id=${role.id}`)).json();
+      expect(latest).toEqual(replay.current);
+    }
+    await page.reload();
+    await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+    await expect(login).toBeEnabled();
+    expect(await (await page.request.get(latestPath)).json()).toEqual(replay.current);
+    await expect(page.getByText('Codex 运行环境不可用，请检查部署配置').first()).toBeVisible();
+  });
+
   test('all native pages remain accessible in both themes and three viewports', async ({ page, context }) => {
     test.setTimeout(180_000);
     await page.goto('/');
@@ -252,6 +309,9 @@ if (config.phase === 'before-restart') {
             .toBeLessThanOrEqual(viewport.width + 1);
           const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
           expect.soft(result.violations, `${label} / ${mode} at ${viewport.width}px`).toEqual([]);
+          if (label === '设置') await page.locator('.console-layout').screenshot({
+            path: resolve(dirname(config.redactionsFile), `codex-${mode}-${viewport.width}.png`), animations: 'disabled',
+          });
         }
       }
     }
