@@ -57,7 +57,7 @@ Local checks passed: `cargo check --locked -p server --tests --features codex-co
 the container-test Clippy check with `-D warnings`, 15 `codex_native::` unit tests,
 2 deployment discovery tests, and Rust formatting. Web type checking and all 528
 existing frontend tests passed. `python3 -B -m unittest discover -s deploy/docker
--p '*_test.py'` passed 65 tests; shell syntax, workflow YAML parsing and
+-p '*_test.py'` passed 66 tests after the sandbox-preflight regression; shell syntax, workflow YAML parsing and
 `git diff --check` passed. These checks do not establish Docker execution or a
 successful ChatGPT authorization.
 
@@ -83,6 +83,13 @@ AppArmor restriction on capabilities inside an unprivileged user namespace.
 Reuse the repository's existing narrowly attached `userns` profile pattern and
 add the same native sandbox preflight before candidate image switching. Keep
 non-root execution, dropped capabilities and no-new-privileges unchanged.
+
+At `4763987d`, all eight real-container tests and the complete installation/update/
+recovery smoke passed. Full database CI exposed two fault-injection tests whose
+shared fixture incorrectly rejected a genuine running native tool session.
+Distinguish running and successfully completed output: fault injection accepts a
+real pending session, while the container sandbox proof polls that same session
+until its successful output is observed. Re-run current-head CI after this fix.
 
 <a id="delivery"></a>
 ## Delivery

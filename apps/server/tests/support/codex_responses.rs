@@ -38,6 +38,8 @@ struct Seen {
     invalid: AtomicBool,
     slow: AtomicBool,
     fail_continuation: AtomicBool,
+    require_completed_tool: AtomicBool,
+    completed_tool: AtomicBool,
     stop_continuation: AtomicBool,
     initial: AtomicBool,
     science: Mutex<Option<SciencePlan>>,
@@ -175,6 +177,19 @@ impl Provider {
         self.seen.fail_continuation.store(true, Ordering::SeqCst);
     }
 
+    #[allow(dead_code)] // Container acceptance requires completed native sandbox execution.
+    pub fn fail_after_completed_tool(&self) {
+        self.fail_after_tool();
+        self.seen
+            .require_completed_tool
+            .store(true, Ordering::SeqCst);
+    }
+
+    #[allow(dead_code)]
+    pub fn saw_completed_tool(&self) -> bool {
+        self.seen.completed_tool.load(Ordering::SeqCst)
+    }
+
     #[allow(dead_code)] // Only Mission tests exercise the real token-limit interrupt.
     pub fn exceed_tokens_before_tool(&self) {
         self.seen.stop_continuation.store(true, Ordering::SeqCst);
@@ -186,18 +201,44 @@ impl Provider {
     }
 }
 
-fn native_tool_completed(items: &[Value]) -> bool {
-    items.iter().any(|item| {
-        if item["type"] != "function_call_output" || item["call_id"] != "qz-partial-usage-tool" {
-            return false;
-        }
-        item["output"].as_str().is_some_and(|output| {
-            // A malformed/failed tool response must reject the fixture request;
-            // a panic in an Axum task alone would not fail its owning test.
-            matches!(std::panic::catch_unwind(|| tool_output::exec_part(output)),
-                Ok((None, body)) if body.trim() == "QZ_NATIVE_TOOL_DONE")
+#[derive(Debug, PartialEq)]
+enum ToolProgress {
+    Running(u64),
+    Completed,
+}
+
+fn native_tool_progress(items: &[Value], ordinal: usize) -> Option<ToolProgress> {
+    let mut session = None;
+    let mut output = String::new();
+    for call in 1..=ordinal {
+        let id = if call == 1 {
+            "qz-partial-usage-tool".to_owned()
+        } else {
+            format!("qz-partial-usage-poll-{}", call - 1)
+        };
+        let item = items
+            .iter()
+            .rev()
+            .find(|item| item["type"] == "function_call_output" && item["call_id"] == id)?;
+        // A parser panic in the independent Axum task must reject the fixture
+        // request, rather than leave its owning test with a false success.
+        let (running, body) = std::panic::catch_unwind(|| {
+            tool_output::exec_part(item["output"].as_str().unwrap_or_default())
         })
-    })
+        .ok()?;
+        if call > 1 && (session.is_none() || running.is_some_and(|id| Some(id) != session)) {
+            return None;
+        }
+        output.push_str(body);
+        session = running;
+    }
+    match session {
+        Some(id) => Some(ToolProgress::Running(id)),
+        None if ordinal > 0 && output.trim() == "QZ_NATIVE_TOOL_DONE" => {
+            Some(ToolProgress::Completed)
+        }
+        None => None,
+    }
 }
 
 async fn respond(
@@ -209,6 +250,7 @@ async fn respond(
     let fail_continuation = seen.fail_continuation.load(Ordering::SeqCst);
     let stop_continuation = seen.stop_continuation.load(Ordering::SeqCst);
     let tool_continuation = fail_continuation || stop_continuation;
+    let require_completed_tool = seen.require_completed_tool.load(Ordering::SeqCst);
     // Observe only controlled fixture sentinels; don't retain or print requests.
     let input = request.get("input").and_then(Value::as_array);
     let input_text = input
@@ -260,15 +302,18 @@ async fn respond(
         .and_then(|output| output.split("Process running with session ID ").nth(1))
         .and_then(|suffix| suffix.split_whitespace().next())
         .and_then(|id| id.parse::<u64>().ok());
+    let tool_progress = if tool_continuation && ordinal > 0 {
+        input.and_then(|items| native_tool_progress(items, ordinal))
+    } else {
+        None
+    };
     let valid = !headers.contains_key(header::AUTHORIZATION)
         && !headers.contains_key(header::COOKIE)
         && request["model"] == "gpt-5.4"
         && request["stream"] == true
-        && (ordinal < 2 || (review && ordinal < 8))
+        && (ordinal < 2 || ((review || require_completed_tool) && ordinal < 8))
         && input.is_some()
-        && (!tool_continuation
-            || ordinal == 0
-            || input.is_some_and(|items| native_tool_completed(items)))
+        && (!tool_continuation || ordinal == 0 || tool_progress.is_some())
         && if review {
             (ordinal == 2 || (ordinal > 2 && (review_input_read || review_session.is_some())))
                 && !input_text.contains("QZ_MISSION_INITIAL_V1")
@@ -324,6 +369,9 @@ async fn respond(
             "{}".into(),
         );
     }
+    if tool_progress == Some(ToolProgress::Completed) {
+        seen.completed_tool.store(true, Ordering::SeqCst);
+    }
     if ordinal == 1 && !tool_continuation {
         seen.prior_context.store(
             input_text.contains(if seen.initial.load(Ordering::SeqCst) {
@@ -341,9 +389,12 @@ async fn respond(
         tokio::time::sleep(Duration::from_secs(60)).await;
     }
     let id = format!("qz-local-response-{ordinal}");
-    if tool_continuation && ordinal == 1 {
-        // A real second native model request receives a broken stream with no
-        // usage receipt. The first response's 12 tokens cannot price this request.
+    if tool_continuation
+        && ordinal > 0
+        && (!require_completed_tool || tool_progress == Some(ToolProgress::Completed))
+    {
+        // Fault tests may fail after a running exec; sandbox acceptance waits
+        // for its completed proof. This request never receives a usage receipt.
         return (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "text/event-stream")],
@@ -353,7 +404,12 @@ async fn respond(
             ),
         );
     }
-    let item = if review && ordinal > 2 && !review_input_read {
+    let item = if let Some(ToolProgress::Running(session)) = tool_progress {
+        // Keep the original exec alive. CPU throttling may return a session
+        // before even this short printf exits; polling is not another exec.
+        json!({"type":"function_call","name":"write_stdin","call_id":format!("qz-partial-usage-poll-{ordinal}"),
+            "arguments":json!({"session_id":session,"chars":"","yield_time_ms":1000,"max_output_tokens":4000}).to_string()})
+    } else if review && ordinal > 2 && !review_input_read {
         assert!(request["tools"]
             .as_array()
             .unwrap()
@@ -711,16 +767,51 @@ mod science_reply_tests {
     fn native_tool_proof_requires_successful_output_not_the_requested_command() {
         let command = json!({"type":"function_call", "call_id":"qz-partial-usage-tool",
             "arguments":{"cmd":"printf QZ_NATIVE_TOOL_DONE"}});
-        assert!(!native_tool_completed(std::slice::from_ref(&command)));
+        assert_eq!(
+            native_tool_progress(std::slice::from_ref(&command), 1),
+            None
+        );
         let output = json!({"type":"function_call_output", "call_id":"qz-partial-usage-tool",
             "output":"Process exited with code 0\nOutput:\nQZ_NATIVE_TOOL_DONE"});
-        assert!(native_tool_completed(&[command.clone(), output.clone()]));
+        assert_eq!(
+            native_tool_progress(&[command.clone(), output.clone()], 1),
+            Some(ToolProgress::Completed)
+        );
         let mut foreign = output.clone();
         foreign["call_id"] = json!("another-tool");
-        assert!(!native_tool_completed(&[command.clone(), foreign]));
-        let mut failed = output;
+        assert_eq!(native_tool_progress(&[command.clone(), foreign], 1), None);
+        let mut failed = output.clone();
         failed["output"] = json!("Process exited with code 1\nOutput:\nQZ_NATIVE_TOOL_DONE");
-        assert!(!native_tool_completed(&[command, failed]));
+        assert_eq!(native_tool_progress(&[command, output, failed], 1), None);
+    }
+
+    #[test]
+    fn native_running_tool_requires_same_session_completion_and_real_output() {
+        let running = json!({"type":"function_call_output", "call_id":"qz-partial-usage-tool",
+            "output":"Process running with session ID 42\nOutput:\nQZ_NATIVE_TOOL_DONE"});
+        assert_eq!(
+            native_tool_progress(std::slice::from_ref(&running), 1),
+            Some(ToolProgress::Running(42))
+        );
+        let finished = json!({"type":"function_call_output", "call_id":"qz-partial-usage-poll-1",
+            "output":"Process exited with code 0\nOutput:\n"});
+        assert_eq!(
+            native_tool_progress(&[running.clone(), finished.clone()], 2),
+            Some(ToolProgress::Completed)
+        );
+        let mut foreign = finished.clone();
+        foreign["call_id"] = json!("foreign-poll");
+        assert_eq!(native_tool_progress(&[running.clone(), foreign], 2), None);
+        let mut wrong_session = finished;
+        wrong_session["output"] = json!("Process running with session ID 99\nOutput:\n");
+        assert_eq!(
+            native_tool_progress(&[running.clone(), wrong_session], 2),
+            None
+        );
+        let mut forged_body = running.clone();
+        forged_body["output"] =
+            json!("Process exited with code 0\nOutput:\nProcess running with session ID 42");
+        assert_eq!(native_tool_progress(&[running, forged_body], 1), None);
     }
 
     #[test]

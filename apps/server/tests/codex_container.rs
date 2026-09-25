@@ -363,7 +363,7 @@ async fn mission_deadline_stops_the_container_without_worker_intervention() {
 async fn mission_thread_executes_its_native_sandbox_inside_the_container() {
     let fixture = Fixture::new().await;
     let provider = responses::Provider::start(&fixture.root.path().join("codex")).await;
-    provider.fail_after_tool();
+    provider.fail_after_completed_tool();
     let run = Id::new();
     let mut client = Client::start_mission(fixture.launch(), limits(run, 60))
         .await
@@ -417,9 +417,10 @@ async fn mission_thread_executes_its_native_sandbox_inside_the_container() {
     })
     .await
     .expect("the controlled upstream fault must terminate the native turn");
-    // The shared fixture accepts request 2 only after receiving the real shell's
-    // QZ_NATIVE_TOOL_DONE output, then intentionally truncates its response.
-    assert_eq!(provider.request_count(), 2);
+    // The fixture polls an actual running exec before truncating upstream;
+    // only a successful exit with the real marker proves sandbox execution.
+    assert!(provider.saw_completed_tool());
+    assert!((2..=8).contains(&provider.request_count()));
     client.close().await.unwrap();
     wait_removed(&fixture.docker, &id).await;
 }
