@@ -1,0 +1,73 @@
+name: Dev image
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/dev-image.yml'
+      - '.github/workflows/dev-image-publish.yml'
+      - '.github/actions/container/**'
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: Branch in this repository to build (need not be merged).
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  build:
+    if: github.repository == 'zhengui666/QuaZonai'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Check out the workflow's container action
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Validate the requested branch name
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+        run: git check-ref-format "refs/heads/$SOURCE_BRANCH"
+      - name: Check out only a repository branch (or the read-only PR test source)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/heads/{0}', inputs.source_branch) || github.event.pull_request.head.sha }}
+          path: source
+          persist-credentials: false
+      - name: Freeze source revision and unique dev tag
+        id: source
+        working-directory: source
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          version="dev-${revision}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/container
+        with:
+          source: source
+          image: quazonai-dev:${{ steps.source.outputs.version }}
+          revision: ${{ steps.source.outputs.revision }}
+          version: ${{ steps.source.outputs.version }}
+      - name: Export the tested image for the separate publisher
+        env:
+          LOCAL_IMAGE: quazonai-dev:${{ steps.source.outputs.version }}
+          REVISION: ${{ steps.source.outputs.revision }}
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$REVISION"
+          test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
+          test "$(docker image inspect "$LOCAL_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
+          mkdir -p "$RUNNER_TEMP/dev-image"
+          printf '%s\n' "$REVISION" > "$RUNNER_TEMP/dev-image/revision"
+          docker image inspect "$LOCAL_IMAGE" --format '{{.Id}}' > "$RUNNER_TEMP/dev-image/image-id"
+          docker save --output "$RUNNER_TEMP/dev-image/dev-image.tar" "$LOCAL_IMAGE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dev-image-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dev-image/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
