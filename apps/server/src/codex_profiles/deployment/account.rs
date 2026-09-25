@@ -73,14 +73,7 @@ impl CodexDeployment {
                 return;
             }
         };
-        let launch = Launch {
-            binary: self.binary.clone(),
-            home: binding.home.clone(),
-            codex_home: binding.codex_home.clone(),
-            working_directory: binding.working_directory.clone(),
-            executable_path: self.executable_path.clone(),
-            native_environment: binding.environment.clone(),
-        };
+        let launch = self.launch(binding, &binding.working_directory);
         let memory = binding.account.clone();
         let id = ticket.acceptance.resource.id;
         *memory.lock().await = Some(AccountMemory { id, device: None });

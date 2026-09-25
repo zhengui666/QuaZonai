@@ -18,6 +18,7 @@ CI_PATHS = {
     ".github/workflows/web.yml",
     ".github/workflows/native-runtime.yml",
     ".github/workflows/polymarket-history.yml",
+    ".github/workflows/container.yml",
 }
 ASSETS = {"release.json", "quazonai-deploy.tar.gz"}
 
@@ -133,11 +134,14 @@ def publish(assets: Path) -> None:
         f"Source revision: `{revision}`\n\n"
         f"Application: `{release['image']}`\n\n"
         f"Database: `{release['database_image']}`\n\n"
-        "Linux x86_64. The application image includes the production frontend, Rust API, Caddy and native Codex. "
+        "Linux x86_64. The application image includes the production frontend, Rust API and Caddy. "
         "The deployment bundle starts PostgreSQL/PGMQ and the application on a Compose network, and installs "
-        "the same-image Worker in the owner's systemd user manager. Scientific runtimes remain separately configured.\n\n"
+        "the same-image Worker in the owner's systemd user manager. Codex runs in separate session containers "
+        "built from the included base-image Dockerfile at the version in .env. Scientific runtimes remain separately configured.\n\n"
         "Extract `quazonai-deploy.tar.gz` into an empty directory and read its README. Run `bash deploy.sh` "
         "for a new installation; run the installed `update.sh VERSION` for an existing installation. "
+        "For the first migration from a native-Codex release, use the new extracted bundle's "
+        "`python3 manage.py apply-update --directory EXISTING_INSTALLATION` instead; its old updater cannot unpack this bundle. "
         "No floating latest image is published. Private GHCR packages require Docker login.\n"
     )
     with tempfile.TemporaryDirectory() as temporary:

@@ -17,6 +17,7 @@ use tokio::process::{Child, Command};
 /// A trusted deployment binding. No Debug/Serialize: explicit native environment
 /// values can contain provider credentials. QZ never opens a native auth file.
 pub struct Launch {
+    pub container: Option<super::ContainerBackend>,
     pub binary: PathBuf,
     pub home: PathBuf,
     pub codex_home: PathBuf,

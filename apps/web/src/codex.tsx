@@ -9,11 +9,11 @@ type Profile = Schema['CodexProfileViewV1'];
 type Observation = Schema['CodexObservationV1'];
 type Values = Schema['SavedModelSettingsV1'];
 const failures: Record<Schema['CodexProbeFailureV1'], string> = {
-  DEPLOYMENT_UNAVAILABLE: '未找到本机 Codex，请安装并登录后重启服务',
+  DEPLOYMENT_UNAVAILABLE: 'Codex 运行环境不可用，请检查部署配置',
   NATIVE_UNAVAILABLE: 'Codex 连接失败，请重试',
   VERSION_UNSUPPORTED: '无法验证 Codex 版本信息',
   CONTRACT_UNSUPPORTED: 'Codex 响应不兼容',
-  AUTHENTICATION_REQUIRED: '请先在本机执行 codex login',
+  AUTHENTICATION_REQUIRED: '请先按部署手册登录 ChatGPT',
   MODEL_SETTINGS_UNSUPPORTED: '模型设置不可用，请恢复本机默认',
 };
 const states: Record<Schema['CodexObservationStateV1'], string> = {
@@ -162,7 +162,7 @@ function ProfileDetails({ id }: { id: string }) {
     mutate(profile);
   }, [online, profile, view, query.isError, observation.isError, editing, probe.isPending, mutate]);
   useGuard(probe.isPending);
-  return <Card title={profile?.name ?? '本机 Codex'}>
+  return <Card title={profile?.name ?? 'Codex'}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!profile} reload={() => { void query.refetch(); }}>
       {profile && <Space orientation="vertical" className="full-width">
         <Space wrap>
@@ -200,6 +200,6 @@ export function CodexSettings() {
       <Select aria-label="Codex 角色" className="full-width" value={profile.id} onChange={setSelected}
         options={query.data?.items.map(item => ({ value: item.id, label: item.name }))} />
       <ProfileDetails key={profile.id} id={profile.id} />
-    </Space> : <NoData text="本机 Codex 尚未就绪" />}
+    </Space> : <NoData text="Codex 尚未就绪" />}
   </QueryPanel>;
 }

@@ -50,6 +50,7 @@ struct Binding {
 #[derive(Default)]
 pub struct CodexDeployment {
     binary: PathBuf,
+    container: Option<native::ContainerBackend>,
     executable_path: OsString,
     bindings: BTreeMap<String, Binding>,
 }
@@ -98,6 +99,11 @@ impl CodexDeployment {
     /// copying native configuration/credentials into QZ. Missing Codex does not
     /// stop the local console; a probe reports deployment unavailability.
     pub fn discover(native_bindings: Vec<CodexHomeBindingV1>) -> Self {
+        // An explicitly configured container backend must never fall back to a
+        // host executable, including when Docker or the lock is unavailable.
+        if std::env::var_os("CODEX_IMAGE").is_some() {
+            return Self::discover_container(native_bindings).unwrap_or_default();
+        }
         Self::discover_from(
             std::env::var_os("PATH"),
             std::env::var_os("HOME"),
@@ -106,6 +112,49 @@ impl CodexDeployment {
             native_bindings,
         )
         .unwrap_or_default()
+    }
+
+    fn discover_container(native_bindings: Vec<CodexHomeBindingV1>) -> Option<Self> {
+        let backend = native::ContainerBackend {
+            image: std::env::var("CODEX_IMAGE").ok()?,
+            socket: std::env::var_os("CODEX_DOCKER_SOCKET")?.into(),
+            lock_file: std::env::var_os("CODEX_LOCK_FILE")?.into(),
+        };
+        backend.validate().ok()?;
+        let codex_home = directory(&PathBuf::from(std::env::var_os("CODEX_HOME")?)).ok()?;
+        // Account/catalog probes need no application data. The native process
+        // already owns this home; never mount the API's state/key directory.
+        let working_directory = codex_home.clone();
+        let gate = Arc::new(Mutex::new(()));
+        let account = Arc::new(Mutex::new(None));
+        let mut bindings = BTreeMap::new();
+        for public in native_bindings {
+            rules::home_binding(&public.reference).ok()?;
+            let reference = public.reference.clone();
+            if bindings
+                .insert(
+                    reference,
+                    Binding {
+                        public,
+                        home: PathBuf::from("/home/codex"),
+                        codex_home: codex_home.clone(),
+                        working_directory: working_directory.clone(),
+                        environment: native_environment(|name| std::env::var_os(name)),
+                        gate: gate.clone(),
+                        account: account.clone(),
+                    },
+                )
+                .is_some()
+            {
+                return None;
+            }
+        }
+        Some(Self {
+            binary: PathBuf::from(native::container::BINARY),
+            container: Some(backend),
+            executable_path: std::env::var_os("PATH")?,
+            bindings,
+        })
     }
 
     fn discover_from(
@@ -158,6 +207,7 @@ impl CodexDeployment {
         }
         Some(Self {
             binary,
+            container: None,
             executable_path,
             bindings,
         })
@@ -217,6 +267,7 @@ impl CodexDeployment {
         }
         Ok(Self {
             binary: configuration.binary,
+            container: None,
             executable_path: configuration.executable_path.into(),
             bindings,
         })
@@ -237,12 +288,21 @@ impl CodexDeployment {
         &self.executable_path
     }
 
+    pub(crate) fn mission_executable_path(&self) -> &std::ffi::OsStr {
+        if self.container.is_some() {
+            std::ffi::OsStr::new(native::container::PATH)
+        } else {
+            &self.executable_path
+        }
+    }
+
     /// No paid request. Reuse the actual account/catalog/settings observation;
     /// the caller still needs a durable Run send permit and scoped MCP binding.
     pub(crate) async fn mission_connection(
         &self,
         snapshot: &CodexProfileSnapshot,
         workspace: &Path,
+        server_binary: &Path,
         resources: native::MissionProcess,
     ) -> Result<(Client, ThreadOptions), CodexProbeFailureV1> {
         let profile = &snapshot.profile;
@@ -261,6 +321,9 @@ impl CodexDeployment {
         }
         let _gate = binding.gate.lock().await;
         let launch = self.launch(binding, &workspace);
+        let resources = resources
+            .with_server_binary(server_binary)
+            .map_err(native_failure)?;
         let mut client = Client::start_mission(launch, resources)
             .await
             .map_err(native_failure)?;
@@ -320,6 +383,7 @@ impl CodexDeployment {
 
     fn launch(&self, binding: &Binding, working_directory: &Path) -> Launch {
         Launch {
+            container: self.container.clone(),
             binary: self.binary.clone(),
             home: binding.home.clone(),
             codex_home: binding.codex_home.clone(),

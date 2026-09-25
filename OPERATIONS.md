@@ -9,18 +9,26 @@
 
 ```sh
 loginctl enable-linger "$USER"
+cp .env.example .env
+# 编辑 .env 中的 CODEX_VERSION 后部署。
 bash deploy.sh
 ```
 
 部署机使用 Linux x86_64、本机 Docker Engine / Compose ≥2.20、Python ≥3.10、systemd user manager / cgroup v2、Git、ripgrep 和 util-linux；以拥有 Codex 的现有用户运行，不使用 sudo。镜像中的原生 Worker 会安装至宿主机，需兼容 Debian 12 ABI（glibc ≥2.36、OpenSSL 3）；脚本在停旧服务前检查二进制。无需部署机安装 Rust 或 Node.js。私有 GHCR 包先执行 `docker login ghcr.io`，不要将凭据写入部署包。
 
-脚本按 Release 中的 image digest 部署编译好的前端、Rust API、Caddy 和 PostgreSQL 18 / PGMQ；建立 Compose bridge 网络、持久数据库卷和独立状态目录。API/Caddy 同容器，Worker 使用从同镜像提取的二进制，以原用户 systemd 服务运行，保留原生 Mission 所需的 cgroup。默认目录 `$HOME/.local/share/quazonai`，网页 `http://localhost:8081`；网页和数据库端口只发布到宿主 loopback。独立科学 Runtime 及目录仍按其原运行合同配置。
+脚本按 Release 中的 image digest 部署编译好的前端、Rust API、Caddy 和 PostgreSQL 18 / PGMQ；建立 Compose bridge 网络、持久数据库卷和独立状态目录。API/Caddy 同容器，Worker 使用同镜像提取的 server，以原用户 systemd 服务运行。Codex 按 `.env` 的版本从 Debian 基础镜像单独构建，API 登录／探测和 Worker Mission 都在独立 Codex 容器中运行，不使用宿主 Codex。默认目录 `$HOME/.local/share/quazonai`，网页 `http://localhost:8081`；网页和数据库端口只发布到宿主 loopback。独立科学 Runtime 及目录仍按其原运行合同配置。
+
+ChatGPT 登录通过部署包的设备码登录入口启动，在浏览器完成授权；完整 `CODEX_HOME` 独立持久保存，凭据由 Codex 自行写入和刷新。Codex 镜像可单独更新至最新或指定版本，不必发布整个 QuaZonai；使用[部署手册中的登录和更新入口](deploy/docker/README.md)，先结束所有 Run 与登录会话。升级不会删除登录目录，版本检查或无凭据 CI 不代表已完成真实账号授权。
 
 更新使用已发布的明确版本，替换下面的示例版本号：
 
 ```sh
 bash "$HOME/.local/share/quazonai/current/deployment/update.sh" v2.0.1
 ```
+
+首次从仍将 Codex 打包在应用镜像中的旧版本迁移时，下载并解压新版部署包，
+在该目录设置 `.env`，执行 `python3 manage.py apply-update --directory "$HOME/.local/share/quazonai"`。
+旧版下载器不识别新增部署文件，不能用于这次格式迁移；后续再使用上面的安装内更新入口。
 
 更新下载目标版本脚本/Compose 和镜像，确认没有未终结 Run，停止本安装的 API/Worker，再次确认静止点，备份 PostgreSQL 和状态，显式迁移后切换。保留数据库卷、密码、master key、原生会话和任务身份。迁移后失败不自动回退旧程序或清空卷；保留原备份和 pending 状态，修复原因后重试同一目标。应用更新不升级 PostgreSQL。参数、状态、独立备份和恢复操作统一见[随版本交付的部署手册](deploy/docker/README.md)。
 
@@ -321,18 +329,20 @@ Worker现从原模拟任务发表不可变FORWARD保持研究评估，再确认�
 
 ## 首次启动认证服务
 
-### Codex 本机发现与模型
+### Codex 运行环境与模型
 
-API 和 Worker 必须以持有本机 Codex 的同一操作系统用户运行，并继承可定位
-`codex` 的 `PATH`。QZ 自动使用该用户的 `HOME` 和原生 `CODEX_HOME`
-（缺省 `~/.codex`）；没有配置文件注册、Provider URL 或 API Key 表单。
-QZ 不读取／复制 `auth.json`，不改写 `config.toml`，认证由原生 `codex login` 管理。
+版本化部署由 API 和 Worker 使用同一安装的 `CODEX_IMAGE`、Docker socket、
+部署锁及持久 `CODEX_HOME`。所有账号／模型请求与 Mission 都进入独立镜像，
+配置容器后不可用时不会回退宿主 PATH。首次使用通过部署包的登录入口完成 ChatGPT 设备码授权；
+如账号尚未启用设备码，先按原生提示启用。QZ 不读取／复制 `auth.json`，
+认证与刷新由 Codex 管理。源码开发的显式本机协议验收仍发现当前用户的
+PATH、HOME 和 CODEX_HOME，不是版本化部署的运行后端。
 
 研究员和独立审阅员两个角色自动建立，共享用户的原生设置，但使用独立任务和 Thread。
 “设置 → Codex → 模型设置”提供“本机默认”、模型和推理强度。
 开启本机默认保留已保存的覆盖值但不发送覆盖；关闭时只发送非空覆盖，
 模型目录、强度和可选加速来自原生检测，不猜测或静默替换。
-按[停止服务、升级与恢复](#stop-services)排空并检查 Mission 后，升级本机 Codex 并重启 API/Worker，在此页重新检测以刷新模型目录；检测会记录实际原生版本，
+按[部署手册](deploy/docker/README.md)排空并检查 Mission 后，运行专门的 Codex 镜像升级脚本，再在此页重新检测以刷新模型目录；检测会记录实际原生版本，
 只在握手、账号、目录或 Thread 协议不兼容时报告不可用。普通连接检测不发送推理请求。
 
 Worker 复用 `PUBLIC_URL`，包含代理端口。独立 Worker 可显式提供
@@ -523,6 +533,14 @@ Mission总Turn和修复Turn计数沿用原生App Server Turn，不是Provider HT
 Universe的 `registration_state` 必须同时展示：`NATIVE_METADATA` 表示存在正式登记证据，`LEGACY_UNVERIFIED` 表示历史记录尚未核验。该标记不证明真实市场来源、PIT或科学有效性，不能把历史行静默显示成原生登记。原生登记同身份重放比较收到的JSON内容，合法时间字符串原样保存；源origin等身份内容变化返回409，而非生成新版本绕过历史。
 
 ### Mission 原生资源前置条件
+
+版本化容器部署使用本机 rootful Docker。API/Worker 通过安装专用镜像启动每个
+App Server；Docker socket 只授予这两个可信所有者，不进入 Codex 容器。
+Docker 限制整个容器的 CPU 速率、内存、swap 和进程数，容器内 timeout 使用
+Run 的剩余墙钟；Worker 退出不重置期限。关闭与取消须按实际容器 ID 核实停止。
+同一 Mission 旧容器未退出时拒绝第二份进程。Codex 沙箱仍限制工具的文件与网络访问。
+
+以下 systemd scope 前提仅用于源码开发的显式本机原生协议验收：
 
 可信Mission启动器需要Linux cgroup v2、`/usr/bin/systemd-run`、`/usr/bin/prlimit`和
 `/usr/bin/systemctl`，以及

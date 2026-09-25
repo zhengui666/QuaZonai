@@ -17,6 +17,7 @@ struct Arguments {
 
 fn launch(binary: &std::path::Path, root: &std::path::Path) -> Launch {
     Launch {
+        container: None,
         binary: binary.to_path_buf(),
         home: root.to_path_buf(),
         codex_home: root.to_path_buf(),

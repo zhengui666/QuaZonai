@@ -64,9 +64,10 @@ impl Drop for ProcessGroup {
 }
 
 pub struct MissionProcess {
-    run_id: Id,
-    limits: JobLimitsV1,
-    deadline: Instant,
+    pub(super) server_binary: Option<PathBuf>,
+    pub(super) run_id: Id,
+    pub(super) limits: JobLimitsV1,
+    pub(super) deadline: Instant,
 }
 
 impl MissionProcess {
@@ -147,10 +148,20 @@ impl MissionProcess {
             return Err(NativeFailure::Configuration);
         }
         Ok(Self {
+            server_binary: None,
             run_id,
             limits,
             deadline: Instant::now() + Duration::from_secs(u64::from(remaining_seconds)),
         })
+    }
+
+    pub(crate) fn with_server_binary(mut self, binary: &std::path::Path) -> Result<Self> {
+        if !binary.is_absolute() || !binary.is_file() {
+            return Err(NativeFailure::Configuration);
+        }
+        self.server_binary =
+            Some(std::fs::canonicalize(binary).map_err(|_| NativeFailure::Configuration)?);
+        Ok(self)
     }
 
     pub(super) fn wrap(&self, native: Command) -> Result<Command> {

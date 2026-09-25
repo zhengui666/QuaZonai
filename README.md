@@ -9,7 +9,7 @@
 <a id="quickstart"></a>
 ## 安装与启动
 
-版本化容器部署：从 [GitHub Releases](https://github.com/zhengui666/QuaZonai/releases) 下载指定版本的 `quazonai-deploy.tar.gz`，解压后运行 `bash deploy.sh`。脚本同时部署前后端镜像、PostgreSQL / PGMQ 和网络，并安装同版本原生 Worker。部署机无需 Rust / Node.js；平台前提、更新与恢复见[容器部署](OPERATIONS.md#container-install)。
+版本化容器部署：从 [GitHub Releases](https://github.com/zhengui666/QuaZonai/releases) 下载指定版本的 `quazonai-deploy.tar.gz`，解压后复制 `.env.example` 为 `.env`，设置 `CODEX_VERSION`，再运行 `bash deploy.sh`。脚本部署前后端、PostgreSQL / PGMQ、同版本 Worker，并从 Debian 基础镜像单独构建 Codex。部署机无需 Rust / Node.js 或宿主 Codex；平台前提、更新与恢复见[容器部署](OPERATIONS.md#container-install)。
 
 从源码安装则准备 Linux x86_64、Rust 1.98.1、Node.js ≥22.12、PostgreSQL 18 / PGMQ 1.10.0 和 Caddy。API、Worker 与原生 Codex 使用同一操作系统用户。
 
@@ -20,7 +20,7 @@ cd QuaZonai
 
 按[安装步骤](OPERATIONS.md#install)构建正式静态资源和 Rust 二进制，初始化状态目录、显式迁移数据库，并启动 API、Worker 与网关。默认访问 `http://localhost:8081`；页面直接进入工作台，不需要账号、验证码或设备信任。API 和网页只监听 loopback。
 
-先在运行服务的用户终端执行 `codex login`。系统自动发现该用户的 `PATH`、`HOME` / `CODEX_HOME` 与原生配置；设置页只选择模型和推理强度，“本机默认”沿用原生设置。右上角切换浅色／深色主题。
+容器部署通过部署包的 ChatGPT 设备码登录入口授权，登录信息保存在独立的持久 `CODEX_HOME` 中，重建或更新 Codex 镜像后继续使用。登录和专用升级命令见[部署手册](deploy/docker/README.md)。设置页选择模型和推理强度，“本机默认”沿用原生设置。源码开发的本机协议验收仍可使用 `codex login` 与当前用户的原生安装。右上角切换浅色／深色主题。
 
 研究前登记真实数据及许可、探测计算 Runtime，并冻结输入和预算。数据、模型、数据库或计算端不可用时显示实际错误，不生成替代结果。升级与恢复保留原数据库、状态目录、密钥和任务身份。
 

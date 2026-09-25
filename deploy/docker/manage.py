@@ -14,6 +14,7 @@ import re
 import secrets
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tarfile
@@ -24,7 +25,8 @@ import urllib.request
 REPOSITORY = "zhengui666/QuaZonai"
 DATABASE_IMAGE = "ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6"
 BUNDLE = Path(__file__).resolve().parent
-BUNDLE_FILES = {"manage.py", "deploy.sh", "update.sh", "compose.yaml", "release.json", "README.md"}
+BUNDLE_FILES = {"manage.py", "deploy.sh", "update.sh", "compose.yaml", "release.json", "README.md",
+                "codex.py", "codex-update.sh", "codex-login.sh", "Codex.Dockerfile", ".env.example"}
 SEMVER = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 
 
@@ -180,7 +182,7 @@ def preflight() -> None:
         raise ValueError("Run as the Linux user who owns Codex, not with sudo.")
     if not Path("/sys/fs/cgroup/cgroup.controllers").is_file():
         raise ValueError("Native Missions require cgroup v2.")
-    for binary in ("docker", "systemctl", "systemd-run", "systemd-analyze", "prlimit", "git", "rg"):
+    for binary in ("docker", "systemctl", "systemd-analyze", "git"):
         if not shutil.which(binary):
             raise ValueError(f"Required executable is missing: {binary}")
     host = os.environ.get("DOCKER_HOST")
@@ -198,7 +200,21 @@ def preflight() -> None:
     run(["systemctl", "--user", "show-environment"], capture=True)
     if run(["loginctl", "show-user", str(os.getuid()), "--property=Linger", "--value"], capture=True) != "yes":
         raise ValueError('Enable persistent user services first: loginctl enable-linger "$USER"')
-    run(["systemd-run", "--user", "--scope", "--quiet", "--collect", "/usr/bin/true"])
+
+
+def container_codex_configuration(config: dict) -> dict:
+    endpoint = os.environ.get('DOCKER_HOST') or run(
+        ['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'], capture=True)
+    if not endpoint.startswith('unix://'):
+        raise ValueError('Codex containers require a local Docker Unix socket.')
+    path = Path(endpoint.removeprefix('unix://')).resolve()
+    metadata = path.stat()
+    if not stat.S_ISSOCK(metadata.st_mode):
+        raise ValueError('The configured Docker endpoint is not a Unix socket.')
+    if config.get('docker_socket', str(path)) != str(path):
+        raise ValueError('Use this installation\'s original Docker socket.')
+    return {**config, 'codex_image': 'quazonai-codex:' + config['project'],
+            'docker_socket': str(path), 'docker_socket_gid': metadata.st_gid}
 
 
 def validate_ports(web: int, database: int, *, available: bool = False) -> None:
@@ -224,6 +240,9 @@ def compose(config: dict, *args: str, capture: bool = False, output=None) -> str
         "WEB_PORT": str(config["port"]), "DATABASE_PORT": str(config["database_port"]),
         "HOST_UID": str(config["uid"]), "HOST_GID": str(config["gid"]),
         "NATIVE_CODEX_HOME": config["codex_home"],
+        "CODEX_IMAGE": config.get('codex_image', 'quazonai-codex:' + config['project']),
+        "CODEX_DOCKER_SOCKET": config.get('docker_socket', '/var/run/docker.sock'),
+        "DOCKER_SOCKET_GID": str(config.get('docker_socket_gid', config['gid'])),
         "APP_RESTART_POLICY": 'unless-stopped' if (Path(config['root']) / 'current').is_symlink()
         and not (Path(config['root']) / 'pending.json').exists() else 'no',
         "RUNTIME_TARGETS": json.dumps(config.get("runtime_targets", [])),
@@ -260,6 +279,10 @@ def require_idle(config: dict) -> None:
 
 def prepare(bundle: Path, config: dict) -> dict:
     validate_configuration_paths(config)
+    config = container_codex_configuration(config)
+    # Application upgrades preserve the independently selected Codex version.
+    import codex
+    codex.prepare(config, bundle)
     release = manifest(bundle)
     destination = Path(config["root"]) / "releases" / release["version"]
     stored = destination / "deployment"
@@ -363,12 +386,7 @@ def verify_worker_unit(config: dict) -> None:
 
 
 def verify_native_binaries(directory: Path) -> None:
-    helper = directory / "codex-resources/bwrap"
-    if not helper.is_file() or not os.access(helper, os.X_OK):
-        raise ValueError("Native release is missing the executable Codex sandbox resource.")
     run([str(directory / "server"), "--version"])
-    run([str(directory / "codex"), "--version"])
-    run([str(helper), "--version"])
 
 
 def configure_worker(config: dict) -> None:
@@ -378,6 +396,9 @@ def configure_worker(config: dict) -> None:
         "DATABASE_URL": f'postgresql://quazonai:{config["password"]}@127.0.0.1:{config["database_port"]}/quazonai',
         "STATE_DIR": str(root / "data/state"), "HOME": config["home"],
         "CODEX_HOME": config["codex_home"], "PUBLIC_URL": f'http://localhost:{config["port"]}',
+        "CODEX_IMAGE": config.get('codex_image', 'quazonai-codex:' + config['project']),
+        "CODEX_DOCKER_SOCKET": config.get('docker_socket', '/var/run/docker.sock'),
+        "CODEX_LOCK_FILE": str(root / '.deployment.lock'),
         "DEVELOPMENT_HTTP": "true", "PATH": f'{binary.parent}:{config["path"]}',
         "RUNTIME_TARGETS": json.dumps(config.get("runtime_targets", [])),
         "DOWNSTREAM_TARGETS": json.dumps(config.get("downstream_targets", [])),
@@ -539,7 +560,7 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
                 raise ValueError("Existing deployment files have no installation manifest; restore it rather than reinitialize.")
             validate_ports(args.port, args.database_port, available=True)
             home = Path.home()
-            codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME", str(home / ".codex"))).expanduser().resolve()
+            codex_home = Path(args.codex_home or str(root.with_name(root.name + '-codex'))).expanduser().resolve()
             config = {
                 **release, "root": str(root), "uid": os.getuid(), "gid": os.getgid(),
                 "home": str(home), "codex_home": str(codex_home), "path": os.environ.get("PATH", os.defpath),
@@ -607,6 +628,9 @@ def apply_update(root: Path) -> None:
         # Every retry checks before shutdown, including preparing retries whose
         # old app may have admitted Runs while the installer was absent.
         require_idle(old)
+        if old.get('codex_image'):
+            import codex
+            codex.require_stopped(old, recover_created=True)
         if not pending:
             pending = {'operation': 'update', 'phase': 'preparing', 'previous': old,
                        'target': candidate, 'backup': None}
@@ -620,6 +644,9 @@ def apply_update(root: Path) -> None:
             require_idle(old)
             run(['systemctl', '--user', 'disable', '--now', unit(old)])
             require_idle(old)
+            if old.get('codex_image'):
+                import codex
+                codex.require_stopped(old, recover_created=True)
             if phase == 'preparing':
                 recovery = backup(old)
         except Exception:

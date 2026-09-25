@@ -239,24 +239,12 @@ class NativeDeploymentTests(unittest.TestCase):
                 self.assertFalse((installation / 'pending.json').exists())
                 self.assertFalse((root / 'native').exists())
 
-    def test_native_package_requires_executable_sandbox_resource(self):
+    def test_host_package_checks_only_the_worker_not_a_native_codex(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(manage, 'run') as command:
             binaries = Path(temporary)
-            helper = binaries / 'codex-resources/bwrap'
-            with self.assertRaisesRegex(ValueError, 'sandbox resource'):
-                manage.verify_native_binaries(binaries)
-            command.assert_not_called()
-            helper.parent.mkdir()
-            helper.write_bytes(b'test-only package entry; never executed')
-            helper.chmod(0o600)
-            with self.assertRaisesRegex(ValueError, 'sandbox resource'):
-                manage.verify_native_binaries(binaries)
-            command.assert_not_called()
-            helper.chmod(0o755)
             manage.verify_native_binaries(binaries)
             self.assertEqual([call.args[0] for call in command.call_args_list], [
-                [str(binaries / 'server'), '--version'], [str(binaries / 'codex'), '--version'],
-                [str(helper), '--version'],
+                [str(binaries / 'server'), '--version'],
             ])
 
     def test_native_unit_validation_uses_exact_future_unit_without_installing(self):
@@ -753,12 +741,12 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(manage.configuration(self.root), self.old)
 
     def test_every_container_build_base_has_an_exact_digest(self):
-        bases = [line.split()[1] for line in (manage.BUNDLE / 'Dockerfile').read_text().splitlines()
-                 if line.startswith('FROM ')]
-        self.assertEqual(len(bases), 5)
+        bases = [line.split()[1] for name in ('Dockerfile', 'Codex.Dockerfile')
+                 for line in (manage.BUNDLE / name).read_text().splitlines() if line.startswith('FROM ')]
+        self.assertEqual(len(bases), 6)
         for image in bases:
             self.assertRegex(image, r'^[^ ]+@sha256:[a-f0-9]{64}\Z')
-        self.assertEqual(bases[0], bases[1])
+        self.assertEqual(bases[0], bases[4])
 
     def test_run_admitted_during_app_shutdown_keeps_worker_running(self):
         self.idle.side_effect = [None, ValueError('run admitted while API was closing')]

@@ -10,6 +10,7 @@ fn launch(root: &std::path::Path) -> Launch {
             .expect("native-codex acceptance requires an official binary"),
     );
     Launch {
+        container: None,
         binary,
         home: root.to_path_buf(),
         codex_home: root.to_path_buf(),

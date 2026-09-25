@@ -186,6 +186,20 @@ impl Provider {
     }
 }
 
+fn native_tool_completed(items: &[Value]) -> bool {
+    items.iter().any(|item| {
+        if item["type"] != "function_call_output" || item["call_id"] != "qz-partial-usage-tool" {
+            return false;
+        }
+        item["output"].as_str().is_some_and(|output| {
+            // A malformed/failed tool response must reject the fixture request;
+            // a panic in an Axum task alone would not fail its owning test.
+            matches!(std::panic::catch_unwind(|| tool_output::exec_part(output)),
+                Ok((None, body)) if body.trim() == "QZ_NATIVE_TOOL_DONE")
+        })
+    })
+}
+
 async fn respond(
     State(seen): State<Arc<Seen>>,
     headers: HeaderMap,
@@ -252,7 +266,9 @@ async fn respond(
         && request["stream"] == true
         && (ordinal < 2 || (review && ordinal < 8))
         && input.is_some()
-        && (!tool_continuation || ordinal == 0 || input_text.contains("QZ_NATIVE_TOOL_DONE"))
+        && (!tool_continuation
+            || ordinal == 0
+            || input.is_some_and(|items| native_tool_completed(items)))
         && if review {
             (ordinal == 2 || (ordinal > 2 && (review_input_read || review_session.is_some())))
                 && !input_text.contains("QZ_MISSION_INITIAL_V1")
@@ -690,6 +706,22 @@ pub async fn completed(
 #[cfg(test)]
 mod science_reply_tests {
     use super::*;
+
+    #[test]
+    fn native_tool_proof_requires_successful_output_not_the_requested_command() {
+        let command = json!({"type":"function_call", "call_id":"qz-partial-usage-tool",
+            "arguments":{"cmd":"printf QZ_NATIVE_TOOL_DONE"}});
+        assert!(!native_tool_completed(std::slice::from_ref(&command)));
+        let output = json!({"type":"function_call_output", "call_id":"qz-partial-usage-tool",
+            "output":"Process exited with code 0\nOutput:\nQZ_NATIVE_TOOL_DONE"});
+        assert!(native_tool_completed(&[command.clone(), output.clone()]));
+        let mut foreign = output.clone();
+        foreign["call_id"] = json!("another-tool");
+        assert!(!native_tool_completed(&[command.clone(), foreign]));
+        let mut failed = output;
+        failed["output"] = json!("Process exited with code 1\nOutput:\nQZ_NATIVE_TOOL_DONE");
+        assert!(!native_tool_completed(&[command, failed]));
+    }
 
     #[test]
     fn reads_the_original_experiment_through_native_text_wrappers() {

@@ -206,6 +206,7 @@ fn message(text: &str) -> Value {
 }
 fn launch(home: &Path, work: &Path, canary: &str) -> Launch {
     Launch {
+        container: None,
         binary: std::env::var_os("CODEX_NATIVE_BIN")
             .expect("pinned native binary required")
             .into(),

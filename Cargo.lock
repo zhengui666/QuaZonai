@@ -7420,6 +7420,7 @@ name = "server"
 version = "2.0.0-dev.1"
 dependencies = [
  "axum",
+ "bollard",
  "chrono",
  "clap",
  "contracts",
@@ -7438,6 +7439,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-sessions",
  "tower-sessions-sqlx-store",

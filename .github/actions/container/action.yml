@@ -21,7 +21,7 @@ runs:
       run: |
         set -euo pipefail
         test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-        for script in deploy/docker/entrypoint.sh deploy/docker/deploy.sh deploy/docker/update.sh; do
+        for script in deploy/docker/entrypoint.sh deploy/docker/deploy.sh deploy/docker/update.sh deploy/docker/codex-update.sh deploy/docker/codex-login.sh; do
           bash -n "$script"
         done
         python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
@@ -59,15 +59,5 @@ runs:
         set -euo pipefail
         docker run --rm "$IMAGE" --version
         docker run --rm --cap-drop ALL --security-opt no-new-privileges --entrypoint /usr/bin/caddy "$IMAGE" validate --config /opt/quazonai/Caddyfile --adapter caddyfile
-        docker run --rm --entrypoint /opt/quazonai/bin/codex-resources/bwrap "$IMAGE" --version
-        profile="$RUNNER_TEMP/quazonai-container-codex.apparmor"
-        cat > "$profile" <<EOF
-        abi <abi/4.0>,
-        include <tunables/global>
-        profile quazonai-ci-container-codex "$RUNNER_TEMP/quazonai-container-*/**/bin/codex" flags=(unconfined) {
-          userns,
-        }
-        EOF
-        sudo apparmor_parser -r "$profile"
-        trap 'sudo apparmor_parser -R "$profile"' EXIT
+        docker run --rm --entrypoint /bin/sh "$IMAGE" -c '! command -v codex'
         python3 -B deploy/docker/smoke.py --image "$IMAGE" --revision "$REVISION"

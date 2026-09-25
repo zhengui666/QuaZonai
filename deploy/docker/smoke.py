@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import http.cookiejar
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,9 @@ import tarfile
 import tempfile
 import urllib.error
 import urllib.request
+import uuid
 
+import codex
 import manage
 import release
 
@@ -46,26 +49,68 @@ def fingerprint(root: Path) -> str:
     return hashlib.sha256((root / "data/state/master.key").read_bytes()).hexdigest()
 
 
-def verify_native_sandbox(root: Path, config: dict) -> None:
+def verify_container_codex(config: dict) -> None:
     binaries = Path(config['root']) / 'releases' / config['version'] / 'bin'
-    with tempfile.TemporaryDirectory(prefix='sandbox-probe-', dir=root) as temporary:
-        home = Path(temporary)
-        (home / 'codex-home').mkdir()
-        # An empty native home and a PATH without system bwrap force the packaged
-        # helper to be exercised. This executes no model and uses no real account.
-        environment = {
-            'HOME': str(home), 'CODEX_HOME': str(home / 'codex-home'),
-            'PATH': str(binaries), 'LANG': 'C.UTF-8',
-        }
-        result = subprocess.run(
-            [str(binaries / 'codex'), '--disable', 'use_legacy_landlock',
-             '-c', 'sandbox_mode="read-only"', 'sandbox', '--', '/usr/bin/true'],
-            cwd=home, env=environment, capture_output=True, text=True, timeout=60, check=False,
-        )
-        if result.returncode != 0:
-            print(result.stdout[-8000:], file=sys.stderr)
-            print(result.stderr[-8000:], file=sys.stderr)
-            raise AssertionError(f'Packaged Codex sandbox failed: {result.returncode}')
+    assert not (binaries / 'codex').exists()
+    manage.compose(config, 'exec', '-T', 'app', '/bin/sh', '-c', 'test ! -e /opt/quazonai/bin/codex')
+    server = str(binaries / 'server')
+    codex.docker(config, 'run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+                 '--security-opt', 'no-new-privileges:true', '--user', f'{config["uid"]}:{config["gid"]}',
+                 '--volume', server + ':' + server + ':ro', '--entrypoint', server,
+                 config['codex_image'], '--version')
+    # The actual running API must launch and initialize the separate container.
+    # An unavailable deployment/transport is a failure, not equivalent to no login.
+    origin = f'http://localhost:{config["port"]}'
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    with opener.open(origin + '/api/v2/auth/session', timeout=10) as response:
+        assert response.status == 200
+    with opener.open(origin + '/api/v2/settings/codex', timeout=10) as response:
+        profiles = json.load(response)['items']
+    assert profiles
+    profile = profiles[0]
+    body = json.dumps({'schema_version': 1, 'profile_id': profile['id'],
+                       'expected_revision': profile['revision']}).encode()
+    request = urllib.request.Request(origin + '/api/v2/codex/probe', data=body, headers={
+        'Content-Type': 'application/json', 'Origin': origin, 'Idempotency-Key': str(uuid.uuid4()),
+    })
+    with opener.open(request, timeout=40) as response:
+        outcome = json.load(response)['resource']['outcome']
+    assert outcome == {'status': 'UNAVAILABLE', 'reason': 'AUTHENTICATION_REQUIRED'}, outcome
+    codex.require_stopped(config)
+
+
+def verify_codex_update(config: dict) -> None:
+    root = Path(config['root'])
+    home = Path(config['codex_home'])
+    sentinel = home / 'container-deployment-smoke.txt'
+    sentinel.write_text('persistent native directory, not an authentication fixture\n')
+    before = sentinel.read_bytes()
+    original = codex.image_id(config)
+    assert codex.read_env(root / '.env')[0] == '0.156.1'
+    target = codex.read_env(Path(config['bundle']) / '.env.example')[0]
+    codex.update(root, target)
+    assert codex.image_id(config) != original
+    assert codex.read_env(root / '.env')[0] == target
+    assert sentinel.read_bytes() == before
+    verify_container_codex(config)
+    # A real running container blocks image replacement even when no QZ Run owns
+    # it, as happens with account operations. Only this test identity is stopped.
+    container = codex.docker(config, 'run', '-d', '--rm', '--label',
+                             'io.quazonai.codex.image=' + config['codex_image'],
+                             '--entrypoint', '/usr/bin/sleep', config['codex_image'], '120', capture=True)
+    try:
+        selected = codex.image_id(config)
+        try:
+            codex.update(root, '0.156.1')
+            raise AssertionError('An active Codex container did not block its version update')
+        except ValueError as error:
+            assert 'Codex sessions still exist' in str(error), str(error)
+        assert codex.image_id(config) == selected
+        assert codex.read_env(root / '.env')[0] == target
+    finally:
+        codex.docker(config, 'container', 'rm', '--force', container, capture=True)
+    assert sentinel.read_bytes() == before
 
 
 def verify_orphaned_volume(root: Path, bundle: Path) -> None:
@@ -170,6 +215,8 @@ manage.main()
 
 def exercise(root: Path, image: str, revision: str) -> None:
     installation = root / "installation with spaces [native] %n $HOME"
+    installation.mkdir()
+    (installation / '.env').write_text('CODEX_VERSION=0.156.1\n')
     web_port, database_port = ports()
     one = make_bundle(root, "v0.0.0-ci.1", revision, image)
     two = make_bundle(root, "v0.0.0-ci.2", revision, image)
@@ -192,7 +239,8 @@ def exercise(root: Path, image: str, revision: str) -> None:
         assert processor_identity(original) == initial_processors
         assert not (installation / 'pending.json').exists()
         verify_app_restart(original, 'unless-stopped')
-        verify_native_sandbox(root, original)
+        verify_container_codex(original)
+        verify_codex_update(original)
         key = fingerprint(installation)
         assert manage.sql(original, "SELECT extversion FROM pg_extension WHERE extname='pgmq'") == "1.10.0"
         manage.sql(original, "CREATE TABLE public.container_release_smoke (value text PRIMARY KEY); "
@@ -322,6 +370,9 @@ def exercise(root: Path, image: str, revision: str) -> None:
             (Path(config["unit_directory"]) / manage.unit(config)).unlink(missing_ok=True)
             manage.run(["systemctl", "--user", "daemon-reload"])
             manage.compose(config, "down", "--volumes", "--remove-orphans")
+            if config.get('codex_image'):
+                with contextlib.suppress(subprocess.CalledProcessError):
+                    codex.docker(config, 'image', 'rm', config['codex_image'], capture=True)
 
 
 def main() -> None:
