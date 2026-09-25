@@ -24,7 +24,8 @@ Do not change frozen Cycle selections or introduce a second credential store.
 1. Trace profile update/probe, native Thread options, Mission bootstrap, shared
    account operations and the Codex settings UI from main `323054f2`.
 2. Correct speed resolution in `crates/domain/src/codex.rs`, native deployment
-   inspection and observation validation; retain existing wire/storage fields.
+   inspection, observation validation and `store/lifecycle/mission.rs` session
+   receipt invariants; retain existing wire/storage fields.
 3. Clarify shared login and role-specific model/effort/speed in the existing web
    components. Update DESIGN and OPERATIONS with the actual behavior.
 4. Extend native process, domain, PostgreSQL and browser regression coverage;
@@ -55,6 +56,11 @@ Local verification:
   actual 390px/1280px browser screenshots; the account/model fixtures are synthetic.
 - Store/PostgreSQL execution and the complete CI matrix run in GitHub Actions;
   the local Docker socket is unavailable. No production database is used.
+- `cargo test --locked -p store --lib native_speed_receipt_matches_the_frozen_role_settings`:
+  reproduced the old receipt invariant failure, then passed all 20 default/custom
+  and speed combinations in one regression check after correction.
+- `cargo clippy --locked -p domain -p store -p server --lib --tests --features server/native-codex -- -D warnings`:
+  passed, including compilation of the new standard/fast Mission start/resume tests.
 
 Live ChatGPT authorization and paid inference are not claimed by the isolated
 protocol/UI tests. Hosted CI owns the complete current-head verification results.
@@ -62,9 +68,15 @@ protocol/UI tests. Hosted CI owns the complete current-head verification results
 <a id="review"></a>
 ## Review
 
-The corresponding PR owns GitHub Codex findings, remediation, current-head CI
+[PR #117](https://github.com/zhengui666/QuaZonai/pull/117) owns GitHub Codex findings, remediation, current-head CI
 and the merge decision. Only an explicit clean review and passing applicable CI
 permit the requested merge; earlier revisions are not approval of later changes.
+
+The first review identified that the Mission receipt invariant still rejected a
+custom role's explicit standard tier after Thread creation. The invariant now
+requires an omitted tier for native defaults, `default` for custom standard, and
+`priority`/`fast` for custom acceleration. Added real App Server + PostgreSQL
+bootstrap, turn and same-Thread recovery cases to the existing Mission CI suite.
 
 <a id="delivery"></a>
 ## Delivery
