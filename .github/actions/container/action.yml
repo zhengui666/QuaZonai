@@ -1,6 +1,9 @@
 name: Verify production container
 description: Build one exact-source image and exercise its real deployment lifecycle.
 inputs:
+  source:
+    description: Source checkout directory, relative to the workspace.
+    default: '.'
   image:
     description: Local image name to build and test.
     required: true
@@ -15,6 +18,7 @@ runs:
   steps:
     - name: Check release helpers and native host prerequisites
       shell: bash
+      working-directory: ${{ inputs.source }}
       env:
         EXPECTED_HEAD: ${{ inputs.revision }}
         PYTHONDONTWRITEBYTECODE: '1'
@@ -39,8 +43,8 @@ runs:
     - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
     - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
       with:
-        context: .
-        file: deploy/docker/Dockerfile
+        context: ${{ inputs.source }}
+        file: ${{ inputs.source }}/deploy/docker/Dockerfile
         platforms: linux/amd64
         load: true
         push: false
@@ -52,6 +56,7 @@ runs:
         cache-to: type=gha,mode=max,scope=quazonai-container
     - name: Verify real installation, upgrade, failure retry and database restore
       shell: bash
+      working-directory: ${{ inputs.source }}
       env:
         IMAGE: ${{ inputs.image }}
         REVISION: ${{ inputs.revision }}
@@ -65,4 +70,5 @@ runs:
     - name: Remove the test host's Codex user namespace profile
       if: always()
       shell: bash
+      working-directory: ${{ inputs.source }}
       run: sudo apparmor_parser -R deploy/docker/codex.apparmor

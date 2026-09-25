@@ -11,13 +11,16 @@ The existing primary worktree and installed services remain outside this task.
 <a id="spec"></a>
 ## Requirements and design
 
-A manually dispatched workflow accepts a same-repository branch, tag or full SHA.
-Checkout resolves it once; the existing container action builds and tests that
-exact source. The tested image is published as
-`ghcr.io/zhengui666/quazonai:dev-<full-sha>-<run-id>-<attempt>` and read back by
-digest. There is no floating alias, Git tag, GitHub Release, deployment bundle
-or production deployment. Sources must contain the existing container action
-and deployment files. The versioned release gate is unchanged.
+A manually dispatched workflow accepts only a same-repository branch name under
+`refs/heads/`; tags, arbitrary SHAs and synthetic PR refs are not inputs. Checkout
+resolves it once. A read-only build uses the workflow's trusted container action
+against a separate source checkout. An isolated publisher accepts its artifact,
+checks the image ID, OCI labels and run-specific dev tag, and pushes the tested
+image as `ghcr.io/zhengui666/quazonai:dev-<full-sha>-<run-id>-<build-attempt>`.
+Rebuilding creates a new tag; retrying only the publisher reuses the original
+artifact and tag. Sources need existing container build/deployment files, but not
+the dev workflow/action. The publisher never executes source code or the image.
+The versioned release gate is unchanged; no deployment bundle is produced.
 
 Contracts: [DESIGN](../../../DESIGN.md#container-release). Usage:
 [OPERATIONS](../../../OPERATIONS.md#dev-image). Dispatch follows
@@ -28,7 +31,8 @@ Contracts: [DESIGN](../../../DESIGN.md#container-release). Usage:
 
 1. Add `.github/workflows/dev-image.yml`, reusing pinned actions and the container
    composite action. Add its path to Container PR selection.
-2. Document dispatch and dev artifacts in DESIGN, OPERATIONS and README. Keep
+2. Run the new read-only build on workflow/action PR changes, exercising a separate
+   checkout and OCI identity checks. Document dispatch and dev artifacts in DESIGN, OPERATIONS and README. Keep
    `release.py` and versioned deployment manifests unchanged.
 3. Obtain current-head CI and explicit clean Codex review, then merge. Once the
    workflow exists on main, dispatch an unmerged source commit and verify the
@@ -43,3 +47,12 @@ passed. These checks do not claim a container build or registry publication.
 Current-head CI and registry publication are pending. Native builds and real
 container lifecycle checks run in GitHub Actions; no local database or user service
 is used for acceptance. The PR owns review, CI, merge and publication evidence.
+
+<a id="review"></a>
+## Review remediation
+
+PR #118 review on `101960c` identified package-write exposure to selected code and
+synthetic fork PR refs. The updated workflow isolates build from publisher, loads
+the action from the workflow checkout, constrains publisher tags, and narrows input
+to repository branches. PR runs exercise build/export with no publishing permission.
+New-head CI and clean re-review are required; earlier checks are not reused.
