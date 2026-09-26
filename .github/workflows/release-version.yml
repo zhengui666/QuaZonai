@@ -62,7 +62,7 @@ jobs:
             --codex-version "$CODEX_VERSION" --output "$RUNNER_TEMP/release-assets"
           # Test drivers are sidecars, never part of the user deployment archive.
           cp deploy/docker/smoke.py deploy/docker/release.py "$RUNNER_TEMP/release-assets/"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: prebuilt-${{ inputs.version }}-${{ inputs.revision }}
           path: ${{ runner.temp }}/release-assets/
@@ -106,7 +106,7 @@ jobs:
           sudo systemctl start "user@$uid.service"
           export XDG_RUNTIME_DIR="/run/user/$uid"
           python3 -B smoke.py --manifest release.json --assert-cold --report "$RUNNER_TEMP/ghcr-install.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ghcr-install-${{ inputs.version }}-${{ inputs.revision }}
           path: ${{ runner.temp }}/ghcr-install.json
