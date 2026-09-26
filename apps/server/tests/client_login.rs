@@ -16,7 +16,7 @@ import errno, json, os, pty, select, signal, sys, termios, time
 config = json.load(sys.stdin)
 pid, fd = pty.fork()
 if pid == 0:
-    os.execve(sys.argv[1], [sys.argv[1], 'client', '--development-http', 'login', '--name', 'CLI acceptance'], {'XDG_CONFIG_HOME': config['directory']})
+    os.execve(sys.argv[1], [sys.argv[1], 'client', '--development-http', 'login', '--name', 'CLI acceptance'] + (['--replace'] if config['replace'] else []), {'XDG_CONFIG_HOME': config['directory']})
 transcript = b''
 address_sent = password_sent = False
 status = None
@@ -49,7 +49,7 @@ finally:
     os.close(fd)
 "#;
 
-async fn login(directory: &Path, origin: &str, password: &str) -> Value {
+async fn login(directory: &Path, origin: &str, password: &str, replace: bool) -> Value {
     let mut child = Command::new("python3")
         .args(["-c", TERMINAL, env!("CARGO_BIN_EXE_server")])
         .env_clear()
@@ -59,7 +59,8 @@ async fn login(directory: &Path, origin: &str, password: &str) -> Value {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let input = json!({"directory":directory,"origin":origin,"password":password});
+    let input =
+        json!({"directory":directory,"origin":origin,"password":password,"replace":replace});
     child
         .stdin
         .take()
@@ -82,6 +83,7 @@ async fn login(directory: &Path, origin: &str, password: &str) -> Value {
 async fn saved(directory: &Path, arguments: &[&str], body: Value) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_server"))
         .arg("client")
+        .current_dir(directory)
         .args(arguments)
         .env_clear()
         .env("XDG_CONFIG_HOME", directory)
@@ -147,15 +149,25 @@ async fn password_login_accepts_json_field_names_and_revocation_ends_device_auth
         .unwrap()
         .to_owned();
     let directory = tempfile::tempdir().unwrap();
-    let wrong = login(directory.path(), &origin, "wrong-cli-login-password").await;
-    assert_ne!(wrong["exit"], 0);
-    assert!(wrong["transcript"]
-        .as_str()
-        .unwrap()
-        .contains("AUTHENTICATION_FAILED"));
+    for wrong_password in [
+        "wrong-cli-login-password",
+        "request_id",
+        "AUTHENTICATION_FAILED",
+    ] {
+        let wrong = login(directory.path(), &origin, wrong_password, false).await;
+        assert_ne!(wrong["exit"], 0);
+        assert!(wrong["transcript"]
+            .as_str()
+            .unwrap()
+            .contains("AUTHENTICATION_FAILED"));
+        assert!(!wrong["transcript"]
+            .as_str()
+            .unwrap()
+            .contains("CLI_RESPONSE_CONTRACT_INVALID"));
+    }
     let path = directory.path().join("quazonai/client.json");
     assert!(!path.exists());
-    let result = login(directory.path(), &origin, password).await;
+    let result = login(directory.path(), &origin, password, false).await;
     assert_eq!(result["exit"], 0, "{}", result["transcript"]);
     let profile: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     assert_eq!(profile["origin"], origin);
@@ -267,10 +279,209 @@ async fn password_login_accepts_json_field_names_and_revocation_ends_device_auth
     assert!(String::from_utf8_lossy(&identity.stderr).contains("AUTHENTICATION_FAILED"));
     assert!(!String::from_utf8_lossy(&identity.stderr).contains(token));
     assert!(identity.stdout.is_empty());
-    let renewed = login(directory.path(), &origin, password).await;
+    let renewed = login(directory.path(), &origin, password, false).await;
     assert_eq!(renewed["exit"], 0, "{}", renewed["transcript"]);
     let identity = saved(directory.path(), &["identity"], Value::Null).await;
     assert!(identity.status.success());
     let renewed: contracts::auth::CliDevice = serde_json::from_slice(&identity.stdout).unwrap();
     assert_ne!(renewed.id, device.id);
+    let valid_profile = fs::read_to_string(&path).unwrap();
+    for (invalid, mode) in [
+        ("{", 0o600),
+        ("{\"schema_version\":0}", 0o600),
+        (valid_profile.as_str(), 0o644),
+    ] {
+        fs::write(&path, invalid).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        assert!(!saved(directory.path(), &["login"], Value::Null)
+            .await
+            .status
+            .success());
+        let replaced = login(directory.path(), &origin, password, true).await;
+        assert_eq!(replaced["exit"], 0, "{}", replaced["transcript"]);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(saved(directory.path(), &["identity"], Value::Null)
+            .await
+            .status
+            .success());
+    }
+}
+
+#[tokio::test]
+async fn repeated_login_persists_the_replacement_ca_without_registering_another_device() {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // Real native TLS with a disposable CA; the fixture accepts only device GETs.
+    fs::write(root.join("extensions.cnf"), "subjectAltName=DNS:localhost\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\n").unwrap();
+    for arguments in [
+        vec![
+            "req",
+            "-x509",
+            "-newkey",
+            "ec",
+            "-pkeyopt",
+            "ec_paramgen_curve:P-256",
+            "-nodes",
+            "-keyout",
+            "ca.key",
+            "-out",
+            "ca.pem",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=CLI regression CA",
+            "-addext",
+            "basicConstraints=critical,CA:TRUE",
+        ],
+        vec![
+            "req",
+            "-new",
+            "-newkey",
+            "ec",
+            "-pkeyopt",
+            "ec_paramgen_curve:P-256",
+            "-nodes",
+            "-keyout",
+            "server.key",
+            "-out",
+            "server.csr",
+            "-subj",
+            "/CN=localhost",
+        ],
+        vec![
+            "x509",
+            "-req",
+            "-in",
+            "server.csr",
+            "-CA",
+            "ca.pem",
+            "-CAkey",
+            "ca.key",
+            "-CAcreateserial",
+            "-out",
+            "server.pem",
+            "-days",
+            "1",
+            "-extfile",
+            "extensions.cnf",
+        ],
+    ] {
+        assert!(Command::new("openssl")
+            .current_dir(root)
+            .args(arguments)
+            .output()
+            .await
+            .unwrap()
+            .status
+            .success());
+    }
+    let device_id = contracts::Id::new();
+    let token = integrations::authentication::format_cli_token(
+        device_id,
+        &integrations::authentication::random_capability(),
+    )
+    .unwrap();
+    let device = json!({"schema_version":1,"id":device_id,"name":"TLS device",
+        "created_at":"2026-09-26T00:00:00Z","last_used_at":"2026-09-26T00:00:00Z"});
+    let mut listener = Command::new("python3")
+        .current_dir(root)
+        .env_clear()
+        .args([
+            "-c",
+            r#"
+import http.server, json, ssl, sys
+config = json.load(sys.stdin)
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        assert self.path == '/api/v2/auth/cli/session'
+        assert self.headers['Authorization'] == 'Bearer ' + config['token']
+        assert self.headers['Cookie'] is None
+        body = json.dumps(config['device']).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args): pass
+server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain('server.pem', 'server.key')
+server.socket = context.wrap_socket(server.socket, server_side=True)
+print(server.server_port, flush=True)
+server.serve_forever()
+"#,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    listener
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&json!({"token":token,"device":device})).unwrap())
+        .await
+        .unwrap();
+    let mut line = String::new();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        BufReader::new(listener.stdout.take().unwrap()).read_line(&mut line),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let port: u16 = line.trim().parse().unwrap();
+    let path = root.join("quazonai/client.json");
+    fs::create_dir(path.parent().unwrap()).unwrap();
+    fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(
+        &path,
+        serde_json::to_vec(&json!({"schema_version":1,
+        "origin":format!("https://localhost:{port}"),"token":token,"development_http":false,
+        "ca_certificate":root.join("obsolete.pem")}))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let confirmed = saved(root, &["--ca-certificate", "ca.pem", "login"], Value::Null).await;
+    assert!(
+        confirmed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&confirmed.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&confirmed.stdout).unwrap(),
+        device
+    );
+    let profile: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        profile["ca_certificate"],
+        fs::canonicalize(root.join("ca.pem"))
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+    assert_eq!(profile["token"], token);
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let identity = saved(root, &["identity"], Value::Null).await;
+    assert!(
+        identity.status.success(),
+        "{}",
+        String::from_utf8_lossy(&identity.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&identity.stdout).unwrap(),
+        device
+    );
+    listener.kill().await.unwrap();
+    listener.wait().await.unwrap();
 }

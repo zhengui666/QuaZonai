@@ -2,9 +2,10 @@
 use super::{body, media, read_file, verify, write_json, Arguments, Connection, Failure, Result};
 use contracts::{
     auth::{CliLogin, CliLoginResult},
+    http::Problem,
     Id, SchemaV1,
 };
-use reqwest::{header, Client, Url};
+use reqwest::{header, Client, Response, Url};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -165,54 +166,64 @@ pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bo
     let path = profile_path()?;
     let mut development_http = arguments.development_http;
     let mut certificate = arguments.ca_certificate.clone();
-    let previous = match Profile::load_from(&path) {
-        Ok(profile) => Some(profile),
-        Err(Failure::LoginRequired) => None,
-        Err(error) => return Err(error),
+    let previous = if replace {
+        writeln!(std::io::stderr().lock(), "Replacing the local connection; any previous CLI device remains managed in authentication settings.")
+            .map_err(|_| Failure::Output)?;
+        None
+    } else {
+        match Profile::load_from(&path) {
+            Ok(profile) => Some(profile),
+            Err(Failure::LoginRequired) => None,
+            Err(error) => return Err(error),
+        }
     };
-    if let Some(profile) = previous {
-        if !replace {
-            development_http |= profile.development_http;
-            certificate = certificate.or(profile.ca_certificate);
-            if let Some(address) = &arguments.origin {
-                if origin(
-                    address,
-                    arguments.development_http || profile.development_http,
-                )?
+    if let Some(mut profile) = previous {
+        development_http |= profile.development_http;
+        certificate = certificate
+            .or(profile.ca_certificate.clone())
+            .as_ref()
+            .map(fs::canonicalize)
+            .transpose()
+            .map_err(|_| Failure::Configuration)?;
+        if let Some(address) = &arguments.origin {
+            if origin(address, development_http)?
                 .origin()
                 .ascii_serialization()
-                    != profile.origin
-                {
+                != profile.origin
+            {
+                return Err(Failure::ReplaceRequired);
+            }
+        }
+        let connection = Connection::connect(
+            profile.origin.clone(),
+            profile.token.clone(),
+            development_http,
+            certificate.clone(),
+        )?;
+        let request = super::commands::Command::Identity.request_for(true)?;
+        let response = connection.send(&request, None, None).await?;
+        match connection.checked(response, 200).await {
+            Err(Failure::Rejected(problem))
+                if problem.status == 401 && problem.code == "AUTHENTICATION_FAILED" => {}
+            Err(error) => return Err(error),
+            Ok(response) => {
+                media(&response, "application/json")?;
+                let bytes = body(response, 16 * 1024).await?;
+                verify(&bytes, &connection.credential)?;
+                let device: contracts::auth::CliDevice =
+                    serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
+                if name.is_some_and(|name| name != device.name) {
                     return Err(Failure::ReplaceRequired);
                 }
-            }
-            let connection = Connection::connect(
-                profile.origin,
-                profile.token,
-                development_http,
-                certificate.clone(),
-            )?;
-            let request = super::commands::Command::Identity.request_for(true)?;
-            let response = connection.send(&request, None, None).await?;
-            match connection.checked(response, 200).await {
-                Err(Failure::Rejected(problem))
-                    if problem.status == 401 && problem.code == "AUTHENTICATION_FAILED" => {}
-                Err(error) => return Err(error),
-                Ok(response) => {
-                    media(&response, "application/json")?;
-                    let bytes = body(response, 16 * 1024).await?;
-                    verify(&bytes, &connection.credential)?;
-                    let device: contracts::auth::CliDevice =
-                        serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
-                    if name.is_some_and(|name| name != device.name) {
-                        return Err(Failure::ReplaceRequired);
-                    }
-                    return write_json(&device);
+                if profile.development_http != development_http
+                    || profile.ca_certificate != certificate
+                {
+                    profile.development_http = development_http;
+                    profile.ca_certificate = certificate;
+                    profile.save(&path)?;
                 }
+                return write_json(&device);
             }
-        } else {
-            writeln!(std::io::stderr().lock(), "Replacing the local connection; the previous CLI device remains managed in authentication settings.")
-                .map_err(|_| Failure::Output)?;
         }
     }
     // Never accept a password through redirected stdin, argv or an environment variable.
@@ -270,13 +281,7 @@ pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bo
         .send()
         .await
         .map_err(|_| Failure::Unavailable)?;
-    // Reuse the strict response boundary, with the password as the forbidden secret.
-    let connection = Connection {
-        client,
-        origin: url.clone(),
-        credential: password,
-    };
-    let response = connection.checked(response, 201).await?;
+    let response = checked_login(response, &password).await?;
     media(&response, "application/json")?;
     let bytes = body(response, 16 * 1024).await?;
     // These closed DTOs reject duplicate/unknown fields and invalid scalar shapes.
@@ -303,10 +308,100 @@ pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bo
     write_json(&result.device)
 }
 
+async fn checked_login(response: Response, password: &str) -> Result<Response> {
+    let status = response.status().as_u16();
+    if status == 201 {
+        return Ok(response);
+    }
+    if !(400..=599).contains(&status) {
+        return Err(Failure::Contract);
+    }
+    media(&response, "application/problem+json")?;
+    let bytes = body(response, 16 * 1024).await?;
+    Err(Failure::Rejected(Box::new(login_problem(
+        &bytes, status, password,
+    )?)))
+}
+
+fn login_problem(bytes: &[u8], status: u16, password: &str) -> Result<Problem> {
+    // Closed DTOs reject duplicate/unknown keys without confusing key names with
+    // a submitted password. Only arbitrary response strings need redaction.
+    let mut problem: Problem = serde_json::from_slice(bytes).map_err(|_| Failure::Contract)?;
+    if problem.status != status || !problem.kind.starts_with("urn:quazonai:problem:") {
+        return Err(Failure::Contract);
+    }
+    let redact = |text: &mut String| {
+        if text.contains(password) {
+            text.clear();
+        }
+    };
+    if status == 401
+        && problem.code == "AUTHENTICATION_FAILED"
+        && problem.kind == "urn:quazonai:problem:authentication-failed"
+    {
+        // This is a protocol constant even when it happens to be the password.
+        problem.title = "AUTHENTICATION_FAILED".into();
+    } else {
+        redact(&mut problem.kind);
+        redact(&mut problem.code);
+        redact(&mut problem.title);
+    }
+    redact(&mut problem.detail);
+    for field in &mut problem.field_errors {
+        redact(&mut field.field);
+        redact(&mut field.code);
+        redact(&mut field.message);
+    }
+    for action in &mut problem.safe_next_actions {
+        redact(action);
+    }
+    Ok(problem)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn password_errors_preserve_protocol_coincidences_but_redact_arbitrary_reflections() {
+        let native = serde_json::json!({
+            "type":"urn:quazonai:problem:authentication-failed", "title":"AUTHENTICATION_FAILED",
+            "status":401, "code":"AUTHENTICATION_FAILED", "detail":"Password not accepted",
+            "request_id":Id::new(), "retryable":false, "field_errors":[], "safe_next_actions":[]
+        });
+        let bytes = serde_json::to_vec(&native).unwrap();
+        for password in [
+            "request_id",
+            "AUTHENTICATION_FAILED",
+            "authentication-failed",
+            "Password not accepted",
+        ] {
+            let problem = login_problem(&bytes, 401, password).unwrap();
+            assert_eq!(problem.code, "AUTHENTICATION_FAILED");
+            assert_eq!(problem.kind, "urn:quazonai:problem:authentication-failed");
+        }
+        let password = "reflected-password";
+        let mut reflected = native.clone();
+        reflected["title"] = serde_json::json!(password);
+        reflected["detail"] = serde_json::json!(format!("prefix {password} suffix"));
+        reflected["field_errors"] =
+            serde_json::json!([{"field":password,"code":password,"message":password}]);
+        reflected["safe_next_actions"] = serde_json::json!([password]);
+        let problem =
+            login_problem(&serde_json::to_vec(&reflected).unwrap(), 401, password).unwrap();
+        assert!(!serde_json::to_string(&problem).unwrap().contains(password));
+        let text = String::from_utf8(bytes).unwrap();
+        for invalid in [
+            format!("{{\"status\":401,{}", &text[1..]),
+            format!("{{\"unknown\":true,{}", &text[1..]),
+            text.replace("\"field_errors\":[]", "\"field_errors\":[{\"field\":\"one\",\"field\":\"two\",\"code\":\"code\",\"message\":\"message\"}]"),
+            text.replace("\"request_id\":", "\"request_id\":null,\"discarded_id\":"),
+        ] {
+            assert!(login_problem(invalid.as_bytes(), 401, password).is_err());
+        }
+        assert!(login_problem(text.as_bytes(), 403, password).is_err());
+    }
 
     #[test]
     fn profile_is_private_atomic_and_rejects_a_scoped_or_exposed_credential() {
