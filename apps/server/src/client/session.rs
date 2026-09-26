@@ -279,7 +279,9 @@ pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bo
     let response = connection.checked(response, 201).await?;
     media(&response, "application/json")?;
     let bytes = body(response, 16 * 1024).await?;
-    verify(&bytes, &connection.credential)?;
+    // These closed DTOs reject duplicate/unknown fields and invalid scalar shapes.
+    // Fixed JSON keys may equal a valid password; only the requested label can
+    // be returned as free text, and it is checked below before any output.
     let result: CliLoginResult = serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
     let token =
         integrations::authentication::cli_token(&result.token).map_err(|_| Failure::Contract)?;

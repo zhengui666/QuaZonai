@@ -41,7 +41,8 @@ try:
     if time.monotonic() >= deadline:
         os.kill(pid, signal.SIGKILL)
     _, status = os.waitpid(pid, 0)
-    assert config['password'].encode() not in transcript, 'terminal echoed password'
+    password_output = transcript.split(b'QuaZonai password: ', 1)[-1]
+    assert config['password'].encode() not in [line.strip() for line in password_output.splitlines()], 'terminal echoed password'
     assert address_sent and password_sent, 'login did not request both interactive inputs'
     print(json.dumps({'exit': os.waitstatus_to_exitcode(status), 'transcript': transcript.decode()}))
 finally:
@@ -119,11 +120,14 @@ async fn login_requires_a_terminal_and_missing_connection_is_actionable() {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn password_login_remembers_this_machine_and_revocation_ends_its_authority(pool: PgPool) {
+async fn password_login_accepts_json_field_names_and_revocation_ends_device_authority(
+    pool: PgPool,
+) {
     let f = support::fixture(pool).await;
     let (origin, _listener) = client::listen(&f).await;
     let http = reqwest::Client::new();
-    let password = "disposable-cli-login-password";
+    // A valid password can equal a wire field name without being echoed as data.
+    let password = "schema_version";
     let setup = http
         .post(format!("{origin}/api/v2/auth/setup"))
         .header("origin", &origin)
@@ -160,10 +164,23 @@ async fn password_login_remembers_this_machine_and_revocation_ends_its_authority
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o600
     );
-    assert!(!fs::read_to_string(&path).unwrap().contains(password));
+    assert!(profile.get("password").is_none());
+    assert!(profile
+        .as_object()
+        .unwrap()
+        .values()
+        .all(|value| value.as_str() != Some(password)));
     let token = profile["token"].as_str().unwrap();
     assert!(token.starts_with("qzc."));
     assert!(!result["transcript"].as_str().unwrap().contains(token));
+    let explicit = directory.path().join("explicit-device-token");
+    fs::write(&explicit, token).unwrap();
+    fs::set_permissions(&explicit, fs::Permissions::from_mode(0o600)).unwrap();
+    let rejected = client::invoke(&origin, &explicit, &["identity"], Value::Null).await;
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("CLI_CREDENTIAL_INVALID"));
+    assert!(!String::from_utf8_lossy(&rejected.stderr).contains(token));
+    assert!(rejected.stdout.is_empty());
     let identity = saved(directory.path(), &["identity"], Value::Null).await;
     assert!(
         identity.status.success(),

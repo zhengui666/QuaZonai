@@ -20,7 +20,7 @@ pub struct Arguments {
     /// Frontend origin; pair with --credential-file to use an existing scoped credential.
     #[arg(long)]
     pub origin: Option<String>,
-    /// Private existing machine/device token file; otherwise reuse the saved login.
+    /// Private existing scoped qz2 machine token file; otherwise reuse the saved login.
     #[arg(long)]
     pub credential_file: Option<PathBuf>,
     /// Optional native CA bundle. There is no unverified-TLS mode.
@@ -127,6 +127,8 @@ impl Connection {
                     let token = std::str::from_utf8(bytes)
                         .map_err(|_| Failure::Credential)?
                         .to_owned();
+                    integrations::authentication::machine_token(&token)
+                        .map_err(|_| Failure::Credential)?;
                     (
                         origin.clone(),
                         token,
