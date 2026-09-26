@@ -123,12 +123,12 @@ Nautilus 在一个共享资金账户内执行目标序列，保留原生成交�
 <a id="container-release"></a>
 ## 镜像与持久状态
 
-Web/API/Caddy 同镜像，PostgreSQL/PGMQ 独立 Compose 服务，Worker 从同镜像提取 server 并由宿主 systemd user manager 运行。Codex 镜像单独构建并保留完整原生资源。科学 Runtime、目录与 journal 不由应用部署自动创建。
+Web/API/Caddy 同镜像，PostgreSQL/PGMQ 独立 Compose 服务，Worker 从同镜像提取 server 并由宿主 systemd user manager 运行。应用镜像同时提供匹配的 Runtime 网关二进制；科学 job 与 Codex 由 CI 制作独立 GHCR 镜像。安装器按 manifest 拉取已有镜像。原生资源、数据目录、journal 与登录目录分别保持原身份。
 
 | 文件 | 关键字段与不变量 |
 | --- | --- |
-| `release.json` | `schema_version=1`、完整 `version` tag、40 位 `revision`、固定 digest 的 `image/database_image`；不包含私有配置 |
-| `installation.json` | 保存原 `root/uid/gid/home/codex_home/path/unit_directory`、端口、密码、Compose `project`、`bundle` 及可选 `runtime_targets/downstream_targets`；首次建库前持久化身份，重试不重生 |
+| `release.json` | `schema_version=2`、完整 `version` tag、40 位 `revision`、固定 GHCR digest 的 `image/database_image/runtime_image/codex_image`、精确 `codex_version`；不包含私有配置 |
+| `installation.json` | 保存原 `root/uid/gid/home/codex_home/path/unit_directory`、端口、密码、Compose `project`、`bundle`、本安装 `codex_runtime_image` 启动别名及可选 `runtime_targets/downstream_targets`；首次建库前持久化身份，重试不重生 |
 | `.env` | 独立 Codex 的精确 `CODEX_VERSION`；应用升级保留，不作为 Shell 执行 |
 | `pending.json` | 原 `previous/target/backup/phase`；恢复同一操作，不清空或重建安装 |
 | `current` | 仅在目标 HTTP 与 Worker 启动检查成功后选择新版本 |
@@ -137,6 +137,6 @@ Web/API/Caddy 同镜像，PostgreSQL/PGMQ 独立 Compose 服务，Worker 从同�
 
 Worker 配置原子写入并同步后，先保存 `starting` 再启动候选。`starting` 重试恢复同一容器和 Worker，不重复迁移、不停止可能已拥有 Run 的候选。激活依次同步 `current`、启用 Worker 恢复、开启应用自动重启、清除 pending。缺少 phase 的旧记录按可能已迁移处理。
 
-Codex 更新先构建并执行真实 sandbox 检查，再持部署锁确认 Run/会话静止，切换镜像与 `.env`。启动器与更新器使用同一锁；运行会话不长期持锁。认证目录保持原位置，失败或中断按原目标对账，不回退宿主可执行文件。
+Codex 更新先拉取已发布镜像并执行真实版本与 sandbox 检查，再持部署锁确认 Run/会话静止，切换镜像与 `.env`。启动器与更新器使用同一锁；运行会话不长期持锁。认证目录保持原位置，失败或中断按原目标对账，不回退宿主可执行文件。
 
 实现：[deploy/docker](../deploy/docker)。发布和诊断：[operations](operations.md)。安装、更新与备份：[部署手册](../deploy/docker/README.md)。

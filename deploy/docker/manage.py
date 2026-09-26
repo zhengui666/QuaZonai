@@ -26,7 +26,7 @@ REPOSITORY = "zhengui666/QuaZonai"
 DATABASE_IMAGE = "ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6"
 BUNDLE = Path(__file__).resolve().parent
 BUNDLE_FILES = {"manage.py", "deploy.sh", "update.sh", "compose.yaml", "release.json", "README.md",
-                "codex.py", "codex-update.sh", "codex-login.sh", "Codex.Dockerfile", "codex.apparmor", ".env.example"}
+                "codex.py", "codex-update.sh", "codex-login.sh", "runtime.sh", "codex.apparmor", ".env.example"}
 SEMVER = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 
 
@@ -51,16 +51,27 @@ def version_precedence(value: str) -> tuple:
     return (*core, 1 if prerelease is None else 0, identifiers)
 
 
-def validate_manifest(value: dict) -> dict:
-    if value.get("schema_version") != 1:
-        raise ValueError("Unsupported deployment manifest schema.")
+def validate_manifest(value: dict, *, published: bool = False) -> dict:
+    if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 2:
+        raise ValueError("This installer requires a version-2 deployment bundle with prebuilt images.")
     version(value["version"])
     if not re.fullmatch(r"[0-9a-f]{40}", value["revision"]):
         raise ValueError("A release must identify its exact source revision.")
-    # Bare content-addressed image IDs let the same installer verify locally built
-    # images in CI. Published manifests always use the GHCR repository digest.
-    if not re.fullmatch(r"(?:ghcr\.io/zhengui666/quazonai@)?sha256:[0-9a-f]{64}", value["image"]):
-        raise ValueError("Application image must use a digest, not a mutable tag.")
+    for field, repository in (("image", "quazonai"), ("runtime_image", "quazonai-runtime"),
+                              ("codex_image", "quazonai-codex")):
+        reference = value.get(field)
+        # The pre-publication suite uses Docker's content-addressed IDs for its
+        # already-built images. Public bundles contain only GHCR digests.
+        pattern = rf"ghcr\.io/zhengui666/{repository}@sha256:[0-9a-f]{{64}}"
+        if not isinstance(reference, str) or not (
+            re.fullmatch(pattern, reference)
+            or (not published and re.fullmatch(r"sha256:[0-9a-f]{64}", reference))
+        ):
+            raise ValueError(f"{field} must identify the prebuilt {repository} image by digest.")
+    codex_version = value.get("codex_version")
+    if not isinstance(codex_version, str) or codex_version.startswith("v"):
+        raise ValueError("codex_version must be an exact published version.")
+    version("v" + codex_version)
     if value["database_image"] != DATABASE_IMAGE:
         raise ValueError("This installer requires the release's supported PostgreSQL/PGMQ image.")
     return value
@@ -213,7 +224,7 @@ def container_codex_configuration(config: dict) -> dict:
         raise ValueError('The configured Docker endpoint is not a Unix socket.')
     if config.get('docker_socket', str(path)) != str(path):
         raise ValueError('Use this installation\'s original Docker socket.')
-    return {**config, 'codex_image': 'quazonai-codex:' + config['project'],
+    return {**config, 'codex_runtime_image': 'quazonai-codex:' + config['project'],
             'docker_socket': str(path), 'docker_socket_gid': metadata.st_gid}
 
 
@@ -240,7 +251,7 @@ def compose(config: dict, *args: str, capture: bool = False, output=None) -> str
         "WEB_PORT": str(config["port"]), "DATABASE_PORT": str(config["database_port"]),
         "HOST_UID": str(config["uid"]), "HOST_GID": str(config["gid"]),
         "NATIVE_CODEX_HOME": config["codex_home"],
-        "CODEX_IMAGE": config.get('codex_image', 'quazonai-codex:' + config['project']),
+        "CODEX_IMAGE": config.get('codex_runtime_image', 'quazonai-codex:' + config['project']),
         "CODEX_DOCKER_SOCKET": config.get('docker_socket', '/var/run/docker.sock'),
         "DOCKER_SOCKET_GID": str(config.get('docker_socket_gid', config['gid'])),
         "APP_RESTART_POLICY": 'unless-stopped' if (Path(config['root']) / 'current').is_symlink()
@@ -279,11 +290,19 @@ def require_idle(config: dict) -> None:
 
 def prepare(bundle: Path, config: dict) -> dict:
     validate_configuration_paths(config)
-    config = container_codex_configuration(config)
-    # Application upgrades preserve the independently selected Codex version.
-    import codex
-    codex.prepare(config, bundle)
     release = manifest(bundle)
+    candidate = container_codex_configuration({**config, **release})
+    # Selected Codex versions survive app updates. No deployment path builds images.
+    import codex
+    codex.prepare(candidate, bundle)
+    for field in ("image", "runtime_image"):
+        image = release[field]
+        if not image.startswith("sha256:"):
+            run(["docker", "pull", image])
+        revision = run(["docker", "image", "inspect", "--format",
+                        '{{index .Config.Labels "org.opencontainers.image.revision"}}', image], capture=True)
+        if revision != release["revision"]:
+            raise ValueError(f"{field} source revision does not match the deployment manifest.")
     destination = Path(config["root"]) / "releases" / release["version"]
     stored = destination / "deployment"
     if (stored / "release.json").exists() and manifest(stored) != release:
@@ -291,34 +310,24 @@ def prepare(bundle: Path, config: dict) -> dict:
     durable_directory(destination)
     if stored.resolve() != bundle.resolve():
         stored.mkdir(mode=0o700, exist_ok=True)
-        # The manifest is copied last, so interrupted bundle copies can be retried.
         for name in sorted(BUNDLE_FILES - {"release.json"}) + ["release.json"]:
             shutil.copyfile(bundle / name, stored / name)
-    image = release["image"]
-    if not image.startswith("sha256:"):
-        run(["docker", "pull", image])
-    revision = run(["docker", "image", "inspect", "--format",
-                    '{{index .Config.Labels "org.opencontainers.image.revision"}}', image], capture=True)
-    if revision != release["revision"]:
-        raise ValueError("Image source revision does not match the deployment manifest.")
     binaries = destination / "bin"
     if not binaries.exists():
         temporary = destination / "bin.partial"
         if temporary.exists():
             shutil.rmtree(temporary)
         temporary.mkdir(mode=0o700)
-        container = run(["docker", "create", image], capture=True)
+        container = run(["docker", "create", release["image"]], capture=True)
         try:
             run(["docker", "cp", f"{container}:/opt/quazonai/bin/.", str(temporary)])
-            # Run before stopping the old release: host shared-library incompatibility
-            # must not take an existing installation offline.
             verify_native_binaries(temporary)
             temporary.rename(binaries)
         finally:
             run(["docker", "rm", container], capture=True)
     else:
         verify_native_binaries(binaries)
-    candidate = {**config, **release, "bundle": str(stored)}
+    candidate["bundle"] = str(stored)
     verify_worker_unit(candidate)
     sync_tree(destination)
     return candidate
@@ -386,7 +395,8 @@ def verify_worker_unit(config: dict) -> None:
 
 
 def verify_native_binaries(directory: Path) -> None:
-    run([str(directory / "server"), "--version"])
+    for binary in ("server", "runtime"):
+        run([str(directory / binary), "--version"])
 
 
 def configure_worker(config: dict) -> None:
@@ -396,7 +406,7 @@ def configure_worker(config: dict) -> None:
         "DATABASE_URL": f'postgresql://quazonai:{config["password"]}@127.0.0.1:{config["database_port"]}/quazonai',
         "STATE_DIR": str(root / "data/state"), "HOME": config["home"],
         "CODEX_HOME": config["codex_home"], "PUBLIC_URL": f'http://localhost:{config["port"]}',
-        "CODEX_IMAGE": config.get('codex_image', 'quazonai-codex:' + config['project']),
+        "CODEX_IMAGE": config.get('codex_runtime_image', 'quazonai-codex:' + config['project']),
         "CODEX_DOCKER_SOCKET": config.get('docker_socket', '/var/run/docker.sock'),
         "CODEX_LOCK_FILE": str(root / '.deployment.lock'),
         "DEVELOPMENT_HTTP": "true", "PATH": f'{binary.parent}:{config["path"]}',
@@ -708,15 +718,36 @@ def download_update(root: Path, target: str) -> None:
         run([sys.executable, str(bundle / "manage.py"), "apply-update", "--directory", str(root)])
 
 
+def run_runtime(root: Path, operation: str, config_path: Path) -> None:
+    config = configuration(root)
+    if (root / "pending.json").exists():
+        raise ValueError("Complete the recorded application update before selecting its Runtime.")
+    release = manifest(Path(config["bundle"]))
+    native_config = json.loads(config_path.read_text())
+    registered = native_config.get("images")
+    if not isinstance(registered, list) or not registered or any(
+        not isinstance(item, dict) or item.get("image_ref") != release["runtime_image"]
+        for item in registered
+    ):
+        raise ValueError("Runtime images must match this release's runtime_image digest.")
+    # Installation already pulled this digest. A gateway restart must still
+    # expose its journal during a registry or Docker outage; native doctor/new
+    # execution checks the configured engine and image availability.
+    binary = root / "releases" / config["version"] / "bin/runtime"
+    # Hand control to the native gateway; preserve signals and its real exit status.
+    os.execv(str(binary), [str(binary), operation, "--config", str(config_path)])
+
+
 def main() -> None:
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["deploy", "update", "apply-update", "status"])
+    parser.add_argument("command", choices=["deploy", "update", "apply-update", "status", "runtime"])
     parser.add_argument("version", nargs="?")
     parser.add_argument("--directory", type=Path, default=Path.home() / ".local/share/quazonai")
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--database-port", type=int, default=55432)
     parser.add_argument("--codex-home")
+    parser.add_argument("--config", type=Path)
     args = parser.parse_args()
     root = args.directory.expanduser().resolve()
     if root in {Path("/"), Path.home().resolve()}:
@@ -733,6 +764,10 @@ def main() -> None:
         if not args.version:
             parser.error("update requires an explicit release tag")
         download_update(root, args.version)
+    elif args.command == "runtime":
+        if args.version not in ("doctor", "serve") or args.config is None:
+            parser.error("runtime requires doctor|serve and --config /absolute/runtime.json")
+        run_runtime(root, args.version, args.config.expanduser().resolve())
     else:
         config = configuration(root)
         print(f'Recorded release: {config["version"]}; http://localhost:{config["port"]}')

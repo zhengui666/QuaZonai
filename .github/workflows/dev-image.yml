@@ -17,7 +17,7 @@ jobs:
   build:
     if: github.repository == 'zhengui666/QuaZonai'
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    timeout-minutes: 85
     steps:
       - name: Check out the workflow's container action
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

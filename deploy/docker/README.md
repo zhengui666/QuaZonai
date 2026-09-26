@@ -1,11 +1,11 @@
 # QuaZonai deployment
 
-The release bundle runs Web/API/Caddy and PostgreSQL 18/PGMQ with Docker Compose. It extracts the same image's server binary for a host systemd user Worker. Codex runs in separately built containers with a persistent native home. Scientific Runtimes and catalogs are registered separately.
+The release bundle runs Web/API/Caddy and PostgreSQL 18/PGMQ with Docker Compose. It extracts the same image's Worker and scientific gateway binaries. Codex and scientific jobs use separate prebuilt GHCR images; the native Codex home persists across updates. Scientific Runtimes and catalogs are registered separately.
 
 <a id="prerequisites"></a>
 ## Prerequisites
 
-Use a non-root Linux x86_64 owner with local Docker Engine, Compose 2.20+, Python 3.10+, Git, systemd (including `systemd-analyze`) and cgroup v2. The host Worker requires glibc 2.36+ and OpenSSL 3. Rust, Node.js and Codex are not needed on the host. Building Codex needs the base-image registries, Debian packages and npm.
+Use a non-root Linux x86_64 owner with local Docker Engine, Compose 2.20+, Python 3.10+, Git, systemd (including `systemd-analyze`) and cgroup v2. The host Worker requires glibc 2.36+ and OpenSSL 3. Rust, Node.js and Codex are not needed on the host. The host needs access to GHCR for image downloads.
 
 Docker must use a local Unix socket and a rootful daemon without `userns-remap`. Docker Desktop, remote contexts and rootless/remapped daemons are unsupported. API and Worker use the owner's Docker access; Codex containers do not receive the socket. Keep the application on its default local interface.
 
@@ -20,19 +20,13 @@ Run deployment scripts as this owner, not with `sudo`. For a private GHCR packag
 <a id="install"></a>
 ## Install
 
-Download `quazonai-deploy.tar.gz` from a [GitHub Release](https://github.com/zhengui666/QuaZonai/releases) that provides the bundle. Extract it into an empty directory, then:
-
-```sh
-cp .env.example .env
-```
-
-Set `CODEX_VERSION` in `.env` to an exact published Codex npm version, then run:
+Download `quazonai-deploy.tar.gz` from a [GitHub Release](https://github.com/zhengui666/QuaZonai/releases) that provides the bundle. Extract it into an empty directory, then run:
 
 ```sh
 bash deploy.sh
 ```
 
-The default installation is `$HOME/.local/share/quazonai`, the browser address is **http://localhost:8081**, and PostgreSQL is published at `127.0.0.1:55432`. Web and database ports bind to loopback. The installer pulls pinned application/database images, initializes new state, runs migrations and checks API/Worker startup. Repeating installation preserves the original identity, password, key and data.
+The default installation is `$HOME/.local/share/quazonai`, the browser address is **http://localhost:8081**, and PostgreSQL is published at `127.0.0.1:55432`. Web and database ports bind to loopback. The installer pulls the application, scientific job, Codex and database digests in `release.json`, initializes new state, runs migrations and checks API/Worker startup. Repeating installation preserves the original identity, password, key and data.
 
 Optional initial settings:
 
@@ -40,6 +34,8 @@ Optional initial settings:
 bash deploy.sh --directory "$HOME/.local/share/quazonai" \
   --port 8081 --database-port 55432
 ```
+
+`release.json` supplies the default Codex version. An optional `.env` copied from `.env.example` can select another exact version already published in `ghcr.io/zhengui666/quazonai-codex`; a version existing only on npm is not installable here.
 
 Installation paths may contain spaces, Unicode, percent signs and brackets, but not control characters, colons, double quotes or backslashes. Keep the chosen absolute path and owner after installation. `.env` accepts `CODEX_VERSION=<exact-version>` and comments, not shell code; an existing installation's `.env` takes precedence.
 
@@ -62,7 +58,7 @@ These commands require idle Runs/sessions and hold the deployment lock. Credenti
 <a id="scientific-runtime"></a>
 ## Scientific Runtime and data
 
-The application release bundle does not contain the scientific gateway or its job image. From this bundle directory, print the setup, configuration-apply and recovery guides pinned to the exact `release.json.revision`:
+The installer extracts the scientific gateway from the application image and pulls the matching job image. Configure its catalogs, credential and resource limits before starting the gateway. From this bundle directory, print the setup, configuration-apply and recovery guides pinned to the exact `release.json.revision`:
 
 ```sh
 python3 - <<'PY'
@@ -72,47 +68,47 @@ revision = json.loads(Path('release.json').read_text())['revision']
 if not re.fullmatch(r'[0-9a-f]{40}', revision):
     raise ValueError('Invalid release revision')
 base = f'https://github.com/zhengui666/QuaZonai/blob/{revision}/.opensdlc'
-for path in ('project.md#runtime-image-build', 'operations.md#scientific-runtime',
+for path in ('operations.md#scientific-runtime',
              'operations.md#runtime-targets', 'operations.md#runtime-recovery',
              'operations.md#access-cutover'):
     print(f'{base}/{path}')
 PY
 ```
 
-For an installed copy, its bundle is `<installation>/current/deployment`. Open the printed revision-specific guides and use the matching gateway/image build. The gateway is a separate host process; scientific jobs run in its registered Docker image. Its loopback listener needs an existing trusted HTTPS reverse proxy reachable from both the API container and host Worker. Container-local `127.0.0.1` does not reach the host.
+For an installed copy, its bundle is `<installation>/current/deployment`. Open the printed revision-specific configuration guide; use `runtime.sh` from that installed bundle and its `release.json.runtime_image` digest. The gateway is a separate host process; scientific jobs run in its registered Docker image. Its loopback listener needs an existing trusted HTTPS reverse proxy reachable from both the API container and host Worker. Container-local `127.0.0.1` does not reach the host.
 
 Follow `runtime-targets` to set the exact HTTPS `origin` and reachable `addresses`, close admissions, preserve configuration and apply both the API and Worker environments using the installed manager. Editing `installation.json` alone or repeating a same-version deployment is insufficient. Then register the matching endpoint and credential in Runtime settings, probe readiness, and register actual catalogs. A successful probe or empty catalog list is not research data.
 
 <a id="codex-update"></a>
 ## Update Codex
 
-Finish Runs and login sessions, then resolve and install the current npm release:
+Finish Runs and login sessions, then pull the latest published QuaZonai Codex image:
 
 ```sh
 bash "$HOME/.local/share/quazonai/current/deployment/codex-update.sh"
 ```
 
-An exact version may be supplied as the first argument. The updater builds and checks the candidate's version and sandbox, requires idle execution, then switches the installation's image and `.env`. No application restart or database migration is needed. After an interrupted switch, retry the same explicit version. The native home and old images are retained.
+An exact published image version may be supplied as the first argument. A missing image fails without changing the selected version. The updater pulls the selected GHCR image and checks its native version and sandbox, requires idle execution, then switches the installation's image and `.env`. No application restart or database migration is needed. After an interrupted switch, retry the same explicit version. The native home and old images are retained.
 
 <a id="update"></a>
 ## Update QuaZonai
 
-Finish all Runs, or cancel them and wait for their actual terminal state. Select an existing published release tag:
+Finish all Runs, or cancel them and wait for their actual terminal state. Stop the independent scientific gateway after its jobs finish and preserve its configuration/state. Select an existing published release tag:
 
 ```sh
 read -r -p 'Published release tag: ' version
 bash "$HOME/.local/share/quazonai/current/deployment/update.sh" "$version"
 ```
 
-The updater downloads the target bundle/image, checks compatibility and idle state, stops this installation, creates a recovery point, explicitly migrates, and activates after API/Worker checks. It preserves PostgreSQL, data, credentials and Codex version. Older versions are rejected; same-version installation is idempotent. Dev-image tags are not release tags and cannot be used here.
+The updater downloads the target bundle/image, checks compatibility and idle state, stops this installation, creates a recovery point, explicitly migrates, and activates after API/Worker checks. It preserves PostgreSQL, data, credentials and Codex version. Older versions are rejected; same-version installation is idempotent. Dev-image tags are not release tags and cannot be used here. Set the stopped gateway configuration to the target manifest's `runtime_image`, restart it using the target `runtime.sh`, and probe capabilities before new research; keep its original state and catalogs.
 
-When upgrading an older release that bundled native Codex, use the freshly extracted **target** bundle for the first transition. Set its `.env`, then run inside that directory:
+For the first upgrade from a deployment bundle with `release.json.schema_version=1`, use the freshly extracted **target** bundle and run inside that directory:
 
 ```sh
 python3 manage.py apply-update --directory "$HOME/.local/share/quazonai"
 ```
 
-The old updater cannot unpack the expanded bundle. Subsequent updates use the installed `update.sh` above.
+The old updater does not accept the version-2 file set. Subsequent updates use the installed `update.sh` above.
 
 <a id="status"></a>
 ## Status and configuration

@@ -1,0 +1,150 @@
+name: Publish prebuilt version
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      revision:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 85
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+    env:
+      VERSION: ${{ inputs.version }}
+      REVISION: ${{ inputs.revision }}
+      LOCAL_IMAGE: quazonai-release:${{ inputs.revision }}
+      GH_TOKEN: ${{ github.token }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the immutable release source
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/*:refs/tags/*'
+          python3 -B deploy/docker/release.py verify --version "$VERSION" --revision "$REVISION"
+      - uses: ./.github/actions/container
+        id: images
+        with:
+          image: ${{ env.LOCAL_IMAGE }}
+          revision: ${{ inputs.revision }}
+          version: ${{ inputs.version }}
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the tested images and freeze the bundle
+        env:
+          RUNTIME_IMAGE: ${{ steps.images.outputs.runtime-image }}
+          CODEX_IMAGE: ${{ steps.images.outputs.codex-image }}
+          CODEX_VERSION: ${{ steps.images.outputs.codex-version }}
+        run: |
+          set -euo pipefail
+          sudo apparmor_parser -r deploy/docker/codex.apparmor
+          trap 'sudo apparmor_parser -R deploy/docker/codex.apparmor' EXIT
+          git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/*:refs/tags/*'
+          python3 -B deploy/docker/release.py push-images --version "$VERSION" --revision "$REVISION" \
+            --image "$LOCAL_IMAGE" --runtime-image "$RUNTIME_IMAGE" --codex-image "$CODEX_IMAGE" \
+            --codex-version "$CODEX_VERSION" --output "$RUNNER_TEMP/release-assets"
+          # Test drivers are sidecars, never part of the user deployment archive.
+          cp deploy/docker/smoke.py deploy/docker/release.py "$RUNNER_TEMP/release-assets/"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prebuilt-${{ inputs.version }}-${{ inputs.revision }}
+          path: ${{ runner.temp }}/release-assets/
+          retention-days: 7
+          if-no-files-found: error
+
+  install:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: read
+      actions: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: prebuilt-${{ inputs.version }}-${{ inputs.revision }}
+          path: ${{ runner.temp }}/release-assets
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify GHCR installation without a checkout or a build
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/deployment-only"
+          tar -xzf "$RUNNER_TEMP/release-assets/quazonai-deploy.tar.gz" -C "$RUNNER_TEMP/deployment-only"
+          cp "$RUNNER_TEMP/release-assets/smoke.py" "$RUNNER_TEMP/release-assets/release.py" "$RUNNER_TEMP/deployment-only/"
+          cd "$RUNNER_TEMP/deployment-only"
+          test ! -e Cargo.toml
+          test ! -d .git
+          test ! -e Codex.Dockerfile
+          sudo apparmor_parser -r codex.apparmor
+          trap 'sudo apparmor_parser -R codex.apparmor' EXIT
+          uid=$(id -u)
+          sudo loginctl enable-linger "$uid"
+          sudo systemctl start "user@$uid.service"
+          export XDG_RUNTIME_DIR="/run/user/$uid"
+          python3 -B smoke.py --manifest release.json --assert-cold --report "$RUNNER_TEMP/ghcr-install.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ghcr-install-${{ inputs.version }}-${{ inputs.revision }}
+          path: ${{ runner.temp }}/ghcr-install.json
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    env:
+      VERSION: ${{ inputs.version }}
+      REVISION: ${{ inputs.revision }}
+      GH_TOKEN: ${{ github.token }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: prebuilt-${{ inputs.version }}-${{ inputs.revision }}
+          path: ${{ runner.temp }}/release-assets
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Finalize only the installed revision
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/*:refs/tags/*'
+          python3 -B deploy/docker/release.py verify --version "$VERSION" --revision "$REVISION"
+          python3 -B deploy/docker/release.py codex-latest --output "$RUNNER_TEMP/release-assets"
+          python3 -B deploy/docker/release.py publish --output "$RUNNER_TEMP/release-assets"

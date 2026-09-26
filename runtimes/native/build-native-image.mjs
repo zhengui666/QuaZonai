@@ -11,6 +11,7 @@ import { copyNativeFile, nativeDestination } from './native-files.mjs';
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const { values } = parseArgs({ options: {
   profile: { type: 'string', default: 'release' },
+  'image-version': { type: 'string', default: 'development' },
   'output-dir': { type: 'string' },
   'isolation-probe': { type: 'string' },
   'prepare-only': { type: 'boolean', default: false },
@@ -134,7 +135,7 @@ try {
   const report = { stage: 'PREPARED_NOT_BUILT', native_image_id: null, source_commit: sourceCommit, profile: values.profile, compiler: '1.98.1', target: 'wasm32-unknown-unknown', test_probe_included: Boolean(values['isolation-probe']), base: 'scratch', commands };
   if (!values['prepare-only']) {
     const dockerfile = path.join(repository, 'runtimes/native/native-job.Dockerfile');
-    run('native-image-build', 'docker', ['build', '--network=none', '--platform=linux/amd64', '--iidfile', path.join(directory, 'image-id.txt'), '--file', dockerfile, context]);
+    run('native-image-build', 'docker', ['build', '--network=none', '--platform=linux/amd64', '--build-arg', 'VERSION=' + values['image-version'], '--build-arg', 'REVISION=' + sourceCommit, '--iidfile', path.join(directory, 'image-id.txt'), '--file', dockerfile, context]);
     const image = fs.readFileSync(path.join(directory, 'image-id.txt'), 'utf8').trim();
     if (!/^sha256:[0-9a-f]{64}$/.test(image)) throw new Error('Docker did not return a native immutable image ID');
     const info = JSON.parse(run('native-image-inspect', 'docker', ['image', 'inspect', image]).stdout)[0];

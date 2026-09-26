@@ -19,8 +19,12 @@ import release
 
 
 def metadata(tag="v1.2.3"):
-    return {"schema_version": 1, "version": tag, "revision": "a" * 40,
-            "image": "sha256:" + "b" * 64, "database_image": manage.DATABASE_IMAGE}
+    return {"schema_version": 2, "version": tag, "revision": "a" * 40,
+            "image": "ghcr.io/zhengui666/quazonai@sha256:" + "b" * 64,
+            "runtime_image": "ghcr.io/zhengui666/quazonai-runtime@sha256:" + "c" * 64,
+            "codex_version": "0.157.0",
+            "codex_image": "ghcr.io/zhengui666/quazonai-codex@sha256:" + "d" * 64,
+            "database_image": manage.DATABASE_IMAGE}
 
 
 class ManifestTests(unittest.TestCase):
@@ -33,7 +37,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_digest_and_database_binding(self):
         self.assertEqual(manage.validate_manifest(metadata()), metadata())
-        for changes in ({"schema_version": 2}, {"image": "ghcr.io/zhengui666/quazonai:latest"},
+        for changes in ({"schema_version": 3}, {"image": "ghcr.io/zhengui666/quazonai:latest"},
                         {"revision": "main"}, {"database_image": "postgres:18"}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 manage.validate_manifest({**metadata(), **changes})
@@ -41,7 +45,10 @@ class ManifestTests(unittest.TestCase):
     def test_real_bundle_roundtrip(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            release.bundle("v1.2.3", "a" * 40, "sha256:" + "b" * 64, root / "assets")
+            selected = metadata()
+            release.bundle(selected["version"], selected["revision"], selected["image"], root / "assets",
+                           runtime_image=selected["runtime_image"], codex_version=selected["codex_version"],
+                           codex_image=selected["codex_image"], published=True)
             (root / "unpacked").mkdir()
             manage.unpack((root / "assets/quazonai-deploy.tar.gz").read_bytes(), root / "unpacked")
             self.assertEqual({x.name for x in (root / "unpacked").iterdir()}, manage.BUNDLE_FILES)
@@ -241,12 +248,13 @@ class NativeDeploymentTests(unittest.TestCase):
                 self.assertFalse((installation / 'pending.json').exists())
                 self.assertFalse((root / 'native').exists())
 
-    def test_host_package_checks_only_the_worker_not_a_native_codex(self):
+    def test_host_package_checks_worker_and_gateway_not_native_codex(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(manage, 'run') as command:
             binaries = Path(temporary)
             manage.verify_native_binaries(binaries)
             self.assertEqual([call.args[0] for call in command.call_args_list], [
                 [str(binaries / 'server'), '--version'],
+                [str(binaries / 'runtime'), '--version'],
             ])
 
     def test_native_unit_validation_uses_exact_future_unit_without_installing(self):
@@ -418,7 +426,7 @@ class GitSelectionTests(unittest.TestCase):
                 git("config", "user.email", "release-test@example.invalid")
                 git("config", "user.name", "Release test")
                 Path("deploy/docker").mkdir(parents=True)
-                Path("deploy/docker/release.py").write_text("# release-capable test commit\n")
+                Path("deploy/docker/runtime.sh").write_text("# release-capable test commit\n")
                 git("add", ".")
                 git("commit", "-m", "first")
                 first = git("rev-parse", "HEAD")
@@ -481,6 +489,7 @@ class UpdateTests(unittest.TestCase):
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.object(manage, "preflight"))
+        self.stack.enter_context(patch("codex.require_stopped"))
         self.stack.enter_context(patch.object(manage, "prepare", return_value=self.new))
         self.stack.enter_context(patch.object(manage, "manifest", return_value=metadata("v1.0.1")))
         self.stack.enter_context(patch.object(manage, "verify_console"))
@@ -841,6 +850,99 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(manage.configuration(self.root), self.new)
         self.assertFalse((self.root / 'pending.json').exists())
 
+
+
+class PrebuiltImageTests(unittest.TestCase):
+    def test_public_manifest_requires_every_matching_repository_digest(self):
+        manifest = metadata()
+        self.assertEqual(manage.validate_manifest(manifest, published=True), manifest)
+        for field in ('image', 'runtime_image', 'codex_image'):
+            for value in (None, '', 'latest', 'sha256:' + 'a' * 64,
+                          'ghcr.io/another/package@sha256:' + 'a' * 64):
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    manage.validate_manifest({**manifest, field: value}, published=True)
+            missing = dict(manifest)
+            del missing[field]
+            with self.assertRaises(ValueError):
+                manage.validate_manifest(missing, published=True)
+        for version in ('latest', 'v0.157.0', '^0.157.0', '0.157.0+build', None):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                manage.validate_manifest({**manifest, 'codex_version': version}, published=True)
+        for schema in (1, True, '2', None):
+            with self.subTest(schema=schema), self.assertRaises(ValueError):
+                manage.validate_manifest({**manifest, 'schema_version': schema}, published=True)
+
+    def test_deployment_bundle_has_no_image_producer(self):
+        self.assertNotIn('Codex.Dockerfile', manage.BUNDLE_FILES)
+        self.assertNotIn('release.py', manage.BUNDLE_FILES)
+        self.assertIn('runtime.sh', manage.BUNDLE_FILES)
+        for name in ('manage.py', 'codex.py'):
+            tree = ast.parse((manage.BUNDLE / name).read_text())
+            # Inspect executed argv literals, not prose mentioning failures.
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.List, ast.Tuple)):
+                    literals = [item.value for item in node.elts if isinstance(item, ast.Constant)]
+                    self.assertFalse('docker' in literals and any(word in literals for word in ('build', 'buildx', 'builder')))
+
+    def test_runtime_launch_uses_image_extracted_binary_and_exact_digest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = {**metadata(), 'root': str(root), 'uid': os.getuid(), 'bundle': str(root),
+                      'docker_socket': '/var/run/docker.sock'}
+            manage.save(root / 'installation.json', config)
+            manage.save(root / 'release.json', metadata())
+            runtime = root / 'runtime.json'
+            manage.save(runtime, {'images': [{'job_kind': 'DATA_VALIDATE', 'image_ref': config['runtime_image']}]})
+            with patch.object(manage, 'run') as command, patch.object(os, 'execv') as execute:
+                manage.run_runtime(root, 'doctor', runtime)
+            command.assert_not_called()
+            binary = str(root / 'releases/v1.2.3/bin/runtime')
+            execute.assert_called_once_with(binary, [binary, 'doctor', '--config', str(runtime)])
+            manage.save(runtime, {'images': [{'job_kind': 'DATA_VALIDATE', 'image_ref': 'wrong'}]})
+            with patch.object(os, 'execv') as execute, self.assertRaises(ValueError):
+                manage.run_runtime(root, 'doctor', runtime)
+            execute.assert_not_called()
+
+    def test_runtime_launch_does_not_bypass_pending_update(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manage.save(root / 'installation.json', {**metadata(), 'uid': os.getuid(), 'root': str(root)})
+            manage.save(root / 'pending.json', {'phase': 'migrating'})
+            with patch.object(manage, 'run') as command, patch.object(os, 'execv') as execute, self.assertRaisesRegex(ValueError, 'update'):
+                manage.run_runtime(root, 'serve', root / 'runtime.json')
+            command.assert_not_called()
+            execute.assert_not_called()
+
+    def test_publishing_rejects_different_image_version_or_source_before_push(self):
+        for labels in (
+            {"org.opencontainers.image.revision": "a" * 40, "org.opencontainers.image.version": "ci"},
+            {"org.opencontainers.image.revision": "b" * 40, "org.opencontainers.image.version": "v1.2.3"},
+        ):
+            with self.subTest(labels=labels), patch.object(release.sys, 'argv', [
+                'release.py', 'push-images', '--version', 'v1.2.3', '--revision', 'a' * 40,
+                '--image', 'test-app', '--runtime-image', 'test-runtime',
+                '--codex-image', 'test-codex', '--codex-version', '0.157.0',
+            ]), patch.object(release, 'verify'), patch.object(
+                release, 'run', return_value=json.dumps(labels)
+            ), patch.object(release, 'push_image') as publish, self.assertRaisesRegex(ValueError, 'version and source'):
+                release.main()
+            publish.assert_not_called()
+
+    def test_registry_roundtrip_checks_the_pushed_image_identity(self):
+        digest = 'ghcr.io/zhengui666/quazonai@sha256:' + 'd' * 64
+        for last in ('original', 'different'):
+            calls = []
+            outputs = iter(('original', json.dumps([digest]), last))
+            def command(args, **kwargs):
+                calls.append(args)
+                return next(outputs) if kwargs.get('capture') else ''
+            with self.subTest(last=last), patch.object(release, 'run', side_effect=command):
+                if last == 'original':
+                    self.assertEqual(release.push_image('native-id', 'ghcr.io/zhengui666/quazonai', 'v1.2.3'), digest)
+                else:
+                    with self.assertRaises(ValueError):
+                        release.push_image('native-id', 'ghcr.io/zhengui666/quazonai', 'v1.2.3')
+            self.assertIn(['docker', 'pull', digest], calls)
 
 if __name__ == "__main__":
     unittest.main()

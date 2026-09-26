@@ -19,10 +19,9 @@
 mkdir quazonai-install
 tar -xzf quazonai-deploy.tar.gz -C quazonai-install
 cd quazonai-install
-cp .env.example .env
 ```
 
-将 `.env` 中的 `CODEX_VERSION` 设为要使用的 Codex 精确版本，再以普通用户执行：
+以普通用户启动：
 
 ```sh
 loginctl enable-linger "$USER"
@@ -31,7 +30,7 @@ bash deploy.sh
 
 打开 **http://localhost:8081**。默认安装目录为 `$HOME/.local/share/quazonai`。
 
-部署包拉取 Web/API 镜像，启动 PostgreSQL，并从同一镜像安装 systemd Worker；Codex 单独构建为容器。宿主机无需安装 Rust、Node.js 或 Codex。[科学 Runtime 与数据目录](deploy/docker/README.md#scientific-runtime)需要另外配置。
+部署包按版本清单从 GHCR 拉取应用、科学计算、Codex 和数据库镜像，并安装同源 Worker 与 Runtime 网关。宿主机无需安装 Rust、Node.js 或 Codex。[科学 Runtime 与数据目录](deploy/docker/README.md#scientific-runtime)需要另外配置。
 
 <a id="usage"></a>
 ## 开始研究
