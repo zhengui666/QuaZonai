@@ -32,6 +32,7 @@ struct Responses {
     oversized: bool,
     redirect: bool,
     hits: usize,
+    raw: Option<(StatusCode, &'static str, String)>,
 }
 struct TestState {
     credential: String,
@@ -63,6 +64,13 @@ async fn reply(State(state): State<Arc<TestState>>, request: Request<Body>) -> R
     );
     assert!(!request.headers().contains_key(header::COOKIE));
     assert!(!request.headers().contains_key("x-operator-grant"));
+    if let Some((status, media, body)) = &values.raw {
+        return Response::builder()
+            .status(*status)
+            .header(header::CONTENT_TYPE, *media)
+            .body(Body::from(body.clone()))
+            .unwrap();
+    }
     if values.redirect {
         return Response::builder()
             .status(StatusCode::TEMPORARY_REDIRECT)
@@ -138,6 +146,7 @@ async fn api() -> Api {
             oversized: false,
             redirect: false,
             hits: 0,
+            raw: None,
         }),
     });
     {
@@ -361,4 +370,53 @@ async fn native_stdio_child_has_no_database_dependency_or_stdout_logs() {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+#[tokio::test]
+async fn native_problem_exposes_only_safe_metadata_and_rejects_reflections() {
+    let api = api().await;
+    let (client, task) = connected(&api).await;
+    let request_id = Id::new();
+    let mut problem = json!({"type":"urn:quazonai:problem:budget_exhausted",
+        "title":"private upstream title", "status":429,"code":"BUDGET_EXHAUSTED",
+        "detail":"private upstream diagnostics", "request_id":request_id,"retryable":false,
+        "field_errors":[],"safe_next_actions":["private upstream action"]});
+    api.state.responses.lock().unwrap().raw = Some((
+        StatusCode::TOO_MANY_REQUESTS,
+        "application/problem+json; charset=utf-8",
+        problem.to_string(),
+    ));
+    let result = run(&client).await;
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        body(&result),
+        json!({"schema_version":1,"code":"MCP_CONTROL_REJECTED",
+        "http_status":429,"problem_code":"BUDGET_EXHAUSTED","retryable":false,"request_id":request_id})
+    );
+    assert!(!result.to_string().contains("private upstream"));
+    problem["detail"] = json!(api.state.credential);
+    api.state.responses.lock().unwrap().raw = Some((
+        StatusCode::TOO_MANY_REQUESTS,
+        "application/problem+json",
+        problem.to_string(),
+    ));
+    let result = run(&client).await;
+    assert_eq!(
+        body(&result),
+        json!({"schema_version":1,"code":"MCP_CONTROL_REJECTED","http_status":429})
+    );
+    assert!(!result.to_string().contains(&api.state.credential));
+    client.cancel().await.unwrap();
+    assert!(task.await.unwrap().is_ok());
+}
+
+#[tokio::test]
+async fn success_rejects_duplicate_json_keys_and_wrong_media() {
+    let api = api().await;
+    let identity = api.state.responses.lock().unwrap().identity.to_string();
+    let duplicate = identity.replacen('{', "{\"schema_version\":1,", 1);
+    for (media, body) in [("application/json", duplicate), ("text/plain", identity)] {
+        api.state.responses.lock().unwrap().raw = Some((StatusCode::OK, media, body));
+        assert!(matches!(bridge(&api).await, Err(Failure::Contract)));
+    }
 }

@@ -4,6 +4,7 @@ mod preview;
 mod session;
 mod watch;
 
+use crate::service_http::{self, body, media, verify, MAX_JSON_BYTES};
 use clap::Args;
 use contracts::{artifacts::ArtifactView, http::Problem, Id};
 use reqwest::{header, Client, Method, Response, Url};
@@ -84,6 +85,18 @@ impl fmt::Display for Failure {
 }
 impl std::error::Error for Failure {}
 
+impl From<service_http::Failure> for Failure {
+    fn from(value: service_http::Failure) -> Self {
+        match value {
+            service_http::Failure::Configuration => Self::Configuration,
+            service_http::Failure::Unavailable => Self::Unavailable,
+            service_http::Failure::Contract => Self::Contract,
+            service_http::Failure::ResponseLimit => Self::ResponseLimit,
+            service_http::Failure::Rejected(problem) => Self::Rejected(problem),
+        }
+    }
+}
+
 struct Connection {
     client: Client,
     origin: Url,
@@ -158,11 +171,7 @@ impl Connection {
     ) -> Result<Self> {
         let origin = session::origin(&origin, development_http)?;
         session::device_token(&credential)?;
-        let mut authorization = header::HeaderValue::from_str(&format!("Bearer {credential}"))
-            .map_err(|_| Failure::Credential)?;
-        authorization.set_sensitive(true);
-        let mut headers = header::HeaderMap::new();
-        headers.insert(header::AUTHORIZATION, authorization);
+        let headers = service_http::bearer(&credential).map_err(|_| Failure::Credential)?;
         Ok(Self {
             client: session::http_client(&origin, ca_certificate.as_ref(), headers)?,
             origin,
@@ -243,25 +252,11 @@ impl Connection {
                 call = call.header("last-event-id", after);
             }
         }
-        call.send().await.map_err(|_| Failure::Unavailable)
+        Ok(service_http::send(call).await?)
     }
 
     async fn checked(&self, response: Response, expected: u16) -> Result<Response> {
-        let status = response.status().as_u16();
-        if status == expected {
-            return Ok(response);
-        }
-        if !(400..=599).contains(&status) {
-            return Err(Failure::Contract);
-        }
-        media(&response, "application/problem+json")?;
-        let bytes = body(response, 1024 * 1024).await?;
-        verify(&bytes, &self.credential)?;
-        let problem: Problem = serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
-        if problem.status != status || !problem.kind.starts_with("urn:quazonai:problem:") {
-            return Err(Failure::Contract);
-        }
-        Err(Failure::Rejected(Box::new(problem)))
+        Ok(service_http::checked(response, expected, &self.credential).await?)
     }
 
     async fn historical_artifact_metadata(
@@ -278,10 +273,9 @@ impl Connection {
             .checked(self.send(&request, None, None).await?, 200)
             .await?;
         media(&response, "application/json")?;
-        let bytes = body(response, 1024 * 1024).await?;
-        verify(&bytes, &self.credential)?;
+        let bytes = body(response, MAX_JSON_BYTES).await?;
         let metadata: contracts::imports::HistoricalArtifactResultV1 =
-            serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
+            service_http::decode(&bytes, &self.credential)?;
         if metadata.report_id != report
             || metadata.record_id != Some(record)
             || !metadata.stored
@@ -303,10 +297,8 @@ impl Connection {
             .checked(self.send(&request, None, None).await?, 200)
             .await?;
         media(&response, "application/json")?;
-        let bytes = body(response, 1024 * 1024).await?;
-        verify(&bytes, &self.credential)?;
-        let metadata: ArtifactView =
-            serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
+        let bytes = body(response, MAX_JSON_BYTES).await?;
+        let metadata: ArtifactView = service_http::decode(&bytes, &self.credential)?;
         if metadata.id != id || metadata.byte_count.get() > 64 * 1024 * 1024 {
             return Err(Failure::Contract);
         }
@@ -314,57 +306,6 @@ impl Connection {
     }
 }
 
-fn media(response: &Response, expected: &str) -> Result<()> {
-    if response
-        .headers()
-        .get_all(header::CONTENT_TYPE)
-        .iter()
-        .count()
-        != 1
-    {
-        return Err(Failure::Contract);
-    }
-    let mut encodings = response.headers().get_all(header::CONTENT_ENCODING).iter();
-    if encodings.next().is_some_and(|value| value != "identity") || encodings.next().is_some() {
-        return Err(Failure::Contract);
-    }
-    let value = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .ok_or(Failure::Contract)?;
-    let mut parts = value.split(';');
-    if !parts
-        .next()
-        .is_some_and(|part| part.trim().eq_ignore_ascii_case(expected))
-    {
-        return Err(Failure::Contract);
-    }
-    if parts.any(|part| !part.trim().eq_ignore_ascii_case("charset=utf-8")) {
-        return Err(Failure::Contract);
-    }
-    Ok(())
-}
-
-async fn body(mut response: Response, maximum: usize) -> Result<Vec<u8>> {
-    if response
-        .content_length()
-        .is_some_and(|size| size > maximum as u64)
-    {
-        return Err(Failure::ResponseLimit);
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| Failure::Unavailable)? {
-        if chunk.len() > maximum.saturating_sub(bytes.len()) {
-            return Err(Failure::ResponseLimit);
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
-}
-fn verify(bytes: &[u8], credential: &str) -> Result<()> {
-    crate::runtime_transport::verify_native_json(bytes, credential).map_err(|_| Failure::Contract)
-}
 fn write_json(value: &impl serde::Serialize) -> Result<()> {
     let mut output = std::io::stdout().lock();
     serde_json::to_writer(&mut output, value).map_err(|_| Failure::Output)?;
@@ -438,7 +379,7 @@ pub async fn run(arguments: Arguments) -> Result<()> {
     match request.output {
         commands::Output::Json(decode) => {
             media(&response, "application/json")?;
-            let bytes = body(response, 1024 * 1024).await?;
+            let bytes = body(response, MAX_JSON_BYTES).await?;
             verify(&bytes, &connection.credential)?;
             write_json(&decode(&bytes)?)
         }
