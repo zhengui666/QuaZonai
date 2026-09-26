@@ -33,9 +33,11 @@ jobs:
       - name: Check operator-only native data preparation
         run: |
           set -euo pipefail
+          python3 -B -m unittest discover -s runtimes/data -v
           cargo clippy --locked -p job --features polymarket-history --bin polymarket-history -- -D warnings
           cargo test --locked -p job --features polymarket-history --bin polymarket-history
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- --help
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- fetch --help
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- import --help
+          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- archive --help
           git diff --exit-code
