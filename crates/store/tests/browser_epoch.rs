@@ -53,7 +53,8 @@ async fn old_browser_and_device_authority_cannot_return_after_epoch_invalidation
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn equal_and_increasing_epochs_work_but_native_overflow_never_wraps(pool: PgPool) {
-    for value in [2_i64, 3, 3, 4, i64::MAX] {
+    let initial = epoch(&pool).await;
+    for value in [initial, initial + 1, initial + 1, initial + 2, i64::MAX] {
         sqlx::query("UPDATE app.operator_auth_state SET session_epoch=$1 WHERE singleton")
             .bind(value)
             .execute(&pool)

@@ -704,7 +704,20 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
         ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityRequirement, SecurityScheme,
     };
     let components = document.components.get_or_insert_with(Default::default);
-    components.add_security_scheme("MachineBearer",SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).bearer_format("qz2/qzc.UUIDv7.opaque-capability").description(Some("Opaque native capability; qzc identifies a revocable owner CLI device, qz2 retains scoped project/run/downstream authority. Never combine with browser Cookie." )).build()));
+    components.add_security_scheme("BrowserSession", SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::with_description("__Host-quazonai", "Password-authenticated HttpOnly browser session; explicit loopback HTTP uses quazonai-dev."))));
+    components.add_security_scheme(
+        "OwnerDeviceBearer",
+        SecurityScheme::Http(
+            HttpBuilder::new()
+                .scheme(HttpAuthScheme::Bearer)
+                .bearer_format("qzc.UUIDv7.opaque-capability")
+                .description(Some(
+                    "Revocable owner CLI device. No operator grant is required.",
+                ))
+                .build(),
+        ),
+    );
+    components.add_security_scheme("MachineBearer",SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).bearer_format("qz2.UUIDv7.opaque-capability").description(Some("Scoped project/run/downstream capability. Never combine with browser Cookie." )).build()));
     components.add_security_scheme("OperatorCommandGrant",SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description("X-Operator-Grant","One-time local CLI grant bound to this credential, exact operation, target and full nonsecret request. No Agent/automation grant issuance."))));
     for (path, item) in &mut document.paths.paths {
         let anonymous = matches!(
@@ -751,7 +764,9 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                         );
                     }
                 }
-                let local = SecurityRequirement::default();
+                let local = SecurityRequirement::new("BrowserSession", std::iter::empty::<&str>());
+                let device =
+                    SecurityRequirement::new("OwnerDeviceBearer", std::iter::empty::<&str>());
                 let bearer = SecurityRequirement::new("MachineBearer", std::iter::empty::<&str>());
                 if !anonymous && !browser_auth {
                     operation.responses.responses.insert(
@@ -782,6 +797,8 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                 }
                 operation.security = Some(if anonymous {
                     vec![]
+                } else if path == "/api/v2/auth/cli/session" {
+                    vec![device]
                 } else if only_machine {
                     vec![bearer]
                 } else if browser_auth || (!write && browser_read) {
@@ -791,14 +808,15 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                         || path == "/api/v2/experiments"
                         || (path.ends_with("/cancel") && path.starts_with("/api/v2/runs/")))
                 {
-                    vec![local, bearer]
+                    vec![local, device, bearer]
                 } else if write {
                     vec![
                         local,
+                        device,
                         bearer.add("OperatorCommandGrant", std::iter::empty::<&str>()),
                     ]
                 } else {
-                    vec![local, bearer]
+                    vec![local, device, bearer]
                 });
             }
         }

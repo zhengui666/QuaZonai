@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import secrets
 import shutil
 import time
 import subprocess
@@ -25,6 +26,10 @@ import uuid
 import codex
 import manage
 import release
+
+# One disposable password per smoke process, retained across its upgrades.
+# Never write it into the installation manifest, output or model context.
+SMOKE_PASSWORD = secrets.token_urlsafe(32)
 
 
 def ports() -> tuple[int, int]:
@@ -70,7 +75,13 @@ def verify_container_codex(config: dict) -> None:
     origin = f'http://localhost:{config["port"]}'
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
                                         urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-    with opener.open(origin + '/api/v2/auth/session', timeout=10) as response:
+    with opener.open(origin + '/api/v2/auth/status', timeout=10) as response:
+        setup = json.load(response)['setup_required']
+    login = urllib.request.Request(origin + ('/api/v2/auth/setup' if setup else '/api/v2/auth/login'),
+                                   data=json.dumps({'schema_version': 1, 'password': SMOKE_PASSWORD,
+                                                    'remember_device': False}).encode(),
+                                   headers={'Content-Type': 'application/json', 'Origin': origin})
+    with opener.open(login, timeout=10) as response:
         assert response.status == 200
     with opener.open(origin + '/api/v2/settings/codex', timeout=10) as response:
         profiles = json.load(response)['items']

@@ -730,7 +730,10 @@ fn the_actual_http_contract_declares_proposal_capability_without_a_human_grant()
     let document: Value = serde_json::from_str(&server::openapi_json().unwrap()).unwrap();
     let path = &document["paths"]["/api/v2/experiments"]["post"];
     assert_eq!(path["operationId"], "propose_experiment");
-    assert_eq!(path["security"], json!([{},{"MachineBearer":[]}]));
+    assert_eq!(
+        path["security"],
+        json!([{"BrowserSession":[]},{"OwnerDeviceBearer":[]},{"MachineBearer":[]}])
+    );
     assert!(path["responses"]["201"]["content"]["application/json"].is_object());
     assert!(path["responses"]["429"]["content"]["application/problem+json"].is_object());
     let schema = &document["components"]["schemas"]["ExperimentProposalV1"];

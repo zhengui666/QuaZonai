@@ -137,7 +137,7 @@ async fn late_grant_failure_rolls_back_native_schema_epoch_and_earlier_grants(po
     .await
     .unwrap();
     assert!(deploy(&pool, Some(&name)).await.status.success());
-    assert_eq!(epoch(&pool).await, 9);
+    assert_eq!(epoch(&pool).await, 10);
     remove_role(&pool, &name).await;
 }
 
@@ -261,7 +261,7 @@ async fn behavior_changing_session_definitions_roll_back_the_complete_migration(
         .await
         .unwrap();
     assert!(deploy(&pool, None).await.status.success());
-    assert_eq!(epoch(&pool).await, 9);
+    assert_eq!(epoch(&pool).await, 10);
     let native = PostgresStore::new(pool.clone());
     assert_eq!(
         native.load(&record.id).await.unwrap().unwrap().data,

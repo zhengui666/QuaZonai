@@ -10,6 +10,8 @@
 
 Create a branch from current main, run the relevant [checks](project.md#commands), open a PR and satisfy [review](review.md). Use the PR's exact final Head for checks/review; the native Issue/PR/Actions record owns the result. A source revert does not downgrade a database.
 
+The password-auth migration invalidates pre-password browser sessions. The first browser visit then sets the instance password; it never imports database or ChatGPT passwords. The existing offline `recover-access` cutover also revokes permanent CLI devices while retaining the password hash and historical records. Re-enter the instance password in the browser or native CLI after recovery. Password changes alone invalidate browser sessions; explicitly remove CLI machines in authentication settings when those devices should lose access.
+
 <a id="container-release"></a>
 ### Versioned images
 

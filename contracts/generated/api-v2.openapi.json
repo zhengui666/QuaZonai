@@ -847,6 +847,22 @@
         ],
         "type": "string"
       },
+      "AuthStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          },
+          "setup_required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "schema_version",
+          "setup_required"
+        ],
+        "type": "object"
+      },
       "AutomationAuthorizeV1": {
         "additionalProperties": false,
         "properties": {
@@ -5752,6 +5768,74 @@
           "NONE"
         ],
         "type": "string"
+      },
+      "CliDevice": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "last_used_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "id",
+          "name",
+          "created_at",
+          "last_used_at"
+        ],
+        "type": "object"
+      },
+      "CliLogin": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "password",
+          "name"
+        ],
+        "type": "object"
+      },
+      "CliLoginResult": {
+        "additionalProperties": false,
+        "properties": {
+          "device": {
+            "$ref": "#/components/schemas/CliDevice"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device",
+          "token"
+        ],
+        "type": "object"
       },
       "CodexAccountActionV1": {
         "enum": [
@@ -20025,6 +20109,50 @@
         ],
         "type": "object"
       },
+      "PasswordChange": {
+        "additionalProperties": false,
+        "properties": {
+          "current_password": {
+            "type": "string"
+          },
+          "new_password": {
+            "maxLength": 1024,
+            "minLength": 8,
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "current_password",
+          "new_password"
+        ],
+        "type": "object"
+      },
+      "PasswordLogin": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "maxLength": 1024,
+            "minLength": 8,
+            "type": "string"
+          },
+          "remember_device": {
+            "type": "boolean"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/SchemaV1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "password",
+          "remember_device"
+        ],
+        "type": "object"
+      },
       "PitStatus": {
         "enum": [
           "VERIFIED",
@@ -23262,9 +23390,15 @@
       }
     },
     "securitySchemes": {
+      "BrowserSession": {
+        "description": "Password-authenticated HttpOnly browser session; explicit loopback HTTP uses quazonai-dev.",
+        "in": "cookie",
+        "name": "__Host-quazonai",
+        "type": "apiKey"
+      },
       "MachineBearer": {
-        "bearerFormat": "qz2.UUIDv7.opaque-capability",
-        "description": "Opaque native capability; only project/run/downstream-scoped server records confer authority. Never combine with browser Cookie.",
+        "bearerFormat": "qz2/qzc.UUIDv7.opaque-capability",
+        "description": "Opaque native capability; qzc identifies a revocable owner CLI device, qz2 retains scoped project/run/downstream authority. Never combine with browser Cookie.",
         "scheme": "bearer",
         "type": "http"
       },
@@ -23273,6 +23407,12 @@
         "in": "header",
         "name": "X-Operator-Grant",
         "type": "apiKey"
+      },
+      "OwnerDeviceBearer": {
+        "bearerFormat": "qzc.UUIDv7.opaque-capability",
+        "description": "Revocable owner CLI device. No operator grant is required.",
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
@@ -23379,7 +23519,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -23501,7 +23646,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -23634,7 +23784,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -23757,7 +23912,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -23879,7 +24039,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -24001,7 +24166,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -24112,7 +24282,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -24215,7 +24390,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -24327,7 +24507,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -24452,7 +24637,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -24565,7 +24755,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -24690,7 +24885,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -24773,7 +24973,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -24868,13 +25073,386 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
         ],
         "tags": [
           "Artifacts"
+        ]
+      }
+    },
+    "/api/v2/auth/cli/devices": {
+      "get": {
+        "operationId": "cli_devices",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CliDevice"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          }
+        ],
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v2/auth/cli/devices/{id}": {
+      "delete": {
+        "operationId": "revoke_cli_device",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          }
+        ],
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v2/auth/cli/login": {
+      "post": {
+        "operationId": "cli_login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CliLogin"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CliLoginResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [],
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v2/auth/cli/session": {
+      "get": {
+        "operationId": "cli_session",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CliDevice"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "OwnerDeviceBearer": []
+          }
+        ],
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v2/auth/login": {
+      "post": {
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordLogin"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserSession"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [],
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v2/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          }
+        ],
+        "tags": [
+          "Authentication"
         ]
       }
     },
@@ -25046,6 +25624,74 @@
         ]
       }
     },
+    "/api/v2/auth/password": {
+      "post": {
+        "operationId": "change_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          }
+        ],
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
     "/api/v2/auth/session": {
       "get": {
         "operationId": "session_status",
@@ -25055,6 +25701,91 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BrowserSession"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "BrowserSession": []
+          }
+        ],
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v2/auth/setup": {
+      "post": {
+        "operationId": "setup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordLogin"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserSession"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -25073,7 +25804,38 @@
         },
         "security": [],
         "tags": [
-          "Local session"
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v2/auth/status": {
+      "get": {
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStatus"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [],
+        "tags": [
+          "Authentication"
         ]
       }
     },
@@ -25160,7 +25922,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -25272,7 +26039,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -25397,7 +26169,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -25491,7 +26268,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -25614,7 +26396,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -25718,7 +26505,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -25853,7 +26645,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -25981,7 +26778,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -26075,7 +26877,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -26175,7 +26982,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -26302,7 +27114,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -26430,7 +27247,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -26524,7 +27346,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -26651,7 +27478,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -26745,7 +27577,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -26872,7 +27709,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -26976,7 +27818,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -27079,7 +27926,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -27201,7 +28053,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -27322,7 +28179,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -27457,7 +28319,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -27577,7 +28444,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -27702,7 +28574,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -27806,7 +28683,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -27909,7 +28791,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -28034,7 +28921,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -28138,7 +29030,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -28271,7 +29168,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -28393,7 +29295,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -28526,7 +29433,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -28630,7 +29542,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -28733,7 +29650,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -28860,7 +29782,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -28973,7 +29900,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -29088,7 +30020,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -29182,7 +30119,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -29285,7 +30227,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -29412,7 +30359,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -29534,7 +30486,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -29661,7 +30618,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -29755,7 +30717,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -29877,7 +30844,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -30002,7 +30974,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -30105,7 +31082,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -30232,7 +31214,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -30346,7 +31333,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -30474,7 +31466,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -30578,7 +31575,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -30713,7 +31715,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -30849,7 +31856,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -30961,7 +31973,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -31073,7 +32090,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -31188,7 +32210,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -31282,7 +32309,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -31386,7 +32418,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -31501,7 +32538,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -31605,7 +32647,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -31738,7 +32785,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -31874,7 +32926,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -31978,7 +33035,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -32082,7 +33144,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -32197,7 +33264,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -32301,7 +33373,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -32434,7 +33511,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -32570,7 +33652,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -32674,7 +33761,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -32789,7 +33881,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -32874,7 +33971,9 @@
           }
         },
         "security": [
-          {}
+          {
+            "BrowserSession": []
+          }
         ],
         "tags": [
           "Machine identity"
@@ -32976,7 +34075,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -33092,7 +34196,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -33195,7 +34304,9 @@
           }
         },
         "security": [
-          {}
+          {
+            "BrowserSession": []
+          }
         ],
         "tags": [
           "Machine identity"
@@ -33305,7 +34416,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -33433,7 +34549,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -33528,7 +34649,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -33621,7 +34747,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -33733,7 +34864,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -33826,7 +34962,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -33927,7 +35068,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -34040,7 +35186,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -34152,7 +35303,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -34271,7 +35427,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -34372,7 +35533,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -34465,7 +35631,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -34592,7 +35763,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -34686,7 +35862,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -34808,7 +35989,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -34925,7 +36111,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -35019,7 +36210,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -35146,7 +36342,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -35241,7 +36442,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -35346,7 +36552,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -35420,7 +36631,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -35533,7 +36749,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -35646,7 +36867,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -35769,7 +36995,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -35882,7 +37113,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -36005,7 +37241,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -36128,7 +37369,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -36261,7 +37507,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -36374,7 +37625,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -36486,7 +37742,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -36608,7 +37869,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -36720,7 +37986,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -36842,7 +38113,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -36954,7 +38230,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -37066,7 +38347,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -37178,7 +38464,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -37300,7 +38591,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -37425,7 +38721,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -37553,7 +38854,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -37647,7 +38953,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -37759,7 +39070,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -37892,7 +39208,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -38005,7 +39326,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -38130,7 +39456,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -38251,7 +39582,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -38334,7 +39670,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -38459,7 +39800,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -38584,7 +39930,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -38667,7 +40018,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -38761,7 +40117,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -38854,7 +40215,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": []
           }
@@ -38987,7 +40353,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []
@@ -39105,7 +40476,12 @@
           }
         },
         "security": [
-          {},
+          {
+            "BrowserSession": []
+          },
+          {
+            "OwnerDeviceBearer": []
+          },
           {
             "MachineBearer": [],
             "OperatorCommandGrant": []

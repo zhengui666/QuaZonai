@@ -135,6 +135,21 @@ pub fn format_machine_token(
 mod machine_token_tests {
     use super::*;
     #[test]
+    fn password_hashing_and_owner_tokens_keep_distinct_credentials() {
+        let password = "fixture password with spaces";
+        let hash = password_verifier(password).unwrap();
+        assert!(verify_password(password, &hash));
+        assert!(!verify_password("wrong password", &hash));
+        assert!(!verify_password(&"x".repeat(1025), &hash));
+        assert!(password_verifier("short").is_err());
+        assert!(password_verifier("密码密码").is_err());
+        assert_ne!(hash, password_verifier(password).unwrap());
+        let token = format_cli_token(contracts::Id::new(), &random_capability()).unwrap();
+        assert!(cli_token(&token).is_ok());
+        assert!(machine_token(&token).is_err());
+        assert!(cli_token(&token.replacen("qzc.", "qz2.", 1)).is_err());
+    }
+    #[test]
     fn machine_token_has_one_bounded_native_id_and_opaque_secret() {
         let public = contracts::Id::new();
         let secret = random_capability();
