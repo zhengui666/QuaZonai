@@ -178,10 +178,10 @@ async fn connected(
 fn request(name: &str, arguments: Value) -> CallToolRequestParams {
     serde_json::from_value(json!({"name":name,"arguments":arguments})).unwrap()
 }
-async fn run(client: &RunningService<RoleClient, ()>, id: Id) -> Value {
+async fn run(client: &RunningService<RoleClient, ()>) -> Value {
     serde_json::to_value(
         client
-            .call_tool(request("run.get", json!({"run_id":id})))
+            .call_tool(request("run.get", json!({})))
             .await
             .unwrap(),
     )
@@ -207,7 +207,7 @@ async fn native_protocol_lists_only_real_tools_and_checks_arguments() {
             "run.get"
         ]
     );
-    let result = run(&client, api.binding.run_id).await;
+    let result = run(&client).await;
     assert_ne!(result["isError"], true);
     assert_eq!(body(&result)["id"], json!(api.binding.run_id));
     assert_eq!(body(&result)["state"], "RUNNING");
@@ -215,6 +215,9 @@ async fn native_protocol_lists_only_real_tools_and_checks_arguments() {
     for (name, arguments) in [
         ("db.query", json!({"query":"SELECT 1"})),
         ("run.get", json!({"run_id":"../../outside"})),
+        ("run.get", json!({"run_id":api.binding.run_id})),
+        ("run.get", json!({"run_id":Id::new()})),
+        ("run.get", json!({"unknown":true})),
         (
             "run.get",
             json!({"run_id":api.binding.run_id,"role":"OPERATOR"}),
@@ -226,9 +229,6 @@ async fn native_protocol_lists_only_real_tools_and_checks_arguments() {
                 || serde_json::to_value(response.unwrap()).unwrap()["isError"] == true
         );
     }
-    let denied = run(&client, Id::new()).await;
-    assert_eq!(denied["isError"], true);
-    assert_eq!(body(&denied)["code"], "MCP_AUTHORITY_REJECTED");
     assert_eq!(api.state.responses.lock().unwrap().hits, 4);
     client.cancel().await.unwrap();
     assert!(task.await.unwrap().is_ok());
@@ -287,7 +287,7 @@ async fn next_call_rechecks_revocation_and_never_returns_upstream_diagnostics() 
     let api = api().await;
     let (client, task) = connected(&api).await;
     api.state.responses.lock().unwrap().status = StatusCode::UNAUTHORIZED;
-    let result = run(&client, api.binding.run_id).await;
+    let result = run(&client).await;
     assert_eq!(result["isError"], true);
     assert_eq!(body(&result)["http_status"], 401);
     assert!(!result.to_string().contains(&api.state.credential));
@@ -317,8 +317,7 @@ async fn native_concurrent_requests_are_bounded_without_a_waiting_queue() {
     let api = api().await;
     let (client, task) = connected(&api).await;
     api.state.delay_ms.store(150, Ordering::SeqCst);
-    let results =
-        futures_util::future::join_all((0..5).map(|_| run(&client, api.binding.run_id))).await;
+    let results = futures_util::future::join_all((0..5).map(|_| run(&client))).await;
     assert_eq!(results.iter().filter(|r| r["isError"] != true).count(), 4);
     assert_eq!(
         results
@@ -353,10 +352,7 @@ async fn native_stdio_child_has_no_database_dependency_or_stdout_logs() {
         ().serve((child.stdout.take().unwrap(), child.stdin.take().unwrap()))
             .await
             .unwrap();
-    assert_eq!(
-        body(&run(&client, api.binding.run_id).await)["id"],
-        json!(api.binding.run_id)
-    );
+    assert_eq!(body(&run(&client).await)["id"], json!(api.binding.run_id));
     client.cancel().await.unwrap();
     let output = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output())
         .await

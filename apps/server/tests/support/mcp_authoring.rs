@@ -197,5 +197,17 @@ pub fn body(reply: &Value) -> Value {
     serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap()
 }
 pub async fn upload(client: &McpClient, kind: &str, path: &str, key: &str) -> Value {
-    call(client, "artifact.submit", json!({"schema_version":1,"kind":kind,"workspace_relative_path":path,"idempotency_key":key})).await
+    call(
+        client,
+        "artifact.submit",
+        json!({"kind":kind,"workspace_relative_path":path,"idempotency_key":key}),
+    )
+    .await
+}
+pub fn proposal_inputs(request: &contracts::experiments::ExperimentProposalV1) -> Value {
+    let mut value = serde_json::to_value(request).unwrap();
+    for field in ["schema_version", "cycle_id"] {
+        value.as_object_mut().unwrap().remove(field);
+    }
+    value
 }
