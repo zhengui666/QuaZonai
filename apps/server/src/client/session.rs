@@ -330,6 +330,15 @@ fn login_problem(bytes: &[u8], status: u16, password: &str) -> Result<Problem> {
     if problem.status != status || !problem.kind.starts_with("urn:quazonai:problem:") {
         return Err(Failure::Contract);
     }
+    if problem.request_id.to_string().contains(password) {
+        return Err(Failure::Contract);
+    }
+    if problem
+        .current_revision
+        .is_some_and(|revision| String::from(revision).contains(password))
+    {
+        problem.current_revision = None;
+    }
     let redact = |text: &mut String| {
         if text.contains(password) {
             text.clear();
@@ -391,6 +400,17 @@ mod tests {
         let problem =
             login_problem(&serde_json::to_vec(&reflected).unwrap(), 401, password).unwrap();
         assert!(!serde_json::to_string(&problem).unwrap().contains(password));
+        let mut reflected_scalar = native.clone();
+        reflected_scalar["current_revision"] = serde_json::json!("12345678");
+        assert!(login_problem(
+            &serde_json::to_vec(&reflected_scalar).unwrap(),
+            401,
+            "12345678"
+        )
+        .unwrap()
+        .current_revision
+        .is_none());
+        assert!(login_problem(&bytes, 401, native["request_id"].as_str().unwrap()).is_err());
         let text = String::from_utf8(bytes).unwrap();
         for invalid in [
             format!("{{\"status\":401,{}", &text[1..]),
