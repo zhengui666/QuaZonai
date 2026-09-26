@@ -356,7 +356,11 @@ fn login_problem(bytes: &[u8], status: u16, password: &str) -> Result<Problem> {
     if problem.status != status || !problem.kind.starts_with("urn:quazonai:problem:") {
         return Err(Failure::Contract);
     }
-    if problem.request_id.to_string().contains(password) {
+    let original: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| Failure::Contract)?;
+    if password_value(&original["request_id"], password)
+        || problem.request_id.to_string().contains(password)
+    {
         return Err(Failure::Contract);
     }
     if problem
@@ -370,12 +374,20 @@ fn login_problem(bytes: &[u8], status: u16, password: &str) -> Result<Problem> {
             text.clear();
         }
     };
-    if status == 401
-        && problem.code == "AUTHENTICATION_FAILED"
-        && problem.kind == "urn:quazonai:problem:authentication-failed"
-    {
+    if matches!(
+        (status, problem.code.as_str(), problem.kind.as_str()),
+        (
+            401,
+            "AUTHENTICATION_FAILED",
+            "urn:quazonai:problem:authentication-failed"
+        ) | (
+            429,
+            "PASSWORD_RATE_LIMITED",
+            "urn:quazonai:problem:password-rate-limited"
+        ) | (429, "CRYPTO_BUSY", "urn:quazonai:problem:crypto-busy")
+    ) {
         // This is a protocol constant even when it happens to be the password.
-        problem.title = "AUTHENTICATION_FAILED".into();
+        problem.title = problem.code.clone();
     } else {
         redact(&mut problem.kind);
         redact(&mut problem.code);
@@ -514,6 +526,37 @@ mod tests {
         .current_revision
         .is_none());
         assert!(login_problem(&bytes, 401, native["request_id"].as_str().unwrap()).is_err());
+        reflected_scalar["request_id"] = serde_json::json!("018FC823-8E40-7ABC-8ABC-ABCDEF123456");
+        for password in [
+            "018FC823-8E40-7ABC-8ABC-ABCDEF123456",
+            "018fc823-8e40-7abc-8abc-abcdef123456",
+        ] {
+            assert!(login_problem(
+                &serde_json::to_vec(&reflected_scalar).unwrap(),
+                401,
+                password
+            )
+            .is_err());
+        }
+        for (code, suffix) in [
+            ("PASSWORD_RATE_LIMITED", "password-rate-limited"),
+            ("CRYPTO_BUSY", "crypto-busy"),
+        ] {
+            let mut limited = native.clone();
+            limited["status"] = serde_json::json!(429);
+            limited["code"] = serde_json::json!(code);
+            limited["type"] = serde_json::json!(format!("urn:quazonai:problem:{suffix}"));
+            for password in [code, suffix] {
+                limited["title"] = serde_json::json!(format!("reflected {password}"));
+                limited["detail"] = serde_json::json!(password);
+                let problem =
+                    login_problem(&serde_json::to_vec(&limited).unwrap(), 429, password).unwrap();
+                assert_eq!(problem.code, code);
+                assert_eq!(problem.title, code);
+                assert_eq!(problem.kind, format!("urn:quazonai:problem:{suffix}"));
+                assert!(problem.detail.is_empty());
+            }
+        }
         let text = String::from_utf8(bytes).unwrap();
         for invalid in [
             format!("{{\"status\":401,{}", &text[1..]),
