@@ -73,7 +73,7 @@ Discovery、Validation、Sealed、Forward 按冻结用途隔离。原始值、�
 
 容器部署的 API 探测与 Worker Mission 均调用独立 Codex 镜像中的 App Server；连接失败不回退宿主 Codex。ChatGPT 设备码授权、令牌保存/刷新由原生 Codex 承担。浏览器可启动、观察、取消登录和确认退出；刷新页面不重新泄露设备码。QZ 不读取或复制 `auth.json`。
 
-Mission 固定原输入、角色模型配置、预算、工具绑定和原生执行身份。工具调用结果回到原 Thread；不能通过另起 Thread 或静态报告代替科学反馈。MCP 使用官方 SDK，工具权限绑定项目/Mission/Attempt，不开放通用 Shell、任意 SQL 或 Docker 控制。
+Mission 固定原输入、角色模型配置、预算、工具绑定和原生执行身份。工具调用结果回到原 Thread；不能通过另起 Thread 或静态报告代替科学反馈。MCP 使用官方 SDK，工具权限绑定项目/Mission/Attempt，不开放通用 Shell、任意 SQL 或 Docker 控制。 `research.get_brief` 和 `run.get` 接受空参数，使用启动器绑定；产物版本与提案的版本、Cycle 由适配层填入，原生 HTTP 合同继续校验研究字段。
 
 每个 App Server 会话独立容器。CPU、内存、进程数及墙钟受原生限制；Worker 退出不重置任务期限。取消核对实际 container ID。只记录公开调用和可观察结果，不索取或保存隐藏推理。
 
@@ -119,6 +119,8 @@ Nautilus 在一个共享资金账户内执行目标序列，保留原生成交�
 界面以项目、实验、Alpha、组合、交付、运行为主对象；版本和证据放详情。使用官方 Ant Design 表单、反馈与主题，图表复用 ECharts。移动端保留同等操作能力，长表格和详情不能因视口收窄丢失操作。
 
 实例首次访问设置密码，之后输入密码登录；可选择记住浏览器 30 天，否则使用最长 12 小时的会话 cookie。密码使用原生 Argon2id 保存校验值，过期或撤销的会话不能自动恢复。设置的“鉴权管理”支持改密和撤销指定 CLI 机器；改密使浏览器会话失效，CLI 机器保持到主动撤销。
+
+对外命令 `quazonai` 是原生 `server` 的安装链接；CLI 与 MCP 通过 [service_http](../apps/server/src/service_http.rs) 共享地址、敏感请求头、无重定向客户端、有限响应及严格 JSON/Problem 解析，各适配层保留自己的身份、期限和输出规则。
 
 外部所有者 CLI 使用与前端相同的实例地址和密码交互登录，保存独立的不透明机器令牌，永久记住该机器，无需再领取单次 Operator grant。该设备拥有所有者操作权限，每次业务事务重验撤销；密码和令牌不得进入模型上下文。原有受限 Machine/Mission、独立 Reviewer 与 Downstream 身份保持各自边界。API 监听 loopback，公开前端地址使用 HTTPS，开发 HTTP 仅限明确启用的 loopback。
 
