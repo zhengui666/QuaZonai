@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -23,6 +24,7 @@ CI_PATHS = {
     ".github/workflows/container.yml",
 }
 ASSETS = {"release.json", "quazonai-deploy.tar.gz"}
+CODEX_REPOSITORY = "ghcr.io/zhengui666/quazonai-codex"
 
 
 def api(endpoint: str, *, pages: bool = False):
@@ -208,21 +210,41 @@ def push_image(image: str, repository: str, tag: str) -> str:
     return matches[0]
 
 
+def published_codex_image(target: str) -> str | None:
+    # The app and standalone publishers share the workflow concurrency group.
+    # Reuse an existing exact version even when a local rebuild has a new ID.
+    reference = CODEX_REPOSITORY + ":" + codex.exact_version(target)
+    result = subprocess.run(["docker", "pull", reference], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        if any(message in result.stderr.lower() for message in ("manifest unknown", "no such manifest", "name unknown")):
+            return None
+        raise ValueError("Could not inspect the published Codex version; no image was pushed.")
+    metadata = json.loads(run(["docker", "image", "inspect", reference], capture=True))[0]
+    digests = metadata.get("RepoDigests") or []
+    matches = [value for value in digests if isinstance(value, str)
+               and re.fullmatch(re.escape(CODEX_REPOSITORY) + r"@sha256:[0-9a-f]{64}", value)]
+    if (len(matches) != 1 or metadata.get("Os") != "linux" or metadata.get("Architecture") != "amd64"
+            or metadata.get("Config", {}).get("Labels", {}).get("org.opencontainers.image.version") != target):
+        raise ValueError("Published Codex version has incompatible metadata; it was not overwritten.")
+    codex.verify_candidate(docker_configuration(), target, matches[0])
+    return matches[0]
+
+
 def advance_codex_latest(image: str, target: str) -> None:
     target = codex.exact_version(target)
     if "-" in target:
         return
-    reference = "ghcr.io/zhengui666/quazonai-codex:latest"
+    reference = CODEX_REPOSITORY + ":latest"
     result = subprocess.run(["docker", "pull", reference], capture_output=True, text=True, check=False)
     if result.returncode == 0:
         previous = run(["docker", "image", "inspect", "--format",
                         '{{index .Config.Labels "org.opencontainers.image.version"}}', reference], capture=True)
-        if version_precedence("v" + codex.exact_version(previous)) > version_precedence("v" + target):
+        if version_precedence("v" + codex.exact_version(previous)) >= version_precedence("v" + target):
             return
     elif not any(message in result.stderr.lower() for message in ("manifest unknown", "no such manifest", "name unknown")):
         raise ValueError("Could not inspect the published Codex latest version.")
     run(["docker", "pull", image])
-    push_image(image, "ghcr.io/zhengui666/quazonai-codex", "latest")
+    push_image(image, CODEX_REPOSITORY, "latest")
 
 
 def main() -> None:
@@ -252,27 +274,34 @@ def main() -> None:
         selected = validate_manifest(json.loads((args.output / "release.json").read_text()), published=True)
         advance_codex_latest(selected["codex_image"], selected["codex_version"])
     elif args.command == "publish-codex":
-        codex.verify_candidate(docker_configuration(), codex.exact_version(args.codex_version), args.image)
-        digest = push_image(args.image, "ghcr.io/zhengui666/quazonai-codex", args.codex_version)
-        advance_codex_latest(digest, args.codex_version)
+        target = codex.exact_version(args.codex_version)
+        codex.verify_candidate(docker_configuration(), target, args.image)
+        digest = published_codex_image(target)
+        if digest is None:
+            digest = push_image(args.image, CODEX_REPOSITORY, target)
+        advance_codex_latest(digest, target)
         print(digest)
     elif args.command == "push-images":
         verify(args.version, args.revision)
-        references = {}
-        for field, image, repository in (
-            ("image", args.image, "quazonai"), ("runtime_image", args.runtime_image, "quazonai-runtime")
-        ):
+        images = (("image", args.image, "quazonai"),
+                  ("runtime_image", args.runtime_image, "quazonai-runtime"))
+        # Complete all candidate checks before mutating any registry reference.
+        for _, image, _ in images:
             labels = json.loads(run(["docker", "image", "inspect", "--format",
                                      "{{json .Config.Labels}}", image], capture=True))
             if (labels.get("org.opencontainers.image.revision") != args.revision
                     or labels.get("org.opencontainers.image.version") != args.version):
                 raise ValueError("The tested image does not match the release version and source.")
-            references[field] = push_image(image, "ghcr.io/zhengui666/" + repository, args.version)
-        codex.verify_candidate(docker_configuration(), codex.exact_version(args.codex_version), args.codex_image)
-        references["codex_image"] = push_image(args.codex_image, "ghcr.io/zhengui666/quazonai-codex", args.codex_version)
+        target = codex.exact_version(args.codex_version)
+        codex.verify_candidate(docker_configuration(), target, args.codex_image)
+        codex_digest = published_codex_image(target)
+        references = {field: push_image(image, "ghcr.io/zhengui666/" + repository, args.version)
+                      for field, image, repository in images}
+        if codex_digest is None:
+            codex_digest = push_image(args.codex_image, CODEX_REPOSITORY, target)
         bundle(args.version, args.revision, references["image"], args.output,
-               runtime_image=references["runtime_image"], codex_version=args.codex_version,
-               codex_image=references["codex_image"], published=True)
+               runtime_image=references["runtime_image"], codex_version=target,
+               codex_image=codex_digest, published=True)
     elif args.command == "bundle":
         bundle(args.version, args.revision, args.image, args.output,
                runtime_image=args.runtime_image, codex_version=args.codex_version,
