@@ -7,8 +7,9 @@ use contracts::SchemaV1;
 use nautilus_core::UnixNanos;
 use nautilus_model::{
     data::{Bar, InstrumentClose, OrderBookDelta, QuoteTick, TradeTick},
-    enums::{InstrumentCloseType, PriceType},
+    enums::{BookAction, InstrumentCloseType, PriceType},
     instruments::{Instrument, InstrumentAny},
+    types::{Price, Quantity},
 };
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use nautilus_polymarket::http::{
@@ -29,6 +30,9 @@ const MAX_INPUT_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_ROWS: usize = 1_000_000;
 const NATIVE_VERSION: &str = "0.63.0";
 
+#[path = "history/archive.rs"]
+mod archive;
+
 #[derive(Parser)]
 #[command(
     version,
@@ -41,6 +45,8 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Convert a verified public Parquet snapshot; select native instruments and a UTC window.
+    Archive(archive::Arguments),
     /// Read public history through the pinned Nautilus Rust clients. Coverage remains unproven.
     Fetch {
         #[arg(long)]
@@ -219,6 +225,15 @@ fn validate(archive: &NativeArchive) -> Result<()> {
             valid_price(delta.order.price.as_decimal()),
             "INVALID_BINARY_BOOK_PRICE"
         );
+        if delta.action == BookAction::Clear {
+            ensure!(
+                delta.order.side.is_none()
+                    && delta.order.price.raw == 0
+                    && delta.order.size.raw == 0
+                    && delta.order.order_id == 0,
+                "INVALID_BOOK_CLEAR"
+            );
+        }
         time_order(delta.ts_event, delta.ts_init)?;
     }
     let mut settled = BTreeSet::new();
@@ -318,7 +333,20 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
         .iter()
         .map(historical_instrument)
         .collect::<Result<Vec<_>>>()?;
+    let precisions = instruments
+        .iter()
+        .map(|i| (i.id(), (i.price_precision(), i.size_precision())))
+        .collect::<std::collections::BTreeMap<_, _>>();
     catalog.write_instruments(instruments)?;
+    // Native clear() uses precision 0. Catalog partition identity includes precision,
+    // even on clears, so preserve its null order with the instrument's representation.
+    for delta in &mut archive.deltas {
+        if delta.action == BookAction::Clear {
+            let (price, size) = precisions[&delta.instrument_id];
+            delta.order.price = Price::from_decimal_dp(Decimal::ZERO, price)?;
+            delta.order.size = Quantity::zero(size);
+        }
+    }
     // Native Parquet metadata belongs to one instrument (one BarType for bars).
     // Stable ordering preserves the source order of simultaneous book updates.
     archive.trades.sort_by_key(|r| (r.instrument_id, r.ts_init));
@@ -369,9 +397,9 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
         limitations: vec![
             "Native serialization is not a coverage, historical fee, settlement or PIT verification.".into(),
             "Current metadata retains its observation time; it is not backdated for historical research.".into(),
-            "Pinned HTTP history may be truncated; same-second ordering is synthesized by upstream, not observed latency.".into(),
+            "Availability, ordering and truncation depend on the original source; see source-evidence.json.".into(),
             "Book records are not claimed gap-free or replayable without separate snapshot/sequence validation.".into(),
-            "No synthetic OHLCV or depth is created. Source evidence is outside the native catalog mount.".into(),
+            "Missing intervals, prices and depth are not imputed. Source evidence is outside the native catalog mount.".into(),
         ],
     };
     // Written last: a directory without this report is an interrupted, unpublished import.
@@ -452,6 +480,7 @@ async fn fetch(slug: &str, start: u64, end: u64, max_trades: u32) -> Result<Nati
 async fn main() {
     let args = Arguments::parse();
     let result = match args.command {
+        Command::Archive(args) => archive::prepare(&args).and_then(|a| import(a, &args.output)),
         Command::Import { input, output } => read_archive(&input).and_then(|a| import(a, &output)),
         Command::Fetch {
             market_slug,
