@@ -47,7 +47,7 @@ export function AuthenticationSettings() {
       <Typography.Paragraph>机器通过实例地址和密码登录后会持续保持连接。删除后，该机器必须重新登录才能使用。</Typography.Paragraph>
       <ErrorNotice error={revoke.error} />
       <QueryPanel pending={devices.isPending} error={devices.error} stale={!!devices.data} reload={() => { void devices.refetch(); }}>
-        <Table rowKey="id" dataSource={devices.data} pagination={false} scroll={{ x: 640 }} locale={{ emptyText: '尚无已连接的 CLI 机器' }} columns={[
+        <Table rowKey="id" dataSource={devices.data} pagination={false} scroll={{ x: 640 }} locale={{ emptyText: <Typography.Text type="secondary">尚无已连接的 CLI 机器</Typography.Text> }} columns={[
           { title: '机器名称', dataIndex: 'name' },
           { title: '首次连接', dataIndex: 'created_at', render: displayTime },
           { title: '最近使用', dataIndex: 'last_used_at', render: displayTime },

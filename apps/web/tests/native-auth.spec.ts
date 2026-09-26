@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { randomBytes } from 'node:crypto';
+import { dirname, resolve } from 'node:path';
 import { fixture, loginNative, rememberPrivateValue } from './native-auth-support';
 
 const config = fixture();
@@ -39,6 +40,10 @@ if (config.phase === 'before-restart') {
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       const audit = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
       expect(audit.violations).toEqual([]);
+      for (const input of await page.locator('input[autocomplete$="password"]').all()) await expect(input).toHaveValue('');
+      await page.locator('.auth-page').screenshot({
+        path: resolve(dirname(config.redactionsFile), `auth-setup-${width}.png`), animations: 'disabled',
+      });
     }
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByLabel('设置密码', { exact: true }).fill(config.password);
@@ -106,6 +111,7 @@ if (config.phase === 'before-restart') {
       await openAuthSettings(page);
       await page.getByRole('row').filter({ hasText: 'Native acceptance machine' }).getByRole('button', { name: '删除机器', exact: true }).click();
       await page.getByRole('dialog').getByRole('button', { name: '删除机器', exact: true }).click();
+      await expect(page.getByRole('dialog')).toBeHidden();
       await expect(page.getByRole('row').filter({ hasText: 'Native acceptance machine' })).toHaveCount(0);
       expect((await cli.request.get('/api/v2/auth/cli/session', { headers })).status()).toBe(401);
       for (const width of [1440, 390]) {
@@ -113,6 +119,10 @@ if (config.phase === 'before-restart') {
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
         const audit = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
         expect(audit.violations).toEqual([]);
+        for (const input of await page.locator('input[autocomplete$="password"]').all()) await expect(input).toHaveValue('');
+        await page.locator('.console-layout').screenshot({
+          path: resolve(dirname(config.redactionsFile), `auth-settings-${width}.png`), animations: 'disabled',
+        });
       }
       // Leave the same password for the console/restart checks; each test logs in normally.
       await changePassword(page, newPassword, config.password);
