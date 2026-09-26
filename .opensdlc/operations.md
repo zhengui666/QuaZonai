@@ -15,14 +15,14 @@ Create a branch from current main, run the relevant [checks](project.md#commands
 
 [release.yml](../.github/workflows/release.yml) observes main/tag pushes and check completion. A release tag is `vMAJOR.MINOR.PATCH[-prerelease]`, without leading zeros, build metadata or a floating alias. Its dereferenced commit must be an ancestor of current main; squash/rebase does not move an old tag.
 
-Release requires successful current-source CI, Web console, Native Runtime, Polymarket history and Container workflows. The release job builds and validates the image, pushes that same image to GHCR, and publishes the manifest/deployment bundle before completing the draft Release. It does not rebuild a different image after testing, overwrite a complete version or publish `latest`. A main push without a version tag is not a release.
+Release requires successful current-source CI, Web console, Native Runtime, Polymarket history and Container workflows. The [version workflow](../.github/workflows/release-version.yml) builds and validates the application, scientific job and Codex images, pushes those same images to GHCR, then runs installation/update/recovery on a fresh runner with no checkout or cached product images and with host build commands denied. Only after that succeeds does it publish the version-2 manifest/deployment bundle and complete the draft Release. It does not rebuild a different image after testing, overwrite a complete version or publish an application `latest` tag. A main push without a version tag is not a release.
 
 Push the chosen immutable tag only within release authorization. Reconcile an existing tag/draft before retrying. Verify the published revision, image digest, package visibility and `quazonai-deploy.tar.gz`; repository visibility alone does not set GHCR visibility. Deployment uses the [versioned bundle](../deploy/docker/README.md), not a developer checkout.
 
 <a id="dev-image"></a>
 ### Development images
 
-Run **Dev image** on workflow ref `main`, setting `source_branch` to an existing branch in this repository. The source branch needs container build/deployment files but need not contain the workflow. It is resolved to a fixed SHA; tags, arbitrary SHAs and fork PR refs are not inputs.
+Run **Dev image** on workflow ref `main`, setting `source_branch` to an existing branch in this repository. The source branch needs the version-2 container build/deployment files but need not contain the workflow. It is resolved to a fixed SHA; tags, arbitrary SHAs and fork PR refs are not inputs.
 
 ```sh
 gh workflow run dev-image.yml --repo zhengui666/QuaZonai --ref main \
@@ -33,10 +33,15 @@ The read-only build uses the workflow's [container action](../.github/actions/co
 
 Use the digest in the publisher's successful Summary. A publisher retry reuses the same build artifact/tag; rerunning the build resolves the branch again. Build artifacts expire after seven days. Both workflows must succeed. This channel creates no Release or deployment bundle and never switches an installation; dev tags are not inputs to `update.sh`.
 
+<a id="codex-image"></a>
+### Codex images
+
+Run the [Codex image workflow](../.github/workflows/codex-image.yml) from `main` with an exact official Codex version. It builds the existing Dockerfile, checks the native sandbox and App Server protocol, then publishes `ghcr.io/zhengui666/quazonai-codex:<version>`. Stable successful publications may advance `latest`; prereleases and older versions do not. The application release manifest freezes a digest. Installation and `codex-update.sh` pull published images; npm availability alone does not imply a published image.
+
 <a id="scientific-runtime"></a>
 ## Scientific Runtime
 
-The application bundle does not provision the scientific gateway, job image or catalogs. Scientific jobs run in the native Docker image; the gateway is a host process that owns its journal and Docker connection. Use the matching [image build](project.md#runtime-image-build) and gateway binary from the application's source revision.
+The installer pulls the manifest's scientific job image and extracts the matching gateway from the application image. The gateway is a host process that owns its journal and Docker connection; real catalogs and its private configuration remain independently managed. Use the installed `runtime.sh` and `release.json.runtime_image`, not a source checkout.
 
 Use a Linux x86_64 Runtime owner with local Docker Engine/cgroup v2 and the gateway's native ABI libraries. Choose absolute, owner-managed paths and write a private `runtime.json` matching [RuntimeConfig](../apps/runtime/src/config.rs). Replace every example path and image placeholder before use:
 
@@ -48,10 +53,10 @@ Use a Linux x86_64 Runtime owner with local Docker Engine/cgroup v2 and the gate
   "docker_socket": "/var/run/docker.sock",
   "bind": "127.0.0.1:8790",
   "images": [
-    {"job_kind": "DATA_VALIDATE", "image_ref": "REPLACE_WITH_NATIVE_IMAGE_ID"},
-    {"job_kind": "ALPHA_EVALUATE", "image_ref": "REPLACE_WITH_NATIVE_IMAGE_ID"},
-    {"job_kind": "PORTFOLIO_BUILD", "image_ref": "REPLACE_WITH_NATIVE_IMAGE_ID"},
-    {"job_kind": "PORTFOLIO_SIMULATE", "image_ref": "REPLACE_WITH_NATIVE_IMAGE_ID"}
+    {"job_kind": "DATA_VALIDATE", "image_ref": "REPLACE_WITH_RELEASE_RUNTIME_DIGEST"},
+    {"job_kind": "ALPHA_EVALUATE", "image_ref": "REPLACE_WITH_RELEASE_RUNTIME_DIGEST"},
+    {"job_kind": "PORTFOLIO_BUILD", "image_ref": "REPLACE_WITH_RELEASE_RUNTIME_DIGEST"},
+    {"job_kind": "PORTFOLIO_SIMULATE", "image_ref": "REPLACE_WITH_RELEASE_RUNTIME_DIGEST"}
   ],
   "catalogs": [],
   "max_cpu": 2,
@@ -68,14 +73,14 @@ The state parent belongs to the Runtime owner; the state directory is mode 0700.
 
 Each catalog registration is `{ "root": "/absolute/immutable/catalog", "metadata_file": "/absolute/catalog-metadata.json" }`. The metadata must satisfy [RuntimeCatalogMetadataV1](../crates/contracts/src/catalogs.rs), including the original snapshot/version, partition, instruments, historical membership, quality and availability provenance. Roots must not overlap each other or the state, credential or Docker socket. Empty catalogs permit configuration inspection, not a research dataset; missing data remains missing.
 
-From the matching build directory, check and start the gateway using the edited configuration:
+Set every `images[].image_ref` above to the installed `<installation>/current/deployment/release.json` field `runtime_image`. Check and start the image-extracted gateway using the edited configuration:
 
 ```sh
-target/release/runtime doctor --config /absolute/runtime.json
-target/release/runtime serve --config /absolute/runtime.json
+bash "$HOME/.local/share/quazonai/current/deployment/runtime.sh" doctor --config /absolute/runtime.json
+bash "$HOME/.local/share/quazonai/current/deployment/runtime.sh" serve --config /absolute/runtime.json
 ```
 
-`runtime doctor` checks the real Docker/image/resource prerequisites. `runtime serve` uses the original state directory; its existing-task status remains available during a Docker outage, but new execution cannot succeed without Docker. Use the same owner, binary/configuration and paths when supervising or restarting it. Neither command replaces execution/cancellation/restore tests.
+`runtime doctor` checks the real Docker/image/resource prerequisites. `runtime serve` uses the original state directory; its existing-task status remains available during a Docker outage, but new execution cannot succeed without Docker. Use the same installation owner, configuration and paths when supervising or restarting it; append `--directory` for a non-default installation. Before changing the application version, finish its jobs and stop the gateway. Preserve its journal/catalogs, select the target manifest's `runtime_image`, restart through that version's helper, and probe capabilities again. Neither command replaces execution/cancellation/restore tests.
 
 The gateway accepts only a loopback listener. Expose it through an existing same-host trusted HTTPS reverse proxy whose origin is reachable from both the Docker API container and host Worker. Inside the API container, `127.0.0.1` is not the host, and the gateway has no Unix-socket HTTP listener. Preserve certificate/Host validation. After configuration changes, probe the new capabilities; existing jobs retain their original launch and remote identity.
 

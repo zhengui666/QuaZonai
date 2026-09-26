@@ -1,0 +1,51 @@
+name: Codex image
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact official Codex npm version to build and publish.
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: quazonai-versioned-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'zhengui666/QuaZonai' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    env:
+      CODEX_VERSION: ${{ inputs.version }}
+      CODEX_CONTAINER_TEST_IMAGE: quazonai-codex-publish:${{ github.run_id }}-${{ github.run_attempt }}
+      RUSTUP_TOOLCHAIN: '1.98.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Build and test the exact native image
+        run: |
+          set -euo pipefail
+          sudo apparmor_parser -r deploy/docker/codex.apparmor
+          python3 -B deploy/docker/release.py build-codex --codex-version "$CODEX_VERSION" --image "$CODEX_CONTAINER_TEST_IMAGE"
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          cargo test --locked -p server --features codex-container --test codex_container -- --test-threads=1
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the verified Codex image
+        run: python3 -B deploy/docker/release.py publish-codex --codex-version "$CODEX_VERSION" --image "$CODEX_CONTAINER_TEST_IMAGE"
+      - name: Remove test containers and namespace profile
+        if: always()
+        run: |
+          docker ps --all --quiet --filter "label=io.quazonai.codex.image=$CODEX_CONTAINER_TEST_IMAGE" | xargs --no-run-if-empty docker rm --force
+          sudo apparmor_parser -R deploy/docker/codex.apparmor

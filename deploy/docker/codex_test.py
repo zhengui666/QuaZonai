@@ -1,5 +1,5 @@
 """Version selection and switching failures; real containers are covered by smoke.py."""
-import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -17,7 +17,8 @@ class CodexTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        self.config = {'root': str(self.root), 'codex_image': 'quazonai-codex:test',
+        self.config = {'root': str(self.root), 'codex_runtime_image': 'quazonai-codex:test',
+                       'codex_image': 'ghcr.io/zhengui666/quazonai-codex@sha256:' + 'a' * 64,
                        'docker_socket': '/var/run/docker.sock', 'bundle': str(manage.BUNDLE)}
         self.env = self.root / '.env'
         self.env.write_text('# keep this comment\nCODEX_VERSION=0.156.1\n')
@@ -33,25 +34,32 @@ class CodexTests(unittest.TestCase):
                     codex.read_env(self.env)
         self.assertFalse((self.root / 'attack').exists())
 
-    def test_latest_is_resolved_before_it_becomes_a_build_argument(self):
-        with patch.object(codex.urllib.request, 'urlopen', return_value=io.BytesIO(b'{"version":"0.157.0"}')) as registry:
-            self.assertEqual(codex.requested_version('latest'), '0.157.0')
-            registry.assert_called_once_with('https://registry.npmjs.org/@openai%2Fcodex/latest', timeout=30)
-        with patch.object(codex.urllib.request, 'urlopen') as registry:
-            self.assertEqual(codex.requested_version('0.156.1'), '0.156.1')
-            registry.assert_not_called()
+    def test_version_selection_is_a_registry_selector_not_an_npm_request(self):
+        self.assertEqual(codex.requested_version('latest'), 'latest')
+        self.assertEqual(codex.requested_version('0.156.1'), '0.156.1')
+        for value in ('^0.157.0', 'file:/tmp/package', '1.x', 'v0.157.0'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                codex.requested_version(value)
+        self.assertNotIn('registry.npmjs.org', Path(codex.__file__).read_text())
+        self.assertFalse(hasattr(codex, 'build'))
 
-    def test_build_checks_actual_binary_before_returning_candidate(self):
+    def test_pull_freezes_the_actual_image_before_verifying_it(self):
         image = 'sha256:' + 'a' * 64
-        def docker(config, *args, **kwargs):
-            if args[0] == 'build':
-                Path(args[args.index('--iidfile') + 1]).write_text(image)
-                self.assertIn('CODEX_VERSION=0.157.0', args)
-                self.assertEqual(list(Path(args[-1]).iterdir()), [Path(args[args.index('--iidfile') + 1])])
-                return ''
-            return 'codex-cli 0.156.1'
-        with patch.object(codex, 'docker', side_effect=docker), self.assertRaisesRegex(ValueError, 'does not match'):
-            codex.build(self.config, '0.157.0', manage.BUNDLE)
+        for version, reference in (('latest', None), ('0.157.0', self.config['codex_image'])):
+            calls = []
+            def docker(config, *args, **kwargs):
+                calls.append(args)
+                if args[0] == 'pull':
+                    return ''
+                return json.dumps([{'Id': image, 'Os': 'linux', 'Architecture': 'amd64',
+                                    'Config': {'Labels': {'org.opencontainers.image.version': '0.157.0'}}}])
+            with self.subTest(version=version), patch.object(codex, 'docker', side_effect=docker), patch.object(
+                codex, 'verify_candidate'
+            ) as verify:
+                self.assertEqual(codex.pull_candidate(self.config, version, reference=reference), ('0.157.0', image))
+                self.assertEqual(calls[0], ('pull', reference or 'ghcr.io/zhengui666/quazonai-codex:latest'))
+                verify.assert_called_once_with(self.config, '0.157.0', image)
+                self.assertFalse(any('build' in call for call in calls))
 
     def test_reported_env_write_failure_restores_original_image_and_text(self):
         before = self.env.read_text()
@@ -69,17 +77,19 @@ class CodexTests(unittest.TestCase):
             codex.switch(self.config, '0.157.0', 'candidate-image', before)
         self.assertEqual(self.env.read_text(), before)
         self.assertEqual([call.args[1:] for call in docker.call_args_list], [
-            ('image', 'tag', 'candidate-image', self.config['codex_image']),
-            ('image', 'tag', 'old-image', self.config['codex_image']),
+            ('image', 'tag', 'candidate-image', self.config['codex_runtime_image']),
+            ('image', 'tag', 'old-image', self.config['codex_runtime_image']),
         ])
 
     def test_sandbox_failure_does_not_activate_a_version_only_candidate(self):
         before = self.env.read_text()
         image = 'sha256:' + 'a' * 64
         def docker(config, *args, **kwargs):
-            if args[0] == 'build':
-                Path(args[args.index('--iidfile') + 1]).write_text(image)
+            if args[0] == 'pull':
                 return ''
+            if args[:2] == ('image', 'inspect'):
+                return json.dumps([{'Id': image, 'Os': 'linux', 'Architecture': 'amd64',
+                                    'Config': {'Labels': {'org.opencontainers.image.version': '0.157.0'}}}])
             if args[-1] == '--version':
                 return 'codex-cli 0.157.0'
             self.assertIn('sandbox', args)
@@ -97,19 +107,20 @@ class CodexTests(unittest.TestCase):
         switch.assert_not_called()
         self.assertEqual(self.env.read_text(), before)
 
-    def test_unchanged_build_failure_does_not_reach_the_switch(self):
+    def test_failed_pull_has_no_build_or_switch_fallback(self):
         before = self.env.read_text()
         with patch.object(manage, 'configuration', return_value=self.config), patch.object(
-            codex, 'build', side_effect=subprocess.CalledProcessError(1, ['docker', 'build'])
-        ), patch.object(codex, 'switch') as switch, self.assertRaises(subprocess.CalledProcessError):
+            codex, 'docker', side_effect=subprocess.CalledProcessError(1, ['docker', 'pull'])
+        ) as docker, patch.object(codex, 'switch') as switch, self.assertRaises(subprocess.CalledProcessError):
             codex.update(self.root, '0.157.0')
         switch.assert_not_called()
+        docker.assert_called_once_with(self.config, 'pull', 'ghcr.io/zhengui666/quazonai-codex:0.157.0')
         self.assertEqual(self.env.read_text(), before)
 
     def test_active_runs_or_sessions_leave_shared_version_untouched(self):
         for active in ('run', 'session'):
             with self.subTest(active=active), patch.object(manage, 'configuration', return_value=self.config), patch.object(
-                codex, 'build', return_value='candidate'
+                codex, 'pull_candidate', return_value=('0.157.0', 'candidate')
             ), patch.object(manage, 'require_idle', side_effect=ValueError('active run') if active == 'run' else None), patch.object(
                 codex, 'require_stopped', side_effect=ValueError('active session') if active == 'session' else None
             ), patch.object(codex, 'switch') as switch, self.assertRaises(ValueError):
@@ -147,7 +158,7 @@ class CodexTests(unittest.TestCase):
             with patch.dict(os.environ, {'DOCKER_HOST': 'unix://' + str(endpoint)}):
                 configured = manage.container_codex_configuration(legacy)
         self.assertEqual({key: configured[key] for key in legacy}, legacy)
-        self.assertEqual(configured['codex_image'], 'quazonai-codex:quazonai-existing')
+        self.assertEqual(configured['codex_runtime_image'], 'quazonai-codex:quazonai-existing')
         self.assertEqual(configured['docker_socket'], str(endpoint))
         self.assertEqual(marker.read_text(), 'existing native directory\n')
         # The target bundle's public entry selects its new manager directly;
@@ -158,6 +169,49 @@ class CodexTests(unittest.TestCase):
             manage.main()
         upgrade.assert_called_once_with(Path(legacy['root']))
         old_download.assert_not_called()
+
+
+    def test_binary_version_and_platform_mismatches_are_not_switched(self):
+        image = 'sha256:' + 'a' * 64
+        for actual, platform in (('0.156.1', 'amd64'), ('0.157.0', 'arm64')):
+            with self.subTest(actual=actual, platform=platform), patch.object(codex, 'docker', side_effect=[
+                '', json.dumps([{'Id': image, 'Os': 'linux', 'Architecture': platform,
+                                 'Config': {'Labels': {'org.opencontainers.image.version': actual}}}])
+            ]), patch.object(codex, 'verify_candidate') as verify, self.assertRaises(ValueError):
+                codex.pull_candidate(self.config, '0.157.0')
+            verify.assert_not_called()
+        with patch.object(codex, 'docker', return_value='codex-cli 0.156.1'), self.assertRaisesRegex(ValueError, 'does not match'):
+            codex.verify_candidate(self.config, '0.157.0', image)
+
+    def test_default_install_uses_manifest_without_an_env_or_build_file(self):
+        self.env.unlink()
+        self.config['codex_version'] = '0.157.0'
+        with patch.object(codex, 'image_id', return_value=None), patch.object(
+            codex, 'require_stopped'
+        ), patch.object(codex, 'pull_candidate', return_value=('0.157.0', 'candidate')) as pull, patch.object(
+            codex, 'switch'
+        ) as switch:
+            codex.prepare(self.config, self.root)
+        pull.assert_called_once_with(self.config, '0.157.0', reference=self.config['codex_image'])
+        switch.assert_called_once_with(self.config, '0.157.0', 'candidate', None)
+
+    def test_application_upgrade_preserves_independent_codex_selection(self):
+        self.config['codex_version'] = '0.157.0'
+        with patch.object(codex, 'image_id', return_value='existing'), patch.object(
+            codex, 'docker', return_value='0.156.1'
+        ), patch.object(codex, 'pull_candidate') as pull, patch.object(codex, 'switch') as switch:
+            codex.prepare(self.config, self.root)
+        pull.assert_not_called()
+        switch.assert_not_called()
+        self.assertEqual(codex.read_env(self.env)[0], '0.156.1')
+
+    def test_pending_update_refuses_independent_switch_before_download(self):
+        (self.root / 'pending.json').write_text('{}')
+        with patch.object(manage, 'configuration', return_value=self.config), patch.object(
+            codex, 'pull_candidate'
+        ) as pull, self.assertRaisesRegex(ValueError, 'pending'):
+            codex.update(self.root, 'latest')
+        pull.assert_not_called()
 
 
 if __name__ == '__main__':

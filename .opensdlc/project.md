@@ -37,20 +37,9 @@ For a contract change, edit Rust DTOs/handlers, run the relevant native schema e
 `npm --prefix apps/web run dev` is a development UI proxy for a real local API. Browser behavior is verified by the native harness, not a substitute backend. Scientific samples belong to tests, not product entrypoints.
 
 <a id="runtime-image-build"></a>
-### Scientific Runtime image build
+### Image production
 
-The native job image and its matching gateway are separate from the application release bundle. Build them from the selected application's source revision on Linux x86_64 with local Docker Engine/cgroup v2, Node.js, Git, GNU `timeout`, `ldd`, a native compiler/linker and the pinned Rust toolchain. Work from the repository root:
-
-```sh
-rustup toolchain install 1.98.1 --profile minimal --target wasm32-unknown-unknown
-rustup run 1.98.1 cargo build --locked --release -p job -p runtime
-assembly_parent=$(mktemp -d)
-node runtimes/native/build-native-image.mjs --profile release --output-dir "$assembly_parent/image"
-```
-
-[build-native-image.mjs](../runtimes/native/build-native-image.mjs) assembles a new directory outside the checkout. It includes the built job, pinned Rust/Wasm tooling, GNU timeout and their actual native libraries, not the working tree or private configuration. Its `image-id.txt` contains Docker's full `sha256:<64 lowercase hex digits>` image identity. Register that value; use native `docker image save` / `docker image load` or a registry digest when transferring the image. Keep the matching gateway binary and its host ABI dependencies.
-
-Configure catalogs, credentials, resources and the gateway using [Runtime operations](operations.md#scientific-runtime). Rebuild the image after changing scientific code. Production images omit `--isolation-probe`; the [native workflow](../.github/workflows/native-runtime.yml) adds that CI-only executable for real execution, cancellation, limits and restore checks. Image assembly or `--version` alone is not those checks.
+[Container CI](../.github/actions/container/action.yml) builds the application, scientific job and Codex images, then installs those already-built artifacts. [Version publishing](../.github/workflows/release-version.yml) pushes the tested images and validates GHCR installation on a fresh runner before publishing the deployment bundle. The job-image assembler lives in [runtimes/native](../runtimes/native); deployment uses the manifest and installed [Runtime entry](operations.md#scientific-runtime).
 
 <a id="conventions"></a>
 ## Conventions

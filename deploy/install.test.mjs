@@ -45,7 +45,7 @@ test('documented deployment entrypoints expose native help without creating an i
   };
   // Only native --help is executed. Docker, login, migration and the guide's
   // privileged commands are never invoked; real lifecycle tests live in smoke.py.
-  for (const script of ['deploy.sh', 'update.sh', 'codex-login.sh', 'codex-update.sh']) {
+  for (const script of ['deploy.sh', 'update.sh', 'codex-login.sh', 'codex-update.sh', 'runtime.sh']) {
     assert.ok(guide.includes(script), `Missing documented entrypoint: ${script}`);
     const help = succeeds('bash', [join(bundle, script), '--help'], options);
     assert.match(help, /usage:/i);
@@ -57,4 +57,15 @@ test('documented deployment entrypoints expose native help without creating an i
     assert.match(help, /usage:/i);
   }
   assert.deepEqual(await readdir(root), [], 'Help must not initialize state or credentials');
+});
+
+test('deployment routes use prebuilt images without checkout or local image production', () => {
+  for (const document of documents) {
+    for (const [, block] of document.matchAll(/```sh\n([\s\S]*?)\n```/g)) {
+      assert.doesNotMatch(block, /\bgit\s+clone\b|\bcargo\s+(?:build|run|install)\b|\bdocker\s+(?:build|buildx|image\s+(?:build|save|load))\b|\btarget\/release\/runtime\b/);
+    }
+  }
+  assert.match(guide, /GHCR/);
+  assert.match(guide, /runtime\.sh/);
+  assert.doesNotMatch(guide, /project\.md#runtime-image-build/);
 });
