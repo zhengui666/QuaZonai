@@ -24,9 +24,7 @@ Wire 类型属于 `contracts`，纯规则属于 `domain`，事务属于 `store`�
 
 ## 文件与执行
 
-网页 ChatGPT 编写源码、测试、配置、脚本和文档。本机 Codex 仅通过 CodexPro handoff 执行授权的 Shell、验证、Git/GitHub 和环境操作，请求模型固定为 `gpt-5.6-luna`；不得代写或修复文件。网页端不直接调用项目 bash。编辑、验证、发布串行，失败交回作者修复。
-
-任务入口为 `.opensdlc/tasks/<task-id>/task.md`，链接实际 Issue/PR。仅记录本任务必要信息；共享合同维护在 `.opensdlc`，历史由 Git 保留。
+任务入口为 `.opensdlc/tasks/<task-id>/task.md`；共享合同维护在 `.opensdlc`，历史由 Git 保留。
 
 ## Code Review Rules
 
