@@ -42,7 +42,7 @@ jobs:
           image: ${{ env.LOCAL_IMAGE }}
           revision: ${{ inputs.revision }}
           version: ${{ inputs.version }}
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -82,7 +82,7 @@ jobs:
         with:
           name: prebuilt-${{ inputs.version }}-${{ inputs.revision }}
           path: ${{ runner.temp }}/release-assets
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -136,7 +136,7 @@ jobs:
         with:
           name: prebuilt-${{ inputs.version }}-${{ inputs.revision }}
           path: ${{ runner.temp }}/release-assets
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

@@ -37,7 +37,7 @@ jobs:
           python3 -B deploy/docker/release.py build-codex --codex-version "$CODEX_VERSION" --image "$CODEX_CONTAINER_TEST_IMAGE"
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
           cargo test --locked -p server --features codex-container --test codex_container -- --test-threads=1
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
