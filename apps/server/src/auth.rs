@@ -12,6 +12,7 @@ use contracts::{auth::*, Id, SchemaV1};
 use integrations::authentication::{
     capability_verifier, format_cli_token, password_verifier, random_capability, verify_password,
 };
+use std::{collections::VecDeque, time::Instant};
 use store::{
     auth::{AuthSnapshot, LoginAuthority},
     StoreError,
@@ -118,11 +119,37 @@ async fn password_snapshot(state: &AppState, password: String) -> Result<AuthSna
         .password_verifier
         .clone()
         .ok_or(StoreError::InvalidCredentials)?;
-    let valid = crypto(state, move || Ok(verify_password(&password, &verifier))).await?;
+    let failures = state.password_failures.clone();
+    let valid = crypto(state, move || {
+        // ponytail: serialize this single-owner API's rare password checks; use a
+        // shared limiter if deployment ever gains multiple API replicas.
+        // Lock only on the blocking thread, through verification and recording,
+        // so concurrent or cancelled requests cannot bypass the failure budget.
+        let mut failures = failures.lock().map_err(|_| ApiError::internal())?;
+        password_budget(&mut failures, Instant::now())?;
+        let valid = verify_password(&password, &verifier);
+        if !valid {
+            failures.push_back(Instant::now());
+        }
+        Ok(valid)
+    })
+    .await?;
     if !valid {
         return Err(StoreError::InvalidCredentials.into());
     }
     Ok(snapshot)
+}
+
+fn password_budget(failures: &mut VecDeque<Instant>, now: Instant) -> Result<(), ApiError> {
+    failures.retain(|failed| now.duration_since(*failed).as_secs() < 60);
+    if failures.len() >= 5 {
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "PASSWORD_RATE_LIMITED",
+            "密码验证尝试过多，请在一分钟后重试。",
+        ));
+    }
+    Ok(())
 }
 
 #[utoipa::path(post,path="/api/v2/auth/setup",tag="Authentication",request_body=PasswordLogin,responses((status=200,body=BrowserSession),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
@@ -132,6 +159,15 @@ pub async fn setup(
     body: Result<Json<PasswordLogin>, JsonRejection>,
 ) -> Result<Json<BrowserSession>, ApiError> {
     let request = json(body)?;
+    if state
+        .store
+        .authentication_snapshot()
+        .await?
+        .password_verifier
+        .is_some()
+    {
+        return Err(StoreError::Conflict.into());
+    }
     let verifier = crypto(&state, move || {
         password_verifier(&request.password).map_err(|_| ApiError::validation())
     })
@@ -240,4 +276,22 @@ pub async fn revoke_cli_device(
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     state.store.revoke_cli_device(login.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_password_budget_expires_without_denied_requests_extending_it() {
+        let now = Instant::now();
+        let mut failures = VecDeque::from([now; 5]);
+        for seconds in [0, 1, 30, 59] {
+            assert!(
+                password_budget(&mut failures, now + std::time::Duration::from_secs(seconds))
+                    .is_err()
+            );
+        }
+        assert!(password_budget(&mut failures, now + std::time::Duration::from_secs(60)).is_ok());
+    }
 }

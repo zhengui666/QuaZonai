@@ -14,6 +14,101 @@ fn password(value: &str, remember: bool) -> Value {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn password_failures_share_a_budget_without_blocking_existing_authority(pool: PgPool) {
+    let f = fixture(pool).await;
+    let cookie = local_session(&f).await.cookie.unwrap();
+    let cli_body =
+        |value: &str| json!({"schema_version":1,"password":value,"name":"Rate limit test"});
+    let device = call(
+        &f,
+        "POST",
+        "/api/v2/auth/cli/login",
+        cli_body("native-test-password"),
+        None,
+    )
+    .await;
+    assert_eq!(device.status, StatusCode::CREATED);
+    let token = device.body["token"].as_str().unwrap();
+    for index in 0..5 {
+        let (route, body) = if index % 2 == 0 {
+            ("/api/v2/auth/login", password("wrong-password", false))
+        } else {
+            ("/api/v2/auth/cli/login", cli_body("wrong-password"))
+        };
+        assert_eq!(
+            call(&f, "POST", route, body, None).await.status,
+            StatusCode::UNAUTHORIZED
+        );
+        if index == 2 {
+            assert_eq!(
+                call(
+                    &f,
+                    "POST",
+                    "/api/v2/auth/login",
+                    password("native-test-password", false),
+                    None
+                )
+                .await
+                .status,
+                StatusCode::OK
+            );
+        }
+    }
+    for (route, body, session) in [
+        (
+            "/api/v2/auth/login",
+            password("native-test-password", false),
+            None,
+        ),
+        (
+            "/api/v2/auth/cli/login",
+            cli_body("native-test-password"),
+            None,
+        ),
+        (
+            "/api/v2/auth/password",
+            json!({"schema_version":1,"current_password":"native-test-password","new_password":"new-password"}),
+            Some(cookie.as_str()),
+        ),
+    ] {
+        let limited = call(&f, "POST", route, body, session).await;
+        assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(limited.body["code"], "PASSWORD_RATE_LIMITED");
+        assert_eq!(limited.body["retryable"], true);
+    }
+    assert_eq!(
+        call(
+            &f,
+            "GET",
+            "/api/v2/auth/session",
+            Value::Null,
+            Some(&cookie)
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        bearer(&f, token, "GET", "/api/v2/auth/cli/session", Value::Null)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &f,
+            "POST",
+            "/api/v2/auth/setup",
+            password("replacement-password", false),
+            None
+        )
+        .await
+        .status,
+        StatusCode::CONFLICT
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn anonymous_setup_password_login_and_fixed_cookie_deadlines(pool: PgPool) {
     let f = fixture(pool.clone()).await;
     let anonymous = call(&f, "GET", "/api/v2/projects", Value::Null, None).await;

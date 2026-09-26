@@ -44,7 +44,12 @@ use axum::{
 use contracts::Id;
 use error::ApiError;
 use integrations::secrets::SecretVault;
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    collections::VecDeque,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 use store::Store;
 use tokio::sync::Semaphore;
 use tower_sessions::{
@@ -116,6 +121,7 @@ pub struct AppState {
     pub vault: Arc<SecretVault>,
     policy: WebPolicy,
     pub crypto_slots: Arc<Semaphore>,
+    pub(crate) password_failures: Arc<Mutex<VecDeque<Instant>>>,
     pub machine_crypto_slots: Arc<Semaphore>,
     pub run_stream_slots: Arc<Semaphore>,
     pub artifact_store: Option<Arc<integrations::artifacts::ArtifactStore>>,
@@ -135,6 +141,7 @@ impl AppState {
             vault: Arc::new(vault),
             policy,
             crypto_slots: Arc::new(Semaphore::new(2)),
+            password_failures: Arc::default(),
             machine_crypto_slots: Arc::new(Semaphore::new(2)),
             run_stream_slots: Arc::new(Semaphore::new(32)),
             artifact_store: None,
