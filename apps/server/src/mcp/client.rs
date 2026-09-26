@@ -308,7 +308,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn origin_matches_the_local_console_without_ambient_authority() {
+    fn origin_matches_the_configured_console_without_ambient_authority() {
         for url in [
             "http://192.168.1.1",
             "http://research.example",
@@ -333,6 +333,6 @@ mod tests {
             "http://localhost:8081/"
         );
         assert!(origin("https://localhost", false).is_ok());
-        assert!(origin("https://research.example", false).is_err());
+        assert!(origin("https://research.example", false).is_ok());
     }
 }

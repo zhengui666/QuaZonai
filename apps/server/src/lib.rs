@@ -686,7 +686,7 @@ codex_profiles::account::login_operation,codex_profiles::account::latest_operati
 data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
 data::revisions,data::revision,data::register,data::universes,data::universe,data::validate,
-artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Local session",description="Automatic loopback browser sessions")))]
+artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Authentication",description="Password browser sessions and revocable CLI devices")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
     let mut document = HttpContracts::openapi();
@@ -717,7 +717,18 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                 .build(),
         ),
     );
-    components.add_security_scheme("MachineBearer",SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).bearer_format("qz2.UUIDv7.opaque-capability").description(Some("Scoped project/run/downstream capability. Never combine with browser Cookie." )).build()));
+    components.add_security_scheme(
+        "MachineBearer",
+        SecurityScheme::Http(
+            HttpBuilder::new()
+                .scheme(HttpAuthScheme::Bearer)
+                .bearer_format("qz2.UUIDv7.opaque-capability")
+                .description(Some(
+                    "Scoped project/run/downstream capability. Never combine with browser Cookie.",
+                ))
+                .build(),
+        ),
+    );
     components.add_security_scheme("OperatorCommandGrant",SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description("X-Operator-Grant","One-time local CLI grant bound to this credential, exact operation, target and full nonsecret request. No Agent/automation grant issuance."))));
     for (path, item) in &mut document.paths.paths {
         let anonymous = matches!(

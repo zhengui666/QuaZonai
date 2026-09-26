@@ -23397,8 +23397,8 @@
         "type": "apiKey"
       },
       "MachineBearer": {
-        "bearerFormat": "qz2/qzc.UUIDv7.opaque-capability",
-        "description": "Opaque native capability; qzc identifies a revocable owner CLI device, qz2 retains scoped project/run/downstream authority. Never combine with browser Cookie.",
+        "bearerFormat": "qz2.UUIDv7.opaque-capability",
+        "description": "Scoped project/run/downstream capability. Never combine with browser Cookie.",
         "scheme": "bearer",
         "type": "http"
       },
@@ -40495,8 +40495,8 @@
   },
   "tags": [
     {
-      "description": "Automatic loopback browser sessions",
-      "name": "Local session"
+      "description": "Password browser sessions and revocable CLI devices",
+      "name": "Authentication"
     }
   ]
 }

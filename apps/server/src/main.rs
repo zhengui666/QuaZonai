@@ -562,7 +562,7 @@ mod local_origin_tests {
     use super::*;
 
     #[test]
-    fn native_missions_use_the_authoritative_local_api_origin() {
+    fn native_missions_use_the_authoritative_api_origin() {
         for origin in [
             "http://localhost:8081",
             "http://127.0.0.1:8080",
@@ -589,9 +589,16 @@ mod local_origin_tests {
                 development_http
             )
             .is_err());
-            assert!(
-                mission_origin(Some("https://remote.example"), None, development_http).is_err()
+            assert_eq!(
+                mission_origin(Some("https://research.example"), None, development_http).unwrap(),
+                "https://research.example"
             );
+            assert!(mission_origin(
+                Some("https://research.example"),
+                Some("https://different.example"),
+                development_http
+            )
+            .is_err());
             assert!(mission_origin(Some(""), None, development_http).is_err());
         }
     }

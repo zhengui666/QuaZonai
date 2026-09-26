@@ -38,12 +38,21 @@ Executed locally against an isolated PostgreSQL 18/PGMQ instance on port 55439:
 - `cargo test -p server --test auth_http --test control_http`: 13 passed, covering password admission, session deadlines, logout/change, device revocation, CSRF and existing scoped authority.
 - `cargo test -p store --test auth --test browser_epoch --test control --test upgrade_cutover`: auth/epoch/control passed; upgrade tests initially exposed stale epoch expectations. After accounting for the appended password migration, all eight upgrade tests passed. Rollback, history and lock assertions remain intact.
 - Native CLI help, Skill package, real terminal login and transport checks passed (24 tests), including a password equal to `schema_version`, hidden input, private profile reuse, writes without grants, device revocation and rejection of explicit owner-token credential files. Five experiment HTTP tests also passed.
-- Web types, 542 unit tests and production build passed. Four separate ChatGPT authentication UI tests passed. Native browser acceptance found and drove fixes for empty-table contrast, modal-exit timing and keyboard access to horizontally scrolling empty tables; the final run is recorded below when complete.
+- Migration/recovery rerun: nine passed, including transaction rollback and a real native archive restore. Crypto/token unit checks: two passed. Server library/binary unit checks: 35 passed. Old Mission tests now accept the configured public HTTPS origin, reject mismatched deployment origins and preserve all existing scoped-token and remote HTTP restrictions.
+- Web types, 542 unit tests and production build passed. Four separate ChatGPT authentication UI tests passed. Native browser acceptance found and drove fixes for empty-table contrast, modal-exit timing and keyboard access to horizontally scrolling empty tables. The final real Rust/PostgreSQL/Caddy/systemd run passed all six browser scenarios and four cleanup tests, including restart persistence, password/device flows, PWA and accessibility. The four new 1440px/390px setup/settings screenshots were visually inspected; fields were empty and artifacts published only after successful runtime cleanup.
+- `cargo fmt --all -- --check` and `cargo clippy --locked --workspace --all-targets --features server/native-codex,runtime/native-oci -- -D warnings` passed.
 - Pinned lychee 0.24.2: zero broken local links; deployment guide/help tests: four passed; smoke script parses successfully.
 
-The complete migration/recovery rerun, workspace Clippy, final native browser acceptance and hosted CI/review remain pending at this checkpoint. These pending results are not passes. Real model-driven service Skill rollouts are unrun: no disposable model runner/comparative baseline is configured; the following independent review is source/document verification only.
+Native schema regeneration, unchanged generated Web files and 2,112 decimal/bigint/fraction wire cases passed. Hosted CI and final-Head review belong to the PR record. Real model-driven service Skill rollouts are unrun: no disposable model runner/comparative baseline is configured; the following independent review is source/document verification only.
 
 <a id="review"></a>
 ## Independent review
 
 A fresh read-only verifier inspected backend admission/revocation/restore, Web flows and portable Skill instructions. Fixed findings: native browser CLI registration needed Origin and HTTP 201; container smoke needed explicit password admission; successful CLI responses wrongly treated protocol keys matching the password as a leak; explicit owner credential files differed between preview and execution. The verifier reread the CLI fixes at e5d0b5ef and found both resolved without new findings. Bound Mission failure still returns to its launcher, revoked machines require private terminal login, and report text cannot authorize credential access. This is separate from GitHub final-Head review.
+
+The verifier also traced every shared origin-policy caller and confirmed public HTTPS remains deployment-controlled: Mission start/resume passes the exact configured origin, the model cannot change it, PUBLIC_URL/MISSION_API_ORIGIN mismatches fail, and both Mission consumers still reject owner-device tokens. No isolation regression was identified.
+
+<a id="delivery"></a>
+## Delivery
+
+The appended migration invalidates historical automatic browser sessions. Existing installations set their password on the first visit after upgrade. Password changes end browser sessions; CLI devices remain until explicitly revoked, including by restore cutover. No production installation, merge or deployment was performed. The PR owns hosted CI/review evidence and remains the reviewable delivery endpoint.
