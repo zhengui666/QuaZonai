@@ -316,11 +316,13 @@ async function main() {
   stages.push({ name: 'real-api-ready', exit_code: 0 });
 
   const fixture = resolve(privateDir, 'fixture.json');
+  const browserPassword = randomBytes(24).toString('hex');
+  privateValues.add(browserPassword);
   const browser = async (phase) => {
-    await writeFile(fixture, JSON.stringify({ baseUrl, phase, redactionsFile }), { mode: 0o600 });
+    await writeFile(fixture, JSON.stringify({ baseUrl, phase, redactionsFile, password: browserPassword }), { mode: 0o600 });
     await run(`browser-${phase}`, process.execPath, [resolve(web, 'node_modules/@playwright/test/cli.js'),
       'test', '--config', 'playwright.config.ts'], {
-      cwd: web, timeout: 420_000,
+      cwd: web, timeout: 600_000,
       env: { ...childEnv, QUAZONAI_WEB_E2E_FIXTURE: fixture, QUAZONAI_WEB_E2E_ORIGIN: baseUrl },
     });
   };

@@ -14,7 +14,7 @@ if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: '**/native-console.spec.ts',
+  testMatch: ['**/native-auth.spec.ts', '**/native-console.spec.ts'],
   // Playwright can emit error-context.md even with screenshots/trace disabled.
   // Keep every raw failure artifact inside the harness-owned private directory.
   outputDir: resolve(dirname(fixture), 'playwright-output'),

@@ -4,6 +4,7 @@ import { responseKind, validateDecimal, validateProblem, validateResponse } from
 
 export type Schema = components['schemas'];
 export type Problem = Schema['Problem'];
+export const authenticationEvents = new EventTarget();
 
 export class ApiFailure extends Error {
   constructor(
@@ -31,11 +32,15 @@ export async function responseFailure(response: Response, schemaPath: string, me
   if (declared) {
     try { value = await response.json(); } catch { value = undefined; }
   }
+  let failure: ApiFailure;
   if (declared && validateProblem(value) && value.status === response.status
     && validateResponse(schemaPath, method, response.status, value, contentType)) {
-    return new ApiFailure(value.code, value.detail, response.status, value, retryAt(response.headers.get('retry-after')));
+    failure = new ApiFailure(value.code, value.detail, response.status, value, retryAt(response.headers.get('retry-after')));
+  } else failure = new ApiFailure('HTTP_CONTRACT_ERROR', `响应无效（HTTP ${response.status}）`, response.status);
+  if (response.status === 401 && ['AUTH_REQUIRED', 'HTTP_CONTRACT_ERROR'].includes(failure.code)) {
+    authenticationEvents.dispatchEvent(new Event('required'));
   }
-  return new ApiFailure('HTTP_CONTRACT_ERROR', `响应无效（HTTP ${response.status}）`, response.status);
+  return failure;
 }
 
 export async function validateSuccessfulResponse(response: Response, schemaPath: string, method: string): Promise<Response> {
