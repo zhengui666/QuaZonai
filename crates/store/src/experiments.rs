@@ -121,7 +121,7 @@ async fn authorize(
     cycle: Id,
 ) -> Result<Author, StoreError> {
     match actor {
-        Actor::Browser { .. } => {
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
             authority::browser(tx, actor, true).await?;
             sqlx::query("SELECT id FROM app.projects WHERE id=$1 FOR UPDATE")
                 .bind(project.as_uuid())

@@ -161,7 +161,25 @@ pub async fn call(
     .await
 }
 pub async fn local_session(f: &Fixture) -> Reply {
-    let response = call(f, "GET", "/api/v2/auth/session", Value::Null, None).await;
+    let setup = f
+        .store
+        .authentication_snapshot()
+        .await
+        .unwrap()
+        .password_verifier
+        .is_none();
+    let response = call(
+        f,
+        "POST",
+        if setup {
+            "/api/v2/auth/setup"
+        } else {
+            "/api/v2/auth/login"
+        },
+        json!({"schema_version":1,"password":"native-test-password","remember_device":false}),
+        None,
+    )
+    .await;
     assert_eq!(response.status, StatusCode::OK, "{}", response.body);
     assert_eq!(response.headers[header::CACHE_CONTROL], "no-store");
     let attributes = response.headers[header::SET_COOKIE].to_str().unwrap();

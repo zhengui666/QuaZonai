@@ -1290,7 +1290,7 @@ async fn read_scope(
     actor: &Actor,
 ) -> Result<(Option<Id>, Option<Id>), StoreError> {
     match actor {
-        Actor::Browser { .. } => {
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
             authority::browser(tx, actor, false).await?;
             Ok((None, None))
         }
@@ -1460,12 +1460,12 @@ impl Store {
         // Browser authority locks precede project locks everywhere. Machine
         // checks follow the already locked project, avoiding SHARE->UPDATE
         // upgrade deadlocks between simultaneous machine cancellations.
-        if matches!(actor, Actor::Browser { .. }) {
+        if matches!(actor, Actor::Browser { .. } | Actor::OwnerDevice { .. }) {
             authority::browser(&mut tx, actor, false).await?;
         }
         let mut locked = lock_run(&mut tx, id).await?;
         let scope = match actor {
-            Actor::Browser { .. } => String::from("OPERATOR"),
+            Actor::Browser { .. } | Actor::OwnerDevice { .. } => String::from("OPERATOR"),
             Actor::Machine { .. } => {
                 let machine = authority::machine(&mut tx, actor, false).await?;
                 if !matches!(machine.kind, PrincipalKind::Cli | PrincipalKind::Automation) {

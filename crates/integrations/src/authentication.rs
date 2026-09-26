@@ -50,6 +50,28 @@ pub fn verify_capability(secret: &str, verifier: &str) -> bool {
     })
 }
 
+pub fn password_verifier(password: &str) -> Result<String, AuthenticationError> {
+    if password.chars().count() < 8 || password.len() > 1024 {
+        return Err(AuthenticationError::Invalid);
+    }
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|_| AuthenticationError::Primitive)
+}
+
+pub fn verify_password(password: &str, verifier: &str) -> bool {
+    if password.len() > 1024 || verifier.len() > 256 {
+        return false;
+    }
+    PasswordHash::new(verifier).is_ok_and(|hash| {
+        Argon2::default()
+            .verify_password(password.as_bytes(), &hash)
+            .is_ok()
+    })
+}
+
 /// A bounded routing identifier plus an opaque secret. This is not a JWT and
 /// carries no roles, scopes, expiry or client-selected authority.
 pub struct MachineToken<'a> {
@@ -58,11 +80,19 @@ pub struct MachineToken<'a> {
 }
 
 pub fn machine_token(value: &str) -> Result<MachineToken<'_>, AuthenticationError> {
+    parse_token(value, "qz2")
+}
+
+pub fn cli_token(value: &str) -> Result<MachineToken<'_>, AuthenticationError> {
+    parse_token(value, "qzc")
+}
+
+fn parse_token<'a>(value: &'a str, prefix: &str) -> Result<MachineToken<'a>, AuthenticationError> {
     if value.len() != 84 {
         return Err(AuthenticationError::Invalid);
     }
     let mut parts = value.split('.');
-    if parts.next() != Some("qz2") {
+    if parts.next() != Some(prefix) {
         return Err(AuthenticationError::Invalid);
     }
     let public = parts.next().ok_or(AuthenticationError::Invalid)?;
@@ -81,6 +111,15 @@ pub fn machine_token(value: &str) -> Result<MachineToken<'_>, AuthenticationErro
             .map_err(|_| AuthenticationError::Invalid)?,
         capability,
     })
+}
+
+pub fn format_cli_token(
+    public: contracts::Id,
+    secret: &str,
+) -> Result<String, AuthenticationError> {
+    let value = format!("qzc.{public}.{secret}");
+    cli_token(&value)?;
+    Ok(value)
 }
 
 pub fn format_machine_token(
