@@ -17,6 +17,7 @@ The selected components below explain integration and attribution. The generated
 | tower-sessions-0.15.0 | MIT | Rust authentication / HTTP / persistence / CLI integration |
 | tower-sessions-sqlx-store at d18c9bf76f1d4fb73130dbe5aa643197f14b5d2d | MIT | Official SQLx0.9 Postgres adapter; fixed upstream Git revision, not a new published crate release |
 | argon2-0.5.3 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |
+| rpassword-7.4.0 | Apache-2.0 | Native hidden terminal password input and terminal restoration; no custom terminal-control implementation |
 | chacha20poly1305-0.10.1 | Apache-2.0 OR MIT | Rust authentication / HTTP / persistence / CLI integration |
 | cap-std-3.4.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Rust authentication / HTTP / persistence / CLI integration |
 | clap-4.5.46 | MIT OR Apache-2.0 | Rust authentication / HTTP / persistence / CLI integration |

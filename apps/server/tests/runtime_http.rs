@@ -84,8 +84,9 @@ async fn local_deployment_readiness_never_creates_an_observation(pool: PgPool) {
     let f = fixture(pool.clone()).await;
     let path = format!("/api/v2/integrations/runtimes/{}/readiness", Id::new());
     let anonymous = call(&f, "GET", &path, Value::Null, None).await;
-    assert_eq!(anonymous.status, StatusCode::NOT_FOUND);
-    assert!(anonymous.cookie.is_some());
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(anonymous.body["code"], "AUTH_REQUIRED");
+    assert!(anonymous.cookie.is_none());
     let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
     let cookie = login.cookie.unwrap();

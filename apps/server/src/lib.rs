@@ -44,7 +44,12 @@ use axum::{
 use contracts::Id;
 use error::ApiError;
 use integrations::secrets::SecretVault;
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    collections::VecDeque,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 use store::Store;
 use tokio::sync::Semaphore;
 use tower_sessions::{
@@ -82,8 +87,8 @@ impl WebPolicy {
             Some(Host::Domain(name)) => name == "localhost",
             None => false,
         };
-        if !bind.ip().is_loopback() || !loopback_host {
-            return Err("QuaZonai requires a loopback bind and local PUBLIC_URL");
+        if !bind.ip().is_loopback() {
+            return Err("QuaZonai requires a loopback API bind");
         }
         let secure = match url.scheme() {
             "https" => true,
@@ -116,6 +121,7 @@ pub struct AppState {
     pub vault: Arc<SecretVault>,
     policy: WebPolicy,
     pub crypto_slots: Arc<Semaphore>,
+    pub(crate) password_failures: Arc<Mutex<VecDeque<Instant>>>,
     pub machine_crypto_slots: Arc<Semaphore>,
     pub run_stream_slots: Arc<Semaphore>,
     pub artifact_store: Option<Arc<integrations::artifacts::ArtifactStore>>,
@@ -135,6 +141,7 @@ impl AppState {
             vault: Arc::new(vault),
             policy,
             crypto_slots: Arc::new(Semaphore::new(2)),
+            password_failures: Arc::default(),
             machine_crypto_slots: Arc::new(Semaphore::new(2)),
             run_stream_slots: Arc::new(Semaphore::new(32)),
             artifact_store: None,
@@ -229,6 +236,18 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route("/api/v2/migrations/reports/{id}", get(migrations::report))
         .route("/api/v2/auth/session", get(auth::session_status))
+        .route("/api/v2/auth/status", get(auth::status))
+        .route("/api/v2/auth/setup", post(auth::setup))
+        .route("/api/v2/auth/login", post(auth::login))
+        .route("/api/v2/auth/logout", post(auth::logout))
+        .route("/api/v2/auth/password", post(auth::change_password))
+        .route("/api/v2/auth/cli/login", post(auth::cli_login))
+        .route("/api/v2/auth/cli/session", get(auth::cli_session))
+        .route("/api/v2/auth/cli/devices", get(auth::cli_devices))
+        .route(
+            "/api/v2/auth/cli/devices/{id}",
+            axum::routing::delete(auth::revoke_cli_device),
+        )
         .route(
             "/api/v2/projects",
             get(control::projects).post(control::create_project),
@@ -584,7 +603,9 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
     let browser_auth = (path.starts_with("/api/v2/auth/")
         && !matches!(
             path,
-            "/api/v2/auth/machine" | "/api/v2/auth/operator-command-grants"
+            "/api/v2/auth/machine"
+                | "/api/v2/auth/operator-command-grants"
+                | "/api/v2/auth/cli/session"
         ))
         || path.starts_with("/api/v2/bootstrap/");
     let has_bearer = headers.contains_key(header::AUTHORIZATION);
@@ -648,7 +669,7 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(migrations::artifact,migrations::artifact_summary,migrations::artifact_results,migrations::artifact_content,migrations::fields,migrations::field,migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::session_status,
+#[openapi(paths(migrations::artifact,migrations::artifact_summary,migrations::artifact_results,migrations::artifact_content,migrations::fields,migrations::field,migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::session_status,auth::status,auth::setup,auth::login,auth::logout,auth::change_password,auth::cli_login,auth::cli_session,auth::cli_devices,auth::revoke_cli_device,
 control::projects,control::project,control::create_project,control::update_project,
 control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,
@@ -672,7 +693,7 @@ codex_profiles::account::login_operation,codex_profiles::account::latest_operati
 data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
 data::revisions,data::revision,data::register,data::universes,data::universe,data::validate,
-artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Local session",description="Automatic loopback browser sessions")))]
+artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Authentication",description="Password browser sessions and revocable CLI devices")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
     let mut document = HttpContracts::openapi();
@@ -690,13 +711,45 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
         ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityRequirement, SecurityScheme,
     };
     let components = document.components.get_or_insert_with(Default::default);
-    components.add_security_scheme("MachineBearer",SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).bearer_format("qz2.UUIDv7.opaque-capability").description(Some("Opaque native capability; only project/run/downstream-scoped server records confer authority. Never combine with browser Cookie." )).build()));
+    components.add_security_scheme("BrowserSession", SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::with_description("__Host-quazonai", "Password-authenticated HttpOnly browser session; explicit loopback HTTP uses quazonai-dev."))));
+    components.add_security_scheme(
+        "OwnerDeviceBearer",
+        SecurityScheme::Http(
+            HttpBuilder::new()
+                .scheme(HttpAuthScheme::Bearer)
+                .bearer_format("qzc.UUIDv7.opaque-capability")
+                .description(Some(
+                    "Revocable owner CLI device. No operator grant is required.",
+                ))
+                .build(),
+        ),
+    );
+    components.add_security_scheme(
+        "MachineBearer",
+        SecurityScheme::Http(
+            HttpBuilder::new()
+                .scheme(HttpAuthScheme::Bearer)
+                .bearer_format("qz2.UUIDv7.opaque-capability")
+                .description(Some(
+                    "Scoped project/run/downstream capability. Never combine with browser Cookie.",
+                ))
+                .build(),
+        ),
+    );
     components.add_security_scheme("OperatorCommandGrant",SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description("X-Operator-Grant","One-time local CLI grant bound to this credential, exact operation, target and full nonsecret request. No Agent/automation grant issuance."))));
     for (path, item) in &mut document.paths.paths {
-        let anonymous = path == "/api/v2/auth/session";
+        let anonymous = matches!(
+            path.as_str(),
+            "/api/v2/auth/status"
+                | "/api/v2/auth/setup"
+                | "/api/v2/auth/login"
+                | "/api/v2/auth/cli/login"
+        );
         let only_machine = matches!(
             path.as_str(),
-            "/api/v2/auth/machine" | "/api/v2/auth/operator-command-grants"
+            "/api/v2/auth/machine"
+                | "/api/v2/auth/operator-command-grants"
+                | "/api/v2/auth/cli/session"
         );
         let browser_auth = path.starts_with("/api/v2/auth/") && !only_machine;
         let browser_read = path.starts_with("/api/v2/machine-principals");
@@ -729,7 +782,9 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                         );
                     }
                 }
-                let local = SecurityRequirement::default();
+                let local = SecurityRequirement::new("BrowserSession", std::iter::empty::<&str>());
+                let device =
+                    SecurityRequirement::new("OwnerDeviceBearer", std::iter::empty::<&str>());
                 let bearer = SecurityRequirement::new("MachineBearer", std::iter::empty::<&str>());
                 if !anonymous && !browser_auth {
                     operation.responses.responses.insert(
@@ -760,6 +815,8 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                 }
                 operation.security = Some(if anonymous {
                     vec![]
+                } else if path == "/api/v2/auth/cli/session" {
+                    vec![device]
                 } else if only_machine {
                     vec![bearer]
                 } else if browser_auth || (!write && browser_read) {
@@ -769,14 +826,15 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                         || path == "/api/v2/experiments"
                         || (path.ends_with("/cancel") && path.starts_with("/api/v2/runs/")))
                 {
-                    vec![local, bearer]
+                    vec![local, device, bearer]
                 } else if write {
                     vec![
                         local,
+                        device,
                         bearer.add("OperatorCommandGrant", std::iter::empty::<&str>()),
                     ]
                 } else {
-                    vec![local, bearer]
+                    vec![local, device, bearer]
                 });
             }
         }

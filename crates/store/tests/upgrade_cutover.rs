@@ -93,7 +93,10 @@ async fn native_runner_initializes_and_rechecks_without_changing_applied_checksu
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(epoch, 2, "local-console migration makes direct entry ready");
+    assert_eq!(
+        epoch, 3,
+        "password migration invalidates prior automatic sessions"
+    );
     no_locks(&pool, &name).await;
 }
 
@@ -200,7 +203,7 @@ async fn upgrade_invalidates_all_historical_browser_epochs_once_not_current_plus
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(epoch, 52);
+    assert_eq!(epoch, 53);
     assert!(matches!(
         store.browser_authority(old_login).await,
         Err(StoreError::AuthenticationRequired)
@@ -215,7 +218,7 @@ async fn upgrade_invalidates_all_historical_browser_epochs_once_not_current_plus
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(epoch_after, 52);
+    assert_eq!(epoch_after, 53);
 }
 
 #[sqlx::test(migrations = false)]

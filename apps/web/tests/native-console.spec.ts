@@ -4,34 +4,12 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import type { Schema } from '../src/api';
+import { fixture, loginNative, rememberPrivateValue } from './native-auth-support';
 
-type Fixture = {
-  baseUrl: string; redactionsFile: string;
-  phase: 'before-restart' | 'after-restart';
-};
 type Checkpoint = {
   key: string; request: Schema['ProjectCreate']; status: number;
   receipt: { schema_version: number; resource: Schema['ProjectView']; replayed: boolean };
 };
-
-function fixture(): Fixture {
-  const path = process.env.QUAZONAI_WEB_E2E_FIXTURE;
-  if (!path) throw new Error('Missing private native fixture; use the native-browser harness');
-  const value: unknown = JSON.parse(readFileSync(path, 'utf8'));
-  if (typeof value !== 'object' || value === null) throw new Error('Invalid private fixture');
-  const fields = value as Record<string, unknown>;
-  if (typeof fields.baseUrl !== 'string' || fields.baseUrl !== process.env.QUAZONAI_WEB_E2E_ORIGIN
-    || !['before-restart', 'after-restart'].includes(String(fields.phase))
-    || fields.redactionsFile !== resolve(dirname(path), 'redactions.jsonl')) {
-    throw new Error('Private fixture fields do not match the test-owned runtime');
-  }
-  return fields as Fixture;
-}
-
-function rememberPrivateValue(config: Fixture, value: string) {
-  // Only the harness reads this private redaction manifest; it is not an artifact.
-  appendFileSync(config.redactionsFile, `${JSON.stringify(value)}\n`, { mode: 0o600 });
-}
 
 const config = fixture();
 const sessionFile = resolve(dirname(config.redactionsFile), 'restart-browser.json');
@@ -39,6 +17,9 @@ const projectFile = resolve(dirname(config.redactionsFile), 'restart-project.jso
 // This is Playwright's own original browser state, never a fabricated session.
 // Each phase is executed once by the same private harness; no skipped cases.
 test.use({ storageState: config.phase === 'after-restart' ? sessionFile : undefined });
+test.beforeEach(async ({ page }) => {
+  if (config.phase === 'before-restart') await loginNative(page, config);
+});
 
 test(config.phase === 'before-restart'
   ? 'packaged local entry, lost-ACK project retry, CSRF and both themes in three viewports'
@@ -78,8 +59,8 @@ async ({ page, context }) => {
 
     await test.step('retain the theme and expose no legacy login operations', async () => {
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-      await expect(page.getByRole('button', { name: '退出登录', exact: true })).toHaveCount(0);
-      for (const path of ['/api/v2/bootstrap/start', '/api/v2/auth/login', '/api/v2/auth/verify']) {
+      await expect(page.getByRole('button', { name: '退出登录', exact: true })).toBeVisible();
+      for (const path of ['/api/v2/bootstrap/start', '/api/v2/auth/verify']) {
         const response = await page.request.post(path, { headers: { Origin: config.baseUrl }, data: {} });
         expect([404, 405]).toContain(response.status());
       }

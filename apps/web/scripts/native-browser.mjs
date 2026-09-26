@@ -316,11 +316,13 @@ async function main() {
   stages.push({ name: 'real-api-ready', exit_code: 0 });
 
   const fixture = resolve(privateDir, 'fixture.json');
+  const browserPassword = randomBytes(24).toString('hex');
+  privateValues.add(browserPassword);
   const browser = async (phase) => {
-    await writeFile(fixture, JSON.stringify({ baseUrl, phase, redactionsFile }), { mode: 0o600 });
+    await writeFile(fixture, JSON.stringify({ baseUrl, phase, redactionsFile, password: browserPassword }), { mode: 0o600 });
     await run(`browser-${phase}`, process.execPath, [resolve(web, 'node_modules/@playwright/test/cli.js'),
       'test', '--config', 'playwright.config.ts'], {
-      cwd: web, timeout: 420_000,
+      cwd: web, timeout: 600_000,
       env: { ...childEnv, QUAZONAI_WEB_E2E_FIXTURE: fixture, QUAZONAI_WEB_E2E_ORIGIN: baseUrl },
     });
   };
@@ -361,6 +363,12 @@ async function main() {
       }
     }
   }
+  for (const surface of ['auth-setup', 'auth-settings']) {
+    for (const width of [1440, 390]) {
+      const name = `${surface}-${width}.png`;
+      screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
+    }
+  }
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
@@ -391,7 +399,7 @@ if (adminEnv) {
   await writeFile(resolve(report, 'result.json'), JSON.stringify({ schema_version: 1,
     status: failure ? 'FAILED' : 'PASSED', stages,
     error: failure ? redact(failure.message) : null,
-    acceptance_scope: 'shipped systemd user units with real packaged API/Worker and production Caddy routes; idle Worker native automatic restart, direct local entry, retained session/project/receipt/theme after normal API stop/start, CSRF, both themes in three viewports navigation/accessibility, actual service-worker updates, offline mutation prevention, and absent legacy login routes',
+    acceptance_scope: 'shipped systemd user units with real packaged API/Worker and production Caddy routes; password setup and login, session-only and 30-day browser cookies, logout, password changes and browser session invalidation, persistent CLI device registration and revocation; idle Worker native automatic restart, retained session/project/receipt/theme after normal API stop/start, CSRF, both themes in three viewports navigation/accessibility, blank authentication surfaces at desktop/mobile sizes, actual service-worker updates, offline mutation prevention, and absent legacy bootstrap/verification routes',
     private_artifacts_retained: privateArtifactsRetained,
     screenshots: failure ? [] : screenshots.map(({ name }) => name),
   }, null, 2), { mode: 0o600 });

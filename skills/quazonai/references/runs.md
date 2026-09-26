@@ -2,20 +2,18 @@
 
 ## Find the original Run
 
-Use a Run ID from the original accepted command receipt or `cycle show`. If the user supplied only a project, use `run list --project-id PROJECT_ID --limit 20` with the normal connection flags and resolve the intended Run from returned metadata. `run show RUN_ID` reads its actual state and active Attempt. Do not start another Cycle or switch identities to get a more convenient result.
+Use a Run ID from the original accepted command receipt or `cycle show`. If the user supplied only a project, use `run list --project-id PROJECT_ID --limit 20` with the saved login (or the original scoped connection flags) and resolve the intended Run from returned metadata. `run show RUN_ID` reads its actual state and active Attempt. Do not start another Cycle or switch identities to get a more convenient result.
 
 ## Bounded event observation
 
 ```sh
-server client --origin "$QZ_ORIGIN" --credential-file "$QZ_CREDENTIAL_FILE" \
-  run watch "$RUN_ID" --max-seconds 30 --max-events 100
+server client run watch "$RUN_ID" --max-seconds 30 --max-events 100
 ```
 
 Add `--development-http` only for an explicitly configured HTTP connection. After a bounded observation, persist the last verified event ID and explicitly resume when the task still requires it:
 
 ```sh
-server client --origin "$QZ_ORIGIN" --credential-file "$QZ_CREDENTIAL_FILE" \
-  run watch "$RUN_ID" --after "$LAST_EVENT_ID" --max-seconds 30 --max-events 100
+server client run watch "$RUN_ID" --after "$LAST_EVENT_ID" --max-seconds 30 --max-events 100
 ```
 
 The cursor is the same Run's `UUIDv7:decimal-sequence`. Keep it verbatim. NDJSON events contain `schema_version`, `event_id` and `event`; the final observation summary contains `watch_ended`, `last_event_id`, `events_received` and `cancellation_requested=false`. That summary is the end of observation, not a terminal business result. After a relevant transition or a stream ending, read `run show` to report the current snapshot.

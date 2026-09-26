@@ -23,6 +23,32 @@ async fn initialized_historical_operator(pool: &PgPool) {
         .unwrap();
 }
 
+async fn historical_cli(f: &Fixture, pool: &PgPool, project: Id) -> (String, Id) {
+    use integrations::authentication::{
+        capability_verifier, format_machine_token, random_capability,
+    };
+    // Exact pre-password issuance fixture. Do not execute today's browser
+    // admission against a database that intentionally lacks today's columns.
+    let principal = Id::new();
+    let credential = Id::new();
+    let public = Id::new();
+    let secret = random_capability();
+    let verifier = capability_verifier(&secret).unwrap();
+    let root = f._state.path();
+    let vault = SecretVault::open(&root.join("secrets"), &root.join("master.key")).unwrap();
+    let reference = vault.put("MACHINE_VERIFIER", verifier.as_bytes()).unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO app.machine_principals(id,name,kind,project_id,enabled,credential_epoch) VALUES($1,'pre-owner-cli','CLI',$2,true,1)")
+        .bind(principal.as_uuid()).bind(project.as_uuid()).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.machine_credentials(id,principal_id,public_token_id,verifier_ref,principal_epoch,scope_codes,issued_at,expires_at,issued_by) VALUES($1,$2,$3,$4,1,$5,clock_timestamp(),clock_timestamp()+interval '1 hour','OPERATOR')")
+        .bind(credential.as_uuid()).bind(principal.as_uuid()).bind(public.to_string()).bind(reference.to_string()).bind(READ_SCOPES).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    (
+        format!("Bearer {}", format_machine_token(public, &secret).unwrap()),
+        credential,
+    )
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn read_only_mission_cannot_keep_identity_run_or_artifact_access_after_takeover(
     pool: PgPool,
@@ -273,8 +299,9 @@ async fn attempt_bound_legacy_credential_cannot_borrow_the_current_owner_on_upgr
         .await
         .unwrap();
     initialized_historical_operator(&pool).await;
-    let (f, cookie, project, _) = setup(&pool).await;
-    let (cli_token, cli_id) = bearer(&f, &cookie, project, READ_SCOPES, "pre-owner-cli").await;
+    let f = fixture(pool.clone()).await;
+    let (project, run, attempt, principal) = mission(&f, &pool).await;
+    let (cli_token, cli_id) = historical_cli(&f, &pool, project).await;
     let mut cli_before: Value =
         sqlx::query_scalar("SELECT to_jsonb(c) FROM app.machine_credentials c WHERE id=$1")
             .bind(cli_id.as_uuid())
@@ -282,7 +309,6 @@ async fn attempt_bound_legacy_credential_cannot_borrow_the_current_owner_on_upgr
             .await
             .unwrap();
     assert!(cli_before.get("issuer_owner_epoch").is_none());
-    let (_, run, attempt, principal) = mission(&f, &pool).await;
     let (legacy, credential, _) =
         mission_token_scoped(&f, &pool, principal, 600, READ_SCOPES).await;
     let mut expected: Value =
@@ -360,7 +386,7 @@ async fn legacy_unbound_mission_is_preserved_but_requires_new_issuance_after_upg
         .await
         .unwrap();
     initialized_historical_operator(&pool).await;
-    let (f, _, _, _) = setup(&pool).await;
+    let f = fixture(pool.clone()).await;
     // Construct an exact pre-018 relational fixture, not a new service against
     // an intentionally old schema. Current admission correctly requires all
     // current migrations, including native Runtime CA configuration.

@@ -1,6 +1,6 @@
 # Inspect Alpha, portfolio and delivery evidence
 
-These are scoped reads. Add the provisioned connection flags to `server client` before the table's native arguments. Resolve IDs from their original parent resources; preserve original versions and provenance.
+These are scoped reads. Use the saved login with `server client`, or retain provisioned connection flags for a scoped machine, before the table's native arguments. Resolve IDs from their original parent resources; preserve original versions and provenance.
 
 | Question | Native arguments |
 | --- | --- |

@@ -52,7 +52,7 @@ async fn upload_authority(
     project: Id,
 ) -> Result<UploadAuthority, StoreError> {
     match actor {
-        Actor::Browser { .. } => {
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
             authority::browser(tx, actor, true).await?;
             crate::research::project_for_write(tx, project).await?;
             Ok(UploadAuthority {
@@ -167,7 +167,9 @@ pub struct ArtifactContent {
 
 fn visible(actor: &Actor) -> Vec<&'static str> {
     match actor {
-        Actor::Browser { .. } => vec!["RESEARCH", "OPERATOR", "DELIVERY"],
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
+            vec!["RESEARCH", "OPERATOR", "DELIVERY"]
+        }
         Actor::Machine { .. } => vec!["RESEARCH"],
     }
 }

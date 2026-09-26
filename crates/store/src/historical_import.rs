@@ -500,7 +500,7 @@ async fn read_scope(
     actor: &Actor,
 ) -> Result<Option<String>, StoreError> {
     match actor {
-        Actor::Browser { .. } => {
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
             authority::browser(tx, actor, false).await?;
             Ok(None)
         }

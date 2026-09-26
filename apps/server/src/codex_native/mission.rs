@@ -294,9 +294,20 @@ mod tests {
             assert!(server.get("tools").is_none() && server.get("env").is_none());
             assert!(server.get("default_tools_approval_mode").is_none());
         }
+        let mission = options.mission.as_mut().unwrap();
+        mission.api_origin = "https://research.example".into();
+        mission.development_http = false;
+        mission.token = Some(format_machine_token(Id::new(), &random_capability()).unwrap());
+        for request in [
+            options.start_params().unwrap(),
+            options.resume_params("original-thread").unwrap(),
+        ] {
+            let server = &request["config"]["mcp_servers"][MCP_NAME];
+            assert_eq!(server["args"][2], "https://research.example");
+            assert_eq!(server["required"], true);
+        }
         for (origin, development_http) in [
             ("http://localhost:8081", false),
-            ("https://research.example", false),
             ("http://192.168.1.1:8081", true),
             ("http://localhost:8081/api", true),
         ] {
