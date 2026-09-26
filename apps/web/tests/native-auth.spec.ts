@@ -79,9 +79,10 @@ if (config.phase === 'before-restart') {
       await secondPage.goto('/');
       await expect(secondPage.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
       const connected = await cli.request.post('/api/v2/auth/cli/login', {
+        headers: { Origin: config.baseUrl },
         data: { schema_version: 1, password: config.password, name: 'Native acceptance machine' },
       });
-      expect(connected.status()).toBe(200);
+      expect(connected.status()).toBe(201);
       const device = await connected.json(); rememberPrivateValue(config, device.token);
       const headers = { Authorization: `Bearer ${device.token}` };
       expect((await cli.request.get('/api/v2/auth/cli/session', { headers })).status()).toBe(200);
