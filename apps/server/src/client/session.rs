@@ -1,0 +1,367 @@
+//! Interactive owner login and one private, atomically replaced connection profile.
+use super::{body, media, read_file, verify, write_json, Arguments, Connection, Failure, Result};
+use contracts::{
+    auth::{CliLogin, CliLoginResult},
+    Id, SchemaV1,
+};
+use reqwest::{header, Client, Url};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::{self, File, OpenOptions},
+    io::{BufRead, IsTerminal, Read, Write},
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Profile {
+    schema_version: SchemaV1,
+    pub origin: String,
+    pub token: String,
+    pub development_http: bool,
+    pub ca_certificate: Option<PathBuf>,
+}
+
+fn profile_path() -> Result<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .filter(|value| !value.is_empty())
+                .map(|home| PathBuf::from(home).join(".config"))
+        })
+        .ok_or(Failure::Configuration)?;
+    if !base.is_absolute() {
+        return Err(Failure::Configuration);
+    }
+    Ok(base.join("quazonai/client.json"))
+}
+
+impl Profile {
+    pub fn load() -> Result<Self> {
+        Self::load_from(&profile_path()?)
+    }
+
+    fn load_from(path: &PathBuf) -> Result<Self> {
+        if !path.try_exists().map_err(|_| Failure::Configuration)? {
+            return Err(Failure::LoginRequired);
+        }
+        let profile: Self = serde_json::from_slice(&read_file(path, 16 * 1024, true)?)
+            .map_err(|_| Failure::Configuration)?;
+        origin(&profile.origin, profile.development_http)?;
+        if !device_token(&profile.token)? {
+            return Err(Failure::Credential);
+        }
+        Ok(profile)
+    }
+
+    #[cfg(unix)]
+    fn save(&self, path: &Path) -> Result<()> {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+        let parent = path.parent().ok_or(Failure::Configuration)?;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+            .map_err(|_| Failure::Configuration)?;
+        let metadata = fs::symlink_metadata(parent).map_err(|_| Failure::Configuration)?;
+        if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
+            return Err(Failure::Credential);
+        }
+        let temporary = parent.join(format!(".client-{}.tmp", Id::new()));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .map_err(|_| Failure::Configuration)?;
+        let result = (|| {
+            serde_json::to_writer(&mut file, self).map_err(|_| Failure::Configuration)?;
+            file.write_all(b"\n")
+                .and_then(|_| file.sync_all())
+                .map_err(|_| Failure::Configuration)?;
+            fs::rename(&temporary, path).map_err(|_| Failure::Configuration)?;
+            File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| Failure::Configuration)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
+    }
+
+    #[cfg(not(unix))]
+    fn save(&self, _: &Path) -> Result<()> {
+        Err(Failure::Configuration)
+    }
+}
+
+pub(super) fn origin(value: &str, development_http: bool) -> Result<Url> {
+    crate::WebPolicy::new(value, ([127, 0, 0, 1], 0).into(), development_http)
+        .map_err(|_| Failure::Configuration)?;
+    Url::parse(value).map_err(|_| Failure::Configuration)
+}
+
+pub(super) fn device_token(value: &str) -> Result<bool> {
+    if value.starts_with("qzc.") {
+        integrations::authentication::cli_token(value).map_err(|_| Failure::Credential)?;
+        Ok(true)
+    } else {
+        integrations::authentication::machine_token(value).map_err(|_| Failure::Credential)?;
+        Ok(false)
+    }
+}
+
+pub(super) fn http_client(
+    origin: &Url,
+    certificate: Option<&PathBuf>,
+    mut headers: header::HeaderMap,
+) -> Result<Client> {
+    headers.insert(
+        header::ACCEPT,
+        header::HeaderValue::from_static("application/json"),
+    );
+    headers.insert(
+        header::ACCEPT_ENCODING,
+        header::HeaderValue::from_static("identity"),
+    );
+    let mut builder = Client::builder()
+        .default_headers(headers)
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .no_proxy()
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(20));
+    if let Some(path) = certificate {
+        let bytes = read_file(path, 65536, false)?;
+        let certificates =
+            reqwest::Certificate::from_pem_bundle(&bytes).map_err(|_| Failure::Configuration)?;
+        if certificates.is_empty() || origin.scheme() != "https" {
+            return Err(Failure::Configuration);
+        }
+        builder = builder.tls_built_in_root_certs(false);
+        for certificate in certificates {
+            builder = builder.add_root_certificate(certificate);
+        }
+    }
+    builder.build().map_err(|_| Failure::Configuration)
+}
+
+pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bool) -> Result<()> {
+    if arguments.preview
+        || arguments.credential_file.is_some()
+        || arguments.operator_grant.is_some()
+        || arguments.idempotency_key.is_some()
+    {
+        return Err(Failure::Input);
+    }
+    let path = profile_path()?;
+    let mut development_http = arguments.development_http;
+    let mut certificate = arguments.ca_certificate.clone();
+    let previous = match Profile::load_from(&path) {
+        Ok(profile) => Some(profile),
+        Err(Failure::LoginRequired) => None,
+        Err(error) => return Err(error),
+    };
+    if let Some(profile) = previous {
+        if !replace {
+            development_http |= profile.development_http;
+            certificate = certificate.or(profile.ca_certificate);
+            if let Some(address) = &arguments.origin {
+                if origin(
+                    address,
+                    arguments.development_http || profile.development_http,
+                )?
+                .origin()
+                .ascii_serialization()
+                    != profile.origin
+                {
+                    return Err(Failure::ReplaceRequired);
+                }
+            }
+            let connection = Connection::connect(
+                profile.origin,
+                profile.token,
+                development_http,
+                certificate.clone(),
+            )?;
+            let request = super::commands::Command::Identity.request_for(true)?;
+            let response = connection.send(&request, None, None).await?;
+            match connection.checked(response, 200).await {
+                Err(Failure::Rejected(problem))
+                    if problem.status == 401 && problem.code == "AUTHENTICATION_FAILED" => {}
+                Err(error) => return Err(error),
+                Ok(response) => {
+                    media(&response, "application/json")?;
+                    let bytes = body(response, 16 * 1024).await?;
+                    verify(&bytes, &connection.credential)?;
+                    let device: contracts::auth::CliDevice =
+                        serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
+                    if name.is_some_and(|name| name != device.name) {
+                        return Err(Failure::ReplaceRequired);
+                    }
+                    return write_json(&device);
+                }
+            }
+        } else {
+            writeln!(std::io::stderr().lock(), "Replacing the local connection; the previous CLI device remains managed in authentication settings.")
+                .map_err(|_| Failure::Output)?;
+        }
+    }
+    // Never accept a password through redirected stdin, argv or an environment variable.
+    if !std::io::stdin().is_terminal() {
+        return Err(Failure::TerminalRequired);
+    }
+    let address = match &arguments.origin {
+        Some(value) => value.clone(),
+        None => {
+            let mut stderr = std::io::stderr().lock();
+            write!(stderr, "QuaZonai frontend address: ")
+                .and_then(|_| stderr.flush())
+                .map_err(|_| Failure::Output)?;
+            let mut value = String::new();
+            std::io::stdin()
+                .lock()
+                .take(2049)
+                .read_line(&mut value)
+                .map_err(|_| Failure::Input)?;
+            if value.len() > 2048 {
+                return Err(Failure::Input);
+            }
+            value.trim().to_owned()
+        }
+    };
+    let url = origin(&address, development_http)?;
+    let ca_certificate = certificate
+        .as_ref()
+        .map(fs::canonicalize)
+        .transpose()
+        .map_err(|_| Failure::Configuration)?;
+    let client = http_client(&url, ca_certificate.as_ref(), header::HeaderMap::new())?;
+    let native_name = fs::read_to_string("/proc/sys/kernel/hostname")
+        .or_else(|_| fs::read_to_string("/etc/hostname"))
+        .unwrap_or_default();
+    let name = name.unwrap_or(native_name.trim());
+    if name.trim().is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
+        return Err(Failure::Input);
+    }
+    let password =
+        rpassword::prompt_password("QuaZonai password: ").map_err(|_| Failure::TerminalRequired)?;
+    if password.len() < 8 || password.len() > 1024 {
+        return Err(Failure::Input);
+    }
+    let mut endpoint = url.clone();
+    endpoint.set_path("/api/v2/auth/cli/login");
+    let response = client
+        .post(endpoint)
+        .header(header::ORIGIN, url.origin().ascii_serialization())
+        .json(&CliLogin {
+            schema_version: SchemaV1,
+            password: password.clone(),
+            name: name.to_owned(),
+        })
+        .send()
+        .await
+        .map_err(|_| Failure::Unavailable)?;
+    // Reuse the strict response boundary, with the password as the forbidden secret.
+    let connection = Connection {
+        client,
+        origin: url.clone(),
+        credential: password,
+    };
+    let response = connection.checked(response, 201).await?;
+    media(&response, "application/json")?;
+    let bytes = body(response, 16 * 1024).await?;
+    verify(&bytes, &connection.credential)?;
+    let result: CliLoginResult = serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
+    let token =
+        integrations::authentication::cli_token(&result.token).map_err(|_| Failure::Contract)?;
+    if result.device.id != token.public_token_id || result.device.name != name {
+        return Err(Failure::Contract);
+    }
+    verify(
+        &serde_json::to_vec(&result.device).map_err(|_| Failure::Contract)?,
+        &result.token,
+    )?;
+    Profile {
+        schema_version: SchemaV1,
+        origin: url.origin().ascii_serialization(),
+        token: result.token,
+        development_http,
+        ca_certificate,
+    }
+    .save(&path)?;
+    write_json(&result.device)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn profile_is_private_atomic_and_rejects_a_scoped_or_exposed_credential() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("quazonai/client.json");
+        assert!(matches!(
+            Profile::load_from(&path),
+            Err(Failure::LoginRequired)
+        ));
+        let token = integrations::authentication::format_cli_token(
+            Id::new(),
+            &integrations::authentication::random_capability(),
+        )
+        .unwrap();
+        let mut profile = Profile {
+            schema_version: SchemaV1,
+            origin: "https://localhost".into(),
+            token,
+            development_http: false,
+            ca_certificate: None,
+        };
+        profile.save(&path).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(Profile::load_from(&path).unwrap().token, profile.token);
+        profile.token = integrations::authentication::format_cli_token(
+            Id::new(),
+            &integrations::authentication::random_capability(),
+        )
+        .unwrap();
+        profile.save(&path).unwrap();
+        assert_eq!(Profile::load_from(&path).unwrap().token, profile.token);
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(matches!(
+            Profile::load_from(&path),
+            Err(Failure::Credential)
+        ));
+        profile.token = integrations::authentication::format_machine_token(
+            Id::new(),
+            &integrations::authentication::random_capability(),
+        )
+        .unwrap();
+        profile.save(&path).unwrap();
+        assert!(matches!(
+            Profile::load_from(&path),
+            Err(Failure::Credential)
+        ));
+    }
+}

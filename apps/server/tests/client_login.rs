@@ -1,0 +1,259 @@
+//! Real terminal -> native CLI -> HTTP/PostgreSQL login and saved-device authority.
+#[path = "support/client.rs"]
+#[allow(dead_code)] // Reuse the real listener without the legacy scoped-token helpers.
+mod client;
+#[allow(dead_code)]
+mod support;
+use serde_json::{json, Value};
+use sqlx::PgPool;
+use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Stdio, time::Duration};
+use tokio::{io::AsyncWriteExt, process::Command};
+
+// Python's stdlib supplies a controlling PTY, so rpassword exercises real terminal
+// echo suppression. Every credential below belongs only to the disposable test.
+const TERMINAL: &str = r#"
+import errno, json, os, pty, select, signal, sys, termios, time
+config = json.load(sys.stdin)
+pid, fd = pty.fork()
+if pid == 0:
+    os.execve(sys.argv[1], [sys.argv[1], 'client', '--development-http', 'login', '--name', 'CLI acceptance'], {'XDG_CONFIG_HOME': config['directory']})
+transcript = b''
+address_sent = password_sent = False
+status = None
+try:
+    deadline = time.monotonic() + 25
+    while time.monotonic() < deadline:
+        if select.select([fd], [], [], 0.1)[0]:
+            try:
+                data = os.read(fd, 65536)
+            except OSError as error:
+                if error.errno == errno.EIO: break
+                raise
+            if not data: break
+            transcript += data
+        if b'QuaZonai frontend address: ' in transcript and not address_sent:
+            os.write(fd, (config['origin'] + '\n').encode())
+            address_sent = True
+        if b'QuaZonai password: ' in transcript and not password_sent:
+            if termios.tcgetattr(fd)[3] & termios.ECHO: continue
+            os.write(fd, (config['password'] + '\n').encode())
+            password_sent = True
+    if time.monotonic() >= deadline:
+        os.kill(pid, signal.SIGKILL)
+    _, status = os.waitpid(pid, 0)
+    assert config['password'].encode() not in transcript, 'terminal echoed password'
+    assert address_sent and password_sent, 'login did not request both interactive inputs'
+    print(json.dumps({'exit': os.waitstatus_to_exitcode(status), 'transcript': transcript.decode()}))
+finally:
+    os.close(fd)
+"#;
+
+async fn login(directory: &Path, origin: &str, password: &str) -> Value {
+    let mut child = Command::new("python3")
+        .args(["-c", TERMINAL, env!("CARGO_BIN_EXE_server")])
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let input = json!({"directory":directory,"origin":origin,"password":password});
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&input).unwrap())
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    serde_json::from_slice(&result.stdout).unwrap()
+}
+
+async fn saved(directory: &Path, arguments: &[&str], body: Value) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_server"))
+        .arg("client")
+        .args(arguments)
+        .env_clear()
+        .env("XDG_CONFIG_HOME", directory)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    if !body.is_null() {
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&serde_json::to_vec(&body).unwrap())
+            .await
+            .unwrap();
+    }
+    child.stdin.take();
+    tokio::time::timeout(Duration::from_secs(25), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn login_requires_a_terminal_and_missing_connection_is_actionable() {
+    let directory = tempfile::tempdir().unwrap();
+    let result = saved(directory.path(), &["login"], Value::Null).await;
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("CLI_LOGIN_REQUIRES_TERMINAL"));
+    let result = saved(directory.path(), &["identity"], Value::Null).await;
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("CLI_LOGIN_REQUIRED"));
+    assert!(!directory.path().join("quazonai/client.json").exists());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn password_login_remembers_this_machine_and_revocation_ends_its_authority(pool: PgPool) {
+    let f = support::fixture(pool).await;
+    let (origin, _listener) = client::listen(&f).await;
+    let http = reqwest::Client::new();
+    let password = "disposable-cli-login-password";
+    let setup = http
+        .post(format!("{origin}/api/v2/auth/setup"))
+        .header("origin", &origin)
+        .json(&json!({"schema_version":1,"password":password,"remember_device":false}))
+        .send()
+        .await
+        .unwrap();
+    assert!(setup.status().is_success());
+    let cookie = setup
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let directory = tempfile::tempdir().unwrap();
+    let wrong = login(directory.path(), &origin, "wrong-cli-login-password").await;
+    assert_ne!(wrong["exit"], 0);
+    assert!(wrong["transcript"]
+        .as_str()
+        .unwrap()
+        .contains("AUTHENTICATION_FAILED"));
+    let path = directory.path().join("quazonai/client.json");
+    assert!(!path.exists());
+    let result = login(directory.path(), &origin, password).await;
+    assert_eq!(result["exit"], 0, "{}", result["transcript"]);
+    let profile: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(profile["origin"], origin);
+    assert_eq!(profile["development_http"], true);
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(!fs::read_to_string(&path).unwrap().contains(password));
+    let token = profile["token"].as_str().unwrap();
+    assert!(token.starts_with("qzc."));
+    assert!(!result["transcript"].as_str().unwrap().contains(token));
+    let identity = saved(directory.path(), &["identity"], Value::Null).await;
+    assert!(
+        identity.status.success(),
+        "{}",
+        String::from_utf8_lossy(&identity.stderr)
+    );
+    let device: contracts::auth::CliDevice = serde_json::from_slice(&identity.stdout).unwrap();
+    assert_eq!(device.name, "CLI acceptance");
+    assert!(!String::from_utf8_lossy(&identity.stdout).contains(token));
+    let again = saved(directory.path(), &["login"], Value::Null).await;
+    assert!(again.status.success());
+    let again: contracts::auth::CliDevice = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(again.id, device.id);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
+        profile
+    );
+    let switched = saved(
+        directory.path(),
+        &["--origin", "https://another.example", "login"],
+        Value::Null,
+    )
+    .await;
+    assert!(!switched.status.success());
+    assert!(String::from_utf8_lossy(&switched.stderr).contains("CLI_LOGIN_REPLACE_REQUIRED"));
+    let listed = http
+        .get(format!("{origin}/api/v2/auth/cli/devices"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .json::<Vec<contracts::auth::CliDevice>>()
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, device.id);
+    let body = json!({"schema_version":1,"name":"Password device project","description":"", "fork_from_project_id":null});
+    let preview = saved(
+        directory.path(),
+        &[
+            "--preview",
+            "--idempotency-key",
+            "owner-device-project",
+            "project",
+            "create",
+        ],
+        body.clone(),
+    )
+    .await;
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let preview: Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(preview["requires_operator_grant"], false);
+    assert_eq!(preview["request_sent"], false);
+    let create = saved(
+        directory.path(),
+        &[
+            "--idempotency-key",
+            "owner-device-project",
+            "project",
+            "create",
+        ],
+        body,
+    )
+    .await;
+    assert!(
+        create.status.success(),
+        "{}",
+        String::from_utf8_lossy(&create.stderr)
+    );
+    let revoke = http
+        .delete(format!("{origin}/api/v2/auth/cli/devices/{}", device.id))
+        .header("origin", &origin)
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap();
+    assert!(revoke.status().is_success());
+    let identity = saved(directory.path(), &["identity"], Value::Null).await;
+    assert!(!identity.status.success());
+    assert!(String::from_utf8_lossy(&identity.stderr).contains("AUTHENTICATION_FAILED"));
+    assert!(!String::from_utf8_lossy(&identity.stderr).contains(token));
+    assert!(identity.stdout.is_empty());
+    let renewed = login(directory.path(), &origin, password).await;
+    assert_eq!(renewed["exit"], 0, "{}", renewed["transcript"]);
+    let identity = saved(directory.path(), &["identity"], Value::Null).await;
+    assert!(identity.status.success());
+    let renewed: contracts::auth::CliDevice = serde_json::from_slice(&identity.stdout).unwrap();
+    assert_ne!(renewed.id, device.id);
+}

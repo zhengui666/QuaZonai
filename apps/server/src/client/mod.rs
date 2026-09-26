@@ -1,6 +1,7 @@
 //! Native HTTP CLI over shared Rust contracts. Never opens a database or an application vault.
 mod commands;
 mod preview;
+mod session;
 mod watch;
 
 use clap::Args;
@@ -16,25 +17,25 @@ use std::{
 
 #[derive(Args)]
 pub struct Arguments {
-    /// Explicit control-plane origin, without a path, query, fragment or user info.
+    /// Frontend origin; pair with --credential-file to use an existing scoped credential.
     #[arg(long)]
-    pub origin: String,
-    /// Private file containing an existing qz2 machine credential, not a browser cookie.
+    pub origin: Option<String>,
+    /// Private existing machine/device token file; otherwise reuse the saved login.
     #[arg(long)]
-    pub credential_file: PathBuf,
+    pub credential_file: Option<PathBuf>,
     /// Optional native CA bundle. There is no unverified-TLS mode.
     #[arg(long)]
     pub ca_certificate: Option<PathBuf>,
     /// Explicit local-console HTTP only; the server must also permit it.
     #[arg(long)]
     pub development_http: bool,
-    /// Validate the local request and print a redacted plan; no credentials or network.
+    /// Validate the local request and print a redacted plan; never contacts the server.
     #[arg(long, global = true)]
     pub preview: bool,
     /// Required for writes. Keep the same key and input after an unknown result.
     #[arg(long, global = true)]
     pub idempotency_key: Option<String>,
-    /// Recent single-use human grant for this exact command and credential.
+    /// Single-use human grant for scoped machine credentials; saved owner devices need none.
     #[arg(long, global = true)]
     pub operator_grant: Option<String>,
     #[command(subcommand)]
@@ -47,6 +48,9 @@ pub type Result<T> = std::result::Result<T, Failure>;
 #[derive(Debug)]
 pub enum Failure {
     Configuration,
+    LoginRequired,
+    TerminalRequired,
+    ReplaceRequired,
     Credential,
     Input,
     IdempotencyRequired,
@@ -62,6 +66,9 @@ impl fmt::Display for Failure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Configuration => "CLI_CONFIGURATION_INVALID",
+            Self::LoginRequired => "CLI_LOGIN_REQUIRED",
+            Self::TerminalRequired => "CLI_LOGIN_REQUIRES_TERMINAL",
+            Self::ReplaceRequired => "CLI_LOGIN_REPLACE_REQUIRED",
             Self::Credential => "CLI_CREDENTIAL_INVALID",
             Self::Input => "CLI_INPUT_INVALID",
             Self::IdempotencyRequired => "CLI_IDEMPOTENCY_KEY_REQUIRED",
@@ -112,61 +119,57 @@ fn read_file(path: &PathBuf, maximum: usize, private: bool) -> Result<Vec<u8>> {
 
 impl Connection {
     fn open(args: &Arguments) -> Result<Self> {
-        crate::WebPolicy::new(
-            &args.origin,
-            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
-            args.development_http,
-        )
-        .map_err(|_| Failure::Configuration)?;
-        let origin = Url::parse(&args.origin).map_err(|_| Failure::Configuration)?;
-        let bytes = read_file(&args.credential_file, 256, true)?;
-        let bytes = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
-        let credential = std::str::from_utf8(bytes)
-            .map_err(|_| Failure::Credential)?
-            .to_owned();
-        integrations::authentication::machine_token(&credential)
-            .map_err(|_| Failure::Credential)?;
+        let (origin, credential, development_http, ca_certificate) =
+            match (&args.origin, &args.credential_file) {
+                (Some(origin), Some(path)) => {
+                    let bytes = read_file(path, 256, true)?;
+                    let bytes = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
+                    let token = std::str::from_utf8(bytes)
+                        .map_err(|_| Failure::Credential)?
+                        .to_owned();
+                    (
+                        origin.clone(),
+                        token,
+                        args.development_http,
+                        args.ca_certificate.clone(),
+                    )
+                }
+                (None, None) => {
+                    let profile = session::Profile::load()?;
+                    (
+                        profile.origin,
+                        profile.token,
+                        args.development_http || profile.development_http,
+                        args.ca_certificate.clone().or(profile.ca_certificate),
+                    )
+                }
+                _ => return Err(Failure::Configuration),
+            };
+        Self::connect(origin, credential, development_http, ca_certificate)
+    }
+
+    fn connect(
+        origin: String,
+        credential: String,
+        development_http: bool,
+        ca_certificate: Option<PathBuf>,
+    ) -> Result<Self> {
+        let origin = session::origin(&origin, development_http)?;
+        session::device_token(&credential)?;
         let mut authorization = header::HeaderValue::from_str(&format!("Bearer {credential}"))
             .map_err(|_| Failure::Credential)?;
         authorization.set_sensitive(true);
         let mut headers = header::HeaderMap::new();
         headers.insert(header::AUTHORIZATION, authorization);
-        headers.insert(
-            header::ACCEPT,
-            header::HeaderValue::from_static("application/json"),
-        );
-        headers.insert(
-            header::ACCEPT_ENCODING,
-            header::HeaderValue::from_static("identity"),
-        );
-        let mut builder = Client::builder()
-            .default_headers(headers)
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .no_proxy()
-            .no_gzip()
-            .no_brotli()
-            .no_deflate()
-            .no_zstd()
-            .connect_timeout(Duration::from_secs(3))
-            .timeout(Duration::from_secs(20));
-        if let Some(path) = &args.ca_certificate {
-            let bytes = read_file(path, 65536, false)?;
-            let certificates = reqwest::Certificate::from_pem_bundle(&bytes)
-                .map_err(|_| Failure::Configuration)?;
-            if certificates.is_empty() || origin.scheme() != "https" {
-                return Err(Failure::Configuration);
-            }
-            builder = builder.tls_built_in_root_certs(false);
-            for certificate in certificates {
-                builder = builder.add_root_certificate(certificate);
-            }
-        }
         Ok(Self {
-            client: builder.build().map_err(|_| Failure::Configuration)?,
+            client: session::http_client(&origin, ca_certificate.as_ref(), headers)?,
             origin,
             credential,
         })
+    }
+
+    fn is_device(&self) -> bool {
+        self.credential.starts_with("qzc.")
     }
 
     fn url(&self, request: &commands::Request) -> Result<Url> {
@@ -369,18 +372,34 @@ fn write_json(value: &impl serde::Serialize) -> Result<()> {
 }
 
 pub async fn run(arguments: Arguments) -> Result<()> {
+    if let commands::Command::Login { ref name, replace } = arguments.command {
+        return session::login(&arguments, name.as_deref(), replace).await;
+    }
     if arguments.preview {
-        let request = arguments.command.request()?;
+        // Explicit legacy previews still never open the credential file. Saved
+        // connections read only their private local profile, never the server.
+        let profile = if arguments.origin.is_none() && arguments.credential_file.is_none() {
+            Some(session::Profile::load()?)
+        } else {
+            None
+        };
+        let origin = arguments
+            .origin
+            .as_deref()
+            .or_else(|| profile.as_ref().map(|p| p.origin.as_str()))
+            .ok_or(Failure::Configuration)?;
+        let device = profile.is_some();
+        let request = arguments.command.request_for(device)?;
         return write_json(&preview::inspect(
             &request,
-            &arguments.origin,
-            arguments.development_http,
+            origin,
+            arguments.development_http || profile.as_ref().is_some_and(|p| p.development_http),
             arguments.idempotency_key.as_deref(),
             arguments.operator_grant.as_deref(),
         )?);
     }
     let connection = Connection::open(&arguments)?;
-    let request = arguments.command.request()?;
+    let request = arguments.command.request_for(connection.is_device())?;
     // A download is bound to the same immutable ID and its declared bytes/media,
     // not an assumed octet-stream response or a caller-chosen secondary URL.
     let metadata = match &request.output {
@@ -494,14 +513,14 @@ mod origin_tests {
             ("https://localhost", false, true),
             ("https://127.0.0.1", false, true),
             ("http://localhost:8081", false, false),
-            ("https://qz.example", false, false),
+            ("https://qz.example", false, true),
             ("http://192.168.1.1:8081", true, false),
             ("http://localhost:8081/path", true, false),
             ("http://user:pass@localhost:8081", true, false),
         ] {
             let arguments = Arguments {
-                origin: origin.into(),
-                credential_file: file.clone(),
+                origin: Some(origin.into()),
+                credential_file: Some(file.clone()),
                 ca_certificate: None,
                 development_http,
                 preview: false,

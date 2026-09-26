@@ -1,6 +1,6 @@
 # Research preparation and submission
 
-Use the connection flags from [connection](connection.md) with each `server client` command below. Table entries are the arguments after that prefix, not separate executable programs. Use only the current credential's authorized project and capabilities.
+Reuse the saved login from [connection](connection.md), or retain the explicit flags for a host-provided scoped identity, with each `server client` command below. Table entries are the arguments after that prefix, not separate executable programs. Use only the current credential's authorized project and capabilities.
 
 ## Inspect before changing
 
@@ -28,9 +28,9 @@ For a question such as â€œcan this Polymarket dataset support this Alpha study?â
 | Publish research content | `artifact submit` | `ArtifactCreate` |
 | Propose an experiment | `experiment propose` | `ExperimentProposalV1` |
 
-Discover the named schema from the installed binary. Populate only user-specified intent and values from the selected current service snapshots. Do not invent IDs, budgets, data roles, policy versions, assumptions or a runtime. Missing scientific decisions belong back with the user; missing authorization belongs with the human Operator. The server may require an exact Operator grant for preparation/start/validation commands. Do not self-issue it; a Mission cannot take this route at all.
+Discover the named schema from the installed binary. Populate only user-specified intent and values from the selected current service snapshots. Do not invent IDs, budgets, data roles, policy versions, assumptions or a runtime. Missing scientific decisions belong back with the user; missing authorization belongs with the human Operator. Password-connected owner devices need no extra Operator grant. Scoped machine credentials may require an exact grant for preparation/start/validation commands; do not self-issue it. A Mission cannot take this CLI route at all.
 
-An external delegated CLI operation uses an already provided exact grant only when the trusted host has explicitly authorized that specific request for that identity. It does not confer standing Operator status. Preserve any `expected_revision` from the snapshot; a conflict requires rereading and reconsidering intent, not silently substituting the latest revision.
+An external CLI operation with a scoped machine credential uses an already provided exact grant only when the trusted host has explicitly authorized that specific request for that identity. It does not confer standing Operator status. Preserve any `expected_revision` from the snapshot; a conflict requires rereading and reconsidering intent, not silently substituting the latest revision.
 
 Preview the final request and retain its original file and idempotency key. Send that request once. Read the resulting resource/Run IDs; a queued Run is followed using [runs](runs.md), never by invoking start again. Frozen objects are not edited in place. A saved draft is not frozen, and a frozen Brief is not an evaluation pass.
 

@@ -53,6 +53,24 @@ fn successful(output: &Output) -> Value {
 }
 
 #[test]
+fn login_help_and_portable_instructions_require_private_user_terminal_entry() {
+    let output = invoke(&["client", "login", "--help"], None);
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout).unwrap();
+    assert!(help.contains("--name"));
+    assert!(!help.contains("--password"));
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/quazonai");
+    let entry = fs::read_to_string(source.join("SKILL.md")).unwrap();
+    let connection = fs::read_to_string(source.join("references/connection.md")).unwrap();
+    assert!(entry.contains("server client login"));
+    assert!(entry.contains("Never ask for the password in chat"));
+    assert!(connection.contains("user types the password directly in their own terminal"));
+    assert!(connection.contains("server client identity"));
+    assert!(connection.contains("never this CLI login flow"));
+    assert!(connection.contains("Scoped credentials still require an exact Operator grant"));
+}
+
+#[test]
 fn documented_alpha_workflow_distinguishes_entity_version_id_and_version_number() {
     const VERSION_ID: &str = "018fc823-8e40-7000-8000-000000000002";
     let path =

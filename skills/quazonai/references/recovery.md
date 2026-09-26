@@ -5,7 +5,9 @@ Use the CLI's actual nonzero exit, safe stderr code/Problem and native MCP `isEr
 | Observed result | Next action |
 | --- | --- |
 | Local `CLI_INPUT_INVALID` or missing/unknown command/schema | Inspect the selected native help/schema and repair the request before sending. Unknown DTO names are not permission errors. Do not guess another endpoint. |
-| `CLI_CREDENTIAL_INVALID`, unauthorized/expired/revoked capability | Stop writes; ask the trusted provisioner to repair the connection. Never ask for token contents or reuse browser identity. |
+| `CLI_LOGIN_REQUIRED`, `CLI_LOGIN_REQUIRES_TERMINAL`, or revoked owner device | Stop writes; have the user run `server client login` in their own terminal and enter the frontend address and hidden password there. Never collect the password through the Agent or chat. |
+| `CLI_LOGIN_REPLACE_REQUIRED` | An existing login points to another instance or device name. Have the user intentionally run `server client login --replace` in their terminal; the previous device remains managed in settings. |
+| `CLI_CREDENTIAL_INVALID`, or unauthorized/expired/revoked scoped capability | Stop writes; ask the trusted provisioner to repair the original connection. Never read token contents, reuse browser cookies or switch a restricted identity to owner login. |
 | Wrong project, insufficient scope, stale Mission Attempt or absent exact Operator grant | Report the original binding and required capability without acquiring or expanding it yourself. A Mission returns to its launcher. |
 | `CLI_SERVER_UNAVAILABLE_OR_RESULT_UNKNOWN`, or a submission timeout | Outcome may already be committed. Retain the same key, original body and exact authorization. Inspect known resource/Run IDs; if an authorized retry is necessary, replay only that original request to obtain its receipt. Do not automatically create a new ID/key or claim rollback. |
 | Conflict / revision mismatch | Read the current record, compare it with the original intent and explain the conflict. Do not silently rewrite the request revision or replace an immutable object. Same key plus changed body is not a valid retry. |

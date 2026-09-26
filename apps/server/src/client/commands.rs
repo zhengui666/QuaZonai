@@ -56,7 +56,16 @@ pub struct ProjectList {
 }
 #[derive(Subcommand)]
 pub enum Command {
-    /// Read the current machine identity, scopes and binding; never returns a token.
+    /// Log in interactively with the frontend address and password; remember this machine.
+    Login {
+        /// Device label shown in authentication settings (defaults to the native hostname).
+        #[arg(long)]
+        name: Option<String>,
+        /// Replace the saved connection; the previous device remains managed in settings.
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Read the current device or scoped machine identity; never returns a token.
     Identity,
     #[command(subcommand)]
     Migrate(Migrate),
@@ -693,11 +702,25 @@ impl Request {
 }
 
 impl Command {
+    pub(super) fn request_for(self, device: bool) -> Result<Request> {
+        if device && matches!(self, Self::Identity) {
+            return Ok(Request::get::<contracts::auth::CliDevice>(
+                "/api/v2/auth/cli/session",
+            ));
+        }
+        let mut request = self.request()?;
+        if device {
+            request.operator = false;
+        }
+        Ok(request)
+    }
+
     pub(super) fn request(self) -> Result<Request> {
         const GET: Method = Method::GET;
         const PATCH: Method = Method::PATCH;
         const POST: Method = Method::POST;
         let result = match self {
+            Self::Login { .. } => return Err(Failure::Input),
             Self::Identity => {
                 Request::get::<contracts::control::MachineSessionView>("/api/v2/auth/machine")
             }
