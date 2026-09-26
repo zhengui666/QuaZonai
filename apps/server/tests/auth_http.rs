@@ -201,6 +201,73 @@ async fn logout_and_password_change_never_silently_restore_sessions(pool: PgPool
     );
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn committed_revocations_succeed_when_native_cookie_cleanup_fails(pool: PgPool) {
+    let f = fixture(pool.clone()).await;
+    let first = local_session(&f).await.cookie.unwrap();
+    let second = local_session(&f).await.cookie.unwrap();
+    sqlx::raw_sql("CREATE FUNCTION public.reject_session_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected session cleanup failure'; END $$; CREATE TRIGGER reject_session_delete BEFORE DELETE ON tower_sessions.session FOR EACH ROW EXECUTE FUNCTION public.reject_session_delete()")
+        .execute(&pool).await.unwrap();
+    let logout = call(&f, "POST", "/api/v2/auth/logout", Value::Null, Some(&first)).await;
+    assert_eq!(logout.status, StatusCode::NO_CONTENT);
+    assert!(logout.headers[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .contains("Max-Age=0"));
+    assert_eq!(
+        call(&f, "GET", "/api/v2/auth/session", Value::Null, Some(&first))
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    let changed = call(&f, "POST", "/api/v2/auth/password",
+        json!({"schema_version":1,"current_password":"native-test-password","new_password":"new-test-password"}), Some(&second)).await;
+    assert_eq!(changed.status, StatusCode::NO_CONTENT);
+    assert!(changed.headers[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .contains("Max-Age=0"));
+    for cookie in [&first, &second] {
+        assert_eq!(
+            call(&f, "GET", "/api/v2/auth/session", Value::Null, Some(cookie))
+                .await
+                .status,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM tower_sessions.session")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        call(
+            &f,
+            "POST",
+            "/api/v2/auth/login",
+            password("native-test-password", false),
+            None
+        )
+        .await
+        .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(
+            &f,
+            "POST",
+            "/api/v2/auth/login",
+            password("new-test-password", false),
+            None
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+}
+
 async fn bearer(f: &Fixture, token: &str, method: &str, path: &str, body: Value) -> Reply {
     exchange(
         &f.app,

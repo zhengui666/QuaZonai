@@ -85,6 +85,16 @@ async fn save_session(
     Ok(())
 }
 
+async fn clear_revoked_session(session: &Session) {
+    session.clear().await;
+    // cycle_id clears the cookie ID before deleting the native row. Once domain
+    // authority is revoked, cleanup failure must neither undo success nor save
+    // the old cookie again; the middleware removes this empty session's cookie.
+    if session.cycle_id().await.is_err() {
+        tracing::warn!("native session cleanup deferred after authority revocation");
+    }
+}
+
 #[utoipa::path(get,path="/api/v2/auth/session",tag="Authentication",responses((status=200,body=BrowserSession),(status=401,body=Problem),(status=503,body=Problem)))]
 pub async fn session_status(
     State(state): State<AppState>,
@@ -157,7 +167,7 @@ pub async fn logout(
 ) -> Result<StatusCode, ApiError> {
     let login = authority(&state, &session).await?;
     state.store.logout_browser(login.id).await?;
-    session.flush().await.map_err(|_| ApiError::internal())?;
+    clear_revoked_session(&session).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -178,7 +188,7 @@ pub async fn change_password(
         .store
         .change_password(login.id, &snapshot, &verifier)
         .await?;
-    session.flush().await.map_err(|_| ApiError::internal())?;
+    clear_revoked_session(&session).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
