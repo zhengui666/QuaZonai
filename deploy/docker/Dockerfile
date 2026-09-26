@@ -27,6 +27,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 1000 --create-home quazonai
 COPY --from=server /out/server /out/runtime /opt/quazonai/bin/
+RUN ln -s server /opt/quazonai/bin/quazonai
 COPY --from=web /build/apps/web/dist/ /opt/quazonai/web/
 COPY --from=caddy /usr/bin/caddy /tmp/caddy
 # The upstream Caddy image grants its binary a privileged-port file capability.

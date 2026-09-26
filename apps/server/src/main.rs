@@ -17,6 +17,7 @@ use tower_sessions_sqlx_store::PostgresStore;
 #[derive(Parser)]
 #[command(
     name = "quazonai",
+    bin_name = "quazonai",
     version,
     about = "QuaZonai trusted control-plane entrypoint"
 )]

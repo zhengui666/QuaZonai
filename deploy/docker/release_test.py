@@ -248,14 +248,21 @@ class NativeDeploymentTests(unittest.TestCase):
                 self.assertFalse((installation / 'pending.json').exists())
                 self.assertFalse((root / 'native').exists())
 
-    def test_host_package_checks_worker_and_gateway_not_native_codex(self):
+    def test_host_package_checks_canonical_cli_worker_and_gateway(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(manage, 'run') as command:
             binaries = Path(temporary)
+            (binaries / 'server').touch()
+            (binaries / 'quazonai').symlink_to('server')
             manage.verify_native_binaries(binaries)
             self.assertEqual([call.args[0] for call in command.call_args_list], [
                 [str(binaries / 'server'), '--version'],
                 [str(binaries / 'runtime'), '--version'],
+                [str(binaries / 'quazonai'), 'client', '--help'],
             ])
+            (binaries / 'quazonai').unlink()
+            (binaries / 'quazonai').touch()
+            with self.assertRaisesRegex(ValueError, 'packaged server executable'):
+                manage.verify_native_binaries(binaries)
 
     def test_native_unit_validation_uses_exact_future_unit_without_installing(self):
         with tempfile.TemporaryDirectory() as temporary:

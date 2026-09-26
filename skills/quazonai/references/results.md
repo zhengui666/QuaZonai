@@ -1,6 +1,6 @@
 # Inspect Alpha, portfolio and delivery evidence
 
-These are scoped reads. Use the saved login with `server client`, or retain provisioned connection flags for a scoped machine, before the table's native arguments. Resolve IDs from their original parent resources; preserve original versions and provenance.
+These are scoped reads. Use the saved login with `quazonai client`, or retain provisioned connection flags for a scoped machine, before the table's native arguments. Resolve IDs from their original parent resources; preserve original versions and provenance.
 
 | Question | Native arguments |
 | --- | --- |
@@ -19,7 +19,7 @@ Never infer qualification from an uploaded REPORT, an empty list or the exit cod
 
 For a portfolio explanation, keep the original candidate, member versions, target weights, frozen policy/mandate and evaluation together. Do not relabel Alpha-level returns as a portfolio equity curve or infer missing daily returns. Explain the actual public metrics and limitations without reimplementing a backtest or inventing a chart's underlying data.
 
-If the user requests a new portfolio build, simulation, study or Alpha evaluation, inspect the exact `server client portfolio ... --help` / `alpha evaluate --help`, discover the native DTO, and follow the same preview and delegated-authorization procedure as [research](research.md). `alpha evaluate ALPHA_VERSION_ID` also targets the selected version object's UUID, not its parent Alpha or version number. Do not use a successful read to infer permission for a new scientific run. Independent evaluation, approval and delivery are not interchangeable with research submissions.
+For a requested portfolio build, simulation, study or Alpha evaluation, discover unfamiliar fields with the exact `quazonai client portfolio ... --help` / `alpha evaluate --help` and native DTO, then follow [research submission](research.md). Authorized routine writes do not require preview. `alpha evaluate ALPHA_VERSION_ID` targets the version object's UUID. A successful read grants no authority for a new run, independent evaluation, approval or delivery.
 
 Only report a release as approved or a handoff as acknowledged when its current record says so. Reading approval/Claim/ACK state does not authorize creating it. A stale or revoked authorization must not be treated as current. QuaZonai's package is target-only: no claim about real fills, positions, account NAV or active broker controls follows from it.
 

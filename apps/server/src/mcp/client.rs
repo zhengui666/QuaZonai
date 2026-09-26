@@ -1,5 +1,6 @@
 //! Fixed-route, credential-scoped HTTP adapter. No ambient proxy or browser authority.
 use super::{Failure, MissionBinding};
+use crate::service_http;
 use chrono::{DateTime, Utc};
 use contracts::{
     artifacts::{ArtifactAccess, ArtifactCreate, ArtifactProducer, ArtifactView},
@@ -14,20 +15,15 @@ use contracts::{
     runs::{RunKind, RunSnapshotV1, RunState},
     Id,
 };
-use reqwest::{header, redirect::Policy, Client};
+use reqwest::Client;
 use serde::{de::DeserializeOwned, Serialize};
 use std::time::Duration;
 use url::Url;
 
-pub(super) const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_RESPONSE_BYTES: usize = service_http::MAX_JSON_BYTES;
 
 pub(super) fn origin(value: &str, development_http: bool) -> Result<Url, Failure> {
-    if value.trim() != value {
-        return Err(Failure::Configuration);
-    }
-    crate::WebPolicy::new(value, ([127, 0, 0, 1], 0).into(), development_http)
-        .map_err(|_| Failure::Configuration)?;
-    Url::parse(value).map_err(|_| Failure::Configuration)
+    Ok(service_http::origin(value, development_http)?)
 }
 
 // Deliberately no Debug: the HTTP client contains a sensitive Authorization header.
@@ -36,6 +32,7 @@ pub(super) struct ControlClient {
     http: Client,
     origin: Url,
     binding: MissionBinding,
+    credential: String,
 }
 impl ControlClient {
     pub(super) fn new(
@@ -46,28 +43,14 @@ impl ControlClient {
     ) -> Result<Self, Failure> {
         let origin = origin(api_origin, development_http)?;
         integrations::authentication::machine_token(token).map_err(|_| Failure::Configuration)?;
-        let mut bearer = header::HeaderValue::from_str(&format!("Bearer {token}"))
-            .map_err(|_| Failure::Configuration)?;
-        bearer.set_sensitive(true);
-        let mut headers = header::HeaderMap::new();
-        headers.insert(header::AUTHORIZATION, bearer);
-        headers.insert(
-            header::ACCEPT,
-            header::HeaderValue::from_static("application/json"),
-        );
-        let http = Client::builder()
-            .default_headers(headers)
-            .redirect(Policy::none())
-            .retry(reqwest::retry::never())
-            .no_proxy()
-            .connect_timeout(Duration::from_secs(3))
-            .timeout(Duration::from_secs(10))
+        let http = service_http::builder(service_http::bearer(token)?, Duration::from_secs(10))
             .build()
             .map_err(|_| Failure::Configuration)?;
         Ok(Self {
             http,
             origin,
             binding,
+            credential: token.to_owned(),
         })
     }
 
@@ -86,45 +69,28 @@ impl ControlClient {
     }
 
     async fn response<T: DeserializeOwned>(
-        mut response: reqwest::Response,
+        &self,
+        response: reqwest::Response,
         expected: reqwest::StatusCode,
     ) -> Result<T, Failure> {
-        if response.status() != expected {
-            // Never parse/forward arbitrary upstream error bodies or redirects.
-            return Err(Failure::Http(response.status().as_u16()));
-        }
-        let content_type = response
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.split(';').next());
-        if content_type != Some("application/json") {
-            return Err(Failure::Contract);
-        }
-        if response
-            .content_length()
-            .is_some_and(|n| n > MAX_RESPONSE_BYTES as u64)
-        {
-            return Err(Failure::ResponseLimit);
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| Failure::Unavailable)? {
-            if chunk.len() > MAX_RESPONSE_BYTES.saturating_sub(bytes.len()) {
-                return Err(Failure::ResponseLimit);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)
+        let status = response.status().as_u16();
+        let response =
+            match service_http::checked(response, expected.as_u16(), &self.credential).await {
+                // Preserve a closed status-only error for non-native error bodies and
+                // redirects. Only a validated native Problem can expose safe metadata.
+                Err(service_http::Failure::Contract) if status != expected.as_u16() => {
+                    return Err(Failure::Http(status));
+                }
+                result => result?,
+            };
+        service_http::media(&response, "application/json")?;
+        let bytes = service_http::body(response, MAX_RESPONSE_BYTES).await?;
+        Ok(service_http::decode(&bytes, &self.credential)?)
     }
 
     async fn get<T: DeserializeOwned>(&self, route: Route) -> Result<T, Failure> {
-        let response = self
-            .http
-            .get(self.url(route))
-            .send()
-            .await
-            .map_err(|_| Failure::Unavailable)?;
-        Self::response(response, reqwest::StatusCode::OK).await
+        let response = service_http::send(self.http.get(self.url(route))).await?;
+        self.response(response, reqwest::StatusCode::OK).await
     }
 
     async fn post<T: DeserializeOwned>(
@@ -139,15 +105,14 @@ impl ControlClient {
         let header = axum::http::HeaderValue::from_str(key).map_err(|_| Failure::Contract)?;
         headers.insert("idempotency-key", header);
         crate::access::idempotency_key(&headers).map_err(|_| Failure::Contract)?;
-        let response = self
-            .http
-            .post(self.url(route))
-            .header("idempotency-key", key)
-            .json(body)
-            .send()
-            .await
-            .map_err(|_| Failure::Unavailable)?;
-        Self::response(response, reqwest::StatusCode::CREATED).await
+        let response = service_http::send(
+            self.http
+                .post(self.url(route))
+                .header("idempotency-key", key)
+                .json(body),
+        )
+        .await?;
+        self.response(response, reqwest::StatusCode::CREATED).await
     }
 
     pub(super) async fn authority(&self) -> Result<(RunSnapshotV1, DateTime<Utc>), Failure> {
@@ -301,6 +266,23 @@ enum Route {
     Brief(Id),
     Artifacts,
     Experiments,
+}
+
+impl From<service_http::Failure> for Failure {
+    fn from(value: service_http::Failure) -> Self {
+        match value {
+            service_http::Failure::Configuration => Self::Configuration,
+            service_http::Failure::Unavailable => Self::Unavailable,
+            service_http::Failure::Contract => Self::Contract,
+            service_http::Failure::ResponseLimit => Self::ResponseLimit,
+            service_http::Failure::Rejected(problem) => Self::Rejected {
+                status: problem.status,
+                code: problem.code,
+                retryable: problem.retryable,
+                request_id: problem.request_id,
+            },
+        }
+    }
 }
 
 #[cfg(test)]

@@ -30,6 +30,7 @@ pub mod runs;
 pub mod runtime;
 pub mod runtime_transport;
 pub mod secrets;
+mod service_http;
 pub mod settings;
 pub mod worker;
 

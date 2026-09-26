@@ -1,5 +1,6 @@
 //! Interactive owner login and one private, atomically replaced connection profile.
 use super::{body, media, read_file, verify, write_json, Arguments, Connection, Failure, Result};
+use crate::service_http;
 use contracts::{
     auth::{CliLogin, CliLoginResult},
     http::Problem,
@@ -101,9 +102,7 @@ impl Profile {
 }
 
 pub(super) fn origin(value: &str, development_http: bool) -> Result<Url> {
-    crate::WebPolicy::new(value, ([127, 0, 0, 1], 0).into(), development_http)
-        .map_err(|_| Failure::Configuration)?;
-    Url::parse(value).map_err(|_| Failure::Configuration)
+    Ok(service_http::origin(value, development_http)?)
 }
 
 pub(super) fn device_token(value: &str) -> Result<bool> {
@@ -119,27 +118,9 @@ pub(super) fn device_token(value: &str) -> Result<bool> {
 pub(super) fn http_client(
     origin: &Url,
     certificate: Option<&PathBuf>,
-    mut headers: header::HeaderMap,
+    headers: header::HeaderMap,
 ) -> Result<Client> {
-    headers.insert(
-        header::ACCEPT,
-        header::HeaderValue::from_static("application/json"),
-    );
-    headers.insert(
-        header::ACCEPT_ENCODING,
-        header::HeaderValue::from_static("identity"),
-    );
-    let mut builder = Client::builder()
-        .default_headers(headers)
-        .redirect(reqwest::redirect::Policy::none())
-        .retry(reqwest::retry::never())
-        .no_proxy()
-        .no_gzip()
-        .no_brotli()
-        .no_deflate()
-        .no_zstd()
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(20));
+    let mut builder = service_http::builder(headers, Duration::from_secs(20));
     if let Some(path) = certificate {
         let bytes = read_file(path, 65536, false)?;
         let certificates =
@@ -209,9 +190,8 @@ pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bo
             Ok(response) => {
                 media(&response, "application/json")?;
                 let bytes = body(response, 16 * 1024).await?;
-                verify(&bytes, &connection.credential)?;
                 let device: contracts::auth::CliDevice =
-                    serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
+                    service_http::decode(&bytes, &connection.credential)?;
                 if name.is_some_and(|name| name != device.name) {
                     return Err(Failure::ReplaceRequired);
                 }
@@ -270,17 +250,17 @@ pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bo
     }
     let mut endpoint = url.clone();
     endpoint.set_path("/api/v2/auth/cli/login");
-    let response = client
-        .post(endpoint)
-        .header(header::ORIGIN, url.origin().ascii_serialization())
-        .json(&CliLogin {
-            schema_version: SchemaV1,
-            password: password.clone(),
-            name: name.to_owned(),
-        })
-        .send()
-        .await
-        .map_err(|_| Failure::Unavailable)?;
+    let response = service_http::send(
+        client
+            .post(endpoint)
+            .header(header::ORIGIN, url.origin().ascii_serialization())
+            .json(&CliLogin {
+                schema_version: SchemaV1,
+                password: password.clone(),
+                name: name.to_owned(),
+            }),
+    )
+    .await?;
     let response = checked_login(response, &password).await?;
     media(&response, "application/json")?;
     let bytes = body(response, 16 * 1024).await?;

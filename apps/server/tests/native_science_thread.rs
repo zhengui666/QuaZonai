@@ -259,7 +259,7 @@ async fn respond(
             seen.phase = 3;
             seen.publications += 1;
             json!({"type":"function_call","namespace":namespace["name"],"name":tool["name"],
-                "call_id":call,"arguments":json!({"schema_version":1,"kind":"REPORT",
+                "call_id":call,"arguments":json!({"kind":"REPORT",
                     "workspace_relative_path":format!("result-{case}.json"),
                     "idempotency_key":format!("native-science-{case}")}).to_string()})
         }

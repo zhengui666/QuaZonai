@@ -46,7 +46,15 @@ New installations use `<installation>-codex` as the persistent Codex home. `--co
 
 Open the browser address and set the QuaZonai instance password on first use (including the first upgrade from password-free access). Later visits require that password. Select **记住本设备 30 天** to keep a browser signed in for 30 days; otherwise the session ends with the browser and lasts at most 12 hours. This password is separate from PostgreSQL and ChatGPT credentials.
 
-**设置 → 鉴权管理** changes the password and lists connected CLI machines. A password change signs browsers out; CLI machines remain connected until individually removed. The matching native CLI uses `server client login`: enter this same frontend address and the password in its private terminal prompt. The machine stores an opaque private token and subsequent `server client` commands reuse it without further authentication. See the [service Skill connection guide](../../skills/quazonai/references/connection.md). Mission and Downstream credentials retain their original restrictions.
+**设置 → 鉴权管理** changes the password and lists connected CLI machines. A password change signs browsers out; CLI machines remain connected until individually removed. The installation provides `quazonai` in its current release's `bin` directory:
+
+```sh
+export PATH="$HOME/.local/share/quazonai/current/bin:$PATH"
+quazonai --version
+quazonai client login
+```
+
+For a custom installation directory, use its `current/bin` path. `quazonai` links to the same native `server` executable; existing internal Worker and maintenance paths remain valid. Enter the frontend address and password in the private login prompt. Subsequent `quazonai client` commands reuse the saved device login. See the [service Skill connection guide](../../skills/quazonai/references/connection.md). Mission and Downstream credentials retain their original restrictions.
 
 Open **Settings → Codex → ChatGPT Auth → 登录 ChatGPT**. Copy the device code, open the authorization link and complete login on OpenAI's page. QuaZonai refreshes account/model status; researcher and reviewer share the account but have separate model settings. Refreshing the page cannot recover its code: finish in the original page or cancel and restart. Device-code authorization must be allowed by the account/workspace.
 
