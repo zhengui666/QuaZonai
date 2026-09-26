@@ -69,7 +69,8 @@ pub enum Command {
     Identity,
     #[command(subcommand)]
     Migrate(Migrate),
-    /// Submit target-only weights using the authenticated downstream identity.
+    /// Compatibility spelling for `forward weights submit`.
+    #[command(hide = true)]
     ForwardWeights,
     #[command(subcommand)]
     Forward(Forward),
@@ -112,7 +113,7 @@ pub enum Command {
     #[command(subcommand)]
     Run(Run),
     /// Read the exact local CLI command grant request from stdin.
-    /// This does not give the CLI lasting Operator authority.
+    /// This does not give a scoped CLI credential lasting Operator authority.
     OperatorGrant,
     /// Write-only IntegrationSecretCreate from stdin; prints only its native reference.
     CredentialRegister,
@@ -171,11 +172,25 @@ pub enum Forward {
         #[command(flatten)]
         page: List,
     },
+    /// Submit or inspect target-only weights.
+    #[command(
+        args_conflicts_with_subcommands = true,
+        subcommand_negates_reqs = true,
+        subcommand_precedence_over_arg = true
+    )]
     Weights {
-        project_id: String,
+        #[command(subcommand)]
+        command: Option<ForwardWeights>,
+        /// Compatibility spelling for `weights list PROJECT_ID`.
+        #[arg(required = true)]
+        project_id: Option<String>,
         #[command(flatten)]
         page: List,
     },
+    #[command(subcommand)]
+    Messages(ForwardMessages),
+    /// Compatibility spelling for `forward messages submit`.
+    #[command(hide = true)]
     Submit,
     Window {
         id: String,
@@ -187,6 +202,23 @@ pub enum Forward {
         #[command(flatten)]
         page: List,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ForwardWeights {
+    /// Submit target-only weights using the authenticated downstream identity.
+    Submit,
+    List {
+        project_id: String,
+        #[command(flatten)]
+        page: List,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ForwardMessages {
+    /// Submit the original downstream forward report.
+    Submit,
 }
 
 #[derive(Subcommand)]
@@ -468,7 +500,7 @@ pub enum Codex {
     Show {
         id: String,
     },
-    /// Read CodexProfileUpdateV1 on stdin; requires CAS and an Operator grant.
+    /// Read CodexProfileUpdateV1 on stdin; requires CAS and, for scoped credentials, an Operator grant.
     Update {
         id: String,
     },
@@ -612,14 +644,14 @@ pub enum Migrate {
         #[command(flatten)]
         page: List,
     },
-    /// Import a deployment-registered historical projection; requires exact Operator grant.
+    /// Import a deployment-registered historical projection; scoped credentials require an exact Operator grant.
     Import {
         #[arg(long)]
         export_ref: String,
         #[arg(long)]
         dry_run: bool,
     },
-    /// Read an import report created by this CLI credential.
+    /// Read an import report within the current identity's authority.
     Report {
         id: String,
     },
@@ -921,14 +953,29 @@ impl Command {
                     )?)
                     .page(page)?
                 }
-                Forward::Weights { project_id, page } => {
-                    Request::get::<Page<contracts::forward::DownstreamWeightsViewV1>>(action(
-                        "/api/v2/projects",
-                        project_id,
-                        "forward-weight-snapshots",
-                    )?)
-                    .page(page)?
+                Forward::Weights {
+                    command: Some(ForwardWeights::Submit),
+                    ..
+                } => return Self::ForwardWeights.request(),
+                Forward::Weights {
+                    command: Some(ForwardWeights::List { project_id, page }),
+                    ..
                 }
+                | Forward::Weights {
+                    command: None,
+                    project_id: Some(project_id),
+                    page,
+                } => Request::get::<Page<contracts::forward::DownstreamWeightsViewV1>>(action(
+                    "/api/v2/projects",
+                    project_id,
+                    "forward-weight-snapshots",
+                )?)
+                .page(page)?,
+                Forward::Weights {
+                    command: None,
+                    project_id: None,
+                    ..
+                } => return Err(Failure::Input),
                 Forward::Window { id, stream } => {
                     let mut request = Request::get::<contracts::forward::ForwardWindowViewV1>(
                         action("/api/v2/handoffs", id, "forward-window")?,
@@ -936,10 +983,12 @@ impl Command {
                     request.query.push(("stream_id".into(), stream));
                     request
                 }
-                Forward::Submit => Request::write::<
-                    contracts::forward::ForwardMessageSubmitV1,
-                    CommandResult<contracts::forward::ForwardMessageViewV1>,
-                >(POST, "/api/v2/forward/messages", 201, false)?,
+                Forward::Submit | Forward::Messages(ForwardMessages::Submit) => {
+                    Request::write::<
+                        contracts::forward::ForwardMessageSubmitV1,
+                        CommandResult<contracts::forward::ForwardMessageViewV1>,
+                    >(POST, "/api/v2/forward/messages", 201, false)?
+                }
                 Forward::List { id, page } => {
                     Request::get::<Page<contracts::forward::ForwardMessageViewV1>>(action(
                         "/api/v2/projects",

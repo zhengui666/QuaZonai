@@ -395,8 +395,11 @@ def verify_worker_unit(config: dict) -> None:
 
 
 def verify_native_binaries(directory: Path) -> None:
+    if not (directory / "quazonai").samefile(directory / "server"):
+        raise ValueError("The quazonai CLI must use the packaged server executable.")
     for binary in ("server", "runtime"):
         run([str(directory / binary), "--version"])
+    run([str(directory / "quazonai"), "client", "--help"])
 
 
 def configure_worker(config: dict) -> None:

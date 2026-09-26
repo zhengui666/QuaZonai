@@ -63,6 +63,13 @@ def fingerprint(root: Path) -> str:
 
 def verify_container_codex(config: dict) -> None:
     binaries = Path(config['root']) / 'releases' / config['version'] / 'bin'
+    assert (binaries / 'quazonai').samefile(binaries / 'server')
+    for args in (['client', '--help'], ['client', 'forward', 'weights', 'submit', '--help'],
+                 ['client', 'forward', 'messages', 'submit', '--help']):
+        help_text = manage.run([str(binaries / 'quazonai'), *args], capture=True)
+        assert 'Usage: quazonai' in help_text
+        container_help = manage.compose(config, 'exec', '-T', 'app', 'quazonai', *args, capture=True)
+        assert 'Usage: quazonai' in container_help
     assert not (binaries / 'codex').exists()
     manage.compose(config, 'exec', '-T', 'app', '/bin/sh', '-c', 'test ! -e /opt/quazonai/bin/codex')
     server = str(binaries / 'server')

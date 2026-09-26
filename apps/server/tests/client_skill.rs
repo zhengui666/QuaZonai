@@ -62,12 +62,95 @@ fn login_help_and_portable_instructions_require_private_user_terminal_entry() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/quazonai");
     let entry = fs::read_to_string(source.join("SKILL.md")).unwrap();
     let connection = fs::read_to_string(source.join("references/connection.md")).unwrap();
-    assert!(entry.contains("server client login"));
+    assert!(entry.contains("quazonai client login"));
     assert!(entry.contains("Never ask for the password in chat"));
     assert!(connection.contains("user types the password directly in their own terminal"));
-    assert!(connection.contains("server client identity"));
+    assert!(connection.contains("quazonai client identity"));
     assert!(connection.contains("never this CLI login flow"));
     assert!(connection.contains("Scoped credentials still require an exact Operator grant"));
+}
+
+#[test]
+#[cfg(unix)]
+fn canonical_executable_runs_the_existing_server_binary() {
+    let installation = tempfile::tempdir().unwrap();
+    let executable = installation.path().join("quazonai");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_server"), &executable).unwrap();
+    let output = Command::new(executable)
+        .env_clear()
+        .args(["client", "forward", "weights", "submit", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains("Usage: quazonai client forward weights submit"));
+}
+
+#[test]
+fn grouped_forward_submissions_preserve_legacy_routes_and_native_requests() {
+    let weights = json!({
+        "schema_version": 1, "project_id": ID, "environment": "PAPER",
+        "external_message_id": "original-weights", "asof_ns": "1", "available_ns": "2",
+        "valid_until_ns": "3", "base_currency": "USD", "cash_weight": "1", "weights": []
+    })
+    .to_string();
+    let messages = json!({
+        "schema_version": 1, "external_message_id": "original-report",
+        "report": {
+            "schema_version": 1, "project_id": ID, "handoff_id": ID,
+            "external_claim_id": "original-claim", "issuer_version": "1", "stream_id": "paper",
+            "sequence": "1", "message_revision": 1, "supersedes_message_id": null,
+            "window_start": "2026-09-01T00:00:00Z", "window_end": "2026-09-02T00:00:00Z",
+            "issued_at": "2026-09-02T00:00:00Z", "complete": true, "returns": []
+        }
+    })
+    .to_string();
+    for (current, legacy, input, route) in [
+        (
+            vec!["forward", "weights", "submit"],
+            vec!["forward-weights"],
+            weights,
+            "/api/v2/forward/weights",
+        ),
+        (
+            vec!["forward", "messages", "submit"],
+            vec!["forward", "submit"],
+            messages,
+            "/api/v2/forward/messages",
+        ),
+    ] {
+        let mut receipts = vec![];
+        for command in [current, legacy] {
+            let mut args = vec!["--idempotency-key", "original-submission"];
+            args.extend(command);
+            let receipt = successful(&preview_at("http://localhost:9", &args, Some(&input)));
+            assert_eq!(receipt["route"], route);
+            assert_eq!(receipt["method"], "POST");
+            assert_eq!(receipt["expected_http_status"], 201);
+            assert_eq!(receipt["requires_operator_grant"], false);
+            assert_eq!(receipt["requires_idempotency_key"], true);
+            receipts.push(receipt);
+        }
+        assert_eq!(receipts[0], receipts[1]);
+    }
+    let route = format!("/api/v2/projects/{ID}/forward-weight-snapshots");
+    for args in [
+        vec!["forward", "weights", "list", ID],
+        vec!["forward", "weights", ID],
+    ] {
+        let receipt = successful(&preview_at("http://localhost:9", &args, None));
+        assert_eq!(receipt["route"], route);
+        assert_eq!(receipt["method"], "GET");
+    }
+    for args in [
+        vec!["forward", "weights"],
+        vec!["forward", "weights", ID, "submit"],
+    ] {
+        assert!(!preview_at("http://localhost:9", &args, None)
+            .status
+            .success());
+    }
 }
 
 #[test]

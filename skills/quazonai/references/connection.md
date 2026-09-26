@@ -2,57 +2,61 @@
 
 ## Inputs and first use
 
-Use the installed QuaZonai `server` executable. The owner logs in once on the machine that will run the external Agent:
+Use the installed `quazonai` executable. The owner logs in once on the external Agent's machine:
 
 ```sh
-server --version
-server client --help
-server client login
-server client identity
+quazonai --version
+quazonai client --help
+quazonai client login
+quazonai client identity
 ```
 
-`login` asks for the QuaZonai frontend address (the same URL used in the browser, without a path) and the instance password with hidden terminal input. First set the password in the frontend if the instance is new. **The user types the password directly in their own terminal. Never ask them to paste it into chat, pass it in argv/environment, pipe it through the Agent, or read a password/profile/token file.** If an Agent cannot offer a private user-controlled terminal, return this one manual login command and resume after the user completes it.
+`login` asks for the frontend origin used in the browser and the instance password with hidden input. A new instance first needs its password set in the frontend. **The user types the password directly in their own terminal.** Never collect it through chat, argv, environment or Agent input, or read password/profile/token files. Without a private user-controlled terminal, return this manual command and resume after login.
 
-The CLI saves only the instance address, private device token and transport settings in `$XDG_CONFIG_HOME/quazonai/client.json` (or `$HOME/.config/quazonai/client.json`). Subsequent `server client` commands reuse that connection without `--origin`, `--credential-file`, a browser session or an Operator grant. The connection has no automatic expiry. Repeating `server client login` confirms the existing connection without creating another device. To intentionally switch instance, replace the device name or recover an unreadable/obsolete saved profile, the user runs `server client login --replace`; the previous device remains listed in its instance's authentication settings until deleted. The owner can name it with `server client login --name NAME`; otherwise the native hostname identifies it. In the frontend, **Settings → Authentication** can change the password or delete any connected CLI machine. A password change ends browser sessions but keeps connected CLI machines until explicitly deleted. After revocation, stop and have the user log in again in their own terminal.
+The CLI privately saves the origin, device token and transport settings in `$XDG_CONFIG_HOME/quazonai/client.json` (otherwise `$HOME/.config/quazonai/client.json`). Later commands reuse them without connection flags, browser sessions or Operator grants. Devices do not expire automatically. Repeating login confirms the connection; `login --replace` intentionally replaces it, and `login --name NAME` supplies a label instead of the hostname. Replacement leaves the previous device registered until deleted. **Settings → Authentication** manages devices and the password; changing the password ends browser sessions but preserves devices. A revoked device requires another user-controlled login.
 
-HTTPS supports the actual public frontend hostname. For an explicitly configured local HTTP deployment, the user runs `server client --development-http login`; HTTP remains loopback-only and this choice is saved. Never infer HTTP permission from the URL. A host-provided private CA uses `server client --ca-certificate /supplied/ca.pem login` and is saved with the connection. To update its CA later, use `server client --ca-certificate /supplied/new-ca.pem login`; successful identity confirmation saves the new certificate path for subsequent commands. Do not disable TLS verification, copy browser cookies or rewrite the origin.
+Use the actual public HTTPS hostname. Only an explicitly configured loopback HTTP deployment uses `quazonai client --development-http login`. A supplied private CA uses `quazonai client --ca-certificate /supplied/ca.pem login`; successful login or identity confirmation saves that path, including a later CA replacement. Never infer HTTP permission, disable TLS verification, copy browser cookies or rewrite the origin.
 
-`identity` returns only the current device's public ID, name, creation time and last-use time. Check that it is the intended connection. The service rechecks device revocation on every request; successful login does not authorize operations outside the user's task.
+`identity` returns nonsecret device metadata. Verify the intended connection; the service rechecks revocation on every request.
 
 ### Existing scoped machine connections
 
 A trusted host may still supply a restricted machine credential for a specific project, Reviewer, Automation or Downstream role:
 
 ```sh
-server client --origin "$QZ_ORIGIN" --credential-file "$QZ_CREDENTIAL_FILE" identity
+quazonai client --origin "$QZ_ORIGIN" --credential-file "$QZ_CREDENTIAL_FILE" identity
 ```
 
-Keep these explicit connection flags paired. The CLI reads the private credential file internally. For a scoped identity, check `kind`, `scope_codes`, `project_id`, `run_id` and `expires_at` against the task; a null project binding is not proof of unrestricted access. Scoped credentials still require an exact Operator grant where indicated. Never replace a bound Mission or restricted credential with the owner's saved login to bypass a denial. A bound Mission always uses its original MCP connection, never this CLI login flow.
+Keep these flags paired; the CLI reads the credential internally. Check `kind`, `scope_codes`, `project_id`, `run_id` and `expires_at`; a null project is not unrestricted authority. Scoped credentials still require an exact Operator grant where indicated. A bound Mission uses its original MCP connection, never this CLI login flow.
 
 ## Discover fields, not source files
 
 ```sh
-server openapi --list-schemas
-server openapi --schema ArtifactCreate
-server openapi --schema ExperimentProposalV1
+quazonai openapi --list-schemas
+quazonai openapi --schema ArtifactCreate
+quazonai openapi --schema ExperimentProposalV1
 ```
 
-Listing schema names is offline. A selected schema result contains `schema_version`, `name`, an entry `schema` reference and `components.schemas` with its transitive native references. Use that complete closure, including required fields and string/number distinctions. These are the installed binary's Rust contracts, not a live-server compatibility check or an authorization catalog. Use a single DTO at a time; do not load the full export unless explicitly needed.
+Discovery is offline. A selected result contains its entry `schema` and transitive `components.schemas`; honor required fields and string/number distinctions. It describes the installed Rust contracts, not live-server compatibility or authority.
 
-The unmodified `server openapi` still exports the full native document. Unknown names fail rather than returning a guessed structure. Missing flags indicate an older client; stop and report the installed version instead of compiling or downloading code.
+`quazonai openapi` exports the full document only when needed. Unknown schemas fail. Missing commands or flags require reporting the installed version/capability gap.
 
-## Preview without acting
+## Optional local preview
+
+Authorized routine writes may execute directly. Preview complex new requests, requested inspections, destructive operations and requests awaiting human review:
 
 ```sh
-server client --preview --idempotency-key "$REQUEST_KEY" artifact submit < artifact-request.json
+quazonai client --preview --idempotency-key "$REQUEST_KEY" artifact submit < artifact-request.json
 ```
 
-Only a user-approved workspace input file belongs in this redirection. `--preview` uses the same command routing and typed JSON parser as execution. It validates the local origin, IDs, cursor/options and supplied key/grant syntax, but never contacts a server or opens CA files. Saved-connection previews read the private profile internally to select the device identity; explicit scoped previews do not open the credential file. It returns method, route, query, expected HTTP status, body byte count and required authorization indicators. Bodies, key values, grants and connection secrets are not printed. Missing idempotency keys for writes are errors; saved owner devices do not require Operator grants, while a missing grant for an explicit scoped credential is shown as a requirement so the authorized human can prepare it.
+Use an authorized workspace input. `--preview` shares execution's routing and typed parser, validating local arguments without contacting the server or opening CA/explicit credential files. Saved profiles are read internally. The result describes the route, status, body size and authorization requirements while redacting bodies, keys and secrets. Writes still require an idempotency key; scoped grant requirements are reported without issuing a grant.
 
-`request_sent=false`, `authorization_checked=false` and `server_state_checked=false` are intentional. Budgets, current revisions, domain eligibility, token validity and successful persistence are not established by a preview. Only remove `--preview` after checking intent and already delegated authority. The existing `migrate import --dry-run` is a different, server-side operation; it is not an offline preview and is outside this skill's maintenance scope.
+`request_sent=false`, `authorization_checked=false` and `server_state_checked=false` mean no server outcome was checked. Execute the unchanged request only within existing authority. `migrate import --dry-run` instead contacts the server and is outside this Skill's maintenance scope.
+
+Forward submissions use `quazonai client forward weights submit` (`DownstreamWeightsSubmitV1`) and `quazonai client forward messages submit` (`ForwardMessageSubmitV1`) with the original Downstream authority. Read snapshots with `forward weights list PROJECT_ID`. Legacy `forward-weights`, `forward submit` and `forward weights PROJECT_ID` remain compatible, but use grouped spellings for new commands.
 
 ## Output and pagination
 
-Normal success is JSON on stdout and exit code 0; errors have nonzero exit and safe stderr. Do not look for Lark's `ok` or an invented universal `code=0` field in QuaZonai success responses. Commands return their native DTO or command receipt. `run watch` returns NDJSON; `artifact export` returns raw bytes and requires an exit-code check.
+Success is the native DTO/receipt on stdout with exit 0, not a universal `ok`/`code` wrapper. Errors use nonzero exit and safe stderr. `run watch` emits NDJSON; `artifact export` emits raw bytes and requires an exit-code check.
 
-Lists default to a bounded page and support `--limit 1..100` and `--cursor`. Keep `next_cursor` as returned. Stop after enough evidence for the question; disclose partial coverage when a page/time bound is reached. UUIDv7 values and bigint/revision decimal strings are opaque: never round them, rewrite them or substitute display names.
+Lists support `--limit 1..100` and unchanged `--cursor` values. Stop when enough evidence is available and disclose partial coverage. UUIDv7 and bigint/revision strings are opaque; do not round or replace them with names.

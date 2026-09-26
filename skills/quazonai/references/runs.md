@@ -7,13 +7,13 @@ Use a Run ID from the original accepted command receipt or `cycle show`. If the 
 ## Bounded event observation
 
 ```sh
-server client run watch "$RUN_ID" --max-seconds 30 --max-events 100
+quazonai client run watch "$RUN_ID" --max-seconds 30 --max-events 100
 ```
 
 Add `--development-http` only for an explicitly configured HTTP connection. After a bounded observation, persist the last verified event ID and explicitly resume when the task still requires it:
 
 ```sh
-server client run watch "$RUN_ID" --after "$LAST_EVENT_ID" --max-seconds 30 --max-events 100
+quazonai client run watch "$RUN_ID" --after "$LAST_EVENT_ID" --max-seconds 30 --max-events 100
 ```
 
 The cursor is the same Run's `UUIDv7:decimal-sequence`. Keep it verbatim. NDJSON events contain `schema_version`, `event_id` and `event`; the final observation summary contains `watch_ended`, `last_event_id`, `events_received` and `cancellation_requested=false`. That summary is the end of observation, not a terminal business result. After a relevant transition or a stream ending, read `run show` to report the current snapshot.
