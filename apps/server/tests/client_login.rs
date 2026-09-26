@@ -122,6 +122,44 @@ async fn login_requires_a_terminal_and_missing_connection_is_actionable() {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn password_login_accepts_a_current_month_prefix_without_orphaning_devices(pool: PgPool) {
+    let f = support::fixture(pool.clone()).await;
+    let (origin, _listener) = client::listen(&f).await;
+    let password = chrono::Utc::now().format("%Y-%m-").to_string();
+    assert!(password.len() >= 8);
+    let setup = reqwest::Client::new()
+        .post(format!("{origin}/api/v2/auth/setup"))
+        .header("origin", &origin)
+        .json(&json!({"schema_version":1,"password":password,"remember_device":false}))
+        .send()
+        .await
+        .unwrap();
+    assert!(setup.status().is_success());
+    let directory = tempfile::tempdir().unwrap();
+    let result = login(directory.path(), &origin, &password, false).await;
+    assert_eq!(result["exit"], 0, "{}", result["transcript"]);
+    let identity = saved(directory.path(), &["identity"], Value::Null).await;
+    assert!(identity.status.success());
+    let device: contracts::auth::CliDevice = serde_json::from_slice(&identity.stdout).unwrap();
+    assert!(device.created_at.to_rfc3339().starts_with(&password));
+    let profile: Value =
+        serde_json::from_slice(&fs::read(directory.path().join("quazonai/client.json")).unwrap())
+            .unwrap();
+    let token =
+        integrations::authentication::cli_token(profile["token"].as_str().unwrap()).unwrap();
+    assert_eq!(token.public_token_id, device.id);
+    let again = saved(directory.path(), &["login"], Value::Null).await;
+    assert!(again.status.success());
+    let again: contracts::auth::CliDevice = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(again.id, device.id);
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.cli_devices")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn password_login_accepts_json_field_names_and_revocation_ends_device_authority(
     pool: PgPool,
 ) {

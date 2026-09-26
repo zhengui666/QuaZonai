@@ -298,20 +298,32 @@ pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bo
 
 fn login_result(bytes: &[u8], password: &str, name: &str) -> Result<CliLoginResult> {
     // Parse the closed DTO first so duplicates/unknown fields cannot disappear
-    // when inspecting values. Check both received spelling and normalized output:
-    // timestamps become UTC and IDs become lowercase during serialization.
+    // when inspecting values. Public typed scalars can share a password prefix;
+    // reject whole-value reflections in both received and normalized spelling.
     let result: CliLoginResult = serde_json::from_slice(bytes).map_err(|_| Failure::Contract)?;
+    let original: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| Failure::Contract)?;
     for value in [
-        serde_json::from_slice(bytes).map_err(|_| Failure::Contract)?,
-        serde_json::to_value(&result).map_err(|_| Failure::Contract)?,
+        original["device"].clone(),
+        serde_json::to_value(&result.device).map_err(|_| Failure::Contract)?,
     ] {
-        if password_value(&value, password) {
+        if ["id", "created_at", "last_used_at"]
+            .into_iter()
+            .any(|field| value[field].as_str() == Some(password))
+        {
             return Err(Failure::Contract);
         }
     }
     let token =
         integrations::authentication::cli_token(&result.token).map_err(|_| Failure::Contract)?;
-    if result.device.id != token.public_token_id || result.device.name != name {
+    // The name was already public input; its exact echo is expected. Only the
+    // token's opaque capability needs substring protection, not its public ID.
+    if result.device.id != token.public_token_id
+        || result.device.name != name
+        || result.token == password
+        || result.token.split('.').nth(1) == Some(password)
+        || token.capability.contains(password)
+    {
         return Err(Failure::Contract);
     }
     verify(
@@ -319,19 +331,6 @@ fn login_result(bytes: &[u8], password: &str, name: &str) -> Result<CliLoginResu
         &result.token,
     )?;
     Ok(result)
-}
-
-fn password_value(value: &serde_json::Value, password: &str) -> bool {
-    match value {
-        serde_json::Value::String(text) => text.contains(password),
-        serde_json::Value::Array(values) => {
-            values.iter().any(|value| password_value(value, password))
-        }
-        serde_json::Value::Object(fields) => {
-            fields.values().any(|value| password_value(value, password))
-        }
-        _ => false,
-    }
 }
 
 async fn checked_login(response: Response, password: &str) -> Result<Response> {
@@ -358,14 +357,15 @@ fn login_problem(bytes: &[u8], status: u16, password: &str) -> Result<Problem> {
     }
     let original: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|_| Failure::Contract)?;
-    if password_value(&original["request_id"], password)
-        || problem.request_id.to_string().contains(password)
+    if original["request_id"].as_str() == Some(password)
+        || problem.request_id.to_string() == password
     {
         return Err(Failure::Contract);
     }
-    if problem
-        .current_revision
-        .is_some_and(|revision| String::from(revision).contains(password))
+    if original["current_revision"].as_str() == Some(password)
+        || problem
+            .current_revision
+            .is_some_and(|revision| String::from(revision) == password)
     {
         problem.current_revision = None;
     }
@@ -411,7 +411,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
-    fn login_success_checks_original_and_normalized_values_without_rejecting_protocol_keys() {
+    fn login_success_rejects_reflection_but_accepts_public_scalar_and_name_coincidences() {
         let id: Id = "018fc823-8e40-7abc-8abc-abcdef123456"
             .to_owned()
             .try_into()
@@ -424,23 +424,39 @@ mod tests {
             "token":token
         });
         let bytes = serde_json::to_vec(&native).unwrap();
-        for password in ["schema_version", "created_at", "last_used_at"] {
+        for password in [
+            "schema_version",
+            "created_at",
+            "last_used_at",
+            "2026-09-",
+            "018fc823",
+            "qzc.018fc823",
+            "CLI acceptance",
+            "acceptance",
+        ] {
             assert!(login_result(&bytes, password, "CLI acceptance").is_ok());
         }
-        for password in [secret, token, "CLI acceptance".to_owned()] {
+        for password in [secret[..8].to_owned(), secret, token] {
             assert!(login_result(&bytes, &password, "CLI acceptance").is_err());
         }
         let mut uppercase = native.clone();
-        uppercase["device"]["id"] = serde_json::json!(id.to_string().to_uppercase());
         uppercase["token"] = serde_json::json!(native["token"]
             .as_str()
             .unwrap()
             .replace(&id.to_string(), &id.to_string().to_uppercase()));
+        assert!(login_result(
+            &serde_json::to_vec(&uppercase).unwrap(),
+            &id.to_string().to_uppercase(),
+            "CLI acceptance"
+        )
+        .is_err());
+        uppercase["device"]["id"] = serde_json::json!(id.to_string().to_uppercase());
         let uppercase = serde_json::to_vec(&uppercase).unwrap();
         assert!(!String::from_utf8_lossy(&uppercase).contains(&id.to_string()));
         for password in [id.to_string(), id.to_string().to_uppercase()] {
             assert!(login_result(&uppercase, &password, "CLI acceptance").is_err());
         }
+        assert!(login_result(&uppercase, "018FC823", "CLI acceptance").is_ok());
         for field in ["created_at", "last_used_at"] {
             let mut reflected = native.clone();
             let original = "2026-09-26T03:02:03+02:00";
@@ -527,6 +543,21 @@ mod tests {
         .is_none());
         assert!(login_problem(&bytes, 401, native["request_id"].as_str().unwrap()).is_err());
         reflected_scalar["request_id"] = serde_json::json!("018FC823-8E40-7ABC-8ABC-ABCDEF123456");
+        reflected_scalar["current_revision"] = serde_json::json!("123456789");
+        for password in ["018FC823", "018fc823", "12345678"] {
+            let problem = login_problem(
+                &serde_json::to_vec(&reflected_scalar).unwrap(),
+                401,
+                password,
+            )
+            .unwrap();
+            assert_eq!(problem.code, "AUTHENTICATION_FAILED");
+            assert_eq!(
+                problem.request_id.to_string(),
+                "018fc823-8e40-7abc-8abc-abcdef123456"
+            );
+            assert_eq!(problem.current_revision.unwrap().get(), 123456789);
+        }
         for password in [
             "018FC823-8E40-7ABC-8ABC-ABCDEF123456",
             "018fc823-8e40-7abc-8abc-abcdef123456",
