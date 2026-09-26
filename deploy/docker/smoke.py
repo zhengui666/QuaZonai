@@ -471,7 +471,7 @@ def verify_runtime(config: dict) -> None:
         external = run_id + "/1"
         route = "/jobs/" + urllib.parse.quote(external, safe="")
         log = directory / "gateway.log"
-        def start():
+        def start(*, journal_only=False):
             with log.open("ab") as output:
                 process = subprocess.Popen(["bash", str(script), "serve", *args],
                                            stdin=subprocess.DEVNULL, stdout=output, stderr=output)
@@ -479,7 +479,7 @@ def verify_runtime(config: dict) -> None:
             while time.monotonic() < deadline:
                 assert process.poll() is None, "Packaged Runtime exited before listening"
                 try:
-                    request("GET", "/capabilities")
+                    request("GET", route if journal_only else "/capabilities")
                     return process
                 except (urllib.error.URLError, TimeoutError):
                     time.sleep(0.2)
@@ -526,7 +526,9 @@ def verify_runtime(config: dict) -> None:
             assert wasm.startswith(b"\0asm\x01\0\0\0") and len(wasm) == int(model["byte_count"])
             child.terminate()
             child.wait(timeout=20)
-            child = start()
+            native_config["docker_socket"] = str(directory / "unavailable-docker.sock")
+            path.write_text(json.dumps(native_config))
+            child = start(journal_only=True)
             assert request("POST", "/jobs", spec) == status
             assert request("GET", route + "/result") == result
             assert request("GET", route + "/artifacts/" + model["storage_ref"], raw=True) == wasm

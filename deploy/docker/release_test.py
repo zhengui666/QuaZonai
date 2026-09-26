@@ -895,7 +895,7 @@ class PrebuiltImageTests(unittest.TestCase):
             manage.save(runtime, {'images': [{'job_kind': 'DATA_VALIDATE', 'image_ref': config['runtime_image']}]})
             with patch.object(manage, 'run') as command, patch.object(os, 'execv') as execute:
                 manage.run_runtime(root, 'doctor', runtime)
-            self.assertEqual(command.call_args.args[0], ['docker', 'pull', config['runtime_image']])
+            command.assert_not_called()
             binary = str(root / 'releases/v1.2.3/bin/runtime')
             execute.assert_called_once_with(binary, [binary, 'doctor', '--config', str(runtime)])
             manage.save(runtime, {'images': [{'job_kind': 'DATA_VALIDATE', 'image_ref': 'wrong'}]})
@@ -912,6 +912,21 @@ class PrebuiltImageTests(unittest.TestCase):
                 manage.run_runtime(root, 'serve', root / 'runtime.json')
             command.assert_not_called()
             execute.assert_not_called()
+
+    def test_publishing_rejects_different_image_version_or_source_before_push(self):
+        for labels in (
+            {"org.opencontainers.image.revision": "a" * 40, "org.opencontainers.image.version": "ci"},
+            {"org.opencontainers.image.revision": "b" * 40, "org.opencontainers.image.version": "v1.2.3"},
+        ):
+            with self.subTest(labels=labels), patch.object(release.sys, 'argv', [
+                'release.py', 'push-images', '--version', 'v1.2.3', '--revision', 'a' * 40,
+                '--image', 'test-app', '--runtime-image', 'test-runtime',
+                '--codex-image', 'test-codex', '--codex-version', '0.157.0',
+            ]), patch.object(release, 'verify'), patch.object(
+                release, 'run', return_value=json.dumps(labels)
+            ), patch.object(release, 'push_image') as publish, self.assertRaisesRegex(ValueError, 'version and source'):
+                release.main()
+            publish.assert_not_called()
 
     def test_registry_roundtrip_checks_the_pushed_image_identity(self):
         digest = 'ghcr.io/zhengui666/quazonai@sha256:' + 'd' * 64

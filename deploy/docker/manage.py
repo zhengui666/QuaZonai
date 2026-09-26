@@ -730,8 +730,9 @@ def run_runtime(root: Path, operation: str, config_path: Path) -> None:
         for item in registered
     ):
         raise ValueError("Runtime images must match this release's runtime_image digest.")
-    if not release["runtime_image"].startswith("sha256:"):
-        run(["docker", "pull", release["runtime_image"]])
+    # Installation already pulled this digest. A gateway restart must still
+    # expose its journal during a registry or Docker outage; native doctor/new
+    # execution checks the configured engine and image availability.
     binary = root / "releases" / config["version"] / "bin/runtime"
     # Hand control to the native gateway; preserve signals and its real exit status.
     os.execv(str(binary), [str(binary), operation, "--config", str(config_path)])

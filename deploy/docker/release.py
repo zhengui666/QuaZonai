@@ -262,10 +262,11 @@ def main() -> None:
         for field, image, repository in (
             ("image", args.image, "quazonai"), ("runtime_image", args.runtime_image, "quazonai-runtime")
         ):
-            actual = run(["docker", "image", "inspect", "--format",
-                          '{{index .Config.Labels "org.opencontainers.image.revision"}}', image], capture=True)
-            if actual != args.revision:
-                raise ValueError("The tested image does not match the release source.")
+            labels = json.loads(run(["docker", "image", "inspect", "--format",
+                                     "{{json .Config.Labels}}", image], capture=True))
+            if (labels.get("org.opencontainers.image.revision") != args.revision
+                    or labels.get("org.opencontainers.image.version") != args.version):
+                raise ValueError("The tested image does not match the release version and source.")
             references[field] = push_image(image, "ghcr.io/zhengui666/" + repository, args.version)
         codex.verify_candidate(docker_configuration(), codex.exact_version(args.codex_version), args.codex_image)
         references["codex_image"] = push_image(args.codex_image, "ghcr.io/zhengui666/quazonai-codex", args.codex_version)
