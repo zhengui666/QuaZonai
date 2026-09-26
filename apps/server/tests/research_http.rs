@@ -328,8 +328,20 @@ async fn research_field_errors_are_safe_bounded_and_native_auth_is_not_optional(
             &[],
         )
         .await;
-        assert_eq!(r.status, StatusCode::OK);
-        assert!(r.cookie.is_some());
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(r.body["code"], "AUTH_REQUIRED");
+        assert!(r.cookie.is_none());
+        let authenticated = browser(
+            &f,
+            &cookie,
+            "query",
+            "GET",
+            &format!("{path}?project_id={}", data.project),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(authenticated.status, StatusCode::OK);
+        assert_eq!(authenticated.body["items"], json!([]));
         for tail in ["&limit=0", "&limit=101", "&limit=65536", "&unknown=1"] {
             let r = browser(
                 &f,
