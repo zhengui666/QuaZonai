@@ -208,7 +208,7 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
     let mut disruptions = Vec::new();
     let mut trades = Vec::new();
     let mut print_keys = BTreeSet::new();
-    let mut ids = BTreeSet::new();
+    let mut identities: BTreeMap<String, BTreeSet<Option<String>>> = BTreeMap::new();
     let mut resolution: Option<(serde_json::Value, u64)> = None;
     for_rows(path, |row| {
         let at = number(&row, "t_arrival_ns")?;
@@ -281,7 +281,7 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
                     let instrument = instruments
                         .get(trade.asset_id.as_str())
                         .context("CAPTURE_UNKNOWN_TOKEN")?;
-                    let tick = parse_trade_tick(
+                    let mut tick = parse_trade_tick(
                         &trade,
                         instrument.id(),
                         instrument.price_precision(),
@@ -295,12 +295,46 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
                                 == Decimal::ZERO,
                         "CAPTURE_LOSSY_TRADE"
                     );
-                    // A transaction can contain several fills. Neither transaction hash nor a
-                    // repeated price/size/timestamp tuple is sufficient to invent a distinct fill.
+                    // The live parser omits transaction_hash from its derived ID. Different
+                    // transactions can legitimately print the same tuple in one millisecond.
+                    let transaction = trade
+                        .transaction_hash
+                        .as_ref()
+                        .map(|hash| {
+                            ensure!(
+                                hash.len() == 66
+                                    && hash.starts_with("0x")
+                                    && hash[2..].bytes().all(|b| b.is_ascii_hexdigit())
+                                    && hash[2..].bytes().any(|b| b != b'0'),
+                                "CAPTURE_TRANSACTION_HASH"
+                            );
+                            Ok::<_, anyhow::Error>(hash.to_ascii_lowercase())
+                        })
+                        .transpose()?;
+                    let tuple = (
+                        tick.instrument_id,
+                        tick.aggressor_side,
+                        tick.price,
+                        tick.size,
+                        tick.ts_event.as_u64(),
+                    );
+                    let seen = identities
+                        .entry(serde_json::to_string(&tuple)?)
+                        .or_default();
+                    // Same-transaction repeats, or any repeat with an unknown transaction,
+                    // remain ambiguous. Receive time and stream order cannot invent a fill.
                     ensure!(
-                        ids.insert((tick.instrument_id, tick.trade_id)),
+                        (seen.is_empty() || transaction.is_some() && !seen.contains(&None))
+                            && seen.insert(transaction.clone()),
                         "CAPTURE_AMBIGUOUS_TRADE_ID"
                     );
+                    let digest = format!(
+                        "{:x}",
+                        Sha256::digest(serde_json::to_vec(&(tuple, transaction))?)
+                    );
+                    // Native TradeId permits 36 characters; final validation rejects any
+                    // truncated-hash collision before publishing a catalog.
+                    tick.trade_id = TradeId::new(format!("ws_{}", &digest[..32]));
                     ensure!(
                         print_keys.insert(serde_json::to_string(&item)?),
                         "CAPTURE_DUPLICATE_PRINT"
@@ -423,6 +457,7 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
             "availability": "Original CLOCK_REALTIME receive times from poly_a; dual-connection audit preserves those times. Bars use max(interval end, contributing receive times). No retrospective REST trade/label backfill is consumed.",
             "coverage": "Matching trade-print multisets and uninterrupted recorded connections for this selection only. Local stream_seq is not an exchange sequence; neither chain completeness nor all-market history is certified.",
             "settlement": "Original market_resolved payout and event/receive times; not a last-price or strike comparison.",
+            "trade_identity": "ws_ plus 128 SHA-256 bits of JSON [canonical native print tuple, lowercase transaction hash or null]; same-transaction and unknown-transaction repeats are rejected. Full payloads remain in the checksummed source.",
         }),
         instruments: def.instruments,
         trades: primary.trades,
@@ -641,6 +676,48 @@ mod tests {
                 trade["price"] = serde_json::json!("0.40");
                 trade = serde_json::json!([first, trade]);
             }
+            if matches!(
+                failure,
+                "distinct_transactions"
+                    | "same_transaction_fills"
+                    | "same_transaction"
+                    | "mixed_missing_transaction"
+                    | "mixed_missing_transaction_reversed"
+                    | "zero_transaction"
+                    | "invalid_transaction"
+            ) {
+                let mut first = trade.clone();
+                first["transaction_hash"] = serde_json::json!(format!("0x{}", "a".repeat(64)));
+                trade["transaction_hash"] = serde_json::json!(format!("0x{}", "b".repeat(64)));
+                match failure {
+                    "same_transaction_fills" => {
+                        first["price"] = serde_json::json!("0.60");
+                        trade["transaction_hash"] = first["transaction_hash"].clone();
+                    }
+                    "same_transaction" => {
+                        // Casing and equivalent decimal spelling do not identify another fill.
+                        trade["transaction_hash"] =
+                            serde_json::json!(format!("0x{}", "A".repeat(64)));
+                        trade["price"] = serde_json::json!("0.5");
+                    }
+                    "mixed_missing_transaction" | "mixed_missing_transaction_reversed" => {
+                        trade.as_object_mut().unwrap().remove("transaction_hash");
+                    }
+                    "zero_transaction" => {
+                        trade["transaction_hash"] =
+                            serde_json::json!(format!("0x{}", "0".repeat(64)));
+                    }
+                    "invalid_transaction" => {
+                        trade["transaction_hash"] = serde_json::json!("0x1234")
+                    }
+                    _ => (),
+                }
+                trade = if failure == "mixed_missing_transaction_reversed" {
+                    serde_json::json!([trade, first])
+                } else {
+                    serde_json::json!([first, trade])
+                };
+            }
             let resolved = serde_json::json!({"id":"fixture", "market":"condition","assets_ids":["123","456"],
                 "winning_asset_id":"456", "winning_outcome":"Down", "timestamp":((START+65)*1000).to_string(),
                 "tags":[],"event_type":"market_resolved"});
@@ -780,6 +857,41 @@ mod tests {
     }
 
     #[test]
+    fn different_transactions_preserve_equal_prints_and_native_volume() {
+        for scenario in ["distinct_transactions", "same_transaction_fills"] {
+            let root = tempfile::tempdir().unwrap();
+            let args = fixture(root.path(), scenario);
+            let archive = prepare(&args).unwrap();
+            assert_eq!(archive.trades.len(), 2);
+            assert_ne!(archive.trades[0].trade_id, archive.trades[1].trade_id);
+            assert_eq!(archive.bars[0].volume, Quantity::from("4.000002"));
+            let repeated = prepare(&args).unwrap();
+            assert_eq!(archive.trades, repeated.trades);
+            let expected = archive
+                .trades
+                .iter()
+                .copied()
+                .map(nautilus_model::data::Data::Trade)
+                .collect::<Vec<_>>();
+            crate::import(archive, &args.output).unwrap();
+            let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+                args.output.join("catalog").to_str().unwrap(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let trades = catalog
+                .query::<TradeTick>(None, None, None, None, None, true)
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(trades, expected);
+        }
+    }
+
+    #[test]
     fn rejects_missing_or_contradictory_capture_evidence() {
         for failure in [
             "fees",
@@ -789,10 +901,26 @@ mod tests {
             "different",
             "duplicate",
             "tick",
+            "same_transaction",
+            "mixed_missing_transaction",
+            "mixed_missing_transaction_reversed",
+            "zero_transaction",
+            "invalid_transaction",
         ] {
             let root = tempfile::tempdir().unwrap();
             let args = fixture(root.path(), failure);
-            assert!(prepare(&args).is_err(), "accepted {failure}");
+            let error = prepare(&args).expect_err(failure).to_string();
+            match failure {
+                "same_transaction"
+                | "mixed_missing_transaction"
+                | "mixed_missing_transaction_reversed" => {
+                    assert_eq!(error, "CAPTURE_AMBIGUOUS_TRADE_ID")
+                }
+                "zero_transaction" | "invalid_transaction" => {
+                    assert_eq!(error, "CAPTURE_TRANSACTION_HASH")
+                }
+                _ => (),
+            }
             assert!(!args.output.exists());
         }
     }
