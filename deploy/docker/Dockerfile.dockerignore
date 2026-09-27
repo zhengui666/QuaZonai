@@ -5,6 +5,8 @@
 !LICENSE
 !NOTICE
 !THIRD_PARTY_NOTICES.md
+!licenses/
+!licenses/**
 !apps/
 !apps/**
 !crates/

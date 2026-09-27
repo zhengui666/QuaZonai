@@ -24,7 +24,6 @@ fn workspace_dependencies_follow_design_boundaries() {
         .args([
             "metadata",
             "--locked",
-            "--offline",
             "--filter-platform",
             host,
             "--format-version=1",
