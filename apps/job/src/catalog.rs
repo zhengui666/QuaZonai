@@ -1,7 +1,11 @@
 //! Read an already-authorized, immutable native catalog mounted into this job.
 //! Native time ordering is necessary, not sufficient, evidence of historical availability.
 use anyhow::{ensure, Result};
-use contracts::science::NativeBarSelectionV1;
+use contracts::{
+    execution::{NativeDataQualityReportV1, NativeDatasetQualityV1, NativeDatasetSelectionV1},
+    science::NativeBarSelectionV1,
+    DbCounter, SchemaV1,
+};
 use nautilus_core::UnixNanos;
 use nautilus_model::{
     data::{Bar, BarType, Data},
@@ -25,6 +29,55 @@ pub struct NativeBarSeries {
 pub struct NativeMarketData {
     pub series: Vec<NativeBarSeries>,
     pub rows: usize,
+}
+
+/// Measure the same native records for operator preparation and formal DATA_VALIDATE.
+/// This does not certify coverage, source permissions, historical availability or PIT.
+pub fn measure_catalog(
+    root: &Path,
+    selected: &NativeDatasetSelectionV1,
+    measure_notionals: bool,
+) -> Result<(NativeMarketData, NativeDatasetQualityV1)> {
+    let data = load_catalog(root, &selected.selection)?;
+    crate::prediction::catalog_closes(root, &data, &selected.selection, &selected.settlements)?;
+    let mut first = u64::MAX;
+    let mut last = 0;
+    let mut available = 0;
+    let mut instrument_ids = Vec::with_capacity(data.series.len());
+    let last_bar_notionals = measure_notionals
+        .then(|| last_bar_notionals(&data))
+        .transpose()?;
+    for series in &data.series {
+        instrument_ids.push(series.instrument.id().to_string());
+        for bar in &series.bars {
+            first = first.min(bar.ts_event.as_u64());
+            last = last.max(bar.ts_event.as_u64());
+            available = available.max(bar.ts_init.as_u64());
+        }
+    }
+    let count = |value| DbCounter::new(value).map_err(anyhow::Error::msg);
+    let quality = NativeDatasetQualityV1 {
+        settlements: selected.settlements.clone(),
+        dataset_revision_id: selected.dataset_revision_id,
+        selection: selected.selection.clone(),
+        row_count: count(data.rows as u64)?,
+        instrument_ids,
+        first_event_ns: count(first)?,
+        last_event_ns: count(last)?,
+        available_through_ns: count(available)?,
+        last_bar_notionals,
+    };
+    Ok((data, quality))
+}
+
+pub fn quality_report(datasets: Vec<NativeDatasetQualityV1>) -> Result<NativeDataQualityReportV1> {
+    Ok(NativeDataQualityReportV1 {
+        schema_version: SchemaV1,
+        native_version: "nautilus-persistence/0.63.0".into(),
+        checked_at: chrono::DateTime::from_timestamp_micros(chrono::Utc::now().timestamp_micros())
+            .ok_or_else(|| anyhow::anyhow!("NATIVE_CLOCK"))?,
+        datasets,
+    })
 }
 
 /// Same last-known native BAR valuation for quality reports and rolling research.

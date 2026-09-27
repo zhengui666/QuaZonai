@@ -1,6 +1,7 @@
 /target/
 **/node_modules/
 **/dist/
+__pycache__/
 # Local developer handoffs, copied upstream sources, and execution evidence.
 /.ai-bridge/
 # Default private application state: never stage master keys or runtime objects.

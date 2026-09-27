@@ -30,11 +30,19 @@ const EXCHANGES: [&str; 2] = [
     "0xc5d563a36ae78145c45a50134d48a1215220f80a",
 ];
 
+#[path = "capture.rs"]
+pub mod capture;
+
+#[path = "v2.rs"]
+mod v2;
+
 #[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Format {
     /// Envio v1 OrderFilled; exclude exchange-counterparty taker summaries.
     MooseFills,
+    /// TimeSeventeen v2 normalized amounts, with exact six-decimal recovery.
+    TimeSeventeenV2,
     /// Joseph3222 minute-END full-book snapshots, not a continuous event feed.
     JosephBooks,
 }
@@ -422,7 +430,13 @@ fn aggregate(archive: &mut NativeArchive, interval: u32) -> Result<()> {
             let end = (bucket[0].ts_event.as_u64() / interval_ns + 1)
                 .checked_mul(interval_ns)
                 .context("BAR_TIMESTAMP_RANGE")?;
-            let bar = builder.build(end.into(), end.into());
+            let available = bucket
+                .iter()
+                .map(|t| t.ts_init.as_u64())
+                .max()
+                .unwrap()
+                .max(end);
+            let bar = builder.build(end.into(), available.into());
             archive.bars.push(Bar {
                 bar_type: external,
                 ..bar
@@ -440,7 +454,7 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
     );
     if let Some(interval) = args.bar_seconds {
         ensure!(
-            args.format == Format::MooseFills
+            matches!(args.format, Format::MooseFills | Format::TimeSeventeenV2)
                 && interval > 0
                 && interval <= 86400
                 && args.start_seconds.is_multiple_of(u64::from(interval))
@@ -491,6 +505,7 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
         let relative = file.strip_prefix(root)?.to_string_lossy();
         let prefix = match args.format {
             Format::MooseFills => "order_filled/",
+            Format::TimeSeventeenV2 => "OrderFilled/",
             Format::JosephBooks => "orderbook_1min/",
         };
         if !relative.starts_with(prefix) {
@@ -501,21 +516,25 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
             let row = row?;
             quality.scanned_rows += 1;
             let label = match args.format {
-                Format::MooseFills => "timestamp",
+                Format::MooseFills | Format::TimeSeventeenV2 => "timestamp",
                 Format::JosephBooks => "minute_ts",
             };
             let label_at = seconds(&row, label)?;
             let at = match args.format {
-                Format::MooseFills => label_at,
+                Format::MooseFills | Format::TimeSeventeenV2 => label_at,
                 Format::JosephBooks => label_at.checked_add(60).context("TIMESTAMP_RANGE")?,
             };
             if at < args.start_seconds || at >= args.end_seconds {
                 continue;
             }
             let (identity, signature) = match args.format {
-                Format::MooseFills => {
+                Format::MooseFills | Format::TimeSeventeenV2 => {
                     let mut row_quality = Quality::default();
-                    let Some(trade) = fill(&row, &by_token, &mut row_quality)? else {
+                    let parsed = match args.format {
+                        Format::TimeSeventeenV2 => v2::fill(&row, &by_token, &mut row_quality)?,
+                        _ => fill(&row, &by_token, &mut row_quality)?,
+                    };
+                    let Some(trade) = parsed else {
                         quality.exchange_summaries_excluded +=
                             row_quality.exchange_summaries_excluded;
                         continue;
@@ -576,7 +595,10 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
         "coverage": "Only selected files/assets/window; no provider completeness claim is verified.",
         "settlement": "Not inferred from state tables, redemption times, end dates or last prices.",
         "book_semantics": "Minute-end snapshots, sequence unknown (0); missing or one-sided books never create tradable zero quotes.",
-        "trade_semantics": "v1 USDC.e cash/token OrderFilled, excluding exchange-counterparty summaries; self trades retained; aggressor unknown; price rounding counted.",
+        "trade_semantics": match args.format {
+            Format::TimeSeventeenV2 => "TimeSeventeen v2 normalized float64 cash/share amounts with unique exact six-decimal recovery, pUSD collateral. Raw integers, emitting contract and transaction hash are absent. Exchange-counterparty summaries excluded; self trades retained; aggressor unknown; price rounding counted.",
+            _ => "v1 USDC.e cash/token OrderFilled, excluding exchange-counterparty summaries; self trades retained; aggressor unknown; price rounding counted.",
+        },
         "instruments_sha256": digest(&args.instruments)?,
     });
     super::validate(&archive)?;
@@ -606,7 +628,7 @@ mod tests {
                 .asset_class(AssetClass::Alternative)
                 .currency(Currency::from_str("USDC.e").unwrap())
                 .activation_ns(0_u64.into())
-                .expiration_ns(1000_000_000_000_u64.into())
+                .expiration_ns(1_000_000_000_000_u64.into())
                 .price_precision(4)
                 .size_precision(6)
                 .price_increment(Price::from("0.0001"))
@@ -643,6 +665,7 @@ mod tests {
     fn fixture_for(root: &Path, rows: &[Row], format: Format) -> Arguments {
         let relative = match format {
             Format::MooseFills => "order_filled/year=2022/month=11.parquet",
+            Format::TimeSeventeenV2 => "OrderFilled/2026-08-09.parquet",
             Format::JosephBooks => "orderbook_1min/date=2026-05-01/data_0.parquet",
         };
         let path = root.join(relative);
