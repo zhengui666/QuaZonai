@@ -4715,6 +4715,7 @@ dependencies = [
 name = "job"
 version = "2.0.0-dev.1"
 dependencies = [
+ "alloy-core",
  "anyhow",
  "arrow-array 56.2.0",
  "bigdecimal",
@@ -4748,6 +4749,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "url",
  "wasmi",
  "wat",
 ]
