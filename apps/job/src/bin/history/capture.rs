@@ -949,7 +949,7 @@ mod tests {
         let report = crate::import(archive, &args.output).unwrap();
         assert_eq!(report.instruments, 2);
         assert_eq!(report.instrument_versions, 3);
-        let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+        let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
             args.output.join("catalog").to_str().unwrap(),
             None,
             None,
