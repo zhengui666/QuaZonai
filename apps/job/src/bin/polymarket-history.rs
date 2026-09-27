@@ -45,6 +45,8 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Convert matching dual live captures with original Gamma metadata and resolution messages.
+    Capture(archive::capture::Arguments),
     /// Convert a verified public Parquet snapshot; select native instruments and a UTC window.
     Archive(archive::Arguments),
     /// Read public history through the pinned Nautilus Rust clients. Coverage remains unproven.
@@ -480,6 +482,9 @@ async fn fetch(slug: &str, start: u64, end: u64, max_trades: u32) -> Result<Nati
 async fn main() {
     let args = Arguments::parse();
     let result = match args.command {
+        Command::Capture(args) => {
+            archive::capture::prepare(&args).and_then(|a| import(a, &args.output))
+        }
         Command::Archive(args) => archive::prepare(&args).and_then(|a| import(a, &args.output)),
         Command::Import { input, output } => read_archive(&input).and_then(|a| import(a, &output)),
         Command::Fetch {

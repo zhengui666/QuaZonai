@@ -13,6 +13,8 @@ The following primary sources were checked on 2026-09-27. Dates and sizes are pu
 | [Moose / Envio v1](https://huggingface.co/datasets/moose-code/polymarket-onchain-v1) | FPMM from September 2020; CLOB from November 2022; chain events through **2026-04-24 07:43:41 UTC**, block 85,948,287. About 127 GB across events and state. | CC-BY-4.0; attribute Envio | Primary native `moose-fills` adapter. Also acquire split, merge, redemption, condition and FPMM files for separate investigation. `orderbook.parquet` contains cumulative statistics, not L2. State export is 2,185 seconds later than the event cutoff. |
 | [Joseph3222 orderbook](https://huggingface.co/datasets/Joseph3222/polymarket-orderbook) | Raw events and minute-end full-depth snapshots, 2026-02-22–2026-08-10; about 1.37 TB overall / 192 GB minute snapshots. | CC-BY-4.0 | Native `joseph-books` adapter for minute snapshots. File inventory has **no 2026-06-12–2026-06-17 partitions**. Sparse active-minute observations are not a continuous book. |
 | [TimeSeventeen v1](https://huggingface.co/datasets/TimeSeventeen/Polymarket-v1) | CLOB through 2026-04-28; raw ConditionalTokens lifecycle, including resolution events. About 53 GB. | CC-BY-4.0; attribute Boka Qin and Rui Yang | Acquisition supported; native schema conversion is not implemented. Resolution rows have block/log IDs but need block timestamps. Derived aligned tables contain retrospective labels. Partition timezone descriptions conflict; filter actual UTC timestamps. |
+| [TimeSeventeen v2](https://huggingface.co/datasets/TimeSeventeen/Polymarket-v2) | 175 daily fill files from 2026-04-03 through 2026-09-25; 43.5 GB of fills. **2026-09-10 is absent**. Early April records precede the production migration. | CC-BY-4.0 | Native `time-seventeen-v2` adapter. Normalized float amounts must have a unique, exact six-decimal representation; no blind rounding. Original raw integers, emitting contract, transaction hashes and reception times are absent. This is not gap-free production coverage. |
+| [lokima live BTC/ETH capture](https://huggingface.co/datasets/lokima/polymarket-btc-eth-5m-updown-8h) | 2026-07-29 20:40 through 2026-07-30 04:40 UTC; 96 five-minute windows, BTC and ETH, dual CLOB feeds, original Gamma responses and receive clocks. | ODC-BY; retain publisher attribution and provenance | Native `capture` path below. The first BTC window has matching trade messages, contemporaneous fees and an observed resolution. Other windows have feed differences; publisher `clean` flags and backfilled labels are not accepted as proof. |
 | [SII-WANGZJ](https://huggingface.co/datasets/SII-WANGZJ/Polymarket_data) | Raw events with transaction/log identity, linked trades and market metadata; card says 2022-11-21–2026-03-04. | README declares MIT; Hub license frontmatter absent | Acquisition supported with the verified README terms supplied explicitly. Large monolithic files. [Reported historical gaps](https://huggingface.co/datasets/SII-WANGZJ/Polymarket_data/discussions/8) were said to be repaired, but full reconciliation is not established here. `quant` normalizes NO to YES; `users` splits trades by wallet. |
 | [PolyData capture](https://huggingface.co/datasets/PolyData/polymarket_trade_capture_5Mar2026) | Daily CLOB fill partitions, 2022-11-21–2026-03-05, about 22 GB. | CC-BY-4.0 | Acquisition supported; no native adapter. Missing log index makes transaction hash insufficient for deduplication. Do not use the card's `cash/(cash+tokens)` price example. |
 | [Jon Becker](https://github.com/Jon-Becker/prediction-market-analysis) / [rhinot mirror](https://huggingface.co/datasets/rhinot/prediction-market-analysis) | CLOB, legacy FPMM, block timestamps and market snapshots; mirror is a 36 GB compressed archive. | MIT in project and mirror card | Independent cross-check candidate; whole archive is inconvenient for selective downloads. Verify collateral precision before interpreting legacy token amounts. |
@@ -26,6 +28,8 @@ Pinned defaults used for verification:
 - Moose: `7eeb860dea5b79d5c74f3182b70bd08c85c8f833`.
 - Joseph: `efe472f1f00a62f2cab1fed2851da439d9c1fe11`.
 - TimeSeventeen: `5aa1b9d52316a8b2e789e81c8ae42c7ed532e8aa`.
+- TimeSeventeen v2: `f14b2977b23852380f828e0a03ec0ad31af710c2`.
+- lokima: `97d05eac7324a410db4dabb4f06b25cc21aae23f`.
 - SII: `6d3c336c39cf1a2dfe53d702ad2c110ab5bdbfde`.
 - PolyData: `804f6e173f6614710e9e91628f0a4897801047d2`.
 
@@ -95,14 +99,69 @@ The new output contains `catalog/`, detached `source-evidence.json` and a final 
 
 To conduct admitted research, provide the original universe/membership, calendar, permission/license, historical parameter and availability provenance, partition and quality evidence required by [RuntimeCatalogMetadataV1](../../crates/contracts/src/catalogs.rs), then use the existing [catalog registration and Runtime workflow](../../.opensdlc/operations.md#scientific-runtime). Fresh `DATA_VALIDATE` must reopen the frozen catalog. Keep Discovery/Validation/Sealed/Forward isolated. The current scientific catalog contract accepts BAR data; archived trades/L2 are source material and do not enable a new L2 strategy engine or bypass that contract.
 
-Remaining source gaps include pre-CLOB FPMM normalization, late-v1 lifecycle joins with block timestamps, licensed v2 continuity, historical fee/tick changes and actual reception/finality evidence. The generic downloader can preserve those public archives now, but this change does not label them converted, PIT-verified or complete.
+For v2 choose `--format time-seventeen-v2`, original **pUSD** definitions, and explicit `OrderFilled/YYYY_MM_DD.parquet` files. Canonical chain/block/log IDs, independent row deduplication and bar construction use the same path as v1. Both v2 exchange-summary addresses come from the [original contract deployments and matching implementation](https://github.com/Polymarket/ctf-exchange-v2/tree/ccc0596074f4dfd62c944fbca4de252893b82b4b). The amount check rejects values outside the exact recoverable range. In the actual 2026-08-09 file, 28,494 of 2,529,399 non-summary fills had at least one amount that failed this strict check (about 1.13%); a selected BTC market failed without publishing an output. Do not round or silently drop those rows to make a selection pass. The legacy column name `usdc_amount` does not authorize changing pUSD to USDC. The provider's derived price/direction and retrospective labels are not used.
+
+## Captured historical availability
+
+This path consumes original historical Gamma responses and both live CLOB connections. It does not need hand-authored instrument definitions. A bounded selection is about 31 MB:
+
+```sh
+python3 -B runtimes/data/snapshot.py download \
+  --dataset lokima/polymarket-btc-eth-5m-updown-8h \
+  --revision 97d05eac7324a410db4dabb4f06b25cc21aae23f \
+  --include 'data/clob_ws/btc/1785357600/*.parquet' \
+  --include 'data/reference/discovery.parquet' \
+  --include 'metadata/clock.json' --include 'PROVENANCE.md' \
+  --include 'metadata/window_meta.parquet' \
+  --include 'metadata/quality_report.json' \
+  --output /absolute/data/lokima-btc-1785357600
+
+target/debug/polymarket-history capture \
+  --snapshot /absolute/data/lokima-btc-1785357600/snapshot.json \
+  --market-slug btc-updown-5m-1785357600 \
+  --start-seconds 1785357600 --end-seconds 1785357900 \
+  --bar-seconds 1 --output /absolute/catalogs/lokima-btc-1785357600
+```
+
+The adapter requires the recorded fee formula, tick, minimum size and parseable lifetime dates before the selected interval. It reuses the pinned native Gamma parser and fee rules. It rejects missing definitions, ambiguous duplicate trade identities, imprecise amounts, local sequence/clock gaps, interrupted connections through resolution, mismatched dual-feed trade messages or payouts, and tick changes affecting the interval. It only supports post-migration pUSD captures from 2026-04-29 onward. Select one unchanged parameter regime; do not replace historical parameters with today's values.
+
+`poly_a` supplies original receive times; `poly_b` independently checks the selected trade-message multiset and resolution. Trades are sorted per instrument by event and receive time before native aggregation; equal timestamps retain original frame/array order. A bar becomes available at `max(interval_end, all contributing receive times)`; nonmonotonic bar availability is rejected, not shifted. Empty intervals remain absent. Native closes use the actual `market_resolved` event and receive times for both outcome tokens. REST final drains, recovered strike labels and price-based winner guesses are not used. Raw source evidence stays outside scientific catalog mounts.
+
+For the verified first BTC window, 1,946 trade messages produce 483 observed one-second bars and two original payouts. The historical fee schedule is rate `0.07`, exponent `1`, taker-only. A separate bounded Polygon `ConditionResolution` lookup agreed with the observed `[0,1]` payout; its block time was earlier than the recorded WebSocket receipt, and was **not** substituted for receipt time. This is evidence for the selected capture interval, not the market's entire lifetime, exchange-wide completeness, economic profitability or a registered research qualification.
+
+## Prepare isolated research partitions
+
+The venue-independent `catalog-prepare` operator command uses the **same native measurement function as `DATA_VALIDATE`**. It selects only original bars, matching instrument definitions and explicitly declared complete settlements, writes a new physical catalog, reads it back, then publishes `catalog-metadata.json` last. It never overwrites an existing output or changes source files.
+
+```sh
+rustup run 1.98.1 cargo build --locked -p job \
+  --features catalog-prepare --bin catalog-prepare
+
+target/debug/catalog-prepare \
+  --catalog /absolute/catalogs/lokima-btc-1785357600/catalog \
+  --declaration /absolute/reviewed-declaration.json \
+  --selection /absolute/native-selection.json \
+  --output /absolute/partitions/discovery
+```
+
+`--declaration` uses [RuntimeCatalogMetadataV1](../../crates/contracts/src/catalogs.rs), omitting `row_count` and `quality`; `universe.instrument_definitions` can be omitted because it is read from the original catalog. If definitions are supplied they must match. Supply all other fields, including the actual origin, PIT/revision policy, source/availability explanation, original membership, calendar, partition and requested event window. `--selection` is [NativeDatasetSelectionV1](../../crates/contracts/src/execution.rs), with a local revision identity, complete native BarType strings, half-open event-label bounds, actual decision cutoff and any original settlement groups. Counter/nanosecond contract fields are **decimal JSON strings**. Native instrument/data timestamps remain their original integer nanoseconds. Registration-facing datetime bounds use microsecond precision; round a declared availability boundary later when necessary, never move the underlying observation earlier.
+
+Repeat with new destinations for disjoint Discovery, Validation and Sealed intervals. Definitions for an untraded payout sibling are retained. Sealed metadata omits notionals and payouts; its physical catalog is for the independent evaluator only. Keep acquisition evidence, preparation declarations and selections containing sealed values outside researcher mounts. Dataset quality reports contain measured facts, not source certification: the tool preserves `UNVERIFIED` and cannot infer `VERIFIED` from successful decoding. Review the recorded clock, metadata history, feed coverage and original permission terms before making a narrower source declaration.
+
+The bounded real capture was also split into 173 Discovery, 172 Validation and 138 Sealed bars; each isolated catalog passed the actual `job execute` `VALIDATE_DATA` operation. A separate native cash-account replay checked the source fee formula and redemption at the original resolution receipt time, with independent cash/commission reconciliation. These are data and execution integration checks, not fitted strategy results.
+
+Formal service acceptance still uses the existing owner workflow: upload the original permission evidence as a REPORT artifact, create the source and `RESEARCH` grant, configure the Runtime's catalog root plus metadata file, register revisions, freeze an InputSet and run fresh validation. The [service Skill](../../skills/quazonai/SKILL.md) documents native authenticated commands. An offline report cannot create a DataGrant, authorize a Runtime mount, establish an untouched Sealed study or substitute for login. This task did not register or deploy data into the live service.
+
+Remaining broad-history gaps include pre-CLOB FPMM normalization, lifecycle joins with historical block/receipt evidence, missing v2 dates, historical fee/tick changes and continuous depth/finality evidence. The pipeline now accepts an evidence-complete captured interval; it does not relabel incomplete older archives as qualified.
 
 ## Checks
 
 ```sh
 python3 -B -m unittest discover -s runtimes/data -v
-rustup run 1.98.1 cargo test --locked -p job --features polymarket-history --bin polymarket-history
-rustup run 1.98.1 cargo clippy --locked -p job --features polymarket-history --bin polymarket-history -- -D warnings
+rustup run 1.98.1 cargo test --locked -p job --features polymarket-history,catalog-prepare \
+  --bin polymarket-history --test catalog_prepare --test catalog --test managed
+rustup run 1.98.1 cargo clippy --locked -p job --features polymarket-history,catalog-prepare \
+  --all-targets -- -D warnings
 ```
 
 CI uses deterministic local Parquet fixtures and HTTP mocks. Live download/import observations are recorded in the [task verification](../../.opensdlc/tasks/polymarket-public-history/task.md#verification), separately from claims about full-source coverage.

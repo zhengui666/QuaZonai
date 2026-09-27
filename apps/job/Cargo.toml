@@ -11,6 +11,12 @@ publish = false
 [features]
 # Operator data preparation only; default scientific job images remain offline.
 polymarket-history = ["dep:tokio", "dep:parquet", "dep:sha2", "dep:nautilus-data"]
+catalog-prepare = []
+
+[[bin]]
+name = "catalog-prepare"
+path = "src/bin/catalog-prepare.rs"
+required-features = ["catalog-prepare"]
 
 [[bin]]
 name = "polymarket-history"

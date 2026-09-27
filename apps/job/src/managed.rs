@@ -6,7 +6,6 @@ use contracts::{
     runtime_jobs::{JobSpecV1, RuntimeOutputKind, RuntimeOutputV1},
     DbCounter, Id, Revision, SchemaV1,
 };
-use nautilus_model::instruments::Instrument;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -353,59 +352,19 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                         && *role != contracts::research::DataPartition::Sealed
                 )
             });
-            let data = crate::catalog::load_catalog(
+            let (_, quality) = crate::catalog::measure_catalog(
                 &input
                     .join("catalogs")
                     .join(selected.dataset_revision_id.to_string()),
-                &selected.selection,
+                &selected,
+                measure_notionals,
             )?;
-            crate::prediction::catalog_closes(
-                &input
-                    .join("catalogs")
-                    .join(selected.dataset_revision_id.to_string()),
-                &data,
-                &selected.selection,
-                &selected.settlements,
-            )?;
-            let mut first = u64::MAX;
-            let mut last = 0;
-            let mut available = 0;
-            let mut instrument_ids = Vec::with_capacity(data.series.len());
-            let last_bar_notionals = measure_notionals
-                .then(|| crate::catalog::last_bar_notionals(&data))
-                .transpose()?;
-            for series in &data.series {
-                instrument_ids.push(series.instrument.id().to_string());
-                for bar in &series.bars {
-                    first = first.min(bar.ts_event.as_u64());
-                    last = last.max(bar.ts_event.as_u64());
-                    available = available.max(bar.ts_init.as_u64());
-                }
-            }
-            datasets.push(NativeDatasetQualityV1 {
-                settlements: selected.settlements,
-                dataset_revision_id: selected.dataset_revision_id,
-                selection: selected.selection,
-                row_count: counter(data.rows as u64)?,
-                instrument_ids,
-                first_event_ns: counter(first)?,
-                last_event_ns: counter(last)?,
-                available_through_ns: counter(available)?,
-                last_bar_notionals,
-            });
+            datasets.push(quality);
         }
         outputs.json(
             "qz.data_quality",
             RuntimeOutputKind::DataQuality,
-            &NativeDataQualityReportV1 {
-                schema_version: SchemaV1,
-                native_version: "nautilus-persistence/0.63.0".into(),
-                checked_at: chrono::DateTime::from_timestamp_micros(
-                    chrono::Utc::now().timestamp_micros(),
-                )
-                .ok_or_else(|| anyhow::anyhow!("NATIVE_CLOCK"))?,
-                datasets,
-            },
+            &crate::catalog::quality_report(datasets)?,
         )?;
     }
     match parameters {
