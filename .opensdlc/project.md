@@ -20,7 +20,7 @@ npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 | Markdown and CLI/Skill documentation | `make check-docs` | Links, native help and Skill contracts pass; requires the CI-pinned lychee and Rust dependencies |
 | README or Docker deployment guide | `make check-links` and `node --test deploy/install.test.mjs` | Run both: the latter checks Bash examples and native helper help with Node, Bash and Python; it does not install services and is not included in `make check-docs` |
 | Markdown links only | `make check-links` | All tracked Markdown, including `.opensdlc`, resolves; this does not run CLI checks |
-| Package ownership | `make check-architecture` | Allowed production/build dependency directions |
+| Package ownership and upstream sources | `make check-architecture` | Allowed dependency directions and official source packages; Cargo fetches missing locked packages when the cache is cold |
 | Rust logic | `make check-unit` | Formatting, Clippy and non-Store/non-Server tests; not the full suite |
 | Transactions | `make check-store` | Disposable PostgreSQL/PGMQ through `DATABASE_URL` |
 | HTTP and Worker | `make check-http` | Disposable database plus native Codex/system prerequisites from CI |

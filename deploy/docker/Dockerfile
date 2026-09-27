@@ -35,6 +35,7 @@ COPY --from=caddy /usr/bin/caddy /tmp/caddy
 # QuaZonai only listens on unprivileged port 8081 and does not need that capability.
 RUN install -m 0755 /tmp/caddy /usr/bin/caddy && rm /tmp/caddy
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/quazonai/
+COPY licenses/ /usr/share/doc/quazonai/licenses/
 COPY deploy/docker/Caddyfile /opt/quazonai/Caddyfile
 COPY --chmod=755 deploy/docker/entrypoint.sh /opt/quazonai/entrypoint.sh
 ARG VERSION=development

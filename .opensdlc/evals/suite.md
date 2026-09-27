@@ -10,6 +10,7 @@ Use a fresh read-only reviewer for changes to [AGENTS](../../AGENTS.md) or the s
 | Trace research cycle startup. May domain call Store? | [Cycle startup](../architecture.md#cycle-startup), atomic admission regression and package directions |
 | A submission timed out and cancellation disconnected. May a new key start a replacement? | Original receipt/Run/remote identity; no inferred rollback or cancellation |
 | CI passed but clean review belongs to an older commit. May this PR merge? | Exact final Head and [review criteria](../review.md#approval) |
+| An official component lacks an API needed by QuaZonai. May its implementation be copied or patched? | Keep upstream source outside the repository and unmodified; adapt QuaZonai through public APIs. Explicitly reject unsupported behavior, preserve original evidence, and require a scope decision before removing a promised capability. |
 
 ## Service operation
 

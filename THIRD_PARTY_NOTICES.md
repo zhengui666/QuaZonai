@@ -6,7 +6,7 @@ The selected components below explain integration and attribution. The generated
 
 | Component | Upstream license | Use |
 |---|---|---|
-| Nautilus Rust 0.63.0 | LGPL-3.0-only | Native BacktestEngine, model, trading, analysis, persistence and Polymarket adapters; upstream copyright and LGPL license apply |
+| Nautilus Rust 0.63.0 | [LGPL-3.0-only](licenses/nautilus-backtest-LGPL-3.0.txt) | Native BacktestEngine, model, trading, analysis, persistence and Polymarket adapters; original license text retained without implementation source |
 | Clarabel.rs 0.11.1 | Apache-2.0 | Native convex solver, not a QZ-owned numerical implementation |
 | Apache Arrow Rust 56.2.0 / 59.3.0 | Apache-2.0 | Native arrays/schema/IPC; both versions occur in the resolved source graph |
 | Serde, UUID, Chrono, BigDecimal, utoipa, thiserror, proptest | Resolved upstream license texts | Wire types, standard scalar implementations, schema and testing |
@@ -37,7 +37,7 @@ contracts; the SDK owns protocol parsing and service lifecycle. The native
 `Cargo.lock` records the exact transitive graph. Protocol fixture tests do not
 establish a complete Codex research loop or a finished license audit.
 
-A dependency inventory is not a completed license audit. Before distribution, inspect the complete resolved graph's upstream license texts and NOTICE requirements and comply with LGPL redistribution/linking obligations, including applicable relinking/source requirements. The committed lockfiles support that work but do not replace it. No license is changed by a directory rename or rewrite. The repository retains one [documented native backtest source patch](vendor/nautilus-backtest/QZ_PATCH.md), with its original LGPL license and source provenance; it does not vendor toolchains.
+A dependency inventory is not a completed license audit. Before distribution, inspect the complete resolved graph's upstream license texts and NOTICE requirements and comply with LGPL redistribution/linking obligations, including applicable relinking/source requirements. The committed lockfiles support that work but do not replace it. No license is changed by a directory rename or rewrite. Component implementations are unmodified official packages resolved outside the source tree; QuaZonai integration code uses their public APIs. The repository does not vendor or patch dependency implementations or toolchains. Existing license notices and applied database compatibility migrations remain preserved.
 
 ## Dependency inventory
 

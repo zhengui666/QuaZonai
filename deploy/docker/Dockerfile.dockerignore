@@ -5,13 +5,12 @@
 !LICENSE
 !NOTICE
 !THIRD_PARTY_NOTICES.md
+!licenses/
+!licenses/**
 !apps/
 !apps/**
 !crates/
 !crates/**
-!vendor/
-!vendor/nautilus-backtest/
-!vendor/nautilus-backtest/**
 !migrations/
 !migrations/**
 !contracts/

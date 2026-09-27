@@ -112,11 +112,8 @@ try {
     const source = path.join(repository, name);
     if (fs.existsSync(source)) copyNative(source, '/usr/share/doc/quazonai/' + name);
   }
-  for (const name of ['LICENSE', 'QZ_PATCH.md', 'upstream-sha256.json']) {
-    const component = 'vendor/nautilus-backtest/' + name;
-    copyNative(path.join(repository, component), '/usr/share/doc/quazonai/' + component);
-  }
   // Preserve upstream notices from the installed native distributions, not invented licenses.
+  copyNative(path.join(repository, 'licenses/nautilus-backtest-LGPL-3.0.txt'), '/usr/share/doc/quazonai/licenses/nautilus-backtest-LGPL-3.0.txt');
   const noticeRoot = path.join(sysroot, 'share/doc/rust');
   if (fs.existsSync(noticeRoot)) fs.cpSync(noticeRoot, destination('/usr/share/doc/rust'), { recursive: true, dereference: false, verbatimSymlinks: true });
   for (const component of ['coreutils', 'libc6', 'libgcc-s1', 'libstdc++6']) {
