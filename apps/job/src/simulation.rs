@@ -13,7 +13,6 @@ use nautilus_analysis::{
 use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
     engine::BacktestEngine,
-    instrument_update::InstrumentUpdate,
 };
 use nautilus_common::{actor::DataActor, logging::logger::LoggerConfig};
 use nautilus_execution::models::{
@@ -500,6 +499,15 @@ fn validate_settings(
     data: &NativeMarketData,
     request: &NativeSimulationRequestV1,
 ) -> Result<Currency> {
+    // The official BacktestEngine cannot update its matching engines in place.
+    // Keep the history for data/planning; replaying a stale tick or replacing
+    // the matching engine would invalidate native order and position state.
+    ensure!(
+        data.series
+            .iter()
+            .all(|series| series.instrument_updates.is_empty()),
+        "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
+    );
     let settings = &request.settings;
     let currency = execution_market(data, settings)?;
     let instruments = data
@@ -733,23 +741,12 @@ pub(crate) fn run(
                 .liquidity_consumption(true)
                 .build()?,
         )?;
-        let market_times = market
+        let first_event = market
             .series
             .iter()
             .flat_map(|series| &series.bars)
             .map(|bar| bar.ts_init)
             .chain(closes.iter().map(|close| close.ts_init))
-            .collect::<BTreeSet<_>>();
-        let first_event = market_times
-            .iter()
-            .copied()
-            .chain(
-                market
-                    .series
-                    .iter()
-                    .flat_map(|series| &series.instrument_updates)
-                    .map(Instrument::ts_init),
-            )
             .min()
             .ok_or_else(|| anyhow::anyhow!("CATALOG_EMPTY_SELECTION"))?;
         ensure!(
@@ -762,15 +759,6 @@ pub(crate) fn run(
         let mut events = Vec::with_capacity(market.rows);
         for series in market.series {
             engine.add_instrument(&series.instrument)?;
-            for update in series.instrument_updates {
-                // The catalog has no cross-record source ordinal. Never invent the
-                // ordering of a definition and a market/settlement event at one clock tick.
-                ensure!(
-                    !market_times.contains(&update.ts_init()),
-                    "SIMULATION_AMBIGUOUS_INSTRUMENT_UPDATE"
-                );
-                events.push(InstrumentUpdate(update).into());
-            }
             events.extend(series.bars.into_iter().map(Data::Bar));
         }
         events.extend(closes.into_iter().map(Data::InstrumentClose));

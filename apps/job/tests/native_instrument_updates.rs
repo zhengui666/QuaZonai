@@ -1,11 +1,14 @@
 //! Synthetic native-engine regressions; these are not historical-market evidence.
+#[path = "support/market.rs"]
+mod market;
+#[path = "support/command.rs"]
+mod native;
 #[path = "support/polymarket.rs"]
 mod prediction;
 
 use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
     engine::BacktestEngine,
-    instrument_update::InstrumentUpdate,
 };
 use nautilus_common::{
     actor::{DataActor, DataActorNative},
@@ -51,9 +54,7 @@ struct State {
 #[derive(Default)]
 struct Observations {
     partial: Option<State>,
-    updated: Option<State>,
     completed: Option<State>,
-    update_time: Option<u64>,
     fills: Vec<OrderFilled>,
 }
 
@@ -102,7 +103,6 @@ nautilus_strategy!(RestingOrder, {
 impl DataActor for RestingOrder {
     fn on_start(&mut self) -> anyhow::Result<()> {
         self.subscribe_quotes(self.instrument_id, None, None);
-        self.subscribe_instrument(self.instrument_id, None, None);
         self.subscribe_bars(self.bar_type, None, None);
         Ok(())
     }
@@ -136,44 +136,11 @@ impl DataActor for RestingOrder {
         Ok(())
     }
 
-    fn on_instrument(&mut self, instrument: &InstrumentAny) -> anyhow::Result<()> {
-        assert_eq!(instrument.price_increment(), Price::from("0.0010"));
-        assert_eq!(instrument.price_precision(), 4);
-        assert_eq!(instrument.size_precision(), 6);
-        assert_eq!(instrument.ts_init().as_u64(), 3 * SECOND);
-        let cached = self
-            .cache_ref()
-            .instrument(&self.instrument_id)
-            .unwrap()
-            .clone();
-        // Native InstrumentAny equality compares IDs only; compare the definition too.
-        assert_eq!(
-            serde_json::to_value(cached).unwrap(),
-            serde_json::to_value(instrument).unwrap()
-        );
-        let state = self.state();
-        let mut observations = self.observations.borrow_mut();
-        observations.updated = Some(state);
-        observations.update_time = Some(self.clock().timestamp_ns().as_u64());
-        Ok(())
-    }
-
     fn on_bar(&mut self, _bar: &Bar) -> anyhow::Result<()> {
         let state = self.state();
         self.observations.borrow_mut().completed = Some(state);
         Ok(())
     }
-}
-
-fn instrument(index: usize, tick: &str, event: u64, received: u64) -> InstrumentAny {
-    let mut instrument = prediction::instruments("0", 5 * SECOND).remove(index);
-    let InstrumentAny::BinaryOption(binary) = &mut instrument else {
-        unreachable!()
-    };
-    binary.price_increment = Price::from(tick);
-    binary.ts_event = event.into();
-    binary.ts_init = received.into();
-    instrument
 }
 
 fn engine(original: &InstrumentAny) -> BacktestEngine {
@@ -211,8 +178,8 @@ fn engine(original: &InstrumentAny) -> BacktestEngine {
 }
 
 #[test]
-fn native_tick_update_preserves_partial_order_cash_position_and_original_settlement() {
-    let original = instrument(0, "0.0100", 0, 0);
+fn upstream_engine_preserves_partial_order_cash_position_and_original_settlement() {
+    let original = prediction::instruments("0", 5 * SECOND).remove(0);
     let id = original.id();
     let bar_type = BarType::from_str(&format!("{id}-1-SECOND-LAST-EXTERNAL")).unwrap();
     let observations = Rc::new(RefCell::new(Observations::default()));
@@ -242,13 +209,12 @@ fn native_tick_update_preserves_partial_order_cash_position_and_original_settlem
             (seconds * SECOND).into(),
         ))
     };
-    let price = Price::from("0.4990");
+    let price = Price::from("0.4900");
     engine
         .add_data(
             vec![
                 quote("0.5900", "0.6000", "100.000000", 1),
                 quote("0.4900", "0.5000", "4.000000", 2),
-                InstrumentUpdate(instrument(0, "0.0010", 3 * SECOND - 1, 3 * SECOND)).into(),
                 Data::Bar(Bar::new(
                     bar_type,
                     price,
@@ -282,9 +248,6 @@ fn native_tick_update_preserves_partial_order_cash_position_and_original_settlem
     assert_eq!(partial.position, Quantity::from("4.000000"));
     assert_eq!(partial.total, Money::from("998 pUSD"));
     assert_eq!(partial.fills, 1);
-    // The update itself must neither refill old displayed liquidity nor reset native state.
-    assert_eq!(observed.updated.as_ref(), Some(partial));
-    assert_eq!(observed.update_time, Some(3 * SECOND));
     let completed = observed.completed.as_ref().expect("original bar callback");
     assert_eq!(completed.order_id, partial.order_id);
     assert_eq!(completed.position_id, partial.position_id);
@@ -294,7 +257,7 @@ fn native_tick_update_preserves_partial_order_cash_position_and_original_settlem
     assert_eq!(completed.position, Quantity::from("10.000000"));
     assert_eq!(completed.total, Money::from("995 pUSD"));
     assert_eq!(completed.fills, 2);
-    // Native maker fills use the resting limit, even when the new bar crosses it.
+    // Native maker fills use the resting limit, even when a later bar crosses it.
     assert_eq!(observed.fills[0].last_px, Price::from("0.5000"));
     assert_eq!(observed.fills[1].last_px, Price::from("0.5000"));
     assert_eq!(observed.fills[1].last_qty, Quantity::from("6.000000"));
@@ -331,23 +294,118 @@ fn native_tick_update_preserves_partial_order_cash_position_and_original_settlem
 }
 
 #[test]
-fn native_update_rejects_unknown_instrument_and_future_original_event() {
-    for (update, reason) in [
-        (
-            instrument(1, "0.0010", 2 * SECOND, 3 * SECOND),
-            "Unknown instrument",
-        ),
-        (
-            instrument(0, "0.0010", 4 * SECOND, 3 * SECOND),
-            "Invalid definition time",
-        ),
-    ] {
-        let mut engine = engine(&instrument(0, "0.0100", 0, 0));
-        engine
-            .add_data(vec![InstrumentUpdate(update).into()], None, false, true)
+fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+
+    // Include a transition at selection-start and one after event-end: late
+    // market data and pending orders still depend on the receive-time cutoff.
+    for (minute, start) in [(1, 1), (5, 0), (22, 0)] {
+        let received = minute * market::INTERVAL_NS;
+        let (root, mut request) = market::market("0", 20);
+        request.selection.event_start_ns = market::count(start * market::INTERVAL_NS);
+        request.selection.decision_cutoff_ns = market::instant(23);
+        let catalog =
+            ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, Some(16), None, None)
+                .unwrap();
+        let original = catalog.instruments(None, None, None).unwrap().remove(0);
+        let mut definition = serde_json::to_value(&original).unwrap();
+        definition["CurrencyPair"]["price_increment"] = "0.00010".into();
+        definition["CurrencyPair"]["ts_event"] = (received - 1).into();
+        definition["CurrencyPair"]["ts_init"] = received.into();
+        let update: InstrumentAny = serde_json::from_value(definition).unwrap();
+        catalog.write_instruments(vec![update.clone()]).unwrap();
+        let data = job::catalog::load_catalog(root.path(), &request.selection).unwrap();
+        let series = data
+            .series
+            .iter()
+            .find(|series| series.instrument.id() == original.id())
             .unwrap();
-        let error = engine.run(None, None, None, false).unwrap_err();
-        assert!(error.to_string().contains(reason), "{error:#}");
-        engine.dispose();
+        assert_eq!(series.instrument_updates.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&series.instrument_updates[0]).unwrap(),
+            serde_json::to_value(&update).unwrap()
+        );
+        assert_eq!(
+            series
+                .instrument_at(received - 1)
+                .unwrap()
+                .price_increment(),
+            original.price_increment()
+        );
+        assert_eq!(
+            series.instrument_at(received).unwrap().price_increment(),
+            update.price_increment()
+        );
+        assert_eq!(
+            job::simulation::simulate(root.path(), &request)
+                .unwrap_err()
+                .to_string(),
+            "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
+        );
+        let output = native::command(
+            &[
+                "simulate".as_ref(),
+                "--catalog".as_ref(),
+                root.path().as_os_str(),
+            ],
+            &request,
+        );
+        assert!(!output.status.success());
+        assert!(
+            output.stdout.is_empty(),
+            "unsupported replay must publish no result"
+        );
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap().trim(),
+            "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
+        );
     }
+}
+
+#[test]
+fn stable_window_after_original_transition_uses_the_original_new_definition() {
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+
+    let (root, mut request) = market::market("0", 20);
+    let catalog =
+        ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, Some(16), None, None)
+            .unwrap();
+    let mut versions = Vec::new();
+    for original in catalog.instruments(None, None, None).unwrap() {
+        let mut value = serde_json::to_value(original).unwrap();
+        value["CurrencyPair"]["price_increment"] = "0.00010".into();
+        value["CurrencyPair"]["ts_event"] = (2 * market::INTERVAL_NS - 1).into();
+        value["CurrencyPair"]["ts_init"] = (2 * market::INTERVAL_NS).into();
+        versions.push(serde_json::from_value::<InstrumentAny>(value).unwrap());
+    }
+    catalog.write_instruments(versions).unwrap();
+    request.selection.event_start_ns = market::count(3 * market::INTERVAL_NS);
+    request.target_points[0].asof_ns = market::instant(4);
+    let data = job::catalog::load_catalog(root.path(), &request.selection).unwrap();
+    assert!(data
+        .series
+        .iter()
+        .all(|series| series.instrument_updates.is_empty()
+            && series.instrument.ts_init().as_u64() == 2 * market::INTERVAL_NS
+            && series.instrument.price_increment() == Price::from("0.00010")));
+    let output = native::command(
+        &[
+            "simulate".as_ref(),
+            "--catalog".as_ref(),
+            root.path().as_os_str(),
+        ],
+        &request,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: contracts::science::NativeSimulationResultV1 =
+        serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        result.consumed_target_points.get(),
+        request.target_points.len() as u64
+    );
+    assert_eq!(result.native_version, "0.63.0");
 }

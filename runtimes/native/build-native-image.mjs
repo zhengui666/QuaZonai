@@ -112,11 +112,11 @@ try {
     const source = path.join(repository, name);
     if (fs.existsSync(source)) copyNative(source, '/usr/share/doc/quazonai/' + name);
   }
-  for (const name of ['LICENSE', 'QZ_PATCH.md', 'upstream-sha256.json']) {
-    const component = 'vendor/nautilus-backtest/' + name;
-    copyNative(path.join(repository, component), '/usr/share/doc/quazonai/' + component);
-  }
   // Preserve upstream notices from the installed native distributions, not invented licenses.
+  const metadata = JSON.parse(run('native-dependencies', 'rustup', ['run', '1.98.1', 'cargo', 'metadata', '--locked', '--offline', '--filter-platform=x86_64-unknown-linux-gnu', '--format-version=1']).stdout);
+  const backtest = metadata.packages.find(pkg => pkg.name === 'nautilus-backtest' && pkg.version === '0.63.0');
+  if (backtest?.source !== 'registry+https://github.com/rust-lang/crates.io-index') throw new Error('Official locked Nautilus package required');
+  copyNative(path.join(path.dirname(backtest.manifest_path), 'LICENSE'), '/usr/share/doc/quazonai/nautilus-backtest/LICENSE');
   const noticeRoot = path.join(sysroot, 'share/doc/rust');
   if (fs.existsSync(noticeRoot)) fs.cpSync(noticeRoot, destination('/usr/share/doc/rust'), { recursive: true, dereference: false, verbatimSymlinks: true });
   for (const component of ['coreutils', 'libc6', 'libgcc-s1', 'libstdc++6']) {
