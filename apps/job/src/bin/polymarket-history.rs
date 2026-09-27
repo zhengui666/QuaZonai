@@ -45,6 +45,8 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Decode original Polygon v1/v2 fills corroborated by two public RPC endpoints.
+    Chain(archive::chain::Arguments),
     /// Convert matching dual live captures with original Gamma metadata and resolution messages.
     Capture(archive::capture::Arguments),
     /// Convert a verified public Parquet snapshot; select native instruments and a UTC window.
@@ -482,6 +484,9 @@ async fn fetch(slug: &str, start: u64, end: u64, max_trades: u32) -> Result<Nati
 async fn main() {
     let args = Arguments::parse();
     let result = match args.command {
+        Command::Chain(args) => {
+            archive::chain::prepare(&args).and_then(|a| import(a, &args.output))
+        }
         Command::Capture(args) => {
             archive::capture::prepare(&args).and_then(|a| import(a, &args.output))
         }

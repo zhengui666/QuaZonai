@@ -36,6 +36,9 @@ pub mod capture;
 #[path = "v2.rs"]
 mod v2;
 
+#[path = "chain.rs"]
+pub mod chain;
+
 #[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Format {
@@ -52,6 +55,9 @@ pub struct Arguments {
     /// snapshot.json emitted by runtimes/data/snapshot.py (fixed revision and hashes).
     #[arg(long)]
     snapshot: PathBuf,
+    /// Optional original EVM evidence from runtimes/data/evm.py, for v2 corroboration.
+    #[arg(long)]
+    chain_evidence: Option<PathBuf>,
     #[arg(long, value_enum)]
     format: Format,
     /// Original native InstrumentAny JSON array; original observation times are preserved.
@@ -97,6 +103,8 @@ struct Quality {
     duplicate_rows: usize,
     self_trades: usize,
     rounded_trade_prices: usize,
+    chain_corroborated_fills: usize,
+    chain_recovered_amounts: usize,
     one_sided_books: usize,
     empty_books: usize,
 }
@@ -226,6 +234,68 @@ fn event_key(id: &str) -> Result<(u64, u64)> {
         "SOURCE_EVENT_ID_INVALID"
     );
     Ok(key)
+}
+
+fn normalized_trade(
+    instrument: &InstrumentAny,
+    id: &str,
+    at_seconds: u64,
+    shares: Decimal,
+    cash: Decimal,
+    self_trade: bool,
+    quality: &mut Quality,
+) -> Result<TradeTick> {
+    ensure!(
+        shares > Decimal::ZERO && cash > Decimal::ZERO,
+        "INVALID_BINARY_TRADE"
+    );
+    let ratio = cash.checked_div(shares).context("TRADE_PRICE_RANGE")?;
+    ensure!(
+        ratio > Decimal::ZERO && ratio <= Decimal::ONE,
+        "INVALID_BINARY_TRADE"
+    );
+    let price = Price::from_decimal_dp(ratio, instrument.price_precision())?;
+    let size = Quantity::from_decimal_dp(shares, instrument.size_precision())?;
+    ensure!(
+        price.as_decimal() > Decimal::ZERO && size.as_decimal() == shares,
+        "SOURCE_PRECISION_LOSS"
+    );
+    quality.rounded_trade_prices += usize::from(price.as_decimal() != ratio);
+    quality.self_trades += usize::from(self_trade);
+    event_key(id)?;
+    let at = epoch_ns(at_seconds)?;
+    Ok(TradeTick::new(
+        instrument.id(),
+        price,
+        size,
+        AggressorSide::NoAggressor,
+        TradeId::new(id),
+        at,
+        at,
+    ))
+}
+
+fn load_instruments(path: &Path) -> Result<(Vec<InstrumentAny>, BTreeMap<String, InstrumentAny>)> {
+    let instruments: Vec<InstrumentAny> = read_json(path)?;
+    ensure!((1..=256).contains(&instruments.len()), "INSTRUMENT_LIMIT");
+    let mut by_token = BTreeMap::new();
+    for instrument in &instruments {
+        historical_instrument(instrument)?;
+        let token = instrument.raw_symbol().to_string();
+        ensure!(
+            !token.is_empty()
+                && token.bytes().all(|b| b.is_ascii_digit())
+                && instrument
+                    .id()
+                    .symbol
+                    .as_str()
+                    .rsplit_once('-')
+                    .is_some_and(|(condition, suffix)| !condition.is_empty() && suffix == token)
+                && by_token.insert(token, instrument.clone()).is_none(),
+            "INSTRUMENT_TOKEN_INVALID"
+        );
+    }
+    Ok((instruments, by_token))
 }
 
 fn fill(
@@ -465,24 +535,18 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
     let snapshot: Snapshot = read_json(&args.snapshot)?;
     let root = args.snapshot.parent().context("SNAPSHOT_ROOT")?;
     let files = verified_files(&snapshot, root)?;
-    let instruments: Vec<InstrumentAny> = read_json(&args.instruments)?;
-    ensure!((1..=256).contains(&instruments.len()), "INSTRUMENT_LIMIT");
-    let mut by_token = BTreeMap::new();
-    for instrument in &instruments {
-        historical_instrument(instrument)?;
-        let token = instrument.raw_symbol().to_string();
-        ensure!(
-            !token.is_empty()
-                && token.bytes().all(|b| b.is_ascii_digit())
-                && instrument
-                    .id()
-                    .symbol
-                    .as_str()
-                    .rsplit_once('-')
-                    .is_some_and(|(condition, suffix)| !condition.is_empty() && suffix == token)
-                && by_token.insert(token, instrument.clone()).is_none(),
-            "INSTRUMENT_TOKEN_INVALID"
-        );
+    let (instruments, by_token) = load_instruments(&args.instruments)?;
+    ensure!(
+        args.chain_evidence.is_none() || args.format == Format::TimeSeventeenV2,
+        "CHAIN_EVIDENCE_REQUIRES_V2"
+    );
+    let chain = args
+        .chain_evidence
+        .as_deref()
+        .map(chain::Evidence::load)
+        .transpose()?;
+    if let Some(evidence) = &chain {
+        evidence.require_v2_exchanges()?;
     }
     let mut archive = NativeArchive {
         schema_version: contracts::SchemaV1,
@@ -490,7 +554,9 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
             "https://huggingface.co/datasets/{}/tree/{}",
             snapshot.repository, snapshot.revision
         ),
-        source_observed_at: snapshot.retrieved_at,
+        source_observed_at: chain.as_ref().map_or(snapshot.retrieved_at, |c| {
+            snapshot.retrieved_at.max(c.observed_at())
+        }),
         source_metadata: serde_json::Value::Null,
         instruments,
         trades: Vec::new(),
@@ -531,7 +597,9 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
                 Format::MooseFills | Format::TimeSeventeenV2 => {
                     let mut row_quality = Quality::default();
                     let parsed = match args.format {
-                        Format::TimeSeventeenV2 => v2::fill(&row, &by_token, &mut row_quality)?,
+                        Format::TimeSeventeenV2 => {
+                            v2::fill(&row, &by_token, &mut row_quality, chain.as_ref())?
+                        }
                         _ => fill(&row, &by_token, &mut row_quality)?,
                     };
                     let Some(trade) = parsed else {
@@ -548,6 +616,8 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
                     }
                     quality.rounded_trade_prices += row_quality.rounded_trade_prices;
                     quality.self_trades += row_quality.self_trades;
+                    quality.chain_corroborated_fills += row_quality.chain_corroborated_fills;
+                    quality.chain_recovered_amounts += row_quality.chain_recovered_amounts;
                     archive.trades.push(trade);
                     (identity, signature)
                 }
@@ -576,6 +646,14 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
         }
     }
     ensure!(quality.selected_rows > 0, "EMPTY_ARCHIVE_SELECTION");
+    if let Some(evidence) = &chain {
+        evidence.check_archive_selection(
+            &by_token,
+            args.start_seconds,
+            args.end_seconds,
+            &identities,
+        )?;
+    }
     // Canonical chain order within a block, never lexicographic log-index order.
     archive.trades.sort_by_key(|t| {
         (
@@ -589,6 +667,7 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
     }
     archive.source_metadata = serde_json::json!({
         "snapshot": snapshot, "format": args.format,
+        "chain_evidence": chain.as_ref().map(chain::Evidence::metadata),
         "selection": {"start_seconds": args.start_seconds, "end_seconds": args.end_seconds, "bar_seconds": args.bar_seconds},
         "quality": quality,
         "availability": "UNVERIFIED: block time or minute end is an event-time proxy, not measured reception/finality latency.",
@@ -596,7 +675,7 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
         "settlement": "Not inferred from state tables, redemption times, end dates or last prices.",
         "book_semantics": "Minute-end snapshots, sequence unknown (0); missing or one-sided books never create tradable zero quotes.",
         "trade_semantics": match args.format {
-            Format::TimeSeventeenV2 => "TimeSeventeen v2 normalized float64 cash/share amounts with unique exact six-decimal recovery, pUSD collateral. Raw integers, emitting contract and transaction hash are absent. Exchange-counterparty summaries excluded; self trades retained; aggressor unknown; price rounding counted.",
+            Format::TimeSeventeenV2 => "TimeSeventeen v2 normalized float64 amounts, pUSD collateral. Optional matching raw Polygon logs supply original integers, contract and transaction identity; otherwise only unique exact six-decimal recovery is accepted. Exchange-counterparty summaries excluded; self trades retained; aggressor unknown; price rounding counted.",
             _ => "v1 USDC.e cash/token OrderFilled, excluding exchange-counterparty summaries; self trades retained; aggressor unknown; price rounding counted.",
         },
         "instruments_sha256": digest(&args.instruments)?,
@@ -620,7 +699,7 @@ mod tests {
     };
     use std::sync::Arc;
 
-    fn instrument() -> InstrumentAny {
+    pub(super) fn instrument() -> InstrumentAny {
         InstrumentAny::BinaryOption(
             BinaryOption::builder()
                 .instrument_id(InstrumentId::from_str("condition-123.POLYMARKET").unwrap())
@@ -719,6 +798,7 @@ mod tests {
         .unwrap();
         Arguments {
             snapshot: manifest,
+            chain_evidence: None,
             instruments: definitions,
             format,
             start_seconds: 0,

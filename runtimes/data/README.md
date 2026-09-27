@@ -22,6 +22,9 @@ The following primary sources were checked on 2026-09-27. Dates and sizes are pu
 | [Pancake history](https://github.com/usepancake/polymarket-history) | Small daily candle/metadata/resolution collection through June 2026. | Attribution plus explicitly stated noncommercial restriction | Download separately using its checksummed manifests. Its trade tape is **synthetic**; never import it as observed fills. |
 | [wzsg v2](https://huggingface.co/datasets/wzsg/polymarket-orderfilled-v2) | New exchange ABI, 2026-04-28–2026-08-03 in the checked snapshot. | No explicit dataset license found | Candidate only. Do not invent a license or concatenate v1/v2 amount fields without decoding their different ABIs. |
 | [warproxxx collector](https://github.com/warproxxx/poly_data) | Current v2 backfill/update pipeline. | GPL-3.0 code; separate data provenance | An external collector, not a licensed frozen data release. HyperSync requires a free account/token. The old Goldsky path no longer establishes complete coverage. |
+| [OpenMarket](https://huggingface.co/datasets/gregyoung14/openmarket-btc-polymarket/tree/74502466d1a7cef56395bfd8d0b465fbebc849cf) | BTC 15-minute quotes, 54 observed dates within 2026-02-12–05-15; 7.58 GB of unified quote partitions. | Apache-2.0 in the fixed card | Acquisition supported. Two complete date files inspected contain only 35 and 74 seconds. Price-change levels are not fills or mid prices. Actual metadata lacks historical fees/resolutions; the collector overwrites values while retaining first_seen. Do not backdate current fields. |
+| [PMXT original capture](https://github.com/pmxt-dev/polymarket-orderbook-collector/tree/cb0f6631556bf460d03594fe20f9bbd020b47d19) | Public hourly v2 market-data objects, including trades and tick changes. | Archive advertises CC-BY-4.0; retain the original terms with each selected object | Candidate requiring a frozen object/terms manifest. The public collector sets timestamp_received at database insertion, and does not archive its market-definition/resolution control stream. This is not proof of original WebSocket arrival or a complete fee regime. |
+| [Rocklabs](https://github.com/rocklabs-io/polymarket-dataset) | Publisher claims chain history from 2020 and extensive 2026 tick capture. | Free academic access by application | Not an anonymous public download. Individual access has not been established; no account, application or email was submitted. |
 
 Pinned defaults used for verification:
 
@@ -99,7 +102,46 @@ The new output contains `catalog/`, detached `source-evidence.json` and a final 
 
 To conduct admitted research, provide the original universe/membership, calendar, permission/license, historical parameter and availability provenance, partition and quality evidence required by [RuntimeCatalogMetadataV1](../../crates/contracts/src/catalogs.rs), then use the existing [catalog registration and Runtime workflow](../../.opensdlc/operations.md#scientific-runtime). Fresh `DATA_VALIDATE` must reopen the frozen catalog. Keep Discovery/Validation/Sealed/Forward isolated. The current scientific catalog contract accepts BAR data; archived trades/L2 are source material and do not enable a new L2 strategy engine or bypass that contract.
 
-For v2 choose `--format time-seventeen-v2`, original **pUSD** definitions, and explicit `OrderFilled/YYYY_MM_DD.parquet` files. Canonical chain/block/log IDs, independent row deduplication and bar construction use the same path as v1. Both v2 exchange-summary addresses come from the [original contract deployments and matching implementation](https://github.com/Polymarket/ctf-exchange-v2/tree/ccc0596074f4dfd62c944fbca4de252893b82b4b). The amount check rejects values outside the exact recoverable range. In the actual 2026-08-09 file, 28,494 of 2,529,399 non-summary fills had at least one amount that failed this strict check (about 1.13%); a selected BTC market failed without publishing an output. Do not round or silently drop those rows to make a selection pass. The legacy column name `usdc_amount` does not authorize changing pUSD to USDC. The provider's derived price/direction and retrospective labels are not used.
+For v2 choose `--format time-seventeen-v2`, original **pUSD** definitions, and explicit `OrderFilled/YYYY_MM_DD.parquet` files. Canonical chain/block/log IDs, independent row deduplication and bar construction use the same path as v1. Both v2 exchange-summary addresses come from the [original contract deployments and matching implementation](https://github.com/Polymarket/ctf-exchange-v2/tree/ccc0596074f4dfd62c944fbca4de252893b82b4b). The amount check rejects values outside the exact recoverable range. In the actual 2026-08-09 file, 28,494 of 2,529,399 non-summary fills had at least one amount that failed this strict check (about 1.13%); a selected BTC market failed without publishing an output. Do not round or silently drop those rows to make a selection pass. The legacy column name `usdc_amount` does not authorize changing pUSD to USDC. Derived prices, aggressor directions and retrospective labels are not imported; chain corroboration additionally checks the original maker-side label.
+
+## Original chain evidence
+
+`evm.py` freezes original EVM headers and logs for explicit blocks, addresses and one event signature. It needs no account, Python package or paid API. Choose two to four distinct public HTTPS RPC hosts that retain the requested history; the [Polygon endpoint list](https://docs.polygon.technology/pos/reference/rpc-endpoints/) lists public options. Provider limits and pruned history can cause a request to fail. No credentials or automatic paid fallback are used.
+
+This bounded example selects the eight blocks containing the rejected BTC amounts. It does **not** establish continuous coverage between them:
+
+```sh
+python3 -B runtimes/data/evm.py \
+  --chain-id 137 \
+  --rpc https://polygon-mainnet.gateway.tatum.io/ \
+  --rpc https://polygon.drpc.org/ \
+  --block 91705515 --block 91705517 --block 91705572 --block 91705647 \
+  --block 91705673 --block 91705693 --block 91705701 --block 91705709 \
+  --address 0xe111180000d2663c0091e4f400237545b87b996b \
+  --address 0xe2222d279d744050d28e00520010520000310f59 \
+  --topic0 0xd543adfd945773f1a62f74f0ee55a5e3b9b1a28262980ba90b1a89f2ea84d8ee \
+  --output /absolute/data/v2-eight-blocks.json
+```
+
+For a continuous block selection replace the repeated `--block` arguments with inclusive `--from-block` and `--to-block` (at most 4,096 blocks per capture). The query covers all matching logs in each explicit block; native conversion then filters tokens and UTC time. Block selection does not freeze a historical market universe. The default total response-body and output limits are each 128 MiB, with 32 MiB per response. Connections can be attempted at most three times with short backoff before any response body is read; HTTP errors, interrupted bodies, malformed data and provider disagreement are not retried. There is no overwrite or resume; use a new output file. A failed acquisition publishes no final file.
+
+The collector binds logs to block hashes, transaction hashes/indices and canonical log indices, checks parent links for adjacent blocks, and requires agreement between providers. The snapshot preserves each original response, endpoint and actual retrieval time. The native reader repeats identity/consistency checks and decodes the original ABI using the already pinned Alloy library. This is corroborated RPC evidence, not an independently verified receipt trie, a historical finality clock or a source permission grant. Raw blockchain facts do not imply a dataset redistribution license; preserve applicable provider terms.
+
+Import chain fills directly, even when a vendor daily partition is absent:
+
+```sh
+target/debug/polymarket-history chain \
+  --snapshot /absolute/data/v2-eight-blocks.json \
+  --instruments /absolute/original-pusd-instruments.json \
+  --start-seconds 1786263300 --end-seconds 1786263600 \
+  --bar-seconds 60 --output /absolute/catalogs/v2-chain-selection
+```
+
+Both original CLOB exchange ABIs are supported. For v1, replace the addresses with `0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e` and `0xc5d563a36ae78145c45a50134d48a1215220f80a`, the topic with `0xd0a08e8c493f9c94f29311604c9de1b4e8c8d4c06bd0c789af57f2d65bfec0f6`, and use original `USDC.e` definitions. The verified v1 example is block `35896869` from November 2022. v2 uses the addresses/topic above and `pUSD`. A snapshot query must use one ABI version. Fees remain in raw event evidence; they do not establish a historical fee formula. Summary events are excluded, identical order hashes remain distinct by block/log index, sizes remain exact, and native price quantization is counted. FPMM, depth and settlements are not synthesized from these fills.
+
+To corroborate a TimeSeventeen v2 import, add `--chain-evidence /absolute/data/v2-eight-blocks.json` to the ordinary `archive --format time-seventeen-v2 ...` command. Both v2 exchanges must have been queried. Within those blocks, selected source rows and raw fills must account for each other; omissions and identity/amount conflicts fail. Outside them, the original strict normalized-amount check still applies.
+
+An amount is replaced only after the canonical ID, order hash, maker/taker, token, side, block timestamp, builder and metadata match. The raw integer supplies the replacement. The original float must lie within one adjacent floating-point value of that independently obtained integer's normalization **and** less than half a base unit away; this detects the observed encoding damage without accepting a different integer amount. The vendor file is never rewritten. Quality reports count corroborated fills and recovered amount fields, and retain both sources with the actual later observation time. Block time remains an explicitly UNVERIFIED availability proxy.
 
 ## Captured historical availability
 

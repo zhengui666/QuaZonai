@@ -1,16 +1,16 @@
 //! TimeSeventeen/Polymarket-v2 OrderFilled is normalized, not original integer logs.
 //! Its six-decimal amounts are accepted only with a unique, exact float round trip.
-//! No transaction hash, emitting contract, reception time or finality is reconstructed.
+//! Optional original RPC evidence can corroborate rows; historical reception is never inferred.
 use super::*;
 
 // Polymarket/ctf-exchange-v2 ccc0596074f4dfd62c944fbca4de252893b82b4b:
 // README deployments; Trading.sol emits taker summaries with taker = address(this).
-const EXCHANGES_V2: [&str; 2] = [
+pub(super) const EXCHANGES_V2: [&str; 2] = [
     "0xe111180000d2663c0091e4f400237545b87b996b",
     "0xe2222d279d744050d28e00520010520000310f59",
 ];
 
-fn normalized_amount(row: &Row, name: &str) -> Result<Decimal> {
+pub(super) fn normalized_amount(row: &Row, name: &str) -> Result<Decimal> {
     let Field::Double(value) = field(row, name)? else {
         bail!("V2_NORMALIZED_FLOAT_REQUIRED:{name}");
     };
@@ -44,6 +44,7 @@ pub(super) fn fill(
     row: &Row,
     instruments: &BTreeMap<String, InstrumentAny>,
     quality: &mut Quality,
+    chain: Option<&chain::Evidence>,
 ) -> Result<Option<TradeTick>> {
     let asset = text(row, "token_asset_id")?;
     let Some(instrument) = instruments.get(asset) else {
@@ -64,34 +65,25 @@ pub(super) fn fill(
         instrument.quote_currency().code.as_str() == "pUSD",
         "V2_PUSD_INSTRUMENT_REQUIRED"
     );
-    let shares = normalized_amount(row, "token_amount")?;
-    let cash = normalized_amount(row, "usdc_amount")?;
-    let ratio = cash.checked_div(shares).context("TRADE_PRICE_RANGE")?;
-    ensure!(
-        ratio > Decimal::ZERO && ratio <= Decimal::ONE,
-        "INVALID_BINARY_TRADE"
-    );
+    let (shares, cash) = match chain.map(|e| e.matching(id)).transpose()?.flatten() {
+        Some(fill) => fill.corroborate(row, quality)?,
+        None => (
+            normalized_amount(row, "token_amount")?,
+            normalized_amount(row, "usdc_amount")?,
+        ),
+    };
     // Ignore the provider's derived price/direction columns. A mint or merge
     // fill does not identify a simple buyer/seller aggressor for this outcome.
-    let price = Price::from_decimal_dp(ratio, instrument.price_precision())?;
-    let size = Quantity::from_decimal_dp(shares, instrument.size_precision())?;
-    ensure!(
-        price.as_decimal() > Decimal::ZERO && size.as_decimal() == shares,
-        "SOURCE_PRECISION_LOSS"
-    );
-    quality.rounded_trade_prices += usize::from(price.as_decimal() != ratio);
-    quality.self_trades += usize::from(text(row, "maker")?.eq_ignore_ascii_case(taker));
     // An event-time proxy only; the archive keeps historical availability UNVERIFIED.
-    let at = epoch_ns(seconds(row, "timestamp")?)?;
-    Ok(Some(TradeTick::new(
-        instrument.id(),
-        price,
-        size,
-        AggressorSide::NoAggressor,
-        TradeId::new(id),
-        at,
-        at,
-    )))
+    Ok(Some(normalized_trade(
+        instrument,
+        id,
+        seconds(row, "timestamp")?,
+        shares,
+        cash,
+        text(row, "maker")?.eq_ignore_ascii_case(taker),
+        quality,
+    )?))
 }
 
 #[cfg(test)]
@@ -172,6 +164,7 @@ mod tests {
             &row("137_91101943_1088", "alice", 2.000001),
             &mappings,
             &mut quality,
+            None,
         )
         .unwrap()
         .unwrap();
@@ -187,20 +180,22 @@ mod tests {
             assert!(fill(
                 &row("137_1_1", &address.to_uppercase(), 2.0),
                 &mappings,
-                &mut quality
+                &mut quality,
+                None
             )
             .unwrap()
             .is_none());
         }
         assert_eq!(quality.exchange_summaries_excluded, 2);
         for id in ["137_01_1", "[137_1_1,137_1_2]", "0xorderhash"] {
-            assert!(fill(&row(id, "bob", 2.0), &mappings, &mut quality).is_err());
+            assert!(fill(&row(id, "bob", 2.0), &mappings, &mut quality, None).is_err());
         }
         for currency in ["USDC.e", "USDC"] {
             assert!(fill(
                 &row("137_1_1", "bob", 2.0),
                 &instruments(currency),
-                &mut quality
+                &mut quality,
+                None
             )
             .is_err());
         }

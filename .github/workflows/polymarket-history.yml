@@ -40,6 +40,7 @@ jobs:
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- fetch --help
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- import --help
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- archive --help
+          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- chain --help
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- capture --help
           cargo run --locked -q -p job --features catalog-prepare --bin catalog-prepare -- --help
           git diff --exit-code
