@@ -13,6 +13,7 @@ use nautilus_analysis::{
 use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
     engine::BacktestEngine,
+    instrument_update::InstrumentUpdate,
 };
 use nautilus_common::{actor::DataActor, logging::logger::LoggerConfig};
 use nautilus_execution::models::{
@@ -120,6 +121,26 @@ nautilus_strategy!(TargetReplay, {
             if !matches {
                 self.status.borrow_mut().failure = Some("NATIVE_SETTLEMENT_SOURCE_MISMATCH");
             }
+            return;
+        }
+        // Native BAR execution can extrapolate a remainder beyond the instrument
+        // bounds. Reject that research result; never clamp or replace its fill.
+        let valid_price = self
+            .cache()
+            .instrument(&event.instrument_id)
+            .is_some_and(|instrument| {
+                instrument.ts_init() <= event.ts_init
+                    && event.last_px.precision == instrument.price_precision()
+                    && instrument.try_normalize_price(event.last_px).is_ok()
+                    && instrument
+                        .min_price()
+                        .is_none_or(|price| event.last_px >= price)
+                    && instrument
+                        .max_price()
+                        .is_none_or(|price| event.last_px <= price)
+            });
+        if !valid_price {
+            self.status.borrow_mut().failure = Some("NATIVE_FILL_OUTSIDE_INSTRUMENT");
             return;
         }
         if now <= self.status.borrow().submitted_after_ns || now >= self.active_expiry_ns {
@@ -712,15 +733,54 @@ pub(crate) fn run(
                 .liquidity_consumption(true)
                 .build()?,
         )?;
+        let market_times = market
+            .series
+            .iter()
+            .flat_map(|series| &series.bars)
+            .map(|bar| bar.ts_init)
+            .chain(closes.iter().map(|close| close.ts_init))
+            .collect::<BTreeSet<_>>();
+        let first_event = market_times
+            .iter()
+            .copied()
+            .chain(
+                market
+                    .series
+                    .iter()
+                    .flat_map(|series| &series.instrument_updates)
+                    .map(Instrument::ts_init),
+            )
+            .min()
+            .ok_or_else(|| anyhow::anyhow!("CATALOG_EMPTY_SELECTION"))?;
+        ensure!(
+            market
+                .series
+                .iter()
+                .all(|series| series.instrument.ts_init() <= first_event),
+            "SIMULATION_BASELINE_FROM_FUTURE"
+        );
         let mut events = Vec::with_capacity(market.rows);
         for series in market.series {
             engine.add_instrument(&series.instrument)?;
+            for update in series.instrument_updates {
+                // The catalog has no cross-record source ordinal. Never invent the
+                // ordering of a definition and a market/settlement event at one clock tick.
+                ensure!(
+                    !market_times.contains(&update.ts_init()),
+                    "SIMULATION_AMBIGUOUS_INSTRUMENT_UPDATE"
+                );
+                events.push(InstrumentUpdate(update).into());
+            }
             events.extend(series.bars.into_iter().map(Data::Bar));
         }
         events.extend(closes.into_iter().map(Data::InstrumentClose));
         engine.add_strategy(strategy)?;
         engine.add_data(events, None, true, true)?;
         engine.run(None, None, None, false)?;
+        ensure!(
+            status.borrow().failure.is_none(),
+            "NATIVE_TARGET_REPLAY_FAILED"
+        );
         for instrument_id in &settled_ids {
             ensure!(
                 engine
@@ -733,7 +793,6 @@ pub(crate) fn run(
             );
         }
         let observed = status.borrow();
-        ensure!(observed.failure.is_none(), "NATIVE_TARGET_REPLAY_FAILED");
         if observed.study_infeasible {
             return Ok(None);
         }

@@ -35,7 +35,8 @@ async fn native_capabilities_exclude_binary_options_without_hiding_supported_mar
         f.crash();
         let mut metadata = catalog_fixture::metadata();
         metadata.universe.instrument_definitions = vec![serde_json::json!({
-            class: {"id": "EUR/USD.SIM", "fixture_only": true}
+            class: {"id": "EUR/USD.SIM", "fixture_only": true,
+                "ts_event": 0, "ts_init": 0, "price_increment": "0.00001"}
         })];
         domain::catalogs::metadata(&metadata, runtime::now()).unwrap();
         fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
@@ -860,7 +861,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
             member
         })
         .collect();
-    metadata.universe.instrument_definitions = request.assets.iter().map(|asset| serde_json::json!({"CurrencyPair":{"id":asset.instrument_id,"fixture_only":true}})).collect();
+    metadata.universe.instrument_definitions = request.assets.iter().map(|asset| serde_json::json!({"CurrencyPair":{"id":asset.instrument_id,"fixture_only":true,"ts_event":0,"ts_init":0,"price_increment":"0.00001"}})).collect();
     metadata.quality.checked_at = runtime::now();
     let quality = &mut metadata.quality.datasets[0];
     quality.dataset_revision_id = dataset;
@@ -1390,7 +1391,7 @@ async fn real_native_sealed_job_reads_the_frozen_model_and_registered_parquet() 
         .iter()
         .map(|asset| {
             serde_json::json!({
-                "CurrencyPair":{"id":asset.instrument_id,"fixture_only":true},
+                "CurrencyPair":{"id":asset.instrument_id,"fixture_only":true,"ts_event":0,"ts_init":0,"price_increment":"0.00001"},
             })
         })
         .collect();

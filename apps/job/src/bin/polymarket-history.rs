@@ -107,6 +107,7 @@ struct ImportReport {
     source_observed_at: DateTime<Utc>,
     imported_at: DateTime<Utc>,
     instruments: usize,
+    instrument_versions: usize,
     trades: usize,
     quotes: usize,
     deltas: usize,
@@ -196,10 +197,51 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         .context("ROW_COUNT_RANGE")?;
     ensure!((1..=MAX_ROWS).contains(&rows), "NATIVE_ROW_LIMIT_OR_EMPTY");
     let mut ids = BTreeSet::new();
+    let mut versions = std::collections::BTreeMap::<_, Vec<&InstrumentAny>>::new();
     for instrument in &archive.instruments {
         historical_instrument(instrument)?;
-        ensure!(ids.insert(instrument.id()), "DUPLICATE_INSTRUMENT");
+        ids.insert(instrument.id());
+        versions
+            .entry(instrument.id())
+            .or_default()
+            .push(instrument);
     }
+    let definitions = archive
+        .instruments
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    domain::catalogs::instrument_versions(&definitions)?;
+    // Static retrospective archives remain explicitly UNVERIFIED. A changing
+    // definition, however, must resolve every record against its original clock.
+    let dynamic_prices = |id, at: UnixNanos, prices: &[Price]| -> Result<()> {
+        let chain = versions.get(&id).context("UNMAPPED_INSTRUMENT")?;
+        if chain.len() == 1 {
+            return Ok(());
+        }
+        ensure!(
+            !chain.iter().skip(1).any(|i| i.ts_init() == at),
+            "AMBIGUOUS_INSTRUMENT_UPDATE"
+        );
+        let instrument = chain
+            .iter()
+            .rev()
+            .find(|i| i.ts_init() <= at)
+            .context("INSTRUMENT_DEFINITION_FROM_FUTURE")?;
+        for price in prices {
+            ensure!(
+                price.precision == instrument.price_precision(),
+                "PRICE_PRECISION_MISMATCH"
+            );
+            instrument.try_normalize_price(*price)?;
+            ensure!(
+                instrument.min_price().is_none_or(|p| *price >= p)
+                    && instrument.max_price().is_none_or(|p| *price <= p),
+                "PRICE_OUTSIDE_INSTRUMENT_BOUNDS"
+            );
+        }
+        Ok(())
+    };
     let mut trade_ids = BTreeSet::new();
     for trade in &archive.trades {
         ensure!(ids.contains(&trade.instrument_id), "UNMAPPED_TRADE");
@@ -212,8 +254,14 @@ fn validate(archive: &NativeArchive) -> Result<()> {
             "DUPLICATE_TRADE_ID"
         );
         time_order(trade.ts_event, trade.ts_init)?;
+        dynamic_prices(trade.instrument_id, trade.ts_init, &[trade.price])?;
     }
     for quote in &archive.quotes {
+        dynamic_prices(
+            quote.instrument_id,
+            quote.ts_init,
+            &[quote.bid_price, quote.ask_price],
+        )?;
         ensure!(ids.contains(&quote.instrument_id), "UNMAPPED_QUOTE");
         ensure!(
             valid_price(quote.bid_price.as_decimal())
@@ -224,6 +272,9 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         time_order(quote.ts_event, quote.ts_init)?;
     }
     for delta in &archive.deltas {
+        if delta.action != BookAction::Clear {
+            dynamic_prices(delta.instrument_id, delta.ts_init, &[delta.order.price])?;
+        }
         ensure!(ids.contains(&delta.instrument_id), "UNMAPPED_BOOK_DELTA");
         ensure!(
             valid_price(delta.order.price.as_decimal()),
@@ -293,6 +344,11 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         }
     }
     for bar in &archive.bars {
+        dynamic_prices(
+            bar.bar_type.instrument_id(),
+            bar.ts_init,
+            &[bar.open, bar.high, bar.low, bar.close],
+        )?;
         ensure!(ids.contains(&bar.bar_type.instrument_id()), "UNMAPPED_BAR");
         ensure!(
             bar.bar_type.is_externally_aggregated()
@@ -391,7 +447,8 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
         source_reference: archive.source_reference,
         source_observed_at: archive.source_observed_at,
         imported_at: Utc::now(),
-        instruments: archive.instruments.len(),
+        instruments: archive.instruments.iter().map(Instrument::id).collect::<BTreeSet<_>>().len(),
+        instrument_versions: archive.instruments.len(),
         trades: archive.trades.len(), quotes: archive.quotes.len(),
         deltas: archive.deltas.len(), bars: archive.bars.len(), closes: archive.closes.len(),
         catalog_relative_path: "catalog".into(),

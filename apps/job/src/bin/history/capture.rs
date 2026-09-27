@@ -6,7 +6,9 @@ use nautilus_model::{data::InstrumentClose, enums::InstrumentCloseType};
 use nautilus_polymarket::{
     http::{
         models::GammaMarket,
-        parse::{create_instrument_from_def, parse_gamma_market},
+        parse::{
+            create_instrument_from_def, parse_gamma_market, rebuild_instrument_with_tick_size,
+        },
     },
     websocket::{
         messages::{PolymarketMarketResolved, PolymarketTrade},
@@ -184,6 +186,9 @@ fn definition(files: &[PathBuf], args: &Arguments) -> Result<Definition> {
 struct Capture {
     trades: Vec<TradeTick>,
     print_keys: BTreeSet<String>,
+    instrument_updates: Vec<InstrumentAny>,
+    tick_keys: BTreeMap<String, Vec<String>>,
+    tick_observations: Vec<serde_json::Value>,
     resolved: serde_json::Value,
     resolved_at: u64,
     rows: u64,
@@ -194,10 +199,10 @@ struct Capture {
 fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result<Capture> {
     let start = epoch_ns(args.start_seconds)?.as_u64();
     let end = epoch_ns(args.end_seconds)?.as_u64();
-    let instruments = def
+    let mut instruments = def
         .instruments
         .iter()
-        .map(|i| (i.raw_symbol().to_string(), i))
+        .map(|i| (i.raw_symbol().to_string(), i.clone()))
         .collect::<BTreeMap<_, _>>();
     let tokens = instruments.keys().cloned().collect::<BTreeSet<_>>();
     let mut sequence = 0;
@@ -210,6 +215,9 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
     let mut print_keys = BTreeSet::new();
     let mut identities: BTreeMap<String, BTreeSet<Option<String>>> = BTreeMap::new();
     let mut resolution: Option<(serde_json::Value, u64)> = None;
+    let mut instrument_updates = Vec::new();
+    let mut tick_keys: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut tick_observations = Vec::new();
     for_rows(path, |row| {
         let at = number(&row, "t_arrival_ns")?;
         let mono = number(&row, "t_arrival_mono_ns")?;
@@ -281,6 +289,10 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
                     let instrument = instruments
                         .get(trade.asset_id.as_str())
                         .context("CAPTURE_UNKNOWN_TOKEN")?;
+                    ensure!(
+                        at > instrument.ts_init().as_u64(),
+                        "CAPTURE_AMBIGUOUS_PARAMETER_TIME"
+                    );
                     let mut tick = parse_trade_tick(
                         &trade,
                         instrument.id(),
@@ -342,10 +354,59 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
                     trades.push(tick);
                 }
                 Some("tick_size_change") => {
+                    let event = event_ns(&item)?;
+                    let token = item["asset_id"].as_str().context("CAPTURE_UNKNOWN_TOKEN")?;
+                    let previous = instruments.get(token).context("CAPTURE_UNKNOWN_TOKEN")?;
+                    tick_observations.push(serde_json::json!({
+                        "payload": item, "available_ns": at, "stream_seq": sequence,
+                    }));
+                    // Expired contracts cannot authorize further trading. Preserve these
+                    // messages in evidence without adding a post-lifetime trading regime.
+                    if previous
+                        .expiration_ns()
+                        .is_some_and(|expiry| event >= expiry.as_u64())
+                    {
+                        continue;
+                    }
+                    ensure!(event <= at && at >= def.at, "CAPTURE_FUTURE_EVENT");
+                    let key = serde_json::to_string(&item)?;
+                    let keys = tick_keys.entry(token.to_owned()).or_default();
+                    if keys.last() == Some(&key) {
+                        continue; // Identical retransmission keeps the first original receipt.
+                    }
+                    let old_tick = Decimal::from_str(
+                        item["old_tick_size"]
+                            .as_str()
+                            .context("CAPTURE_OLD_TICK_REQUIRED")?,
+                    )?;
+                    let new_tick = item["new_tick_size"]
+                        .as_str()
+                        .context("CAPTURE_NEW_TICK_REQUIRED")?;
                     ensure!(
-                        event_ns(&item)? >= end && at >= end,
-                        "CAPTURE_PARAMETER_CHANGE"
+                        old_tick == previous.price_increment().as_decimal()
+                            && Decimal::from_str(new_tick)? != old_tick
+                            && at > previous.ts_init().as_u64()
+                            && event >= previous.ts_event().as_u64()
+                            && resolution.is_none(),
+                        "CAPTURE_INVALID_TICK_CHAIN"
                     );
+                    let updated = rebuild_instrument_with_tick_size(
+                        previous,
+                        new_tick,
+                        event.into(),
+                        at.into(),
+                    )?;
+                    domain::catalogs::instrument_versions(&[
+                        serde_json::to_value(previous)?,
+                        serde_json::to_value(&updated)?,
+                    ])?;
+                    keys.push(key);
+                    ensure!(
+                        instrument_updates.len() + def.instruments.len() < 256,
+                        "INSTRUMENT_LIMIT"
+                    );
+                    instrument_updates.push(updated.clone());
+                    instruments.insert(token.to_owned(), updated);
                 }
                 Some("market_resolved") => {
                     let event = event_ns(&item)?;
@@ -356,7 +417,7 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
                             && tokens.contains(&message.winning_asset_id),
                         "CAPTURE_PAYOUT_IDENTITY"
                     );
-                    let winner = serde_json::to_value(instruments[&message.winning_asset_id])?;
+                    let winner = serde_json::to_value(&instruments[&message.winning_asset_id])?;
                     ensure!(
                         winner["BinaryOption"]["outcome"].as_str()
                             == Some(message.winning_outcome.as_str()),
@@ -388,6 +449,9 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
     Ok(Capture {
         trades,
         print_keys,
+        instrument_updates,
+        tick_keys,
+        tick_observations,
         resolved,
         resolved_at,
         rows: sequence,
@@ -424,7 +488,9 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
     let primary = capture(file("poly_a")?, &def, args, "poly_a")?;
     let secondary = capture(file("poly_b")?, &def, args, "poly_b")?;
     ensure!(
-        primary.print_keys == secondary.print_keys && primary.resolved == secondary.resolved,
+        primary.print_keys == secondary.print_keys
+            && primary.resolved == secondary.resolved
+            && primary.tick_keys == secondary.tick_keys,
         "CAPTURE_CONNECTIONS_DISAGREE"
     );
     let retrieved_ns = u64::try_from(
@@ -449,6 +515,7 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
         source_metadata: serde_json::json!({
             "snapshot": snapshot, "format": "lokima-dual-capture", "market": def.raw,
             "definition_available_ns": def.at,
+            "tick_changes": {"primary": primary.tick_observations, "secondary": secondary.tick_observations},
             "selection": {"start_seconds":args.start_seconds,"end_seconds":args.end_seconds,"bar_seconds":args.bar_seconds},
             "capture_check": {"primary_rows":primary.rows,"secondary_rows":secondary.rows,
                 "primary_first_ns":primary.first_at,"primary_last_ns":primary.last_at,
@@ -484,6 +551,8 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
             primary.resolved_at.into(),
         ));
     }
+    archive.instruments.extend(primary.instrument_updates);
+    archive.instruments.sort_by_key(|i| (i.id(), i.ts_init()));
     // Stable sorting retains original frame/array order for equal native timestamps.
     archive
         .trades
@@ -753,13 +822,50 @@ mod tests {
                     start + 3_000_000_000,
                     "ws_frame",
                     "market",
-                    trade,
+                    trade.clone(),
                     leg,
                 ));
             }
             if failure == "tick" {
                 rows.push(row(4,start+3_000_000_000,"ws_frame","market",serde_json::json!({
                 "market":"condition","event_type":"tick_size_change","timestamp":((START+3)*1000).to_string()}),leg));
+            }
+            if failure.starts_with("tick_") {
+                let tick = serde_json::json!({"market":"condition", "event_type":"tick_size_change",
+                    "asset_id":"123", "old_tick_size":if failure=="tick_wrong_old" {"0.02"} else {"0.01"},
+                    "new_tick_size":if failure=="tick_disagree" && leg=="poly_b" {"0.0001"} else {"0.001"},
+                    "timestamp":((START+3)*1000).to_string()});
+                rows.push(row(
+                    4,
+                    start + 3_005_000_000 + shift,
+                    "ws_frame",
+                    "market",
+                    tick.clone(),
+                    leg,
+                ));
+                let mut repeated = tick;
+                if failure == "tick_conflict" {
+                    repeated["new_tick_size"] = serde_json::json!("0.0001");
+                }
+                rows.push(row(
+                    5,
+                    start + 3_006_000_000 + shift,
+                    "ws_frame",
+                    "market",
+                    repeated,
+                    leg,
+                ));
+                let mut finer = trade;
+                finer["price"] = serde_json::json!("0.501");
+                finer["timestamp"] = serde_json::json!(((START + 4) * 1000).to_string());
+                rows.push(row(
+                    6,
+                    start + 4_005_000_000 + shift,
+                    "ws_frame",
+                    "market",
+                    finer,
+                    leg,
+                ));
             }
             let seq = rows.len() as u64 + 1;
             rows.push(row(
@@ -802,6 +908,66 @@ mod tests {
             end_seconds: START + 60,
             bar_seconds: 1,
             output: root.join("native"),
+        }
+    }
+
+    #[test]
+    fn original_tick_refinement_keeps_first_receipt_and_round_trips_versions() {
+        let root = tempfile::tempdir().unwrap();
+        let args = fixture(root.path(), "tick_refine");
+        let archive = prepare(&args).unwrap();
+        assert_eq!(archive.instruments.len(), 3);
+        assert_eq!(archive.trades.len(), 2);
+        assert_eq!(archive.bars.len(), 2);
+        let changed = archive
+            .instruments
+            .iter()
+            .find(|i| i.ts_init().as_u64() == START * 1_000_000_000 + 3_005_000_000)
+            .unwrap();
+        assert_eq!(
+            changed.price_increment().as_decimal(),
+            Decimal::from_str("0.001").unwrap()
+        );
+        assert_eq!(changed.ts_event().as_u64(), (START + 3) * 1_000_000_000);
+        assert_eq!(
+            archive.bars[1].close.as_decimal(),
+            Decimal::from_str("0.501").unwrap()
+        );
+        assert_eq!(
+            archive.source_metadata["tick_changes"]["primary"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let originals = archive
+            .instruments
+            .iter()
+            .map(historical_instrument)
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        let report = crate::import(archive, &args.output).unwrap();
+        assert_eq!(report.instruments, 2);
+        assert_eq!(report.instrument_versions, 3);
+        let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+            args.output.join("catalog").to_str().unwrap(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let mut actual = catalog.instruments(None, None, None).unwrap();
+        actual.sort_by_key(|i| (i.id(), i.ts_init()));
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(originals).unwrap()
+        );
+        for reason in ["tick_wrong_old", "tick_disagree", "tick_conflict"] {
+            let root = tempfile::tempdir().unwrap();
+            let args = fixture(root.path(), reason);
+            assert!(prepare(&args).is_err(), "{reason}");
+            assert!(!args.output.exists());
         }
     }
 

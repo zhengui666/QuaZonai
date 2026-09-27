@@ -257,14 +257,15 @@ pub(crate) fn prepare(
             .iter()
             .map(|series| {
                 let bar = &series.bars[rows - 1];
+                let instrument = series.instrument_at(selection.decision_cutoff_ns.get())?;
                 Ok(NativePortfolioSlippageReferenceV1 {
                     instrument_id: series.instrument.id().to_string(),
                     currency: series.instrument.quote_currency().to_string(),
                     event_ns: count(bar.ts_event.as_u64())?,
-                    available_ns: count(bar.ts_init.as_u64())?,
+                    // Price and tick can arrive separately; both are known by this time.
+                    available_ns: count(bar.ts_init.max(instrument.ts_init()).as_u64())?,
                     close_price: bar.close.to_string().parse().map_err(anyhow::Error::msg)?,
-                    price_increment: series
-                        .instrument
+                    price_increment: instrument
                         .price_increment()
                         .to_string()
                         .parse()

@@ -152,6 +152,90 @@ fn native_price_dependent_commission_is_not_a_fixed_planning_coefficient() {
 }
 
 #[test]
+fn native_bar_remainder_cannot_trade_above_original_bounds_but_redemption_can() {
+    use nautilus_model::{
+        data::{Bar, BarType},
+        instruments::InstrumentAny,
+        types::{Price, Quantity},
+    };
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+
+    for (volume, reject_remainder) in [("1000000.000000", false), ("8.000000", true)] {
+        let (_unused, request) = simulation("0", Some(["1.0000", "0.0000"]), 0);
+        let root = tempfile::tempdir().unwrap();
+        let catalog =
+            ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, None, None, None)
+                .unwrap();
+        for (index, instrument) in prediction::instruments("0", 18 * STEP)
+            .into_iter()
+            .enumerate()
+        {
+            let mut value = serde_json::to_value(instrument).unwrap();
+            value["BinaryOption"]["price_increment"] = "0.0100".into();
+            value["BinaryOption"]["min_price"] = "0.0100".into();
+            value["BinaryOption"]["max_price"] = "0.9900".into();
+            let instrument: InstrumentAny = serde_json::from_value(value).unwrap();
+            catalog.write_instruments(vec![instrument]).unwrap();
+            let kind: BarType = request.selection.bar_types[index].parse().unwrap();
+            let price = Price::from(if index == 0 { "0.9900" } else { "0.5000" });
+            let volume = Quantity::from(if index == 0 { volume } else { "1000000.000000" });
+            let bars = (1..=17_u64)
+                .map(|minute| {
+                    Bar::new_checked(
+                        kind,
+                        price,
+                        price,
+                        price,
+                        price,
+                        volume,
+                        (minute * STEP).into(),
+                        (minute * STEP + 1).into(),
+                    )
+                    .unwrap()
+                })
+                .collect::<Vec<_>>();
+            catalog.write_to_parquet(&bars, None, None, None).unwrap();
+        }
+        prediction::settle(root.path(), 18 * STEP, 19 * STEP, ["1.0000", "0.0000"]);
+        let result = job::simulation::simulate(root.path(), &request);
+        if reject_remainder {
+            // Eight shares become four two-share native BAR ticks. The first
+            // partial fill costs 1.98 pUSD; the larger remaining buy is natively
+            // extrapolated from .9900 to 1.0000, exceeding the original maximum.
+            match result {
+                Ok(result) => panic!(
+                    "native out-of-bounds ordinary fill was accepted: {}",
+                    result.canonical_result["fills"]
+                ),
+                Err(error) => assert!(
+                    error.to_string().contains("NATIVE_TARGET_REPLAY_FAILED"),
+                    "{error:#}"
+                ),
+            }
+        } else {
+            let result = result.unwrap();
+            assert_eq!(result.summary["positions.open"], "0");
+            let closes = result.canonical_result["fills"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| &value["event"]["Filled"])
+                .filter(|fill| fill["order_side"] == "SELL")
+                .collect::<Vec<_>>();
+            assert_eq!(closes.len(), 2);
+            for (id, payout) in IDS.iter().zip(["1.0000", "0.0000"]) {
+                let close = closes
+                    .iter()
+                    .find(|fill| fill["instrument_id"] == *id)
+                    .unwrap();
+                assert_eq!(close["last_px"], payout);
+                assert_eq!(close["ts_event"], (19 * STEP).to_string());
+            }
+        }
+    }
+}
+
+#[test]
 fn no_settlement_is_not_assumed_from_expiry_or_the_last_price() {
     let (catalog, request) = simulation("0", None, 0);
     assert!(simulate(catalog.path(), &request)

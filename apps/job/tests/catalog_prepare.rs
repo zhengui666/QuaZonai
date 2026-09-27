@@ -314,3 +314,138 @@ fn oversized_declaration_and_future_membership_are_rejected_before_publication()
         json!(instant(6 * prediction::STEP));
     f.reject();
 }
+
+fn versioned_fixture() -> Fixture {
+    let mut f = Fixture::new();
+    let data = job::catalog::load_catalog(&f.catalog, &f.selection.selection).unwrap();
+    let root = f.directory.path().join("versioned-source");
+    fs::create_dir(&root).unwrap();
+    let catalog = native(&root);
+    let mut versions = Vec::new();
+    for instrument in prediction::instruments("0", 1000 * prediction::STEP) {
+        for (time, tick) in [
+            (0, "0.0001"),
+            (prediction::STEP / 2, "0.0010"),
+            (2 * prediction::STEP - 1000, "0.0100"),
+            (4 * prediction::STEP + 10, "0.1000"),
+            (6 * prediction::STEP, "0.0001"),
+        ] {
+            let mut value = serde_json::to_value(&instrument).unwrap();
+            value["BinaryOption"]["ts_event"] = time.into();
+            value["BinaryOption"]["ts_init"] = time.into();
+            value["BinaryOption"]["price_increment"] = tick.into();
+            versions.push(serde_json::from_value(value).unwrap());
+        }
+    }
+    catalog.write_instruments(versions).unwrap();
+    catalog
+        .write_to_parquet(&data.series[0].bars, None, None, None)
+        .unwrap();
+    f.catalog = root;
+    prediction::settle(
+        &f.catalog,
+        3 * prediction::STEP,
+        4 * prediction::STEP,
+        ["1.0000", "0.0000"],
+    );
+    f.selection.settlements = prediction::settlement_groups(
+        3 * prediction::STEP,
+        4 * prediction::STEP,
+        ["1.0000", "0.0000"],
+    );
+    f
+}
+
+#[test]
+fn physical_partition_keeps_causal_versions_and_siblings_without_future_definitions() {
+    for sealed in [false, true] {
+        let mut f = versioned_fixture();
+        if sealed {
+            f.declaration["partition"] = "SEALED".into();
+        }
+        let result = f.run();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let metadata: RuntimeCatalogMetadataV1 = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(
+            metadata.row_count.get(),
+            3,
+            "definition versions are not BAR rows"
+        );
+        assert_eq!(metadata.quality.datasets[0].instrument_ids.len(), 1);
+        assert_eq!(metadata.universe.instrument_definitions.len(), 6);
+        assert_eq!(metadata.origin, DataOrigin::Fixture);
+        assert_eq!(metadata.pit_status, PitStatus::Unverified);
+        assert_eq!(metadata.quality.datasets[0].settlements.is_empty(), sealed);
+        assert_eq!(
+            metadata.quality.datasets[0].last_bar_notionals.is_none(),
+            sealed
+        );
+        let output = native(&f.output().join("catalog"));
+        let published = output.instruments(None, None, None).unwrap();
+        assert_eq!(published.len(), 6);
+        for id in prediction::IDS {
+            let times = published
+                .iter()
+                .filter(|v| v.id().to_string() == id)
+                .map(|v| v.ts_init().as_u64())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                times,
+                vec![
+                    prediction::STEP / 2,
+                    2 * prediction::STEP - 1000,
+                    4 * prediction::STEP + 10
+                ]
+            );
+        }
+        let readback =
+            job::catalog::load_catalog(&f.output().join("catalog"), &f.selection.selection)
+                .unwrap();
+        assert_eq!(readback.series[0].instrument_updates.len(), 2);
+        assert_eq!(readback.series[0].bars.len(), 3);
+        assert!(
+            readback.series[0].instrument_updates[1].ts_event().as_u64()
+                > f.selection.selection.event_end_ns.get()
+        );
+    }
+}
+
+#[test]
+fn preparation_retains_an_original_update_received_exactly_at_selection_start() {
+    let mut f = versioned_fixture();
+    // Declaration instants are microsecond-aligned; original native times stay exact.
+    let boundary = 2 * prediction::STEP - 1000;
+    f.selection.selection.event_start_ns = count(boundary);
+    f.declaration["event_start"] = json!(instant(boundary));
+    let result = f.run();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let metadata: RuntimeCatalogMetadataV1 = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(metadata.row_count.get(), 2);
+    assert_eq!(metadata.universe.instrument_definitions.len(), 6);
+    let readback =
+        job::catalog::load_catalog(&f.output().join("catalog"), &f.selection.selection).unwrap();
+    assert_eq!(
+        readback.series[0].instrument.ts_init().as_u64(),
+        prediction::STEP / 2
+    );
+    assert_eq!(readback.series[0].instrument_updates.len(), 2);
+    assert_eq!(
+        readback.series[0].instrument_updates[0].ts_init().as_u64(),
+        boundary
+    );
+}
+
+#[test]
+fn metadata_availability_must_cover_original_updates_after_the_last_bar() {
+    let mut f = versioned_fixture();
+    f.declaration["available_through"] = json!(instant(4 * prediction::STEP));
+    f.reject();
+}

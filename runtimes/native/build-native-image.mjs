@@ -108,9 +108,13 @@ try {
   }
   for (const name of ['tmp', 'input', 'output']) fs.mkdirSync(destination('/' + name), { mode: name === 'tmp' ? 0o1777 : 0o755 });
   fs.chmodSync(destination('/tmp'), 0o1777);
-  for (const name of ['LICENSE', 'NOTICE']) {
+  for (const name of ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md']) {
     const source = path.join(repository, name);
     if (fs.existsSync(source)) copyNative(source, '/usr/share/doc/quazonai/' + name);
+  }
+  for (const name of ['LICENSE', 'QZ_PATCH.md', 'upstream-sha256.json']) {
+    const component = 'vendor/nautilus-backtest/' + name;
+    copyNative(path.join(repository, component), '/usr/share/doc/quazonai/' + component);
   }
   // Preserve upstream notices from the installed native distributions, not invented licenses.
   const noticeRoot = path.join(sysroot, 'share/doc/rust');
