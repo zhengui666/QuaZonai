@@ -21,14 +21,66 @@ use std::{
 };
 
 pub struct NativeBarSeries {
+    /// Latest definition strictly before event start, or the earliest original definition.
     pub instrument: InstrumentAny,
+    /// Original tick-only changes after the baseline, through decision cutoff.
+    pub instrument_updates: Vec<InstrumentAny>,
     pub bar_type: BarType,
     pub bars: Vec<Bar>,
+}
+
+impl NativeBarSeries {
+    pub fn instrument_at(&self, ts_init: u64) -> Result<&InstrumentAny> {
+        ensure!(
+            self.instrument.ts_init().as_u64() <= ts_init,
+            "INSTRUMENT_DEFINITION_FROM_FUTURE"
+        );
+        Ok(self
+            .instrument_updates
+            .iter()
+            .rev()
+            .find(|instrument| instrument.ts_init().as_u64() <= ts_init)
+            .unwrap_or(&self.instrument))
+    }
 }
 
 pub struct NativeMarketData {
     pub series: Vec<NativeBarSeries>,
     pub rows: usize,
+}
+
+/// Select original baseline plus updates without copying earlier or future versions.
+/// This same selection is used for traded series and original settlement siblings.
+pub fn select_instrument_versions(
+    instruments: Vec<InstrumentAny>,
+    selection: &NativeBarSelectionV1,
+) -> Result<BTreeMap<String, Vec<InstrumentAny>>> {
+    let values = instruments
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    domain::catalogs::instrument_versions(&values)?;
+    let mut chains: BTreeMap<String, Vec<InstrumentAny>> = BTreeMap::new();
+    for instrument in instruments {
+        ensure!(
+            instrument.ts_init().as_u64() <= selection.decision_cutoff_ns.get(),
+            "INSTRUMENT_DEFINITION_FROM_FUTURE"
+        );
+        chains
+            .entry(instrument.id().to_string())
+            .or_default()
+            .push(instrument);
+    }
+    for versions in chains.values_mut() {
+        let preceding = versions.partition_point(|instrument| {
+            instrument.ts_init().as_u64() < selection.event_start_ns.get()
+        });
+        // An update at the boundary remains an event, including its ordering checks.
+        // A static catalog may begin with an empty interval before its first definition.
+        // Keep the original time; each BAR must still be available after this baseline.
+        *versions = versions.split_off(preceding.saturating_sub(1));
+    }
+    Ok(chains)
 }
 
 /// Measure the same native records for operator preparation and formal DATA_VALIDATE.
@@ -258,31 +310,21 @@ pub fn validate_native(
 ) -> Result<NativeMarketData> {
     let types = selected_types(selection)?;
     ensure!(
-        instruments.len() == types.len(),
-        "CATALOG_INSTRUMENT_VERSION_MISMATCH"
-    );
-    ensure!(
         bars.len() <= selection.maximum_rows as usize,
         "CATALOG_ROW_LIMIT"
     );
-    let mut definitions = BTreeMap::new();
-    for instrument in instruments {
-        ensure!(
-            definitions
-                .insert(instrument.id().to_string(), instrument)
-                .is_none(),
-            "CATALOG_DUPLICATE_INSTRUMENT_VERSION"
-        );
-    }
+    let mut definitions = select_instrument_versions(instruments, selection)?;
     let mut series = Vec::with_capacity(types.len());
     let mut indices = BTreeMap::new();
     for bar_type in types {
-        let instrument = definitions
+        let mut versions = definitions
             .remove(&bar_type.instrument_id().to_string())
             .ok_or_else(|| anyhow::anyhow!("CATALOG_INSTRUMENT_MISSING"))?;
+        let instrument = versions.remove(0);
         indices.insert(bar_type.to_string(), series.len());
         series.push(NativeBarSeries {
             instrument,
+            instrument_updates: versions,
             bar_type,
             bars: Vec::new(),
         });
@@ -304,23 +346,37 @@ pub fn validate_native(
             continue;
         }
         let selected = &mut series[*index];
+        // Native records have no shared source ordinal to disambiguate this tie.
         ensure!(
-            selected.instrument.ts_init() <= bar.ts_init,
-            "INSTRUMENT_DEFINITION_FROM_FUTURE"
+            !selected
+                .instrument_updates
+                .iter()
+                .any(|instrument| instrument.ts_init() == bar.ts_init),
+            "CATALOG_AMBIGUOUS_INSTRUMENT_UPDATE"
         );
+        let instrument = selected.instrument_at(available)?;
         if let Some(previous) = selected.bars.last() {
             ensure!(
                 previous.ts_event < bar.ts_event && previous.ts_init < bar.ts_init,
                 "CATALOG_NONUNIQUE_OR_REVISED_BAR"
             );
         }
-        let precision = selected.instrument.price_precision();
+        let precision = instrument.price_precision();
         for price in [bar.open, bar.high, bar.low, bar.close] {
             ensure!(
                 price.precision == precision,
                 "CATALOG_PRICE_PRECISION_MISMATCH"
             );
-            selected.instrument.try_normalize_price(price)?;
+            instrument.try_normalize_price(price)?;
+            ensure!(
+                instrument
+                    .min_price()
+                    .is_none_or(|minimum| price >= minimum)
+                    && instrument
+                        .max_price()
+                        .is_none_or(|maximum| price <= maximum),
+                "CATALOG_PRICE_OUTSIDE_INSTRUMENT_BOUNDS"
+            );
             ensure!(
                 price.as_f64().is_finite() && price.as_f64() > 0.0,
                 "UNSUPPORTED_NONPOSITIVE_PRICE"
@@ -334,7 +390,7 @@ pub fn validate_native(
                 && bar.low <= bar.close,
             "CATALOG_OHLC_INVALID"
         );
-        selected.instrument.try_normalize_qty(bar.volume)?;
+        instrument.try_normalize_qty(bar.volume)?;
         selected.bars.push(bar);
         rows += 1;
     }

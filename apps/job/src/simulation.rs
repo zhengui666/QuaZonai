@@ -13,6 +13,7 @@ use nautilus_analysis::{
 use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
     engine::BacktestEngine,
+    instrument_update::InstrumentUpdate,
 };
 use nautilus_common::{actor::DataActor, logging::logger::LoggerConfig};
 use nautilus_execution::models::{
@@ -712,9 +713,44 @@ pub(crate) fn run(
                 .liquidity_consumption(true)
                 .build()?,
         )?;
+        let market_times = market
+            .series
+            .iter()
+            .flat_map(|series| &series.bars)
+            .map(|bar| bar.ts_init)
+            .chain(closes.iter().map(|close| close.ts_init))
+            .collect::<BTreeSet<_>>();
+        let first_event = market_times
+            .iter()
+            .copied()
+            .chain(
+                market
+                    .series
+                    .iter()
+                    .flat_map(|series| &series.instrument_updates)
+                    .map(Instrument::ts_init),
+            )
+            .min()
+            .ok_or_else(|| anyhow::anyhow!("CATALOG_EMPTY_SELECTION"))?;
+        ensure!(
+            market
+                .series
+                .iter()
+                .all(|series| series.instrument.ts_init() <= first_event),
+            "SIMULATION_BASELINE_FROM_FUTURE"
+        );
         let mut events = Vec::with_capacity(market.rows);
         for series in market.series {
             engine.add_instrument(&series.instrument)?;
+            for update in series.instrument_updates {
+                // The catalog has no cross-record source ordinal. Never invent the
+                // ordering of a definition and a market/settlement event at one clock tick.
+                ensure!(
+                    !market_times.contains(&update.ts_init()),
+                    "SIMULATION_AMBIGUOUS_INSTRUMENT_UPDATE"
+                );
+                events.push(InstrumentUpdate(update).into());
+            }
             events.extend(series.bars.into_iter().map(Data::Bar));
         }
         events.extend(closes.into_iter().map(Data::InstrumentClose));

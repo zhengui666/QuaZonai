@@ -79,7 +79,8 @@ pub fn metadata() -> RuntimeCatalogMetadataV1 {
                 groups: Some(vec!["fixture-group".into()]),
             }],
             instrument_definitions: vec![serde_json::json!({
-                "CurrencyPair": {"id": instrument, "fixture_only": true}
+                "CurrencyPair": {"id": instrument, "fixture_only": true,
+                    "ts_event": 0, "ts_init": 0, "price_increment": "0.00001"}
             })],
         },
         quality: NativeDataQualityReportV1 {

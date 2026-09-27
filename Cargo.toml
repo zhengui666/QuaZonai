@@ -1,5 +1,6 @@
 [workspace]
 members = ["apps/job", "crates/contracts", "crates/domain", "crates/store", "crates/integrations", "apps/server", "apps/runtime"]
+exclude = ["vendor/nautilus-backtest"]
 resolver = "2"
 
 [workspace.package]
@@ -13,3 +14,7 @@ repository = "https://github.com/zhengui666/QuaZonai"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["raw_value"] }
 sqlx = { version = "=0.9.0", default-features = false }
+
+[patch.crates-io]
+# Pinned native instrument-update forwarding; upstream execution/matching is unchanged.
+nautilus-backtest = { path = "vendor/nautilus-backtest" }

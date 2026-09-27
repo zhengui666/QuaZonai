@@ -37,7 +37,7 @@ contracts; the SDK owns protocol parsing and service lifecycle. The native
 `Cargo.lock` records the exact transitive graph. Protocol fixture tests do not
 establish a complete Codex research loop or a finished license audit.
 
-A dependency inventory is not a completed license audit. Before distribution, inspect the complete resolved graph's upstream license texts and NOTICE requirements and comply with LGPL redistribution/linking obligations, including applicable relinking/source requirements. The committed lockfiles support that work but do not replace it. No license is changed by a directory rename or rewrite. The repository does not vendor Cargo dependencies or toolchains.
+A dependency inventory is not a completed license audit. Before distribution, inspect the complete resolved graph's upstream license texts and NOTICE requirements and comply with LGPL redistribution/linking obligations, including applicable relinking/source requirements. The committed lockfiles support that work but do not replace it. No license is changed by a directory rename or rewrite. The repository retains one [documented native backtest source patch](vendor/nautilus-backtest/QZ_PATCH.md), with its original LGPL license and source provenance; it does not vendor toolchains.
 
 ## Dependency inventory
 

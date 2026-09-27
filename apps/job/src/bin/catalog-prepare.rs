@@ -5,7 +5,7 @@ use contracts::{
     catalogs::RuntimeCatalogMetadataV1, execution::NativeDatasetSelectionV1,
     research::DataPartition,
 };
-use job::catalog::{measure_catalog, quality_report, NativeMarketData};
+use job::catalog::{measure_catalog, quality_report, select_instrument_versions, NativeMarketData};
 use nautilus_core::UnixNanos;
 use nautilus_model::{
     data::{Data, InstrumentClose},
@@ -106,28 +106,21 @@ fn originals(
         None,
         Some(UnixNanos::from(selected.selection.decision_cutoff_ns.get())),
     )?;
-    let mut definitions = BTreeMap::new();
-    for instrument in instruments {
-        let id = instrument.id().to_string();
-        ensure!(
-            ids.contains(&id) && !definitions.contains_key(&id),
-            "CATALOG_INSTRUMENT_VERSION_MISMATCH"
-        );
-        ensure!(
-            instrument.ts_event() <= instrument.ts_init()
-                && instrument.ts_init().as_u64() <= selected.selection.decision_cutoff_ns.get(),
-            "INSTRUMENT_DEFINITION_FROM_FUTURE"
-        );
-        if let Some(outcome) = payouts.get(&id) {
+    let definitions = select_instrument_versions(instruments, &selected.selection)?;
+    ensure!(definitions.len() == ids.len(), "CATALOG_INSTRUMENT_MISSING");
+    for (id, versions) in &definitions {
+        let instrument = &versions[0];
+        ensure!(ids.contains(id), "CATALOG_INSTRUMENT_VERSION_MISMATCH");
+        if let Some(outcome) = payouts.get(id) {
             ensure!(
                 instrument.ts_init().as_u64() <= outcome.ts_init.get(),
                 "INSTRUMENT_DEFINITION_FROM_FUTURE"
             );
         }
         if matches!(instrument, InstrumentAny::BinaryOption(_)) {
-            let value = serde_json::to_value(&instrument)?;
+            let value = serde_json::to_value(instrument)?;
             let (activation, expiration) = domain::prediction::instrument(&value["BinaryOption"])?;
-            if let Some(outcome) = payouts.get(&id) {
+            if let Some(outcome) = payouts.get(id) {
                 ensure!(
                     outcome.ts_event.get() >= activation,
                     "SETTLEMENT_BEFORE_ACTIVATION"
@@ -150,13 +143,14 @@ fn originals(
                 );
             }
         }
-        definitions.insert(id, instrument);
     }
-    ensure!(definitions.len() == ids.len(), "CATALOG_INSTRUMENT_MISSING");
     for series in &data.series {
+        let observed = std::iter::once(&series.instrument)
+            .chain(&series.instrument_updates)
+            .collect::<Vec<_>>();
         ensure!(
             serde_json::to_value(&definitions[&series.instrument.id().to_string()])?
-                == serde_json::to_value(&series.instrument)?,
+                == serde_json::to_value(observed)?,
             "CATALOG_INSTRUMENT_CHANGED"
         );
     }
@@ -190,7 +184,7 @@ fn originals(
                         == outcome.close_price
                     && close.close_type
                         == nautilus_model::enums::InstrumentCloseType::ContractExpired
-                    && close.close_price.precision == definitions[&id].price_precision(),
+                    && close.close_price.precision == definitions[&id][0].price_precision(),
                 "SETTLEMENT_SOURCE_MISMATCH"
             );
             closes.push(close);
@@ -198,7 +192,7 @@ fn originals(
         ensure!(seen.len() == payouts.len(), "SETTLEMENT_SOURCE_MISMATCH");
     }
     closes.sort_by_key(|close| close.instrument_id);
-    Ok((definitions.into_values().collect(), closes))
+    Ok((definitions.into_values().flatten().collect(), closes))
 }
 
 fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
@@ -226,14 +220,12 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
         .and_then(Value::as_object_mut)
         .context("UNIVERSE_REQUIRED")?;
     if let Some(declared) = universe.get("instrument_definitions") {
-        let mut declared = serde_json::from_value::<Vec<Value>>(declared.clone())?;
-        declared.sort_by_key(|v| {
-            domain::catalogs::instrument_definition(v)
-                .ok()
-                .and_then(|(_, v)| v["id"].as_str())
-                .unwrap_or("")
-                .to_owned()
-        });
+        let declared = serde_json::from_value::<Vec<Value>>(declared.clone())?;
+        let declared = domain::catalogs::instrument_versions(&declared)?
+            .into_values()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
         ensure!(
             Value::Array(declared) == definitions,
             "DECLARED_INSTRUMENTS_DIFFER_FROM_SOURCE"

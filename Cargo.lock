@@ -5112,8 +5112,6 @@ dependencies = [
 [[package]]
 name = "nautilus-backtest"
 version = "0.63.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202b263d825bf5655ef8367695793d02ab1093c88e3941920f95cc146e2efe10"
 dependencies = [
  "ahash 0.8.12",
  "anyhow",
