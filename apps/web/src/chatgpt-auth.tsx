@@ -72,6 +72,18 @@ const reasons: Record<Schema['CodexAccountReasonV1'], string> = {
 export function activeAccountOperation(operation: Operation | null | undefined): boolean {
   return !!operation && ['REQUESTED', 'WAITING', 'CANCEL_REQUESTED'].includes(operation.state);
 }
+export function settleAccountSessions(operation: Operation | null | undefined) {
+  if (!operation || activeAccountOperation(operation)) return;
+  for (const session of sessions.values()) {
+    const started = session.startedId === operation.operation.id;
+    const cancelled = session.cancelRequest?.operation_id === operation.operation.id;
+    if (!started && !cancelled) continue;
+    if (started) { session.startRequest = undefined; session.startIntent.clear(); session.startedId = undefined; }
+    if (cancelled) { session.cancelRequest = undefined; session.cancelIntent.clear(); }
+    session.update({ challenge: undefined, pendingStart: false, pendingCancel: false,
+      unknownStart: false, unknownCancel: false, startError: undefined, cancelError: undefined });
+  }
+}
 export function liveLoginCode(challenge: Challenge | undefined, operation: Operation | null | undefined, now: number) {
   if (!challenge || !operation || operation.operation.id !== challenge.id || operation.operation.action !== 'LOGIN'
     || operation.state !== 'WAITING' || Date.parse(operation.operation.deadline_at) <= now) return undefined;

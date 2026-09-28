@@ -22,6 +22,10 @@ export function useSettingsWorkKey(key: string) {
   return useSyncExternalStore(subscribe, () => active.has(key), () => false);
 }
 
+export function useSettingsWorkPrefix(prefix: string) {
+  return useSyncExternalStore(subscribe, () => [...active].some(key => key.startsWith(prefix)), () => false);
+}
+
 export function useSettingsWorkVersion(key: string) {
   return useSyncExternalStore(subscribe, () => versions.get(key) ?? 0, () => 0);
 }

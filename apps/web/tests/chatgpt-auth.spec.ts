@@ -448,6 +448,60 @@ test('terminal login clears a cancellation started from another role', async ({ 
   })).toBe(false);
 });
 
+test('Cycle start waits for a shared account action and refreshes its terminal status', async ({ page }) => {
+  const { state, profiles } = await setup(page, true);
+  const now = new Date().toISOString();
+  const projectId = '01990000-0000-7000-8000-000000000071';
+  const brief: Schema['BriefView'] = { id: '01990000-0000-7000-8000-000000000072', project_id: projectId,
+    version: 1, revision: '1', state: 'FROZEN', content: {} as Schema['BriefContentV1'], bindings: [],
+    created_at: now, updated_at: now, frozen_at: now };
+  const project: Schema['ProjectView'] = { id: projectId, root_lineage_id: projectId, name: 'Cycle fixture',
+    description: '', state: 'ACTIVE', revision: '1', created_by: 'OPERATOR', created_at: now, updated_at: now };
+  await page.route(`**/api/v2/projects/${projectId}`, route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(project) }));
+  await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
+  await expect(page.getByLabel('ChatGPT 授权码')).toBeVisible();
+  await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+  await page.evaluate(async brief => {
+    const uiPath = '/src/ui.tsx';
+    const cyclesPath = '/src/cycles.tsx';
+    const version = (await (await fetch(cyclesPath)).text()).match(/react\.js\?v=([0-9a-f]+)/)?.[1];
+    if (!version) throw new Error('Vite dependency version missing');
+    const dep = (name: string) => `/node_modules/.vite/deps/${name}.js?v=${version}`;
+    const reactPath = dep('react');
+    const domPath = dep('react-dom_client');
+    const queryPath = dep('@tanstack_react-query');
+    const antdPath = dep('antd');
+    const React = (await import(reactPath)).default;
+    const { createRoot } = (await import(domPath)).default;
+    const { QueryClient, QueryClientProvider } = await import(queryPath);
+    const { App } = await import(antdPath);
+    const { GuardProvider } = await import(uiPath);
+    const { BriefExecution } = await import(cyclesPath);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000 } } });
+    client.setQueryData(['frozen-brief', brief.id], { schema_version: 1, brief, execution_context: {
+      schema_version: 1, runtime_id: brief.id, runtime_revision: '1', discovery_input_set_id: brief.id,
+      validation_input_set_id: brief.id, sealed_input_set_id: brief.id,
+    } });
+    const host = document.createElement('div'); host.id = 'brief-cycle-fixture'; document.body.append(host);
+    createRoot(host, { onUncaughtError: (error: unknown) => { host.dataset.error = String(error); } }).render(React.createElement(App, null, React.createElement(QueryClientProvider, { client },
+      React.createElement(GuardProvider, null, React.createElement(BriefExecution, { brief, close: () => {} })))));
+  }, brief);
+  await expect.poll(async () => {
+    const error = await page.locator('#brief-cycle-fixture').getAttribute('data-error');
+    if (error) throw new Error(error);
+    return page.getByRole('dialog', { name: '确认启动研究 Cycle' }).count();
+  }).toBe(1);
+  await page.getByRole('combobox', { name: '选择研究者 Codex 配置' }).click();
+  await page.getByText(`${profiles[0]!.name} · ${profiles[0]!.id}`, { exact: true }).last().click();
+  await page.getByRole('combobox', { name: '选择独立 Reviewer Codex 配置' }).click();
+  await page.getByText(`${profiles[1]!.name} · ${profiles[1]!.id}`, { exact: true }).last().click();
+  const submit = page.getByRole('button', { name: '确认启动 Cycle' });
+  await expect(submit).toBeDisabled();
+  state.operation = { ...state.operation!, state: 'SUCCEEDED', reason: 'NATIVE_LOGIN_COMPLETED',
+    revision: '9007199254740996', finished_at: new Date().toISOString() };
+  await expect(submit).toBeEnabled({ timeout: 12_000 });
+});
+
 test('reload restores only status, and a local deadline never invents a terminal result', async ({ page }) => {
   const { state, open } = await setup(page);
   await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();

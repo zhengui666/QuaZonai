@@ -540,6 +540,35 @@ test('a completed import receipt remains visible when the report list fails', as
   })).toBe(false);
 });
 
+test('error recovery asks before discarding a recoverable settings operation', async ({ page }) => {
+  await setup(page);
+  await page.evaluate(async () => {
+    const reactPath = '/node_modules/.vite/deps/react.js';
+    const domPath = '/node_modules/.vite/deps/react-dom_client.js';
+    const boundaryPath = '/src/AppErrorBoundary.tsx';
+    const themePath = '/src/theme.ts';
+    const workPath = '/src/settings-work.ts';
+    const React = (await import(reactPath)).default;
+    const { createRoot } = (await import(domPath)).default;
+    const { default: Boundary } = await import(boundaryPath);
+    const { ColorThemeContext } = await import(themePath);
+    (await import(workPath)).setSettingsWork('recovery-fixture', true);
+    const host = document.createElement('div'); host.id = 'recovery-fixture'; document.body.append(host);
+    const Crash = () => { throw new Error('synthetic render failure'); };
+    createRoot(host, { onCaughtError: () => {} }).render(React.createElement(ColorThemeContext.Provider, { value: ['light', () => {}] },
+      React.createElement(Boundary, null, React.createElement(Crash))));
+  });
+  await page.locator('#recovery-fixture').getByRole('button', { name: '重新加载页面' }).click();
+  await expect(page.getByText('仍有待确认操作')).toBeVisible();
+  await expect(page.getByText('未保存内容将丢失')).toHaveCount(0);
+  await page.getByRole('button', { name: '留在此页' }).click();
+  await page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    (await import(modulePath)).setSettingsWork('recovery-fixture', false);
+  });
+  await expect(page.getByText('仍有待确认操作')).toHaveCount(0);
+});
+
 test('a rejected import remains visible with its draft after navigation', async ({ page }) => {
   await setup(page);
   const exportRef = '01990000-0000-7000-8000-000000000031';
