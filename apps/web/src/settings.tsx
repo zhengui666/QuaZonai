@@ -5,6 +5,7 @@ import { IntegrationManagement } from './integrations';
 import { CodexSettings } from './codex';
 import { MigrationManagement } from './migrations';
 import { AuthenticationSettings } from './auth-settings';
+import { SettingsCommandRecovery } from './settings-command';
 
 const categories = [
   { key: 'codex', label: 'Codex' },
@@ -19,6 +20,7 @@ export function Settings() {
   const screens = Grid.useBreakpoint();
   return <Space orientation="vertical" className="full-width" size="large">
     <Typography.Title level={1}>设置</Typography.Title>
+    <SettingsCommandRecovery />
     {screens.md ? <Tabs activeKey={tab} onChange={setTab} items={categories} />
       : <Select aria-label="设置类别" className="full-width" virtual={false} value={tab} onChange={setTab}
         options={categories.map(({ key, label }) => ({ value: key, label }))} />}

@@ -197,6 +197,79 @@ test('existing Runtime, Downstream and data source edits save without a Save act
   await expect(page.getByText('请先保存或取消更改')).toHaveCount(0);
 });
 
+test('uncertain Runtime creation keeps its command and credential across Settings navigation', async ({ page }) => {
+  const { runtime, secretId } = await setup(page);
+  const requests: { key: string | undefined; body: Schema['RuntimeCreate'] }[] = [];
+  await page.route(/\/api\/v2\/integrations\/runtimes(?:\?|$)/, async route => {
+    const request = route.request();
+    if (request.method() === 'GET') return route.fallback();
+    const body: Schema['RuntimeCreate'] = request.postDataJSON();
+    requests.push({ key: request.headers()['idempotency-key'], body });
+    if (requests.length === 1) return route.abort('failed');
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({
+      schema_version: 1, replayed: true, resource: { ...runtime, configuration: body.configuration },
+    }) });
+  });
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '登记 Runtime' });
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime B');
+  await dialog.getByRole('textbox', { name: 'Runtime HTTPS origin' }).fill('https://runtime-b.example');
+  await dialog.getByRole('textbox', { name: '新的 RUNTIME 凭据' }).fill('a'.repeat(32));
+  await dialog.getByRole('button', { name: '登记凭据' }).click();
+  await expect(dialog.getByText(secretId)).toBeVisible();
+  await dialog.getByRole('button', { name: '保存配置' }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  await expect(dialog.getByRole('button', { name: '重试当前操作' })).toBeVisible();
+  await dialog.getByRole('button', { name: '返回' }).click();
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await expect(page.getByText('Runtime 登记结果待确认')).toBeVisible();
+  await page.getByRole('button', { name: '重试当前操作' }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1]).toEqual(requests[0]);
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+});
+
+test('uncertain Downstream creation keeps its command and credential across Settings navigation', async ({ page }) => {
+  const { downstream, secretId } = await setup(page);
+  const requests: { key: string | undefined; body: Schema['DownstreamCreate'] }[] = [];
+  await page.route(/\/api\/v2\/integrations\/downstreams(?:\?|$)/, async route => {
+    const request = route.request();
+    if (request.method() === 'GET') return route.fallback();
+    const body: Schema['DownstreamCreate'] = request.postDataJSON();
+    requests.push({ key: request.headers()['idempotency-key'], body });
+    if (requests.length === 1) return route.abort('failed');
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({
+      schema_version: 1, replayed: true, resource: { ...downstream, configuration: body.configuration },
+    }) });
+  });
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('tab', { name: '目标交付下游' }).click();
+  await page.getByRole('button', { name: '登记目标交付下游' }).click();
+  const dialog = page.getByRole('dialog', { name: '登记目标交付下游' });
+  await dialog.getByRole('textbox', { name: '下游名称' }).fill('Downstream B');
+  await dialog.getByRole('textbox', { name: '下游 HTTPS origin' }).fill('https://downstream-b.example');
+  await dialog.getByRole('textbox', { name: '新的 DOWNSTREAM 凭据' }).fill('test-credential');
+  await dialog.getByRole('button', { name: '登记凭据' }).click();
+  await expect(dialog.getByText(secretId)).toBeVisible();
+  await dialog.getByRole('button', { name: '保存下游配置' }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  await expect(dialog.getByRole('button', { name: '重试当前操作' })).toBeVisible();
+  await dialog.getByRole('button', { name: '返回' }).click();
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await expect(page.getByText('目标交付下游登记结果待确认')).toBeVisible();
+  await page.getByRole('button', { name: '重试当前操作' }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1]).toEqual(requests[0]);
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+});
+
 test('closing and reopening an editor keeps writes ordered and uncertain retries identical', async ({ page }) => {
   const { runtime, writes, holdNextRuntime, failNextRuntime } = await setup(page);
   await page.getByRole('tab', { name: '集成' }).click();
@@ -436,9 +509,15 @@ test('an offline edit closed before debounce saves on reconnect without reopenin
 test('an uncertain data source registration retries the same command after Settings navigation', async ({ page }) => {
   const { source } = await setup(page);
   const requests: { key: string | undefined; body: Schema['DataSourceCreate'] }[] = [];
-  await page.route('**/api/v2/data/sources', async route => {
+  let releaseRefresh!: () => void;
+  const heldRefresh = new Promise<void>(resolve => { releaseRefresh = resolve; });
+  let refreshes = 0;
+  await page.route(/\/api\/v2\/data\/sources(?:\?|$)/, async route => {
     const request = route.request();
-    if (request.method() === 'GET') return route.fallback();
+    if (request.method() === 'GET') {
+      if (requests.length === 2) { refreshes++; await heldRefresh; }
+      return route.fallback();
+    }
     const body: Schema['DataSourceCreate'] = request.postDataJSON();
     requests.push({ key: request.headers()['idempotency-key'], body });
     if (requests.length === 1) return route.abort('failed');
@@ -468,6 +547,12 @@ test('an uncertain data source registration retries the same command after Setti
   await expect.poll(() => requests.length).toBe(2);
   expect(requests[1]).toEqual(requests[0]);
   await expect(page.getByText('数据源登记结果待确认')).toHaveCount(0);
+  await expect.poll(() => refreshes).toBe(1);
+  expect(await page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(true);
+  releaseRefresh();
   await expect.poll(() => page.evaluate(async () => {
     const modulePath = '/src/settings-work.ts';
     return (await import(modulePath)).settingsWorkActive();
