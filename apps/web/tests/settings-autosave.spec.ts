@@ -244,6 +244,7 @@ test('source dependent actions wait for a closed editor autosave to settle', asy
   await expect(page.getByRole('button', { name: '登记许可授权' })).toBeDisabled();
   release();
   await expect.poll(() => source.name).toBe('Source B');
+  await expect(page.getByText('Source B').last()).toBeVisible();
   await expect(page.getByRole('button', { name: '登记原生数据版本' })).toBeEnabled();
   await expect(page.getByRole('button', { name: '登记许可授权' })).toBeEnabled();
 });
@@ -265,6 +266,7 @@ test('data registration waits for the bound Runtime autosave across settings tab
   release();
   await expect.poll(() => runtime.configuration.name).toBe('Runtime B');
   await expect(page.getByRole('button', { name: '登记原生数据版本' })).toBeEnabled();
+  await expect(page.getByText('Runtime B')).toBeVisible();
 });
 
 test('a corrected server-rejected setting saves with a new request', async ({ page }) => {
@@ -526,8 +528,16 @@ test('a completed import receipt remains visible when the report list fails', as
   await page.getByRole('tab', { name: '迁移' }).click();
   await expect(page.getByText('导入回执已保存')).toBeVisible();
   await expect(page.getByText(report.id)).toBeVisible();
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(true);
   await page.getByRole('button', { name: '关闭回执' }).click();
   await expect(page.getByText(report.id)).toHaveCount(0);
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
 });
 
 test('a rejected import remains visible with its draft after navigation', async ({ page }) => {

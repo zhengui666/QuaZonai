@@ -6,7 +6,7 @@ import { api, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useOnline } from './ui';
 import { useFormAutosave } from './settings-autosave';
-import { useSettingsWorkKey } from './settings-work';
+import { useSettingsWorkKey, useSettingsWorkVersion } from './settings-work';
 import { ResourceSelect } from './resource-select';
 import { validateNativeCatalogKey } from '@quazonai/web/response-contract';
 
@@ -195,7 +195,8 @@ function SourceDetails({ sourceId }: { sourceId: string }) {
   const grants = useQuery({ queryKey: ['data','grants',sourceId,history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/data/sources/{id}/grants', { params: { path: { id: sourceId }, query: { cursor: history.at(-1), limit: 50 } }, signal })) });
   const runtimeId = source.data?.runtime_id;
   const runtimeSaving = useSettingsWorkKey(`autosave:runtime:${runtimeId ?? ''}`);
-  const runtime = useQuery({ queryKey: ['data','source-runtime',runtimeId], enabled: runtimeId !== undefined, queryFn: async ({ signal }) => {
+  const runtimeVersion = useSettingsWorkVersion(`autosave:runtime:${runtimeId ?? ''}`);
+  const runtime = useQuery({ queryKey: ['data','source-runtime',runtimeId,runtimeVersion], enabled: runtimeId !== undefined && !runtimeSaving, queryFn: async ({ signal }) => {
     if (!runtimeId) throw new Error('Source binding missing');
     return dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId } }, signal }));
   } });

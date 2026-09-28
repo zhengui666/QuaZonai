@@ -17,7 +17,7 @@ const importIntent = new Intent();
 function setImport(state: Partial<ImportState>) {
   importState = { ...importState, ...state };
   importListeners.forEach(listener => listener());
-  setSettingsWork('historical-import', importState.pending || importState.unknown);
+  setSettingsWork('historical-import', importState.pending || importState.unknown || !!importState.receipt);
 }
 function useImportState() {
   return useSyncExternalStore(listener => {

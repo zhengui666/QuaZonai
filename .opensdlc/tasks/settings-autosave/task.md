@@ -16,9 +16,10 @@ Password changes, initial registrations, credential registration, data grants/re
 ## Requirements and design
 
 - Send valid configuration edits through the existing revision-checked, idempotent APIs. Keep writes ordered per resource across editor closure/reopening and retain an uncertain request identity until retry resolves it.
+- Before freezing or submitting work tied to a Runtime, Downstream or Codex role, wait for that resource's autosave and read its current revision.
 - Let users leave a settings category or the page without an unsaved-change warning. Remove settings-only guards and discard prompts; keep genuine operation/error feedback.
 - Never send incomplete credentials, password fields or partially valid new records as background writes. Preserve form validation and server error visibility.
-- Retain active ChatGPT device challenges and explicit import identities in page memory across Settings navigation. A page reload intentionally does not persist device codes. Defer PWA updates while a settings write or recoverable operation is active.
+- Retain active ChatGPT device challenges and explicit import identities and receipts in page memory across Settings navigation. A page reload intentionally does not persist device codes. Defer PWA updates while a settings write or recoverable operation or unacknowledged import receipt is active.
 
 <a id="verification"></a>
 ## Verification

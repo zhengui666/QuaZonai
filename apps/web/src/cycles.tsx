@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ResourceSelect } from './resource-select';
+import { useSettingsWorkKey, useSettingsWorkVersion } from './settings-work';
 import { RunDetail } from './runs';
 import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';
 
@@ -12,8 +13,8 @@ type Fields = { runtime_id?: string; discovery_input_set_id: string; validation_
 type Submitted = { kind: 'freeze'; body: Schema['BriefFreezeV1'] } | { kind: 'start'; body: Schema['CycleStartV1'] };
 const required = [{ required: true, message: '请明确选择已有记录。' }];
 
-function useProfile(id?: string) {
-  return useQuery({ queryKey: ['codex', 'profile', id], enabled: !!id, staleTime: 0,
+function useProfile(id: string | undefined, settled: boolean, version: number) {
+  return useQuery({ queryKey: ['codex', 'profile', id, version], enabled: !!id && settled, staleTime: 0,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/settings/codex/{id}', { params: { path: { id: id! } }, signal })) });
 }
 
@@ -27,8 +28,15 @@ export function BriefExecution({ brief, close }: { brief: Brief; close: () => vo
   const runtimeId: string | undefined = Form.useWatch('runtime_id', form);
   const researcherId: string | undefined = Form.useWatch('researcher_id', form);
   const reviewerId: string | undefined = Form.useWatch('reviewer_id', form);
-  const researcher = useProfile(researcherId); const reviewer = useProfile(reviewerId);
-  const runtime = useQuery({ queryKey: ['integrations', 'runtime', runtimeId], enabled: freeze && !!runtimeId,
+  const runtimeKey = `autosave:runtime:${runtimeId ?? ''}`;
+  const researcherKey = `codex-model:${researcherId ?? ''}`;
+  const reviewerKey = `codex-model:${reviewerId ?? ''}`;
+  const runtimeSaving = useSettingsWorkKey(runtimeKey); const runtimeVersion = useSettingsWorkVersion(runtimeKey);
+  const researcherSaving = useSettingsWorkKey(researcherKey); const researcherVersion = useSettingsWorkVersion(researcherKey);
+  const reviewerSaving = useSettingsWorkKey(reviewerKey); const reviewerVersion = useSettingsWorkVersion(reviewerKey);
+  const researcher = useProfile(researcherId, !researcherSaving, researcherVersion);
+  const reviewer = useProfile(reviewerId, !reviewerSaving, reviewerVersion);
+  const runtime = useQuery({ queryKey: ['integrations', 'runtime', runtimeId, runtimeVersion], enabled: freeze && !!runtimeId && !runtimeSaving,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId! } }, signal })) });
   const project = useQuery({ queryKey: ['project', brief.project_id], staleTime: 0,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}', { params: { path: { id: brief.project_id } }, signal })) });
@@ -59,9 +67,9 @@ export function BriefExecution({ brief, close }: { brief: Brief; close: () => vo
   useGuard(true);
   const conflict = submitted === undefined && mutation.error instanceof ApiFailure && mutation.error.code === 'REVISION_CONFLICT';
   const unavailable = !project.data || project.isError || project.isFetching || (freeze ? project.data.state === 'ARCHIVED' : project.data.state !== 'ACTIVE');
-  const ready = freeze ? !!runtime.data?.configuration.enabled && !runtime.isError && !runtime.isFetching
+  const ready = freeze ? !runtimeSaving && !!runtime.data?.configuration.enabled && !runtime.isError && !runtime.isFetching
     : !!frozen.data && !frozen.isError && !frozen.isFetching && !!researcher.data?.home_binding && !!reviewer.data?.home_binding
-      && !researcher.isError && !reviewer.isError && !researcher.isFetching && !reviewer.isFetching;
+      && !researcherSaving && !reviewerSaving && !researcher.isError && !reviewer.isError && !researcher.isFetching && !reviewer.isFetching;
   const retry = submitted !== undefined && mutation.isError;
   function submit(value: Fields) {
     if (!online || mutation.isPending || unavailable || !ready || submitted || conflict) return;
