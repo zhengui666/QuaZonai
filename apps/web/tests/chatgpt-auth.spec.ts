@@ -166,6 +166,23 @@ test('navigation does not block an in-flight model autosave', async ({ page }) =
   await expect(page.getByRole('switch', { name: '本机默认' })).not.toBeChecked();
 });
 
+test('switching roles keeps each autosave independent while a write is pending', async ({ page }) => {
+  const { state, profiles } = await setup(page, true);
+  let release!: () => void;
+  state.holdSave = new Promise<void>(resolve => { release = resolve; });
+  await page.getByRole('switch', { name: '本机默认' }).click();
+  await expect.poll(() => state.saves.length).toBe(1);
+  await page.getByRole('combobox', { name: 'Codex 角色' }).click();
+  await page.getByText('独立审阅员', { exact: true }).last().click();
+  const reviewerDefault = page.getByRole('switch', { name: '本机默认' });
+  await expect(reviewerDefault).toBeEnabled();
+  await reviewerDefault.click();
+  await expect.poll(() => state.saves.length).toBe(2);
+  expect(state.saves.map(save => save.id)).toEqual(profiles.map(profile => profile.id));
+  release();
+  await expect.poll(() => profiles.every(profile => !profile.model_settings.use_default_model_settings)).toBe(true);
+});
+
 test('a lost model-save response retries the identical write', async ({ page }) => {
   const { state, profiles } = await setup(page, true);
   state.dropSaveAfterCommit = true;

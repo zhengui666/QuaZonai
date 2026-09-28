@@ -159,7 +159,7 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
           {profile && <Space orientation="vertical" className="full-width">
             <Space wrap><Button loading={probe.isPending} disabled={!online || query.isError || accountBusy} onClick={() => probe.mutate(profile)}>刷新</Button>
               {view && <Tag>{view.state === 'AVAILABLE' && !valid ? states.STALE : states[view.state]}</Tag>}</Space>
-            <ModelSettings profile={profile} observation={query.isError || observation.isError ? undefined : view}
+            <ModelSettings key={profile.id} profile={profile} observation={query.isError || observation.isError ? undefined : view}
               disabled={query.isError || probe.isPending || accountBusy} />
             <Descriptions column={1} items={[
               { key: 'defaults', label: '设置', children: profile.model_settings.use_default_model_settings ? '本机默认' : '自定义模型' },
