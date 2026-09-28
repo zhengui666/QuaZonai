@@ -24,6 +24,8 @@ Apple Silicon, and Windows x86_64.
 
 - Explicit HTTP URLs work for CLI login, saved sessions and commands, without
   changing unrelated machine/Runtime HTTPS transport rules or following redirects.
+  Remote HTTP uses an explicitly configured `CLI_HTTP_ORIGIN` and native marker;
+  browser cookies/bootstrap routes retain the original public-origin boundary.
 - Every `dev` push receives an immutable `v<core>-dev.<UTC timestamp>.<run ID>` tag
   identifying that push's exact source. Retries reuse the tag. Publication waits
   for all applicable CI for that source and invokes the existing reusable release
@@ -66,6 +68,12 @@ the CLI. Native installer failures exposed Bash 3.2 empty-array handling and
 PowerShell null-string conversion; both are corrected and await final-Head CI.
 System Bash, Bash 3.2 and a symlinked temporary directory pass all 12 Unix checks.
 
+Real non-loopback HTTP through the shipped Caddy routing configuration passes
+interactive password login, saved identity, project writes/reads and reused login.
+All 8 auth HTTP and 5 client login tests pass, including negative browser/cookie/
+origin checks. Native CLI and affected server targets pass Clippy with warnings
+denied. Compose retains the HTTP override across old/new bundle directories.
+
 A real Linux CLI archive was installed and updated in a disposable home, with
 exact binary/checksum/version and offline contract verification. Four disposable
 Docker images exercised export, gzip archive load, identity readback and package
@@ -84,7 +92,7 @@ avoids contention with default-branch publishers without changing live main.
 Independent local review identified and corrected missing portable-CI triggers,
 shared Codex tag races, incomplete Release detection and main/dev duplicate
 publication. GitHub Codex also identified server rejection of remote HTTP login
-and out-of-order dev release selection; their corrections require fresh review.
+and out-of-order dev release selection; both are corrected with regression checks.
 Final-Head GitHub CI and explicit clean Codex review remain pending.
 
 <a id="delivery"></a>

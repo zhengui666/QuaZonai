@@ -33,7 +33,7 @@ CLI 安装至 Linux/macOS 的 `$HOME/.local/bin` 或 Windows 的 `%LOCALAPPDATA%
 quazonai client --origin http://localhost:8081 login
 ```
 
-HTTP 明文传输密码和令牌，请在可信网络中使用；公网连接使用 HTTPS。后续命令复用保存的连接，HTTPS 不会自动降级为 HTTP。
+HTTP 明文传输密码和令牌，请在可信网络中使用；公网连接使用 HTTPS。远程 HTTP 需先按[CLI HTTP 配置](deploy/docker/README.md#cli-http)设置服务端允许的确切地址；本机 localhost 无需额外配置。后续命令复用保存的连接，HTTPS 不会自动降级为 HTTP。
 
 <a id="usage"></a>
 ## 开始研究
