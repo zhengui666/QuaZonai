@@ -211,7 +211,7 @@ curl -fsSL {base}/install.sh | bash
 ```
 
 macOS Intel or Apple Silicon: install/update the native CLI for a remote QuaZonai
-service (requires Bash, curl, Python 3; the Docker cluster runs on Linux x86_64).
+service (requires Bash and curl; the Docker cluster runs on Linux x86_64).
 The same CLI-only command also works on Linux x86_64:
 
 ```sh

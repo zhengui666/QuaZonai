@@ -20,6 +20,21 @@ Run deployment scripts as this owner, not with `sudo`. For a private GHCR packag
 <a id="install"></a>
 ## Install
 
+Install or update this exact release, including the native CLI, in one command:
+
+```sh
+curl -fsSL https://github.com/zhengui666/QuaZonai/releases/download/@QUAZONAI_VERSION@/install.sh | bash
+```
+
+The producer substitutes the tagged version above in every published bundle.
+For a Linux CLI-only host, use `bash -s -- --cli-only` in place of `bash`.
+The same Release's generated README contains native Windows and macOS commands.
+Each release includes SHA256SUMS, all four CLI archives and application, database,
+scientific Runtime and Codex image archives. The installer downloads prebuilt
+artifacts and verifies checksums; it never checks out source or builds binaries or
+images. `--bin-dir` selects the CLI directory; `--directory` selects the cluster.
+The existing installation/upgrade recovery and prerequisites below still apply.
+
 Download `quazonai-deploy.tar.gz` from a [GitHub Release](https://github.com/zhengui666/QuaZonai/releases) that provides the bundle. Extract it into an empty directory, then run:
 
 ```sh
@@ -54,7 +69,7 @@ quazonai --version
 quazonai client login
 ```
 
-For a custom installation directory, use its `current/bin` path. `quazonai` links to the same native `server` executable; existing internal Worker and maintenance paths remain valid. Enter the frontend address and password in the private login prompt. Subsequent `quazonai client` commands reuse the saved device login. See the [service Skill connection guide](../../skills/quazonai/references/connection.md). Mission and Downstream credentials retain their original restrictions.
+For a custom installation directory, use its `current/bin` path. The cluster bundle retains its `quazonai` link to the native `server` executable; the one-line installer also places the standalone portable CLI in `$HOME/.local/bin`; existing internal Worker and maintenance paths remain valid. Enter the frontend HTTP or HTTPS address and password in the private login prompt. Explicit HTTP works without an extra development flag; it transmits credentials in cleartext and is intended for trusted networks. Use HTTPS for public connections. Subsequent `quazonai client` commands reuse the saved device login. See the [service Skill connection guide](../../skills/quazonai/references/connection.md). Mission and Downstream credentials retain their original restrictions.
 
 Open **Settings → Codex → ChatGPT Auth → 登录 ChatGPT**. Copy the device code, open the authorization link and complete login on OpenAI's page. QuaZonai refreshes account/model status; researcher and reviewer share the account but have separate model settings. Refreshing the page cannot recover its code: finish in the original page or cancel and restart. Device-code authorization must be allowed by the account/workspace.
 
@@ -112,7 +127,7 @@ read -r -p 'Published release tag: ' version
 bash "$HOME/.local/share/quazonai/current/deployment/update.sh" "$version"
 ```
 
-The updater downloads the target bundle/image, checks compatibility and idle state, stops this installation, creates a recovery point, explicitly migrates, and activates after API/Worker checks. It preserves PostgreSQL, data, credentials and Codex version. Older versions are rejected; same-version installation is idempotent. Dev-image tags are not release tags and cannot be used here. Set the stopped gateway configuration to the target manifest's `runtime_image`, restart it using the target `runtime.sh`, and probe capabilities before new research; keep its original state and catalogs.
+The updater downloads the target bundle/image, checks compatibility and idle state, stops this installation, creates a recovery point, explicitly migrates, and activates after API/Worker checks. It preserves PostgreSQL, data, credentials and Codex version. Older versions are rejected; same-version installation is idempotent. Timestamped `v<core>-dev.<UTC timestamp>.<run ID>` Releases are installable here. The separate manual `dev-<sha>-...` image-only channel has no bundle and cannot be used here. Set the stopped gateway configuration to the target manifest's `runtime_image`, restart it using the target `runtime.sh`, and probe capabilities before new research; keep its original state and catalogs.
 
 For the first upgrade from a deployment bundle with `release.json.schema_version=1`, use the freshly extracted **target** bundle and run inside that directory:
 

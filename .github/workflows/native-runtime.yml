@@ -2,7 +2,7 @@ name: Native Runtime
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 permissions:
   contents: read
@@ -13,7 +13,7 @@ env:
   CARGO_INCREMENTAL: '0'
   CARGO_PROFILE_DEV_DEBUG: '0'
 concurrency:
-  group: native-runtime-${{ github.ref }}
+  group: native-runtime-${{ github.ref == 'refs/heads/dev' && github.sha || github.ref }}
   cancel-in-progress: true
 jobs:
   native-runtime:

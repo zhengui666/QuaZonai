@@ -1,0 +1,65 @@
+name: Dev release
+on:
+  push:
+    branches: [dev]
+permissions:
+  contents: read
+  actions: read
+# Each push is a release candidate, including when a newer push arrives.
+concurrency:
+  group: dev-release-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  tag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Create or reuse this push's timestamped tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: dev
+          REVISION: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          git fetch origin '+refs/heads/dev:refs/remotes/origin/dev' '+refs/tags/*:refs/tags/*'
+          python3 -B deploy/docker/release.py dev-tag --revision "$REVISION" --run-id "$RUN_ID"
+  checks:
+    needs: tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Wait for all checks on this exact push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ github.sha }}
+        run: python3 -B deploy/docker/release.py wait-ci --revision "$REVISION"
+  publish:
+    needs: [tag, checks]
+    concurrency:
+      group: quazonai-versioned-release
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    uses: ./.github/workflows/release-version.yml
+    with:
+      version: ${{ needs.tag.outputs.version }}
+      revision: ${{ github.sha }}
+      branch: dev

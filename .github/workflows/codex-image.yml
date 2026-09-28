@@ -11,6 +11,7 @@ permissions:
 concurrency:
   group: quazonai-versioned-release
   cancel-in-progress: false
+  queue: max
 jobs:
   publish:
     if: github.repository == 'zhengui666/QuaZonai' && github.ref == 'refs/heads/main'

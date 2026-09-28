@@ -2,7 +2,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 permissions:
   contents: read
@@ -10,7 +10,7 @@ env:
   EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
   RUSTUP_TOOLCHAIN: '1.98.1'
 concurrency:
-  group: native-ci-${{ github.ref }}
+  group: native-ci-${{ github.ref == 'refs/heads/dev' && github.sha || github.ref }}
   cancel-in-progress: true
 jobs:
   docs-links:

@@ -434,6 +434,7 @@ class GitSelectionTests(unittest.TestCase):
                 git("config", "user.name", "Release test")
                 Path("deploy/docker").mkdir(parents=True)
                 Path("deploy/docker/runtime.sh").write_text("# release-capable test commit\n")
+                Path("deploy/install.sh").write_text("# portable release-capable test commit\n")
                 git("add", ".")
                 git("commit", "-m", "first")
                 first = git("rev-parse", "HEAD")
