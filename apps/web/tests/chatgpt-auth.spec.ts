@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import type { Schema } from '../src/api';
 
@@ -124,6 +125,10 @@ test('one shared account keeps model, reasoning and speed independent for each r
   await expect(page.getByText('共享 ChatGPT 账号', { exact: true })).toBeVisible();
   await expect(page.getByText('已登录 ChatGPT', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).hover();
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toHaveCSS('color', 'rgb(255, 255, 255)');
+  expect((await new AxeBuilder({ page }).include('button[aria-label="登录 ChatGPT"]').withRules(['color-contrast']).analyze()).violations).toEqual([]);
   const originalReviewer = structuredClone(profiles[1]);
   for (const [index, name, model, effort, fast] of [
     [0, '研究员', 'research-model', 'high', true],
@@ -186,6 +191,18 @@ test('navigation does not block an in-flight model autosave', async ({ page }) =
   await expect(page.getByRole('switch', { name: '本机默认' })).not.toBeChecked();
 });
 
+test('account actions wait for a model autosave on the same role', async ({ page }) => {
+  const { state } = await setup(page, true);
+  let release!: () => void;
+  state.holdSave = new Promise<void>(resolve => { release = resolve; });
+  await page.getByRole('switch', { name: '本机默认' }).click();
+  await expect.poll(() => state.saves.length).toBe(1);
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeDisabled();
+  expect(state.starts).toHaveLength(0);
+  release();
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeEnabled();
+});
+
 test('switching roles keeps each autosave independent while a write is pending', async ({ page }) => {
   const { state, profiles } = await setup(page, true);
   let release!: () => void;
@@ -194,6 +211,7 @@ test('switching roles keeps each autosave independent while a write is pending',
   await expect.poll(() => state.saves.length).toBe(1);
   await page.getByRole('combobox', { name: 'Codex 角色' }).click();
   await page.getByText('独立审阅员', { exact: true }).last().click();
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeDisabled();
   const reviewerDefault = page.getByRole('switch', { name: '本机默认' });
   await expect(reviewerDefault).toBeEnabled();
   await reviewerDefault.click();
@@ -340,6 +358,21 @@ test('a late lost login ACK reconciles after switching roles', async ({ page }) 
     const modulePath = '/src/settings-work.ts';
     return (await import(modulePath)).settingsWorkActive();
   })).toBe(false);
+});
+
+test('a successful background login replay clears its stale network error', async ({ page }) => {
+  const { state } = await setup(page);
+  state.dropStart = true;
+  let release!: () => void;
+  state.holdStart = new Promise<void>(resolve => { release = resolve; });
+  await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
+  await expect.poll(() => state.starts.length).toBe(1);
+  await page.getByRole('tab', { name: '鉴权管理' }).click();
+  release();
+  await expect.poll(() => state.starts.length).toBe(2);
+  await page.getByRole('tab', { name: 'Codex' }).click();
+  await expect(page.getByLabel('ChatGPT 授权码')).toHaveText('TEST-ONLY');
+  await expect(page.getByText('连接中断，提交结果未知；请重试当前操作')).toHaveCount(0);
 });
 
 test('lost cancel ACK preserves the request and stays pending until native confirmation', async ({ page }) => {

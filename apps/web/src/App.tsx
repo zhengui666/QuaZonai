@@ -81,6 +81,7 @@ export default function App() {
     cssVar: { key: 'quazonai' },
     components: {
       Button: {
+        primaryColor: '#fff',
         defaultHoverColor: dark ? '#b0ccff' : '#1f4796',
         defaultHoverBorderColor: dark ? '#b0ccff' : '#1f4796',
         defaultActiveColor: dark ? '#83b2ff' : '#183b80',

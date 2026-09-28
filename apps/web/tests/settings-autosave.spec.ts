@@ -353,6 +353,43 @@ test('a pending import survives navigation and retries with the same identity', 
   expect(attempts[1]).toEqual(attempts[0]);
 });
 
+test('a completed import receipt remains visible when the report list fails', async ({ page }) => {
+  await setup(page);
+  const exportRef = '01990000-0000-7000-8000-000000000051';
+  const report: Schema['HistoricalImportReportV1'] = { schema_version: 1, id: '01990000-0000-7000-8000-000000000052',
+    export_ref: exportRef, source_installation_id: '01990000-0000-7000-8000-000000000053', dry_run: true,
+    projected_rows: '0', new_rows: '0', existing_rows: '0', checked_relationships: '0',
+    unverified_relationships: [], manual_review_required: false };
+  let release!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  let attempts = 0;
+  await page.route('**/api/v2/migrations/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/v2/migrations/reports') return route.abort('failed');
+    if (path === '/api/v2/migrations/import') {
+      attempts++; await hold;
+      return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({
+        schema_version: 1, replayed: false, resource: report,
+      }) });
+    }
+    return route.abort('blockedbyclient');
+  });
+  await page.getByRole('tab', { name: '迁移' }).click();
+  await page.getByRole('button', { name: '导入历史投影' }).click();
+  const dialog = page.getByRole('dialog', { name: '导入历史投影' });
+  await dialog.getByRole('textbox', { name: '已登记的导出编号' }).fill(exportRef);
+  await dialog.getByRole('button', { name: '提交导入请求' }).click();
+  await expect.poll(() => attempts).toBe(1);
+  await dialog.getByRole('button', { name: '返回' }).click();
+  await page.getByRole('tab', { name: '鉴权管理' }).click();
+  release();
+  await page.getByRole('tab', { name: '迁移' }).click();
+  await expect(page.getByText('导入回执已保存')).toBeVisible();
+  await expect(page.getByText(report.id)).toBeVisible();
+  await page.getByRole('button', { name: '关闭回执' }).click();
+  await expect(page.getByText(report.id)).toHaveCount(0);
+});
+
 test('a rejected import remains visible with its draft after navigation', async ({ page }) => {
   await setup(page);
   const exportRef = '01990000-0000-7000-8000-000000000031';

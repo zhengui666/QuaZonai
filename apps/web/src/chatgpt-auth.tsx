@@ -41,7 +41,7 @@ class AuthSession {
       client.setQueryData(['codex', 'account-operation', this.profileId], result.current);
       if (activeAccountOperation(result.current)) this.update({
         challenge: result.device_code ? { id: result.current.operation.id, code: result.device_code } : undefined,
-        unknownStart: false,
+        unknownStart: false, startError: undefined,
       });
       else {
         this.startRequest = undefined; this.startIntent.clear(); this.startedId = undefined;

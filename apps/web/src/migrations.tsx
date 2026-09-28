@@ -44,10 +44,14 @@ async function sendImport(body: Import, client: ReturnType<typeof useQueryClient
 export function MigrationManagement() {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const [creating, setCreating] = useState(() => (!!importState.submitted || !!importState.error) && !importState.receipt); const [selected, setSelected] = useState<string>();
+  const importStatus = useImportState();
   const query = useQuery({ queryKey: ['migration-reports', history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/migrations/reports', { params: { query: { cursor: history.at(-1), limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="large">
     
     <Button onClick={() => { if ((!importState.submitted && !importState.error) || importState.receipt) { importIntent.clear(); setImport({ draft: { export_ref: '', dry_run: true }, submitted: undefined, receipt: undefined, error: undefined, unknown: false }); } setCreating(true); }}>导入历史投影</Button>
+    {importStatus.receipt && !creating && <Alert showIcon type="success" title="导入回执已保存"
+      description={<Typography.Text className="break-word">{importStatus.receipt.id}</Typography.Text>}
+      action={<Button onClick={() => setImport({ receipt: undefined })}>关闭回执</Button>} />}
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Report> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="尚无历史导入报告。" /> }} columns={[
         { title: '导入报告', key: 'id', render: (_, row) => <Button disabled={query.isError} onClick={() => setSelected(row.id)}>{row.id}</Button> },

@@ -21,10 +21,14 @@ class ModelSaveSession {
   update(changes: Partial<ModelState>) {
     this.state = { ...this.state, ...changes };
     this.listeners.forEach(listener => listener());
+    modelListeners.forEach(listener => listener());
     setSettingsWork(`codex-model:${this.profileId}`, this.state.pending || this.state.uncertain);
   }
 }
 const modelSessions = new Map<string, ModelSaveSession>();
+const modelListeners = new Set<() => void>();
+const subscribeModelSaves = (listener: () => void) => { modelListeners.add(listener); return () => { modelListeners.delete(listener); }; };
+const modelSavesBusy = () => [...modelSessions.values()].some(session => session.state.pending || session.state.uncertain);
 function modelSessionFor(id: string) {
   let session = modelSessions.get(id);
   if (!session) { session = new ModelSaveSession(id); modelSessions.set(id, session); }
@@ -153,6 +157,7 @@ function ModelSettings({ profile, observation, disabled }: { profile: Profile; o
 }
 function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Profile[]; onSelect: (id: string) => void }) {
   const online = useOnline(); const now = useClock(); const client = useQueryClient(); const intent = useRef(new Intent());
+  const modelBusy = useSyncExternalStore(subscribeModelSaves, modelSavesBusy, () => false);
   const [accountBusy, setAccountBusy] = useState(true);
   const attempted = useRef<string | undefined>(undefined);
   const accountChanged = useCallback(async () => {
@@ -188,7 +193,7 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
   }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching, accountBusy, probe.isPending, mutate]);
   return <Space orientation="vertical" className="full-width" size="large">
     {profile && <ChatgptAuth key={profile.id} profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
-      disabled={query.isError || probe.isPending} onBusy={setAccountBusy} onChanged={accountChanged} />}
+      disabled={query.isError || probe.isPending || modelBusy} onBusy={setAccountBusy} onChanged={accountChanged} />}
     <Card title="角色模型设置">
       <Space orientation="vertical" className="full-width">
         <Typography.Text type="secondary">模型、推理强度和速度按角色独立保存。</Typography.Text>
