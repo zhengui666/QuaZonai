@@ -15,7 +15,7 @@ quazonai client identity
 
 The CLI privately saves the origin, device token and transport settings in `$XDG_CONFIG_HOME/quazonai/client.json` (otherwise `$HOME/.config/quazonai/client.json`). Later commands reuse them without connection flags, browser sessions or Operator grants. Devices do not expire automatically. Repeating login confirms the connection; `login --replace` intentionally replaces it, and `login --name NAME` supplies a label instead of the hostname. Replacement leaves the previous device registered until deleted. **Settings → Authentication** manages devices and the password; changing the password ends browser sessions but preserves devices. A revoked device requires another user-controlled login.
 
-Use the actual public HTTPS hostname. Only an explicitly configured loopback HTTP deployment uses `quazonai client --development-http login`. A supplied private CA uses `quazonai client --ca-certificate /supplied/ca.pem login`; successful login or identity confirmation saves that path, including a later CA replacement. Never infer HTTP permission, disable TLS verification, copy browser cookies or rewrite the origin.
+Use the actual frontend origin. HTTPS verifies the server certificate; an explicitly supplied `http://` origin also works, including a remote host, and sends credentials without TLS. The CLI never changes schemes or follows redirects; `--development-http` remains a compatibility option. A supplied private CA uses `quazonai client --ca-certificate /supplied/ca.pem login`; successful login or identity confirmation saves that path, including a later CA replacement. Never infer an origin, disable TLS verification, copy browser cookies or rewrite the origin.
 
 `identity` returns nonsecret device metadata. Verify the intended connection; the service rechecks revocation on every request.
 
@@ -60,3 +60,5 @@ Forward submissions use `quazonai client forward weights submit` (`DownstreamWei
 Success is the native DTO/receipt on stdout with exit 0, not a universal `ok`/`code` wrapper. Errors use nonzero exit and safe stderr. `run watch` emits NDJSON; `artifact export` emits raw bytes and requires an exit-code check.
 
 Lists support `--limit 1..100` and unchanged `--cursor` values. Stop when enough evidence is available and disclose partial coverage. UUIDv7 and bigint/revision strings are opaque; do not round or replace them with names.
+
+The prebuilt CLI runs on Linux, macOS and Windows. Unix profiles use `$XDG_CONFIG_HOME/quazonai/client.json` (or `$HOME/.config/quazonai/client.json`) with owner-only permissions. Windows profiles use `%APPDATA%\quazonai\client.json` with an owner-only ACL managed through the built-in Windows PowerShell; existing scoped credential files must also grant access only to the current user.

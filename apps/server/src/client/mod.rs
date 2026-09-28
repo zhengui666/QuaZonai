@@ -1,6 +1,7 @@
 //! Native HTTP CLI over shared Rust contracts. Never opens a database or an application vault.
 mod commands;
 mod preview;
+mod private;
 mod session;
 mod watch;
 
@@ -18,7 +19,7 @@ use std::{
 
 #[derive(Args)]
 pub struct Arguments {
-    /// Frontend origin; pair with --credential-file to use an existing scoped credential.
+    /// Explicit http:// or https:// frontend origin; HTTP sends credentials without TLS.
     #[arg(long)]
     pub origin: Option<String>,
     /// Private existing scoped qz2 machine token file; otherwise reuse the saved login.
@@ -27,7 +28,7 @@ pub struct Arguments {
     /// Optional native CA bundle. There is no unverified-TLS mode.
     #[arg(long)]
     pub ca_certificate: Option<PathBuf>,
-    /// Explicit local-console HTTP only; the server must also permit it.
+    /// Compatibility option; explicit http:// origins no longer require this flag.
     #[arg(long)]
     pub development_http: bool,
     /// Validate the local request and print a redacted plan; never contacts the server.
@@ -109,16 +110,16 @@ fn read_file(path: &PathBuf, maximum: usize, private: bool) -> Result<Vec<u8>> {
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > maximum as u64 {
         return Err(Failure::Configuration);
     }
-    #[cfg(unix)]
     if private {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(Failure::Credential);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(Failure::Credential);
+            }
         }
-    }
-    #[cfg(not(unix))]
-    if private {
-        return Err(Failure::Configuration);
+        #[cfg(windows)]
+        private::check(path)?;
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.take(maximum as u64 + 1)
@@ -136,7 +137,10 @@ impl Connection {
             match (&args.origin, &args.credential_file) {
                 (Some(origin), Some(path)) => {
                     let bytes = read_file(path, 256, true)?;
-                    let bytes = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
+                    let bytes = bytes
+                        .strip_suffix(b"\r\n")
+                        .or_else(|| bytes.strip_suffix(b"\n"))
+                        .unwrap_or(&bytes);
                     let token = std::str::from_utf8(bytes)
                         .map_err(|_| Failure::Credential)?
                         .to_owned();
@@ -216,7 +220,9 @@ impl Connection {
                 "idempotency-key",
                 header::HeaderValue::from_str(key).map_err(|_| Failure::Input)?,
             );
-            crate::access::idempotency_key(&headers).map_err(|_| Failure::Input)?;
+            if !contracts::http::valid_idempotency_key(key) {
+                return Err(Failure::Input);
+            }
             call = call.headers(headers);
             if let Some(body) = &request.body {
                 call = call
@@ -439,25 +445,30 @@ pub fn report(error: &Failure) {
 #[cfg(test)]
 mod origin_tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     #[tokio::test]
-    async fn cli_accepts_the_same_local_origin_as_the_browser() {
+    async fn cli_accepts_explicit_http_and_https_origins() {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("disposable-cli-token");
         let secret = integrations::authentication::random_capability();
         let token = integrations::authentication::format_machine_token(Id::new(), &secret).unwrap();
-        std::fs::write(&file, token).unwrap();
-        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&file, format!("{token}\r\n")).unwrap();
+        private::restrict(&file, false).unwrap();
         for (origin, development_http, accepted) in [
             ("http://localhost:8081", true, true),
             ("http://127.0.0.1:8080", true, true),
             ("http://[::1]:8081", true, true),
             ("https://localhost", false, true),
             ("https://127.0.0.1", false, true),
-            ("http://localhost:8081", false, false),
+            ("http://localhost:8081", false, true),
             ("https://qz.example", false, true),
-            ("http://192.168.1.1:8081", true, false),
+            ("http://192.168.1.1:8081", false, true),
+            ("http://qz.example:8080", false, true),
+            ("https://qz.example/path", false, false),
+            ("ftp://qz.example", false, false),
+            ("https://qz.example?key=value", false, false),
+            ("https://qz.example#fragment", false, false),
+            (" https://qz.example", false, false),
             ("http://localhost:8081/path", true, false),
             ("http://user:pass@localhost:8081", true, false),
         ] {
@@ -476,5 +487,53 @@ mod origin_tests {
             };
             assert_eq!(Connection::open(&arguments).is_ok(), accepted, "{origin}");
         }
+    }
+
+    #[tokio::test]
+    async fn explicit_http_sends_once_and_never_follows_a_redirect() {
+        use std::{io::Read, net::TcpListener};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let token = integrations::authentication::format_machine_token(
+            Id::new(),
+            &integrations::authentication::random_capability(),
+        )
+        .unwrap();
+        let connection = Connection::connect(origin.clone(), token.clone(), false, None).unwrap();
+        let redirect = origin.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut byte = [0];
+            while !bytes.ends_with(b"\r\n\r\n") {
+                stream.read_exact(&mut byte).unwrap();
+                bytes.push(byte[0]);
+                assert!(bytes.len() < 16384);
+            }
+            let request = String::from_utf8(bytes).unwrap();
+            assert!(request.starts_with("GET /api/v2/projects?limit=1 HTTP/1.1\r\n"));
+            assert!(request.contains(&format!("authorization: Bearer {token}\r\n")));
+            write!(stream, "HTTP/1.1 307 Temporary Redirect\r\nLocation: {redirect}/api/v2/projects\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            listener
+        });
+        let request = commands::Command::Project(commands::Project::List(commands::List {
+            cursor: None,
+            limit: 1,
+        }))
+        .request()
+        .unwrap();
+        let response = connection.send(&request, None, None).await.unwrap();
+        assert!(matches!(
+            connection.checked(response, 200).await,
+            Err(Failure::Contract)
+        ));
+        assert_eq!(
+            server.join().unwrap().accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 }

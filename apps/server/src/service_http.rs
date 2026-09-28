@@ -1,6 +1,6 @@
 //! Shared native service transport. Authority and business routes stay in each adapter.
 use contracts::http::Problem;
-use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response, Url};
+use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
 
@@ -15,15 +15,6 @@ pub(crate) enum Failure {
     Rejected(Box<Problem>),
 }
 type Result<T> = std::result::Result<T, Failure>;
-
-pub(crate) fn origin(value: &str, development_http: bool) -> Result<Url> {
-    if value.trim() != value {
-        return Err(Failure::Configuration);
-    }
-    crate::WebPolicy::new(value, ([127, 0, 0, 1], 0).into(), development_http)
-        .map_err(|_| Failure::Configuration)?;
-    Url::parse(value).map_err(|_| Failure::Configuration)
-}
 
 pub(crate) fn bearer(token: &str) -> Result<header::HeaderMap> {
     let mut value = header::HeaderValue::from_str(&format!("Bearer {token}"))
@@ -108,7 +99,7 @@ pub(crate) async fn body(mut response: Response, maximum: usize) -> Result<Vec<u
 }
 
 pub(crate) fn verify(bytes: &[u8], credential: &str) -> Result<()> {
-    crate::runtime_transport::verify_native_json(bytes, credential).map_err(|_| Failure::Contract)
+    integrations::json::verify(bytes, credential).map_err(|_| Failure::Contract)
 }
 
 pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8], credential: &str) -> Result<T> {

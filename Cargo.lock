@@ -4505,6 +4505,8 @@ dependencies = [
  "libc",
  "rustix",
  "seccompiler",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.20",
 ]
@@ -6292,6 +6294,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "quazonai-cli"
+version = "2.0.0-dev.1"
+dependencies = [
+ "clap",
+ "contracts",
+ "eventsource-stream",
+ "futures-util",
+ "integrations",
+ "reqwest 0.12.23",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

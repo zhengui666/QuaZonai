@@ -1,0 +1,27 @@
+[package]
+name = "quazonai-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "quazonai"
+path = "src/main.rs"
+
+[dependencies]
+contracts = { path = "../../crates/contracts" }
+integrations = { path = "../../crates/integrations" }
+serde.workspace = true
+serde_json.workspace = true
+clap = { version = "=4.5.46", features = ["derive", "env"] }
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
+eventsource-stream = "=0.2.3"
+futures-util = "=0.3.34"
+rpassword = "=7.4.0"
+
+[dev-dependencies]
+tempfile = "=3.27.0"

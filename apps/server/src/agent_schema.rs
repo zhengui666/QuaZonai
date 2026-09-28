@@ -1,6 +1,6 @@
 //! Focused, offline discovery over the actual native OpenAPI, not another schema registry.
+use crate::client::{Failure, Result};
 use serde_json::{json, Map, Value};
-use server::client::{Failure, Result};
 use std::collections::BTreeSet;
 
 fn schemas(document: &Value) -> Result<&Map<String, Value>> {
@@ -73,9 +73,8 @@ fn select(document: &Value, name: &str) -> Result<Value> {
     }))
 }
 
-pub fn describe(name: Option<&str>) -> Result<Value> {
-    let source = server::openapi_json().map_err(|_| Failure::Contract)?;
-    let document: Value = serde_json::from_str(&source).map_err(|_| Failure::Contract)?;
+pub fn describe(source: &str, name: Option<&str>) -> Result<Value> {
+    let document: Value = serde_json::from_str(source).map_err(|_| Failure::Contract)?;
     match name {
         Some(name) => select(&document, name),
         None => {

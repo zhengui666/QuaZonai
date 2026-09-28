@@ -102,6 +102,7 @@ fn workspace_dependencies_follow_design_boundaries() {
             "domain" | "integrations" => &["contracts"],
             "store" | "job" => &["contracts", "domain"],
             "runtime" => &["contracts", "domain", "integrations"],
+            "quazonai-cli" => &["contracts", "integrations"],
             "server" => &["contracts", "domain", "store", "integrations"],
             _ => panic!(
                 "Document ownership of new workspace package {name} in .opensdlc/architecture.md first"

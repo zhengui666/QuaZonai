@@ -23,7 +23,12 @@ use url::Url;
 pub(super) const MAX_RESPONSE_BYTES: usize = service_http::MAX_JSON_BYTES;
 
 pub(super) fn origin(value: &str, development_http: bool) -> Result<Url, Failure> {
-    Ok(service_http::origin(value, development_http)?)
+    if value.trim() != value {
+        return Err(Failure::Configuration);
+    }
+    crate::WebPolicy::new(value, ([127, 0, 0, 1], 0).into(), development_http)
+        .map_err(|_| Failure::Configuration)?;
+    Url::parse(value).map_err(|_| Failure::Configuration)
 }
 
 // Deliberately no Debug: the HTTP client contains a sensitive Authorization header.

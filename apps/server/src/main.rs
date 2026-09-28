@@ -3,7 +3,7 @@ mod historical_export;
 use clap::{Args, Parser, Subcommand};
 use contracts::Id;
 use integrations::{artifacts::ArtifactStore, secrets::SecretVault};
-use server::{AppState, WebPolicy};
+use server::{client, AppState, WebPolicy};
 use std::{
     fs,
     io::{Read, Write},
@@ -412,7 +412,10 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             if schema.is_none() && !list_schemas {
                 print!("{}", server::openapi_json()?);
             } else {
-                println!("{}", agent_schema::describe(schema.as_deref())?);
+                println!(
+                    "{}",
+                    agent_schema::describe(&server::openapi_json()?, schema.as_deref())?
+                );
             }
         }
         Command::Migrate {

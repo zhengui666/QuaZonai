@@ -14,12 +14,11 @@ use url::{Host, Url};
 mod catalog;
 mod downstream;
 mod jobs;
-mod json;
 
 pub use catalog::ReceivedCatalogMetadata;
 pub use downstream::DownstreamTransport;
+use integrations::json;
 pub use jobs::{ReceivedRuntimeResult, RuntimeRequestError};
-pub(crate) use json::verify as verify_native_json;
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
