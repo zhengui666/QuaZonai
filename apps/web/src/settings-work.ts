@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 const active = new Set<string>();
 const listeners = new Set<() => void>();
+const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 
 export const settingsWorkActive = () => active.size > 0;
 
@@ -12,8 +13,9 @@ export function setSettingsWork(key: string, pending: boolean) {
 }
 
 export function useSettingsWork() {
-  return useSyncExternalStore(listener => {
-    listeners.add(listener);
-    return () => { listeners.delete(listener); };
-  }, settingsWorkActive, () => false);
+  return useSyncExternalStore(subscribe, settingsWorkActive, () => false);
+}
+
+export function useSettingsWorkKey(key: string) {
+  return useSyncExternalStore(subscribe, () => active.has(key), () => false);
 }

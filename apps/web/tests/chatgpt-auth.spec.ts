@@ -222,14 +222,17 @@ test('a lost probe response keeps its identity after switching roles', async ({ 
   await expect.poll(() => state.probes).toBe(1);
   await page.getByRole('combobox', { name: 'Codex 角色' }).click();
   await page.getByText('独立审阅员', { exact: true }).last().click();
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeDisabled();
   release();
   await page.getByRole('combobox', { name: 'Codex 角色' }).click();
   await page.getByText('研究员', { exact: true }).last().click();
   await expect(page.getByText('连接中断，提交结果未知；请重试当前操作')).toBeVisible();
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeDisabled();
   expect(state.probes).toBe(1);
   await page.getByRole('button', { name: '刷新', exact: true }).click();
   await expect.poll(() => state.probes).toBe(2);
   expect(state.probeRequests[1]).toEqual(state.probeRequests[0]);
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeEnabled();
 });
 
 test('switching roles keeps each autosave independent while a write is pending', async ({ page }) => {
@@ -273,6 +276,9 @@ test('a rejected reasoning edit restores the authoritative slider position', asy
   await expect(page.getByText('Test model setting rejected')).toBeVisible();
   await expect(slider).toHaveAttribute('aria-valuenow', '0');
   await expect(page.getByText('推理强度：本机默认')).toBeVisible();
+  await page.getByRole('button', { name: '重新载入' }).click();
+  await expect(page.getByText('Test model setting rejected')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '重新载入' })).toHaveCount(0);
 });
 
 test('an uncertain model autosave keeps its retry identity after navigation', async ({ page }) => {

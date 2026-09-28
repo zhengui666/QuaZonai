@@ -6,6 +6,7 @@ import { api, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useOnline } from './ui';
 import { useFormAutosave } from './settings-autosave';
+import { useSettingsWorkKey } from './settings-work';
 import { ResourceSelect } from './resource-select';
 import { validateNativeCatalogKey } from '@quazonai/web/response-contract';
 
@@ -72,12 +73,12 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
       const body: Schema['DataSourceUpdate'] = { schema_version: 1, expected_revision: revision, name: values.name, enabled: values.enabled };
       const result = dataOf(await api.PATCH('/api/v2/data/sources/{id}', { params: { path: { id: source.id },
         header: writeIntent.headers('PATCH', `/api/v2/data/sources/${source.id}`, body) }, body }));
-      void refresh();
+      await refresh();
       return result.resource;
     }, async () => {
       if (!source) throw new Error('数据源不存在');
       const current = dataOf(await api.GET('/api/v2/data/sources/{id}', { params: { path: { id: source.id } } }));
-      void refresh();
+      await refresh();
       return { values: { name: current.name, enabled: current.enabled } as Values,
         revision: current.revision, updated_at: current.updated_at, resource: current };
     });
@@ -186,6 +187,7 @@ function RegisterDialog({ source, runtimeRevision, close }: { source: Source; ru
 
 function SourceDetails({ sourceId }: { sourceId: string }) {
   const online = useOnline(); const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
+  const sourceSaving = useSettingsWorkKey(`autosave:source:${sourceId}`);
   const [editing, setEditing] = useState<Source>(); const [granting, setGranting] = useState<Source>();
   const [revoking, setRevoking] = useState<Grant>(); const [registering, setRegistering] = useState<{ source: Source; revision: string }>();
   const [historyGrant, setHistoryGrant] = useState<Grant>();
@@ -209,8 +211,8 @@ function SourceDetails({ sourceId }: { sourceId: string }) {
         ]} />
         <Space wrap>
           <Button disabled={!online || source.isError} onClick={() => setEditing(current)}>修改数据源</Button>
-          <Button disabled={!online || source.isError || !current.enabled} onClick={() => setGranting(current)}>登记许可授权</Button>
-          <Button type="primary" disabled={!online || source.isError || runtime.isError || !current.enabled || !runtime.data?.configuration.enabled}
+          <Button disabled={!online || source.isError || sourceSaving || !current.enabled} onClick={() => setGranting(current)}>登记许可授权</Button>
+          <Button type="primary" disabled={!online || source.isError || sourceSaving || runtime.isError || !current.enabled || !runtime.data?.configuration.enabled}
             onClick={() => { if (runtime.data) setRegistering({ source: current, revision: runtime.data.revision }); }}>登记原生数据版本</Button>
         </Space>
         <ErrorNotice error={runtime.error} retry={() => { void runtime.refetch(); }} />

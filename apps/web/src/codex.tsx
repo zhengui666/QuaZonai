@@ -47,6 +47,7 @@ class ProbeSession {
   private update(changes: Partial<ProbeState>) {
     this.state = { ...this.state, ...changes };
     this.listeners.forEach(listener => listener());
+    probeListeners.forEach(listener => listener());
     setSettingsWork(`codex-probe:${this.profileId}`, this.state.pending || this.state.uncertain);
   }
   async run(profile: Profile, client: QueryClient) {
@@ -76,6 +77,9 @@ class ProbeSession {
   }
 }
 const probeSessions = new Map<string, ProbeSession>();
+const probeListeners = new Set<() => void>();
+const subscribeProbes = (listener: () => void) => { probeListeners.add(listener); return () => { probeListeners.delete(listener); }; };
+const probesBusy = () => [...probeSessions.values()].some(session => session.state.pending || session.state.uncertain);
 function probeSessionFor(id: string) {
   let session = probeSessions.get(id);
   if (!session) { session = new ProbeSession(id); probeSessions.set(id, session); }
@@ -191,6 +195,14 @@ function ModelSettings({ profile, observation, disabled }: { profile: Profile; o
     session.update({ pending: true, error: undefined });
     mutation.mutate(values);
   }
+  async function reloadProfile() {
+    try {
+      const latest = dataOf(await api.GET('/api/v2/settings/codex/{id}', { params: { path: { id: profile.id } } }));
+      query.setQueryData(['codex', 'profile', profile.id], latest);
+      session.update({ error: undefined });
+      void query.invalidateQueries({ queryKey: ['codex', 'observation', profile.id], exact: true });
+    } catch (error) { session.update({ error }); }
+  }
   return <Space orientation="vertical" className="full-width">
     <ModelControls values={profile.model_settings} observation={observation} profile={profile}
       disabled={disabled || !online || state.pending || state.uncertain} save={save} />
@@ -199,7 +211,7 @@ function ModelSettings({ profile, observation, disabled }: { profile: Profile; o
     {state.uncertain && <Button disabled={!online} onClick={() => {
       if (session.values) { session.update({ pending: true, error: undefined }); mutation.mutate(session.values); }
     }}>重试</Button>}
-    {!!state.error && !state.uncertain && <Button onClick={() => { void query.invalidateQueries({ queryKey: ['codex'] }); }}>重新载入</Button>}
+    {!!state.error && !state.uncertain && <Button onClick={() => { void reloadProfile(); }}>重新载入</Button>}
   </Space>;
 }
 function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Profile[]; onSelect: (id: string) => void }) {
@@ -210,6 +222,7 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
   const currentModelState = useSyncExternalStore(currentModel.subscribe, currentModel.getSnapshot, currentModel.getSnapshot);
   const modelSaving = currentModelState.pending || currentModelState.uncertain;
   const modelBusy = useSyncExternalStore(subscribeModelSaves, modelSavesBusy, () => false);
+  const probeBusy = useSyncExternalStore(subscribeProbes, probesBusy, () => false);
   const [accountBusy, setAccountBusy] = useState(true);
   const accountChanged = useCallback(async () => {
     probe.attemptedRevision = undefined;
@@ -233,7 +246,7 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
     accountBusy, modelSaving, probeState.pending, probeState.uncertain, probe, client]);
   return <Space orientation="vertical" className="full-width" size="large">
     {profile && <ChatgptAuth key={profile.id} profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
-      disabled={query.isError || probeState.pending || modelBusy} onBusy={setAccountBusy} onChanged={accountChanged} />}
+      disabled={query.isError || probeBusy || modelBusy} onBusy={setAccountBusy} onChanged={accountChanged} />}
     <Card title="角色模型设置">
       <Space orientation="vertical" className="full-width">
         <Typography.Text type="secondary">模型、推理强度和速度按角色独立保存。</Typography.Text>

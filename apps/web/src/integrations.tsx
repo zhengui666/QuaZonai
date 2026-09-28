@@ -5,6 +5,7 @@ import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useClock, useOnline } from './ui';
 import { useFormAutosave } from './settings-autosave';
+import { useSettingsWorkKey } from './settings-work';
 
 type Runtime = Schema['RuntimeView'];
 type Downstream = Schema['DownstreamView'];
@@ -91,12 +92,12 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
         : { ...base, configuration: { ...common, tls_policy: 'SYSTEM_CA', development_http: values.development_http }, ca_certificate_ref: null };
       const result = dataOf(await api.PATCH('/api/v2/integrations/runtimes/{id}', { body, params: { path: { id: original.id },
         header: writeIntent.headers('PATCH', `/api/v2/integrations/runtimes/${original.id}`, body) } }));
-      void refresh();
+      await refresh();
       return result.resource;
     }, async () => {
       if (!original) throw new Error('Runtime 不存在');
       const current = dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: original.id } } }));
-      void refresh();
+      await refresh();
       return { values: current.configuration as Values, revision: current.revision, updated_at: current.updated_at, resource: current };
     });
   const shown = (autosave.resource as Runtime | undefined) ?? mutation.data?.resource ?? original;
@@ -139,6 +140,7 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
 
 function RuntimeDetails({ id }: { id: string }) {
   const online = useOnline(); const time = useClock(); const [editing, setEditing] = useState<Runtime>(); const intent = useRef(new Intent()); const refresh = useRefresh();
+  const runtimeSaving = useSettingsWorkKey(`autosave:runtime:${id}`);
   const query = useQuery({ queryKey: ['integrations','runtime',id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id } }, signal })) });
   const readiness = useQuery({ queryKey: ['integrations','readiness',id], refetchInterval: online ? 15000 : false, queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/runtimes/{id}/readiness', { params: { path: { id } }, signal })) });
   const probe = useMutation({ mutationFn: async (runtime: Runtime) => {
@@ -159,7 +161,7 @@ function RuntimeDetails({ id }: { id: string }) {
           { key: 'enabled', label: '新任务', children: runtime.configuration.enabled ? '允许，仍须通过原生探测' : '已停用' },
         ]} />
         <Space wrap><Button disabled={!online || query.isError || probe.isPending} onClick={() => setEditing(runtime)}>修改配置</Button>
-          <Button type="primary" loading={probe.isPending} disabled={!online || query.isError || !runtime.configuration.enabled} onClick={() => probe.mutate(runtime)}>执行原生探测</Button></Space>
+          <Button type="primary" loading={probe.isPending} disabled={!online || query.isError || runtimeSaving || !runtime.configuration.enabled} onClick={() => probe.mutate(runtime)}>执行原生探测</Button></Space>
         <ErrorNotice error={probe.error} />
       </>}
     </QueryPanel>

@@ -122,6 +122,9 @@ class Autosave<T extends object> {
     window.clearTimeout(this.timer); this.timer = undefined;
     if (this.form) this.latest = this.form.getFieldsValue(true);
     const serialized = JSON.stringify(this.latest);
+    if (serialized === this.saved && !this.running && !this.uncertain && !this.conflict && (this.rejected || this.snapshot.error)) {
+      this.rejected = undefined; this.snapshot = { ...this.snapshot, error: undefined }; this.emit();
+    }
     if (!this.enabled || this.offline || this.running || this.uncertain || this.conflict || serialized === this.saved || serialized === this.rejected) return;
     void this.send(this.latest, false, !closing);
   }

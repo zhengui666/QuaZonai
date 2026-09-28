@@ -29,6 +29,7 @@ async function setup(page: Page) {
   let conflictRuntime = false;
   let matchConflictRuntime = false;
   let holdRuntime: Promise<void> | undefined;
+  let holdSource: Promise<void> | undefined;
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const reply = (json: unknown, status = 200) => route.fulfill({ status, body: JSON.stringify(json), contentType: 'application/json' });
@@ -90,6 +91,7 @@ async function setup(page: Page) {
       if (request.method() === 'GET') return reply(source);
       const body: Schema['DataSourceUpdate'] = request.postDataJSON();
       writes.push({ kind: 'source', key: request.headers()['idempotency-key'], body });
+      if (holdSource) { await holdSource; holdSource = undefined; }
       expect(body.expected_revision).toBe(source.revision);
       source.name = body.name; source.enabled = body.enabled; source.revision = (BigInt(source.revision) + 1n).toString();
       return reply({ schema_version: 1, replayed: false, resource: source });
@@ -105,6 +107,10 @@ async function setup(page: Page) {
     holdNextRuntime: () => {
       let release!: () => void;
       holdRuntime = new Promise<void>(resolve => { release = resolve; });
+      return release;
+    }, holdNextSource: () => {
+      let release!: () => void;
+      holdSource = new Promise<void>(resolve => { release = resolve; });
       return release;
     } };
 }
@@ -151,9 +157,11 @@ test('existing Runtime, Downstream and data source edits save without a Save act
   await runtimeDialog.getByRole('switch', { name: '允许新任务' }).click();
   await runtimeDialog.getByRole('button', { name: '关闭' }).click();
   await expect(runtimeDialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '执行原生探测' })).toBeDisabled();
   releaseClose();
   await expect.poll(() => runtime.configuration.enabled).toBe(true);
   expect(runtime.configuration.name).toBe('Runtime D');
+  await expect(page.getByRole('button', { name: '执行原生探测' })).toBeEnabled();
 
   await page.getByRole('tab', { name: '目标交付下游' }).click();
   await page.getByRole('button', { name: '修改下游' }).click();
@@ -211,6 +219,25 @@ test('closing and reopening an editor keeps writes ordered and uncertain retries
   expect(writes[3]?.body).toEqual(writes[2]?.body);
 });
 
+test('source dependent actions wait for a closed editor autosave to settle', async ({ page }) => {
+  const { source, writes, holdNextSource } = await setup(page);
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await page.getByRole('button', { name: '查看许可与版本登记' }).click();
+  await page.getByRole('button', { name: '修改数据源' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改数据源显示与启用状态' });
+  const release = holdNextSource();
+  await dialog.getByRole('textbox', { name: '数据源名称' }).fill('Source B');
+  await expect.poll(() => writes.filter(write => write.kind === 'source').length).toBe(1);
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '登记原生数据版本' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '登记许可授权' })).toBeDisabled();
+  release();
+  await expect.poll(() => source.name).toBe('Source B');
+  await expect(page.getByRole('button', { name: '登记原生数据版本' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '登记许可授权' })).toBeEnabled();
+});
+
 test('a corrected server-rejected setting saves with a new request', async ({ page }) => {
   const { runtime, writes, rejectNextRuntime } = await setup(page);
   await page.getByRole('tab', { name: '集成' }).click();
@@ -224,6 +251,21 @@ test('a corrected server-rejected setting saves with a new request', async ({ pa
   await expect.poll(() => runtime.configuration.endpoint).toBe('https://runtime-b.example');
   expect(writes).toHaveLength(2);
   expect(writes[1]?.key).not.toBe(writes[0]?.key);
+});
+
+test('reverting a rejected edit clears its stale error without another write', async ({ page }) => {
+  const { writes, rejectNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  rejectNextRuntime();
+  await dialog.getByRole('textbox', { name: 'Runtime HTTPS origin' }).fill('https://runtime.example/path');
+  await expect(dialog.getByText('Origin must not contain a path')).toBeVisible();
+  await dialog.getByRole('textbox', { name: 'Runtime HTTPS origin' }).fill('https://runtime.example');
+  await expect(dialog.getByText('Origin must not contain a path')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: '重试' })).toHaveCount(0);
+  expect(writes).toHaveLength(1);
 });
 
 test('a revision conflict retains the edit on the canonical revision until retry', async ({ page }) => {
