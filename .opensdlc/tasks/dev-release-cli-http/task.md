@@ -24,8 +24,9 @@ Apple Silicon, and Windows x86_64.
 
 - Explicit HTTP URLs work for CLI login, saved sessions and commands, without
   changing unrelated machine/Runtime HTTPS transport rules or following redirects.
-  Remote HTTP uses an explicitly configured `CLI_HTTP_ORIGIN` and native marker;
-  browser cookies/bootstrap routes retain the original public-origin boundary.
+  Remote HTTP uses an explicitly configured `CLI_HTTP_ORIGIN`, native marker and
+  owner-device credential; machine credentials and browser/bootstrap routes retain
+  the original public-origin boundary.
 - Every `dev` push receives an immutable `v<core>-dev.<UTC timestamp>.<run ID>` tag
   identifying that push's exact source. Retries reuse the tag. Publication waits
   for all applicable CI for that source and invokes the existing reusable release
@@ -73,6 +74,10 @@ interactive password login, saved identity, project writes/reads and reused logi
 All 8 auth HTTP and 5 client login tests pass, including negative browser/cookie/
 origin checks. Native CLI and affected server targets pass Clippy with warnings
 denied. Compose retains the HTTP override across old/new bundle directories.
+The follow-up review narrowed remote HTTP to owner-device credentials. The server
+rejects a genuinely issued machine token even with the CLI marker; the shared CLI
+connection rejects that combination before network access. All 10 portable CLI
+checks and 13 authentication/login checks pass after this correction.
 
 A real Linux CLI archive was installed and updated in a disposable home, with
 exact binary/checksum/version and offline contract verification. Four disposable
