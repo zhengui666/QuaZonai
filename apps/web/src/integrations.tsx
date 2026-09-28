@@ -171,7 +171,10 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
       onFinish={original ? undefined : values => mutation.mutate(values)}>
       <Form.Item name="name" label="名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
       <Form.Item name="endpoint" label="Runtime HTTPS origin" rules={[required, { max: 2048 }]}><Input maxLength={2048} placeholder="https://runtime.example" /></Form.Item>
-      <Form.Item name="tls_policy" label="TLS 信任方式" rules={[required]}><Select onChange={() => form.setFieldValue('development_http', false)} options={[
+      <Form.Item name="tls_policy" label="TLS 信任方式" rules={[required]}><Select onChange={value => {
+        form.setFieldValue('development_http', false);
+        if (value === 'SYSTEM_CA') { secretSessionFor(caKey).abandon(); form.setFieldValue('ca_certificate_ref', undefined); }
+      }} options={[
         { value: 'SYSTEM_CA', label: '系统可信 CA' }, { value: 'PINNED_CA', label: '指定 CA 证书' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换 Runtime 凭据（不登记则保留）' : 'Runtime 服务凭据'} rules={original ? [] : [required]}>

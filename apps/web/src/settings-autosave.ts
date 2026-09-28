@@ -120,7 +120,10 @@ class Autosave<T extends object> {
   }
   flush(closing = false) {
     window.clearTimeout(this.timer); this.timer = undefined;
-    if (this.form) this.latest = this.form.getFieldsValue(true);
+    if (this.form) {
+      const values = this.form.getFieldsValue(true);
+      if (JSON.stringify(values) !== JSON.stringify(this.latest)) { this.latest = values; this.emit(); }
+    }
     const serialized = JSON.stringify(this.latest);
     if (serialized === this.saved && !this.running && !this.uncertain && !this.conflict && (this.rejected || this.snapshot.error)) {
       this.rejected = undefined; this.snapshot = { ...this.snapshot, error: undefined }; this.emit();

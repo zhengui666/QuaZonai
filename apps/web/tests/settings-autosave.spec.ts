@@ -432,6 +432,32 @@ test('a newly bound Runtime CA remains configured for later autosaves', async ({
   expect(writes.filter(write => write.kind === 'runtime')).toHaveLength(2);
 });
 
+test('switching back to system trust abandons an unbound CA registration', async ({ page }) => {
+  const { caId, writes } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await dialog.getByRole('textbox', { name: '名称' }).fill('');
+  await dialog.getByRole('combobox', { name: 'TLS 信任方式' }).click();
+  await page.getByText('指定 CA 证书', { exact: true }).last().click();
+  await dialog.getByRole('textbox', { name: '新的 CA PEM 证书' }).fill('TEST CA');
+  await dialog.getByRole('button', { name: '登记证书' }).click();
+  await expect(dialog.getByText(caId)).toBeVisible();
+  await dialog.getByRole('combobox', { name: 'TLS 信任方式' }).click();
+  await page.getByText('系统可信 CA', { exact: true }).last().click();
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime A');
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+  expect(writes).toHaveLength(0);
+  await dialog.getByRole('combobox', { name: 'TLS 信任方式' }).click();
+  await page.getByText('指定 CA 证书', { exact: true }).last().click();
+  await expect(dialog.getByText(caId)).toHaveCount(0);
+  await expect(dialog.getByRole('textbox', { name: '新的 CA PEM 证书' })).toBeEnabled();
+});
+
 test('closing with an incomplete setting does not send it', async ({ page }) => {
   const { writes } = await setup(page);
   await page.getByRole('tab', { name: '集成' }).click();
