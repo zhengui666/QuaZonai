@@ -20,6 +20,19 @@ function withoutConsumedRefs<T extends object>(values: T, sent: T): T {
   return next as T;
 }
 
+function withRegisteredRefs<T extends object>(base: T, values: T): T {
+  const next = { ...base } as Record<string, unknown>;
+  const current = values as Record<string, unknown>;
+  for (const field of ['credential_ref', 'ca_certificate_ref']) {
+    if (current[field]) next[field] = current[field];
+  }
+  if (next.ca_certificate_ref && next.tls_policy === 'SYSTEM_CA') {
+    next.tls_policy = 'PINNED_CA';
+    next.development_http = false;
+  }
+  return next as T;
+}
+
 class Autosave<T extends object> {
   readonly subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   readonly getSnapshot = () => this.snapshot;
@@ -74,14 +87,15 @@ class Autosave<T extends object> {
     const values = form.getFieldsValue(true);
     this.form = undefined;
     this.notice = undefined;
-    if (this.closing) { this.closing = false; window.clearTimeout(this.timer); return; }
+    if (this.closing) { this.closing = false; window.clearTimeout(this.timer); this.flush(true); return; }
     const serialized = JSON.stringify(values);
     const validation = this.validation?.serialized === serialized ? this.validation.result
       : form.validateFields({ validateOnly: true }).then(() => true, () => false);
     void validation.then(valid => {
       if (this.form) return;
-      this.latest = valid ? values : this.attempted ?? this.savedValue;
-      if (valid) this.flush(true); else this.emit();
+      this.latest = valid ? values : withRegisteredRefs(this.attempted ?? this.savedValue, values);
+      this.emit();
+      this.flush(true);
     });
   }
   change(_changed: Partial<T>, values: T) {
@@ -99,7 +113,7 @@ class Autosave<T extends object> {
     this.closing = true;
     const values = form.getFieldsValue(true);
     try { await form.validateFields({ validateOnly: true }); }
-    catch { this.latest = this.attempted ?? this.savedValue; this.emit(); return; }
+    catch { this.latest = withRegisteredRefs(this.attempted ?? this.savedValue, values); this.emit(); return; }
     if (JSON.stringify(form.getFieldsValue(true)) !== JSON.stringify(values)) return this.close();
     this.latest = values;
     this.flush(true);
@@ -133,11 +147,12 @@ class Autosave<T extends object> {
         if (JSON.stringify(value) !== JSON.stringify(previous[field])) rebased[field] = value;
       }
       this.savedValue = current.values; this.saved = JSON.stringify(current.values); this.latest = rebased as T;
-      this.attempted = undefined; this.rejected = JSON.stringify(this.latest) === this.saved ? undefined : JSON.stringify(this.latest);
+      const reconciled = JSON.stringify(this.latest) === this.saved;
+      this.attempted = undefined; this.rejected = reconciled ? undefined : JSON.stringify(this.latest);
       this.uncertain = false; this.conflict = false; this.intent.clear();
       this.form?.setFieldsValue(this.latest as Partial<T>);
       this.snapshot = { saving: true, revision: current.revision, updated_at: current.updated_at, resource: current.resource,
-        error: new ApiFailure('REVISION_CONFLICT', '配置在其他地方已更改，已保留本次编辑，请检查后重试') };
+        error: reconciled ? undefined : new ApiFailure('REVISION_CONFLICT', '配置在其他地方已更改，已保留本次编辑，请检查后重试') };
     } catch (error) { this.snapshot = { ...this.snapshot, error }; }
     finally { this.reloading = false; if (!this.running) this.snapshot = { ...this.snapshot, saving: false }; this.emit(); }
   }
@@ -153,7 +168,7 @@ class Autosave<T extends object> {
         else {
           const validation = this.validation?.serialized === JSON.stringify(this.latest) ? this.validation.result : Promise.resolve(false);
           if (await validation) this.flush(true);
-          else { this.latest = this.attempted ?? this.savedValue; this.emit(); }
+          else { this.latest = withRegisteredRefs(this.attempted ?? this.savedValue, this.latest); this.emit(); this.flush(true); }
         }
         return;
       }

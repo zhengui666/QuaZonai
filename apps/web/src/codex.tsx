@@ -1,6 +1,6 @@
 import { Alert, App, Button, Card, Descriptions, Select, Slider, Space, Switch, Tag, Typography } from 'antd';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { api, ApiFailure, dataOf, Intent } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, NoData, QueryPanel, useClock, useOnline } from './ui';
@@ -32,6 +32,53 @@ const modelSavesBusy = () => [...modelSessions.values()].some(session => session
 function modelSessionFor(id: string) {
   let session = modelSessions.get(id);
   if (!session) { session = new ModelSaveSession(id); modelSessions.set(id, session); }
+  return session;
+}
+type ProbeState = { pending: boolean; uncertain: boolean; error?: unknown };
+class ProbeSession {
+  private intent = new Intent();
+  private body?: Schema['CodexProbeRequestV1'];
+  private listeners = new Set<() => void>();
+  attemptedRevision?: string;
+  state: ProbeState = { pending: false, uncertain: false };
+  constructor(readonly profileId: string) {}
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  getSnapshot = () => this.state;
+  private update(changes: Partial<ProbeState>) {
+    this.state = { ...this.state, ...changes };
+    this.listeners.forEach(listener => listener());
+    setSettingsWork(`codex-probe:${this.profileId}`, this.state.pending || this.state.uncertain);
+  }
+  async run(profile: Profile, client: QueryClient) {
+    if (this.state.pending) return;
+    if (!this.body) {
+      this.body = { schema_version: 1, profile_id: profile.id, expected_revision: profile.revision };
+      this.attemptedRevision = profile.revision;
+    }
+    const body = this.body;
+    this.update({ pending: true, uncertain: false, error: undefined });
+    try {
+      dataOf(await api.POST('/api/v2/codex/probe', { body, params: {
+        header: this.intent.headers('POST', '/api/v2/codex/probe', body),
+      } }));
+      this.body = undefined; this.intent.clear();
+      this.update({ pending: false, uncertain: false, error: undefined });
+      void Promise.allSettled([
+        client.invalidateQueries({ queryKey: ['codex','profile',profile.id], exact: true }),
+        client.invalidateQueries({ queryKey: ['codex','observation',profile.id], exact: true }),
+      ]);
+    } catch (error) {
+      const rejected = error instanceof ApiFailure && !!error.problem && error.status >= 400 && error.status < 500;
+      const offline = error instanceof ApiFailure && error.code === 'OFFLINE';
+      if (rejected || offline) { this.body = undefined; this.intent.clear(); }
+      this.update({ pending: false, uncertain: !rejected && !offline, error });
+    }
+  }
+}
+const probeSessions = new Map<string, ProbeSession>();
+function probeSessionFor(id: string) {
+  let session = probeSessions.get(id);
+  if (!session) { session = new ProbeSession(id); probeSessions.set(id, session); }
   return session;
 }
 const failures: Record<Schema['CodexProbeFailureV1'], string> = {
@@ -156,44 +203,37 @@ function ModelSettings({ profile, observation, disabled }: { profile: Profile; o
   </Space>;
 }
 function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Profile[]; onSelect: (id: string) => void }) {
-  const online = useOnline(); const now = useClock(); const client = useQueryClient(); const intent = useRef(new Intent());
+  const online = useOnline(); const now = useClock(); const client = useQueryClient();
+  const probe = probeSessionFor(id);
+  const probeState = useSyncExternalStore(probe.subscribe, probe.getSnapshot, probe.getSnapshot);
+  const currentModel = modelSessionFor(id);
+  const currentModelState = useSyncExternalStore(currentModel.subscribe, currentModel.getSnapshot, currentModel.getSnapshot);
+  const modelSaving = currentModelState.pending || currentModelState.uncertain;
   const modelBusy = useSyncExternalStore(subscribeModelSaves, modelSavesBusy, () => false);
   const [accountBusy, setAccountBusy] = useState(true);
-  const attempted = useRef<string | undefined>(undefined);
   const accountChanged = useCallback(async () => {
-    attempted.current = undefined; intent.current.clear();
+    probe.attemptedRevision = undefined;
     await client.invalidateQueries({ queryKey: ['codex'] });
-  }, [client]);
+  }, [client, probe]);
   const query = useQuery({ queryKey: ['codex','profile',id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/settings/codex/{id}', { params: { path: { id } }, signal })) });
   const observation = useQuery({ queryKey: ['codex','observation',id], refetchInterval: online ? 15_000 : false,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/codex/models', { params: { query: { profile_id: id } }, signal })) });
-  const probe = useMutation({ mutationFn: async (profile: Profile) => {
-    const body: Schema['CodexProbeRequestV1'] = { schema_version: 1, profile_id: id, expected_revision: profile.revision };
-    return dataOf(await api.POST('/api/v2/codex/probe', { body, params: { header: intent.current.headers('POST','/api/v2/codex/probe',body) } }));
-  }, onSuccess: async () => {
-    intent.current.clear();
-    await Promise.all([
-      client.invalidateQueries({ queryKey: ['codex','profile',id], exact: true }),
-      client.invalidateQueries({ queryKey: ['codex','observation',id], exact: true }),
-    ]);
-  } });
   const profile = query.data; const view = observation.data; const native = view?.observation;
   const detected = native?.outcome.status === 'AVAILABLE' ? native.outcome : undefined;
   const tier = detected?.effective.service_tier;
   const speed = !tier || tier === 'default' ? '标准'
     : detected?.models.find(item => item.capability.model === detected.effective.model)?.service_tiers.find(item => item.id === tier)?.name ?? tier;
   const valid = !accountBusy && !query.isError && !observation.isError && fresh(view, profile, now);
-  const mutate = probe.mutate;
   useEffect(() => {
-    if (!online || !profile || !view || query.isError || observation.isError || query.isFetching || observation.isFetching || accountBusy || probe.isPending) return;
-    const version = `${profile.id}:${profile.revision}`;
-    if (attempted.current === version || (view.state !== 'NEVER_PROBED' && view.state !== 'STALE')) return;
-    attempted.current = version;
-    mutate(profile);
-  }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching, accountBusy, probe.isPending, mutate]);
+    if (!online || !profile || !view || query.isError || observation.isError || query.isFetching || observation.isFetching
+      || accountBusy || modelSaving || probeState.pending || probeState.uncertain) return;
+    if (probe.attemptedRevision === profile.revision || (view.state !== 'NEVER_PROBED' && view.state !== 'STALE')) return;
+    void probe.run(profile, client);
+  }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching,
+    accountBusy, modelSaving, probeState.pending, probeState.uncertain, probe, client]);
   return <Space orientation="vertical" className="full-width" size="large">
     {profile && <ChatgptAuth key={profile.id} profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
-      disabled={query.isError || probe.isPending || modelBusy} onBusy={setAccountBusy} onChanged={accountChanged} />}
+      disabled={query.isError || probeState.pending || modelBusy} onBusy={setAccountBusy} onChanged={accountChanged} />}
     <Card title="角色模型设置">
       <Space orientation="vertical" className="full-width">
         <Typography.Text type="secondary">模型、推理强度和速度按角色独立保存。</Typography.Text>
@@ -201,16 +241,17 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
           options={profiles.map(item => ({ value: item.id, label: item.name }))} />
         <QueryPanel pending={query.isPending} error={query.error} stale={!!profile} reload={() => { void query.refetch(); }}>
           {profile && <Space orientation="vertical" className="full-width">
-            <Space wrap><Button loading={probe.isPending} disabled={!online || query.isError || accountBusy} onClick={() => probe.mutate(profile)}>刷新</Button>
+            <Space wrap><Button loading={probeState.pending} disabled={!online || query.isError || accountBusy || modelSaving}
+              onClick={() => { void probe.run(profile, client); }}>刷新</Button>
               {view && <Tag>{view.state === 'AVAILABLE' && !valid ? states.STALE : states[view.state]}</Tag>}</Space>
             <ModelSettings key={profile.id} profile={profile} observation={query.isError || observation.isError ? undefined : view}
-              disabled={query.isError || probe.isPending || accountBusy} />
+              disabled={query.isError || probeState.pending || accountBusy} />
             <Descriptions column={1} items={[
               { key: 'defaults', label: '设置', children: profile.model_settings.use_default_model_settings ? '本机默认' : '自定义模型' },
               { key: 'saved', label: '模型 / 推理强度', children: `${profile.model_settings.saved_model ?? '默认'} / ${profile.model_settings.saved_reasoning_effort ?? '默认'}` },
               { key: 'speed', label: '速度', children: profile.model_settings.use_default_model_settings ? '本机默认' : profile.model_settings.saved_fast_mode ? '加速' : '标准' },
             ]} />
-            <ErrorNotice error={probe.error} />
+            <ErrorNotice error={probeState.error} />
           </Space>}
         </QueryPanel>
         <QueryPanel pending={observation.isPending} error={observation.error} stale={!!view} reload={() => { void observation.refetch(); }}>

@@ -23,9 +23,11 @@ async function setup(page: Page) {
   };
   const writes: { kind: string; key: string | undefined; body: unknown }[] = [];
   const secretId = '01990000-0000-7000-8000-000000000014';
+  const caId = '01990000-0000-7000-8000-000000000015';
   let failRuntime = false;
   let rejectRuntime = false;
   let conflictRuntime = false;
+  let matchConflictRuntime = false;
   let holdRuntime: Promise<void> | undefined;
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
@@ -38,7 +40,8 @@ async function setup(page: Page) {
     if (path === '/api/v2/settings/credentials') {
       const body: Schema['IntegrationSecretCreate'] = request.postDataJSON();
       return reply({ schema_version: 1, replayed: false,
-        resource: { id: secretId, purpose: body.intent.purpose, label: body.intent.label, created_at: now } }, 201);
+        resource: { id: body.intent.purpose === 'TLS_CA' ? caId : secretId,
+          purpose: body.intent.purpose, label: body.intent.label, created_at: now } }, 201);
     }
     if (path === '/api/v2/integrations/runtimes') {
       if (request.method() !== 'GET') { writes.push({ kind: 'runtime-create', key: request.headers()['idempotency-key'], body: request.postDataJSON() }); return route.abort('blockedbyclient'); }
@@ -61,7 +64,8 @@ async function setup(page: Page) {
       }
       if (conflictRuntime) {
         conflictRuntime = false;
-        runtime.configuration.name = 'Runtime external'; runtime.revision = (BigInt(runtime.revision) + 1n).toString();
+        runtime.configuration.name = matchConflictRuntime ? body.configuration.name : 'Runtime external';
+        matchConflictRuntime = false; runtime.revision = (BigInt(runtime.revision) + 1n).toString();
         return route.fulfill({ status: 409, contentType: 'application/problem+json', body: JSON.stringify({
           type: 'about:blank', title: 'Revision conflict', status: 409, code: 'REVISION_CONFLICT',
           detail: 'Configuration changed elsewhere', request_id: secretId, retryable: false,
@@ -95,8 +99,9 @@ async function setup(page: Page) {
   });
   await page.goto('/');
   await page.getByRole('menuitem', { name: '设置', exact: true }).click();
-  return { runtime, downstream, source, secretId, writes, failNextRuntime: () => { failRuntime = true; },
+  return { runtime, downstream, source, secretId, caId, writes, failNextRuntime: () => { failRuntime = true; },
     rejectNextRuntime: () => { rejectRuntime = true; }, conflictNextRuntime: () => { conflictRuntime = true; },
+    matchNextRuntime: () => { conflictRuntime = true; matchConflictRuntime = true; },
     holdNextRuntime: () => {
       let release!: () => void;
       holdRuntime = new Promise<void>(resolve => { release = resolve; });
@@ -236,6 +241,19 @@ test('a revision conflict retains the edit on the canonical revision until retry
   expect(writes.map(write => (write.body as Schema['RuntimeUpdate']).expected_revision)).toEqual(['1', '2']);
 });
 
+test('an already applied edit clears its conflict instead of offering a no-op retry', async ({ page }) => {
+  const { runtime, writes, matchNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  matchNextRuntime();
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime B');
+  await expect.poll(() => runtime.configuration.name).toBe('Runtime B');
+  await expect(dialog.getByRole('button', { name: '重试' })).toHaveCount(0);
+  expect(writes).toHaveLength(1);
+});
+
 test('a credential reference survives a conflict after its editor closes', async ({ page }) => {
   const { runtime, secretId, writes, conflictNextRuntime, holdNextRuntime } = await setup(page);
   await page.getByRole('tab', { name: '集成' }).click();
@@ -311,6 +329,27 @@ test('closing with an incomplete setting does not send it', async ({ page }) => 
   expect(writes).toHaveLength(0);
   await page.getByRole('button', { name: '修改配置' }).click();
   await expect(dialog.getByRole('textbox', { name: '名称' })).toHaveValue('Runtime A');
+});
+
+test('closing an invalid editor binds newly registered credential and CA to valid settings', async ({ page }) => {
+  const { runtime, secretId, caId, writes } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await dialog.getByRole('textbox', { name: '名称' }).fill('');
+  await dialog.getByRole('combobox', { name: 'TLS 信任方式' }).click();
+  await page.getByText('指定 CA 证书', { exact: true }).last().click();
+  await dialog.getByRole('textbox', { name: '新的 RUNTIME 凭据' }).fill('a'.repeat(32));
+  await dialog.getByRole('button', { name: '登记凭据' }).click();
+  await dialog.getByRole('textbox', { name: '新的 CA PEM 证书' }).fill('TEST CA');
+  await dialog.getByRole('button', { name: '登记证书' }).click();
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => runtime.revision).toBe('2');
+  expect(writes).toHaveLength(1);
+  expect(writes[0]?.body).toMatchObject({ credential_ref: secretId, ca_certificate_ref: caId,
+    configuration: { name: 'Runtime A', tls_policy: 'PINNED_CA' } });
 });
 
 test('a pending import survives navigation and retries with the same identity', async ({ page }) => {

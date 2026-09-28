@@ -36,12 +36,15 @@ async function setup(page: Page, ready = false) {
     operation: null as Schema['CodexAccountOperationV1'] | null,
     starts: [] as { key: string | undefined; body: unknown }[], cancels: [] as { key: string | undefined; body: unknown }[],
     probes: 0, dropStart: false, rejectStart: false, terminalStart: false, dropCancel: false, stale: false,
+    probeRequests: [] as { key: string | undefined; body: Schema['CodexProbeRequestV1'] }[],
+    dropProbeAfterCommit: false, holdProbe: undefined as Promise<void> | undefined,
     holdStart: undefined as Promise<void> | undefined,
     holdSave: undefined as Promise<void> | undefined, dropSaveAfterCommit: false, rejectSave: false,
     saveKeys: [] as (string | undefined)[],
     saves: [] as { id: string; body: Schema['CodexProfileUpdateV1'] }[],
   };
   const saveResults = new Map<string, Schema['CodexProfileViewV1']>();
+  const probeResults = new Map<string, Schema['CodexProbeViewV1']>();
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const reply = (json: unknown, status = 200) => route.fulfill({ status, body: JSON.stringify(json), contentType: 'application/json' });
@@ -78,8 +81,14 @@ async function setup(page: Page, ready = false) {
     }
     if (path === '/api/v2/codex/probe') {
       state.probes++; state.stale = false;
-      const selected = profiles.find(item => item.id === request.postDataJSON().profile_id)!;
+      const body: Schema['CodexProbeRequestV1'] = request.postDataJSON();
+      const key = request.headers()['idempotency-key']; state.probeRequests.push({ key, body });
+      if (state.holdProbe) { await state.holdProbe; state.holdProbe = undefined; }
+      if (key && probeResults.has(key)) return reply({ schema_version: 1, replayed: true, resource: probeResults.get(key) });
+      const selected = profiles.find(item => item.id === body.profile_id)!;
       const observation = observed(selected); views.set(selected.id, observation);
+      if (key) probeResults.set(key, observation);
+      if (state.dropProbeAfterCommit) { state.dropProbeAfterCommit = false; return route.abort('failed'); }
       return reply({ schema_version: 1, replayed: false, resource: observation });
     }
     if (path === '/api/v2/codex/login') return reply(state.operation);
@@ -198,9 +207,29 @@ test('account actions wait for a model autosave on the same role', async ({ page
   await page.getByRole('switch', { name: '本机默认' }).click();
   await expect.poll(() => state.saves.length).toBe(1);
   await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '刷新', exact: true })).toBeDisabled();
   expect(state.starts).toHaveLength(0);
   release();
   await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeEnabled();
+});
+
+test('a lost probe response keeps its identity after switching roles', async ({ page }) => {
+  const { state } = await setup(page, true);
+  state.dropProbeAfterCommit = true;
+  let release!: () => void;
+  state.holdProbe = new Promise<void>(resolve => { release = resolve; });
+  await page.getByRole('button', { name: '刷新', exact: true }).click();
+  await expect.poll(() => state.probes).toBe(1);
+  await page.getByRole('combobox', { name: 'Codex 角色' }).click();
+  await page.getByText('独立审阅员', { exact: true }).last().click();
+  release();
+  await page.getByRole('combobox', { name: 'Codex 角色' }).click();
+  await page.getByText('研究员', { exact: true }).last().click();
+  await expect(page.getByText('连接中断，提交结果未知；请重试当前操作')).toBeVisible();
+  expect(state.probes).toBe(1);
+  await page.getByRole('button', { name: '刷新', exact: true }).click();
+  await expect.poll(() => state.probes).toBe(2);
+  expect(state.probeRequests[1]).toEqual(state.probeRequests[0]);
 });
 
 test('switching roles keeps each autosave independent while a write is pending', async ({ page }) => {
@@ -212,6 +241,7 @@ test('switching roles keeps each autosave independent while a write is pending',
   await page.getByRole('combobox', { name: 'Codex 角色' }).click();
   await page.getByText('独立审阅员', { exact: true }).last().click();
   await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '刷新', exact: true })).toBeEnabled();
   const reviewerDefault = page.getByRole('switch', { name: '本机默认' });
   await expect(reviewerDefault).toBeEnabled();
   await reviewerDefault.click();
