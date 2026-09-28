@@ -1,0 +1,93 @@
+name: Portable CLI
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      revision:
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: portable-cli-${{ inputs.version || (github.ref == 'refs/heads/dev' && github.sha || github.ref) }}
+  cancel-in-progress: true
+jobs:
+  native:
+    name: CLI / ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            executable: quazonai
+            archive: quazonai-cli-linux-x86_64.tar.gz
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            executable: quazonai
+            archive: quazonai-cli-macos-x86_64.tar.gz
+          - platform: macos-aarch64
+            runner: macos-15
+            target: aarch64-apple-darwin
+            executable: quazonai
+            archive: quazonai-cli-macos-aarch64.tar.gz
+          - platform: windows-x86_64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            executable: quazonai.exe
+            archive: quazonai-cli-windows-x86_64.zip
+    env:
+      RUSTUP_TOOLCHAIN: '1.98.1'
+      EXPECTED_HEAD: ${{ inputs.revision || github.event.pull_request.head.sha || github.sha }}
+      QUAZONAI_VERSION: ${{ inputs.version || format('v0.0.0-ci.{0}', github.run_id) }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          persist-credentials: false
+      - name: Check exact-source native client and build its binary
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target '${{ matrix.target }}'
+          cargo test --locked -p quazonai-cli --target '${{ matrix.target }}'
+          cargo build --locked --release -p quazonai-cli --bin quazonai --target '${{ matrix.target }}'
+      - name: Verify the portable packager
+        run: python -B -m unittest discover -s deploy -p 'package_test.py' -v
+      - name: Package and execute the extracted release binary
+        run: |
+          set -euo pipefail
+          python -B deploy/package.py pack-cli \
+            --binary 'target/${{ matrix.target }}/release/${{ matrix.executable }}' \
+            --platform '${{ matrix.platform }}' --version "$QUAZONAI_VERSION" \
+            --revision "$EXPECTED_HEAD" --output "$RUNNER_TEMP/cli-assets"
+          python -B deploy/package.py smoke-cli \
+            --archive "$RUNNER_TEMP/cli-assets/${{ matrix.archive }}" \
+            --platform '${{ matrix.platform }}' --version "$QUAZONAI_VERSION"
+      - name: Verify Unix installation and update without builds
+        if: runner.os != 'Windows'
+        run: node --test deploy/install.test.mjs
+      - name: Verify native Windows installation and update without builds
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./deploy/install.test.ps1 -Binary 'target/${{ matrix.target }}/release/${{ matrix.executable }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: inputs.version != ''
+        with:
+          name: cli-${{ inputs.version }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/cli-assets/${{ matrix.archive }}
+          retention-days: 7
+          if-no-files-found: error
