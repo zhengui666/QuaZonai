@@ -47,6 +47,7 @@ jobs:
             archive: quazonai-cli-windows-x86_64.zip
     env:
       RUSTUP_TOOLCHAIN: '1.98.1'
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
       EXPECTED_HEAD: ${{ inputs.revision || github.event.pull_request.head.sha || github.sha }}
       QUAZONAI_VERSION: ${{ inputs.version || format('v0.0.0-ci.{0}', github.run_id) }}
       PYTHONDONTWRITEBYTECODE: '1'

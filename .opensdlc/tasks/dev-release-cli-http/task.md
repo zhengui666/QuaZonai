@@ -113,6 +113,15 @@ Actual publication exposed a test fixture inheriting `RELEASE_BRANCH=dev` while
 its temporary Git repository intentionally contains only `origin/main`. The
 fixture now explicitly selects main, and the shared container check runs all
 release tests in dev context as well. This reproduces the publisher environment
-in ordinary CI without changing production ancestry validation. A follow-up PR
-must pass review and CI before merging; complete release publication remains
+in ordinary CI without changing production ancestry validation. PR #133 passed
+all 13 checks and an explicit clean Codex review, then merged as
+`cc371918cbbbc46320b47a676ce7a89e05c7343d`. Its automatic tag is
+`v2.0.0-dev.20260928100635.36407687164`.
+
+Inspection of the real uploaded Windows binary then found an external
+`VCRUNTIME140.dll` dependency. Native runner execution alone could miss this on
+machines with Visual Studio installed. Publication was cancelled before any
+Release was exposed. The Windows build now statically links the C runtime and
+native Windows acceptance checks the actual PE imports for VC runtime DLLs.
+This follow-up must pass review and CI; complete release publication remains
 the final delivery gate.
