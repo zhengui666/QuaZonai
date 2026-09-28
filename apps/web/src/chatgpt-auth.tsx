@@ -21,6 +21,7 @@ class AuthSession {
   constructor(readonly profileId: string) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.snapshot;
+  get observed() { return this.listeners.size > 0; }
   update(changes: Partial<AuthSnapshot> = {}) {
     this.snapshot = { ...this.snapshot, ...changes };
     this.listeners.forEach(listener => listener());
@@ -110,6 +111,7 @@ export function ChatgptAuth({ profile, account, disabled, onBusy, onChanged }: {
   }, onError: error => {
     if (!uncertain(error)) { session.startRequest = undefined; session.startIntent.clear(); }
     session.update({ pendingStart: false, unknownStart: uncertain(error) });
+    if (uncertain(error) && !session.observed) void session.reconcileUnknownStart(client);
     void latest.refetch();
   } });
   const cancel = useMutation({ mutationFn: async (operation: Operation) => {

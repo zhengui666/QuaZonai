@@ -35,6 +35,7 @@ async function setup(page: Page, ready = false) {
     operation: null as Schema['CodexAccountOperationV1'] | null,
     starts: [] as { key: string | undefined; body: unknown }[], cancels: [] as { key: string | undefined; body: unknown }[],
     probes: 0, dropStart: false, terminalStart: false, dropCancel: false, stale: false,
+    holdStart: undefined as Promise<void> | undefined,
     holdSave: undefined as Promise<void> | undefined, dropSaveAfterCommit: false, saveKeys: [] as (string | undefined)[],
     saves: [] as { id: string; body: Schema['CodexProfileUpdateV1'] }[],
   };
@@ -79,6 +80,7 @@ async function setup(page: Page, ready = false) {
           action: 'LOGIN', created_at: now, deadline_at: new Date(Date.now() + 900_000).toISOString() },
         finished_at: null, reason: null, account: null };
       if (state.terminalStart) state.operation = { ...state.operation, state: 'FAILED', reason: 'DEPLOYMENT_UNAVAILABLE', finished_at: now };
+      if (state.holdStart) { await state.holdStart; state.holdStart = undefined; }
       if (state.dropStart) { state.dropStart = false; return route.abort('failed'); }
       return reply({ schema_version: 1, acceptance: { schema_version: 1, replayed: state.starts.length > 1, resource: state.operation.operation },
         current: state.operation, device_code: state.terminalStart ? null : { verification_url: 'https://auth.openai.com/codex/device', user_code: 'TEST-ONLY' } }, 202);
@@ -265,6 +267,27 @@ test('a terminal operation reconciles the previous role after navigation', async
   await page.getByText('独立审阅员', { exact: true }).last().click();
   state.operation = { ...state.operation!, state: 'FAILED', reason: 'DEPLOYMENT_UNAVAILABLE', finished_at: new Date().toISOString(),
     revision: '9007199254740995' };
+  await expect.poll(() => state.starts.length).toBe(2);
+  expect(state.starts[1]).toEqual(state.starts[0]);
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+});
+
+test('a late lost login ACK reconciles after switching roles', async ({ page }) => {
+  const { state } = await setup(page, true);
+  state.dropStart = true;
+  let release!: () => void;
+  state.holdStart = new Promise<void>(resolve => { release = resolve; });
+  await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
+  await expect.poll(() => state.starts.length).toBe(1);
+  await page.getByRole('combobox', { name: 'Codex 角色' }).click();
+  await page.getByText('独立审阅员', { exact: true }).last().click();
+  state.operation = { ...state.operation!, state: 'FAILED', reason: 'DEPLOYMENT_UNAVAILABLE', finished_at: new Date().toISOString(),
+    revision: '9007199254740995' };
+  await expect(page.getByText('Codex 运行环境不可用，请检查部署配置')).toBeVisible();
+  release();
   await expect.poll(() => state.starts.length).toBe(2);
   expect(state.starts[1]).toEqual(state.starts[0]);
   await expect.poll(() => page.evaluate(async () => {
