@@ -65,6 +65,7 @@ use utoipa::OpenApi;
 pub struct WebPolicy {
     origin: String,
     secure: bool,
+    cli_http_origin: Option<String>,
 }
 impl WebPolicy {
     pub fn new(
@@ -99,15 +100,39 @@ impl WebPolicy {
         Ok(Self {
             origin: url.origin().ascii_serialization(),
             secure,
+            cli_http_origin: None,
         })
     }
     pub fn origin(&self) -> &str {
         &self.origin
     }
+    /// One explicitly configured trusted-network origin for native CLI authority only.
+    pub fn with_cli_http_origin(mut self, origin: Option<&str>) -> Result<Self, &'static str> {
+        if let Some(origin) = origin {
+            let url = Url::parse(origin).map_err(|_| "CLI_HTTP_ORIGIN must be an HTTP origin")?;
+            if origin.trim() != origin
+                || origin.chars().any(char::is_control)
+                || url.scheme() != "http"
+                || url.host().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.path() != "/"
+                || url.query().is_some()
+                || url.fragment().is_some()
+            {
+                return Err("CLI_HTTP_ORIGIN must contain only an explicit HTTP origin");
+            }
+            self.cli_http_origin = Some(url.origin().ascii_serialization());
+        }
+        Ok(self)
+    }
     fn valid_host(&self, host: &str) -> bool {
-        let scheme = if self.secure { "https" } else { "http" };
+        Self::origin_host(&self.origin, host)
+    }
+    fn origin_host(origin: &str, host: &str) -> bool {
+        let scheme = origin.split_once("://").expect("validated origin").0;
         Url::parse(&format!("{scheme}://{host}")).is_ok_and(|url| {
-            url.origin().ascii_serialization() == self.origin
+            url.origin().ascii_serialization() == origin
                 && url.username().is_empty()
                 && url.password().is_none()
                 && url.path() == "/"
@@ -611,11 +636,27 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
         || path.starts_with("/api/v2/bootstrap/");
     let has_bearer = headers.contains_key(header::AUTHORIZATION);
     let origin = access::one_header(headers, "origin");
+    // The marker selects a transport policy, never authority. Password/token checks
+    // still run normally; browser cookies and bootstrap/admin routes cannot use it.
+    let cli_origin = state.policy.cli_http_origin.as_deref().filter(|expected| {
+        access::one_header(headers, "x-quazonai-cli").ok().flatten() == Some("1")
+            && !headers.contains_key(header::COOKIE)
+            && origin.as_ref().ok().copied().flatten() == Some(*expected)
+            && ((path == "/api/v2/auth/cli/login" && *request.method() == Method::POST)
+                || (has_bearer && !browser_auth))
+    });
+    let expected_origin = cli_origin.unwrap_or(state.policy.origin());
     let url_credential = request.uri().query().is_some_and(|query| {
         url::form_urlencoded::parse(query.as_bytes())
             .any(|(k, _)| matches!(k.as_ref(), "token" | "access_token" | "bearer"))
     });
-    let rejection = if host.is_none_or(|host| !state.policy.valid_host(host)) {
+    let rejection = if host.is_none_or(|host| {
+        if cli_origin.is_some() {
+            !WebPolicy::origin_host(expected_origin, host)
+        } else {
+            !state.policy.valid_host(host)
+        }
+    }) {
         Some(ApiError::new(
             StatusCode::BAD_REQUEST,
             "INVALID_HOST",
@@ -628,10 +669,10 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
     } else if origin.is_err()
         || origin
             .as_ref()
-            .is_ok_and(|o| o.is_some_and(|o| o != state.policy.origin()))
+            .is_ok_and(|o| o.is_some_and(|o| o != expected_origin))
         || (mutating
             && (!has_bearer || browser_auth)
-            && origin.as_ref().ok().copied().flatten() != Some(state.policy.origin()))
+            && origin.as_ref().ok().copied().flatten() != Some(expected_origin))
     {
         Some(ApiError::new(
             StatusCode::FORBIDDEN,

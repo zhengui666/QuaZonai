@@ -148,6 +148,64 @@ Before `current` exists, use the extracted bundle's `manage.py status`. Commands
 
 Keep `installation.json`, the data directory, `master.key`, `.env`, original ports and Compose project identity. Runtime/downstream settings use the manifest's `runtime_targets` and `downstream_targets`; a local `compose.override.yaml` survives updates. Runtime targets must be reachable through their configured HTTP transport as described [above](#scientific-runtime); the native gateway does not listen on a Unix HTTP socket. Empty target lists do not create a Runtime.
 
+<a id="cli-http"></a>
+## Remote HTTP CLI
+
+Local `http://localhost:<web-port>` CLI access needs no extra configuration. To expose a separate HTTP endpoint on a trusted network, keep the existing browser `PUBLIC_URL` and add the exact external origin to the installation's persistent `<installation>/compose.override.yaml` (merge with existing settings; keep a private backup before editing):
+
+```yaml
+services:
+  app:
+    environment:
+      CLI_HTTP_ORIGIN: http://research.lan:18080
+```
+
+Use your actual host and port. `CLI_HTTP_ORIGIN` contains only an HTTP origin, with no credentials, path, query or fragment. Docker still listens on loopback. Configure the trusted-network reverse proxy to forward that origin to `http://127.0.0.1:<web-port>` while preserving `Host`, `Origin`, `Authorization` and `X-Quazonai-Cli`. The bundled Caddy forwards those headers unchanged and does not enable access logging. Keep passwords, Authorization headers and response bodies out of any external proxy logs. HTTP sends the password and device token without TLS; HTTPS remains available without this option.
+
+Finish/reconcile all Runs and Codex operations, then apply the override using the installed manager's existing maintenance operations:
+
+```sh
+python3 - "$HOME/.local/share/quazonai" <<'PY'
+import sys
+from pathlib import Path
+root = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root / 'current/deployment'))
+import manage as m
+import codex
+m.preflight()
+with m.locked(root):
+    if (root / 'pending.json').exists():
+        raise ValueError('Complete the recorded installation/update first')
+    config = m.configuration(root)
+    m.compose(config, 'config', '--quiet')
+    m.require_idle(config)
+    codex.require_stopped(config, recover_created=True)
+    try:
+        m.configure_app_restarts(config, False)
+        m.compose(config, 'stop', 'app')
+        m.require_idle(config)
+        codex.require_stopped(config, recover_created=True)
+        m.run(['systemctl', '--user', 'disable', '--now', m.unit(config)])
+        m.require_idle(config)
+    except Exception:
+        m.resume_existing_services(config)
+        m.configure_app_restarts(config, True)
+        raise
+    m.compose(config, 'up', '--no-start', '--no-deps', 'app')
+    m.configure_app_restarts(config, False)
+    print('Configuration prepared; starting the original installation', flush=True)
+    m.resume_existing_services(config, enable_boot=False)
+    m.verify_worker(config)
+    m.verify_console(config)
+    m.run(['systemctl', '--user', 'enable', m.unit(config)])
+    m.configure_app_restarts(config, True)
+PY
+```
+
+This uses the existing image, database, state and Worker; it performs no build or migration. The installation-root override survives application updates and rollback/retry because every manager Compose call loads it. A startup/check failure remains a failed apply: correct or restore the saved override and repeat after idle checks. If interrupted after the prepared message and either process may be running, use the revision-pinned `runtime-targets` recovery command above to resume without recreation before applying another change.
+
+On the client, run `quazonai client --origin http://research.lan:18080 login`, enter the password in your own terminal, then `quazonai client identity`. Saved connections retain the same origin and native CLI marker. This additional origin accepts only CLI login and cookie-free bearer API requests; it does not permit browser setup/login/session routes or relax MCP/Runtime transport validation.
+
 <a id="recovery"></a>
 ## Backups and recovery
 

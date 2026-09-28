@@ -134,8 +134,16 @@ pub(super) fn device_token(value: &str) -> Result<bool> {
 pub(super) fn http_client(
     origin: &Url,
     certificate: Option<&PathBuf>,
-    headers: header::HeaderMap,
+    mut headers: header::HeaderMap,
 ) -> Result<Client> {
+    headers.insert("x-quazonai-cli", header::HeaderValue::from_static("1"));
+    if origin.scheme() == "http" {
+        headers.insert(
+            header::ORIGIN,
+            header::HeaderValue::from_str(&origin.origin().ascii_serialization())
+                .map_err(|_| Failure::Configuration)?,
+        );
+    }
     let mut builder = service_http::builder(headers, Duration::from_secs(20));
     if let Some(path) = certificate {
         let bytes = read_file(path, 65536, false)?;
