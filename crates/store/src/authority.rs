@@ -10,6 +10,10 @@ pub enum Actor {
     Browser {
         login_id: Id,
     },
+    OwnerDevice {
+        device_id: Id,
+        verifier: String,
+    },
     Machine {
         credential_id: Id,
         verifier_ref: Id,
@@ -94,9 +98,6 @@ pub(crate) async fn browser(
     actor: &Actor,
     write: bool,
 ) -> Result<(), StoreError> {
-    let Actor::Browser { login_id } = actor else {
-        return Err(StoreError::Forbidden);
-    };
     let sql = if write {
         "SELECT id FROM app.operator_auth_state WHERE singleton AND initialized FOR UPDATE"
     } else {
@@ -105,7 +106,15 @@ pub(crate) async fn browser(
     if sqlx::query(sql).fetch_optional(&mut **tx).await?.is_none() {
         return Err(StoreError::AuthenticationRequired);
     }
-    auth::lock_login(tx, *login_id).await?;
+    match actor {
+        Actor::Browser { login_id } => {
+            auth::lock_login(tx, *login_id).await?;
+        }
+        Actor::OwnerDevice { .. } => {
+            auth::lock_cli_device(tx, actor).await?;
+        }
+        Actor::Machine { .. } => return Err(StoreError::Forbidden),
+    }
     Ok(())
 }
 
@@ -244,7 +253,7 @@ pub(crate) async fn read_project(
     scope: MachineScope,
 ) -> Result<(), StoreError> {
     match actor {
-        Actor::Browser { .. } => browser(tx, actor, false).await,
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => browser(tx, actor, false).await,
         Actor::Machine { .. } => {
             let authority = machine(tx, actor, false).await?;
             authority.requires(scope)?;

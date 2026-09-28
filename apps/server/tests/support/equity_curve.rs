@@ -19,8 +19,8 @@ pub(super) async fn verify(
     let (client, origin, token) = transport;
     let url = |id: Id| format!("{origin}/api/v2/evaluations/{id}/equity-curve");
     let local = client.get(url(cancelled)).send().await.unwrap();
-    assert_eq!(local.status(), reqwest::StatusCode::OK);
-    assert!(local.headers().contains_key(reqwest::header::SET_COOKIE));
+    assert_eq!(local.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert!(!local.headers().contains_key(reqwest::header::SET_COOKIE));
     let denied = client
         .get(url(cancelled))
         .bearer_auth("invalid")

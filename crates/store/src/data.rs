@@ -12,7 +12,9 @@ type Tx<'a> = Transaction<'a, Postgres>;
 
 pub(crate) async fn read_authority(tx: &mut Tx<'_>, actor: &Actor) -> Result<(), StoreError> {
     match actor {
-        Actor::Browser { .. } => authority::browser(tx, actor, false).await,
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
+            authority::browser(tx, actor, false).await
+        }
         Actor::Machine { .. } => {
             let machine = authority::machine(tx, actor, false).await?;
             if machine.kind != PrincipalKind::Cli

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and switch this installation's Codex image without touching its native home."""
+"""Pull and switch a published Codex image without touching its native home."""
 from __future__ import annotations
 
 import argparse
@@ -12,8 +12,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
-import urllib.request
 import uuid
 
 import manage
@@ -28,13 +26,7 @@ def exact_version(value: str) -> str:
 
 
 def requested_version(value: str) -> str:
-    if value != 'latest':
-        return exact_version(value)
-    with urllib.request.urlopen('https://registry.npmjs.org/@openai%2Fcodex/latest', timeout=30) as response:
-        data = response.read(256_001)
-    if len(data) > 256_000:
-        raise ValueError('The npm version response is too large.')
-    return exact_version(json.loads(data)['version'])
+    return "latest" if value == "latest" else exact_version(value)
 
 
 def read_env(path: Path) -> tuple[str, str]:
@@ -58,9 +50,13 @@ def docker(config: dict, *args: str, capture: bool = False) -> str:
     return manage.run(['docker', *args], capture=capture, env=environment)
 
 
+def image_tag(config: dict) -> str:
+    return config.get("codex_runtime_image") or config["codex_image"]
+
+
 def image_id(config: dict) -> str | None:
     # `image ls` distinguishes an absent tag from an unavailable Docker daemon.
-    value = docker(config, 'image', 'ls', '--quiet', '--no-trunc', config['codex_image'], capture=True)
+    value = docker(config, 'image', 'ls', '--quiet', '--no-trunc', image_tag(config), capture=True)
     if not value:
         return None
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', value):
@@ -70,7 +66,7 @@ def image_id(config: dict) -> str | None:
 
 def require_stopped(config: dict, *, recover_created: bool = False) -> None:
     containers = docker(config, 'container', 'ls', '--all', '--quiet', '--no-trunc', '--filter',
-                        'label=io.quazonai.codex.image=' + config['codex_image'], capture=True).splitlines()
+                        'label=io.quazonai.codex.image=' + image_tag(config), capture=True).splitlines()
     for container in containers:
         state = docker(config, 'inspect', '--format', '{{.State.Status}}', container, capture=True)
         if state == 'created' and recover_created:
@@ -82,25 +78,13 @@ def require_stopped(config: dict, *, recover_created: bool = False) -> None:
             raise ValueError('Codex sessions still exist. Finish or cancel/reconcile them before updating.')
 
 
-def build(config: dict, target: str, bundle: Path) -> str:
-    target = exact_version(target)
-    # The context has no source, .env, credentials, history or native configuration.
-    with tempfile.TemporaryDirectory(prefix='quazonai-codex-build-') as temporary:
-        root = Path(temporary)
-        output = root / 'image.id'
-        docker(config, 'build', '--platform', 'linux/amd64', '--build-arg', 'CODEX_VERSION=' + target,
-               '--iidfile', str(output), '-f', str(bundle / 'Codex.Dockerfile'), str(root))
-        candidate = output.read_text().strip()
-    if not re.fullmatch(r'sha256:[0-9a-f]{64}', candidate):
-        raise ValueError('Docker did not return a content-addressed Codex image.')
+def verify_candidate(config: dict, target: str, candidate: str) -> None:
     actual = docker(config, 'run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
                     '--security-opt', 'no-new-privileges:true', candidate, '--version', capture=True)
     if actual != 'codex-cli ' + target:
-        raise ValueError('The built Codex executable does not match the requested version.')
+        raise ValueError('The pulled Codex executable does not match the requested version.')
     uid, gid = config.get('uid', 1000), config.get('gid', 1000)
     try:
-        # Exercise the actual nested namespace sandbox, not just its version.
-        # No native home, account, host workspace or provider request is involved.
         docker(config, 'run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
                '--security-opt', 'no-new-privileges:true', '--security-opt', 'seccomp=unconfined',
                '--security-opt', 'apparmor=unconfined', '--user', f'{uid}:{gid}',
@@ -115,7 +99,27 @@ def build(config: dict, target: str, bundle: Path) -> str:
                          'On hosts restricting user namespaces with AppArmor, have an administrator install '
                          'and load this bundle\'s codex.apparmor as described in README.md, then retry. '
                          'Do not disable host-wide user-namespace policy or the Codex sandbox.') from error
-    return candidate
+
+
+def pull_candidate(config: dict, target: str, *, reference: str | None = None) -> tuple[str, str]:
+    target = requested_version(target)
+    selected = reference or 'ghcr.io/zhengui666/quazonai-codex:' + target
+    if reference is not None and not re.fullmatch(
+        r'(?:ghcr\.io/zhengui666/quazonai-codex@)?sha256:[0-9a-f]{64}', reference
+    ):
+        raise ValueError('A selected Codex image must be an immutable repository digest.')
+    if not selected.startswith('sha256:'):
+        docker(config, 'pull', selected)
+    metadata = json.loads(docker(config, 'image', 'inspect', selected, capture=True))[0]
+    candidate = metadata['Id']
+    actual_version = exact_version(metadata['Config']['Labels']['org.opencontainers.image.version'])
+    if (not re.fullmatch(r'sha256:[0-9a-f]{64}', candidate)
+            or metadata['Os'] != 'linux' or metadata['Architecture'] != 'amd64'):
+        raise ValueError('The published Codex image is not a Linux x86_64 image.')
+    if target != 'latest' and target != actual_version:
+        raise ValueError('The published Codex image does not match the requested version.')
+    verify_candidate(config, actual_version, candidate)
+    return actual_version, candidate
 
 
 def switch(config: dict, target: str, candidate: str, previous_text: str | None) -> None:
@@ -127,15 +131,15 @@ def switch(config: dict, target: str, candidate: str, previous_text: str | None)
         if not text.endswith('\n'):
             text += '\n'
     try:
-        docker(config, 'image', 'tag', candidate, config['codex_image'])
+        docker(config, 'image', 'tag', candidate, image_tag(config))
         manage.atomic_text(root / '.env', text)
     except BaseException:
         # Image tag and file are two native stores. Roll back both on a reported
         # failure; a killed updater is detected by the next version check.
         if previous:
-            docker(config, 'image', 'tag', previous, config['codex_image'])
+            docker(config, 'image', 'tag', previous, image_tag(config))
         else:
-            docker(config, 'image', 'rm', config['codex_image'])
+            docker(config, 'image', 'rm', image_tag(config))
         if previous_text is not None:
             manage.atomic_text(root / '.env', previous_text)
         else:
@@ -149,9 +153,7 @@ def prepare(config: dict, bundle: Path) -> None:
     source = root / '.env'
     if not source.exists():
         source = bundle / '.env'
-    if not source.exists():
-        source = bundle / '.env.example'
-    target, text = read_env(source)
+    target = read_env(source)[0] if source.exists() else exact_version(config['codex_version'])
     current = image_id(config)
     if current:
         installed = docker(config, 'image', 'inspect', '--format',
@@ -159,32 +161,31 @@ def prepare(config: dict, bundle: Path) -> None:
         if installed != target:
             raise ValueError('Codex image differs from .env; run codex-update.sh with the intended version before continuing.')
         if not (root / '.env').exists():
-            manage.atomic_text(root / '.env', text)
+            manage.atomic_text(root / '.env', 'CODEX_VERSION=' + target + '\n')
         return
     require_stopped(config, recover_created=True)
-    candidate = build(config, target, bundle)
-    switch(config, target, candidate, (root / '.env').read_text() if (root / '.env').exists() else None)
+    reference = config['codex_image'] if config['codex_version'] == target else None
+    actual, candidate = pull_candidate(config, target, reference=reference)
+    switch(config, actual, candidate, (root / '.env').read_text() if (root / '.env').exists() else None)
 
 
-def update(root: Path, target: str) -> str:
+def update(root: Path, target: str, *, reference: str | None = None) -> str:
     target = requested_version(target)
     config = manage.configuration(root)
-    if not config.get('codex_image') or not config.get('docker_socket'):
-        raise ValueError('Upgrade the application deployment to the container Codex backend first.')
+    if not config.get('codex_runtime_image') or not config.get('docker_socket'):
+        raise ValueError('Upgrade the application to a prebuilt-image deployment bundle first.')
     if (root / 'pending.json').exists():
         raise ValueError('Finish the pending application deployment before changing Codex.')
-    # Download/build before blocking new sessions. No shared tag or configuration
-    # changes until the same lock used by the launchers is held exclusively.
-    candidate = build(config, target, Path(config['bundle']))
+    actual, candidate = pull_candidate(config, target, reference=reference)
     with manage.locked(root):
         if manage.configuration(root) != config or (root / 'pending.json').exists():
-            raise ValueError('Application deployment changed during the Codex build; retry.')
+            raise ValueError('Application deployment changed during the Codex pull; retry.')
         _, previous_text = read_env(root / '.env')
         manage.require_idle(config)
         require_stopped(config, recover_created=True)
-        switch(config, target, candidate, previous_text)
-    manage.announce('Codex image updated to ' + target + '; native authentication and history were preserved.')
-    return target
+        switch(config, actual, candidate, previous_text)
+    manage.announce('Codex image updated to ' + actual + '; native authentication and history were preserved.')
+    return actual
 
 
 def login(root: Path, *, status: bool = False) -> None:
@@ -196,12 +197,12 @@ def login(root: Path, *, status: bool = False) -> None:
         require_stopped(config, recover_created=True)
         image = image_id(config)
         if image is None:
-            raise ValueError('The installation has no Codex image; run codex-update.sh first.')
+            raise ValueError('The installation has no Codex image; finish deployment or run codex-update.sh.')
         name = config['project'] + '-login-' + uuid.uuid4().hex
         mount = io.StringIO()
         csv.writer(mount, lineterminator='').writerow(
             ['type=bind', 'source=' + config['codex_home'], 'target=' + config['codex_home']])
-        command = ['run', '--rm', '--name', name, '--label', 'io.quazonai.codex.image=' + config['codex_image'],
+        command = ['run', '--rm', '--name', name, '--label', 'io.quazonai.codex.image=' + image_tag(config),
                    '--user', f'{config["uid"]}:{config["gid"]}', '--read-only', '--cap-drop', 'ALL',
                    '--security-opt', 'no-new-privileges:true', '--pids-limit', '128', '--memory', '512m',
                    '--memory-swap', '512m', '--cpus', '1', '--init',

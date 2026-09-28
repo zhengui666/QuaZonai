@@ -15,7 +15,9 @@ on:
       - 'skills/**'
       - 'Cargo.*'
       - 'rust-toolchain.toml'
-      - 'runtimes/codex/**'
+      - 'runtimes/**'
+      - '.github/workflows/release-version.yml'
+      - '.github/workflows/codex-image.yml'
       - 'LICENSE'
       - 'NOTICE'
       - 'THIRD_PARTY_NOTICES.md'
@@ -73,7 +75,7 @@ jobs:
   build-smoke:
     name: Container / install, update and recovery
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:

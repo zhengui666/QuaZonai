@@ -122,6 +122,26 @@ nautilus_strategy!(TargetReplay, {
             }
             return;
         }
+        // Native BAR execution can extrapolate a remainder beyond the instrument
+        // bounds. Reject that research result; never clamp or replace its fill.
+        let valid_price = self
+            .cache()
+            .instrument(&event.instrument_id)
+            .is_some_and(|instrument| {
+                instrument.ts_init() <= event.ts_init
+                    && event.last_px.precision == instrument.price_precision()
+                    && instrument.try_normalize_price(event.last_px).is_ok()
+                    && instrument
+                        .min_price()
+                        .is_none_or(|price| event.last_px >= price)
+                    && instrument
+                        .max_price()
+                        .is_none_or(|price| event.last_px <= price)
+            });
+        if !valid_price {
+            self.status.borrow_mut().failure = Some("NATIVE_FILL_OUTSIDE_INSTRUMENT");
+            return;
+        }
         if now <= self.status.borrow().submitted_after_ns || now >= self.active_expiry_ns {
             self.status.borrow_mut().failure = Some("NATIVE_NONCAUSAL_OR_EXPIRED_FILL");
             return;
@@ -479,6 +499,15 @@ fn validate_settings(
     data: &NativeMarketData,
     request: &NativeSimulationRequestV1,
 ) -> Result<Currency> {
+    // The official BacktestEngine cannot update its matching engines in place.
+    // Keep the history for data/planning; replaying a stale tick or replacing
+    // the matching engine would invalidate native order and position state.
+    ensure!(
+        data.series
+            .iter()
+            .all(|series| series.instrument_updates.is_empty()),
+        "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
+    );
     let settings = &request.settings;
     let currency = execution_market(data, settings)?;
     let instruments = data
@@ -712,6 +741,21 @@ pub(crate) fn run(
                 .liquidity_consumption(true)
                 .build()?,
         )?;
+        let first_event = market
+            .series
+            .iter()
+            .flat_map(|series| &series.bars)
+            .map(|bar| bar.ts_init)
+            .chain(closes.iter().map(|close| close.ts_init))
+            .min()
+            .ok_or_else(|| anyhow::anyhow!("CATALOG_EMPTY_SELECTION"))?;
+        ensure!(
+            market
+                .series
+                .iter()
+                .all(|series| series.instrument.ts_init() <= first_event),
+            "SIMULATION_BASELINE_FROM_FUTURE"
+        );
         let mut events = Vec::with_capacity(market.rows);
         for series in market.series {
             engine.add_instrument(&series.instrument)?;
@@ -721,6 +765,10 @@ pub(crate) fn run(
         engine.add_strategy(strategy)?;
         engine.add_data(events, None, true, true)?;
         engine.run(None, None, None, false)?;
+        ensure!(
+            status.borrow().failure.is_none(),
+            "NATIVE_TARGET_REPLAY_FAILED"
+        );
         for instrument_id in &settled_ids {
             ensure!(
                 engine
@@ -733,7 +781,6 @@ pub(crate) fn run(
             );
         }
         let observed = status.borrow();
-        ensure!(observed.failure.is_none(), "NATIVE_TARGET_REPLAY_FAILED");
         if observed.study_infeasible {
             return Ok(None);
         }

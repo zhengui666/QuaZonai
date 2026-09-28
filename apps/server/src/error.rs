@@ -107,7 +107,7 @@ impl From<StoreError> for ApiError {
             StoreError::InvalidCredentials => Self::new(
                 StatusCode::UNAUTHORIZED,
                 "AUTHENTICATION_FAILED",
-                "机器凭据无效或已失效。",
+                "密码或机器凭据无效，或登录已失效。",
             ),
             StoreError::Forbidden => Self::new(
                 StatusCode::FORBIDDEN,

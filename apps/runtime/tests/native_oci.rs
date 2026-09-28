@@ -35,7 +35,8 @@ async fn native_capabilities_exclude_binary_options_without_hiding_supported_mar
         f.crash();
         let mut metadata = catalog_fixture::metadata();
         metadata.universe.instrument_definitions = vec![serde_json::json!({
-            class: {"id": "EUR/USD.SIM", "fixture_only": true}
+            class: {"id": "EUR/USD.SIM", "fixture_only": true,
+                "ts_event": 0, "ts_init": 0, "price_increment": "0.00001"}
         })];
         domain::catalogs::metadata(&metadata, runtime::now()).unwrap();
         fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
@@ -860,7 +861,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
             member
         })
         .collect();
-    metadata.universe.instrument_definitions = request.assets.iter().map(|asset| serde_json::json!({"CurrencyPair":{"id":asset.instrument_id,"fixture_only":true}})).collect();
+    metadata.universe.instrument_definitions = request.assets.iter().map(|asset| serde_json::json!({"CurrencyPair":{"id":asset.instrument_id,"fixture_only":true,"ts_event":0,"ts_init":0,"price_increment":"0.00001"}})).collect();
     metadata.quality.checked_at = runtime::now();
     let quality = &mut metadata.quality.datasets[0];
     quality.dataset_revision_id = dataset;
@@ -1390,7 +1391,7 @@ async fn real_native_sealed_job_reads_the_frozen_model_and_registered_parquet() 
         .iter()
         .map(|asset| {
             serde_json::json!({
-                "CurrencyPair":{"id":asset.instrument_id,"fixture_only":true},
+                "CurrencyPair":{"id":asset.instrument_id,"fixture_only":true,"ts_event":0,"ts_init":0,"price_increment":"0.00001"},
             })
         })
         .collect();
@@ -1764,8 +1765,85 @@ async fn real_native_compile_oom_is_reported_as_a_safe_resource_failure() {
     spec.limits.memory_mib = 64;
     let accepted = f.submit(&spec).await;
     let terminal = f.terminal(&spec).await;
-    assert_eq!(terminal.state, RuntimeJobState::Failed);
     let manifest = f.manifest(&spec).await;
+    // Preserve exact-container scalar evidence before any assertion can drop the
+    // fixture. Compiler stderr is deliberately discarded by production code;
+    // do not substitute an inferred OOM or expose input/configuration bodies.
+    let docker = docker().await;
+    let id = f.native_container(&spec).await.id.unwrap();
+    let began = std::time::Instant::now();
+    let mut previous = None;
+    loop {
+        let current = docker.inspect_container(&id, None).await.unwrap();
+        let state = current.state.as_ref().unwrap();
+        let limits = current.host_config.as_ref().unwrap();
+        let snapshot = serde_json::json!({
+            "container_id": id,
+            "running": state.running,
+            "exit_code": state.exit_code,
+            "oom_killed": state.oom_killed,
+            "started_at": state.started_at,
+            "finished_at": state.finished_at,
+            "memory": limits.memory,
+            "memory_swap": limits.memory_swap,
+            "pids_limit": limits.pids_limit,
+            "runtime_state": terminal.state,
+            "runtime_error": manifest.error.as_ref().map(|error| error.code),
+            "compiler_stderr": "discarded_by_production",
+        });
+        let complete = state.oom_killed == Some(true) || began.elapsed() >= Duration::from_secs(5);
+        if previous.as_ref() != Some(&snapshot) || complete {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "scope": "test-owned native compiler exit observation",
+                    "observed_at": runtime::now(),
+                    "elapsed_ms": began.elapsed().as_millis(),
+                    "observation": snapshot,
+                })
+            );
+            previous = Some(snapshot);
+        }
+        if complete {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    {
+        use sqlx::Connection;
+        #[derive(sqlx::FromRow, serde::Serialize)]
+        struct ObservedExit {
+            container_id: String,
+            started_us: i64,
+            finished_us: i64,
+            exit_code: i64,
+            oom_killed: bool,
+            failure_code: Option<String>,
+            observed_us: i64,
+        }
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(f.directory.path().join("state/journal.sqlite"))
+            .read_only(true);
+        let mut journal = sqlx::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
+        let observed: Option<ObservedExit> = sqlx::query_as(
+            "SELECT container_id,started_us,finished_us,exit_code,oom_killed,failure_code,observed_us FROM native_exit_observations WHERE external_id=?",
+        )
+        .bind(&spec.external_job_id)
+        .fetch_optional(&mut journal)
+        .await
+        .unwrap();
+        println!(
+            "{}",
+            serde_json::json!({
+                "scope": "test-owned durable native compiler exit",
+                "observation": observed,
+            })
+        );
+        journal.close().await.unwrap();
+    }
+    assert_eq!(terminal.state, RuntimeJobState::Failed);
     domain::runtime_jobs::manifest(&manifest, &spec, accepted.submitted_at, runtime::now())
         .unwrap();
     assert!(manifest.artifacts.is_empty());

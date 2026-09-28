@@ -6,7 +6,7 @@ use axum::{
     http::{header, request::Parts, HeaderMap},
 };
 use contracts::Id;
-use integrations::authentication::{machine_token, verify_capability};
+use integrations::authentication::{cli_token, machine_token, verify_capability};
 use store::authority::Actor;
 use tower_sessions::Session;
 
@@ -49,6 +49,32 @@ impl FromRequestParts<AppState> for Authority {
                 .ok_or_else(ApiError::authentication)?;
             if !scheme.eq_ignore_ascii_case("Bearer") {
                 return Err(ApiError::authentication());
+            }
+            if value.starts_with("qzc.") {
+                if parts.headers.contains_key("x-operator-grant") {
+                    return Err(ApiError::authentication());
+                }
+                let token = cli_token(value).map_err(|_| ApiError::authentication())?;
+                let verifier = state
+                    .store
+                    .cli_device_verifier(token.public_token_id)
+                    .await?;
+                let secret = token.capability.to_owned();
+                let expected = verifier.clone();
+                let valid =
+                    auth::crypto_with_slots(state.machine_crypto_slots.clone(), move || {
+                        Ok(verify_capability(&secret, &expected))
+                    })
+                    .await?;
+                if !valid {
+                    return Err(ApiError::authentication());
+                }
+                let actor = Actor::OwnerDevice {
+                    device_id: token.public_token_id,
+                    verifier,
+                };
+                state.store.cli_device_session(&actor).await?;
+                return Ok(Self(actor));
             }
             let token = machine_token(value).map_err(|_| ApiError::authentication())?;
             let secret = token.capability.to_owned();

@@ -1,4 +1,4 @@
-//! Local wire-level request preview. Never opens credentials, files or a connection.
+//! Local wire-level request preview. Never opens a network connection.
 use super::{commands, watch, Failure, Result};
 use contracts::Id;
 use reqwest::{header, Method};
@@ -11,8 +11,7 @@ pub(super) fn inspect(
     key: Option<&str>,
     grant: Option<&str>,
 ) -> Result<Value> {
-    crate::WebPolicy::new(origin, ([127, 0, 0, 1], 0).into(), development_http)
-        .map_err(|_| Failure::Configuration)?;
+    super::session::origin(origin, development_http)?;
     let writes = request.method != Method::GET;
     if writes {
         let key = key.ok_or(Failure::IdempotencyRequired)?;

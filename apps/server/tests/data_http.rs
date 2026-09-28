@@ -57,8 +57,9 @@ async fn a_fresh_authenticated_operator_can_distinguish_empty_management_from_un
         assert_eq!(reply.body["items"], json!([]));
         assert!(reply.body["next_cursor"].is_null());
         let anonymous = support::call(&f, "GET", path, Value::Null, None).await;
-        assert_eq!(anonymous.status, StatusCode::OK);
-        assert!(anonymous.cookie.is_some());
+        assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(anonymous.body["code"], "AUTH_REQUIRED");
+        assert!(anonymous.cookie.is_none());
     }
 }
 
@@ -435,8 +436,9 @@ async fn data_http_rejects_client_authority_missing_keys_unauthenticated_and_bad
         "/api/v2/data/universes",
     ] {
         let anonymous = support::call(&f, "GET", path, Value::Null, None).await;
-        assert_eq!(anonymous.status, StatusCode::OK);
-        assert!(anonymous.cookie.is_some());
+        assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(anonymous.body["code"], "AUTH_REQUIRED");
+        assert!(anonymous.cookie.is_none());
         let invalid = support::call(
             &f,
             "GET",

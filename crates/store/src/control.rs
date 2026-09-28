@@ -109,7 +109,7 @@ impl Store {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
         let allowed = match actor {
-            Actor::Browser { .. } => {
+            Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
                 authority::browser(&mut tx, actor, false).await?;
                 None
             }
@@ -557,8 +557,8 @@ impl CredentialIssuance {
         // Native crypto/IO is bounded but can cross a time boundary. The held
         // row locks preserve revocation/epoch; check time again before issuance.
         match &actor {
-            Actor::Browser { login_id } => {
-                crate::auth::lock_login(&mut tx, *login_id).await?;
+            Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
+                authority::browser(&mut tx, &actor, true).await?;
             }
             Actor::Machine { operator_grant, .. } => {
                 authority::machine(&mut tx, &actor, true).await?;

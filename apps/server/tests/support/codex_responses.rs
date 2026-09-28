@@ -586,9 +586,13 @@ fn science_item(
                         .map(|tool| (namespace, tool))
                 })
                 .expect("the actual experiment.propose tool must be discovered");
+            let mut proposal = serde_json::to_value(&plan.proposal).unwrap();
+            for field in ["schema_version", "cycle_id"] {
+                proposal.as_object_mut().unwrap().remove(field);
+            }
             json!({"type":"function_call","namespace":namespace["name"],"name":tool["name"],
                 "call_id":"native-science-proposal",
-                "arguments":json!({"idempotency_key":"native-science-proposal","proposal":plan.proposal}).to_string()})
+                "arguments":json!({"idempotency_key":"native-science-proposal","proposal":proposal}).to_string()})
         }
         2 => {
             let output = request["input"]

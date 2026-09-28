@@ -61,7 +61,9 @@ jobs:
       - name: Assemble a native immutable OCI image without a floating base or secret mounts
         run: |
           set -euo pipefail
-          node runtimes/native/build-native-image.mjs --profile debug --output-dir "$RUNNER_TEMP/native-job-image" --isolation-probe "$RUNNER_TEMP/isolation-probe"
+          # Assembling built binaries must not fetch or require cached dependency sources.
+          CARGO_HOME="$(mktemp -d "$RUNNER_TEMP/assembly-cargo.XXXXXX")" \
+            node runtimes/native/build-native-image.mjs --profile debug --output-dir "$RUNNER_TEMP/native-job-image" --isolation-probe "$RUNNER_TEMP/isolation-probe"
           image=$(cat "$RUNNER_TEMP/native-job-image/image-id.txt")
           [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]]
           echo "QUAZONAI_NATIVE_JOB_IMAGE=$image" >> "$GITHUB_ENV"

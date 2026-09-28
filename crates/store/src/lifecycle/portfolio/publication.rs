@@ -363,6 +363,7 @@ where
         domain::catalogs::portfolio_slippage_sources(
             &binding.metadata,
             &report.slippage_references,
+            frozen.selection.decision_cutoff_ns.get(),
         )
         .map_err(|_| StoreError::Integrity)?;
         let groups = domain::catalogs::portfolio_groups(

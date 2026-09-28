@@ -40,7 +40,7 @@ describe('strict API values and response parsing', () => {
     expect(validateResponse(collection, 'PATCH', 409, problem, 'application/problem+json')).toBe(false);
     expect(validateResponse(collection, 'POST', 409, problem, 'application/problem+json')).toBe(false);
   });
-  it('validates the local session and exposes no interactive auth contracts', () => {
+  it('validates password auth responses and rejects the removed bootstrap contract', () => {
     expect(validateResponse('/api/v2/auth/session', 'GET', 200, {
       schema_version: 1, authenticated_at: '2026-09-20T00:00:00Z', expires_at: '2026-09-20T12:00:00Z',
     })).toBe(true);
@@ -48,7 +48,8 @@ describe('strict API values and response parsing', () => {
     expect(validateResponse('/api/v2/bootstrap/status', 'GET', 200, {
       schema_version: 1, initialized: false, setup_allowed: true,
     })).toBe(false);
-    expect(validateResponse('/api/v2/auth/logout', 'POST', 204, undefined)).toBe(false);
+    expect(validateResponse('/api/v2/auth/status', 'GET', 200, { schema_version: 1, setup_required: true })).toBe(true);
+    expect(validateResponse('/api/v2/auth/logout', 'POST', 204, undefined)).toBe(true);
   });
 });
 describe('canonical scalar and command identity', () => {

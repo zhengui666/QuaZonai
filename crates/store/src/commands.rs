@@ -81,7 +81,7 @@ pub(crate) async fn operator(
         return Err(StoreError::Invalid("operation_target"));
     }
     let (scope, grant) = match actor {
-        Actor::Browser { .. } => {
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
             authority::browser(tx, actor, true).await?;
             (String::from("OPERATOR"), None)
         }
@@ -169,7 +169,9 @@ pub(crate) async fn recheck_authority(
     prepared: &Prepared,
 ) -> Result<(), StoreError> {
     match actor {
-        Actor::Browser { .. } => authority::browser(tx, actor, true).await?,
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
+            authority::browser(tx, actor, true).await?
+        }
         Actor::Machine { .. } => {
             let machine = authority::machine(tx, actor, true).await?;
             if machine.kind != PrincipalKind::Cli

@@ -4,6 +4,9 @@
 body { margin: 0; min-width: 320px; }
 .full-width { width: 100%; }
 .break-word { overflow-wrap: anywhere; word-break: break-word; }
+.auth-page { min-height: 100dvh; display: grid; place-items: center; padding: 24px 12px; }
+.auth-card { width: 100%; max-width: 440px; }
+.password-form { max-width: 440px; }
 .console-layout { min-height: 100dvh; }
 .console-sidebar { border-right: 1px solid var(--ant-color-border-secondary); }
 .brand { padding: 28px 24px 14px; }

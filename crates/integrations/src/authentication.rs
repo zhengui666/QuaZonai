@@ -50,6 +50,28 @@ pub fn verify_capability(secret: &str, verifier: &str) -> bool {
     })
 }
 
+pub fn password_verifier(password: &str) -> Result<String, AuthenticationError> {
+    if password.chars().count() < 8 || password.len() > 1024 {
+        return Err(AuthenticationError::Invalid);
+    }
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|_| AuthenticationError::Primitive)
+}
+
+pub fn verify_password(password: &str, verifier: &str) -> bool {
+    if password.len() > 1024 || verifier.len() > 256 {
+        return false;
+    }
+    PasswordHash::new(verifier).is_ok_and(|hash| {
+        Argon2::default()
+            .verify_password(password.as_bytes(), &hash)
+            .is_ok()
+    })
+}
+
 /// A bounded routing identifier plus an opaque secret. This is not a JWT and
 /// carries no roles, scopes, expiry or client-selected authority.
 pub struct MachineToken<'a> {
@@ -58,11 +80,19 @@ pub struct MachineToken<'a> {
 }
 
 pub fn machine_token(value: &str) -> Result<MachineToken<'_>, AuthenticationError> {
+    parse_token(value, "qz2")
+}
+
+pub fn cli_token(value: &str) -> Result<MachineToken<'_>, AuthenticationError> {
+    parse_token(value, "qzc")
+}
+
+fn parse_token<'a>(value: &'a str, prefix: &str) -> Result<MachineToken<'a>, AuthenticationError> {
     if value.len() != 84 {
         return Err(AuthenticationError::Invalid);
     }
     let mut parts = value.split('.');
-    if parts.next() != Some("qz2") {
+    if parts.next() != Some(prefix) {
         return Err(AuthenticationError::Invalid);
     }
     let public = parts.next().ok_or(AuthenticationError::Invalid)?;
@@ -83,6 +113,15 @@ pub fn machine_token(value: &str) -> Result<MachineToken<'_>, AuthenticationErro
     })
 }
 
+pub fn format_cli_token(
+    public: contracts::Id,
+    secret: &str,
+) -> Result<String, AuthenticationError> {
+    let value = format!("qzc.{public}.{secret}");
+    cli_token(&value)?;
+    Ok(value)
+}
+
 pub fn format_machine_token(
     public: contracts::Id,
     secret: &str,
@@ -95,6 +134,21 @@ pub fn format_machine_token(
 #[cfg(test)]
 mod machine_token_tests {
     use super::*;
+    #[test]
+    fn password_hashing_and_owner_tokens_keep_distinct_credentials() {
+        let password = "fixture password with spaces";
+        let hash = password_verifier(password).unwrap();
+        assert!(verify_password(password, &hash));
+        assert!(!verify_password("wrong password", &hash));
+        assert!(!verify_password(&"x".repeat(1025), &hash));
+        assert!(password_verifier("short").is_err());
+        assert!(password_verifier("密码密码").is_err());
+        assert_ne!(hash, password_verifier(password).unwrap());
+        let token = format_cli_token(contracts::Id::new(), &random_capability()).unwrap();
+        assert!(cli_token(&token).is_ok());
+        assert!(machine_token(&token).is_err());
+        assert!(cli_token(&token.replacen("qzc.", "qz2.", 1)).is_err());
+    }
     #[test]
     fn machine_token_has_one_bounded_native_id_and_opaque_secret() {
         let public = contracts::Id::new();

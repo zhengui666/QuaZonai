@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { responseFailure } from './api';
+import { authenticationEvents, responseFailure } from './api';
 
 const id = '01990000-0000-7000-8000-000000000001';
 const path = '/api/v2/artifacts/{id}/content' as const;
@@ -27,10 +27,19 @@ describe('native error status, media and Problem schema', () => {
   it('rejects a well-shaped but undeclared status', async () => {
     await expect(failure({ ...problem, status: 418 }, 418)).resolves.toMatchObject({ code: 'HTTP_CONTRACT_ERROR' });
   });
-  it('preserves valid authorization errors without opening a login flow', async () => {
-    await expect(failure({ ...problem, status: 401, code: 'AUTH_REQUIRED', request_id: 'invalid' }, 401))
-      .resolves.toMatchObject({ code: 'HTTP_CONTRACT_ERROR' });
-    await expect(failure({ ...problem, status: 401, code: 'AUTH_REQUIRED' }, 401))
-      .resolves.toMatchObject({ code: 'AUTH_REQUIRED' });
+  it('expires the browser gate on auth failure but preserves a wrong-password form', async () => {
+    let expirations = 0;
+    const listener = () => { expirations++; };
+    authenticationEvents.addEventListener('required', listener);
+    try {
+      await expect(failure({ ...problem, status: 401, code: 'AUTH_REQUIRED', request_id: 'invalid' }, 401))
+        .resolves.toMatchObject({ code: 'HTTP_CONTRACT_ERROR' });
+      await expect(failure({ ...problem, status: 401, code: 'AUTH_REQUIRED' }, 401))
+        .resolves.toMatchObject({ code: 'AUTH_REQUIRED' });
+      expect(expirations).toBe(2);
+      await expect(failure({ ...problem, status: 401, code: 'AUTHENTICATION_FAILED' }, 401))
+        .resolves.toMatchObject({ code: 'AUTHENTICATION_FAILED' });
+      expect(expirations).toBe(2);
+    } finally { authenticationEvents.removeEventListener('required', listener); }
   });
 });

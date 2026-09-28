@@ -15,9 +15,10 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/build/target \
-    cargo build --locked --release -p server --bin server \
+    cargo build --locked --release -p server -p runtime \
  && install -Dm755 target/release/server /out/server \
- && strip /out/server
+ && install -Dm755 target/release/runtime /out/runtime \
+ && strip /out/server /out/runtime
 
 FROM caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb AS caddy
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
@@ -25,7 +26,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git ripgrep tini libssl3 libstdc++6 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 1000 --create-home quazonai
-COPY --from=server /out/server /opt/quazonai/bin/server
+COPY --from=server /out/server /out/runtime /opt/quazonai/bin/
+RUN ln -s server /opt/quazonai/bin/quazonai
 COPY --from=web /build/apps/web/dist/ /opt/quazonai/web/
 COPY --from=caddy /usr/bin/caddy /tmp/caddy
 # The upstream Caddy image grants its binary a privileged-port file capability.
@@ -33,6 +35,7 @@ COPY --from=caddy /usr/bin/caddy /tmp/caddy
 # QuaZonai only listens on unprivileged port 8081 and does not need that capability.
 RUN install -m 0755 /tmp/caddy /usr/bin/caddy && rm /tmp/caddy
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/quazonai/
+COPY licenses/ /usr/share/doc/quazonai/licenses/
 COPY deploy/docker/Caddyfile /opt/quazonai/Caddyfile
 COPY --chmod=755 deploy/docker/entrypoint.sh /opt/quazonai/entrypoint.sh
 ARG VERSION=development

@@ -2,7 +2,10 @@
 use crate::{control::text, research::invalid, DomainError};
 use chrono::{DateTime, Utc};
 use contracts::{catalogs::*, research::PitStatus, runtime::RuntimeDataKind};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// The existing wire limit bounds definition records, not just distinct identities.
+pub const MAX_INSTRUMENT_DEFINITIONS: usize = 256;
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_CATALOG_METADATA_INVALID")
@@ -27,6 +30,105 @@ pub fn instrument_definition(
         .ok_or_else(|| bad("instrument_definition.id"))?;
     text(id, 1, 200, false)?;
     Ok((class, payload))
+}
+
+/// Validate original, tick-only definition histories without rewriting native fields.
+/// Ordering is per identity; timestamps never establish source permission or PIT status.
+pub fn instrument_versions(
+    definitions: &[serde_json::Value],
+) -> Result<BTreeMap<&str, Vec<&serde_json::Value>>, DomainError> {
+    if !(1..=MAX_INSTRUMENT_DEFINITIONS).contains(&definitions.len()) {
+        return Err(bad("instrument_definitions"));
+    }
+    let mut chains: BTreeMap<&str, Vec<&serde_json::Value>> = BTreeMap::new();
+    for definition in definitions {
+        let (class, payload) = instrument_definition(definition)?;
+        let id = payload["id"]
+            .as_str()
+            .ok_or_else(|| bad("instrument_definition.id"))?;
+        let event = definition_time(payload, "ts_event")?;
+        let available = definition_time(payload, "ts_init")?;
+        if event > available {
+            return Err(bad("instrument_definition.time"));
+        }
+        let tick: contracts::DecimalValue =
+            serde_json::from_value(payload["price_increment"].clone())
+                .map_err(|_| bad("instrument_definition.price_increment"))?;
+        if !tick.is_positive() {
+            return Err(bad("instrument_definition.price_increment"));
+        }
+        let bound = |field: &str| -> Result<Option<contracts::DecimalValue>, DomainError> {
+            if payload[field].is_null() {
+                return Ok(None);
+            }
+            serde_json::from_value(payload[field].clone())
+                .map(Some)
+                .map_err(|_| bad("instrument_definition.price_bounds"))
+        };
+        if let (Some(minimum), Some(maximum)) = (bound("min_price")?, bound("max_price")?) {
+            if minimum > maximum {
+                return Err(bad("instrument_definition.price_bounds"));
+            }
+        }
+        let chain = chains.entry(id).or_default();
+        if let Some(previous) = chain.last() {
+            let (previous_class, previous) = instrument_definition(previous)?;
+            if class != previous_class
+                || available <= definition_time(previous, "ts_init")?
+                || event < definition_time(previous, "ts_event")?
+            {
+                return Err(bad("instrument_definition.version_time"));
+            }
+            let immutable = |value: &serde_json::Value| -> Result<_, DomainError> {
+                let mut fields = value
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| bad("instrument_definition"))?;
+                for field in [
+                    "price_increment",
+                    "min_price",
+                    "max_price",
+                    "ts_event",
+                    "ts_init",
+                ] {
+                    fields.remove(field);
+                }
+                Ok(fields)
+            };
+            if immutable(payload)? != immutable(previous)? {
+                return Err(bad("instrument_definition.immutable_fields"));
+            }
+            if ["price_increment", "min_price", "max_price"]
+                .iter()
+                .all(|field| payload[*field] == previous[*field])
+            {
+                return Err(bad("instrument_definition.repeated_state"));
+            }
+        }
+        chain.push(definition);
+    }
+    Ok(chains)
+}
+
+fn definition_time(payload: &serde_json::Value, field: &str) -> Result<u64, DomainError> {
+    payload[field]
+        .as_u64()
+        .filter(|value| *value <= i64::MAX as u64)
+        .ok_or_else(|| bad("instrument_definition.time"))
+}
+
+/// Resolve an already-validated chain at its original availability time.
+pub fn instrument_version_at<'a>(
+    versions: &[&'a serde_json::Value],
+    available_ns: u64,
+) -> Result<(&'a str, &'a serde_json::Value), DomainError> {
+    for definition in versions.iter().rev() {
+        let (class, payload) = instrument_definition(definition)?;
+        if definition_time(payload, "ts_init")? <= available_ns {
+            return Ok((class, payload));
+        }
+    }
+    Err(bad("instrument_definition.from_future"))
 }
 
 /// Match the supported single-base-currency venue to Nautilus 0.63.0 add_instrument.
@@ -61,32 +163,25 @@ pub fn execution_fees(
     if ids.len() != settings.fee_rates.len() {
         return Err(bad("execution_fees"));
     }
-    let definitions = metadata
-        .universe
-        .instrument_definitions
-        .iter()
-        .map(instrument_definition)
-        .collect::<Result<Vec<_>, _>>()?;
+    let definitions = instrument_versions(&metadata.universe.instrument_definitions)?;
     for rate in &settings.fee_rates {
-        let matches = definitions
-            .iter()
-            .filter(|(_, v)| v["id"].as_str() == Some(&rate.instrument_id))
-            .collect::<Vec<_>>();
-        let [(class, value)] = matches.as_slice() else {
-            return Err(bad("execution_fees.identity"));
-        };
+        let versions = definitions
+            .get(rate.instrument_id.as_str())
+            .ok_or_else(|| bad("execution_fees.identity"))?;
+        // Currency, account class and all fee fields are invariant across this chain.
+        let (class, value) = instrument_definition(versions[0])?;
         execution_account(class, settings.account_kind)?;
-        let currency = match *class {
+        let currency = match class {
             "CurrencyPair" => &value["quote_currency"],
             "Equity" | "BinaryOption" => &value["currency"],
             _ => {
                 return Err(DomainError::CapabilityUnavailable(
                     "execution_assumption_instrument",
-                ))
+                ));
             }
         };
         let (maker, taker): (contracts::DecimalValue, contracts::DecimalValue) =
-            if *class == "BinaryOption" {
+            if class == "BinaryOption" {
                 if !crate::prediction::uses_native_fee(&settings.fee_model) {
                     return Err(DomainError::CapabilityUnavailable(
                         "polymarket_native_fee_model",
@@ -131,23 +226,31 @@ pub fn execution_fees(
 pub fn portfolio_slippage_sources(
     metadata: &RuntimeCatalogMetadataV1,
     references: &[contracts::science::NativePortfolioSlippageReferenceV1],
+    decision_cutoff_ns: u64,
 ) -> Result<(), DomainError> {
+    let selected = &metadata
+        .quality
+        .datasets
+        .first()
+        .ok_or_else(|| bad("quality"))?
+        .selection;
+    if decision_cutoff_ns > selected.decision_cutoff_ns.get() {
+        return Err(bad("slippage.cutoff"));
+    }
+    let definitions = instrument_versions(&metadata.universe.instrument_definitions)?;
     for reference in references {
-        let mut found = false;
-        for value in &metadata.universe.instrument_definitions {
-            let (_, instrument) = instrument_definition(value)?;
-            if instrument["id"].as_str() == Some(&reference.instrument_id) {
-                let tick: contracts::DecimalValue =
-                    serde_json::from_value(instrument["price_increment"].clone())
-                        .map_err(|_| bad("slippage.price_increment"))?;
-                if found || tick != reference.price_increment {
-                    return Err(bad("slippage.price_increment"));
-                }
-                found = true;
-            }
-        }
-        if !found {
-            return Err(bad("slippage.instrument"));
+        let versions = definitions
+            .get(reference.instrument_id.as_str())
+            .ok_or_else(|| bad("slippage.instrument"))?;
+        let (_, instrument) = instrument_version_at(versions, decision_cutoff_ns)?;
+        let tick: contracts::DecimalValue =
+            serde_json::from_value(instrument["price_increment"].clone())
+                .map_err(|_| bad("slippage.price_increment"))?;
+        if tick != reference.price_increment
+            || reference.available_ns.get() < definition_time(instrument, "ts_init")?
+            || reference.available_ns.get() > decision_cutoff_ns
+        {
+            return Err(bad("slippage.price_increment"));
         }
     }
     Ok(())
@@ -195,6 +298,7 @@ pub fn metadata(
         return Err(bad("snapshot"));
     }
     let quality = &value.quality.datasets[0];
+    let definitions = instrument_versions(&value.universe.instrument_definitions)?;
     if value.partition == contracts::research::DataPartition::Sealed
         && quality.last_bar_notionals.is_some()
     {
@@ -220,24 +324,17 @@ pub fn metadata(
             }
             // The untraded sibling may have no BAR series. Its native definition is
             // still required so one source cannot splice unrelated condition IDs.
-            let mut found = false;
-            for definition in &value.universe.instrument_definitions {
-                let (class, payload) = instrument_definition(definition)?;
-                if payload["id"].as_str() != Some(&outcome.instrument_id) {
-                    continue;
-                }
-                if found || class != "BinaryOption" {
-                    return Err(bad("quality.settlement_instrument"));
-                }
-                let (activation, _) = crate::prediction::instrument(payload)?;
-                if payload["info"]["condition_id"].as_str() != Some(&group.condition_id)
-                    || outcome.ts_event.get() < activation
-                {
-                    return Err(bad("quality.settlement_instrument"));
-                }
-                found = true;
+            let versions = definitions
+                .get(outcome.instrument_id.as_str())
+                .ok_or_else(|| bad("quality.settlement_instrument"))?;
+            let (class, payload) = instrument_version_at(versions, outcome.ts_init.get())?;
+            if class != "BinaryOption" {
+                return Err(bad("quality.settlement_instrument"));
             }
-            if !found {
+            let (activation, _) = crate::prediction::instrument(payload)?;
+            if payload["info"]["condition_id"].as_str() != Some(&group.condition_id)
+                || outcome.ts_event.get() < activation
+            {
                 return Err(bad("quality.settlement_instrument"));
             }
         }
@@ -300,7 +397,7 @@ pub fn metadata(
         || universe.coverage_start >= universe.coverage_end
         || universe.selection_asof > value.available_through
         || !(1..=4096).contains(&universe.membership.len())
-        || !(1..=256).contains(&universe.instrument_definitions.len())
+        || !(1..=MAX_INSTRUMENT_DEFINITIONS).contains(&universe.instrument_definitions.len())
     {
         return Err(bad("universe"));
     }
@@ -336,20 +433,27 @@ pub fn metadata(
             return Err(bad("quality.instrument_ids"));
         }
     }
-    let mut definitions = BTreeSet::new();
-    for definition in &universe.instrument_definitions {
-        let (_, payload) = instrument_definition(definition)?;
-        let id = payload["id"]
-            .as_str()
-            .ok_or_else(|| bad("instrument_definition.id"))?;
-        if !definitions.insert(id) {
-            return Err(bad("universe.instrument_definitions"));
+    for versions in definitions.values() {
+        let mut baselines = 0;
+        for definition in versions {
+            let (_, payload) = instrument_definition(definition)?;
+            let timestamp = definition_time(payload, "ts_init")?;
+            // A version received exactly at the boundary is still an in-scope update.
+            baselines += usize::from(timestamp < quality.selection.event_start_ns.get());
+            if timestamp > quality.selection.decision_cutoff_ns.get()
+                || timestamp > available as u64
+            {
+                return Err(bad("instrument_definition.from_future"));
+            }
+        }
+        if baselines > 1 {
+            return Err(bad("instrument_definition.baseline"));
         }
     }
     if quality
         .instrument_ids
         .iter()
-        .any(|id| !definitions.contains(id.as_str()))
+        .any(|id| !definitions.contains_key(id.as_str()))
     {
         return Err(bad("universe.instrument_definitions"));
     }

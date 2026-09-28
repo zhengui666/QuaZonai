@@ -74,8 +74,8 @@ async fn offline_cutover_invalidates_retained_authority_and_replays_atomically(p
         Some(&cookie),
     )
     .await;
-    assert_eq!(old.status, StatusCode::OK);
-    assert_ne!(old.cookie.as_deref(), Some(cookie.as_str()));
+    assert_eq!(old.status, StatusCode::UNAUTHORIZED);
+    assert!(old.cookie.is_none());
     let request = Request::builder()
         .uri("/api/v2/projects")
         .header(header::HOST, "localhost")
@@ -88,7 +88,7 @@ async fn offline_cutover_invalidates_retained_authority_and_replays_atomically(p
     assert_eq!(
         relogin.status,
         StatusCode::OK,
-        "local access needs no restored authenticator"
+        "the retained password permits a fresh login"
     );
     let projects = support::call(
         &f,
@@ -505,7 +505,7 @@ async fn native_archive_restores_original_receipt_and_native_encryption(pool: Pg
         )
         .await
         .status,
-        StatusCode::OK
+        StatusCode::UNAUTHORIZED
     );
     let login = support::local_session(&restored).await;
     assert_eq!(login.status, StatusCode::OK);
@@ -698,16 +698,8 @@ async fn native_archive_restores_original_receipt_and_native_encryption(pool: Pg
         .send()
         .await
         .unwrap();
-    assert_eq!(stale.status(), StatusCode::OK);
-    assert_ne!(
-        stale.headers()[header::SET_COOKIE]
-            .to_str()
-            .unwrap()
-            .split(';')
-            .next()
-            .unwrap(),
-        cookie
-    );
+    assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+    assert!(!stale.headers().contains_key(header::SET_COOKIE));
     let machine = http
         .get(format!("http://{address}/api/v2/projects"))
         .header(header::HOST, "localhost")

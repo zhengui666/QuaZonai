@@ -213,26 +213,17 @@ pub fn target_window(
     if asof_ns >= until_ns {
         return Err(DomainError::Invalid("polymarket_target_lifetime"));
     }
+    let chains = crate::catalogs::instrument_versions(definitions)?;
     for id in ids {
-        let mut found = false;
-        for definition in definitions {
-            let (class, payload) = crate::catalogs::instrument_definition(definition)?;
-            if payload.get("id").and_then(Value::as_str) != Some(id.as_str()) {
-                continue;
+        let versions = chains
+            .get(id.as_str())
+            .ok_or(DomainError::Invalid("polymarket_target_identity"))?;
+        let (class, payload) = crate::catalogs::instrument_version_at(versions, asof_ns)?;
+        if class == "BinaryOption" {
+            let (activation, expiration) = instrument(payload)?;
+            if asof_ns < activation || asof_ns >= expiration || until_ns > expiration {
+                return Err(DomainError::Invalid("polymarket_target_lifetime"));
             }
-            if found {
-                return Err(DomainError::Invalid("polymarket_target_identity"));
-            }
-            found = true;
-            if class == "BinaryOption" {
-                let (activation, expiration) = instrument(payload)?;
-                if asof_ns < activation || asof_ns >= expiration || until_ns > expiration {
-                    return Err(DomainError::Invalid("polymarket_target_lifetime"));
-                }
-            }
-        }
-        if !found {
-            return Err(DomainError::Invalid("polymarket_target_identity"));
         }
     }
     Ok(())

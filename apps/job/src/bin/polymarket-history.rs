@@ -7,8 +7,9 @@ use contracts::SchemaV1;
 use nautilus_core::UnixNanos;
 use nautilus_model::{
     data::{Bar, InstrumentClose, OrderBookDelta, QuoteTick, TradeTick},
-    enums::{InstrumentCloseType, PriceType},
+    enums::{BookAction, InstrumentCloseType, PriceType},
     instruments::{Instrument, InstrumentAny},
+    types::{Price, Quantity},
 };
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use nautilus_polymarket::http::{
@@ -29,6 +30,9 @@ const MAX_INPUT_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_ROWS: usize = 1_000_000;
 const NATIVE_VERSION: &str = "0.63.0";
 
+#[path = "history/archive.rs"]
+mod archive;
+
 #[derive(Parser)]
 #[command(
     version,
@@ -41,6 +45,12 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Decode original Polygon v1/v2 fills corroborated by two public RPC endpoints.
+    Chain(archive::chain::Arguments),
+    /// Convert matching dual live captures with original Gamma metadata and resolution messages.
+    Capture(archive::capture::Arguments),
+    /// Convert a verified public Parquet snapshot; select native instruments and a UTC window.
+    Archive(archive::Arguments),
     /// Read public history through the pinned Nautilus Rust clients. Coverage remains unproven.
     Fetch {
         #[arg(long)]
@@ -97,6 +107,7 @@ struct ImportReport {
     source_observed_at: DateTime<Utc>,
     imported_at: DateTime<Utc>,
     instruments: usize,
+    instrument_versions: usize,
     trades: usize,
     quotes: usize,
     deltas: usize,
@@ -186,10 +197,51 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         .context("ROW_COUNT_RANGE")?;
     ensure!((1..=MAX_ROWS).contains(&rows), "NATIVE_ROW_LIMIT_OR_EMPTY");
     let mut ids = BTreeSet::new();
+    let mut versions = std::collections::BTreeMap::<_, Vec<&InstrumentAny>>::new();
     for instrument in &archive.instruments {
         historical_instrument(instrument)?;
-        ensure!(ids.insert(instrument.id()), "DUPLICATE_INSTRUMENT");
+        ids.insert(instrument.id());
+        versions
+            .entry(instrument.id())
+            .or_default()
+            .push(instrument);
     }
+    let definitions = archive
+        .instruments
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    domain::catalogs::instrument_versions(&definitions)?;
+    // Static retrospective archives remain explicitly UNVERIFIED. A changing
+    // definition, however, must resolve every record against its original clock.
+    let dynamic_prices = |id, at: UnixNanos, prices: &[Price]| -> Result<()> {
+        let chain = versions.get(&id).context("UNMAPPED_INSTRUMENT")?;
+        if chain.len() == 1 {
+            return Ok(());
+        }
+        ensure!(
+            !chain.iter().skip(1).any(|i| i.ts_init() == at),
+            "AMBIGUOUS_INSTRUMENT_UPDATE"
+        );
+        let instrument = chain
+            .iter()
+            .rev()
+            .find(|i| i.ts_init() <= at)
+            .context("INSTRUMENT_DEFINITION_FROM_FUTURE")?;
+        for price in prices {
+            ensure!(
+                price.precision == instrument.price_precision(),
+                "PRICE_PRECISION_MISMATCH"
+            );
+            instrument.try_normalize_price(*price)?;
+            ensure!(
+                instrument.min_price().is_none_or(|p| *price >= p)
+                    && instrument.max_price().is_none_or(|p| *price <= p),
+                "PRICE_OUTSIDE_INSTRUMENT_BOUNDS"
+            );
+        }
+        Ok(())
+    };
     let mut trade_ids = BTreeSet::new();
     for trade in &archive.trades {
         ensure!(ids.contains(&trade.instrument_id), "UNMAPPED_TRADE");
@@ -202,8 +254,14 @@ fn validate(archive: &NativeArchive) -> Result<()> {
             "DUPLICATE_TRADE_ID"
         );
         time_order(trade.ts_event, trade.ts_init)?;
+        dynamic_prices(trade.instrument_id, trade.ts_init, &[trade.price])?;
     }
     for quote in &archive.quotes {
+        dynamic_prices(
+            quote.instrument_id,
+            quote.ts_init,
+            &[quote.bid_price, quote.ask_price],
+        )?;
         ensure!(ids.contains(&quote.instrument_id), "UNMAPPED_QUOTE");
         ensure!(
             valid_price(quote.bid_price.as_decimal())
@@ -214,11 +272,23 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         time_order(quote.ts_event, quote.ts_init)?;
     }
     for delta in &archive.deltas {
+        if delta.action != BookAction::Clear {
+            dynamic_prices(delta.instrument_id, delta.ts_init, &[delta.order.price])?;
+        }
         ensure!(ids.contains(&delta.instrument_id), "UNMAPPED_BOOK_DELTA");
         ensure!(
             valid_price(delta.order.price.as_decimal()),
             "INVALID_BINARY_BOOK_PRICE"
         );
+        if delta.action == BookAction::Clear {
+            ensure!(
+                delta.order.side.is_none()
+                    && delta.order.price.raw == 0
+                    && delta.order.size.raw == 0
+                    && delta.order.order_id == 0,
+                "INVALID_BOOK_CLEAR"
+            );
+        }
         time_order(delta.ts_event, delta.ts_init)?;
     }
     let mut settled = BTreeSet::new();
@@ -274,6 +344,11 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         }
     }
     for bar in &archive.bars {
+        dynamic_prices(
+            bar.bar_type.instrument_id(),
+            bar.ts_init,
+            &[bar.open, bar.high, bar.low, bar.close],
+        )?;
         ensure!(ids.contains(&bar.bar_type.instrument_id()), "UNMAPPED_BAR");
         ensure!(
             bar.bar_type.is_externally_aggregated()
@@ -318,7 +393,20 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
         .iter()
         .map(historical_instrument)
         .collect::<Result<Vec<_>>>()?;
+    let precisions = instruments
+        .iter()
+        .map(|i| (i.id(), (i.price_precision(), i.size_precision())))
+        .collect::<std::collections::BTreeMap<_, _>>();
     catalog.write_instruments(instruments)?;
+    // Native clear() uses precision 0. Catalog partition identity includes precision,
+    // even on clears, so preserve its null order with the instrument's representation.
+    for delta in &mut archive.deltas {
+        if delta.action == BookAction::Clear {
+            let (price, size) = precisions[&delta.instrument_id];
+            delta.order.price = Price::from_decimal_dp(Decimal::ZERO, price)?;
+            delta.order.size = Quantity::zero(size);
+        }
+    }
     // Native Parquet metadata belongs to one instrument (one BarType for bars).
     // Stable ordering preserves the source order of simultaneous book updates.
     archive.trades.sort_by_key(|r| (r.instrument_id, r.ts_init));
@@ -359,7 +447,8 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
         source_reference: archive.source_reference,
         source_observed_at: archive.source_observed_at,
         imported_at: Utc::now(),
-        instruments: archive.instruments.len(),
+        instruments: archive.instruments.iter().map(Instrument::id).collect::<BTreeSet<_>>().len(),
+        instrument_versions: archive.instruments.len(),
         trades: archive.trades.len(), quotes: archive.quotes.len(),
         deltas: archive.deltas.len(), bars: archive.bars.len(), closes: archive.closes.len(),
         catalog_relative_path: "catalog".into(),
@@ -369,9 +458,9 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
         limitations: vec![
             "Native serialization is not a coverage, historical fee, settlement or PIT verification.".into(),
             "Current metadata retains its observation time; it is not backdated for historical research.".into(),
-            "Pinned HTTP history may be truncated; same-second ordering is synthesized by upstream, not observed latency.".into(),
+            "Availability, ordering and truncation depend on the original source; see source-evidence.json.".into(),
             "Book records are not claimed gap-free or replayable without separate snapshot/sequence validation.".into(),
-            "No synthetic OHLCV or depth is created. Source evidence is outside the native catalog mount.".into(),
+            "Missing intervals, prices and depth are not imputed. Source evidence is outside the native catalog mount.".into(),
         ],
     };
     // Written last: a directory without this report is an interrupted, unpublished import.
@@ -452,6 +541,13 @@ async fn fetch(slug: &str, start: u64, end: u64, max_trades: u32) -> Result<Nati
 async fn main() {
     let args = Arguments::parse();
     let result = match args.command {
+        Command::Chain(args) => {
+            archive::chain::prepare(&args).and_then(|a| import(a, &args.output))
+        }
+        Command::Capture(args) => {
+            archive::capture::prepare(&args).and_then(|a| import(a, &args.output))
+        }
+        Command::Archive(args) => archive::prepare(&args).and_then(|a| import(a, &args.output)),
         Command::Import { input, output } => read_archive(&input).and_then(|a| import(a, &output)),
         Command::Fetch {
             market_slug,

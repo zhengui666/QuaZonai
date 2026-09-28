@@ -128,7 +128,10 @@ async fn loopback_reads_and_cancel_use_real_auth_origin_revision_and_receipts(po
     let run = admitted(&pool, &f, "http").await;
     let http = Http::start(f.app.clone()).await;
     let path = format!("/api/v2/runs/{}", run.id);
-    json_reply(http.get(&path, None).await, StatusCode::OK).await;
+    let anonymous = http.get(&path, None).await;
+    assert!(anonymous.headers().get("set-cookie").is_none());
+    let denied = json_reply(anonymous, StatusCode::UNAUTHORIZED).await;
+    assert_eq!(denied["code"], "AUTH_REQUIRED");
     let current = json_reply(http.get(&path, Some(&cookie)).await, StatusCode::OK).await;
     assert_eq!(current["id"], run.id.to_string());
     assert_eq!(current["last_event_seq"], "1");

@@ -52,7 +52,7 @@ pub(super) async fn read_authority(
     project: Id,
 ) -> Result<Option<Id>, StoreError> {
     Ok(match actor {
-        Actor::Browser { .. } => {
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
             authority::browser(tx, actor, false).await?;
             None
         }

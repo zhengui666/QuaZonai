@@ -14,7 +14,7 @@ use contracts::{
     Id,
 };
 use integrations::artifacts::ArtifactStore;
-use native::{body, call, client, fixture, upload};
+use native::{body, call, client, fixture, proposal_inputs, upload};
 use serde_json::json;
 use sqlx::PgPool;
 use std::{fs, os::unix::fs::symlink};
@@ -90,11 +90,31 @@ async fn publish(pool: &PgPool, reconciling: bool) {
         assert_eq!(retry["replayed"], true);
         assert_eq!(retry["resource"], original["resource"]);
     }
-    let intent = json!({"idempotency_key":"experiment","proposal":proposal});
+    let intent = json!({"idempotency_key":"experiment","proposal":proposal_inputs(&proposal)});
+    for (field, value) in [
+        ("cycle_id", json!(f.binding.cycle_id)),
+        ("cycle_id", json!(Id::new())),
+        ("schema_version", json!(1)),
+        ("project_id", json!(f.binding.project_id)),
+        ("outcome", json!("PASS")),
+        ("hypothesis", json!(" ")),
+        (
+            "parameter_artifact_id",
+            json!(proposal.proposal_artifact_id),
+        ),
+    ] {
+        let mut invalid = intent.clone();
+        invalid["proposal"][field] = value;
+        let rejected = call(&client, "experiment.propose", invalid).await;
+        assert_eq!(rejected["isError"], true);
+        assert_eq!(body(&rejected)["code"], "MCP_CONTRACT_INCOMPATIBLE");
+    }
     let response = call(&client, "experiment.propose", intent.clone()).await;
     assert_ne!(response["isError"], true, "{response}");
     let initial: CommandResult<ExperimentView> = serde_json::from_value(body(&response)).unwrap();
     assert_eq!(initial.resource.author_run_id, Some(f.binding.run_id));
+    assert_eq!(initial.resource.cycle_id, f.binding.cycle_id);
+    assert_eq!(initial.resource.family_id, proposal.family_id);
     assert_eq!(initial.resource.trial_source, ExperimentSource::Codex);
     assert_eq!(initial.resource.outcome, Some(ExperimentOutcome::Pending));
     assert!(initial.resource.run_id.is_none());
@@ -141,7 +161,7 @@ async fn file_scope_and_revocation_rejections_leave_no_artifact(pool: PgPool) {
     let denied = call(
         &client,
         "experiment.propose",
-        json!({"idempotency_key":"no-scope","proposal":f.research.request}),
+        json!({"idempotency_key":"no-scope","proposal":proposal_inputs(&f.research.request)}),
     )
     .await;
     assert_eq!(denied["isError"], true);

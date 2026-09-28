@@ -40,6 +40,8 @@ async function setup(page: Page, ready = false) {
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const reply = (json: unknown, status = 200) => route.fulfill({ status, body: JSON.stringify(json), contentType: 'application/json' });
+    if (path === '/api/v2/auth/status') return reply({ schema_version: 1, setup_required: false });
+    if (path === '/api/v2/auth/session') return reply({ schema_version: 1, authenticated_at: now, expires_at: new Date(Date.now() + 43_200_000).toISOString() });
     if (path === '/api/v2/projects') return reply({ schema_version: 1, items: [], next_cursor: null });
     if (path === '/api/v2/settings/codex') return reply({ schema_version: 1, items: profiles, next_cursor: null });
     const current = profiles.find(item => path === `/api/v2/settings/codex/${item.id}`);

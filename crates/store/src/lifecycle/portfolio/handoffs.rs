@@ -138,7 +138,7 @@ async fn read_authority(
     project: Id,
 ) -> Result<Option<Id>, StoreError> {
     match actor {
-        Actor::Browser { .. } => {
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
             crate::authority::browser(tx, actor, false).await?;
             Ok(None)
         }

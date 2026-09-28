@@ -38,6 +38,178 @@ fn fixture() -> (InstrumentAny, Vec<Bar>, NativeBarSelectionV1) {
     (instrument, bars, selection)
 }
 
+fn definition(original: &InstrumentAny, tick: &str, event: u64, available: u64) -> InstrumentAny {
+    let mut value = serde_json::to_value(original).unwrap();
+    let payload = value.as_object_mut().unwrap().values_mut().next().unwrap();
+    payload["price_increment"] = tick.into();
+    payload["ts_event"] = event.into();
+    payload["ts_init"] = available.into();
+    serde_json::from_value(value).unwrap()
+}
+
+#[test]
+fn parquet_tick_history_keeps_late_rows_controls_after_event_end_and_original_baselines() {
+    let directory = tempfile::tempdir().unwrap();
+    let (original, mut bars, mut selection) = fixture();
+    let original = definition(&original, "0.00100", 0, 0);
+    let update = definition(&original, "0.00010", 210_000_000_000, 210_000_000_001);
+    bars[0].ts_init = 200_000_000_000_u64.into();
+    bars[1].ts_init = 230_000_000_000_u64.into();
+    bars[1].close = Price::from("0.65550");
+    bars[2].ts_init = 260_000_000_000_u64.into();
+    bars[3].ts_init = 280_000_000_000_u64.into();
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(2),
+        None,
+        None,
+    )
+    .unwrap();
+    catalog
+        .write_instruments(vec![original.clone(), update.clone()])
+        .unwrap();
+    catalog.write_to_parquet(&bars, None, None, None).unwrap();
+    selection.event_end_ns = DbCounter::new(150_000_000_000).unwrap();
+    let result = load_catalog(directory.path(), &selection).unwrap();
+    assert_eq!(result.rows, 2);
+    assert_eq!(result.series[0].bars, bars[..2]);
+    assert_eq!(
+        serde_json::to_value(&result.series[0].instrument_updates).unwrap(),
+        serde_json::to_value([&update]).unwrap()
+    );
+    assert_eq!(
+        result.series[0]
+            .instrument_at(200_000_000_000)
+            .unwrap()
+            .price_increment(),
+        original.price_increment()
+    );
+    assert_eq!(
+        result.series[0]
+            .instrument_at(230_000_000_000)
+            .unwrap()
+            .price_increment(),
+        update.price_increment()
+    );
+    selection.decision_cutoff_ns = DbCounter::new(205_000_000_000).unwrap();
+    let before = load_catalog(directory.path(), &selection).unwrap();
+    assert_eq!(before.series[0].bars, bars[..1]);
+    assert!(before.series[0].instrument_updates.is_empty());
+    selection.event_start_ns = DbCounter::new(225_000_000_000).unwrap();
+    selection.event_end_ns = DbCounter::new(300_000_000_000).unwrap();
+    selection.decision_cutoff_ns = selection.event_end_ns;
+    let later = load_catalog(directory.path(), &selection).unwrap();
+    assert_eq!(later.series[0].bars, bars[3..]);
+    assert_eq!(
+        serde_json::to_value(&later.series[0].instrument).unwrap(),
+        serde_json::to_value(&update).unwrap()
+    );
+    assert!(later.series[0].instrument_updates.is_empty());
+}
+
+#[test]
+fn parquet_boundary_update_keeps_its_baseline_and_rejects_a_tied_bar() {
+    let boundary = 60_000_000_000;
+    for (earlier_definition, delay) in [(true, 0), (true, 1), (false, 0)] {
+        let directory = tempfile::tempdir().unwrap();
+        let (original, mut bars, mut selection) = fixture();
+        let update = definition(&original, "0.00010", boundary - 1, boundary);
+        bars[0].ts_init = (boundary + delay).into();
+        selection.event_start_ns = DbCounter::new(boundary).unwrap();
+        let catalog = ParquetDataCatalog::from_uri(
+            directory.path().to_str().unwrap(),
+            None,
+            Some(2),
+            None,
+            None,
+        )
+        .unwrap();
+        let definitions = if earlier_definition {
+            vec![original.clone(), update.clone()]
+        } else {
+            vec![update.clone()]
+        };
+        catalog.write_instruments(definitions).unwrap();
+        catalog.write_to_parquet(&bars, None, None, None).unwrap();
+        let result = load_catalog(directory.path(), &selection);
+        if earlier_definition && delay == 0 {
+            assert!(result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("CATALOG_AMBIGUOUS_INSTRUMENT_UPDATE"));
+            continue;
+        }
+        let data = result.unwrap();
+        assert_eq!(data.series[0].bars, bars);
+        let expected_baseline = if earlier_definition {
+            &original
+        } else {
+            &update
+        };
+        assert_eq!(
+            serde_json::to_value(&data.series[0].instrument).unwrap(),
+            serde_json::to_value(expected_baseline).unwrap()
+        );
+        assert_eq!(
+            data.series[0].instrument_updates.len(),
+            usize::from(earlier_definition)
+        );
+        assert_eq!(
+            serde_json::to_value(data.series[0].instrument_at(boundary).unwrap()).unwrap(),
+            serde_json::to_value(&update).unwrap()
+        );
+    }
+}
+
+#[test]
+fn tick_history_rejects_missing_baseline_ambiguous_ties_and_crossing_invalid_ohlc() {
+    let (original, bars, selection) = fixture();
+    let update = definition(
+        &original,
+        "0.00010",
+        119_000_000_000,
+        bars[1].ts_init.as_u64(),
+    );
+    let error = validate_native(
+        vec![original.clone(), update.clone()],
+        bars.clone(),
+        &selection,
+    )
+    .err()
+    .unwrap();
+    assert!(error
+        .to_string()
+        .contains("CATALOG_AMBIGUOUS_INSTRUMENT_UPDATE"));
+    assert!(validate_native(vec![update], bars.clone(), &selection).is_err());
+    let update = definition(&original, "0.00010", 100_000_000_000, 110_000_000_000);
+    let mut crossing = bars.clone();
+    crossing[1].open = Price::from("0.65001");
+    assert!(validate_native(vec![original.clone(), update.clone()], crossing, &selection).is_err());
+    let mut bounds = serde_json::to_value(&update).unwrap();
+    bounds["CurrencyPair"]["max_price"] = "0.65000".into();
+    let bounds = serde_json::from_value(bounds).unwrap();
+    assert!(validate_native(vec![original, bounds], bars, &selection).is_err());
+}
+
+#[test]
+fn original_static_definition_after_empty_selection_start_is_not_backdated_or_rejected() {
+    let (original, bars, selection) = fixture();
+    let original = definition(&original, "0.00001", 10_000_000_000, 20_000_000_000);
+    let data = validate_native(vec![original.clone()], bars.clone(), &selection).unwrap();
+    assert_eq!(data.series[0].instrument.ts_init(), original.ts_init());
+    assert!(data.series[0].instrument_at(19_999_999_999).is_err());
+    assert_eq!(data.rows, bars.len());
+    let unavailable = definition(
+        &original,
+        "0.00001",
+        10_000_000_000,
+        bars[0].ts_init.as_u64() + 1,
+    );
+    assert!(validate_native(vec![unavailable], bars, &selection).is_err());
+}
+
 #[test]
 fn native_catalog_round_trip_preserves_identity_values_and_times() {
     let directory = tempfile::tempdir().unwrap();

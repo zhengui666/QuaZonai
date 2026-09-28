@@ -33,9 +33,14 @@ jobs:
       - name: Check operator-only native data preparation
         run: |
           set -euo pipefail
-          cargo clippy --locked -p job --features polymarket-history --bin polymarket-history -- -D warnings
-          cargo test --locked -p job --features polymarket-history --bin polymarket-history
+          python3 -B -m unittest discover -s runtimes/data -v
+          cargo clippy --locked -p job --features polymarket-history,catalog-prepare --all-targets -- -D warnings
+          cargo test --locked -p job --features polymarket-history,catalog-prepare --bin polymarket-history --test catalog_prepare --test catalog --test managed --test instrument_versions --test native_instrument_updates
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- --help
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- fetch --help
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- import --help
+          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- archive --help
+          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- chain --help
+          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- capture --help
+          cargo run --locked -q -p job --features catalog-prepare --bin catalog-prepare -- --help
           git diff --exit-code

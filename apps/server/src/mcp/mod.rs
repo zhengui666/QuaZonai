@@ -5,15 +5,15 @@ mod client;
 mod requests;
 
 use chrono::Utc;
-use contracts::{artifacts::ArtifactCreate, control::MachineScope, Id};
+use contracts::{artifacts::ArtifactCreate, control::MachineScope, Id, SchemaV1};
 use integrations::mission_files::MissionFiles;
-use requests::{ArtifactFileRequest, ProposalRequest};
+use requests::{ArtifactFileRequest, BoundReadRequest, ProposalRequest};
 use rmcp::{
     handler::server::wrapper::Parameters,
     model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo},
-    schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
+    tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{fmt, future::Future, path::Path, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite},
@@ -37,7 +37,7 @@ pub struct MissionBinding {
 }
 
 /// Safe, closed failures: no source error chain, URL, token, body or request headers.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Failure {
     Configuration,
     Authority,
@@ -49,9 +49,15 @@ pub enum Failure {
     Capacity,
     Protocol,
     Http(u16),
+    Rejected {
+        status: u16,
+        code: String,
+        retryable: bool,
+        request_id: Id,
+    },
 }
 impl Failure {
-    pub fn code(self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             Self::Configuration => "MCP_CONFIGURATION_INVALID",
             Self::Authority => "MCP_AUTHORITY_REJECTED",
@@ -62,13 +68,25 @@ impl Failure {
             Self::Deadline => "MCP_DEADLINE_EXCEEDED",
             Self::Capacity => "MCP_CONCURRENCY_LIMIT",
             Self::Protocol => "MCP_PROTOCOL_FAILED",
-            Self::Http(_) => "MCP_CONTROL_REJECTED",
+            Self::Http(_) | Self::Rejected { .. } => "MCP_CONTROL_REJECTED",
         }
     }
     fn tool_result(self) -> CallToolResult {
         let mut body = serde_json::json!({"schema_version":1,"code":self.code()});
-        if let Self::Http(status) = self {
-            body["http_status"] = status.into();
+        match self {
+            Self::Http(status) => body["http_status"] = status.into(),
+            Self::Rejected {
+                status,
+                code,
+                retryable,
+                request_id,
+            } => {
+                body["http_status"] = status.into();
+                body["problem_code"] = code.into();
+                body["retryable"] = retryable.into();
+                body["request_id"] = serde_json::json!(request_id);
+            }
+            _ => {}
         }
         CallToolResult::error(vec![ContentBlock::text(body.to_string())])
     }
@@ -79,25 +97,6 @@ impl fmt::Display for Failure {
     }
 }
 impl std::error::Error for Failure {}
-
-fn id_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    // Reuse the existing UUIDv7 wire contract, rather than a second regex/type.
-    let value = serde_json::to_value(<Id as utoipa::PartialSchema>::schema())
-        .expect("Id's native schema must serialize");
-    schemars::Schema::try_from(value).expect("Id's native schema must be a JSON object")
-}
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BriefRequest {
-    #[schemars(schema_with = "id_schema")]
-    pub brief_id: Id,
-}
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RunRequest {
-    #[schemars(schema_with = "id_schema")]
-    pub run_id: Id,
-}
 
 #[derive(Clone)]
 pub struct MissionMcp {
@@ -178,12 +177,9 @@ impl MissionMcp {
     )]
     async fn get_brief(
         &self,
-        Parameters(request): Parameters<BriefRequest>,
+        Parameters(_): Parameters<BoundReadRequest>,
     ) -> Result<CallToolResult, McpError> {
         self.bounded(async {
-            if request.brief_id != self.binding.brief_id {
-                return Err(Failure::Authority);
-            }
             let (_, expires) = self.control.authority().await?;
             let brief = self.control.brief().await?;
             if expires <= Utc::now() {
@@ -200,12 +196,9 @@ impl MissionMcp {
     )]
     async fn get_run(
         &self,
-        Parameters(request): Parameters<RunRequest>,
+        Parameters(_): Parameters<BoundReadRequest>,
     ) -> Result<CallToolResult, McpError> {
         self.bounded(async {
-            if request.run_id != self.binding.run_id {
-                return Err(Failure::Authority);
-            }
             let (run, _) = self.control.authority().await?;
             Ok(run)
         })
@@ -239,7 +232,7 @@ impl MissionMcp {
             .await
             .map_err(|_| Failure::File)??;
             let upload = ArtifactCreate {
-                schema_version: request.schema_version,
+                schema_version: SchemaV1,
                 project_id: self.binding.project_id,
                 kind: request.kind,
                 content,
@@ -254,16 +247,16 @@ impl MissionMcp {
 
     #[tool(
         name = "experiment.propose",
-        description = "Publish an immutable experiment proposal for this Mission's existing Cycle and frozen Family using real registered research artifacts. Requires EXPERIMENT_SUBMIT. Returns the original proposal on an exact idempotent retry; does not run science or grant PASS, qualification, approval or delivery."
+        description = "Publish an immutable experiment proposal for this Mission's bound Cycle using a chosen frozen Family and real registered research artifacts. Cycle and schema version are supplied by the adapter. Requires EXPERIMENT_SUBMIT. Returns the original proposal on an exact idempotent retry; does not run science or grant PASS, qualification, approval or delivery."
     )]
     async fn propose_experiment(
         &self,
         Parameters(request): Parameters<ProposalRequest>,
     ) -> Result<CallToolResult, McpError> {
-        self.bounded(
-            self.control
-                .propose(&request.idempotency_key, &request.proposal),
-        )
+        self.bounded(async {
+            let (key, proposal) = request.into_native(self.binding.cycle_id)?;
+            self.control.propose(&key, &proposal).await
+        })
         .await
     }
 }
@@ -301,27 +294,6 @@ impl MissionMcp {
                 cancellation.cancel();
                 Err(Failure::Deadline)
             }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tool_schema_reuses_strict_native_uuid_and_rejects_authority_fields() {
-        let schema = schemars::schema_for!(RunRequest);
-        let value = serde_json::to_value(schema).unwrap();
-        let native = serde_json::to_value(<Id as utoipa::PartialSchema>::schema()).unwrap();
-        assert_eq!(value["properties"]["run_id"], native);
-        assert_eq!(value["additionalProperties"], false);
-        for value in [
-            serde_json::json!({"run_id":"../../secret"}),
-            serde_json::json!({"run_id":"550e8400-e29b-41d4-a716-446655440000"}),
-            serde_json::json!({"run_id":Id::new(),"project_id":Id::new()}),
-        ] {
-            assert!(serde_json::from_value::<RunRequest>(value).is_err());
         }
     }
 }

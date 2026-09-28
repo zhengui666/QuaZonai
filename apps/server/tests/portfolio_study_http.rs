@@ -184,7 +184,7 @@ async fn http(
     let release_url = format!("{origin}/api/v2/projects/{}/releases", f.data.project);
     assert_eq!(
         client.get(&release_url).send().await.unwrap().status(),
-        reqwest::StatusCode::OK
+        reqwest::StatusCode::UNAUTHORIZED
     );
     let empty = client
         .get(&release_url)
@@ -267,7 +267,7 @@ async fn http(
     let provenance_url = format!("{origin}/api/v2/runs/{}/rebalance", run.id);
     assert_eq!(
         client.get(&provenance_url).send().await.unwrap().status(),
-        reqwest::StatusCode::OK
+        reqwest::StatusCode::UNAUTHORIZED
     );
     let provenance = client
         .get(&provenance_url)
@@ -762,7 +762,7 @@ async fn claim_http(
     let approvals_url = format!("{origin}/api/v2/releases/{}/approvals", release.id);
     assert_eq!(
         http.get(&approvals_url).send().await.unwrap().status(),
-        reqwest::StatusCode::OK
+        reqwest::StatusCode::UNAUTHORIZED
     );
     assert_eq!(
         http.get(&approvals_url)

@@ -5,6 +5,84 @@ use sqlx::PgPool;
 use store::{authority::Actor, Store, StoreError};
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn setup_has_one_winner_and_password_change_fences_inflight_admission(pool: PgPool) {
+    let store = Store::from_pool(pool);
+    let (a, b) = tokio::join!(
+        store.setup_password("first-verifier", false),
+        store.setup_password("second-verifier", false)
+    );
+    assert_ne!(a.is_ok(), b.is_ok());
+    let login = a.or(b).unwrap();
+    let snapshot = store.authentication_snapshot().await.unwrap();
+    store
+        .change_password(login.id, &snapshot, "changed-verifier")
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.password_login(&snapshot, true).await,
+        Err(StoreError::InvalidCredentials)
+    ));
+    assert!(matches!(
+        store
+            .register_cli_device(&snapshot, "stale login", "device-verifier")
+            .await,
+        Err(StoreError::InvalidCredentials)
+    ));
+    assert!(matches!(
+        store.browser_authority(login.id).await,
+        Err(StoreError::AuthenticationRequired)
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn revoked_device_actor_is_rechecked_inside_business_transactions_and_restore(pool: PgPool) {
+    let store = Store::from_pool(pool.clone());
+    let login = store
+        .setup_password("password-verifier", false)
+        .await
+        .unwrap();
+    let snapshot = store.authentication_snapshot().await.unwrap();
+    let device = store
+        .register_cli_device(&snapshot, "test device", "device-verifier")
+        .await
+        .unwrap();
+    let actor = Actor::OwnerDevice {
+        device_id: device.id,
+        verifier: "device-verifier".into(),
+    };
+    store.cli_device_session(&actor).await.unwrap();
+    store.revoke_cli_device(login.id, device.id).await.unwrap();
+    let request = ProjectCreate {
+        schema_version: SchemaV1,
+        name: "denied".into(),
+        description: String::new(),
+        fork_from_project_id: None,
+    };
+    assert!(matches!(
+        store
+            .create_project(&actor, "revoked-device", &request)
+            .await,
+        Err(StoreError::InvalidCredentials)
+    ));
+    let second = store
+        .register_cli_device(&snapshot, "second device", "second-verifier")
+        .await
+        .unwrap();
+    store.invalidate_restored_access(Id::new()).await.unwrap();
+    assert!(matches!(
+        store.cli_device_verifier(second.id).await,
+        Err(StoreError::InvalidCredentials)
+    ));
+    assert!(
+        sqlx::query("UPDATE app.cli_devices SET revoked_at=NULL WHERE id=$1")
+            .bind(device.id.as_uuid())
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn concurrent_local_sessions_need_no_setup_and_have_fixed_twelve_hour_lifetimes(
     pool: PgPool,
 ) {

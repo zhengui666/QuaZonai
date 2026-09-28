@@ -1,5 +1,5 @@
 name: Verify production container
-description: Build one exact-source image and exercise its real deployment lifecycle.
+description: Build exact-source application, scientific and Codex images; install without building.
 inputs:
   source:
     description: Source checkout directory, relative to the workspace.
@@ -13,6 +13,16 @@ inputs:
   version:
     description: OCI version label.
     required: true
+outputs:
+  runtime-image:
+    description: Already-tested native scientific image ID.
+    value: ${{ steps.native.outputs.image }}
+  codex-image:
+    description: Already-tested native Codex image ID.
+    value: ${{ steps.codex.outputs.image }}
+  codex-version:
+    description: Exact Codex version in the tested image.
+    value: ${{ steps.codex.outputs.version }}
 runs:
   using: composite
   steps:
@@ -25,7 +35,8 @@ runs:
       run: |
         set -euo pipefail
         test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-        for script in deploy/docker/entrypoint.sh deploy/docker/deploy.sh deploy/docker/update.sh deploy/docker/codex-update.sh deploy/docker/codex-login.sh; do
+        test -f deploy/docker/runtime.sh
+        for script in deploy/docker/entrypoint.sh deploy/docker/deploy.sh deploy/docker/update.sh deploy/docker/codex-update.sh deploy/docker/codex-login.sh deploy/docker/runtime.sh; do
           bash -n "$script"
         done
         python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
@@ -40,6 +51,37 @@ runs:
         export XDG_RUNTIME_DIR="/run/user/$uid"
         systemctl --user show --property=Version
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+    - name: Build the scientific image from the same source
+      id: native
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        IMAGE_VERSION: ${{ inputs.version }}
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_RELEASE_DEBUG: '0'
+      run: |
+        set -euo pipefail
+        rustup toolchain install 1.98.1 --profile minimal --target wasm32-unknown-unknown
+        rustup run 1.98.1 cargo build --locked --release -p job
+        assembly=$(mktemp -d "$RUNNER_TEMP/native-image.XXXXXX")
+        node runtimes/native/build-native-image.mjs --profile release --output-dir "$assembly/image" --image-version "$IMAGE_VERSION"
+        echo "image=$(cat "$assembly/image/image-id.txt")" >> "$GITHUB_OUTPUT"
+        # The image now owns its executable/toolchain. Free only this job's
+        # disposable Rust build output before the independent application build.
+        rm -rf target/release
+    - name: Build independent Codex images before installation
+      id: codex
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        PYTHONDONTWRITEBYTECODE: '1'
+      run: |
+        set -euo pipefail
+        version=$(sed -n 's/^CODEX_VERSION=//p' deploy/docker/.env.example)
+        python3 -B deploy/docker/release.py build-codex --codex-version "$version" --image quazonai-codex-candidate
+        python3 -B deploy/docker/release.py build-codex --codex-version 0.156.1 --image quazonai-codex-previous
+        echo "image=$(docker image inspect quazonai-codex-candidate --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
     - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
     - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
       with:
@@ -60,13 +102,18 @@ runs:
       env:
         IMAGE: ${{ inputs.image }}
         REVISION: ${{ inputs.revision }}
+        RUNTIME_IMAGE: ${{ steps.native.outputs.image }}
+        CODEX_IMAGE: ${{ steps.codex.outputs.image }}
+        CODEX_VERSION: ${{ steps.codex.outputs.version }}
         PYTHONDONTWRITEBYTECODE: '1'
       run: |
         set -euo pipefail
         docker run --rm "$IMAGE" --version
         docker run --rm --cap-drop ALL --security-opt no-new-privileges --entrypoint /usr/bin/caddy "$IMAGE" validate --config /opt/quazonai/Caddyfile --adapter caddyfile
         docker run --rm --entrypoint /bin/sh "$IMAGE" -c '! command -v codex'
-        python3 -B deploy/docker/smoke.py --image "$IMAGE" --revision "$REVISION"
+        python3 -B deploy/docker/smoke.py --image "$IMAGE" --revision "$REVISION" \
+          --runtime-image "$RUNTIME_IMAGE" --codex-image "$CODEX_IMAGE" --codex-version "$CODEX_VERSION" \
+          --previous-codex-image quazonai-codex-previous --previous-codex-version 0.156.1
     - name: Remove the test host's Codex user namespace profile
       if: always()
       shell: bash

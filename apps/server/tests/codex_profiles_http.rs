@@ -131,8 +131,9 @@ async fn local_roles_exist_without_registration_or_credentials_and_reads_do_not_
     }
     assert!(!view.to_string().contains(home.path().to_str().unwrap()));
     let anonymous = support::call(&f, "GET", "/api/v2/settings/codex", Value::Null, None).await;
-    assert_eq!(anonymous.status, StatusCode::OK);
-    assert!(anonymous.cookie.is_some());
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(anonymous.body["code"], "AUTH_REQUIRED");
+    assert!(anonymous.cookie.is_none());
     let homes = support::call(&f, "GET", "/api/v2/codex/homes", Value::Null, Some(&cookie)).await;
     assert_eq!(homes.status, StatusCode::NOT_FOUND);
     let registration = command(&f, &cookie, "no-registration", "POST", "/api/v2/settings/codex",

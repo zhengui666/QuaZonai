@@ -176,9 +176,16 @@ fn run(operation: Operation) -> Result<()> {
 
 fn main() {
     let args = Arguments::parse();
-    if run(args.command).is_err() {
-        // No upstream tracebacks, host paths, input contents or secrets on this channel.
-        eprintln!("QZ_NATIVE_JOB_FAILED");
+    if let Err(error) = run(args.command) {
+        // Only this fixed capability diagnostic is public. No upstream
+        // tracebacks, host paths, input contents or held-out values are exposed.
+        let code = match error.to_string().as_str() {
+            "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED" => {
+                "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
+            }
+            _ => "QZ_NATIVE_JOB_FAILED",
+        };
+        eprintln!("{code}");
         std::process::exit(1);
     }
 }

@@ -14,9 +14,10 @@ use std::sync::Arc;
 async fn assumptions_http_missing_and_empty_are_not_fabricated_versions(pool: PgPool) {
     let f = support::fixture(pool).await;
     let missing = format!("/api/v2/execution-assumptions/{}", contracts::Id::new());
-    let local = support::call(&f, "GET", &missing, Value::Null, None).await;
-    assert_eq!(local.status, StatusCode::NOT_FOUND);
-    assert!(local.cookie.is_some());
+    let anonymous = support::call(&f, "GET", &missing, Value::Null, None).await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(anonymous.body["code"], "AUTH_REQUIRED");
+    assert!(anonymous.cookie.is_none());
     let denied = support::invalid_bearer(&f, "GET", &missing, Value::Null).await;
     assert_eq!(denied.status, StatusCode::UNAUTHORIZED);
     assert!(denied.cookie.is_none());

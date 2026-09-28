@@ -59,6 +59,7 @@ fn complete_payout_vectors_preserve_collateral_and_identity() {
 fn definition(token: &str, expiry: u64) -> Value {
     json!({"BinaryOption": {"id":format!("condition-{token}.POLYMARKET"), "raw_symbol":token,
         "currency":"pUSD", "activation_ns":10, "expiration_ns":expiry,
+        "ts_event":0, "ts_init":0, "price_increment":"0.01",
         "info":{"condition_id":"condition", "token_id":token}}})
 }
 
@@ -77,6 +78,21 @@ fn earliest_contract_expiry_bounds_all_target_publication_paths() {
     assert!(
         prediction::target_window(&definitions, &["foreign.POLYMARKET".into()], 10, 90).is_err()
     );
+}
+
+#[test]
+fn tick_only_history_preserves_target_lifetime_and_rejects_fee_or_expiry_revisions() {
+    let original = definition("1", 100);
+    let mut update = original.clone();
+    update["BinaryOption"]["ts_event"] = 19.into();
+    update["BinaryOption"]["ts_init"] = 20.into();
+    update["BinaryOption"]["price_increment"] = "0.001".into();
+    let ids = vec!["condition-1.POLYMARKET".into()];
+    prediction::target_window(&[original.clone(), update.clone()], &ids, 30, 100).unwrap();
+    prediction::target_window(&[original.clone(), update.clone()], &ids, 10, 100).unwrap();
+    assert!(prediction::target_window(&[original.clone(), update.clone()], &ids, 30, 101).is_err());
+    update["BinaryOption"]["expiration_ns"] = 200.into();
+    assert!(prediction::target_window(&[original, update], &ids, 30, 100).is_err());
 }
 
 #[test]

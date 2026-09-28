@@ -1,21 +1,18 @@
-# Project review policy
+# Review
 
 <a id="scope"></a>
 ## Scope
-Follow [AGENTS](../AGENTS.md) and the current [owner amendment](../DESIGN.md#personal-lean). One task record and one PR are sufficient; no separate approval ledger or review calendar.
+
+Review the changed behavior and its callers against [architecture](architecture.md) and the linked task. Prioritize data loss, incorrect scientific results, duplicated external effects and broken user workflows. Do not turn cosmetic preferences into new product requirements.
 
 <a id="focus"></a>
-## Focus
-Check changed behavior, data flow, native reuse, numerical validity, recovery and unintended scope. Deletions must remove their obsolete callers and docs without deleting useful regression coverage.
+## Findings
 
-<a id="severity"></a>
-## Severity
-Prioritize data loss, incorrect results and unauthorized external effects; then broken workflows and performance. Cosmetic suggestions are not new product requirements.
+A finding identifies the changed path, triggering conditions, observable failure and a focused correction. Check generated contracts, source/permission lineage, transaction boundaries, cancellation/recovery and native component reuse where affected. Documentation changes must retain operational prerequisites and working references. Deletions must remove stale callers without deleting useful regression coverage or user data.
 
 <a id="approval"></a>
-## Approval
-GitHub Codex performs read-only review. Web ChatGPT addresses findings. Require current-Head applicable CI and explicit clean review before merging; missing evidence is not success. This is the owner's delivery procedure, not a claim about native branch protection.
+## Merge
 
-<a id="quality"></a>
-## Finding quality
-Each finding identifies a changed path, reproducible failure and minimal correction. Distinguish actual execution, fixtures and untested assumptions. Do not create new gates merely to satisfy this document.
+GitHub Codex performs read-only review; the web author fixes findings. Merge only when the final PR Head has all applicable CI passing, actionable review findings resolved and explicit clean Codex review. An old-Head review, emoji-only acknowledgement, skipped check or written handoff is not that evidence. Recheck the final Head and merge result in GitHub.
+
+Account authorization and deployment require their own scoped execution. Fixture tests, scoped maintenance and a merged PR do not establish unperformed end-to-end account results.

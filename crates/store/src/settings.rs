@@ -26,7 +26,9 @@ pub struct NativeSecretBinding {
 
 pub(crate) async fn read_authority(tx: &mut Tx<'_>, actor: &Actor) -> Result<(), StoreError> {
     match actor {
-        Actor::Browser { .. } => authority::browser(tx, actor, false).await?,
+        Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
+            authority::browser(tx, actor, false).await?
+        }
         Actor::Machine { .. } => {
             let machine = authority::machine(tx, actor, false).await?;
             if !matches!(machine.kind, PrincipalKind::Cli | PrincipalKind::Automation)

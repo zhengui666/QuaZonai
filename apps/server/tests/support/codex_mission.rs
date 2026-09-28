@@ -138,7 +138,7 @@ async fn respond(
                         .map(|tool| (namespace, tool))
                 })
                 .expect("native searched brief tool");
-            json!({"type":"function_call","namespace":namespace["name"],"name":tool["name"],"call_id":"qz-brief-call","arguments":json!({"brief_id":seen.brief}).to_string()})
+            json!({"type":"function_call","namespace":namespace["name"],"name":tool["name"],"call_id":"qz-brief-call","arguments":"{}"})
         }
         2 => {
             let tools = request["tools"].as_array().expect("native tool catalog");

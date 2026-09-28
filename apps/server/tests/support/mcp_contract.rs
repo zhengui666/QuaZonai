@@ -6,12 +6,7 @@ async fn frozen_brief_is_exactly_bound_and_draft_or_missing_freeze_is_rejected()
     let api = api().await;
     let (client, task) = connected(&api).await;
     let original = api.state.responses.lock().unwrap().brief.clone();
-    let call = || {
-        request(
-            "research.get_brief",
-            json!({"brief_id":api.binding.brief_id}),
-        )
-    };
+    let call = || request("research.get_brief", json!({}));
     let result = serde_json::to_value(client.call_tool(call()).await.unwrap()).unwrap();
     assert_ne!(result["isError"], true);
     assert_eq!(body(&result), original);
@@ -42,9 +37,19 @@ async fn frozen_brief_is_exactly_bound_and_draft_or_missing_freeze_is_rejected()
         assert_eq!(body(&result)["code"], "MCP_AUTHORITY_REJECTED");
     }
     let hits = api.state.responses.lock().unwrap().hits;
-    let other = request("research.get_brief", json!({"brief_id":Id::new()}));
-    let result = serde_json::to_value(client.call_tool(other).await.unwrap()).unwrap();
-    assert_eq!(body(&result)["code"], "MCP_AUTHORITY_REJECTED");
+    for arguments in [
+        json!({"brief_id":api.binding.brief_id}),
+        json!({"brief_id":Id::new()}),
+        json!({"project_id":api.binding.project_id}),
+        json!({"unknown":true}),
+    ] {
+        let result = client
+            .call_tool(request("research.get_brief", arguments))
+            .await;
+        assert!(
+            result.is_err() || serde_json::to_value(result.unwrap()).unwrap()["isError"] == true
+        );
+    }
     assert_eq!(api.state.responses.lock().unwrap().hits, hits);
     client.cancel().await.unwrap();
     assert!(task.await.unwrap().is_ok());
@@ -55,14 +60,14 @@ async fn runtime_attempt_takeover_or_expiry_revokes_the_next_native_tool_call() 
     let api = api().await;
     let (client, task) = connected(&api).await;
     api.state.responses.lock().unwrap().run["active_attempt_id"] = json!(Id::new());
-    let result = run(&client, api.binding.run_id).await;
+    let result = run(&client).await;
     assert_eq!(body(&result)["code"], "MCP_AUTHORITY_REJECTED");
     {
         let mut values = api.state.responses.lock().unwrap();
         values.run["active_attempt_id"] = json!(api.binding.attempt_id);
         values.identity["expires_at"] = json!(Utc::now() - ChronoDuration::seconds(1));
     }
-    let result = run(&client, api.binding.run_id).await;
+    let result = run(&client).await;
     assert_eq!(body(&result)["code"], "MCP_AUTHORITY_REJECTED");
     client.cancel().await.unwrap();
     assert!(task.await.unwrap().is_ok());

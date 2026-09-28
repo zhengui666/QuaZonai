@@ -11,6 +11,7 @@ import { Delivery } from './delivery';
 import { Runs } from './runs';
 import { Settings } from './settings';
 import { PwaUpdate } from './pwa';
+import { AuthGate, LogoutButton } from './auth';
 import { GuardContext, GuardProvider, useOnline, useReducedMotion } from './ui';
 import { useColorTheme } from './theme';
 import type { ColorTheme } from './theme';
@@ -55,7 +56,7 @@ function Console({ colorTheme, toggleTheme }: { colorTheme: ColorTheme; toggleTh
       <Layout>
         <Layout.Header className="console-header">
           <Space>{!screens.lg && <Button icon={<MenuOutlined aria-hidden />} aria-label="打开主导航" onClick={() => setMenuOpen(true)} />}<Typography.Text strong>QuaZonai</Typography.Text></Space>
-          <Button icon={colorTheme === 'light' ? <MoonOutlined aria-hidden /> : <SunOutlined aria-hidden />} aria-label={themeLabel} title={themeLabel} onClick={toggleTheme} />
+          <Space><Button icon={colorTheme === 'light' ? <MoonOutlined aria-hidden /> : <SunOutlined aria-hidden />} aria-label={themeLabel} title={themeLabel} onClick={toggleTheme} /><LogoutButton /></Space>
         </Layout.Header>
         <Layout.Content className="console-content" id="main-content" tabIndex={-1}>
           <a className="skip-link" href="#main-content">跳至主要内容</a>
@@ -107,6 +108,6 @@ export default function App() {
       borderRadius: 8, controlHeight: 44, fontSize: 15, motion: motionProviderReady && !reducedMotion,
     },
   }}>
-    <AntApp><QueryClientProvider client={queries}><GuardProvider><Console colorTheme={colorTheme} toggleTheme={toggleTheme} /></GuardProvider></QueryClientProvider></AntApp>
+    <AntApp><QueryClientProvider client={queries}><AuthGate><GuardProvider><Console colorTheme={colorTheme} toggleTheme={toggleTheme} /></GuardProvider></AuthGate></QueryClientProvider></AntApp>
   </ConfigProvider>;
 }

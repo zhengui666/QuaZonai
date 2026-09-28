@@ -32,6 +32,7 @@ struct Responses {
     oversized: bool,
     redirect: bool,
     hits: usize,
+    raw: Option<(StatusCode, &'static str, String)>,
 }
 struct TestState {
     credential: String,
@@ -63,6 +64,13 @@ async fn reply(State(state): State<Arc<TestState>>, request: Request<Body>) -> R
     );
     assert!(!request.headers().contains_key(header::COOKIE));
     assert!(!request.headers().contains_key("x-operator-grant"));
+    if let Some((status, media, body)) = &values.raw {
+        return Response::builder()
+            .status(*status)
+            .header(header::CONTENT_TYPE, *media)
+            .body(Body::from(body.clone()))
+            .unwrap();
+    }
     if values.redirect {
         return Response::builder()
             .status(StatusCode::TEMPORARY_REDIRECT)
@@ -138,6 +146,7 @@ async fn api() -> Api {
             oversized: false,
             redirect: false,
             hits: 0,
+            raw: None,
         }),
     });
     {
@@ -178,10 +187,10 @@ async fn connected(
 fn request(name: &str, arguments: Value) -> CallToolRequestParams {
     serde_json::from_value(json!({"name":name,"arguments":arguments})).unwrap()
 }
-async fn run(client: &RunningService<RoleClient, ()>, id: Id) -> Value {
+async fn run(client: &RunningService<RoleClient, ()>) -> Value {
     serde_json::to_value(
         client
-            .call_tool(request("run.get", json!({"run_id":id})))
+            .call_tool(request("run.get", json!({})))
             .await
             .unwrap(),
     )
@@ -207,7 +216,7 @@ async fn native_protocol_lists_only_real_tools_and_checks_arguments() {
             "run.get"
         ]
     );
-    let result = run(&client, api.binding.run_id).await;
+    let result = run(&client).await;
     assert_ne!(result["isError"], true);
     assert_eq!(body(&result)["id"], json!(api.binding.run_id));
     assert_eq!(body(&result)["state"], "RUNNING");
@@ -215,6 +224,9 @@ async fn native_protocol_lists_only_real_tools_and_checks_arguments() {
     for (name, arguments) in [
         ("db.query", json!({"query":"SELECT 1"})),
         ("run.get", json!({"run_id":"../../outside"})),
+        ("run.get", json!({"run_id":api.binding.run_id})),
+        ("run.get", json!({"run_id":Id::new()})),
+        ("run.get", json!({"unknown":true})),
         (
             "run.get",
             json!({"run_id":api.binding.run_id,"role":"OPERATOR"}),
@@ -226,9 +238,6 @@ async fn native_protocol_lists_only_real_tools_and_checks_arguments() {
                 || serde_json::to_value(response.unwrap()).unwrap()["isError"] == true
         );
     }
-    let denied = run(&client, Id::new()).await;
-    assert_eq!(denied["isError"], true);
-    assert_eq!(body(&denied)["code"], "MCP_AUTHORITY_REJECTED");
     assert_eq!(api.state.responses.lock().unwrap().hits, 4);
     client.cancel().await.unwrap();
     assert!(task.await.unwrap().is_ok());
@@ -287,7 +296,7 @@ async fn next_call_rechecks_revocation_and_never_returns_upstream_diagnostics() 
     let api = api().await;
     let (client, task) = connected(&api).await;
     api.state.responses.lock().unwrap().status = StatusCode::UNAUTHORIZED;
-    let result = run(&client, api.binding.run_id).await;
+    let result = run(&client).await;
     assert_eq!(result["isError"], true);
     assert_eq!(body(&result)["http_status"], 401);
     assert!(!result.to_string().contains(&api.state.credential));
@@ -317,8 +326,7 @@ async fn native_concurrent_requests_are_bounded_without_a_waiting_queue() {
     let api = api().await;
     let (client, task) = connected(&api).await;
     api.state.delay_ms.store(150, Ordering::SeqCst);
-    let results =
-        futures_util::future::join_all((0..5).map(|_| run(&client, api.binding.run_id))).await;
+    let results = futures_util::future::join_all((0..5).map(|_| run(&client))).await;
     assert_eq!(results.iter().filter(|r| r["isError"] != true).count(), 4);
     assert_eq!(
         results
@@ -353,10 +361,7 @@ async fn native_stdio_child_has_no_database_dependency_or_stdout_logs() {
         ().serve((child.stdout.take().unwrap(), child.stdin.take().unwrap()))
             .await
             .unwrap();
-    assert_eq!(
-        body(&run(&client, api.binding.run_id).await)["id"],
-        json!(api.binding.run_id)
-    );
+    assert_eq!(body(&run(&client).await)["id"], json!(api.binding.run_id));
     client.cancel().await.unwrap();
     let output = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output())
         .await
@@ -365,4 +370,53 @@ async fn native_stdio_child_has_no_database_dependency_or_stdout_logs() {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+#[tokio::test]
+async fn native_problem_exposes_only_safe_metadata_and_rejects_reflections() {
+    let api = api().await;
+    let (client, task) = connected(&api).await;
+    let request_id = Id::new();
+    let mut problem = json!({"type":"urn:quazonai:problem:budget_exhausted",
+        "title":"private upstream title", "status":429,"code":"BUDGET_EXHAUSTED",
+        "detail":"private upstream diagnostics", "request_id":request_id,"retryable":false,
+        "field_errors":[],"safe_next_actions":["private upstream action"]});
+    api.state.responses.lock().unwrap().raw = Some((
+        StatusCode::TOO_MANY_REQUESTS,
+        "application/problem+json; charset=utf-8",
+        problem.to_string(),
+    ));
+    let result = run(&client).await;
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        body(&result),
+        json!({"schema_version":1,"code":"MCP_CONTROL_REJECTED",
+        "http_status":429,"problem_code":"BUDGET_EXHAUSTED","retryable":false,"request_id":request_id})
+    );
+    assert!(!result.to_string().contains("private upstream"));
+    problem["detail"] = json!(api.state.credential);
+    api.state.responses.lock().unwrap().raw = Some((
+        StatusCode::TOO_MANY_REQUESTS,
+        "application/problem+json",
+        problem.to_string(),
+    ));
+    let result = run(&client).await;
+    assert_eq!(
+        body(&result),
+        json!({"schema_version":1,"code":"MCP_CONTROL_REJECTED","http_status":429})
+    );
+    assert!(!result.to_string().contains(&api.state.credential));
+    client.cancel().await.unwrap();
+    assert!(task.await.unwrap().is_ok());
+}
+
+#[tokio::test]
+async fn success_rejects_duplicate_json_keys_and_wrong_media() {
+    let api = api().await;
+    let identity = api.state.responses.lock().unwrap().identity.to_string();
+    let duplicate = identity.replacen('{', "{\"schema_version\":1,", 1);
+    for (media, body) in [("application/json", duplicate), ("text/plain", identity)] {
+        api.state.responses.lock().unwrap().raw = Some((StatusCode::OK, media, body));
+        assert!(matches!(bridge(&api).await, Err(Failure::Contract)));
+    }
 }
