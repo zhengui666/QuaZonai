@@ -4,6 +4,7 @@ import { useSyncExternalStore } from 'react';
 import { api, dataOf, displayTime } from './api';
 import { passwordRules, useAuth } from './auth';
 import { ErrorNotice, QueryPanel, useOnline } from './ui';
+import { setSettingsWork } from './settings-work';
 
 type PasswordState = { pending: boolean; error?: unknown };
 let passwordState: PasswordState = { pending: false };
@@ -11,6 +12,7 @@ const passwordListeners = new Set<() => void>();
 function setPasswordState(changes: Partial<PasswordState>) {
   passwordState = { ...passwordState, ...changes };
   passwordListeners.forEach(listener => listener());
+  setSettingsWork('password-change', passwordState.pending);
 }
 function usePasswordState() {
   return useSyncExternalStore(listener => {

@@ -34,7 +34,7 @@ async function setup(page: Page, ready = false) {
   const state = {
     operation: null as Schema['CodexAccountOperationV1'] | null,
     starts: [] as { key: string | undefined; body: unknown }[], cancels: [] as { key: string | undefined; body: unknown }[],
-    probes: 0, dropStart: false, terminalStart: false, dropCancel: false, stale: false,
+    probes: 0, dropStart: false, rejectStart: false, terminalStart: false, dropCancel: false, stale: false,
     holdStart: undefined as Promise<void> | undefined,
     holdSave: undefined as Promise<void> | undefined, dropSaveAfterCommit: false, saveKeys: [] as (string | undefined)[],
     saves: [] as { id: string; body: Schema['CodexProfileUpdateV1'] }[],
@@ -81,6 +81,14 @@ async function setup(page: Page, ready = false) {
         finished_at: null, reason: null, account: null };
       if (state.terminalStart) state.operation = { ...state.operation, state: 'FAILED', reason: 'DEPLOYMENT_UNAVAILABLE', finished_at: now };
       if (state.holdStart) { await state.holdStart; state.holdStart = undefined; }
+      if (state.rejectStart) {
+        state.rejectStart = false; state.operation = null;
+        return route.fulfill({ status: 409, contentType: 'application/problem+json', body: JSON.stringify({
+          type: 'about:blank', title: 'Profile changed', status: 409, code: 'PROFILE_CHANGED',
+          detail: 'Profile changed before login', request_id: profile.id, retryable: false,
+          safe_next_actions: ['RELOAD'], field_errors: [],
+        }) });
+      }
       if (state.dropStart) { state.dropStart = false; return route.abort('failed'); }
       return reply({ schema_version: 1, acceptance: { schema_version: 1, replayed: state.starts.length > 1, resource: state.operation.operation },
         current: state.operation, device_code: state.terminalStart ? null : { verification_url: 'https://auth.openai.com/codex/device', user_code: 'TEST-ONLY' } }, 202);
@@ -256,6 +264,23 @@ test('a terminal native failure after a lost login ACK still offers the same-key
   await page.getByRole('button', { name: '重试当前操作' }).click();
   await expect.poll(() => state.starts.length).toBe(2);
   expect(state.starts[1]).toEqual(state.starts[0]);
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+});
+
+test('a definite login rejection remains visible after navigation', async ({ page }) => {
+  const { state } = await setup(page);
+  state.rejectStart = true;
+  let release!: () => void;
+  state.holdStart = new Promise<void>(resolve => { release = resolve; });
+  await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
+  await expect.poll(() => state.starts.length).toBe(1);
+  await page.getByRole('tab', { name: '鉴权管理' }).click();
+  release();
+  await page.getByRole('tab', { name: 'Codex' }).click();
+  await expect(page.getByText('Profile changed before login')).toBeVisible();
 });
 
 test('a terminal operation reconciles the previous role after navigation', async ({ page }) => {

@@ -9,7 +9,8 @@ import { setSettingsWork } from './settings-work';
 type Operation = Schema['CodexAccountOperationV1'];
 type Challenge = { id: string; code: Schema['CodexDeviceCodeV1'] };
 type Action = Schema['CodexAccountActionV1'];
-type AuthSnapshot = { challenge?: Challenge; pendingStart: boolean; pendingCancel: boolean; unknownStart: boolean; unknownCancel: boolean };
+type AuthSnapshot = { challenge?: Challenge; pendingStart: boolean; pendingCancel: boolean; unknownStart: boolean; unknownCancel: boolean;
+  startError?: unknown; cancelError?: unknown };
 class AuthSession {
   startIntent = new Intent(); cancelIntent = new Intent();
   startRequest?: { action: Action; body: Schema['CodexAccountRequestV1'] };
@@ -44,7 +45,7 @@ class AuthSession {
       });
       else {
         this.startRequest = undefined; this.startIntent.clear(); this.startedId = undefined;
-        this.update({ challenge: undefined, unknownStart: false });
+        this.update({ challenge: undefined, unknownStart: false, startError: undefined });
       }
     } catch { /* Keep the original request for an explicit same-key retry. */ }
     finally { this.reconciling = false; }
@@ -103,14 +104,16 @@ export function ChatgptAuth({ profile, account, disabled, onBusy, onChanged }: {
     await client.cancelQueries({ queryKey: key, exact: true });
     const result = dataOf(await api.POST(path, { body: request.body,
       params: { header: session.startIntent.headers('POST', path, request.body) } }));
-    session.startedId = result.current.operation.id;
+    const activeResult = activeAccountOperation(result.current);
+    session.startedId = activeResult ? result.current.operation.id : undefined;
+    if (!activeResult) { session.startRequest = undefined; session.startIntent.clear(); }
     // Only component memory owns the one-time code; mutation/query caches receive no code.
-    session.update({ challenge: result.device_code ? { id: result.current.operation.id, code: result.device_code } : undefined,
-      pendingStart: false, unknownStart: false });
+    session.update({ challenge: activeResult && result.device_code ? { id: result.current.operation.id, code: result.device_code } : undefined,
+      pendingStart: false, unknownStart: false, startError: undefined });
     client.setQueryData(key, result.current);
   }, onError: error => {
     if (!uncertain(error)) { session.startRequest = undefined; session.startIntent.clear(); }
-    session.update({ pendingStart: false, unknownStart: uncertain(error) });
+    session.update({ pendingStart: false, unknownStart: uncertain(error), startError: error });
     if (uncertain(error) && !session.observed) void session.reconcileUnknownStart(client);
     void latest.refetch();
   } });
@@ -119,11 +122,11 @@ export function ChatgptAuth({ profile, account, disabled, onBusy, onChanged }: {
     const body = session.cancelRequest;
     dataOf(await api.POST('/api/v2/codex/login/cancel', { body,
       params: { header: session.cancelIntent.headers('POST', '/api/v2/codex/login/cancel', body) } }));
-    session.update({ challenge: undefined, pendingCancel: false, unknownCancel: false });
+    session.update({ challenge: undefined, pendingCancel: false, unknownCancel: false, cancelError: undefined });
     await latest.refetch();
   }, onSuccess: () => { session.cancelRequest = undefined; session.cancelIntent.clear(); session.update(); }, onError: error => {
     if (!uncertain(error)) { session.cancelRequest = undefined; session.cancelIntent.clear(); }
-    session.update({ pendingCancel: false, unknownCancel: uncertain(error) });
+    session.update({ pendingCancel: false, unknownCancel: uncertain(error), cancelError: error });
     void latest.refetch();
   } });
   const operation = latest.data;
@@ -147,7 +150,8 @@ export function ChatgptAuth({ profile, account, disabled, onBusy, onChanged }: {
       if (owner.startedId === operation.operation.id || owner.cancelRequest?.operation_id === operation.operation.id) {
         owner.startRequest = undefined; owner.startIntent.clear(); owner.startedId = undefined;
         owner.cancelRequest = undefined; owner.cancelIntent.clear();
-        owner.update({ challenge: undefined, pendingStart: false, pendingCancel: false, unknownStart: false, unknownCancel: false });
+        owner.update({ challenge: undefined, pendingStart: false, pendingCancel: false, unknownStart: false, unknownCancel: false,
+          startError: undefined, cancelError: undefined });
       } else void owner.reconcileUnknownStart(client);
     }
     if (session.refreshed === version) return;
@@ -160,14 +164,15 @@ export function ChatgptAuth({ profile, account, disabled, onBusy, onChanged }: {
     if (ownedCancel) {
       session.cancelRequest = undefined; session.cancelIntent.clear(); cancel.reset();
     }
-    session.update({ challenge: undefined, ...(ownedStart ? { unknownStart: false } : {}), ...(ownedCancel ? { unknownCancel: false } : {}) });
+    session.update({ challenge: undefined, ...(ownedStart ? { unknownStart: false, startError: undefined } : {}),
+      ...(ownedCancel ? { unknownCancel: false, cancelError: undefined } : {}) });
     void onChanged();
   }, [operation, active, latest.isError, onChanged, cancel.reset, session, client]);
   function startOperation(action: Action) {
-    session.update({ pendingStart: true, unknownStart: false }); start.mutate(action);
+    session.update({ pendingStart: true, unknownStart: false, startError: undefined }); start.mutate(action);
   }
   function cancelOperation(value: Operation) {
-    session.update({ pendingCancel: true, unknownCancel: false }); cancel.mutate(value);
+    session.update({ pendingCancel: true, unknownCancel: false, cancelError: undefined }); cancel.mutate(value);
   }
   function begin(action: Action) {
     session.startRequest = undefined; session.startIntent.clear(); session.startedId = undefined;
@@ -206,8 +211,8 @@ export function ChatgptAuth({ profile, account, disabled, onBusy, onChanged }: {
       {active && !expired && !code && !pending && !unknownStart && !session.startRequest && operation?.state !== 'CANCEL_REQUESTED'
         && <Typography.Text>请在发起登录的页面完成授权，或取消后重新登录。</Typography.Text>}
       <ErrorNotice error={latest.error} retry={() => { void latest.refetch(); }} />
-      <ErrorNotice error={start.error} />
-      <ErrorNotice error={cancel.error} />
+      <ErrorNotice error={state.startError} />
+      <ErrorNotice error={state.cancelError} />
     </Space>
   </Card>;
 }

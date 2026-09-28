@@ -93,6 +93,11 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
         header: writeIntent.headers('PATCH', `/api/v2/integrations/runtimes/${original.id}`, body) } }));
       void refresh();
       return result.resource;
+    }, async () => {
+      if (!original) throw new Error('Runtime 不存在');
+      const current = dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: original.id } } }));
+      void refresh();
+      return { values: current.configuration as Values, revision: current.revision, updated_at: current.updated_at, resource: current };
     });
   const shown = (autosave.resource as Runtime | undefined) ?? mutation.data?.resource ?? original;
   const pending = mutation.isPending || secretBusy;
@@ -116,11 +121,11 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
         { value: 'SYSTEM_CA', label: '系统可信 CA' }, { value: 'PINNED_CA', label: '指定 CA 证书' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换 Runtime 凭据（不登记则保留）' : 'Runtime 服务凭据'} rules={original ? [] : [required]}>
-        <SecretReference purpose="RUNTIME" configured={shown?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="RUNTIME" configured={shown?.credential_configured ?? false} disabled={pending || autosave.saving || !online} onBusy={setSecretBusy} />
       </Form.Item>
       {tls === 'PINNED_CA' && <Form.Item name="ca_certificate_ref" label="指定 CA 证书" preserve={false}
         rules={shown?.configuration.tls_policy === 'PINNED_CA' && shown.ca_configured ? [] : [required]}>
-        <SecretReference purpose="TLS_CA" configured={shown?.configuration.tls_policy === 'PINNED_CA' && !!shown.ca_configured} disabled={pending || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="TLS_CA" configured={shown?.configuration.tls_policy === 'PINNED_CA' && !!shown.ca_configured} disabled={pending || autosave.saving || !online} onBusy={setSecretBusy} />
       </Form.Item>}
       <Form.Item name="allowed_capabilities" label="允许的任务类型" rules={[required]}><Select mode="multiple" options={jobs} /></Form.Item>
       <Form.Item name="enabled" label="允许新任务" valuePropName="checked"><Switch /></Form.Item>
@@ -218,6 +223,11 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
         header: writeIntent.headers('PATCH', `/api/v2/integrations/downstreams/${original.id}`, body) } }));
       void refresh();
       return result.resource;
+    }, async () => {
+      if (!original) throw new Error('下游不存在');
+      const current = dataOf(await api.GET('/api/v2/integrations/downstreams/{id}', { params: { path: { id: original.id } } }));
+      void refresh();
+      return { values: current.configuration as Values, revision: current.revision, updated_at: current.updated_at, resource: current };
     });
   const shown = (autosave.resource as Downstream | undefined) ?? mutation.data?.resource ?? original;
   const pending = mutation.isPending || secretBusy;
@@ -240,7 +250,7 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
         { value: 'PAPER', label: '仅 Paper' }, { value: 'LIVE', label: '仅 Live' }, { value: 'BOTH', label: 'Paper 与 Live（仍须分别审批）' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换下游服务凭据（可保留）' : '下游服务凭据'} rules={original ? [] : [required]}>
-        <SecretReference purpose="DOWNSTREAM" configured={shown?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="DOWNSTREAM" configured={shown?.credential_configured ?? false} disabled={pending || autosave.saving || !online} onBusy={setSecretBusy} />
       </Form.Item>
       
       <Form.Item name="enabled" label="允许未来目标交付" valuePropName="checked"><Switch /></Form.Item>

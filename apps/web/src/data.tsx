@@ -74,6 +74,12 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
         header: writeIntent.headers('PATCH', `/api/v2/data/sources/${source.id}`, body) }, body }));
       void refresh();
       return result.resource;
+    }, async () => {
+      if (!source) throw new Error('数据源不存在');
+      const current = dataOf(await api.GET('/api/v2/data/sources/{id}', { params: { path: { id: source.id } } }));
+      void refresh();
+      return { values: { name: current.name, enabled: current.enabled } as Values,
+        revision: current.revision, updated_at: current.updated_at, resource: current };
     });
   function cancel() {
     if (!source && mutation.isPending) return;

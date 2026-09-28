@@ -25,6 +25,7 @@ async function setup(page: Page) {
   const secretId = '01990000-0000-7000-8000-000000000014';
   let failRuntime = false;
   let rejectRuntime = false;
+  let conflictRuntime = false;
   let holdRuntime: Promise<void> | undefined;
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
@@ -57,6 +58,15 @@ async function setup(page: Page) {
           detail: 'Origin must not contain a path', request_id: secretId, retryable: false, safe_next_actions: [], field_errors: [],
         }) });
       }
+      if (conflictRuntime) {
+        conflictRuntime = false;
+        runtime.configuration.name = 'Runtime external'; runtime.revision = (BigInt(runtime.revision) + 1n).toString();
+        return route.fulfill({ status: 409, contentType: 'application/problem+json', body: JSON.stringify({
+          type: 'about:blank', title: 'Revision conflict', status: 409, code: 'REVISION_CONFLICT',
+          detail: 'Configuration changed elsewhere', request_id: secretId, retryable: false,
+          current_revision: runtime.revision, safe_next_actions: ['RELOAD'], field_errors: [],
+        }) });
+      }
       if (holdRuntime) { await holdRuntime; holdRuntime = undefined; }
       expect(body.expected_revision).toBe(runtime.revision);
       runtime.configuration = body.configuration; runtime.revision = (BigInt(runtime.revision) + 1n).toString();
@@ -85,7 +95,8 @@ async function setup(page: Page) {
   });
   await page.goto('/');
   await page.getByRole('menuitem', { name: '设置', exact: true }).click();
-  return { runtime, downstream, source, secretId, writes, failNextRuntime: () => { failRuntime = true; }, rejectNextRuntime: () => { rejectRuntime = true; },
+  return { runtime, downstream, source, secretId, writes, failNextRuntime: () => { failRuntime = true; },
+    rejectNextRuntime: () => { rejectRuntime = true; }, conflictNextRuntime: () => { conflictRuntime = true; },
     holdNextRuntime: () => {
       let release!: () => void;
       holdRuntime = new Promise<void>(resolve => { release = resolve; });
@@ -118,9 +129,13 @@ test('existing Runtime, Downstream and data source edits save without a Save act
   release();
   await expect.poll(() => runtime.configuration.enabled).toBe(false);
   expect(writes.filter(write => write.kind === 'runtime').map(write => (write.body as Schema['RuntimeUpdate']).expected_revision)).toEqual(['1', '1', '2', '3']);
+  const releaseCredential = holdNextRuntime();
   await runtimeDialog.getByRole('textbox', { name: '新的 RUNTIME 凭据' }).fill('a'.repeat(32));
   await runtimeDialog.getByRole('button', { name: '登记凭据' }).click();
   await expect.poll(() => writes.filter(write => write.kind === 'runtime').length).toBe(5);
+  await expect(runtimeDialog.getByRole('button', { name: '放弃本次绑定' })).toBeDisabled();
+  releaseCredential();
+  await expect.poll(() => runtime.revision).toBe('5');
   expect((writes.filter(write => write.kind === 'runtime').at(-1)?.body as Schema['RuntimeUpdate']).credential_ref).toBe(secretId);
   await runtimeDialog.getByRole('textbox', { name: '名称' }).fill('Runtime C');
   await expect.poll(() => runtime.configuration.name).toBe('Runtime C');
@@ -204,6 +219,43 @@ test('a corrected server-rejected setting saves with a new request', async ({ pa
   await expect.poll(() => runtime.configuration.endpoint).toBe('https://runtime-b.example');
   expect(writes).toHaveLength(2);
   expect(writes[1]?.key).not.toBe(writes[0]?.key);
+});
+
+test('a revision conflict loads the canonical configuration before another autosave', async ({ page }) => {
+  const { runtime, writes, conflictNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  conflictNextRuntime();
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime local');
+  await expect(dialog.getByText('配置在其他地方已更改，已载入最新版本，请重新编辑')).toBeVisible();
+  await expect(dialog.getByRole('textbox', { name: '名称' })).toHaveValue('Runtime external');
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime after conflict');
+  await expect.poll(() => runtime.configuration.name).toBe('Runtime after conflict');
+  expect(writes.map(write => (write.body as Schema['RuntimeUpdate']).expected_revision)).toEqual(['1', '2']);
+});
+
+test('an offline follow-up write pauses until the editor reconnects', async ({ page }) => {
+  const { runtime, writes, holdNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  const release = holdNextRuntime();
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime B');
+  await expect.poll(() => writes.length).toBe(1);
+  await dialog.getByRole('switch', { name: '允许新任务' }).click();
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await page.evaluate(() => Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false }));
+  release();
+  await expect.poll(() => runtime.revision).toBe('2');
+  await page.waitForTimeout(200);
+  expect(writes).toHaveLength(1);
+  await page.evaluate(() => { Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true }); window.dispatchEvent(new Event('online')); });
+  await page.getByRole('button', { name: '修改配置' }).click();
+  await expect.poll(() => runtime.configuration.enabled).toBe(false);
+  expect(writes).toHaveLength(2);
 });
 
 test('a newly bound Runtime CA remains configured for later autosaves', async ({ page }) => {
@@ -333,9 +385,17 @@ test('a pending password change retains its result across settings navigation', 
   await page.getByRole('button', { name: '修改密码并重新登录' }).click();
   await expect.poll(() => attempts).toBe(1);
   await page.getByRole('tab', { name: 'Codex' }).click();
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(true);
   release();
   await page.getByRole('tab', { name: '鉴权管理' }).click();
   await expect(page.getByText('Current password is incorrect')).toBeVisible();
   await expect(page.getByRole('button', { name: '修改密码并重新登录' })).toBeEnabled();
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
   expect(attempts).toBe(1);
 });
