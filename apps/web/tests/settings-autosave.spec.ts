@@ -34,8 +34,11 @@ async function setup(page: Page) {
     if (path === '/api/v2/auth/cli/devices') return reply([]);
     if (path === '/api/v2/projects') return reply({ schema_version: 1, items: [], next_cursor: null });
     if (path === '/api/v2/settings/codex') return reply({ schema_version: 1, items: [], next_cursor: null });
-    if (path === '/api/v2/settings/credentials') return reply({ schema_version: 1, replayed: false,
-      resource: { id: secretId, purpose: 'RUNTIME', label: 'RUNTIME service credential', created_at: now } }, 201);
+    if (path === '/api/v2/settings/credentials') {
+      const body: Schema['IntegrationSecretCreate'] = request.postDataJSON();
+      return reply({ schema_version: 1, replayed: false,
+        resource: { id: secretId, purpose: body.intent.purpose, label: body.intent.label, created_at: now } }, 201);
+    }
     if (path === '/api/v2/integrations/runtimes') {
       if (request.method() !== 'GET') { writes.push({ kind: 'runtime-create', key: request.headers()['idempotency-key'], body: request.postDataJSON() }); return route.abort('blockedbyclient'); }
       return reply({ schema_version: 1, items: [runtime], next_cursor: null });
@@ -57,6 +60,7 @@ async function setup(page: Page) {
       if (holdRuntime) { await holdRuntime; holdRuntime = undefined; }
       expect(body.expected_revision).toBe(runtime.revision);
       runtime.configuration = body.configuration; runtime.revision = (BigInt(runtime.revision) + 1n).toString();
+      if (body.ca_certificate_ref) runtime.ca_configured = true;
       return reply({ schema_version: 1, replayed: false, resource: runtime });
     }
     if (path === '/api/v2/integrations/downstreams') return reply({ schema_version: 1, items: [downstream], next_cursor: null });
@@ -202,6 +206,37 @@ test('a corrected server-rejected setting saves with a new request', async ({ pa
   expect(writes[1]?.key).not.toBe(writes[0]?.key);
 });
 
+test('a newly bound Runtime CA remains configured for later autosaves', async ({ page }) => {
+  const { runtime, writes } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await dialog.getByRole('combobox', { name: 'TLS 信任方式' }).click();
+  await page.getByText('指定 CA 证书', { exact: true }).last().click();
+  await dialog.getByRole('textbox', { name: '新的 CA PEM 证书' }).fill('TEST CA');
+  await dialog.getByRole('button', { name: '登记证书' }).click();
+  await expect.poll(() => runtime.ca_configured).toBe(true);
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime with CA');
+  await expect.poll(() => runtime.configuration.name).toBe('Runtime with CA');
+  expect(writes.filter(write => write.kind === 'runtime')).toHaveLength(2);
+});
+
+test('closing with an incomplete setting does not send it', async ({ page }) => {
+  const { writes } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await dialog.getByRole('textbox', { name: '名称' }).fill('');
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.waitForTimeout(600);
+  expect(writes).toHaveLength(0);
+  await page.getByRole('button', { name: '修改配置' }).click();
+  await expect(dialog.getByRole('textbox', { name: '名称' })).toHaveValue('Runtime A');
+});
+
 test('a pending import survives navigation and retries with the same identity', async ({ page }) => {
   await setup(page);
   const exportRef = '01990000-0000-7000-8000-000000000021';
@@ -240,4 +275,67 @@ test('a pending import survives navigation and retries with the same identity', 
   await resumed.getByRole('button', { name: '重试同一导入请求' }).click();
   await expect(resumed.getByText(report.id)).toBeVisible();
   expect(attempts[1]).toEqual(attempts[0]);
+});
+
+test('a rejected import remains visible with its draft after navigation', async ({ page }) => {
+  await setup(page);
+  const exportRef = '01990000-0000-7000-8000-000000000031';
+  let release!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/v2/migrations/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/v2/migrations/reports')
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schema_version: 1, items: [], next_cursor: null }) });
+    if (path === '/api/v2/migrations/import') {
+      await hold;
+      return route.fulfill({ status: 422, contentType: 'application/problem+json', body: JSON.stringify({
+        type: 'about:blank', title: 'Invalid export', status: 422, code: 'INVALID_EXPORT', detail: 'Export cannot be imported',
+        request_id: '01990000-0000-7000-8000-000000000032', retryable: false, safe_next_actions: [], field_errors: [],
+      }) });
+    }
+    return route.abort('blockedbyclient');
+  });
+  await page.getByRole('tab', { name: '迁移' }).click();
+  await page.getByRole('button', { name: '导入历史投影' }).click();
+  const dialog = page.getByRole('dialog', { name: '导入历史投影' });
+  await dialog.getByRole('textbox', { name: '已登记的导出编号' }).fill(exportRef);
+  const response = page.waitForResponse(res => new URL(res.url()).pathname === '/api/v2/migrations/import' && res.status() === 422);
+  await dialog.getByRole('button', { name: '提交导入请求' }).click();
+  await dialog.getByRole('button', { name: '返回' }).click();
+  await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+  release(); await response;
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '迁移' }).click();
+  const resumed = page.getByRole('dialog', { name: '导入历史投影' });
+  await expect(resumed.getByText('Export cannot be imported')).toBeVisible();
+  await expect(resumed.getByRole('textbox', { name: '已登记的导出编号' })).toHaveValue(exportRef);
+  await expect(resumed.getByRole('textbox', { name: '已登记的导出编号' })).toBeEnabled();
+});
+
+test('a pending password change retains its result across settings navigation', async ({ page }) => {
+  await setup(page);
+  let release!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  let attempts = 0;
+  await page.route('**/api/v2/auth/password', async route => {
+    attempts++;
+    await hold;
+    return route.fulfill({ status: 422, contentType: 'application/problem+json', body: JSON.stringify({
+      type: 'about:blank', title: 'Incorrect password', status: 422, code: 'INCORRECT_PASSWORD',
+      detail: 'Current password is incorrect', request_id: '01990000-0000-7000-8000-000000000041',
+      retryable: false, safe_next_actions: [], field_errors: [],
+    }) });
+  });
+  await page.getByRole('tab', { name: '鉴权管理' }).click();
+  await page.getByRole('textbox', { name: '当前密码' }).fill('incorrect-current');
+  await page.getByRole('textbox', { name: /^\* 新密码$/ }).fill('new-password-123');
+  await page.getByRole('textbox', { name: '确认新密码' }).fill('new-password-123');
+  await page.getByRole('button', { name: '修改密码并重新登录' }).click();
+  await expect.poll(() => attempts).toBe(1);
+  await page.getByRole('tab', { name: 'Codex' }).click();
+  release();
+  await page.getByRole('tab', { name: '鉴权管理' }).click();
+  await expect(page.getByText('Current password is incorrect')).toBeVisible();
+  await expect(page.getByRole('button', { name: '修改密码并重新登录' })).toBeEnabled();
+  expect(attempts).toBe(1);
 });

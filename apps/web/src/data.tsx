@@ -77,8 +77,8 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
     });
   function cancel() {
     if (!source && mutation.isPending) return;
-    if (source) void autosave.flush();
-    close();
+    if (source) void autosave.close().then(close);
+    else close();
   }
   return <Modal open title={source ? '修改数据源显示与启用状态' : '登记数据源'} onCancel={cancel} destroyOnHidden
     okText="登记" cancelText="返回" confirmLoading={mutation.isPending} closable={!!source || !mutation.isPending} maskClosable={false}

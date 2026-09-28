@@ -1,5 +1,5 @@
 import { Alert, App, Button, Card, Descriptions, Space, Typography } from 'antd';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useSyncExternalStore } from 'react';
 import { api, ApiFailure, dataOf, Intent } from './api';
 import type { Schema } from './api';
@@ -17,6 +17,7 @@ class AuthSession {
   startedId?: string; refreshed?: string;
   snapshot: AuthSnapshot = { pendingStart: false, pendingCancel: false, unknownStart: false, unknownCancel: false };
   private listeners = new Set<() => void>();
+  private reconciling = false;
   constructor(readonly profileId: string) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.snapshot;
@@ -25,6 +26,27 @@ class AuthSession {
     this.listeners.forEach(listener => listener());
     setSettingsWork(`chatgpt-auth:${this.profileId}`, !!(this.startRequest || this.cancelRequest || this.snapshot.challenge
       || this.snapshot.pendingStart || this.snapshot.pendingCancel || this.snapshot.unknownStart || this.snapshot.unknownCancel));
+  }
+  async reconcileUnknownStart(client: QueryClient) {
+    const request = this.startRequest;
+    if (!request || !this.snapshot.unknownStart || this.reconciling) return;
+    this.reconciling = true;
+    const path = request.action === 'LOGIN' ? '/api/v2/codex/login/start' : '/api/v2/codex/logout';
+    try {
+      const result = dataOf(await api.POST(path, { body: request.body,
+        params: { header: this.startIntent.headers('POST', path, request.body) } }));
+      this.startedId = result.current.operation.id;
+      client.setQueryData(['codex', 'account-operation', this.profileId], result.current);
+      if (activeAccountOperation(result.current)) this.update({
+        challenge: result.device_code ? { id: result.current.operation.id, code: result.device_code } : undefined,
+        unknownStart: false,
+      });
+      else {
+        this.startRequest = undefined; this.startIntent.clear(); this.startedId = undefined;
+        this.update({ challenge: undefined, unknownStart: false });
+      }
+    } catch { /* Keep the original request for an explicit same-key retry. */ }
+    finally { this.reconciling = false; }
   }
 }
 const sessions = new Map<string, AuthSession>();
@@ -118,17 +140,27 @@ export function ChatgptAuth({ profile, account, disabled, onBusy, onChanged }: {
   useEffect(() => {
     if (!operation || active || latest.isError) return;
     const version = `${operation.operation.id}:${operation.revision}`;
+    const owner = sessions.get(operation.operation.profile_id);
+    if (owner && owner !== session) {
+      if (owner.startedId === operation.operation.id || owner.cancelRequest?.operation_id === operation.operation.id) {
+        owner.startRequest = undefined; owner.startIntent.clear(); owner.startedId = undefined;
+        owner.cancelRequest = undefined; owner.cancelIntent.clear();
+        owner.update({ challenge: undefined, pendingStart: false, pendingCancel: false, unknownStart: false, unknownCancel: false });
+      } else void owner.reconcileUnknownStart(client);
+    }
     if (session.refreshed === version) return;
     session.refreshed = version;
-    if (session.startedId === operation.operation.id) {
+    const ownedStart = session.startedId === operation.operation.id;
+    const ownedCancel = session.cancelRequest?.operation_id === operation.operation.id;
+    if (ownedStart) {
       session.startRequest = undefined; session.startIntent.clear(); session.startedId = undefined;
     }
-    if (session.cancelRequest?.operation_id === operation.operation.id) {
+    if (ownedCancel) {
       session.cancelRequest = undefined; session.cancelIntent.clear(); cancel.reset();
     }
-    session.update({ challenge: undefined, unknownStart: false, unknownCancel: false });
+    session.update({ challenge: undefined, ...(ownedStart ? { unknownStart: false } : {}), ...(ownedCancel ? { unknownCancel: false } : {}) });
     void onChanged();
-  }, [operation, active, latest.isError, onChanged, cancel.reset, session]);
+  }, [operation, active, latest.isError, onChanged, cancel.reset, session, client]);
   function startOperation(action: Action) {
     session.update({ pendingStart: true, unknownStart: false }); start.mutate(action);
   }

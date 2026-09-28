@@ -5,7 +5,7 @@ import { setSettingsWork } from './settings-work';
 
 type Result = { revision: string; updated_at: string };
 type Write<T> = (values: T, revision: string, intent: Intent) => Promise<Result>;
-type Snapshot = { error?: unknown; saving: boolean; revision: string; updated_at: string };
+type Snapshot = { error?: unknown; saving: boolean; revision: string; updated_at: string; resource?: unknown };
 const sessions = new Map<string, Autosave<object>>();
 const empty: Snapshot = { saving: false, revision: '', updated_at: '' };
 const noSubscribe = () => () => {};
@@ -29,16 +29,20 @@ class Autosave<T extends object> {
   private write?: Write<T>;
   private notice?: () => void;
   private latest: T;
+  private savedValue: T;
   private saved: string;
   private attempted?: T;
   private rejected?: string;
   private running = false;
   private uncertain = false;
   private enabled = false;
+  private closing = false;
+  private validation?: { serialized: string; result: Promise<boolean> };
   private timer?: number;
 
   constructor(readonly key: string, initial: T, revision: string, updated_at: string) {
     this.latest = initial;
+    this.savedValue = initial;
     this.saved = JSON.stringify(initial);
     this.snapshot = { saving: false, revision, updated_at };
   }
@@ -48,9 +52,10 @@ class Autosave<T extends object> {
     setSettingsWork(`autosave:${this.key}`, this.running || this.uncertain || JSON.stringify(this.latest) !== this.saved);
   }
   attach(form: FormInstance<T>, write: Write<T>, notice: () => void, initial: T, revision: string, updated_at: string, enabled: boolean) {
+    this.closing = false;
     this.form = form; this.write = write; this.notice = notice; this.enabled = enabled;
     if (!this.running && JSON.stringify(this.latest) === this.saved && BigInt(revision) > BigInt(this.snapshot.revision)) {
-      this.latest = initial; this.saved = JSON.stringify(initial); this.rejected = undefined;
+      this.latest = initial; this.savedValue = initial; this.saved = JSON.stringify(initial); this.rejected = undefined;
       this.snapshot = { saving: false, revision, updated_at };
     }
     form.setFieldsValue(this.latest as Partial<T>);
@@ -59,16 +64,38 @@ class Autosave<T extends object> {
   }
   detach(form: FormInstance<T>) {
     if (this.form !== form) return;
-    this.latest = form.getFieldsValue(true);
+    const values = form.getFieldsValue(true);
     this.form = undefined;
     this.notice = undefined;
-    this.flush(true);
+    if (this.closing) { this.closing = false; window.clearTimeout(this.timer); return; }
+    const serialized = JSON.stringify(values);
+    const validation = this.validation?.serialized === serialized ? this.validation.result
+      : form.validateFields({ validateOnly: true }).then(() => true, () => false);
+    void validation.then(valid => {
+      if (this.form) return;
+      this.latest = valid ? values : this.attempted ?? this.savedValue;
+      if (valid) this.flush(true); else this.emit();
+    });
   }
   change(_changed: Partial<T>, values: T) {
     this.latest = values;
+    this.validation = { serialized: JSON.stringify(values),
+      result: this.form?.validateFields({ validateOnly: true }).then(() => true, () => false) ?? Promise.resolve(false) };
     window.clearTimeout(this.timer);
     this.timer = window.setTimeout(() => this.flush(), 450);
     this.emit();
+  }
+  async close(): Promise<void> {
+    window.clearTimeout(this.timer); this.timer = undefined;
+    const form = this.form;
+    if (!form) return;
+    this.closing = true;
+    const values = form.getFieldsValue(true);
+    try { await form.validateFields({ validateOnly: true }); }
+    catch { this.latest = this.attempted ?? this.savedValue; this.emit(); return; }
+    if (JSON.stringify(form.getFieldsValue(true)) !== JSON.stringify(values)) return this.close();
+    this.latest = values;
+    this.flush(true);
   }
   flush(closing = false) {
     window.clearTimeout(this.timer); this.timer = undefined;
@@ -93,7 +120,16 @@ class Autosave<T extends object> {
     if (!retry && validate && this.form) {
       const form = this.form;
       try { await form.validateFields({ validateOnly: true }); }
-      catch { this.running = false; if (this.form) this.emit(); else this.flush(true); return; }
+      catch {
+        this.running = false;
+        if (this.form) this.emit();
+        else {
+          const validation = this.validation?.serialized === JSON.stringify(this.latest) ? this.validation.result : Promise.resolve(false);
+          if (await validation) this.flush(true);
+          else { this.latest = this.attempted ?? this.savedValue; this.emit(); }
+        }
+        return;
+      }
       if (this.form === form && JSON.stringify(form.getFieldsValue(true)) !== JSON.stringify(values)) {
         this.running = false; this.flush(); return;
       }
@@ -102,14 +138,15 @@ class Autosave<T extends object> {
     try {
       const result = await this.write(values, this.snapshot.revision, this.intent);
       this.intent.clear(); this.uncertain = false; this.attempted = undefined; this.rejected = undefined;
-      this.saved = JSON.stringify(withoutConsumedRefs(values, values));
+      this.savedValue = withoutConsumedRefs(values, values);
+      this.saved = JSON.stringify(this.savedValue);
       this.latest = withoutConsumedRefs(this.latest, values);
       for (const field of ['credential_ref', 'ca_certificate_ref']) {
         const sent = (values as Record<string, unknown>)[field];
         if (sent && (this.form?.getFieldsValue(true) as Record<string, unknown> | undefined)?.[field] === sent)
           this.form?.setFieldsValue({ [field]: undefined } as Partial<T>);
       }
-      this.snapshot = { saving: true, revision: result.revision, updated_at: result.updated_at };
+      this.snapshot = { saving: true, revision: result.revision, updated_at: result.updated_at, resource: result };
     } catch (error) {
       const rejected = error instanceof ApiFailure && !!error.problem && error.status >= 400 && error.status < 500;
       this.snapshot = { ...this.snapshot, error };
@@ -143,6 +180,7 @@ export function useFormAutosave<T extends object>(form: FormInstance<T>, key: st
       () => { void message.error('设置更新失败，请重试'); }, initial, revision, updated_at, enabled);
     return () => session.detach(form);
   }, [session, form, revision, updated_at, enabled, message]);
-  return { change: (changed: Partial<T>, values: T) => session?.change(changed, values), flush: () => session?.flush(true),
-    retry: () => session?.retry(), error: snapshot.error, saving: snapshot.saving, revision: snapshot.revision, updated_at: snapshot.updated_at };
+  return { change: (changed: Partial<T>, values: T) => session?.change(changed, values), close: async () => { await session?.close(); },
+    retry: () => session?.retry(), error: snapshot.error, saving: snapshot.saving, revision: snapshot.revision,
+    updated_at: snapshot.updated_at, resource: snapshot.resource };
 }

@@ -1,14 +1,27 @@
 import { App, Button, Card, Form, Input, Space, Table, Typography } from 'antd';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { api, dataOf, displayTime } from './api';
 import { passwordRules, useAuth } from './auth';
 import { ErrorNotice, QueryPanel, useOnline } from './ui';
 
+type PasswordState = { pending: boolean; error?: unknown };
+let passwordState: PasswordState = { pending: false };
+const passwordListeners = new Set<() => void>();
+function setPasswordState(changes: Partial<PasswordState>) {
+  passwordState = { ...passwordState, ...changes };
+  passwordListeners.forEach(listener => listener());
+}
+function usePasswordState() {
+  return useSyncExternalStore(listener => {
+    passwordListeners.add(listener);
+    return () => { passwordListeners.delete(listener); };
+  }, () => passwordState, () => passwordState);
+}
+
 export function AuthenticationSettings() {
   const [form] = Form.useForm();
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<unknown>();
+  const { pending, error } = usePasswordState();
   const { endSession } = useAuth();
   const { modal } = App.useApp();
   const online = useOnline();
@@ -17,12 +30,13 @@ export function AuthenticationSettings() {
     await api.DELETE('/api/v2/auth/cli/devices/{id}', { params: { path: { id } } });
   }, onSuccess: async () => { await devices.refetch(); } });
   async function changePassword(values: { current_password: string; new_password: string }) {
-    setPending(true); setError(undefined);
+    if (passwordState.pending) return;
+    setPasswordState({ pending: true, error: undefined });
     try {
       await api.POST('/api/v2/auth/password', { body: { schema_version: 1, current_password: values.current_password, new_password: values.new_password } });
       form.resetFields(); endSession();
-    } catch (failure) { form.resetFields(); setError(failure); }
-    finally { setPending(false); }
+    } catch (failure) { form.resetFields(); setPasswordState({ error: failure }); }
+    finally { setPasswordState({ pending: false }); }
   }
   return <Space orientation="vertical" className="full-width" size="large">
     <Typography.Title level={2}>鉴权管理</Typography.Title>

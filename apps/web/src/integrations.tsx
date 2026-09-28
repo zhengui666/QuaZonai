@@ -94,11 +94,12 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
       void refresh();
       return result.resource;
     });
+  const shown = (autosave.resource as Runtime | undefined) ?? mutation.data?.resource ?? original;
   const pending = mutation.isPending || secretBusy;
   function cancel() {
     if (secretBusy || (!original && pending)) return;
-    if (original) void autosave.flush();
-    close();
+    if (original) void autosave.close().then(close);
+    else close();
   }
   return <Modal open width={760} title={original ? '修改 Runtime 配置' : '登记 Runtime'} maskClosable={false} closable={!secretBusy && (!!original || !pending)}
     onCancel={cancel} onOk={() => { if (!original && online && !pending) form.submit(); }} confirmLoading={mutation.isPending}
@@ -115,11 +116,11 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
         { value: 'SYSTEM_CA', label: '系统可信 CA' }, { value: 'PINNED_CA', label: '指定 CA 证书' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换 Runtime 凭据（不登记则保留）' : 'Runtime 服务凭据'} rules={original ? [] : [required]}>
-        <SecretReference purpose="RUNTIME" configured={mutation.data?.resource.credential_configured ?? original?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="RUNTIME" configured={shown?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
       </Form.Item>
       {tls === 'PINNED_CA' && <Form.Item name="ca_certificate_ref" label="指定 CA 证书" preserve={false}
-        rules={(mutation.data?.resource ?? original)?.configuration.tls_policy === 'PINNED_CA' && (mutation.data?.resource ?? original)?.ca_configured ? [] : [required]}>
-        <SecretReference purpose="TLS_CA" configured={(mutation.data?.resource ?? original)?.configuration.tls_policy === 'PINNED_CA' && !!(mutation.data?.resource ?? original)?.ca_configured} disabled={pending || !online} onBusy={setSecretBusy} />
+        rules={shown?.configuration.tls_policy === 'PINNED_CA' && shown.ca_configured ? [] : [required]}>
+        <SecretReference purpose="TLS_CA" configured={shown?.configuration.tls_policy === 'PINNED_CA' && !!shown.ca_configured} disabled={pending || !online} onBusy={setSecretBusy} />
       </Form.Item>}
       <Form.Item name="allowed_capabilities" label="允许的任务类型" rules={[required]}><Select mode="multiple" options={jobs} /></Form.Item>
       <Form.Item name="enabled" label="允许新任务" valuePropName="checked"><Switch /></Form.Item>
@@ -218,11 +219,12 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
       void refresh();
       return result.resource;
     });
+  const shown = (autosave.resource as Downstream | undefined) ?? mutation.data?.resource ?? original;
   const pending = mutation.isPending || secretBusy;
   function cancel() {
     if (secretBusy || (!original && pending)) return;
-    if (original) void autosave.flush();
-    close();
+    if (original) void autosave.close().then(close);
+    else close();
   }
   return <Modal open title={original ? '修改目标交付下游' : '登记目标交付下游'} width={760} maskClosable={false} closable={!secretBusy && (!!original || !pending)}
     onCancel={cancel} onOk={() => { if (!original && online && !pending) form.submit(); }} confirmLoading={mutation.isPending}
@@ -238,7 +240,7 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
         { value: 'PAPER', label: '仅 Paper' }, { value: 'LIVE', label: '仅 Live' }, { value: 'BOTH', label: 'Paper 与 Live（仍须分别审批）' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换下游服务凭据（可保留）' : '下游服务凭据'} rules={original ? [] : [required]}>
-        <SecretReference purpose="DOWNSTREAM" configured={mutation.data?.resource.credential_configured ?? original?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="DOWNSTREAM" configured={shown?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
       </Form.Item>
       
       <Form.Item name="enabled" label="允许未来目标交付" valuePropName="checked"><Switch /></Form.Item>
