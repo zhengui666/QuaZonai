@@ -559,7 +559,7 @@ def verify_runtime(config: dict) -> None:
                 codex.docker(config, "rm", "--force", *containers.splitlines(), capture=True)
 
 
-def verify_published_bundle(root: Path, bundle: Path) -> None:
+def verify_published_bundle(root: Path, bundle: Path, assets: Path | None = None) -> None:
     # First consumer on the fresh runner: the exact shipped archive, including
     # its original version and default Codex digest. No synthetic manifest here.
     selected = manage.manifest(bundle)
@@ -567,15 +567,39 @@ def verify_published_bundle(root: Path, bundle: Path) -> None:
     web, database = ports()
     command = ["bash", str(bundle / "deploy.sh"), "--directory", str(installation),
                "--port", str(web), "--database-port", str(database)]
+    env = None
+    if assets:
+        # The Release stays a draft until acceptance. Serve the exact downloaded
+        # Actions artifacts through a curl fixture; execute the shipped installer
+        # and all real deployment/CLI processes under the no-build wrappers.
+        transport = root / "release-downloads"
+        transport.mkdir()
+        curl = transport / "curl"
+        base = f"https://github.com/{manage.REPOSITORY}/releases/download/{selected['version']}/"
+        curl.write_text("#!/usr/bin/python3\nimport shutil, sys\nfrom pathlib import Path\n"
+                        f"base = {base!r}\nassets = Path({str(assets)!r})\n"
+                        "args = sys.argv[1:]\nurl = args[-1]\n"
+                        "assert url.startswith(base)\nname = url[len(base):]\n"
+                        "assert name in {'SHA256SUMS', 'quazonai-cli-linux-x86_64.tar.gz', 'quazonai-deploy.tar.gz'}\n"
+                        "shutil.copyfile(assets / name, args[args.index('--output') + 1])\n")
+        curl.chmod(0o755)
+        env = {**os.environ, "PATH": str(transport) + os.pathsep + os.environ["PATH"]}
+        command = ["bash", str(assets / "install.sh"), "--directory", str(installation),
+                   "--bin-dir", str(root / "client-bin"), "--port", str(web), "--database-port", str(database)]
     try:
-        manage.run(command)
+        manage.run(command, env=env)
         config = manage.configuration(installation)
         assert all(config[name] == value for name, value in selected.items())
         assert codex.read_env(installation / ".env")[0] == selected["codex_version"]
         original_key = fingerprint(installation)
         verify_container_codex(config)
         verify_runtime(config)
-        manage.run(command)
+        if assets:
+            binary = str(root / "client-bin/quazonai")
+            assert selected["version"] in manage.run([binary, "--version"], capture=True)
+            manage.run([binary, "client", "--help"], capture=True)
+            assert json.loads(manage.run([binary, "openapi"], capture=True))["openapi"]
+        manage.run(command, env=env)
         assert fingerprint(installation) == original_key
         assert manage.configuration(installation) == config
     finally:
@@ -593,6 +617,7 @@ def main() -> None:
     parser.add_argument("--previous-codex-version")
     parser.add_argument("--revision")
     parser.add_argument("--assert-cold", action="store_true")
+    parser.add_argument("--installer-assets", type=Path)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     os.umask(0o077)
@@ -624,7 +649,8 @@ def main() -> None:
         root = Path(temporary)
         with installation_tools(root / "tools") as log:
             if args.manifest:
-                verify_published_bundle(root, args.manifest.resolve().parent)
+                verify_published_bundle(root, args.manifest.resolve().parent,
+                                        args.installer_assets.resolve() if args.installer_assets else None)
             exercise(root, images, revision, previous)
             commands = [json.loads(line) for line in log.read_text().splitlines()]
             assert not any(command["blocked"] for command in commands)
@@ -633,6 +659,7 @@ def main() -> None:
             args.report.write_text(json.dumps({
                 "revision": revision, "images": images, "cold_registry_install": args.assert_cold,
                 "published_bundle_install": "passed" if args.manifest else "not_run",
+                "one_line_installer_and_cli": "passed" if args.installer_assets else "not_run",
                 "install_update_restore": "passed", "native_runtime_compile_restart": "passed",
                 "host_build_commands": 0,
             }, indent=2) + "\n")

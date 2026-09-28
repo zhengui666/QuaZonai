@@ -25,11 +25,7 @@ pub fn one_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a s
 }
 pub fn idempotency_key(headers: &HeaderMap) -> Result<&str, ApiError> {
     let value = one_header(headers, "idempotency-key")?.ok_or_else(ApiError::validation)?;
-    if value.is_empty()
-        || value.len() > 200
-        || value.trim() != value
-        || value.chars().any(char::is_control)
-    {
+    if !contracts::http::valid_idempotency_key(value) {
         return Err(ApiError::validation());
     }
     Ok(value)

@@ -28,3 +28,32 @@ pub struct Problem {
     pub field_errors: Vec<FieldError>,
     pub safe_next_actions: Vec<String>,
 }
+
+/// Shared wire constraint for the idempotency header; authority remains server-side.
+pub fn valid_idempotency_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.is_ascii()
+        && value.len() <= 200
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn idempotency_keys_preserve_visible_ascii_header_contract() {
+        assert!(super::valid_idempotency_key("same intent 01"));
+        assert!(super::valid_idempotency_key(&"a".repeat(200)));
+        for invalid in [
+            "",
+            " leading",
+            "trailing ",
+            "line\nfeed",
+            "tab\tvalue",
+            "nonascii-意图",
+            &"a".repeat(201),
+        ] {
+            assert!(!super::valid_idempotency_key(invalid));
+        }
+    }
+}

@@ -1,5 +1,6 @@
 """Publication ordering and shared-version regressions; no registry writes."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import unittest
@@ -19,6 +20,17 @@ ARGV = ["release.py", "push-images", "--version", "v1.2.3", "--revision", REVISI
 
 
 class PublicationPreflightTests(unittest.TestCase):
+    def test_dev_publication_never_writes_a_shared_codex_tag(self):
+        with patch.dict(os.environ, {"RELEASE_BRANCH": "dev"}), patch.object(release.sys, "argv", ARGV), \
+                patch.object(release, "verify"), patch.object(release, "run", return_value=json.dumps(LABELS)), \
+                patch.object(release, "docker_configuration", return_value={}), \
+                patch.object(release.codex, "verify_candidate"), \
+                patch.object(release, "published_codex_image", return_value=None), \
+                patch.object(release, "push_image", return_value=DIGEST) as push, \
+                patch.object(release, "bundle"):
+            release.main()
+        self.assertEqual(push.call_args_list[-1].args, ("test-codex", release.CODEX_REPOSITORY, "v1.2.3"))
+
     def test_bad_second_image_prevents_every_push(self):
         for field, wrong in (("org.opencontainers.image.revision", "b" * 40),
                              ("org.opencontainers.image.version", "v9.9.9")):

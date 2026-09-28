@@ -8,7 +8,7 @@ A single-user research workbench: Web/CLI/MCP → Rust API → PostgreSQL/PGMQ �
 <a id="commands"></a>
 ## Development and checks
 
-Work at the repository root on a branch from current main. Preserve unrelated worktrees. Use the compiler in [rust-toolchain.toml](../rust-toolchain.toml); the [Makefile](../Makefile) selects it explicitly. Dependency versions come from Cargo/npm lockfiles. The frontend Node requirement is in [package.json](../apps/web/package.json); CI setup is authoritative for native prerequisites.
+Work at the repository root on a branch from the requested delivery base (normally main; dev for development releases). Preserve unrelated worktrees. Use the compiler in [rust-toolchain.toml](../rust-toolchain.toml); the [Makefile](../Makefile) selects it explicitly. Dependency versions come from Cargo/npm lockfiles. The frontend Node requirement is in [package.json](../apps/web/package.json); CI setup is authoritative for native prerequisites.
 
 ```sh
 npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
@@ -21,6 +21,7 @@ npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 | README or Docker deployment guide | `make check-links` and `node --test deploy/install.test.mjs` | Run both: the latter checks Bash examples and native helper help with Node, Bash and Python; it does not install services and is not included in `make check-docs` |
 | Markdown links only | `make check-links` | All tracked Markdown, including `.opensdlc`, resolves; this does not run CLI checks |
 | Package ownership and upstream sources | `make check-architecture` | Allowed dependency directions and official source packages; Cargo fetches missing locked packages when the cache is cold |
+| Portable CLI and release assets | `cargo test --locked -p quazonai-cli` and `python3 -B -m unittest discover -s deploy -p '*_test.py'` | Native Windows/macOS/Linux jobs in the CLI workflow execute the actual binaries; installer checks use `node --test deploy/install.test.mjs` |
 | Rust logic | `make check-unit` | Formatting, Clippy and non-Store/non-Server tests; not the full suite |
 | Transactions | `make check-store` | Disposable PostgreSQL/PGMQ through `DATABASE_URL` |
 | HTTP and Worker | `make check-http` | Disposable database plus native Codex/system prerequisites from CI |

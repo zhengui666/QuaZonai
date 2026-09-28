@@ -2,7 +2,7 @@ name: Container
 on:
   pull_request:
     paths:
-      - 'deploy/docker/**'
+      - 'deploy/**'
       - '.github/actions/container/**'
       - '.github/workflows/container.yml'
       - '.github/workflows/release.yml'
@@ -17,16 +17,18 @@ on:
       - 'rust-toolchain.toml'
       - 'runtimes/**'
       - '.github/workflows/release-version.yml'
+      - '.github/workflows/dev-release.yml'
+      - '.github/workflows/cli.yml'
       - '.github/workflows/codex-image.yml'
       - 'LICENSE'
       - 'NOTICE'
       - 'THIRD_PARTY_NOTICES.md'
   push:
-    branches: [main]
+    branches: [main, dev]
 permissions:
   contents: read
 concurrency:
-  group: container-${{ github.ref }}
+  group: container-${{ github.ref == 'refs/heads/dev' && github.sha || github.ref }}
   cancel-in-progress: true
 jobs:
   codex-backend:

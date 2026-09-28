@@ -8,7 +8,7 @@
 <a id="delivery"></a>
 ## Delivery
 
-Create a branch from current main, run the relevant [checks](project.md#commands), open a PR and satisfy [review](review.md). Use the PR's exact final Head for checks/review; the native Issue/PR/Actions record owns the result. A source revert does not downgrade a database.
+Create a branch from the authorized delivery base (main or dev), run the relevant [checks](project.md#commands), open a PR and satisfy [review](review.md). Use the PR's exact final Head for checks/review; the native Issue/PR/Actions record owns the result. A source revert does not downgrade a database.
 
 The password-auth migration invalidates pre-password browser sessions. The first browser visit then sets the instance password; it never imports database or ChatGPT passwords. The existing offline `recover-access` cutover also revokes permanent CLI devices while retaining the password hash and historical records. Re-enter the instance password in the browser or native CLI after recovery. Password changes alone invalidate browser sessions; explicitly remove CLI machines in authentication settings when those devices should lose access.
 
@@ -17,9 +17,38 @@ The password-auth migration invalidates pre-password browser sessions. The first
 
 [release.yml](../.github/workflows/release.yml) observes main/tag pushes and check completion. A release tag is `vMAJOR.MINOR.PATCH[-prerelease]`, without leading zeros, build metadata or a floating alias. Its dereferenced commit must be an ancestor of current main; squash/rebase does not move an old tag.
 
-Release requires successful current-source CI, Web console, Native Runtime, Polymarket history and Container workflows. The [version workflow](../.github/workflows/release-version.yml) builds and validates the application, scientific job and Codex images, pushes those same images to GHCR, then runs installation/update/recovery on a fresh runner with no checkout or cached product images and with host build commands denied. Only after that succeeds does it publish the version-2 manifest/deployment bundle and complete the draft Release. It does not rebuild a different image after testing, overwrite a complete version or publish an application `latest` tag. A main push without a version tag is not a release.
+Release requires successful current-source CI, Web console, Native Runtime, Polymarket history, Container and portable CLI workflows. The [version workflow](../.github/workflows/release-version.yml) builds and validates the application, scientific job and Codex images, pushes those same images to GHCR, then runs installation/update/recovery on a fresh runner with no checkout or cached product images and with host build commands denied. The release also builds and executes native Linux x86_64, Windows x86_64 and macOS Intel/Apple Silicon CLIs, archives and reloads all four Docker images, and checks the one-line installer on a fresh Linux runner. Only after every platform and installation check succeeds does it upload all archives, installers, tag-rendered README and SHA256SUMS, verify the uploaded asset sizes/digests, and complete the draft Release. It does not rebuild a different image after testing, overwrite a complete version or publish an application `latest` tag. A main push without a version tag is not a release.
 
 Push the chosen immutable tag only within release authorization. Reconcile an existing tag/draft before retrying. Verify the published revision, image digest, package visibility and `quazonai-deploy.tar.gz`; repository visibility alone does not set GHCR visibility. Deployment uses the [versioned bundle](../deploy/docker/README.md), not a developer checkout.
+
+<a id="dev-release"></a>
+### Automatic development releases
+
+Every push to remote `dev` runs [Dev release](../.github/workflows/dev-release.yml).
+It creates `v<workspace core>-dev.<UTC YYYYMMDDHHMMSS>.<Actions run ID>` at the
+exact push SHA, then waits for all six source workflows and calls the same
+[version publisher](../.github/workflows/release-version.yml) with `branch=dev`.
+The run creation timestamp and ID make retries reuse the existing tag; a tag
+pointing elsewhere is rejected. Successive dev pushes keep their own source CI.
+Main release selection excludes these automatic timestamped tags even after their source is merged into main; the original dev run owns retries. The source must remain contained in dev. Force-pushing it away prevents release.
+
+Dev runs reuse a verified existing Codex digest or publish under their unique release tag; they never change shared Codex version/latest tags and do not contend with the default-branch publisher queue.
+
+The reusable workflow call is intentional: GitHub does not run tag-push workflows
+for tags created by GITHUB_TOKEN. No extra PAT, recursive commit, floating image
+alias or production deployment is introduced. The root README resolves the latest
+complete published dev Release; each Release README/notes and extracted deployment
+README contains its concrete tag. Retry the failed Actions run after fixing or
+rerunning its exact-source checks; do not move or replace its tag.
+
+Each complete Release contains the deployment bundle, four native CLI archives,
+four separately reload-tested Docker archives, `install.sh`, `install.ps1`,
+`README.md`, `release.json` and `SHA256SUMS`. Image downloads for installation
+remain immutable GHCR digest pulls; Docker archives are also available for
+explicit `docker load` use. These installers perform no local compilation/build.
+The existing cluster prerequisites, backup and recovery procedures still apply.
+The standalone CLI supports explicit HTTP URLs; public connections should use
+HTTPS. This does not change Runtime/MCP transport policies.
 
 <a id="dev-image"></a>
 ### Development images

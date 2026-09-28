@@ -13,24 +13,27 @@
 
 需要 Linux x86_64、本机 Docker Engine、Docker Compose 2.20+、Python 3.10+、Git、systemd 和 cgroup v2。Worker 需要 glibc 2.36+、OpenSSL 3；不支持 Docker Desktop、远程 Docker、rootless 或 userns-remap。完整前提见[部署手册](deploy/docker/README.md#prerequisites)。
 
-从 [GitHub Releases](https://github.com/zhengui666/QuaZonai/releases) 选择提供 `quazonai-deploy.tar.gz` 的版本，下载后执行：
+安装或更新最新**已完整发布的 dev 版本**，一行执行：
 
 ```sh
-mkdir quazonai-install
-tar -xzf quazonai-deploy.tar.gz -C quazonai-install
-cd quazonai-install
+python3 -c 'import json,re,urllib.request,subprocess; releases=json.load(urllib.request.urlopen("https://api.github.com/repos/zhengui666/QuaZonai/releases?per_page=100")); r=max((r for r in releases if not r["draft"] and re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*",r["tag_name"]) and any(a["name"]=="install.sh" for a in r["assets"])),key=lambda r:tuple(map(int,re.findall(r"[0-9]+",r["tag_name"])))); subprocess.run(["bash"],input=urllib.request.urlopen("https://github.com/zhengui666/QuaZonai/releases/download/"+r["tag_name"]+"/install.sh").read(),check=True)'
 ```
 
-以普通用户启动：
+首次安装前执行一次 `loginctl enable-linger "$USER"`。更新前完成运行并停止独立 Runtime；安装器保留原有数据、凭据、端口和恢复记录。
 
-```sh
-loginctl enable-linger "$USER"
-bash deploy.sh
-```
+每次远程 `dev` 更新自动生成 `v<版本>-dev.<UTC时间戳>.<运行编号>`，通过该提交的完整 CI 后发布。每个 [Release](https://github.com/zhengui666/QuaZonai/releases) 的说明和 `README.md`、部署包内 README 都会自动写入**该次确切 tag** 的一行命令，复制即可安装或更新指定版本。
 
 打开 **http://localhost:8081**。默认安装目录为 `$HOME/.local/share/quazonai`。
 
-部署包按版本清单从 GHCR 拉取应用、科学计算、Codex 和数据库镜像，并安装同源 Worker 与 Runtime 网关。宿主机无需安装 Rust、Node.js 或 Codex。[科学 Runtime 与数据目录](deploy/docker/README.md#scientific-runtime)需要另外配置。
+部署包按版本清单从 GHCR 拉取应用、科学计算、Codex 和数据库镜像，并安装同源 Worker 与 Runtime 网关。宿主机无需安装 Rust、Node.js 或 Codex，不运行任何编译或镜像构建。Release 同时提供全部四类 Docker 镜像归档、SHA-256 校验和，以及 Windows x86_64、macOS Intel/Apple Silicon、Linux x86_64 的原生 CLI 包。[科学 Runtime 与数据目录](deploy/docker/README.md#scientific-runtime)需要另外配置。
+
+CLI 安装至 Linux/macOS 的 `$HOME/.local/bin` 或 Windows 的 `%LOCALAPPDATA%\QuaZonai\bin`。macOS/Windows 在 Release 中复制对应的一行命令；Linux 仅安装远程客户端时在该版本命令后加 `--cli-only`。Docker 集群运行于上述 Linux 主机。CLI 可直接连接明确指定的 HTTP 或 HTTPS 地址：
+
+```sh
+quazonai client --origin http://localhost:8081 login
+```
+
+HTTP 明文传输密码和令牌，请在可信网络中使用；公网连接使用 HTTPS。远程 HTTP 需先按[CLI HTTP 配置](deploy/docker/README.md#cli-http)设置服务端允许的确切地址；本机 localhost 无需额外配置。后续命令复用保存的连接，HTTPS 不会自动降级为 HTTP。
 
 <a id="usage"></a>
 ## 开始研究

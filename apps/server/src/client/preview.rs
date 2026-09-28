@@ -15,13 +15,11 @@ pub(super) fn inspect(
     let writes = request.method != Method::GET;
     if writes {
         let key = key.ok_or(Failure::IdempotencyRequired)?;
-        let mut headers = header::HeaderMap::new();
-        headers.insert(
-            "idempotency-key",
-            header::HeaderValue::from_str(key).map_err(|_| Failure::Input)?,
-        );
+        header::HeaderValue::from_str(key).map_err(|_| Failure::Input)?;
         // Same native key validator used by the real sender, not a preview rule.
-        crate::access::idempotency_key(&headers).map_err(|_| Failure::Input)?;
+        if !contracts::http::valid_idempotency_key(key) {
+            return Err(Failure::Input);
+        }
     }
     if let Some(grant) = grant {
         let _: Id = grant.to_owned().try_into().map_err(|_| Failure::Input)?;

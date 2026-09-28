@@ -3,7 +3,7 @@ mod historical_export;
 use clap::{Args, Parser, Subcommand};
 use contracts::Id;
 use integrations::{artifacts::ArtifactStore, secrets::SecretVault};
-use server::{AppState, WebPolicy};
+use server::{client, AppState, WebPolicy};
 use std::{
     fs,
     io::{Read, Write},
@@ -105,6 +105,9 @@ enum Command {
         bind: SocketAddr,
         #[arg(long, env = "PUBLIC_URL")]
         public_url: String,
+        /// Optional HTTP origin for native CLI access through a trusted-network proxy.
+        #[arg(long, env = "CLI_HTTP_ORIGIN")]
+        cli_http_origin: Option<String>,
         #[arg(long, env = "DEVELOPMENT_HTTP", default_value_t = false)]
         development_http: bool,
         /// Deployment-only origin/socket allowlist; no credentials or model-selected URLs.
@@ -412,7 +415,10 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             if schema.is_none() && !list_schemas {
                 print!("{}", server::openapi_json()?);
             } else {
-                println!("{}", agent_schema::describe(schema.as_deref())?);
+                println!(
+                    "{}",
+                    agent_schema::describe(&server::openapi_json()?, schema.as_deref())?
+                );
             }
         }
         Command::Migrate {
@@ -503,6 +509,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             state_dir,
             bind,
             public_url,
+            cli_http_origin,
             development_http,
             runtime_targets,
             downstream_targets,
@@ -513,7 +520,8 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let registrations = serde_json::from_str(&historical_exports)
                 .map_err(|_| "invalid historical export registrations")?;
             let historical_exports = server::migrations::HistoricalExports::load(registrations)?;
-            let policy = WebPolicy::new(&public_url, bind, development_http)?;
+            let policy = WebPolicy::new(&public_url, bind, development_http)?
+                .with_cli_http_origin(cli_http_origin.as_deref())?;
             let targets = parse_integration_targets(&runtime_targets, development_http)?;
             let downstream_targets =
                 parse_integration_targets(&downstream_targets, development_http)?;

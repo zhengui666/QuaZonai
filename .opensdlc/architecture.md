@@ -16,6 +16,7 @@ QZ 只交付目标，不连接券商账户或执行真实订单。任务执行�
 | [domain](../crates/domain/src) | 预算、准入、资格与状态转换的纯规则 | contracts |
 | [integrations](../crates/integrations/src) | 原生 Codex、MCP、外部协议适配 | contracts |
 | [store](../crates/store/src) | SQLx 事务、并发控制、幂等回执、PGMQ | contracts、domain |
+| [quazonai-cli](../apps/cli) | 跨平台 HTTP/HTTPS 所有者 CLI、离线合同查询 | contracts、integrations |
 | [server](../apps/server/src) | HTTP/CLI/MCP、API 与 Worker 编排 | contracts、domain、store、integrations |
 | [runtime](../apps/runtime/src) | 科学任务网关、OCI 生命周期、持久 journal | contracts、domain、integrations |
 | [job](../apps/job/src) | 类型化科学计算与原生结果文件 | contracts、domain |
@@ -130,9 +131,9 @@ Nautilus 在一个共享资金账户内执行目标序列，保留原生成交�
 
 实例首次访问设置密码，之后输入密码登录；可选择记住浏览器 30 天，否则使用最长 12 小时的会话 cookie。密码使用原生 Argon2id 保存校验值，过期或撤销的会话不能自动恢复。设置的“鉴权管理”支持改密和撤销指定 CLI 机器；改密使浏览器会话失效，CLI 机器保持到主动撤销。
 
-对外命令 `quazonai` 是原生 `server` 的安装链接；CLI 与 MCP 通过 [service_http](../apps/server/src/service_http.rs) 共享地址、敏感请求头、无重定向客户端、有限响应及严格 JSON/Problem 解析，各适配层保留自己的身份、期限和输出规则。
+对外命令 `quazonai` 提供独立跨平台 CLI 包；Linux 集群保留原生 `server` 的安装链接。独立包通过 Rust `#[path]` 复用现有 CLI 源码，不依赖 Server/Store。CLI 与 MCP 通过 [service_http](../apps/server/src/service_http.rs) 共享地址、敏感请求头、无重定向客户端、有限响应及严格 JSON/Problem 解析，各适配层保留自己的身份、期限和输出规则。
 
-外部所有者 CLI 使用与前端相同的实例地址和密码交互登录，保存独立的不透明机器令牌，永久记住该机器，无需再领取单次 Operator grant。该设备拥有所有者操作权限，每次业务事务重验撤销；密码和令牌不得进入模型上下文。原有受限 Machine/Mission、独立 Reviewer 与 Downstream 身份保持各自边界。API 监听 loopback，公开前端地址使用 HTTPS，开发 HTTP 仅限明确启用的 loopback。
+外部所有者 CLI 使用与前端相同的实例地址和密码交互登录，保存独立的不透明机器令牌，永久记住该机器，无需再领取单次 Operator grant。该设备拥有所有者操作权限，每次业务事务重验撤销；密码和令牌不得进入模型上下文。原有受限 Machine/Mission、独立 Reviewer 与 Downstream 身份保持各自边界。API 监听 loopback，公开前端地址使用 HTTPS。所有者 CLI 接受明确指定的 HTTP/HTTPS 地址并保存该连接；HTTP 明文传输凭据，只适用于可信网络。MCP、Runtime 等机器边界仍保留原有 HTTPS/开发 loopback 规则，不因 CLI 放宽而改变。
 
 表单沿用服务端的字段、联合约束和错误；HTTP 202、过期缓存和未知结果不能展示为成功。PWA 检测新前端版本后提示用户更新，不在编辑中静默替换页面。
 

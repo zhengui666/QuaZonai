@@ -1,5 +1,7 @@
 //! Interactive owner login and one private, atomically replaced connection profile.
-use super::{body, media, read_file, verify, write_json, Arguments, Connection, Failure, Result};
+use super::{
+    body, media, private, read_file, verify, write_json, Arguments, Connection, Failure, Result,
+};
 use crate::service_http;
 use contracts::{
     auth::{CliLogin, CliLoginResult},
@@ -9,7 +11,7 @@ use contracts::{
 use reqwest::{header, Client, Response, Url};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{BufRead, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     time::Duration,
@@ -26,6 +28,12 @@ pub(super) struct Profile {
 }
 
 fn profile_path() -> Result<PathBuf> {
+    #[cfg(windows)]
+    let base = std::env::var_os("APPDATA")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or(Failure::Configuration)?;
+    #[cfg(not(windows))]
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -59,50 +67,58 @@ impl Profile {
         Ok(profile)
     }
 
-    #[cfg(unix)]
     fn save(&self, path: &Path) -> Result<()> {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
         let parent = path.parent().ok_or(Failure::Configuration)?;
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(parent)
-            .map_err(|_| Failure::Configuration)?;
-        let metadata = fs::symlink_metadata(parent).map_err(|_| Failure::Configuration)?;
-        if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
-            return Err(Failure::Credential);
-        }
+        private::directory(parent)?;
         let temporary = parent.join(format!(".client-{}.tmp", Id::new()));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
             .open(&temporary)
             .map_err(|_| Failure::Configuration)?;
         let result = (|| {
+            #[cfg(windows)]
+            private::restrict(&temporary, false)?;
+            private::check(&temporary)?;
             serde_json::to_writer(&mut file, self).map_err(|_| Failure::Configuration)?;
             file.write_all(b"\n")
                 .and_then(|_| file.sync_all())
                 .map_err(|_| Failure::Configuration)?;
+            drop(file);
             fs::rename(&temporary, path).map_err(|_| Failure::Configuration)?;
-            File::open(parent)
+            #[cfg(unix)]
+            fs::File::open(parent)
                 .and_then(|directory| directory.sync_all())
-                .map_err(|_| Failure::Configuration)
+                .map_err(|_| Failure::Configuration)?;
+            Ok(())
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temporary);
         }
         result
     }
-
-    #[cfg(not(unix))]
-    fn save(&self, _: &Path) -> Result<()> {
-        Err(Failure::Configuration)
-    }
 }
 
-pub(super) fn origin(value: &str, development_http: bool) -> Result<Url> {
-    Ok(service_http::origin(value, development_http)?)
+pub(super) fn origin(value: &str, _development_http: bool) -> Result<Url> {
+    let url = Url::parse(value).map_err(|_| Failure::Configuration)?;
+    if value.trim() != value
+        || value.chars().any(char::is_control)
+        || !matches!(url.scheme(), "http" | "https")
+        || url.host().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return Err(Failure::Configuration);
+    }
+    Ok(url)
 }
 
 pub(super) fn device_token(value: &str) -> Result<bool> {
@@ -118,8 +134,16 @@ pub(super) fn device_token(value: &str) -> Result<bool> {
 pub(super) fn http_client(
     origin: &Url,
     certificate: Option<&PathBuf>,
-    headers: header::HeaderMap,
+    mut headers: header::HeaderMap,
 ) -> Result<Client> {
+    headers.insert("x-quazonai-cli", header::HeaderValue::from_static("1"));
+    if origin.scheme() == "http" {
+        headers.insert(
+            header::ORIGIN,
+            header::HeaderValue::from_str(&origin.origin().ascii_serialization())
+                .map_err(|_| Failure::Configuration)?,
+        );
+    }
     let mut builder = service_http::builder(headers, Duration::from_secs(20));
     if let Some(path) = certificate {
         let bytes = read_file(path, 65536, false)?;
@@ -238,7 +262,9 @@ pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bo
     let client = http_client(&url, ca_certificate.as_ref(), header::HeaderMap::new())?;
     let native_name = fs::read_to_string("/proc/sys/kernel/hostname")
         .or_else(|_| fs::read_to_string("/etc/hostname"))
-        .unwrap_or_default();
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "QuaZonai CLI".into());
     let name = name.unwrap_or(native_name.trim());
     if name.trim().is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
         return Err(Failure::Input);
@@ -388,6 +414,7 @@ fn login_problem(bytes: &[u8], status: u16, password: &str) -> Result<Problem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
@@ -601,18 +628,8 @@ mod tests {
             ca_certificate: None,
         };
         profile.save(&path).unwrap();
-        assert_eq!(
-            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        assert_eq!(
-            fs::metadata(path.parent().unwrap())
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
+        private::check(&path).unwrap();
+        private::check(path.parent().unwrap()).unwrap();
         assert_eq!(Profile::load_from(&path).unwrap().token, profile.token);
         profile.token = integrations::authentication::format_cli_token(
             Id::new(),
@@ -622,11 +639,14 @@ mod tests {
         profile.save(&path).unwrap();
         assert_eq!(Profile::load_from(&path).unwrap().token, profile.token);
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(matches!(
-            Profile::load_from(&path),
-            Err(Failure::Credential)
-        ));
+        #[cfg(unix)]
+        {
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(matches!(
+                Profile::load_from(&path),
+                Err(Failure::Credential)
+            ));
+        }
         profile.token = integrations::authentication::format_machine_token(
             Id::new(),
             &integrations::authentication::random_capability(),

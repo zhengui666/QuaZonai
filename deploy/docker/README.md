@@ -20,6 +20,21 @@ Run deployment scripts as this owner, not with `sudo`. For a private GHCR packag
 <a id="install"></a>
 ## Install
 
+Install or update this exact release, including the native CLI, in one command:
+
+```sh
+curl -fsSL https://github.com/zhengui666/QuaZonai/releases/download/@QUAZONAI_VERSION@/install.sh | bash
+```
+
+The producer substitutes the tagged version above in every published bundle.
+For a Linux CLI-only host, use `bash -s -- --cli-only` in place of `bash`.
+The same Release's generated README contains native Windows and macOS commands.
+Each release includes SHA256SUMS, all four CLI archives and application, database,
+scientific Runtime and Codex image archives. The installer downloads prebuilt
+artifacts and verifies checksums; it never checks out source or builds binaries or
+images. `--bin-dir` selects the CLI directory; `--directory` selects the cluster.
+The existing installation/upgrade recovery and prerequisites below still apply.
+
 Download `quazonai-deploy.tar.gz` from a [GitHub Release](https://github.com/zhengui666/QuaZonai/releases) that provides the bundle. Extract it into an empty directory, then run:
 
 ```sh
@@ -54,7 +69,7 @@ quazonai --version
 quazonai client login
 ```
 
-For a custom installation directory, use its `current/bin` path. `quazonai` links to the same native `server` executable; existing internal Worker and maintenance paths remain valid. Enter the frontend address and password in the private login prompt. Subsequent `quazonai client` commands reuse the saved device login. See the [service Skill connection guide](../../skills/quazonai/references/connection.md). Mission and Downstream credentials retain their original restrictions.
+For a custom installation directory, use its `current/bin` path. The cluster bundle retains its `quazonai` link to the native `server` executable; the one-line installer also places the standalone portable CLI in `$HOME/.local/bin`; existing internal Worker and maintenance paths remain valid. Enter the frontend HTTP or HTTPS address and password in the private login prompt. Explicit HTTP works without an extra development flag; it transmits credentials in cleartext and is intended for trusted networks. Use HTTPS for public connections. Subsequent `quazonai client` commands reuse the saved device login. See the [service Skill connection guide](../../skills/quazonai/references/connection.md). Mission and Downstream credentials retain their original restrictions.
 
 Open **Settings → Codex → ChatGPT Auth → 登录 ChatGPT**. Copy the device code, open the authorization link and complete login on OpenAI's page. QuaZonai refreshes account/model status; researcher and reviewer share the account but have separate model settings. Refreshing the page cannot recover its code: finish in the original page or cancel and restart. Device-code authorization must be allowed by the account/workspace.
 
@@ -112,7 +127,7 @@ read -r -p 'Published release tag: ' version
 bash "$HOME/.local/share/quazonai/current/deployment/update.sh" "$version"
 ```
 
-The updater downloads the target bundle/image, checks compatibility and idle state, stops this installation, creates a recovery point, explicitly migrates, and activates after API/Worker checks. It preserves PostgreSQL, data, credentials and Codex version. Older versions are rejected; same-version installation is idempotent. Dev-image tags are not release tags and cannot be used here. Set the stopped gateway configuration to the target manifest's `runtime_image`, restart it using the target `runtime.sh`, and probe capabilities before new research; keep its original state and catalogs.
+The updater downloads the target bundle/image, checks compatibility and idle state, stops this installation, creates a recovery point, explicitly migrates, and activates after API/Worker checks. It preserves PostgreSQL, data, credentials and Codex version. Older versions are rejected; same-version installation is idempotent. Timestamped `v<core>-dev.<UTC timestamp>.<run ID>` Releases are installable here. The separate manual `dev-<sha>-...` image-only channel has no bundle and cannot be used here. Set the stopped gateway configuration to the target manifest's `runtime_image`, restart it using the target `runtime.sh`, and probe capabilities before new research; keep its original state and catalogs.
 
 For the first upgrade from a deployment bundle with `release.json.schema_version=1`, use the freshly extracted **target** bundle and run inside that directory:
 
@@ -132,6 +147,64 @@ python3 "$HOME/.local/share/quazonai/current/deployment/manage.py" status
 Before `current` exists, use the extracted bundle's `manage.py status`. Commands accept `--directory /absolute/installation/path` for a non-default installation.
 
 Keep `installation.json`, the data directory, `master.key`, `.env`, original ports and Compose project identity. Runtime/downstream settings use the manifest's `runtime_targets` and `downstream_targets`; a local `compose.override.yaml` survives updates. Runtime targets must be reachable through their configured HTTP transport as described [above](#scientific-runtime); the native gateway does not listen on a Unix HTTP socket. Empty target lists do not create a Runtime.
+
+<a id="cli-http"></a>
+## Remote HTTP CLI
+
+Local `http://localhost:<web-port>` CLI access needs no extra configuration. To expose a separate HTTP endpoint on a trusted network, keep the existing browser `PUBLIC_URL` and add the exact external origin to the installation's persistent `<installation>/compose.override.yaml` (merge with existing settings; keep a private backup before editing):
+
+```yaml
+services:
+  app:
+    environment:
+      CLI_HTTP_ORIGIN: http://research.lan:18080
+```
+
+Use your actual host and port. `CLI_HTTP_ORIGIN` contains only an HTTP origin, with no credentials, path, query or fragment. Docker still listens on loopback. Configure the trusted-network reverse proxy to forward that origin to `http://127.0.0.1:<web-port>` while preserving `Host`, `Origin`, `Authorization` and `X-Quazonai-Cli`. The bundled Caddy forwards those headers unchanged and does not enable access logging. Keep passwords, Authorization headers and response bodies out of any external proxy logs. HTTP sends the password and device token without TLS; HTTPS remains available without this option.
+
+Finish/reconcile all Runs and Codex operations, then apply the override using the installed manager's existing maintenance operations:
+
+```sh
+python3 - "$HOME/.local/share/quazonai" <<'PY'
+import sys
+from pathlib import Path
+root = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root / 'current/deployment'))
+import manage as m
+import codex
+m.preflight()
+with m.locked(root):
+    if (root / 'pending.json').exists():
+        raise ValueError('Complete the recorded installation/update first')
+    config = m.configuration(root)
+    m.compose(config, 'config', '--quiet')
+    m.require_idle(config)
+    codex.require_stopped(config, recover_created=True)
+    try:
+        m.configure_app_restarts(config, False)
+        m.compose(config, 'stop', 'app')
+        m.require_idle(config)
+        codex.require_stopped(config, recover_created=True)
+        m.run(['systemctl', '--user', 'disable', '--now', m.unit(config)])
+        m.require_idle(config)
+    except Exception:
+        m.resume_existing_services(config)
+        m.configure_app_restarts(config, True)
+        raise
+    m.compose(config, 'up', '--no-start', '--no-deps', 'app')
+    m.configure_app_restarts(config, False)
+    print('Configuration prepared; starting the original installation', flush=True)
+    m.resume_existing_services(config, enable_boot=False)
+    m.verify_worker(config)
+    m.verify_console(config)
+    m.run(['systemctl', '--user', 'enable', m.unit(config)])
+    m.configure_app_restarts(config, True)
+PY
+```
+
+This uses the existing image, database, state and Worker; it performs no build or migration. The installation-root override survives application updates and rollback/retry because every manager Compose call loads it. A startup/check failure remains a failed apply: correct or restore the saved override and repeat after idle checks. If interrupted after the prepared message and either process may be running, use the revision-pinned `runtime-targets` recovery command above to resume without recreation before applying another change.
+
+On the client, run `quazonai client --origin http://research.lan:18080 login`, enter the password in your own terminal, then `quazonai client identity`. Saved connections retain the same origin and native CLI marker. This additional origin accepts only CLI login and cookie-free owner-device (`qzc`) bearer API requests; scoped machine/Mission (`qz2`) credentials retain their existing HTTPS/loopback policy: the CLI rejects remote HTTP before sending them, and the server also rejects them at this origin. It does not permit browser setup/login/session routes or relax MCP/Runtime transport validation.
 
 <a id="recovery"></a>
 ## Backups and recovery

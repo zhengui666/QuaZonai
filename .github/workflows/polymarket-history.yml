@@ -2,12 +2,12 @@ name: Polymarket history
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: polymarket-history-${{ github.ref }}
+  group: polymarket-history-${{ github.ref == 'refs/heads/dev' && github.sha || github.ref }}
   cancel-in-progress: true
 jobs:
   native-history:

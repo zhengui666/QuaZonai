@@ -551,3 +551,30 @@ fn deployment_policy_requires_loopback_for_http_and_https() {
     assert!(WebPolicy::new("http://research.example", local, true).is_err());
     assert!(WebPolicy::new("https://[::1]", "[::1]:8080".parse().unwrap(), false).is_ok());
 }
+
+#[test]
+fn explicit_cli_http_origin_does_not_change_browser_or_runtime_policy() {
+    let local = "127.0.0.1:8080".parse().unwrap();
+    for origin in ["http://192.0.2.1:8081", "http://research.example:8081"] {
+        let policy = WebPolicy::new("https://localhost", local, false)
+            .unwrap()
+            .with_cli_http_origin(Some(origin))
+            .unwrap();
+        assert_eq!(policy.origin(), "https://localhost");
+        assert!(WebPolicy::new(origin, local, true).is_err());
+    }
+    for invalid in [
+        "",
+        "http://user:pass@example.test",
+        "https://example.test",
+        "http://example.test/api",
+        "http://example.test?token=value",
+        "http://example.test#fragment",
+        " http://example.test",
+    ] {
+        assert!(WebPolicy::new("https://localhost", local, false)
+            .unwrap()
+            .with_cli_http_origin(Some(invalid))
+            .is_err());
+    }
+}
