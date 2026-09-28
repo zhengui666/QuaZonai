@@ -64,6 +64,16 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
   type Values = { name: string; runtime_id: string; native_catalog_ref: string; enabled: boolean };
   const [form] = Form.useForm<Values>(); const { command, state } = useSettingsCommand('source-create', '数据源登记');
   const online = useOnline(); const refresh = useDataRefresh();
+  const runtimeId = Form.useWatch('runtime_id', form);
+  const runtimeKey = `autosave:runtime:${runtimeId ?? ''}`;
+  const runtimeSaving = useSettingsWorkKey(runtimeKey);
+  const runtimeVersion = useSettingsWorkVersion(runtimeKey);
+  const runtime = useQuery({ queryKey: ['data', 'source-create-runtime', runtimeId, runtimeVersion],
+    enabled: !source && !!runtimeId && !runtimeSaving, staleTime: 0, queryFn: async ({ signal }) => {
+      if (!runtimeId) throw new Error('Runtime 未选择');
+      return dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId } }, signal }));
+    } });
+  const runtimeReady = !!runtime.data?.configuration.enabled && !runtimeSaving && !runtime.isFetching && !runtime.isError;
   const autosave = useFormAutosave(form, source && `source:${source.id}`, (source ? { name: source.name, enabled: source.enabled } : {}) as Values,
     source?.revision, source?.updated_at, online && !!source, async (values, revision, writeIntent) => {
       if (!source) throw new Error('数据源不存在');
@@ -87,14 +97,15 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
   return <Modal open title={source ? '修改数据源显示与启用状态' : '登记数据源'} onCancel={cancel} destroyOnHidden
     okText={state.unknown ? '重试当前操作' : '登记'} cancelText="返回" confirmLoading={state.pending} closable={!!source || !state.pending} maskClosable={false}
     footer={source ? <Button onClick={cancel}>关闭</Button> : undefined}
-    okButtonProps={{ disabled: !online, 'aria-label': state.unknown ? '重试当前操作' : '登记', 'aria-busy': state.pending }}
-    onOk={() => { if (!source && online && !state.pending) { if (state.unknown) command.retry(); else form.submit(); } }}>
+    okButtonProps={{ disabled: !online || (!state.unknown && !runtimeReady), 'aria-label': state.unknown ? '重试当前操作' : '登记', 'aria-busy': state.pending }}
+    onOk={() => { if (!source && online && !state.pending) { if (state.unknown) command.retry(); else if (runtimeReady) form.submit(); } }}>
     <Form form={form} layout="vertical" initialValues={source ? { name: source.name, enabled: source.enabled } : { enabled: true }}
       disabled={!online || (!source && (state.pending || state.unknown))} onValuesChange={source ? autosave.change : undefined}
       onFinish={source ? undefined : values => {
+        if (!runtimeReady) return;
         const body: Schema['DataSourceCreate'] = { schema_version: 1, provider_kind: 'NAUTILUS_CATALOG', ...values };
-        void command.submit(async () => { dataOf(await api.POST('/api/v2/data/sources', { body,
-          params: { header: command.intent.headers('POST', '/api/v2/data/sources', body) } })); }, async () => { await refresh(); close(); });
+        void command.submit(async () => (dataOf(await api.POST('/api/v2/data/sources', { body,
+          params: { header: command.intent.headers('POST', '/api/v2/data/sources', body) } }))).resource.id, async () => { await refresh(); close(); });
       }}>
       {source && <ResourceFacts id={source.id} revision={autosave.revision} updated={autosave.updated_at} />}
       <Form.Item name="name" label="数据源名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
@@ -108,6 +119,8 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
       <Form.Item name="enabled" label="允许新消费" valuePropName="checked"><Switch /></Form.Item>
       {source && autosave.saving && <Typography.Text role="status">正在保存</Typography.Text>}
       <ErrorNotice error={source ? autosave.error : state.error} />
+      {!source && <ErrorNotice error={runtime.error} />}
+      {!source && runtimeId && !runtimeSaving && runtime.data && !runtime.data.configuration.enabled && <Alert type="warning" showIcon title="所选 Runtime 已停用" />}
       {source && !!autosave.error && <Button onClick={autosave.retry}>重试</Button>}
     </Form>
   </Modal>;
@@ -125,9 +138,9 @@ function GrantDialog({ source, close }: { source: Source; close: () => void }) {
       const body: Schema['DataGrantCreate'] = { schema_version: 1, source_id: source.id, license_reference: values.license_reference,
         evidence_artifact_id: values.evidence_artifact_id, allowed_uses: values.allowed_uses,
         valid_from: values.valid_from!.toISOString(), valid_until: values.valid_until?.toISOString() ?? null };
-      void command.submit(async () => { dataOf(await api.POST('/api/v2/data/sources/{id}/grants', { body,
-        params: { path: { id: source.id }, header: command.intent.headers('POST', `/api/v2/data/sources/${source.id}/grants`, body) } }));
-      }, async () => { await refresh(); close(); });
+      void command.submit(async () => (dataOf(await api.POST('/api/v2/data/sources/{id}/grants', { body,
+        params: { path: { id: source.id }, header: command.intent.headers('POST', `/api/v2/data/sources/${source.id}/grants`, body) } }))).resource.id,
+      async () => { await refresh(); close(); });
     }}>
       <Form.Item name="license_reference" label="许可出处或合同编号" rules={[required, { max: 2000, whitespace: true }]}><Input.TextArea rows={3} maxLength={2000} /></Form.Item>
       <Form.Item name="evidence_artifact_id" label="已发布的许可证明" rules={[required]}><EvidenceSelect /></Form.Item>
@@ -154,9 +167,9 @@ function RevokeDialog({ grant, close }: { grant: Grant; close: () => void }) {
     <Form form={form} layout="vertical" initialValues={{ reason_code: 'OPERATOR_REVOKED' }} disabled={state.pending || state.unknown || !online} onFinish={values => {
       const body: Schema['DataGrantRevoke'] = { schema_version: 1, reason_code: values.reason_code, reason: values.reason,
         effective_at: values.effective_at?.toISOString() ?? null };
-      void command.submit(async () => { dataOf(await api.POST('/api/v2/data/grants/{id}/revoke', { body,
-        params: { path: { id: grant.id }, header: command.intent.headers('POST', `/api/v2/data/grants/${grant.id}/revoke`, body) } }));
-      }, async () => { await refresh(); close(); });
+      void command.submit(async () => (dataOf(await api.POST('/api/v2/data/grants/{id}/revoke', { body,
+        params: { path: { id: grant.id }, header: command.intent.headers('POST', `/api/v2/data/grants/${grant.id}/revoke`, body) } }))).resource.id,
+      async () => { await refresh(); close(); });
     }}>
       <Form.Item name="reason_code" label="原因代码" rules={[required, { max: 120 }]}><Input maxLength={120} /></Form.Item>
       <Form.Item name="reason" label="撤销说明" rules={[required, { max: 2000, whitespace: true }]}><Input.TextArea rows={4} maxLength={2000} /></Form.Item>
@@ -178,9 +191,9 @@ function RegisterDialog({ source, runtimeRevision, close }: { source: Source; ru
       const body: Schema['DatasetRegister'] = { schema_version: 1, source_id: source.id, grant_id: values.grant_id,
         expected_source_revision: source.revision, expected_runtime_revision: runtimeRevision,
         native_storage_version: values.native_storage_version, existing_universe_version_id: values.existing_universe_version_id ?? null };
-      void command.submit(async () => { dataOf(await api.POST('/api/v2/data/revisions', { body,
-        params: { header: command.intent.headers('POST', '/api/v2/data/revisions', body) } }));
-      }, async () => { await refresh(); close(); });
+      void command.submit(async () => (dataOf(await api.POST('/api/v2/data/revisions', { body,
+        params: { header: command.intent.headers('POST', '/api/v2/data/revisions', body) } }))).resource.id,
+      async () => { await refresh(); close(); });
     }}>
       <Form.Item name="grant_id" label="适用数据授权" rules={[required]}><ResourceSelect label="选择当前有效的授权" queryKey={['data','grant-options',source.id]}
         load={async (cursor, signal) => { const page = dataOf(await api.GET('/api/v2/data/sources/{id}/grants', { params: { path: { id: source.id }, query: { cursor, limit: 50 } }, signal })); return { items: page.items.map(item => ({ value: item.id, label: `版本 ${item.version} · ${item.license_reference} · ${licenseNames[item.license_state]}`, disabled: item.license_state !== 'ACTIVE' })), next_cursor: page.next_cursor }; }} /></Form.Item>

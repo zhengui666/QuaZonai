@@ -65,7 +65,7 @@ class SecretSession {
     }
   }
   abandon() {
-    if (this.state.pending) return;
+    if (this.state.pending || this.state.unknown) return;
     this.request = undefined; this.intent.clear();
     this.update({ unknown: false, ref: undefined, error: undefined });
   }
@@ -122,6 +122,8 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
   const online = useOnline(); const { command, state } = useSettingsCommand('runtime-create', 'Runtime 登记'); const refresh = useRefresh();
   const credentialKey = `runtime:${original?.id ?? 'new'}:credential`;
   const caKey = `runtime:${original?.id ?? 'new'}:ca`;
+  const caSession = secretSessionFor(caKey);
+  const caState = useSyncExternalStore(caSession.subscribe, caSession.getSnapshot, caSession.getSnapshot);
   const tls = Form.useWatch('tls_policy', form) ?? original?.configuration.tls_policy ?? 'SYSTEM_CA';
   const autosave = useFormAutosave(form, original && `runtime:${original.id}`, (original?.configuration ?? {}) as Values,
     original?.revision, original?.updated_at, online && !!original, async (values, revision, writeIntent) => {
@@ -143,6 +145,9 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
       await refresh();
       return { values: current.configuration as Values, revision: current.revision, updated_at: current.updated_at, resource: current };
     });
+  useEffect(() => {
+    if (caState.unknown && form.getFieldValue('tls_policy') !== 'PINNED_CA') form.setFieldValue('tls_policy', 'PINNED_CA');
+  }, [caState.unknown, form]);
   const shown = (autosave.resource as Runtime | undefined) ?? original;
   const pending = (!original && state.pending) || secretBusy;
   function cancel() {
@@ -166,17 +171,18 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
         void command.submit(async () => {
           if (!values.credential_ref || (values.tls_policy === 'PINNED_CA' && !values.ca_certificate_ref))
             throw new ApiFailure('LOCAL_VALIDATION_ERROR', '请先登记本次必需的凭据和证书。');
-          dataOf(await api.POST('/api/v2/integrations/runtimes', { body,
+          const result = dataOf(await api.POST('/api/v2/integrations/runtimes', { body,
             params: { header: command.intent.headers('POST', '/api/v2/integrations/runtimes', body) } }));
           consumeSecretSession(credentialKey, values.credential_ref);
           if (values.tls_policy === 'PINNED_CA') consumeSecretSession(caKey, values.ca_certificate_ref);
+          return result.resource.id;
         }, async () => { await refresh(); close(); });
       }}>
       <Form.Item name="name" label="名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
       <Form.Item name="endpoint" label="Runtime HTTPS origin" rules={[required, { max: 2048 }]}><Input maxLength={2048} placeholder="https://runtime.example" /></Form.Item>
-      <Form.Item name="tls_policy" label="TLS 信任方式" rules={[required]}><Select onChange={value => {
+      <Form.Item name="tls_policy" label="TLS 信任方式" rules={[required]}><Select disabled={caState.unknown} onChange={value => {
         form.setFieldValue('development_http', false);
-        if (value === 'SYSTEM_CA') { secretSessionFor(caKey).abandon(); form.setFieldValue('ca_certificate_ref', undefined); }
+        if (value === 'SYSTEM_CA') { caSession.abandon(); form.setFieldValue('ca_certificate_ref', undefined); }
       }} options={[
         { value: 'SYSTEM_CA', label: '系统可信 CA' }, { value: 'PINNED_CA', label: '指定 CA 证书' },
       ]} /></Form.Item>
@@ -307,9 +313,10 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
         const body: Schema['DownstreamCreate'] = { schema_version: 1, configuration, credential_ref: values.credential_ref! };
         void command.submit(async () => {
           if (!values.credential_ref) throw new ApiFailure('LOCAL_VALIDATION_ERROR', '请先登记下游服务凭据。');
-          dataOf(await api.POST('/api/v2/integrations/downstreams', { body,
+          const result = dataOf(await api.POST('/api/v2/integrations/downstreams', { body,
             params: { header: command.intent.headers('POST', '/api/v2/integrations/downstreams', body) } }));
           consumeSecretSession(credentialKey, values.credential_ref);
+          return result.resource.id;
         }, async () => { await refresh(); close(); });
       }}>
       <Form.Item name="name" label="下游名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>

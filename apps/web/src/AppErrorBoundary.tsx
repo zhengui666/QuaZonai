@@ -2,13 +2,14 @@ import { Component, type ReactNode } from 'react';
 import { Button, ConfigProvider, Popconfirm, Result, theme } from 'antd';
 import { useColorTheme } from './theme';
 import { useSettingsWork } from './settings-work';
+import { guardWorkActive } from './ui';
 
 type Props = { children: ReactNode };
-type State = { failed: boolean };
+type State = { failed: boolean; protectedAtFailure: boolean };
 
-function Recovery() {
+function Recovery({ protectedAtFailure }: { protectedAtFailure: boolean }) {
   const [colorTheme] = useColorTheme();
-  const recoverableWork = useSettingsWork();
+  const recoverableWork = useSettingsWork() || protectedAtFailure;
   const dark = colorTheme === 'dark';
   return (
     <ConfigProvider theme={{
@@ -19,7 +20,7 @@ function Recovery() {
         <Result
           status="error"
           title={<h1 style={{ fontSize: 24 }}>页面暂时无法显示</h1>}
-          extra={recoverableWork ? <Popconfirm title="仍有待确认操作" description="重新加载会清除本页的重试身份或回执。请先核对操作结果。"
+          extra={recoverableWork ? <Popconfirm title="操作内容可能丢失" description="重新加载会清除本页输入、重试身份或回执。若刚提交请求，请先核对结果。"
             okText="确认重新加载" cancelText="留在此页" onConfirm={() => window.location.reload()}>
             <Button type="primary">重新加载页面</Button>
           </Popconfirm> : <Button type="primary" onClick={() => window.location.reload()}>重新加载页面</Button>}
@@ -31,13 +32,13 @@ function Recovery() {
 
 /** Render recovery only: never retry commands or expose exception contents. */
 export default class AppErrorBoundary extends Component<Props, State> {
-  override state: State = { failed: false };
+  override state: State = { failed: false, protectedAtFailure: false };
 
   static getDerivedStateFromError(): State {
-    return { failed: true };
+    return { failed: true, protectedAtFailure: guardWorkActive() };
   }
 
   override render() {
-    return this.state.failed ? <Recovery /> : this.props.children;
+    return this.state.failed ? <Recovery protectedAtFailure={this.state.protectedAtFailure} /> : this.props.children;
   }
 }

@@ -31,6 +31,7 @@ async function setup(page: Page) {
   let holdRuntime: Promise<void> | undefined;
   let holdSource: Promise<void> | undefined;
   let holdSecret: Promise<void> | undefined;
+  let failSecret = false;
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const reply = (json: unknown, status = 200) => route.fulfill({ status, body: JSON.stringify(json), contentType: 'application/json' });
@@ -42,6 +43,7 @@ async function setup(page: Page) {
     if (path === '/api/v2/settings/credentials') {
       const body: Schema['IntegrationSecretCreate'] = request.postDataJSON();
       if (holdSecret) { await holdSecret; holdSecret = undefined; }
+      if (failSecret) { failSecret = false; return route.abort('failed'); }
       return reply({ schema_version: 1, replayed: false,
         resource: { id: body.intent.purpose === 'TLS_CA' ? caId : secretId,
           purpose: body.intent.purpose, label: body.intent.label, created_at: now } }, 201);
@@ -104,6 +106,7 @@ async function setup(page: Page) {
   await page.goto('/');
   await page.getByRole('menuitem', { name: '设置', exact: true }).click();
   return { runtime, downstream, source, secretId, caId, writes, failNextRuntime: () => { failRuntime = true; },
+    failNextSecret: () => { failSecret = true; },
     rejectNextRuntime: () => { rejectRuntime = true; }, conflictNextRuntime: () => { conflictRuntime = true; },
     matchNextRuntime: () => { conflictRuntime = true; matchConflictRuntime = true; },
     holdNextRuntime: () => {
@@ -227,6 +230,9 @@ test('uncertain Runtime creation keeps its command and credential across Setting
   await page.getByRole('button', { name: '重试当前操作' }).click();
   await expect.poll(() => requests.length).toBe(2);
   expect(requests[1]).toEqual(requests[0]);
+  await expect(page.getByText('Runtime 登记回执已确认')).toBeVisible();
+  await expect(page.getByText(runtime.id)).toBeVisible();
+  await page.getByRole('button', { name: '关闭回执' }).click();
   await expect.poll(() => page.evaluate(async () => {
     const modulePath = '/src/settings-work.ts';
     return (await import(modulePath)).settingsWorkActive();
@@ -282,6 +288,9 @@ test('uncertain Downstream creation keeps its command and credential across Sett
   await page.getByRole('button', { name: '重试当前操作' }).click();
   await expect.poll(() => requests.length).toBe(2);
   expect(requests[1]).toEqual(requests[0]);
+  await expect(page.getByText('目标交付下游登记回执已确认')).toBeVisible();
+  await expect(page.getByText(downstream.id)).toBeVisible();
+  await page.getByRole('button', { name: '关闭回执' }).click();
   await expect.poll(() => page.evaluate(async () => {
     const modulePath = '/src/settings-work.ts';
     return (await import(modulePath)).settingsWorkActive();
@@ -358,6 +367,31 @@ test('data registration waits for the bound Runtime autosave across settings tab
   await expect.poll(() => runtime.configuration.name).toBe('Runtime B');
   await expect(page.getByRole('button', { name: '登记原生数据版本' })).toBeEnabled();
   await expect(page.getByText('Runtime B')).toBeVisible();
+});
+
+test('new data source registration checks the selected Runtime after its autosave', async ({ page }) => {
+  const { runtime, writes, holdNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const release = holdNextRuntime();
+  const editor = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await editor.getByRole('switch', { name: '允许新任务' }).click();
+  await expect.poll(() => writes.filter(write => write.kind === 'runtime').length).toBe(1);
+  await editor.getByRole('button', { name: '关闭' }).click();
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await page.getByRole('button', { name: '登记数据源' }).click();
+  const dialog = page.getByRole('dialog', { name: '登记数据源' });
+  await dialog.getByRole('textbox', { name: '数据源名称' }).fill('New source');
+  await dialog.getByRole('combobox', { name: '选择已登记的 Runtime' }).click();
+  await page.getByText('Runtime A', { exact: true }).last().click();
+  await dialog.getByRole('textbox', { name: 'Runtime 原生目录登记键' }).fill('catalog/new-source');
+  await expect(dialog.getByRole('button', { name: '登记', exact: true })).toBeDisabled();
+  release();
+  await expect.poll(() => runtime.configuration.enabled).toBe(false);
+  await expect(dialog.getByText('所选 Runtime 已停用')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '登记', exact: true })).toBeDisabled();
+  expect(writes.filter(write => write.kind === 'source-create')).toHaveLength(0);
 });
 
 test('immutable portfolio editors wait for a Runtime autosave and read its new revision', async ({ page }) => {
@@ -611,7 +645,7 @@ test('an offline edit closed before debounce saves on reconnect without reopenin
   expect(writes).toHaveLength(1);
 });
 
-test('an uncertain data source registration retries the same command after Settings navigation', async ({ page }) => {
+test('a confirmed data source receipt survives a failed list refresh after retry', async ({ page }) => {
   const { source } = await setup(page);
   const requests: { key: string | undefined; body: Schema['DataSourceCreate'] }[] = [];
   let releaseRefresh!: () => void;
@@ -620,7 +654,7 @@ test('an uncertain data source registration retries the same command after Setti
   await page.route(/\/api\/v2\/data\/sources(?:\?|$)/, async route => {
     const request = route.request();
     if (request.method() === 'GET') {
-      if (requests.length === 2) { refreshes++; await heldRefresh; }
+      if (requests.length === 2) { refreshes++; await heldRefresh; return route.abort('failed'); }
       return route.fallback();
     }
     const body: Schema['DataSourceCreate'] = request.postDataJSON();
@@ -658,6 +692,9 @@ test('an uncertain data source registration retries the same command after Setti
     return (await import(modulePath)).settingsWorkActive();
   })).toBe(true);
   releaseRefresh();
+  await expect(page.getByText('数据源登记回执已确认')).toBeVisible();
+  await expect(page.getByText(source.id)).toBeVisible();
+  await page.getByRole('button', { name: '关闭回执' }).click();
   await expect.poll(() => page.evaluate(async () => {
     const modulePath = '/src/settings-work.ts';
     return (await import(modulePath)).settingsWorkActive();
@@ -704,6 +741,32 @@ test('switching back to system trust abandons an unbound CA registration', async
   await page.getByText('指定 CA 证书', { exact: true }).last().click();
   await expect(dialog.getByText(caId)).toHaveCount(0);
   await expect(dialog.getByRole('textbox', { name: '新的 CA PEM 证书' })).toBeEnabled();
+});
+
+test('an unknown CA registration keeps its retry identity until reconciled', async ({ page }) => {
+  const { caId, failNextSecret } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await dialog.getByRole('combobox', { name: 'TLS 信任方式' }).click();
+  await page.getByText('指定 CA 证书', { exact: true }).last().click();
+  failNextSecret();
+  await dialog.getByRole('textbox', { name: '新的 CA PEM 证书' }).fill('TEST CA');
+  await dialog.getByRole('button', { name: '登记证书' }).click();
+  await expect(dialog.getByRole('button', { name: '重试登记' })).toBeVisible();
+  await expect(dialog.getByRole('combobox', { name: 'TLS 信任方式' })).toBeDisabled();
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const reopened = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await expect(reopened.getByRole('button', { name: '重试登记' })).toBeVisible();
+  await expect(reopened.getByRole('combobox', { name: 'TLS 信任方式' })).toBeDisabled();
+  await reopened.getByRole('button', { name: '重试登记' }).click();
+  await expect(reopened.getByText(caId)).toBeVisible();
+  await expect(reopened.getByRole('combobox', { name: 'TLS 信任方式' })).toBeEnabled();
 });
 
 test('closing with an incomplete setting does not send it', async ({ page }) => {
@@ -876,14 +939,43 @@ test('error recovery asks before discarding a recoverable settings operation', a
       React.createElement(Boundary, null, React.createElement(Crash))));
   });
   await page.locator('#recovery-fixture').getByRole('button', { name: '重新加载页面' }).click();
-  await expect(page.getByText('仍有待确认操作')).toBeVisible();
+  await expect(page.getByText('操作内容可能丢失')).toBeVisible();
   await expect(page.getByText('未保存内容将丢失')).toHaveCount(0);
   await page.getByRole('button', { name: '留在此页' }).click();
   await page.evaluate(async () => {
     const modulePath = '/src/settings-work.ts';
     (await import(modulePath)).setSettingsWork('recovery-fixture', false);
   });
-  await expect(page.getByText('仍有待确认操作')).toHaveCount(0);
+  await expect(page.getByText('操作内容可能丢失')).toHaveCount(0);
+});
+
+test('error recovery keeps the reload warning for an active explicit operation', async ({ page }) => {
+  await setup(page);
+  await page.evaluate(async () => {
+    const reactPath = '/node_modules/.vite/deps/react.js';
+    const domPath = '/node_modules/.vite/deps/react-dom_client.js';
+    const boundaryPath = '/src/AppErrorBoundary.tsx';
+    const themePath = '/src/theme.ts';
+    const uiPath = '/src/ui.tsx';
+    const React = (await import(reactPath)).default;
+    const { createRoot } = (await import(domPath)).default;
+    const { default: Boundary } = await import(boundaryPath);
+    const { ColorThemeContext } = await import(themePath);
+    const { GuardProvider, useGuard } = await import(uiPath);
+    const host = document.createElement('div'); host.id = 'guarded-recovery-fixture'; document.body.append(host);
+    const Crash = () => {
+      const [failed, setFailed] = React.useState(false);
+      useGuard(true);
+      React.useEffect(() => { setFailed(true); }, []);
+      if (failed) throw new Error('synthetic render failure');
+      return null;
+    };
+    createRoot(host, { onCaughtError: () => {} }).render(React.createElement(ColorThemeContext.Provider, { value: ['light', () => {}] },
+      React.createElement(Boundary, null, React.createElement(GuardProvider, null, React.createElement(Crash)))));
+  });
+  await page.locator('#guarded-recovery-fixture').getByRole('button', { name: '重新加载页面' }).click();
+  await expect(page.getByText('操作内容可能丢失')).toBeVisible();
+  await expect(page.getByText('未保存内容将丢失')).toHaveCount(0);
 });
 
 test('a rejected import remains visible with its draft after navigation', async ({ page }) => {
