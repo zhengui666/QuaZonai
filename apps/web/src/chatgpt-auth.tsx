@@ -154,6 +154,11 @@ export function ChatgptAuth({ profile, account, disabled, onBusy, onChanged }: {
           startError: undefined, cancelError: undefined });
       } else void owner.reconcileUnknownStart(client);
     }
+    for (const candidate of sessions.values()) {
+      if (candidate === session || candidate === owner || candidate.cancelRequest?.operation_id !== operation.operation.id) continue;
+      candidate.cancelRequest = undefined; candidate.cancelIntent.clear();
+      candidate.update({ pendingCancel: false, unknownCancel: false, cancelError: undefined });
+    }
     if (session.refreshed === version) return;
     session.refreshed = version;
     const ownedStart = session.startedId === operation.operation.id;

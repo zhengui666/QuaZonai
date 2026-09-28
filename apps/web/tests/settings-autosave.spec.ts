@@ -30,6 +30,7 @@ async function setup(page: Page) {
   let matchConflictRuntime = false;
   let holdRuntime: Promise<void> | undefined;
   let holdSource: Promise<void> | undefined;
+  let holdSecret: Promise<void> | undefined;
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const reply = (json: unknown, status = 200) => route.fulfill({ status, body: JSON.stringify(json), contentType: 'application/json' });
@@ -40,6 +41,7 @@ async function setup(page: Page) {
     if (path === '/api/v2/settings/codex') return reply({ schema_version: 1, items: [], next_cursor: null });
     if (path === '/api/v2/settings/credentials') {
       const body: Schema['IntegrationSecretCreate'] = request.postDataJSON();
+      if (holdSecret) { await holdSecret; holdSecret = undefined; }
       return reply({ schema_version: 1, replayed: false,
         resource: { id: body.intent.purpose === 'TLS_CA' ? caId : secretId,
           purpose: body.intent.purpose, label: body.intent.label, created_at: now } }, 201);
@@ -112,6 +114,10 @@ async function setup(page: Page) {
       let release!: () => void;
       holdSource = new Promise<void>(resolve => { release = resolve; });
       return release;
+    }, holdNextSecret: () => {
+      let release!: () => void;
+      holdSecret = new Promise<void>(resolve => { release = resolve; });
+      return release;
     } };
 }
 
@@ -148,6 +154,10 @@ test('existing Runtime, Downstream and data source edits save without a Save act
   releaseCredential();
   await expect.poll(() => runtime.revision).toBe('5');
   expect((writes.filter(write => write.kind === 'runtime').at(-1)?.body as Schema['RuntimeUpdate']).credential_ref).toBe(secretId);
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
   await runtimeDialog.getByRole('textbox', { name: '名称' }).fill('Runtime C');
   await expect.poll(() => runtime.configuration.name).toBe('Runtime C');
   expect((writes.filter(write => write.kind === 'runtime').at(-1)?.body as Schema['RuntimeUpdate']).credential_ref).toBeNull();
@@ -236,6 +246,25 @@ test('source dependent actions wait for a closed editor autosave to settle', asy
   await expect.poll(() => source.name).toBe('Source B');
   await expect(page.getByRole('button', { name: '登记原生数据版本' })).toBeEnabled();
   await expect(page.getByRole('button', { name: '登记许可授权' })).toBeEnabled();
+});
+
+test('data registration waits for the bound Runtime autosave across settings tabs', async ({ page }) => {
+  const { runtime, writes, holdNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const release = holdNextRuntime();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime B');
+  await expect.poll(() => writes.filter(write => write.kind === 'runtime').length).toBe(1);
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await page.getByRole('button', { name: '查看许可与版本登记' }).click();
+  await expect(page.getByRole('button', { name: '登记原生数据版本' })).toBeDisabled();
+  release();
+  await expect.poll(() => runtime.configuration.name).toBe('Runtime B');
+  await expect(page.getByRole('button', { name: '登记原生数据版本' })).toBeEnabled();
 });
 
 test('a corrected server-rejected setting saves with a new request', async ({ page }) => {
@@ -392,6 +421,36 @@ test('closing an invalid editor binds newly registered credential and CA to vali
   expect(writes).toHaveLength(1);
   expect(writes[0]?.body).toMatchObject({ credential_ref: secretId, ca_certificate_ref: caId,
     configuration: { name: 'Runtime A', tls_policy: 'PINNED_CA' } });
+});
+
+test('a one-time credential blocks PWA reload until it is bound or abandoned', async ({ page }) => {
+  const { secretId, holdNextSecret } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
+  const release = holdNextSecret();
+  await page.getByRole('dialog', { name: '登记 Runtime' }).getByRole('textbox', { name: '新的 RUNTIME 凭据' }).fill('a'.repeat(32));
+  await page.getByRole('button', { name: '登记凭据' }).click();
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(true);
+  release();
+  const first = page.getByRole('dialog', { name: '登记 Runtime' });
+  await expect(first.getByText(secretId)).toBeVisible();
+  await first.getByRole('button', { name: '返回' }).click();
+  await expect(first).toHaveCount(0);
+  await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '登记 Runtime' });
+  await expect(dialog.getByText(secretId)).toBeVisible();
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(true);
+  await dialog.getByRole('button', { name: '放弃本次绑定' }).click();
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
 });
 
 test('a pending import survives navigation and retries with the same identity', async ({ page }) => {

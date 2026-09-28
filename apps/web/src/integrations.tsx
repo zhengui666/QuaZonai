@@ -1,11 +1,11 @@
 import { Alert, Button, Card, Descriptions, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useClock, useOnline } from './ui';
 import { useFormAutosave } from './settings-autosave';
-import { useSettingsWorkKey } from './settings-work';
+import { setSettingsWork, useSettingsWorkKey } from './settings-work';
 
 type Runtime = Schema['RuntimeView'];
 type Downstream = Schema['DownstreamView'];
@@ -31,41 +31,87 @@ function useRefresh() {
   ]); };
 }
 
-/** Secret plaintext is confined to this transient field and the write-only request.
- * The query/mutation caches and browser storage never receive the secret as state. */
-export function SecretReference({ value, onChange, purpose, configured, disabled, onBusy }: {
+type SecretState = { pending: boolean; unknown: boolean; ref?: string; error?: unknown };
+class SecretSession {
+  private intent = new Intent();
+  private request?: Schema['IntegrationSecretCreate'];
+  private listeners = new Set<() => void>();
+  state: SecretState = { pending: false, unknown: false };
+  constructor(readonly key: string) {}
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  getSnapshot = () => this.state;
+  private update(changes: Partial<SecretState>) {
+    this.state = { ...this.state, ...changes };
+    this.listeners.forEach(listener => listener());
+    setSettingsWork(`secret:${this.key}`, this.state.pending || this.state.unknown || !!this.state.ref);
+  }
+  async register(body?: Schema['IntegrationSecretCreate']) {
+    if (this.state.pending || this.state.ref) return;
+    this.request ??= body;
+    const request = this.request;
+    if (!request) return;
+    this.update({ pending: true, unknown: false, error: undefined });
+    try {
+      const result = dataOf(await api.POST('/api/v2/settings/credentials', { body: request,
+        params: { header: this.intent.headers('POST', '/api/v2/settings/credentials', request) } }));
+      this.request = undefined; this.intent.clear();
+      this.update({ pending: false, unknown: false, ref: result.resource.id, error: undefined });
+    } catch (error) {
+      const rejected = error instanceof ApiFailure && !!error.problem && error.status >= 400 && error.status < 500;
+      const offline = error instanceof ApiFailure && error.code === 'OFFLINE';
+      if (rejected || offline) { this.request = undefined; this.intent.clear(); }
+      this.update({ pending: false, unknown: !rejected && !offline, error });
+    }
+  }
+  abandon() {
+    if (this.state.pending) return;
+    this.request = undefined; this.intent.clear();
+    this.update({ unknown: false, ref: undefined, error: undefined });
+  }
+  consume(ref: string) { if (this.state.ref === ref) this.update({ ref: undefined, error: undefined }); }
+}
+const secretSessions = new Map<string, SecretSession>();
+function secretSessionFor(key: string) {
+  let session = secretSessions.get(key);
+  if (!session) { session = new SecretSession(key); secretSessions.set(key, session); }
+  return session;
+}
+function consumeSecretSession(key: string, ref: string | undefined) { if (ref) secretSessions.get(key)?.consume(ref); }
+
+/** Secret plaintext stays in this field or an unresolved in-memory request.
+ * The query/mutation caches and browser storage never receive it. */
+export function SecretReference({ value, onChange, purpose, configured, disabled, onBusy, sessionKey }: {
   value?: string | null; onChange?: (id: string | undefined) => void;
   purpose: 'RUNTIME' | 'DOWNSTREAM' | 'TLS_CA'; configured: boolean;
-  disabled: boolean; onBusy: (busy: boolean) => void;
+  disabled: boolean; onBusy: (busy: boolean) => void; sessionKey: string;
 }) {
-  const [secret, setSecret] = useState(''); const [pending, setPending] = useState(false); const [error, setError] = useState<unknown>();
-  const active = useRef(false); const intent = useRef(new Intent()); const online = useOnline();
+  const [secret, setSecret] = useState(''); const online = useOnline();
+  const session = secretSessionFor(sessionKey);
+  const state = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
+  useEffect(() => { onBusy(state.pending); }, [onBusy, state.pending]);
+  useEffect(() => { if (state.ref && value !== state.ref) onChange?.(state.ref); }, [state.ref, value, onChange]);
+  useEffect(() => { if (state.ref) setSecret(''); }, [state.ref]);
   const isCa = purpose === 'TLS_CA';
   const valid = isCa ? secret.length >= 1 && secret.length <= 65536 && /^[\x00-\x7f]+(?![\s\S])/.test(secret)
     : secret.length >= (purpose === 'RUNTIME' ? 32 : 1) && secret.length <= 8192 && /^[!-~]+(?![\s\S])/.test(secret);
-  async function register() {
-    if (active.current || !online || !valid || disabled) return;
-    active.current = true; setPending(true); onBusy(true); setError(undefined);
+  function register() {
+    if (state.pending || state.unknown || state.ref || !online || !valid || disabled) return;
+    onBusy(true);
     const common = { schema_version: 1 as const, label: isCa ? 'Runtime CA certificate' : `${purpose} service credential` };
     const body: Schema['IntegrationSecretCreate'] = purpose === 'RUNTIME'
       ? { intent: { ...common, purpose: 'RUNTIME' }, value: secret }
       : purpose === 'DOWNSTREAM' ? { intent: { ...common, purpose: 'DOWNSTREAM' }, value: secret }
           : { intent: { ...common, purpose: 'TLS_CA' }, value: secret };
-    try {
-      const result = dataOf(await api.POST('/api/v2/settings/credentials', {
-        body, params: { header: intent.current.headers('POST','/api/v2/settings/credentials',body) },
-      }));
-      onChange?.(result.resource.id); setSecret(''); intent.current.clear();
-    } catch (error) { setError(error); }
-    finally { active.current = false; setPending(false); onBusy(false); }
+    void session.register(body);
   }
   return <Space orientation="vertical" className="full-width">
     {configured && !value && <Typography.Text type="secondary">已配置</Typography.Text>}
-    {value && <Alert type="success" showIcon title="凭据已登记" description={<Space wrap><Typography.Text copyable>{value}</Typography.Text><Button size="small" disabled={disabled || pending} onClick={() => onChange?.(undefined)}>放弃本次绑定</Button></Space>} />}
-    {isCa ? <Input.TextArea aria-label="新的 CA PEM 证书" value={secret} onChange={event => setSecret(event.target.value)} rows={5} maxLength={65536} disabled={disabled || pending || !online} autoComplete="off" />
-      : <Input.Password aria-label={`新的 ${purpose} 凭据`} value={secret} onChange={event => setSecret(event.target.value)} maxLength={8192} disabled={disabled || pending || !online} autoComplete="new-password" />}
-    <Button onClick={() => { void register(); }} loading={pending} disabled={!online || !valid || disabled}>登记{isCa ? '证书' : '凭据'}</Button>
-    <ErrorNotice error={error} />
+    {(value || state.ref) && <Alert type="success" showIcon title="凭据已登记" description={<Space wrap><Typography.Text copyable>{value || state.ref}</Typography.Text><Button size="small" disabled={disabled || state.pending} onClick={() => { session.abandon(); onChange?.(undefined); }}>放弃本次绑定</Button></Space>} />}
+    {isCa ? <Input.TextArea aria-label="新的 CA PEM 证书" value={secret} onChange={event => setSecret(event.target.value)} rows={5} maxLength={65536} disabled={disabled || state.pending || state.unknown || !!state.ref || !online} autoComplete="off" />
+      : <Input.Password aria-label={`新的 ${purpose} 凭据`} value={secret} onChange={event => setSecret(event.target.value)} maxLength={8192} disabled={disabled || state.pending || state.unknown || !!state.ref || !online} autoComplete="new-password" />}
+    <Button onClick={register} loading={state.pending} disabled={!online || !valid || disabled || state.unknown || !!state.ref}>登记{isCa ? '证书' : '凭据'}</Button>
+    {state.unknown && <Button disabled={!online || state.pending} onClick={() => { onBusy(true); void session.register(); }}>重试登记</Button>}
+    <ErrorNotice error={state.error} />
   </Space>;
 }
 
@@ -73,6 +119,8 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
   type Values = Schema['RuntimeConfigurationV1'] & { credential_ref?: string; ca_certificate_ref?: string };
   const [form] = Form.useForm<Values>(); const [secretBusy, setSecretBusy] = useState(false);
   const online = useOnline(); const intent = useRef(new Intent()); const refresh = useRefresh();
+  const credentialKey = `runtime:${original?.id ?? 'new'}:credential`;
+  const caKey = `runtime:${original?.id ?? 'new'}:ca`;
   const tls = Form.useWatch('tls_policy', form) ?? original?.configuration.tls_policy ?? 'SYSTEM_CA';
   const mutation = useMutation({ mutationFn: async (values: Values) => {
     const common = { name: values.name, endpoint: values.endpoint, allowed_capabilities: values.allowed_capabilities, enabled: values.enabled };
@@ -80,7 +128,10 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
     const body: Schema['RuntimeCreate'] = values.tls_policy === 'PINNED_CA'
       ? { schema_version: 1, credential_ref: values.credential_ref, ca_certificate_ref: values.ca_certificate_ref!, configuration: { ...common, tls_policy: 'PINNED_CA', development_http: false } }
       : { schema_version: 1, credential_ref: values.credential_ref, ca_certificate_ref: null, configuration: { ...common, tls_policy: 'SYSTEM_CA', development_http: values.development_http } };
-    return dataOf(await api.POST('/api/v2/integrations/runtimes', { body, params: { header: intent.current.headers('POST','/api/v2/integrations/runtimes',body) } }));
+    const result = dataOf(await api.POST('/api/v2/integrations/runtimes', { body, params: { header: intent.current.headers('POST','/api/v2/integrations/runtimes',body) } }));
+    consumeSecretSession(credentialKey, values.credential_ref);
+    if (values.tls_policy === 'PINNED_CA') consumeSecretSession(caKey, values.ca_certificate_ref);
+    return result;
   }, onSuccess: () => { intent.current.clear(); void refresh(); close(); } });
   const autosave = useFormAutosave(form, original && `runtime:${original.id}`, (original?.configuration ?? {}) as Values,
     original?.revision, original?.updated_at, online && !!original, async (values, revision, writeIntent) => {
@@ -92,6 +143,8 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
         : { ...base, configuration: { ...common, tls_policy: 'SYSTEM_CA', development_http: values.development_http }, ca_certificate_ref: null };
       const result = dataOf(await api.PATCH('/api/v2/integrations/runtimes/{id}', { body, params: { path: { id: original.id },
         header: writeIntent.headers('PATCH', `/api/v2/integrations/runtimes/${original.id}`, body) } }));
+      consumeSecretSession(credentialKey, values.credential_ref);
+      if (body.ca_certificate_ref) consumeSecretSession(caKey, body.ca_certificate_ref);
       await refresh();
       return result.resource;
     }, async () => {
@@ -122,11 +175,11 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
         { value: 'SYSTEM_CA', label: '系统可信 CA' }, { value: 'PINNED_CA', label: '指定 CA 证书' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换 Runtime 凭据（不登记则保留）' : 'Runtime 服务凭据'} rules={original ? [] : [required]}>
-        <SecretReference purpose="RUNTIME" configured={shown?.credential_configured ?? false} disabled={pending || autosave.saving || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="RUNTIME" sessionKey={credentialKey} configured={shown?.credential_configured ?? false} disabled={pending || autosave.saving || !online} onBusy={setSecretBusy} />
       </Form.Item>
       {tls === 'PINNED_CA' && <Form.Item name="ca_certificate_ref" label="指定 CA 证书" preserve={false}
         rules={shown?.configuration.tls_policy === 'PINNED_CA' && shown.ca_configured ? [] : [required]}>
-        <SecretReference purpose="TLS_CA" configured={shown?.configuration.tls_policy === 'PINNED_CA' && !!shown.ca_configured} disabled={pending || autosave.saving || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="TLS_CA" sessionKey={caKey} configured={shown?.configuration.tls_policy === 'PINNED_CA' && !!shown.ca_configured} disabled={pending || autosave.saving || !online} onBusy={setSecretBusy} />
       </Form.Item>}
       <Form.Item name="allowed_capabilities" label="允许的任务类型" rules={[required]}><Select mode="multiple" options={jobs} /></Form.Item>
       <Form.Item name="enabled" label="允许新任务" valuePropName="checked"><Switch /></Form.Item>
@@ -209,11 +262,14 @@ function Runtimes() {
 function DownstreamDialog({ original, close }: { original?: Downstream; close: () => void }) {
   type Values = Schema['DownstreamConfigurationV1'] & { credential_ref?: string };
   const [form] = Form.useForm<Values>(); const [secretBusy, setSecretBusy] = useState(false); const online = useOnline(); const intent = useRef(new Intent()); const refresh = useRefresh();
+  const credentialKey = `downstream:${original?.id ?? 'new'}:credential`;
   const mutation = useMutation({ mutationFn: async (values: Values) => {
     const configuration: Schema['DownstreamConfigurationV1'] = { name: values.name, endpoint: values.endpoint, accepted_package_versions: ['1'], environments: values.environments, enabled: values.enabled, development_http: values.development_http };
     if (!values.credential_ref) throw new ApiFailure('LOCAL_VALIDATION_ERROR','请先登记下游服务凭据。');
     const body: Schema['DownstreamCreate'] = { schema_version: 1, configuration, credential_ref: values.credential_ref };
-    return dataOf(await api.POST('/api/v2/integrations/downstreams', { body, params: { header: intent.current.headers('POST','/api/v2/integrations/downstreams',body) } }));
+    const result = dataOf(await api.POST('/api/v2/integrations/downstreams', { body, params: { header: intent.current.headers('POST','/api/v2/integrations/downstreams',body) } }));
+    consumeSecretSession(credentialKey, values.credential_ref);
+    return result;
   }, onSuccess: () => { intent.current.clear(); void refresh(); close(); } });
   const autosave = useFormAutosave(form, original && `downstream:${original.id}`, (original?.configuration ?? {}) as Values,
     original?.revision, original?.updated_at, online && !!original, async (values, revision, writeIntent) => {
@@ -223,6 +279,7 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
       const body: Schema['DownstreamUpdate'] = { schema_version: 1, expected_revision: revision, configuration, credential_ref: values.credential_ref ?? null };
       const result = dataOf(await api.PATCH('/api/v2/integrations/downstreams/{id}', { body, params: { path: { id: original.id },
         header: writeIntent.headers('PATCH', `/api/v2/integrations/downstreams/${original.id}`, body) } }));
+      consumeSecretSession(credentialKey, values.credential_ref);
       void refresh();
       return result.resource;
     }, async () => {
@@ -252,7 +309,7 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
         { value: 'PAPER', label: '仅 Paper' }, { value: 'LIVE', label: '仅 Live' }, { value: 'BOTH', label: 'Paper 与 Live（仍须分别审批）' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换下游服务凭据（可保留）' : '下游服务凭据'} rules={original ? [] : [required]}>
-        <SecretReference purpose="DOWNSTREAM" configured={shown?.credential_configured ?? false} disabled={pending || autosave.saving || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="DOWNSTREAM" sessionKey={credentialKey} configured={shown?.credential_configured ?? false} disabled={pending || autosave.saving || !online} onBusy={setSecretBusy} />
       </Form.Item>
       
       <Form.Item name="enabled" label="允许未来目标交付" valuePropName="checked"><Switch /></Form.Item>

@@ -428,6 +428,26 @@ test('lost cancel ACK preserves the request and stays pending until native confi
   await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeEnabled();
 });
 
+test('terminal login clears a cancellation started from another role', async ({ page }) => {
+  const { state } = await setup(page, true);
+  await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
+  await expect(page.getByLabel('ChatGPT 授权码')).toBeVisible();
+  await page.getByRole('combobox', { name: 'Codex 角色' }).click();
+  await page.getByText('独立审阅员', { exact: true }).last().click();
+  state.dropCancel = true;
+  await page.getByRole('button', { name: '取消登录', exact: true }).click();
+  await expect(page.getByText('正在取消，请等待确认')).toBeVisible();
+  await page.getByRole('combobox', { name: 'Codex 角色' }).click();
+  await page.getByText('研究员', { exact: true }).last().click();
+  state.operation = { ...state.operation!, state: 'CANCELLED', reason: 'NATIVE_CANCEL_CONFIRMED',
+    revision: '9007199254740996', finished_at: new Date().toISOString() };
+  await expect(page.getByText('登录已取消', { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+});
+
 test('reload restores only status, and a local deadline never invents a terminal result', async ({ page }) => {
   const { state, open } = await setup(page);
   await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();

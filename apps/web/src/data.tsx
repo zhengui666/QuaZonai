@@ -194,6 +194,7 @@ function SourceDetails({ sourceId }: { sourceId: string }) {
   const source = useQuery({ queryKey: ['data','source',sourceId], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/data/sources/{id}', { params: { path: { id: sourceId } }, signal })) });
   const grants = useQuery({ queryKey: ['data','grants',sourceId,history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/data/sources/{id}/grants', { params: { path: { id: sourceId }, query: { cursor: history.at(-1), limit: 50 } }, signal })) });
   const runtimeId = source.data?.runtime_id;
+  const runtimeSaving = useSettingsWorkKey(`autosave:runtime:${runtimeId ?? ''}`);
   const runtime = useQuery({ queryKey: ['data','source-runtime',runtimeId], enabled: runtimeId !== undefined, queryFn: async ({ signal }) => {
     if (!runtimeId) throw new Error('Source binding missing');
     return dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId } }, signal }));
@@ -212,7 +213,7 @@ function SourceDetails({ sourceId }: { sourceId: string }) {
         <Space wrap>
           <Button disabled={!online || source.isError} onClick={() => setEditing(current)}>修改数据源</Button>
           <Button disabled={!online || source.isError || sourceSaving || !current.enabled} onClick={() => setGranting(current)}>登记许可授权</Button>
-          <Button type="primary" disabled={!online || source.isError || sourceSaving || runtime.isError || !current.enabled || !runtime.data?.configuration.enabled}
+          <Button type="primary" disabled={!online || source.isError || sourceSaving || runtimeSaving || runtime.isError || !current.enabled || !runtime.data?.configuration.enabled}
             onClick={() => { if (runtime.data) setRegistering({ source: current, revision: runtime.data.revision }); }}>登记原生数据版本</Button>
         </Space>
         <ErrorNotice error={runtime.error} retry={() => { void runtime.refetch(); }} />
