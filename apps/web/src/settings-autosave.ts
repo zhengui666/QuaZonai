@@ -127,11 +127,17 @@ class Autosave<T extends object> {
     this.reloading = true; this.snapshot = { ...this.snapshot, saving: true }; this.emit();
     try {
       const current = await this.reload();
-      this.savedValue = current.values; this.saved = JSON.stringify(current.values); this.latest = current.values;
-      this.attempted = undefined; this.rejected = undefined; this.uncertain = false; this.conflict = false; this.intent.clear();
-      this.form?.setFieldsValue(current.values as Partial<T>);
+      const rebased = { ...current.values } as Record<string, unknown>;
+      const previous = this.savedValue as Record<string, unknown>;
+      for (const [field, value] of Object.entries(this.latest)) {
+        if (JSON.stringify(value) !== JSON.stringify(previous[field])) rebased[field] = value;
+      }
+      this.savedValue = current.values; this.saved = JSON.stringify(current.values); this.latest = rebased as T;
+      this.attempted = undefined; this.rejected = JSON.stringify(this.latest) === this.saved ? undefined : JSON.stringify(this.latest);
+      this.uncertain = false; this.conflict = false; this.intent.clear();
+      this.form?.setFieldsValue(this.latest as Partial<T>);
       this.snapshot = { saving: true, revision: current.revision, updated_at: current.updated_at, resource: current.resource,
-        error: new ApiFailure('REVISION_CONFLICT', '配置在其他地方已更改，已载入最新版本，请重新编辑') };
+        error: new ApiFailure('REVISION_CONFLICT', '配置在其他地方已更改，已保留本次编辑，请检查后重试') };
     } catch (error) { this.snapshot = { ...this.snapshot, error }; }
     finally { this.reloading = false; if (!this.running) this.snapshot = { ...this.snapshot, saving: false }; this.emit(); }
   }

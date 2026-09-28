@@ -36,7 +36,8 @@ async function setup(page: Page, ready = false) {
     starts: [] as { key: string | undefined; body: unknown }[], cancels: [] as { key: string | undefined; body: unknown }[],
     probes: 0, dropStart: false, rejectStart: false, terminalStart: false, dropCancel: false, stale: false,
     holdStart: undefined as Promise<void> | undefined,
-    holdSave: undefined as Promise<void> | undefined, dropSaveAfterCommit: false, saveKeys: [] as (string | undefined)[],
+    holdSave: undefined as Promise<void> | undefined, dropSaveAfterCommit: false, rejectSave: false,
+    saveKeys: [] as (string | undefined)[],
     saves: [] as { id: string; body: Schema['CodexProfileUpdateV1'] }[],
   };
   const saveResults = new Map<string, Schema['CodexProfileViewV1']>();
@@ -53,6 +54,14 @@ async function setup(page: Page, ready = false) {
       const body: Schema['CodexProfileUpdateV1'] = request.postDataJSON();
       state.saves.push({ id: current.id, body });
       const key = request.headers()['idempotency-key']; state.saveKeys.push(key);
+      if (state.rejectSave) {
+        state.rejectSave = false;
+        return route.fulfill({ status: 422, contentType: 'application/problem+json', body: JSON.stringify({
+          type: 'about:blank', title: 'Invalid model settings', status: 422, code: 'INVALID_MODEL_SETTINGS',
+          detail: 'Test model setting rejected', request_id: profile.id, retryable: false,
+          safe_next_actions: [], field_errors: [],
+        }) });
+      }
       if (state.holdSave) { await state.holdSave; state.holdSave = undefined; }
       if (key && saveResults.has(key)) return reply({ schema_version: 1, replayed: true, resource: saveResults.get(key) });
       current.model_settings = body.model_settings; current.revision = (BigInt(current.revision) + 1n).toString();
@@ -204,6 +213,18 @@ test('a lost model-save response retries the identical write', async ({ page }) 
   expect(state.saves).toHaveLength(2); expect(state.saves[1]).toEqual(state.saves[0]);
   expect(state.saveKeys[1]).toBe(state.saveKeys[0]);
   expect(profiles[0]!.revision).toBe('9007199254740994');
+});
+
+test('a rejected reasoning edit restores the authoritative slider position', async ({ page }) => {
+  const { state } = await setup(page, true);
+  await page.getByRole('switch', { name: '本机默认' }).click();
+  await expect(page.getByRole('slider', { name: '推理强度' })).toBeEnabled();
+  state.rejectSave = true;
+  const slider = page.getByRole('slider', { name: '推理强度' });
+  await slider.focus(); await slider.press('End');
+  await expect(page.getByText('Test model setting rejected')).toBeVisible();
+  await expect(slider).toHaveAttribute('aria-valuenow', '0');
+  await expect(page.getByText('推理强度：本机默认')).toBeVisible();
 });
 
 test('an uncertain model autosave keeps its retry identity after navigation', async ({ page }) => {

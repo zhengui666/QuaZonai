@@ -50,6 +50,7 @@ async function setup(page: Page) {
       if (request.method() === 'GET') return reply(runtime);
       const body: Schema['RuntimeUpdate'] = request.postDataJSON();
       writes.push({ kind: 'runtime', key: request.headers()['idempotency-key'], body });
+      if (holdRuntime) { await holdRuntime; holdRuntime = undefined; }
       if (failRuntime) { failRuntime = false; return route.abort('failed'); }
       if (rejectRuntime) {
         rejectRuntime = false;
@@ -67,7 +68,6 @@ async function setup(page: Page) {
           current_revision: runtime.revision, safe_next_actions: ['RELOAD'], field_errors: [],
         }) });
       }
-      if (holdRuntime) { await holdRuntime; holdRuntime = undefined; }
       expect(body.expected_revision).toBe(runtime.revision);
       runtime.configuration = body.configuration; runtime.revision = (BigInt(runtime.revision) + 1n).toString();
       if (body.ca_certificate_ref) runtime.ca_configured = true;
@@ -221,7 +221,7 @@ test('a corrected server-rejected setting saves with a new request', async ({ pa
   expect(writes[1]?.key).not.toBe(writes[0]?.key);
 });
 
-test('a revision conflict loads the canonical configuration before another autosave', async ({ page }) => {
+test('a revision conflict retains the edit on the canonical revision until retry', async ({ page }) => {
   const { runtime, writes, conflictNextRuntime } = await setup(page);
   await page.getByRole('tab', { name: '集成' }).click();
   await page.getByRole('button', { name: '配置与原生探测' }).click();
@@ -229,11 +229,35 @@ test('a revision conflict loads the canonical configuration before another autos
   const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
   conflictNextRuntime();
   await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime local');
-  await expect(dialog.getByText('配置在其他地方已更改，已载入最新版本，请重新编辑')).toBeVisible();
-  await expect(dialog.getByRole('textbox', { name: '名称' })).toHaveValue('Runtime external');
-  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime after conflict');
-  await expect.poll(() => runtime.configuration.name).toBe('Runtime after conflict');
+  await expect(dialog.getByText('配置在其他地方已更改，已保留本次编辑，请检查后重试')).toBeVisible();
+  await expect(dialog.getByRole('textbox', { name: '名称' })).toHaveValue('Runtime local');
+  await dialog.getByRole('button', { name: '重试' }).click();
+  await expect.poll(() => runtime.configuration.name).toBe('Runtime local');
   expect(writes.map(write => (write.body as Schema['RuntimeUpdate']).expected_revision)).toEqual(['1', '2']);
+});
+
+test('a credential reference survives a conflict after its editor closes', async ({ page }) => {
+  const { runtime, secretId, writes, conflictNextRuntime, holdNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  let dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  conflictNextRuntime();
+  const release = holdNextRuntime();
+  await dialog.getByRole('textbox', { name: '新的 RUNTIME 凭据' }).fill('c'.repeat(32));
+  await dialog.getByRole('button', { name: '登记凭据' }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  release();
+  await expect.poll(() => runtime.revision).toBe('2');
+  await page.getByRole('button', { name: '修改配置' }).click();
+  dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await expect(dialog.getByText(secretId)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '重试' })).toBeVisible();
+  await dialog.getByRole('button', { name: '重试' }).click();
+  await expect.poll(() => runtime.revision).toBe('3');
+  expect((writes[1]?.body as Schema['RuntimeUpdate']).credential_ref).toBe(secretId);
+  expect((writes[1]?.body as Schema['RuntimeUpdate']).expected_revision).toBe('2');
 });
 
 test('an offline follow-up write pauses until the editor reconnects', async ({ page }) => {

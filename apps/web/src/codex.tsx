@@ -72,6 +72,9 @@ function ModelControls({ values, observation, profile, disabled, save }: {
   const selectedModel = models.find(item => item.capability.model === (selected || native?.native_default_model));
   const efforts = selectedModel?.capability.supported_reasoning_efforts ?? [];
   const index = effort ? efforts.findIndex(item => item.reasoning_effort === effort) : -1;
+  const canonicalPosition = index >= 0 ? index + 1 : 0;
+  const [position, setPosition] = useState(canonicalPosition);
+  useEffect(() => setPosition(canonicalPosition), [canonicalPosition, profile.revision, selected]);
   const fastSupported = selectedModel?.service_tiers.some(tier => tier.id === 'priority' || tier.id === 'fast') ?? false;
   const options = models.map(item => ({ value: item.capability.model, label: item.capability.display_name }));
   if (selected && !options.some(option => option.value === selected)) options.unshift({ value: selected, label: selected });
@@ -86,11 +89,14 @@ function ModelControls({ values, observation, profile, disabled, save }: {
           saved_fast_mode: !!models.find(item => item.capability.model === (model || native?.native_default_model))?.service_tiers.some(tier => tier.id === 'priority' || tier.id === 'fast') && savedFast })} />
     </div></div>
     <Space orientation="vertical" className="full-width"><Typography.Text>推理强度：{effort ?? '本机默认'}</Typography.Text>
-      {efforts.length > 0 ? <Slider key={`${profile.revision}:${index}`} min={0} max={efforts.length} step={1} defaultValue={index >= 0 ? index + 1 : 0}
+      {efforts.length > 0 ? <Slider min={0} max={efforts.length} step={1} value={position} onChange={setPosition}
         ariaLabelForHandle="推理强度" disabled={disabled || defaults || !valid}
         marks={{ 0: '默认', ...Object.fromEntries(efforts.flatMap((item, position) => efforts.length <= 6 || position === efforts.length - 1 || position === index ? [[position + 1, item.reasoning_effort]] : [])) }}
         tooltip={{ formatter: value => value === undefined ? '' : value === 0 ? '本机默认' : efforts[value - 1]?.reasoning_effort ?? '' }}
-        onChangeComplete={position => save({ ...values, saved_reasoning_effort: position === 0 ? null : efforts[position - 1]?.reasoning_effort ?? null })} />
+        onChangeComplete={next => {
+          setPosition(canonicalPosition);
+          save({ ...values, saved_reasoning_effort: next === 0 ? null : efforts[next - 1]?.reasoning_effort ?? null });
+        }} />
         : <Typography.Text type="secondary">暂无选项</Typography.Text>}
       {effort && <Button disabled={disabled || defaults} onClick={() => save({ ...values, saved_reasoning_effort: null })}>恢复默认强度</Button>}
     </Space>
