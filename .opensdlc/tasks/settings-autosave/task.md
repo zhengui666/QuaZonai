@@ -24,4 +24,9 @@ Password changes, initial registrations, credential registration, data grants/re
 
 `make check-web` passed: generated contracts unchanged, TypeScript passed, 542 unit tests passed, and the production build succeeded. `npm --prefix apps/web run test:auth-ui` passed seven Chromium tests against contract-validated API fixtures. They cover independent Codex role settings, navigation during an in-flight save, Runtime/Downstream/data-source autosave, ordered edits, uncertain-response retry with the same idempotency key, one-time credential reference binding, and closing before the debounce expires. The 1280px and 390px role-settings screenshots were inspected for layout and horizontal overflow.
 
-`make check-links` could not start because the pinned `lychee` executable is absent locally; this new task record has no links. The native Rust/PostgreSQL/Caddy browser harness was not run locally; its disposable database administrator and packaged server prerequisites were not supplied in this worktree.
+`make check-links` could not start because the pinned `lychee` executable is absent locally; the PR link below was verified by creating and reading the PR. The native Rust/PostgreSQL/Caddy browser harness was not run locally; its disposable database administrator and packaged server prerequisites were not supplied in this worktree.
+
+<a id="delivery"></a>
+## Delivery
+
+[PR #131](https://github.com/zhengui666/QuaZonai/pull/131) carries the web change. No contract, migration or production deployment is included. Final-Head CI and GitHub Codex review remain owned by the PR.
