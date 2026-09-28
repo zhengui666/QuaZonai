@@ -50,10 +50,6 @@ jobs:
         run: python3 -B deploy/docker/release.py wait-ci --revision "$REVISION"
   publish:
     needs: [tag, checks]
-    concurrency:
-      group: quazonai-versioned-release
-      cancel-in-progress: false
-      queue: max
     permissions:
       contents: write
       packages: write

@@ -455,7 +455,7 @@ class GitSelectionTests(unittest.TestCase):
                                                            {"version": "v1.0.1", "revision": second}])
                     self.assertEqual(release.tag_revision("v1.0.1"), second)
                 existing = {"v1.0.0": {"tag_name": "v1.0.0", "target_commitish": first, "draft": False,
-                                        "assets": [{"name": x} for x in release.ASSETS]}}
+                                        "assets": [{"name": x, "state": "uploaded", "size": 1} for x in release.asset_package().REQUIRED_ASSETS]}}
                 with patch.object(release, "releases", return_value=existing), patch.object(release, "ci_ready", return_value=True):
                     self.assertEqual(release.select(None), [{"version": "v1.0.1", "revision": second}])
             finally:
@@ -473,12 +473,20 @@ class GitSelectionTests(unittest.TestCase):
 
     def test_published_version_cannot_move(self):
         existing = {"tag_name": "v1.0.0", "target_commitish": "a" * 40, "draft": False,
-                    "assets": [{"name": x} for x in release.ASSETS]}
+                    "assets": [{"name": x, "state": "uploaded", "size": 1} for x in release.asset_package().REQUIRED_ASSETS]}
         self.assertTrue(release.completed_release(existing, "a" * 40))
         with self.assertRaises(ValueError):
             release.completed_release(existing, "b" * 40)
         with self.assertRaises(ValueError):
             release.completed_release({**existing, "assets": []}, "a" * 40)
+        legacy_assets = [{"name": name, "state": "uploaded", "size": 1}
+                         for name in ("release.json", "quazonai-deploy.tar.gz")]
+        with self.assertRaises(ValueError):
+            release.completed_release({**existing, "assets": legacy_assets}, "a" * 40)
+        unfinished = [{"name": name, "state": "starter", "size": 1}
+                      for name in release.asset_package().REQUIRED_ASSETS]
+        with self.assertRaises(ValueError):
+            release.completed_release({**existing, "assets": unfinished}, "a" * 40)
 
 
 class UpdateTests(unittest.TestCase):

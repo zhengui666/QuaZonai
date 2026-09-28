@@ -29,7 +29,6 @@ CI_PATHS = {
     ".github/workflows/container.yml",
     ".github/workflows/cli.yml",
 }
-ASSETS = {"release.json", "quazonai-deploy.tar.gz"}
 CODEX_REPOSITORY = "ghcr.io/zhengui666/quazonai-codex"
 
 
@@ -42,6 +41,13 @@ def api(endpoint: str, *, pages: bool = False):
 
 def releases() -> dict:
     return {item["tag_name"]: item for page in api("releases?per_page=100", pages=True) for item in page}
+
+
+def asset_package():
+    # smoke.py reuses bundle() without shipping this CI-only producer to users.
+    sys.path.insert(0, str(BUNDLE.parent))
+    import package
+    return package
 
 
 def ci_runs(revision: str) -> dict:
@@ -125,7 +131,9 @@ def completed_release(release: dict, revision: str) -> bool:
         raise ValueError(f'Release {release["tag_name"]} does not identify the tagged source SHA; it was not overwritten.')
     if release["draft"]:
         return False
-    if not ASSETS.issubset({x["name"] for x in release["assets"]}):
+    uploaded = {item["name"] for item in release["assets"]
+                if item.get("state") == "uploaded" and item.get("size", 0) > 0}
+    if not asset_package().REQUIRED_ASSETS.issubset(uploaded):
         raise ValueError(f'Published release {release["tag_name"]} has incomplete assets; it was not overwritten.')
     return True
 
@@ -195,8 +203,7 @@ def bundle(tag: str, revision: str, image: str, destination: Path, *,
 
 
 def publish(assets: Path) -> None:
-    sys.path.insert(0, str(BUNDLE.parent))
-    import package
+    package = asset_package()
     package.verify(assets)
     release = validate_manifest(json.loads((assets / "release.json").read_text()), published=True)
     tag, revision = release["version"], release["revision"]
@@ -398,7 +405,10 @@ def main() -> None:
         references = {field: push_image(image, "ghcr.io/zhengui666/" + repository, args.version)
                       for field, image, repository in images}
         if codex_digest is None:
-            codex_digest = push_image(args.codex_image, CODEX_REPOSITORY, target)
+            # Dev runs have unique release tags and never write a shared Codex
+            # version/latest tag, so they cannot race the default-branch publisher.
+            tag = args.version if os.environ.get("RELEASE_BRANCH") == "dev" else target
+            codex_digest = push_image(args.codex_image, CODEX_REPOSITORY, tag)
         bundle(args.version, args.revision, references["image"], args.output,
                runtime_image=references["runtime_image"], codex_version=target,
                codex_image=codex_digest, published=True)

@@ -64,12 +64,10 @@ Linux native tests, Clippy, architecture and existing server CLI transport/help/
 Skill checks. Windows/macOS execution and complete container release acceptance
 remain pending native GitHub CI.
 
-The actionlint 1.7.12 schema predates GitHub's `queue: max`; all other workflow
-validation passed. The queue property follows [GitHub's native concurrency
-contract](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
-and will be validated by the actual workflow runs. The existing shared publisher
-lock serializes app/Codex publication; its native queue retains up to 100 pending
-publications. Every dev push gets its tag before entering this queue.
+All workflow definitions pass actionlint 1.7.12. Dev publication never writes a
+shared Codex version/latest tag: it reuses an existing verified published version,
+or publishes its tested image under the unique application release tag. This
+avoids contention with default-branch publishers without changing live main.
 
 <a id="review"></a>
 ## Review

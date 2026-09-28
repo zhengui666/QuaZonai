@@ -28,9 +28,11 @@ Every push to remote `dev` runs [Dev release](../.github/workflows/dev-release.y
 It creates `v<workspace core>-dev.<UTC YYYYMMDDHHMMSS>.<Actions run ID>` at the
 exact push SHA, then waits for all six source workflows and calls the same
 [version publisher](../.github/workflows/release-version.yml) with `branch=dev`.
-Publication shares the existing app/Codex concurrency group with native `queue: max` (up to 100 pending publications; retry a run if the platform rejects overflow). The run creation timestamp and ID make retries reuse the existing tag; a tag
+The run creation timestamp and ID make retries reuse the existing tag; a tag
 pointing elsewhere is rejected. Successive dev pushes keep their own source CI.
 The source must remain contained in dev. Force-pushing it away prevents release.
+
+Dev runs reuse a verified existing Codex digest or publish under their unique release tag; they never change shared Codex version/latest tags and do not contend with the default-branch publisher queue.
 
 The reusable workflow call is intentional: GitHub does not run tag-push workflows
 for tags created by GITHUB_TOKEN. No extra PAT, recursive commit, floating image

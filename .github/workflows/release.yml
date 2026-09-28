@@ -18,7 +18,6 @@ permissions:
 concurrency:
   group: quazonai-versioned-release
   cancel-in-progress: false
-  queue: max
 jobs:
   select:
     if: github.repository == 'zhengui666/QuaZonai'
