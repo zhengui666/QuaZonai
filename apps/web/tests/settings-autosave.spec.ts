@@ -416,6 +416,64 @@ test('an offline follow-up write pauses until the editor reconnects', async ({ p
   expect(writes).toHaveLength(2);
 });
 
+test('an offline edit closed before debounce saves on reconnect without reopening', async ({ page }) => {
+  const { runtime, writes } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime offline edit');
+  await page.evaluate(() => { Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false }); window.dispatchEvent(new Event('offline')); });
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.waitForTimeout(600);
+  expect(writes).toHaveLength(0);
+  await page.evaluate(() => { Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true }); window.dispatchEvent(new Event('online')); });
+  await expect.poll(() => runtime.configuration.name).toBe('Runtime offline edit');
+  expect(writes).toHaveLength(1);
+});
+
+test('an uncertain data source registration retries the same command after Settings navigation', async ({ page }) => {
+  const { source } = await setup(page);
+  const requests: { key: string | undefined; body: Schema['DataSourceCreate'] }[] = [];
+  await page.route('**/api/v2/data/sources', async route => {
+    const request = route.request();
+    if (request.method() === 'GET') return route.fallback();
+    const body: Schema['DataSourceCreate'] = request.postDataJSON();
+    requests.push({ key: request.headers()['idempotency-key'], body });
+    if (requests.length === 1) return route.abort('failed');
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({
+      schema_version: 1, replayed: true, resource: { ...source, name: body.name, native_catalog_ref: body.native_catalog_ref },
+    }) });
+  });
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await page.getByRole('button', { name: '登记数据源' }).click();
+  const dialog = page.getByRole('dialog', { name: '登记数据源' });
+  await dialog.getByRole('textbox', { name: '数据源名称' }).fill('New source');
+  await dialog.getByRole('combobox', { name: '选择已登记的 Runtime' }).click();
+  await page.getByText('Runtime A', { exact: true }).last().click();
+  await dialog.getByRole('textbox', { name: 'Runtime 原生目录登记键' }).fill('catalog/new-source');
+  await dialog.getByRole('button', { name: '登记', exact: true }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  await expect(dialog.getByRole('button', { name: '重试当前操作' })).toBeVisible();
+  expect(await page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(true);
+  await dialog.getByRole('button', { name: '返回' }).click();
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await expect(page.getByText('数据源登记结果待确认')).toBeVisible();
+  await page.getByRole('button', { name: '重试当前操作' }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1]).toEqual(requests[0]);
+  await expect(page.getByText('数据源登记结果待确认')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+});
+
 test('a newly bound Runtime CA remains configured for later autosaves', async ({ page }) => {
   const { runtime, writes } = await setup(page);
   await page.getByRole('tab', { name: '集成' }).click();

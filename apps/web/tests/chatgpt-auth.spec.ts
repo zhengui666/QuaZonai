@@ -35,7 +35,7 @@ async function setup(page: Page, ready = false) {
   const state = {
     operation: null as Schema['CodexAccountOperationV1'] | null,
     starts: [] as { key: string | undefined; body: unknown }[], cancels: [] as { key: string | undefined; body: unknown }[],
-    probes: 0, dropStart: false, rejectStart: false, terminalStart: false, dropCancel: false, stale: false,
+    probes: 0, dropStart: false, rejectStart: false, rejectReplay: false, terminalStart: false, dropCancel: false, stale: false,
     probeRequests: [] as { key: string | undefined; body: Schema['CodexProbeRequestV1'] }[],
     dropProbeAfterCommit: false, holdProbe: undefined as Promise<void> | undefined,
     holdStart: undefined as Promise<void> | undefined,
@@ -100,7 +100,7 @@ async function setup(page: Page, ready = false) {
         finished_at: null, reason: null, account: null };
       if (state.terminalStart) state.operation = { ...state.operation, state: 'FAILED', reason: 'DEPLOYMENT_UNAVAILABLE', finished_at: now };
       if (state.holdStart) { await state.holdStart; state.holdStart = undefined; }
-      if (state.rejectStart) {
+      if (state.rejectStart || (state.rejectReplay && state.starts.length > 1)) {
         state.rejectStart = false; state.operation = null;
         return route.fulfill({ status: 409, contentType: 'application/problem+json', body: JSON.stringify({
           type: 'about:blank', title: 'Profile changed', status: 409, code: 'PROFILE_CHANGED',
@@ -411,6 +411,26 @@ test('a successful background login replay clears its stale network error', asyn
   await page.getByRole('tab', { name: 'Codex' }).click();
   await expect(page.getByLabel('ChatGPT 授权码')).toHaveText('TEST-ONLY');
   await expect(page.getByText('连接中断，提交结果未知；请重试当前操作')).toHaveCount(0);
+});
+
+test('a definite background login replay rejection clears the pending identity', async ({ page }) => {
+  const { state } = await setup(page);
+  state.dropStart = true; state.rejectReplay = true;
+  let release!: () => void;
+  state.holdStart = new Promise<void>(resolve => { release = resolve; });
+  await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
+  await expect.poll(() => state.starts.length).toBe(1);
+  await page.getByRole('tab', { name: '鉴权管理' }).click();
+  release();
+  await expect.poll(() => state.starts.length).toBe(2);
+  expect(state.starts[1]).toEqual(state.starts[0]);
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+  await page.getByRole('tab', { name: 'Codex' }).click();
+  await expect(page.getByText('Profile changed before login')).toBeVisible();
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeEnabled();
 });
 
 test('lost cancel ACK preserves the request and stays pending until native confirmation', async ({ page }) => {

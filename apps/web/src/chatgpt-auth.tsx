@@ -47,7 +47,12 @@ class AuthSession {
         this.startRequest = undefined; this.startIntent.clear(); this.startedId = undefined;
         this.update({ challenge: undefined, unknownStart: false, startError: undefined });
       }
-    } catch { /* Keep the original request for an explicit same-key retry. */ }
+    } catch (error) {
+      if (!uncertain(error)) {
+        this.startRequest = undefined; this.startIntent.clear(); this.startedId = undefined;
+        this.update({ challenge: undefined, pendingStart: false, unknownStart: false, startError: error });
+      }
+    }
     finally { this.reconciling = false; }
   }
 }

@@ -57,7 +57,7 @@ class Autosave<T extends object> {
   private closing = false;
   private validation?: { serialized: string; result: Promise<boolean> };
   private timer?: number;
-  private resumeOnline = () => { this.offline = false; this.flush(); };
+  private resumeOnline = () => { this.enabled = true; this.offline = false; this.flush(); };
 
   constructor(readonly key: string, initial: T, revision: string, updated_at: string) {
     this.latest = initial;
@@ -74,6 +74,7 @@ class Autosave<T extends object> {
     this.closing = false;
     this.form = form; this.write = write; this.reload = reload; this.notice = notice; this.enabled = enabled;
     if (enabled && this.offline) { this.offline = false; window.removeEventListener('online', this.resumeOnline); }
+    if (!enabled && !this.offline) { this.offline = true; window.addEventListener('online', this.resumeOnline, { once: true }); }
     if (!this.running && JSON.stringify(this.latest) === this.saved && BigInt(revision) > BigInt(this.snapshot.revision)) {
       this.latest = initial; this.savedValue = initial; this.saved = JSON.stringify(initial); this.rejected = undefined;
       this.snapshot = { saving: false, revision, updated_at };
