@@ -35,8 +35,10 @@ async function setup(page: Page, ready = false) {
     operation: null as Schema['CodexAccountOperationV1'] | null,
     starts: [] as { key: string | undefined; body: unknown }[], cancels: [] as { key: string | undefined; body: unknown }[],
     probes: 0, dropStart: false, dropCancel: false, stale: false,
+    holdSave: undefined as Promise<void> | undefined, dropSaveAfterCommit: false, saveKeys: [] as (string | undefined)[],
     saves: [] as { id: string; body: Schema['CodexProfileUpdateV1'] }[],
   };
+  const saveResults = new Map<string, Schema['CodexProfileViewV1']>();
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     const reply = (json: unknown, status = 200) => route.fulfill({ status, body: JSON.stringify(json), contentType: 'application/json' });
@@ -49,7 +51,12 @@ async function setup(page: Page, ready = false) {
       if (request.method() !== 'PATCH') return reply(current);
       const body: Schema['CodexProfileUpdateV1'] = request.postDataJSON();
       state.saves.push({ id: current.id, body });
+      const key = request.headers()['idempotency-key']; state.saveKeys.push(key);
+      if (state.holdSave) { await state.holdSave; state.holdSave = undefined; }
+      if (key && saveResults.has(key)) return reply({ schema_version: 1, replayed: true, resource: saveResults.get(key) });
       current.model_settings = body.model_settings; current.revision = (BigInt(current.revision) + 1n).toString();
+      if (key) saveResults.set(key, structuredClone(current));
+      if (state.dropSaveAfterCommit) { state.dropSaveAfterCommit = false; return route.abort('failed'); }
       return reply({ schema_version: 1, replayed: false, resource: current });
     }
     if (path === '/api/v2/codex/models') {
@@ -106,22 +113,24 @@ test('one shared account keeps model, reasoning and speed independent for each r
       await page.getByRole('combobox', { name: 'Codex 角色' }).click();
       await page.getByText(name, { exact: true }).last().click();
     }
-    await page.getByRole('button', { name: '模型设置', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: `${name} · 模型设置`, exact: true });
-    await dialog.getByRole('switch', { name: '本机默认', exact: true }).click();
-    await dialog.getByRole('combobox', { name: '模型', exact: true }).click();
+    const savesBefore = state.saves.length;
+    await page.getByRole('switch', { name: '本机默认', exact: true }).click();
+    await expect.poll(() => state.saves.length).toBe(savesBefore + 1);
+    await expect(page.getByRole('combobox', { name: '模型', exact: true })).toBeEnabled();
+    await page.getByRole('combobox', { name: '模型', exact: true }).click();
     await page.getByText(model, { exact: true }).last().click();
-    const slider = dialog.getByRole('slider', { name: '推理强度' });
+    await expect.poll(() => state.saves.length).toBe(savesBefore + 2);
+    const slider = page.getByRole('slider', { name: '推理强度' });
+    await expect(slider).toBeEnabled();
     await slider.focus(); await slider.press('Home');
     await slider.press(effort === 'high' ? 'End' : 'ArrowRight');
-    const speed = dialog.getByRole('switch', { name: '速度', exact: true });
+    await expect.poll(() => state.saves.length).toBe(savesBefore + 3);
+    const speed = page.getByRole('switch', { name: '速度', exact: true });
     await expect(speed).not.toBeChecked();
     if (fast) await speed.click();
-    await dialog.getByRole('button', { name: '保存', exact: true }).click();
-    await expect(dialog).toHaveCount(0);
-    await expect.poll(() => state.saves.length).toBe(index + 1);
-    expect(state.saves[index]).toEqual({ id: profiles[index]!.id, body: {
-      schema_version: 1, expected_revision: '9007199254740993',
+    await expect.poll(() => state.saves.length).toBe(savesBefore + (fast ? 4 : 3));
+    expect(state.saves.at(-1)).toEqual({ id: profiles[index]!.id, body: {
+      schema_version: 1, expected_revision: (BigInt('9007199254740993') + BigInt(fast ? 3 : 2)).toString(),
       model_settings: { schema_version: 1, use_default_model_settings: false, saved_model: model, saved_reasoning_effort: effort, saved_fast_mode: fast },
     } });
     if (!index) expect(profiles[1]).toEqual(originalReviewer);
@@ -142,6 +151,33 @@ test('one shared account keeps model, reasoning and speed independent for each r
   }
 });
 
+test('navigation does not block an in-flight model autosave', async ({ page }) => {
+  const { state, profiles } = await setup(page, true);
+  let release!: () => void;
+  state.holdSave = new Promise<void>(resolve => { release = resolve; });
+  await page.getByRole('switch', { name: '本机默认' }).click();
+  await expect.poll(() => state.saves.length).toBe(1);
+  await page.getByRole('tab', { name: '鉴权管理' }).click();
+  await expect(page.getByRole('heading', { name: '鉴权管理' })).toBeVisible();
+  await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+  release();
+  await expect.poll(() => profiles[0]!.model_settings.use_default_model_settings).toBe(false);
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('switch', { name: '本机默认' })).not.toBeChecked();
+});
+
+test('a lost model-save response retries the identical write', async ({ page }) => {
+  const { state, profiles } = await setup(page, true);
+  state.dropSaveAfterCommit = true;
+  await page.getByRole('switch', { name: '本机默认' }).click();
+  await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(page.getByRole('switch', { name: '本机默认' })).not.toBeChecked();
+  expect(state.saves).toHaveLength(2); expect(state.saves[1]).toEqual(state.saves[0]);
+  expect(state.saveKeys[1]).toBe(state.saveKeys[0]);
+  expect(profiles[0]!.revision).toBe('9007199254740994');
+});
+
 test('lost login ACK reuses the original identity; success clears the code and refreshes models', async ({ page }, testInfo) => {
   const { state } = await setup(page); state.dropStart = true;
   await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
@@ -151,7 +187,7 @@ test('lost login ACK reuses the original identity; success clears the code and r
   expect(state.starts).toHaveLength(2); expect(state.starts[1]).toEqual(state.starts[0]);
   expect(state.starts[0]?.body).toMatchObject({ expected_revision: '9007199254740993' });
   await expect(page.getByRole('link', { name: '打开 ChatGPT 授权页面' })).toHaveAttribute('rel', 'noopener noreferrer');
-  await expect(page.getByRole('button', { name: '模型设置' })).toBeDisabled();
+  await expect(page.getByRole('switch', { name: '本机默认' })).toBeDisabled();
   expect(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]))).not.toContain('TEST-ONLY');
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });

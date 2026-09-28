@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, Intent } from './api';
 import type { Schema } from './api';
-import { ErrorNotice, useClock, useGuard, useOnline } from './ui';
+import { ErrorNotice, useClock, useOnline } from './ui';
 
 type Operation = Schema['CodexAccountOperationV1'];
 type Challenge = { id: string; code: Schema['CodexDeviceCodeV1'] };
@@ -85,7 +85,6 @@ export function ChatgptAuth({ profile, account, disabled, onBusy, onChanged }: {
   const pending = start.isPending || cancel.isPending;
   const busy = pending || unknownStart || unknownCancel || active || latest.isPending || latest.isError;
   const code = !latest.isError && online ? liveLoginCode(challenge, operation, now) : undefined;
-  useGuard(pending || unknownStart || unknownCancel || (active && !expired));
   useEffect(() => { onBusy(busy); }, [busy, onBusy]);
   useEffect(() => {
     if (challenge && (!active || expired || operation?.state === 'CANCEL_REQUESTED')) setChallenge(undefined);

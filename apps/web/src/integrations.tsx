@@ -1,9 +1,10 @@
-import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Descriptions, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
-import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useClock, useGuard, useOnline } from './ui';
+import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useClock, useOnline } from './ui';
+import { useFormAutosave } from './settings-autosave';
 
 type Runtime = Schema['RuntimeView'];
 type Downstream = Schema['DownstreamView'];
@@ -70,12 +71,12 @@ export function SecretReference({ value, onChange, purpose, configured, disabled
 function RuntimeDialog({ original, close }: { original?: Runtime; close: () => void }) {
   type Values = Schema['RuntimeConfigurationV1'] & { credential_ref?: string; ca_certificate_ref?: string };
   const [form] = Form.useForm<Values>(); const [secretBusy, setSecretBusy] = useState(false);
-  const online = useOnline(); const intent = useRef(new Intent()); const refresh = useRefresh(); const { modal } = App.useApp();
+  const online = useOnline(); const intent = useRef(new Intent()); const revision = useRef(original?.revision); const refresh = useRefresh();
   const tls = Form.useWatch('tls_policy', form) ?? original?.configuration.tls_policy ?? 'SYSTEM_CA';
   const mutation = useMutation({ mutationFn: async (values: Values) => {
     const common = { name: values.name, endpoint: values.endpoint, allowed_capabilities: values.allowed_capabilities, enabled: values.enabled };
     if (original) {
-      const base = { schema_version: 1 as const, expected_revision: original.revision, credential_ref: values.credential_ref ?? null };
+      const base = { schema_version: 1 as const, expected_revision: revision.current!, credential_ref: values.credential_ref ?? null };
       const body: Schema['RuntimeUpdate'] = values.tls_policy === 'PINNED_CA'
         ? { ...base, configuration: { ...common, tls_policy: 'PINNED_CA', development_http: false }, ca_certificate_ref: values.ca_certificate_ref ?? null }
         : { ...base, configuration: { ...common, tls_policy: 'SYSTEM_CA', development_http: values.development_http }, ca_certificate_ref: null };
@@ -87,36 +88,46 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
       ? { schema_version: 1, credential_ref: values.credential_ref, ca_certificate_ref: values.ca_certificate_ref!, configuration: { ...common, tls_policy: 'PINNED_CA', development_http: false } }
       : { schema_version: 1, credential_ref: values.credential_ref, ca_certificate_ref: null, configuration: { ...common, tls_policy: 'SYSTEM_CA', development_http: values.development_http } };
     return dataOf(await api.POST('/api/v2/integrations/runtimes', { body, params: { header: intent.current.headers('POST','/api/v2/integrations/runtimes',body) } }));
-  }, onSuccess: async () => { await refresh(); close(); } });
+  }, onSuccess: result => { revision.current = result.resource.revision; intent.current.clear(); void refresh(); if (!original) close(); } });
+  const autosave = useFormAutosave(form, (original?.configuration ?? {}) as Values, online && !!original, async values => {
+    await mutation.mutateAsync(values);
+    if (values.credential_ref) form.setFieldValue('credential_ref', undefined);
+    if (values.ca_certificate_ref) form.setFieldValue('ca_certificate_ref', undefined);
+    return { ...values, credential_ref: undefined, ca_certificate_ref: undefined };
+  });
   const pending = mutation.isPending || secretBusy;
-  useGuard(true);
   function cancel() {
-    if (pending) return;
-    if (form.isFieldsTouched()) modal.confirm({ title: '放弃尚未提交的 Runtime 配置？', content: '已经登记的凭据不会被删除，已有 Run 的冻结配置也不会改变。', okText: '确认放弃', cancelText: '继续编辑', onOk: close });
-    else close();
+    if (secretBusy || (!original && pending)) return;
+    if (original) void autosave.flush();
+    close();
   }
-  return <Modal open width={760} title={original ? '修改 Runtime 配置' : '登记 Runtime'} maskClosable={false} closable={!pending}
-    onCancel={cancel} onOk={() => { if (online && !pending) form.submit(); }} confirmLoading={mutation.isPending}
+  return <Modal open width={760} title={original ? '修改 Runtime 配置' : '登记 Runtime'} maskClosable={false} closable={!secretBusy && (!!original || !pending)}
+    onCancel={cancel} onOk={() => { if (!original && online && !pending) form.submit(); }} confirmLoading={mutation.isPending}
+    footer={original ? <Button onClick={cancel}>关闭</Button> : undefined}
     okText="保存配置" cancelText="返回" okButtonProps={{ disabled: !online || secretBusy }}>
     
-    {original && <ResourceFacts id={original.id} revision={original.revision} updated={original.updated_at} />}
-    <Form form={form} layout="vertical" initialValues={original ? original.configuration : { tls_policy: 'SYSTEM_CA', enabled: true, development_http: false, allowed_capabilities: ['DATA_VALIDATE'] }} disabled={pending || !online} onFinish={values => mutation.mutate(values)}>
+    {original && <ResourceFacts id={original.id} revision={mutation.data?.resource.revision ?? original.revision} updated={mutation.data?.resource.updated_at ?? original.updated_at} />}
+    <Form form={form} layout="vertical" initialValues={original ? original.configuration : { tls_policy: 'SYSTEM_CA', enabled: true, development_http: false, allowed_capabilities: ['DATA_VALIDATE'] }}
+      disabled={!online || secretBusy || (!original && pending)} onValuesChange={original ? autosave.change : undefined}
+      onFinish={original ? undefined : values => mutation.mutate(values)}>
       <Form.Item name="name" label="名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
       <Form.Item name="endpoint" label="Runtime HTTPS origin" rules={[required, { max: 2048 }]}><Input maxLength={2048} placeholder="https://runtime.example" /></Form.Item>
       <Form.Item name="tls_policy" label="TLS 信任方式" rules={[required]}><Select onChange={() => form.setFieldValue('development_http', false)} options={[
         { value: 'SYSTEM_CA', label: '系统可信 CA' }, { value: 'PINNED_CA', label: '指定 CA 证书' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换 Runtime 凭据（不登记则保留）' : 'Runtime 服务凭据'} rules={original ? [] : [required]}>
-        <SecretReference purpose="RUNTIME" configured={original?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="RUNTIME" configured={mutation.data?.resource.credential_configured ?? original?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
       </Form.Item>
       {tls === 'PINNED_CA' && <Form.Item name="ca_certificate_ref" label="指定 CA 证书" preserve={false}
-        rules={original?.configuration.tls_policy === 'PINNED_CA' && original.ca_configured ? [] : [required]}>
-        <SecretReference purpose="TLS_CA" configured={original?.configuration.tls_policy === 'PINNED_CA' && original.ca_configured} disabled={pending || !online} onBusy={setSecretBusy} />
+        rules={(mutation.data?.resource ?? original)?.configuration.tls_policy === 'PINNED_CA' && (mutation.data?.resource ?? original)?.ca_configured ? [] : [required]}>
+        <SecretReference purpose="TLS_CA" configured={(mutation.data?.resource ?? original)?.configuration.tls_policy === 'PINNED_CA' && !!(mutation.data?.resource ?? original)?.ca_configured} disabled={pending || !online} onBusy={setSecretBusy} />
       </Form.Item>}
       <Form.Item name="allowed_capabilities" label="允许的任务类型" rules={[required]}><Select mode="multiple" options={jobs} /></Form.Item>
       <Form.Item name="enabled" label="允许新任务" valuePropName="checked"><Switch /></Form.Item>
       <Form.Item name="development_http" label="显式本机 HTTP 开发模式" valuePropName="checked"><Switch disabled={tls === 'PINNED_CA' || pending || !online} /></Form.Item>
-      <ErrorNotice error={mutation.error} />
+      {original && autosave.saving && <Typography.Text role="status">正在保存</Typography.Text>}
+      <ErrorNotice error={original ? autosave.error : mutation.error} />
+      {original && !!autosave.error && <Button onClick={autosave.retry}>重试</Button>}
     </Form>
   </Modal>;
 }
@@ -190,36 +201,50 @@ function Runtimes() {
 
 function DownstreamDialog({ original, close }: { original?: Downstream; close: () => void }) {
   type Values = Schema['DownstreamConfigurationV1'] & { credential_ref?: string };
-  const [form] = Form.useForm<Values>(); const [secretBusy, setSecretBusy] = useState(false); const online = useOnline(); const intent = useRef(new Intent()); const refresh = useRefresh();
+  const [form] = Form.useForm<Values>(); const [secretBusy, setSecretBusy] = useState(false); const online = useOnline(); const intent = useRef(new Intent()); const revision = useRef(original?.revision); const refresh = useRefresh();
   const mutation = useMutation({ mutationFn: async (values: Values) => {
     const configuration: Schema['DownstreamConfigurationV1'] = { name: values.name, endpoint: values.endpoint, accepted_package_versions: ['1'], environments: values.environments, enabled: values.enabled, development_http: values.development_http };
     if (original) {
-      const body: Schema['DownstreamUpdate'] = { schema_version: 1, expected_revision: original.revision, configuration, credential_ref: values.credential_ref ?? null };
+      const body: Schema['DownstreamUpdate'] = { schema_version: 1, expected_revision: revision.current!, configuration, credential_ref: values.credential_ref ?? null };
       return dataOf(await api.PATCH('/api/v2/integrations/downstreams/{id}', { body, params: { path: { id: original.id }, header: intent.current.headers('PATCH',`/api/v2/integrations/downstreams/${original.id}`,body) } }));
     }
     if (!values.credential_ref) throw new ApiFailure('LOCAL_VALIDATION_ERROR','请先登记下游服务凭据。');
     const body: Schema['DownstreamCreate'] = { schema_version: 1, configuration, credential_ref: values.credential_ref };
     return dataOf(await api.POST('/api/v2/integrations/downstreams', { body, params: { header: intent.current.headers('POST','/api/v2/integrations/downstreams',body) } }));
-  }, onSuccess: async () => { await refresh(); close(); } });
-  const pending = mutation.isPending || secretBusy; useGuard(true);
-  return <Modal open title={original ? '修改目标交付下游' : '登记目标交付下游'} width={760} maskClosable={false} closable={!pending}
-    onCancel={() => { if (!pending) close(); }} onOk={() => { if (online && !pending) form.submit(); }} confirmLoading={mutation.isPending}
+  }, onSuccess: result => { revision.current = result.resource.revision; intent.current.clear(); void refresh(); if (!original) close(); } });
+  const autosave = useFormAutosave(form, (original?.configuration ?? {}) as Values, online && !!original, async values => {
+    await mutation.mutateAsync(values);
+    if (values.credential_ref) form.setFieldValue('credential_ref', undefined);
+    return { ...values, credential_ref: undefined };
+  });
+  const pending = mutation.isPending || secretBusy;
+  function cancel() {
+    if (secretBusy || (!original && pending)) return;
+    if (original) void autosave.flush();
+    close();
+  }
+  return <Modal open title={original ? '修改目标交付下游' : '登记目标交付下游'} width={760} maskClosable={false} closable={!secretBusy && (!!original || !pending)}
+    onCancel={cancel} onOk={() => { if (!original && online && !pending) form.submit(); }} confirmLoading={mutation.isPending}
+    footer={original ? <Button onClick={cancel}>关闭</Button> : undefined}
     okText="保存下游配置" cancelText="返回" okButtonProps={{ disabled: !online || secretBusy }}>
     
-    {original && <ResourceFacts id={original.id} revision={original.revision} updated={original.updated_at} />}
-    <Form form={form} layout="vertical" disabled={pending || !online} initialValues={original?.configuration ?? { environments: 'PAPER', enabled: true, development_http: false }} onFinish={values => mutation.mutate(values)}>
+    {original && <ResourceFacts id={original.id} revision={mutation.data?.resource.revision ?? original.revision} updated={mutation.data?.resource.updated_at ?? original.updated_at} />}
+    <Form form={form} layout="vertical" disabled={!online || secretBusy || (!original && pending)} initialValues={original?.configuration ?? { environments: 'PAPER', enabled: true, development_http: false }}
+      onValuesChange={original ? autosave.change : undefined} onFinish={original ? undefined : values => mutation.mutate(values)}>
       <Form.Item name="name" label="下游名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
       <Form.Item name="endpoint" label="下游 HTTPS origin" rules={[required, { max: 2048 }]}><Input maxLength={2048} placeholder="https://downstream.example" /></Form.Item>
       <Form.Item name="environments" label="允许环境" rules={[required]}><Select options={[
         { value: 'PAPER', label: '仅 Paper' }, { value: 'LIVE', label: '仅 Live' }, { value: 'BOTH', label: 'Paper 与 Live（仍须分别审批）' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换下游服务凭据（可保留）' : '下游服务凭据'} rules={original ? [] : [required]}>
-        <SecretReference purpose="DOWNSTREAM" configured={original?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="DOWNSTREAM" configured={mutation.data?.resource.credential_configured ?? original?.credential_configured ?? false} disabled={pending || !online} onBusy={setSecretBusy} />
       </Form.Item>
       
       <Form.Item name="enabled" label="允许未来目标交付" valuePropName="checked"><Switch /></Form.Item>
       <Form.Item name="development_http" label="显式本机 HTTP 开发模式" valuePropName="checked"><Switch /></Form.Item>
-      <ErrorNotice error={mutation.error} />
+      {original && autosave.saving && <Typography.Text role="status">正在保存</Typography.Text>}
+      <ErrorNotice error={original ? autosave.error : mutation.error} />
+      {original && !!autosave.error && <Button onClick={autosave.retry}>重试</Button>}
     </Form>
   </Modal>;
 }

@@ -1,9 +1,9 @@
-import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Select, Slider, Space, Switch, Tag, Typography } from 'antd';
+import { Alert, App, Button, Card, Descriptions, Select, Slider, Space, Switch, Tag, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { api, ApiFailure, dataOf, Intent } from './api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, dataOf, Intent } from './api';
 import type { Schema } from './api';
-import { ErrorNotice, GuardContext, NoData, QueryPanel, useClock, useGuard, useOnline } from './ui';
+import { ErrorNotice, NoData, QueryPanel, useClock, useOnline } from './ui';
 import { ChatgptAuth } from './chatgpt-auth';
 
 type Profile = Schema['CodexProfileViewV1'];
@@ -40,15 +40,11 @@ function useRefresh() {
   const client = useQueryClient();
   return async () => { await client.invalidateQueries({ queryKey: ['codex'] }); };
 }
-function ModelControls({ form, observation, profile, disabled }: {
-  form: ReturnType<typeof Form.useForm<Values>>[0]; observation?: Observation; profile: Profile; disabled: boolean;
+function ModelControls({ values, observation, profile, disabled, save }: {
+  values: Values; observation?: Observation; profile: Profile; disabled: boolean; save: (values: Values) => void;
 }) {
   const now = useClock();
-  const defaults = Form.useWatch('use_default_model_settings', form) ?? true;
-  const selected = Form.useWatch('saved_model', form) as string | null | undefined;
-  const effort = Form.useWatch('saved_reasoning_effort', form) as string | null | undefined;
-  const savedFast = Form.useWatch('saved_fast_mode', form) ?? false;
-  function setEffort(value: string | null) { form.setFields([{ name: 'saved_reasoning_effort', value, touched: true }]); }
+  const { use_default_model_settings: defaults, saved_model: selected, saved_reasoning_effort: effort, saved_fast_mode: savedFast } = values;
   const valid = fresh(observation, profile, now);
   const native = observation?.observation?.outcome.status === 'AVAILABLE' ? observation.observation.outcome : undefined;
   const models = valid ? native?.models ?? [] : [];
@@ -59,88 +55,67 @@ function ModelControls({ form, observation, profile, disabled }: {
   const options = models.map(item => ({ value: item.capability.model, label: item.capability.display_name }));
   if (selected && !options.some(option => option.value === selected)) options.unshift({ value: selected, label: selected });
   return <>
-    <Form.Item name="use_default_model_settings" label="本机默认" valuePropName="checked"><Switch /></Form.Item>
+    <Space><Typography.Text>本机默认</Typography.Text><Switch aria-label="本机默认" checked={defaults}
+      disabled={disabled || (defaults && !valid)} onChange={checked => save({ ...values, use_default_model_settings: checked })} /></Space>
     {!valid && <Alert type="warning" showIcon title="模型目录未就绪" />}
-    <Form.Item name="saved_model" label="模型">
-      <Select allowClear showSearch optionFilterProp="label" options={options} disabled={disabled || defaults || !valid}
-        placeholder={native?.native_default_model ?? '本机默认'} onChange={() => setEffort(null)} />
-    </Form.Item>
-    <Form.Item name="saved_reasoning_effort" hidden><Input /></Form.Item>
-    <Form.Item label="推理强度">
-      <Space orientation="vertical" className="full-width">
-        <Typography.Text>{effort ?? '本机默认'}</Typography.Text>
-        {efforts.length > 0 ? <Slider min={0} max={efforts.length} step={1} value={index >= 0 ? index + 1 : 0}
-          ariaLabelForHandle="推理强度" disabled={disabled || defaults || !valid}
-          marks={{ 0: '默认', ...Object.fromEntries(efforts.flatMap((item, position) => efforts.length <= 6 || position === efforts.length - 1 || position === index ? [[position + 1, item.reasoning_effort]] : [])) }}
-          tooltip={{ formatter: value => value === undefined ? '' : value === 0 ? '本机默认' : efforts[value - 1]?.reasoning_effort ?? '' }}
-          onChange={value => { const chosen = efforts[value - 1]; if (value === 0) setEffort(null); else if (chosen) setEffort(chosen.reasoning_effort); }} />
-          : <Typography.Text type="secondary">暂无选项</Typography.Text>}
-        {effort && <Button disabled={disabled || defaults} onClick={() => setEffort(null)}>恢复默认强度</Button>}
-      </Space>
-    </Form.Item>
-    <Form.Item name="saved_fast_mode" label="速度" valuePropName="checked">
-      <Switch checkedChildren="加速" unCheckedChildren="标准" disabled={disabled || defaults || ((!valid || !fastSupported) && !savedFast)} />
-    </Form.Item>
+    <div className="full-width"><Typography.Text>模型</Typography.Text><div>
+      <Select aria-label="模型" className="full-width" allowClear showSearch optionFilterProp="label" options={options} value={selected}
+        disabled={disabled || defaults || !valid} placeholder={native?.native_default_model ?? '本机默认'}
+        onChange={model => save({ ...values, saved_model: model || null, saved_reasoning_effort: null,
+          saved_fast_mode: !!models.find(item => item.capability.model === (model || native?.native_default_model))?.service_tiers.some(tier => tier.id === 'priority' || tier.id === 'fast') && savedFast })} />
+    </div></div>
+    <Space orientation="vertical" className="full-width"><Typography.Text>推理强度：{effort ?? '本机默认'}</Typography.Text>
+      {efforts.length > 0 ? <Slider key={`${profile.revision}:${index}`} min={0} max={efforts.length} step={1} defaultValue={index >= 0 ? index + 1 : 0}
+        ariaLabelForHandle="推理强度" disabled={disabled || defaults || !valid}
+        marks={{ 0: '默认', ...Object.fromEntries(efforts.flatMap((item, position) => efforts.length <= 6 || position === efforts.length - 1 || position === index ? [[position + 1, item.reasoning_effort]] : [])) }}
+        tooltip={{ formatter: value => value === undefined ? '' : value === 0 ? '本机默认' : efforts[value - 1]?.reasoning_effort ?? '' }}
+        onChangeComplete={position => save({ ...values, saved_reasoning_effort: position === 0 ? null : efforts[position - 1]?.reasoning_effort ?? null })} />
+        : <Typography.Text type="secondary">暂无选项</Typography.Text>}
+      {effort && <Button disabled={disabled || defaults} onClick={() => save({ ...values, saved_reasoning_effort: null })}>恢复默认强度</Button>}
+    </Space>
+    <Space><Typography.Text>速度</Typography.Text><Switch aria-label="速度" checkedChildren="加速" unCheckedChildren="标准" checked={savedFast}
+      disabled={disabled || defaults || !valid || (!fastSupported && !savedFast)} onChange={checked => save({ ...values, saved_fast_mode: checked })} /></Space>
   </>;
 }
-function ModelDialog({ original, observation, close }: { original: Profile; observation?: Observation; close: () => void }) {
-  const [form] = Form.useForm<Values>();
-  const online = useOnline(); const { modal } = App.useApp(); const refresh = useRefresh();
-  const now = useClock();
-  const watched = Form.useWatch(values => values, form) as Values | undefined;
-  const valid = canSaveSettings(watched ?? original.model_settings, observation, original, now);
+function ModelSettings({ profile, observation, disabled }: { profile: Profile; observation?: Observation; disabled: boolean }) {
+  const online = useOnline(); const refresh = useRefresh(); const query = useQueryClient();
+  const { message } = App.useApp();
   const intent = useRef(new Intent()); const sent = useRef<Schema['CodexProfileUpdateV1'] | undefined>(undefined);
-  const hadUnknown = useRef(false); const [saveValues, setSaveValues] = useState<Values>();
   const mutation = useMutation({ mutationFn: async (values: Values) => {
-    if (!sent.current && !canSaveSettings(values, observation, original, Date.now())) {
-      throw new ApiFailure('MODEL_SETTINGS_UNAVAILABLE', '请刷新模型目录或使用本机默认');
-    }
-    const body = sent.current ?? {
-      schema_version: 1 as const, expected_revision: original.revision,
+    const body: Schema['CodexProfileUpdateV1'] = sent.current ?? {
+      schema_version: 1, expected_revision: profile.revision,
       model_settings: {
-        schema_version: 1 as const, use_default_model_settings: values.use_default_model_settings,
+        schema_version: 1, use_default_model_settings: values.use_default_model_settings,
         saved_model: values.saved_model || null, saved_reasoning_effort: values.saved_reasoning_effort || null, saved_fast_mode: values.saved_fast_mode,
       },
     };
     sent.current = body;
     return dataOf(await api.PATCH('/api/v2/settings/codex/{id}', { body, params: {
-      path: { id: original.id }, header: intent.current.headers('PATCH', `/api/v2/settings/codex/${original.id}`, body),
+      path: { id: profile.id }, header: intent.current.headers('PATCH', `/api/v2/settings/codex/${profile.id}`, body),
     } }));
-  }, onSuccess: async () => { close(); await refresh(); }, onError: error => {
-    if (!(error instanceof ApiFailure) || error.code === 'NETWORK_UNKNOWN' || error.code === 'HTTP_CONTRACT_ERROR') hadUnknown.current = true;
-    if (!hadUnknown.current) { sent.current = undefined; setSaveValues(undefined); }
-  } });
-  const pending = mutation.isPending;
-  const unknown = !!saveValues && mutation.isError;
-  useGuard(true);
-  function cancel() {
-    if (pending) return;
-    if (form.isFieldsTouched() || unknown) modal.confirm({
-      title: unknown ? '关闭结果未确认的操作？' : '放弃未保存的更改？',
-      okText: '关闭', cancelText: '继续编辑', onOk: close,
-    });
-    else close();
+  }, onSuccess: result => {
+    sent.current = undefined; intent.current.clear();
+    query.setQueryData(['codex', 'profile', profile.id], result.resource);
+    void refresh();
+  }, onError: () => { void message.error('设置更新失败，请重试'); } });
+  function save(values: Values) {
+    if (disabled || !online || mutation.isPending || mutation.isError || JSON.stringify(values) === JSON.stringify(profile.model_settings)
+      || !canSaveSettings(values, observation, profile, Date.now())) return;
+    mutation.mutate(values);
   }
-  return <Modal open title={`${original.name} · 模型设置`} width={680} maskClosable={false} closable={!pending} onCancel={cancel}
-    onOk={() => { if (online && !pending) { if (unknown && saveValues) mutation.mutate(saveValues); else if (valid) form.submit(); } }}
-    okText={unknown ? '重试保存' : '保存'} cancelText="取消" confirmLoading={pending} okButtonProps={{ disabled: !online || (!unknown && !valid) }}>
-    {unknown && <Alert type="warning" showIcon title="保存结果未知，请重试当前操作" />}
-    {!unknown && !valid && <Alert type="warning" showIcon title="请刷新模型目录或使用本机默认" />}
-    <Form form={form} layout="vertical" disabled={!online || pending || unknown} initialValues={original.model_settings}
-      onFinish={values => {
-        if (!online || pending || unknown || !canSaveSettings(values, observation, original, Date.now())) return;
-        const request = structuredClone(values); setSaveValues(request); mutation.mutate(request);
-      }}>
-      <ModelControls form={form} observation={observation} profile={original} disabled={!online || pending || unknown} />
-      <ErrorNotice error={mutation.error} />
-    </Form>
-  </Modal>;
+  return <Space orientation="vertical" className="full-width">
+    <ModelControls values={profile.model_settings} observation={observation} profile={profile}
+      disabled={disabled || !online || mutation.isPending || mutation.isError} save={save} />
+    {mutation.isPending && <Typography.Text role="status">正在保存</Typography.Text>}
+    <ErrorNotice error={mutation.error} />
+    {mutation.isError && <Space><Button disabled={!online} onClick={() => { if (mutation.variables) mutation.mutate(mutation.variables); }}>重试</Button>
+      <Button onClick={() => { mutation.reset(); sent.current = undefined; intent.current.clear(); void query.invalidateQueries({ queryKey: ['codex'] }); }}>重新载入</Button></Space>}
+  </Space>;
 }
 function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Profile[]; onSelect: (id: string) => void }) {
   const online = useOnline(); const now = useClock(); const client = useQueryClient(); const intent = useRef(new Intent());
-  const { blocked } = useContext(GuardContext);
   const [accountBusy, setAccountBusy] = useState(true);
-  const [editing, setEditing] = useState<Profile>(); const attempted = useRef<string | undefined>(undefined);
+  const attempted = useRef<string | undefined>(undefined);
   const accountChanged = useCallback(async () => {
     attempted.current = undefined; intent.current.clear();
     await client.invalidateQueries({ queryKey: ['codex'] });
@@ -166,28 +141,26 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
   const valid = !accountBusy && !query.isError && !observation.isError && fresh(view, profile, now);
   const mutate = probe.mutate;
   useEffect(() => {
-    if (!online || !profile || !view || query.isError || observation.isError || query.isFetching || observation.isFetching || accountBusy || editing || probe.isPending) return;
+    if (!online || !profile || !view || query.isError || observation.isError || query.isFetching || observation.isFetching || accountBusy || probe.isPending) return;
     const version = `${profile.id}:${profile.revision}`;
     if (attempted.current === version || (view.state !== 'NEVER_PROBED' && view.state !== 'STALE')) return;
     attempted.current = version;
     mutate(profile);
-  }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching, accountBusy, editing, probe.isPending, mutate]);
-  useGuard(probe.isPending);
+  }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching, accountBusy, probe.isPending, mutate]);
   return <Space orientation="vertical" className="full-width" size="large">
     {profile && <ChatgptAuth profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
-      disabled={query.isError || probe.isPending || !!editing} onBusy={setAccountBusy} onChanged={accountChanged} />}
+      disabled={query.isError || probe.isPending} onBusy={setAccountBusy} onChanged={accountChanged} />}
     <Card title="角色模型设置">
       <Space orientation="vertical" className="full-width">
         <Typography.Text type="secondary">模型、推理强度和速度按角色独立保存。</Typography.Text>
-        <Select aria-label="Codex 角色" className="full-width" value={id} disabled={blocked} onChange={onSelect}
+        <Select aria-label="Codex 角色" className="full-width" value={id} onChange={onSelect}
           options={profiles.map(item => ({ value: item.id, label: item.name }))} />
         <QueryPanel pending={query.isPending} error={query.error} stale={!!profile} reload={() => { void query.refetch(); }}>
           {profile && <Space orientation="vertical" className="full-width">
-            <Space wrap>
-              <Button disabled={!online || query.isError || probe.isPending || accountBusy} onClick={() => setEditing(profile)}>模型设置</Button>
-              <Button loading={probe.isPending} disabled={!online || query.isError || accountBusy} onClick={() => probe.mutate(profile)}>刷新</Button>
-              {view && <Tag>{view.state === 'AVAILABLE' && !valid ? states.STALE : states[view.state]}</Tag>}
-            </Space>
+            <Space wrap><Button loading={probe.isPending} disabled={!online || query.isError || accountBusy} onClick={() => probe.mutate(profile)}>刷新</Button>
+              {view && <Tag>{view.state === 'AVAILABLE' && !valid ? states.STALE : states[view.state]}</Tag>}</Space>
+            <ModelSettings profile={profile} observation={query.isError || observation.isError ? undefined : view}
+              disabled={query.isError || probe.isPending || accountBusy} />
             <Descriptions column={1} items={[
               { key: 'defaults', label: '设置', children: profile.model_settings.use_default_model_settings ? '本机默认' : '自定义模型' },
               { key: 'saved', label: '模型 / 推理强度', children: `${profile.model_settings.saved_model ?? '默认'} / ${profile.model_settings.saved_reasoning_effort ?? '默认'}` },
@@ -208,7 +181,6 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
             ]} />
           </>}
         </QueryPanel>
-        {editing && <ModelDialog original={editing} observation={query.isError || observation.isError ? undefined : view} close={() => setEditing(undefined)} />}
       </Space>
     </Card>
   </Space>;

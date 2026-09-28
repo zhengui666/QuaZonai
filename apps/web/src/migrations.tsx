@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { uuidPattern } from './api';
-import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
+import { ErrorNotice, NoData, Pager, QueryPanel, useOnline } from './ui';
 
 type Report = Schema['HistoricalImportReportV1'];
 type Import = Schema['HistoricalImportRequestV1'];
@@ -41,7 +41,6 @@ function ImportEditor({ close }: { close: () => void }) {
     if (!rejected) unknown.current = true;
     if (rejected && !unknown.current) setSubmitted(undefined);
   } });
-  useGuard(!receipt);
   async function submit() {
     if (!online || mutation.isPending || receipt) return;
     if (submitted) { mutation.mutate(submitted); return; }
