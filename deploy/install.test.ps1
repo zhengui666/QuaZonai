@@ -34,6 +34,12 @@ try {
     Set-Content -LiteralPath $Installer -Value $Template.Replace('@QUAZONAI_VERSION@', $Version) -Encoding utf8
     & $Installer
     $Destination = Join-Path $env:LOCALAPPDATA 'QuaZonai/bin/quazonai.exe'
+    $VsWhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+    $Dumpbin = & $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+    Assert ($LASTEXITCODE -eq 0 -and $Dumpbin) 'Native PE dependency inspector is unavailable.'
+    $Imports = & $Dumpbin /DEPENDENTS $Destination
+    Assert ($LASTEXITCODE -eq 0) 'Cannot inspect the installed CLI dependencies.'
+    Assert (-not ($Imports -match '(?i)\b(?:VCRUNTIME|MSVCP)\d\w*\.dll\b')) 'The CLI requires a separately installed VC runtime.'
     $Expected = (Get-FileHash -Algorithm SHA256 $Binary).Hash
     Assert ((Get-FileHash -Algorithm SHA256 $Destination).Hash -eq $Expected) 'Installed binary differs from its release.'
     & $Installer # Exercise native atomic replacement of an existing executable.
