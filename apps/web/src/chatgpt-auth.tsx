@@ -72,7 +72,10 @@ const reasons: Record<Schema['CodexAccountReasonV1'], string> = {
 export function activeAccountOperation(operation: Operation | null | undefined): boolean {
   return !!operation && ['REQUESTED', 'WAITING', 'CANCEL_REQUESTED'].includes(operation.state);
 }
-export function settleAccountSessions(operation: Operation | null | undefined) {
+export function settleAccountSessions(operation: Operation | null | undefined, client: QueryClient) {
+  for (const session of sessions.values()) {
+    if (session.snapshot.unknownStart) void session.reconcileUnknownStart(client);
+  }
   if (!operation || activeAccountOperation(operation)) return;
   for (const session of sessions.values()) {
     const started = session.startedId === operation.operation.id;

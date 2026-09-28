@@ -228,11 +228,13 @@ test('a lost probe response keeps its identity after switching roles', async ({ 
   await page.getByText('研究员', { exact: true }).last().click();
   await expect(page.getByText('连接中断，提交结果未知；请重试当前操作')).toBeVisible();
   await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeDisabled();
+  await expect(page.getByRole('switch', { name: '本机默认' })).toBeDisabled();
   expect(state.probes).toBe(1);
   await page.getByRole('button', { name: '刷新', exact: true }).click();
   await expect.poll(() => state.probes).toBe(2);
   expect(state.probeRequests[1]).toEqual(state.probeRequests[0]);
   await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeEnabled();
+  await expect(page.getByRole('switch', { name: '本机默认' })).toBeEnabled();
 });
 
 test('switching roles keeps each autosave independent while a write is pending', async ({ page }) => {
@@ -448,8 +450,10 @@ test('terminal login clears a cancellation started from another role', async ({ 
   })).toBe(false);
 });
 
-test('Cycle start waits for a shared account action and refreshes its terminal status', async ({ page }) => {
+for (const lostStart of [false, true]) {
+test(`Cycle start waits for a shared account action${lostStart ? ' after a lost login response' : ''}`, async ({ page }) => {
   const { state, profiles } = await setup(page, true);
+  state.dropStart = lostStart;
   const now = new Date().toISOString();
   const projectId = '01990000-0000-7000-8000-000000000071';
   const brief: Schema['BriefView'] = { id: '01990000-0000-7000-8000-000000000072', project_id: projectId,
@@ -459,33 +463,17 @@ test('Cycle start waits for a shared account action and refreshes its terminal s
     description: '', state: 'ACTIVE', revision: '1', created_by: 'OPERATOR', created_at: now, updated_at: now };
   await page.route(`**/api/v2/projects/${projectId}`, route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(project) }));
   await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
-  await expect(page.getByLabel('ChatGPT 授权码')).toBeVisible();
+  if (lostStart) await expect(page.getByText('连接中断，提交结果未知；请重试当前操作')).toBeVisible();
+  else await expect(page.getByLabel('ChatGPT 授权码')).toBeVisible();
   await page.getByRole('menuitem', { name: '研究', exact: true }).click();
   await page.evaluate(async brief => {
-    const uiPath = '/src/ui.tsx';
-    const cyclesPath = '/src/cycles.tsx';
-    const version = (await (await fetch(cyclesPath)).text()).match(/react\.js\?v=([0-9a-f]+)/)?.[1];
-    if (!version) throw new Error('Vite dependency version missing');
-    const dep = (name: string) => `/node_modules/.vite/deps/${name}.js?v=${version}`;
-    const reactPath = dep('react');
-    const domPath = dep('react-dom_client');
-    const queryPath = dep('@tanstack_react-query');
-    const antdPath = dep('antd');
-    const React = (await import(reactPath)).default;
-    const { createRoot } = (await import(domPath)).default;
-    const { QueryClient, QueryClientProvider } = await import(queryPath);
-    const { App } = await import(antdPath);
-    const { GuardProvider } = await import(uiPath);
-    const { BriefExecution } = await import(cyclesPath);
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000 } } });
-    client.setQueryData(['frozen-brief', brief.id], { schema_version: 1, brief, execution_context: {
-      schema_version: 1, runtime_id: brief.id, runtime_revision: '1', discovery_input_set_id: brief.id,
-      validation_input_set_id: brief.id, sealed_input_set_id: brief.id,
-    } });
-    const host = document.createElement('div'); host.id = 'brief-cycle-fixture'; document.body.append(host);
-    createRoot(host, { onUncaughtError: (error: unknown) => { host.dataset.error = String(error); } }).render(React.createElement(App, null, React.createElement(QueryClientProvider, { client },
-      React.createElement(GuardProvider, null, React.createElement(BriefExecution, { brief, close: () => {} })))));
+    const fixturePath = '/tests/brief-execution-fixture.tsx';
+    (await import(fixturePath)).mountBriefExecution(brief);
   }, brief);
+  if (lostStart) {
+    await expect.poll(() => state.starts.length).toBe(2);
+    expect(state.starts[1]).toEqual(state.starts[0]);
+  }
   await expect.poll(async () => {
     const error = await page.locator('#brief-cycle-fixture').getAttribute('data-error');
     if (error) throw new Error(error);
@@ -501,6 +489,7 @@ test('Cycle start waits for a shared account action and refreshes its terminal s
     revision: '9007199254740996', finished_at: new Date().toISOString() };
   await expect(submit).toBeEnabled({ timeout: 12_000 });
 });
+}
 
 test('reload restores only status, and a local deadline never invents a terminal result', async ({ page }) => {
   const { state, open } = await setup(page);

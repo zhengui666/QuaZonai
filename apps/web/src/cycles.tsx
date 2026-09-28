@@ -46,9 +46,9 @@ export function BriefExecution({ brief, close }: { brief: Brief; close: () => vo
   const researcherAccount = useAccountOperation(researcherId, !freeze, accountWork);
   const reviewerAccount = useAccountOperation(reviewerId, !freeze, accountWork);
   useEffect(() => {
-    settleAccountSessions(researcherAccount.data);
-    settleAccountSessions(reviewerAccount.data);
-  }, [researcherAccount.data, reviewerAccount.data]);
+    settleAccountSessions(researcherAccount.data, client);
+    settleAccountSessions(reviewerAccount.data, client);
+  }, [researcherAccount.data, reviewerAccount.data, researcherAccount.dataUpdatedAt, reviewerAccount.dataUpdatedAt, client]);
   const runtime = useQuery({ queryKey: ['integrations', 'runtime', runtimeId, runtimeVersion], enabled: freeze && !!runtimeId && !runtimeSaving,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId! } }, signal })) });
   const project = useQuery({ queryKey: ['project', brief.project_id], staleTime: 0,

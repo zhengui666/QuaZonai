@@ -258,7 +258,7 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
               onClick={() => { void probe.run(profile, client); }}>刷新</Button>
               {view && <Tag>{view.state === 'AVAILABLE' && !valid ? states.STALE : states[view.state]}</Tag>}</Space>
             <ModelSettings key={profile.id} profile={profile} observation={query.isError || observation.isError ? undefined : view}
-              disabled={query.isError || probeState.pending || accountBusy} />
+              disabled={query.isError || probeState.pending || probeState.uncertain || accountBusy} />
             <Descriptions column={1} items={[
               { key: 'defaults', label: '设置', children: profile.model_settings.use_default_model_settings ? '本机默认' : '自定义模型' },
               { key: 'saved', label: '模型 / 推理强度', children: `${profile.model_settings.saved_model ?? '默认'} / ${profile.model_settings.saved_reasoning_effort ?? '默认'}` },

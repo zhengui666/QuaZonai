@@ -269,6 +269,49 @@ test('data registration waits for the bound Runtime autosave across settings tab
   await expect(page.getByText('Runtime B')).toBeVisible();
 });
 
+test('immutable portfolio editors wait for a Runtime autosave and read its new revision', async ({ page }) => {
+  const { runtime, writes, holdNextRuntime } = await setup(page);
+  const now = new Date().toISOString();
+  const projectId = '01990000-0000-7000-8000-000000000071';
+  const project: Schema['ProjectView'] = { id: projectId, root_lineage_id: projectId, name: 'Portfolio fixture',
+    description: '', state: 'ACTIVE', revision: '1', created_by: 'OPERATOR', created_at: now, updated_at: now };
+  await page.route(url => new URL(url).pathname === '/api/v2/projects', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, items: [project], next_cursor: null,
+  }) }));
+  await page.getByRole('tab', { name: '集成', exact: true }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const release = holdNextRuntime();
+  await page.getByRole('dialog', { name: '修改 Runtime 配置' }).getByRole('textbox', { name: '名称' }).fill('Runtime B');
+  await expect.poll(() => writes.filter(write => write.kind === 'runtime').length).toBe(1);
+  await page.getByRole('dialog', { name: '修改 Runtime 配置' }).getByRole('button', { name: '关闭' }).click();
+  await page.getByRole('menuitem', { name: '组合', exact: true }).click();
+  await page.getByRole('combobox', { name: '选择组合所属项目' }).click();
+  await page.getByText(`Portfolio fixture · ${projectId}`, { exact: true }).last().click();
+  await page.getByRole('button', { name: '新建组合配置' }).click();
+  const mandate = page.getByRole('dialog', { name: '新建不可变组合配置' });
+  await mandate.getByRole('textbox', { name: 'Runtime 编号' }).fill(runtime.id);
+  await expect(mandate.getByRole('button', { name: '保存不可变配置' })).toBeDisabled();
+  await mandate.getByRole('button', { name: '取消' }).click();
+  await page.getByRole('button', { name: '放弃修改' }).click();
+  await page.getByRole('tab', { name: '执行假设' }).click();
+  await page.getByRole('button', { name: '新建执行假设' }).click();
+  const assumptions = page.getByRole('dialog', { name: '新建不可变执行假设' });
+  await assumptions.getByRole('textbox', { name: 'Runtime 编号' }).fill(runtime.id);
+  await expect(assumptions.getByRole('button', { name: '保存不可变执行假设' })).toBeDisabled();
+  release();
+  await expect(assumptions.getByText('Runtime 配置版本：2')).toBeVisible();
+  await expect(assumptions.getByRole('button', { name: '保存不可变执行假设' })).toBeEnabled();
+  await assumptions.getByRole('button', { name: '取消' }).click();
+  await page.getByRole('button', { name: '放弃修改' }).click();
+  await page.getByRole('tab', { name: '组合配置' }).click();
+  await page.getByRole('button', { name: '新建组合配置' }).click();
+  const again = page.getByRole('dialog', { name: '新建不可变组合配置' });
+  await again.getByRole('textbox', { name: 'Runtime 编号' }).fill(runtime.id);
+  await expect(again.getByText('Runtime 配置版本：2')).toBeVisible();
+  await expect(again.getByRole('button', { name: '保存不可变配置' })).toBeEnabled();
+});
+
 test('a corrected server-rejected setting saves with a new request', async ({ page }) => {
   const { runtime, writes, rejectNextRuntime } = await setup(page);
   await page.getByRole('tab', { name: '集成' }).click();
