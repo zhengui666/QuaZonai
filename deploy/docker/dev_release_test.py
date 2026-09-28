@@ -68,10 +68,24 @@ class DevReleaseTests(unittest.TestCase):
                 release.wait_ci("a" * 40)
 
     def test_dev_does_not_authorize_stable_tags_or_an_arbitrary_branch(self):
-        with patch.dict(os.environ, {"RELEASE_BRANCH": "dev"}), self.assertRaisesRegex(ValueError, "timestamped"):
+        with patch.dict(os.environ, {"RELEASE_BRANCH": "dev"}), self.assertRaisesRegex(ValueError, "Timestamped"):
             release.verify("v2.0.0", "a" * 40)
         with patch.dict(os.environ, {"RELEASE_BRANCH": "unreviewed"}), self.assertRaises(ValueError):
             release.is_merged("a" * 40)
+
+    def test_main_never_claims_automatic_dev_tags_after_their_source_is_merged(self):
+        tag = "v2.0.0-dev.20260928010203.1234"
+        with patch.dict(os.environ, {"RELEASE_BRANCH": "main"}), \
+                patch.object(release, "releases", return_value={}), \
+                patch.object(release, "run", return_value=tag), \
+                patch.object(release, "is_merged", return_value=True), \
+                patch.object(release, "tag_revision") as source:
+            self.assertEqual(release.select(None), [])
+            source.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "original Dev release run"):
+                release.select(tag)
+            with self.assertRaisesRegex(ValueError, "dev publisher"):
+                release.verify(tag, "a" * 40)
 
 
 if __name__ == "__main__":

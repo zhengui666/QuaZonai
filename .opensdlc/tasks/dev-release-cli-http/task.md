@@ -58,11 +58,17 @@ creating a recursive documentation commit on dev.
 <a id="verification"></a>
 ## Verification
 
-Local integrated checks passed: 89 Docker release/upgrade tests, 9 complete asset
+Local integrated checks passed: 91 Docker release/upgrade tests, 9 complete asset
 packaging tests, and 11 installer/documentation checks. The CLI author verified
 Linux native tests, Clippy, architecture and existing server CLI transport/help/
 Skill checks. Windows/macOS execution and complete container release acceptance
 remain pending native GitHub CI.
+
+A real Linux CLI archive was installed and updated in a disposable home, with
+exact binary/checksum/version and offline contract verification. Four disposable
+Docker images exercised export, gzip archive load, identity readback and package
+validation without touching the running installation. Full release-image cold
+installation remains a post-merge release gate.
 
 All workflow definitions pass actionlint 1.7.12. Dev publication never writes a
 shared Codex version/latest tag: it reuses an existing verified published version,
@@ -72,7 +78,10 @@ avoids contention with default-branch publishers without changing live main.
 <a id="review"></a>
 ## Review
 
-Pending PR and final-Head CI/Codex review.
+[PR #132](https://github.com/zhengui666/QuaZonai/pull/132) targets dev.
+Independent local review identified and corrected missing portable-CI triggers,
+shared Codex tag races, incomplete Release detection and main/dev duplicate
+publication. Final-Head GitHub CI and explicit clean Codex review remain pending.
 
 <a id="delivery"></a>
 ## Delivery

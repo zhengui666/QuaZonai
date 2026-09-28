@@ -30,6 +30,7 @@ CI_PATHS = {
     ".github/workflows/cli.yml",
 }
 CODEX_REPOSITORY = "ghcr.io/zhengui666/quazonai-codex"
+DEV_TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*")
 
 
 def api(endpoint: str, *, pages: bool = False):
@@ -149,6 +150,10 @@ def select(requested: str | None) -> list[dict]:
             version(tag)
         except ValueError:
             continue
+        if DEV_TAG.fullmatch(tag) and os.environ.get("RELEASE_BRANCH", "main") != "dev":
+            if requested:
+                raise ValueError("Retry timestamped dev releases through their original Dev release run.")
+            continue
         revision = tag_revision(tag)
         if not is_merged(revision):
             print(f"Not merged into main yet: {tag}", file=sys.stderr)
@@ -170,8 +175,8 @@ def select(requested: str | None) -> list[dict]:
 
 
 def verify(tag: str, revision: str) -> None:
-    if os.environ.get("RELEASE_BRANCH") == "dev" and not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*", tag):
-        raise ValueError("Dev publication requires an immutable timestamped development tag.")
+    if (os.environ.get("RELEASE_BRANCH", "main") == "dev") != bool(DEV_TAG.fullmatch(tag)):
+        raise ValueError("Timestamped development tags must use the dev publisher; other tags must use main.")
     if tag_revision(tag) != revision or not is_merged(revision):
         raise ValueError("Tag moved or source is not contained in the release branch.")
     if run(["git", "rev-parse", "HEAD"], capture=True) != revision:
@@ -307,7 +312,7 @@ def push_image(image: str, repository: str, tag: str) -> str:
 
 
 def published_codex_image(target: str) -> str | None:
-    # The app and standalone publishers share the workflow concurrency group.
+    # Main and standalone publishers share the workflow concurrency group; dev only reads this tag.
     # Reuse an existing exact version even when a local rebuild has a new ID.
     reference = CODEX_REPOSITORY + ":" + codex.exact_version(target)
     result = subprocess.run(["docker", "pull", reference], capture_output=True, text=True, check=False)
