@@ -71,30 +71,29 @@ export function SecretReference({ value, onChange, purpose, configured, disabled
 function RuntimeDialog({ original, close }: { original?: Runtime; close: () => void }) {
   type Values = Schema['RuntimeConfigurationV1'] & { credential_ref?: string; ca_certificate_ref?: string };
   const [form] = Form.useForm<Values>(); const [secretBusy, setSecretBusy] = useState(false);
-  const online = useOnline(); const intent = useRef(new Intent()); const revision = useRef(original?.revision); const refresh = useRefresh();
+  const online = useOnline(); const intent = useRef(new Intent()); const refresh = useRefresh();
   const tls = Form.useWatch('tls_policy', form) ?? original?.configuration.tls_policy ?? 'SYSTEM_CA';
   const mutation = useMutation({ mutationFn: async (values: Values) => {
     const common = { name: values.name, endpoint: values.endpoint, allowed_capabilities: values.allowed_capabilities, enabled: values.enabled };
-    if (original) {
-      const base = { schema_version: 1 as const, expected_revision: revision.current!, credential_ref: values.credential_ref ?? null };
-      const body: Schema['RuntimeUpdate'] = values.tls_policy === 'PINNED_CA'
-        ? { ...base, configuration: { ...common, tls_policy: 'PINNED_CA', development_http: false }, ca_certificate_ref: values.ca_certificate_ref ?? null }
-        : { ...base, configuration: { ...common, tls_policy: 'SYSTEM_CA', development_http: values.development_http }, ca_certificate_ref: null };
-      return dataOf(await api.PATCH('/api/v2/integrations/runtimes/{id}', { body, params: { path: { id: original.id },
-        header: intent.current.headers('PATCH',`/api/v2/integrations/runtimes/${original.id}`,body) } }));
-    }
     if (!values.credential_ref || (values.tls_policy === 'PINNED_CA' && !values.ca_certificate_ref)) throw new ApiFailure('LOCAL_VALIDATION_ERROR','请先登记本次必需的凭据和证书。');
     const body: Schema['RuntimeCreate'] = values.tls_policy === 'PINNED_CA'
       ? { schema_version: 1, credential_ref: values.credential_ref, ca_certificate_ref: values.ca_certificate_ref!, configuration: { ...common, tls_policy: 'PINNED_CA', development_http: false } }
       : { schema_version: 1, credential_ref: values.credential_ref, ca_certificate_ref: null, configuration: { ...common, tls_policy: 'SYSTEM_CA', development_http: values.development_http } };
     return dataOf(await api.POST('/api/v2/integrations/runtimes', { body, params: { header: intent.current.headers('POST','/api/v2/integrations/runtimes',body) } }));
-  }, onSuccess: result => { revision.current = result.resource.revision; intent.current.clear(); void refresh(); if (!original) close(); } });
-  const autosave = useFormAutosave(form, (original?.configuration ?? {}) as Values, online && !!original, async values => {
-    await mutation.mutateAsync(values);
-    if (values.credential_ref) form.setFieldValue('credential_ref', undefined);
-    if (values.ca_certificate_ref) form.setFieldValue('ca_certificate_ref', undefined);
-    return { ...values, credential_ref: undefined, ca_certificate_ref: undefined };
-  });
+  }, onSuccess: () => { intent.current.clear(); void refresh(); close(); } });
+  const autosave = useFormAutosave(form, original && `runtime:${original.id}`, (original?.configuration ?? {}) as Values,
+    original?.revision, original?.updated_at, online && !!original, async (values, revision, writeIntent) => {
+      if (!original) throw new Error('Runtime 不存在');
+      const common = { name: values.name, endpoint: values.endpoint, allowed_capabilities: values.allowed_capabilities, enabled: values.enabled };
+      const base = { schema_version: 1 as const, expected_revision: revision, credential_ref: values.credential_ref ?? null };
+      const body: Schema['RuntimeUpdate'] = values.tls_policy === 'PINNED_CA'
+        ? { ...base, configuration: { ...common, tls_policy: 'PINNED_CA', development_http: false }, ca_certificate_ref: values.ca_certificate_ref ?? null }
+        : { ...base, configuration: { ...common, tls_policy: 'SYSTEM_CA', development_http: values.development_http }, ca_certificate_ref: null };
+      const result = dataOf(await api.PATCH('/api/v2/integrations/runtimes/{id}', { body, params: { path: { id: original.id },
+        header: writeIntent.headers('PATCH', `/api/v2/integrations/runtimes/${original.id}`, body) } }));
+      void refresh();
+      return result.resource;
+    });
   const pending = mutation.isPending || secretBusy;
   function cancel() {
     if (secretBusy || (!original && pending)) return;
@@ -106,7 +105,7 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
     footer={original ? <Button onClick={cancel}>关闭</Button> : undefined}
     okText="保存配置" cancelText="返回" okButtonProps={{ disabled: !online || secretBusy }}>
     
-    {original && <ResourceFacts id={original.id} revision={mutation.data?.resource.revision ?? original.revision} updated={mutation.data?.resource.updated_at ?? original.updated_at} />}
+    {original && <ResourceFacts id={original.id} revision={autosave.revision} updated={autosave.updated_at} />}
     <Form form={form} layout="vertical" initialValues={original ? original.configuration : { tls_policy: 'SYSTEM_CA', enabled: true, development_http: false, allowed_capabilities: ['DATA_VALIDATE'] }}
       disabled={!online || secretBusy || (!original && pending)} onValuesChange={original ? autosave.change : undefined}
       onFinish={original ? undefined : values => mutation.mutate(values)}>
@@ -201,22 +200,24 @@ function Runtimes() {
 
 function DownstreamDialog({ original, close }: { original?: Downstream; close: () => void }) {
   type Values = Schema['DownstreamConfigurationV1'] & { credential_ref?: string };
-  const [form] = Form.useForm<Values>(); const [secretBusy, setSecretBusy] = useState(false); const online = useOnline(); const intent = useRef(new Intent()); const revision = useRef(original?.revision); const refresh = useRefresh();
+  const [form] = Form.useForm<Values>(); const [secretBusy, setSecretBusy] = useState(false); const online = useOnline(); const intent = useRef(new Intent()); const refresh = useRefresh();
   const mutation = useMutation({ mutationFn: async (values: Values) => {
     const configuration: Schema['DownstreamConfigurationV1'] = { name: values.name, endpoint: values.endpoint, accepted_package_versions: ['1'], environments: values.environments, enabled: values.enabled, development_http: values.development_http };
-    if (original) {
-      const body: Schema['DownstreamUpdate'] = { schema_version: 1, expected_revision: revision.current!, configuration, credential_ref: values.credential_ref ?? null };
-      return dataOf(await api.PATCH('/api/v2/integrations/downstreams/{id}', { body, params: { path: { id: original.id }, header: intent.current.headers('PATCH',`/api/v2/integrations/downstreams/${original.id}`,body) } }));
-    }
     if (!values.credential_ref) throw new ApiFailure('LOCAL_VALIDATION_ERROR','请先登记下游服务凭据。');
     const body: Schema['DownstreamCreate'] = { schema_version: 1, configuration, credential_ref: values.credential_ref };
     return dataOf(await api.POST('/api/v2/integrations/downstreams', { body, params: { header: intent.current.headers('POST','/api/v2/integrations/downstreams',body) } }));
-  }, onSuccess: result => { revision.current = result.resource.revision; intent.current.clear(); void refresh(); if (!original) close(); } });
-  const autosave = useFormAutosave(form, (original?.configuration ?? {}) as Values, online && !!original, async values => {
-    await mutation.mutateAsync(values);
-    if (values.credential_ref) form.setFieldValue('credential_ref', undefined);
-    return { ...values, credential_ref: undefined };
-  });
+  }, onSuccess: () => { intent.current.clear(); void refresh(); close(); } });
+  const autosave = useFormAutosave(form, original && `downstream:${original.id}`, (original?.configuration ?? {}) as Values,
+    original?.revision, original?.updated_at, online && !!original, async (values, revision, writeIntent) => {
+      if (!original) throw new Error('下游不存在');
+      const configuration: Schema['DownstreamConfigurationV1'] = { name: values.name, endpoint: values.endpoint,
+        accepted_package_versions: ['1'], environments: values.environments, enabled: values.enabled, development_http: values.development_http };
+      const body: Schema['DownstreamUpdate'] = { schema_version: 1, expected_revision: revision, configuration, credential_ref: values.credential_ref ?? null };
+      const result = dataOf(await api.PATCH('/api/v2/integrations/downstreams/{id}', { body, params: { path: { id: original.id },
+        header: writeIntent.headers('PATCH', `/api/v2/integrations/downstreams/${original.id}`, body) } }));
+      void refresh();
+      return result.resource;
+    });
   const pending = mutation.isPending || secretBusy;
   function cancel() {
     if (secretBusy || (!original && pending)) return;
@@ -228,7 +229,7 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
     footer={original ? <Button onClick={cancel}>关闭</Button> : undefined}
     okText="保存下游配置" cancelText="返回" okButtonProps={{ disabled: !online || secretBusy }}>
     
-    {original && <ResourceFacts id={original.id} revision={mutation.data?.resource.revision ?? original.revision} updated={mutation.data?.resource.updated_at ?? original.updated_at} />}
+    {original && <ResourceFacts id={original.id} revision={autosave.revision} updated={autosave.updated_at} />}
     <Form form={form} layout="vertical" disabled={!online || secretBusy || (!original && pending)} initialValues={original?.configuration ?? { environments: 'PAPER', enabled: true, development_http: false }}
       onValuesChange={original ? autosave.change : undefined} onFinish={original ? undefined : values => mutation.mutate(values)}>
       <Form.Item name="name" label="下游名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>

@@ -60,18 +60,21 @@ function EvidenceSelect({ value, onChange }: { value?: string; onChange?: (id: s
 
 function SourceDialog({ source, close }: { source?: Source; close: () => void }) {
   type Values = { name: string; runtime_id: string; native_catalog_ref: string; enabled: boolean };
-  const [form] = Form.useForm<Values>(); const intent = useRef(new Intent()); const revision = useRef(source?.revision);
+  const [form] = Form.useForm<Values>(); const intent = useRef(new Intent());
   const online = useOnline(); const refresh = useDataRefresh();
   const mutation = useMutation({ mutationFn: async (values: Values) => {
-    if (source) {
-      const body: Schema['DataSourceUpdate'] = { schema_version: 1, expected_revision: revision.current!, name: values.name, enabled: values.enabled };
-      return dataOf(await api.PATCH('/api/v2/data/sources/{id}', { params: { path: { id: source.id }, header: intent.current.headers('PATCH', `/api/v2/data/sources/${source.id}`, body) }, body }));
-    }
     const body: Schema['DataSourceCreate'] = { schema_version: 1, provider_kind: 'NAUTILUS_CATALOG', ...values };
     return dataOf(await api.POST('/api/v2/data/sources', { body, params: { header: intent.current.headers('POST','/api/v2/data/sources',body) } }));
-  }, onSuccess: result => { revision.current = result.resource.revision; intent.current.clear(); void refresh(); if (!source) close(); } });
-  const autosave = useFormAutosave(form, (source ? { name: source.name, enabled: source.enabled } : {}) as Values, online && !!source,
-    async values => { await mutation.mutateAsync(values); });
+  }, onSuccess: () => { intent.current.clear(); void refresh(); close(); } });
+  const autosave = useFormAutosave(form, source && `source:${source.id}`, (source ? { name: source.name, enabled: source.enabled } : {}) as Values,
+    source?.revision, source?.updated_at, online && !!source, async (values, revision, writeIntent) => {
+      if (!source) throw new Error('数据源不存在');
+      const body: Schema['DataSourceUpdate'] = { schema_version: 1, expected_revision: revision, name: values.name, enabled: values.enabled };
+      const result = dataOf(await api.PATCH('/api/v2/data/sources/{id}', { params: { path: { id: source.id },
+        header: writeIntent.headers('PATCH', `/api/v2/data/sources/${source.id}`, body) }, body }));
+      void refresh();
+      return result.resource;
+    });
   function cancel() {
     if (!source && mutation.isPending) return;
     if (source) void autosave.flush();
@@ -84,7 +87,7 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
     <Form form={form} layout="vertical" initialValues={source ? { name: source.name, enabled: source.enabled } : { enabled: true }}
       disabled={!online || (!source && mutation.isPending)} onValuesChange={source ? autosave.change : undefined}
       onFinish={source ? undefined : values => mutation.mutate(values)}>
-      {source && <ResourceFacts id={source.id} revision={mutation.data?.resource.revision ?? source.revision} updated={mutation.data?.resource.updated_at ?? source.updated_at} />}
+      {source && <ResourceFacts id={source.id} revision={autosave.revision} updated={autosave.updated_at} />}
       <Form.Item name="name" label="数据源名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
       {!source && <>
         <Form.Item name="runtime_id" label="所属 Runtime" rules={[required]}><ResourceSelect label="选择已登记的 Runtime" queryKey={['data','runtime-options']}

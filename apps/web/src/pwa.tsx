@@ -2,10 +2,11 @@ import { Alert, Button, Modal, Space, Typography } from 'antd';
 import { useIsMutating } from '@tanstack/react-query';
 import { useContext, useEffect, useRef, useState } from 'react';
 import { GuardContext, useOnline } from './ui';
+import { settingsWorkActive, useSettingsWork } from './settings-work';
 
 /** Browser lifecycle glue only; Vite/Workbox owns generation and static caching. */
 export function PwaUpdate() {
-  const { blocked } = useContext(GuardContext); const mutating = useIsMutating();
+  const { blocked } = useContext(GuardContext); const mutating = useIsMutating(); const settingsWork = useSettingsWork();
   const online = useOnline();
   const [waiting, setWaiting] = useState<ServiceWorker>();
   const [dismissed, setDismissed] = useState(false);
@@ -13,7 +14,7 @@ export function PwaUpdate() {
   const [ready, setReady] = useState(false);
   const [failure, setFailure] = useState(false);
   const consent = useRef(false); const reloaded = useRef(false);
-  const protectedWork = useRef(false); protectedWork.current = blocked || mutating > 0;
+  const protectedWork = useRef(false); protectedWork.current = blocked || mutating > 0 || settingsWork;
   useEffect(() => {
     if (!installing) return;
     const timer = window.setTimeout(() => {
@@ -45,7 +46,7 @@ export function PwaUpdate() {
       setWaiting(undefined); setInstalling(false);
       // Another tab may activate the new worker, but cannot authorize this tab
       // to reload. Keep a manual reload action instead of a stale waiting worker.
-      if (!consent.current || protectedWork.current) { setReady(true); return; }
+      if (!consent.current || protectedWork.current || settingsWorkActive()) { setReady(true); return; }
       reloaded.current = true; window.location.reload();
     }
     function check() {
@@ -69,9 +70,9 @@ export function PwaUpdate() {
       observed.forEach(worker => worker.removeEventListener('statechange', changed));
     };
   }, []);
-  const unavailable = !online || blocked || mutating > 0 || installing;
+  const unavailable = !online || blocked || mutating > 0 || settingsWork || installing;
   function update() {
-    if (unavailable) return;
+    if (unavailable || settingsWorkActive()) return;
     if (ready) { reloaded.current = true; window.location.reload(); return; }
     if (!waiting) return;
     consent.current = true; setFailure(false); setInstalling(true);
@@ -85,7 +86,7 @@ export function PwaUpdate() {
       okButtonProps={{ 'aria-label': '确认更新', 'aria-busy': installing, disabled: unavailable }} confirmLoading={installing} closable={!installing} maskClosable={!installing}>
       <Space orientation="vertical" className="full-width">
         
-        {(blocked || mutating > 0) && <Alert type="warning" showIcon title="请先保存或取消当前编辑" />}
+        {(blocked || mutating > 0 || settingsWork) && <Alert type="info" showIcon title="当前操作完成后可更新" />}
         {!online && <Alert type="warning" showIcon title="离线，无法更新" />}
         
       </Space>

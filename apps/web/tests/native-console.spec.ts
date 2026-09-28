@@ -346,7 +346,7 @@ if (config.phase === 'before-restart') {
       await page.evaluate(async () => { await (await navigator.serviceWorker.ready).update(); });
       await expect(page.getByRole('dialog', { name: '检测到新的前端版本' })).toBeVisible();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeDisabled();
-      await expect(page.getByText('请先保存或取消当前编辑', { exact: true })).toBeVisible();
+      await expect(page.getByText('当前操作完成后可更新', { exact: true })).toBeVisible();
       await page.getByRole('button', { name: '稍后', exact: true }).click();
       await expect(page.getByLabel('研究名称')).toHaveValue('Unsaved native PWA edit');
       await page.getByRole('button', { name: '取消', exact: true }).click();

@@ -1,14 +1,35 @@
 import { Alert, App, Button, Card, Descriptions, Select, Slider, Space, Switch, Tag, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, dataOf, Intent } from './api';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { api, ApiFailure, dataOf, Intent } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, NoData, QueryPanel, useClock, useOnline } from './ui';
 import { ChatgptAuth } from './chatgpt-auth';
+import { setSettingsWork } from './settings-work';
 
 type Profile = Schema['CodexProfileViewV1'];
 type Observation = Schema['CodexObservationV1'];
 type Values = Schema['SavedModelSettingsV1'];
+type ModelState = { pending: boolean; uncertain: boolean; error?: unknown };
+class ModelSaveSession {
+  intent = new Intent(); sent?: Schema['CodexProfileUpdateV1']; values?: Values;
+  state: ModelState = { pending: false, uncertain: false };
+  private listeners = new Set<() => void>();
+  constructor(readonly profileId: string) {}
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  getSnapshot = () => this.state;
+  update(changes: Partial<ModelState>) {
+    this.state = { ...this.state, ...changes };
+    this.listeners.forEach(listener => listener());
+    setSettingsWork(`codex-model:${this.profileId}`, this.state.pending || this.state.uncertain);
+  }
+}
+const modelSessions = new Map<string, ModelSaveSession>();
+function modelSessionFor(id: string) {
+  let session = modelSessions.get(id);
+  if (!session) { session = new ModelSaveSession(id); modelSessions.set(id, session); }
+  return session;
+}
 const failures: Record<Schema['CodexProbeFailureV1'], string> = {
   DEPLOYMENT_UNAVAILABLE: 'Codex 运行环境不可用，请检查部署配置',
   NATIVE_UNAVAILABLE: 'Codex 连接失败，请重试',
@@ -80,36 +101,48 @@ function ModelControls({ values, observation, profile, disabled, save }: {
 function ModelSettings({ profile, observation, disabled }: { profile: Profile; observation?: Observation; disabled: boolean }) {
   const online = useOnline(); const refresh = useRefresh(); const query = useQueryClient();
   const { message } = App.useApp();
-  const intent = useRef(new Intent()); const sent = useRef<Schema['CodexProfileUpdateV1'] | undefined>(undefined);
+  const session = modelSessionFor(profile.id);
+  const state = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const mutation = useMutation({ mutationFn: async (values: Values) => {
-    const body: Schema['CodexProfileUpdateV1'] = sent.current ?? {
+    const body: Schema['CodexProfileUpdateV1'] = session.sent ?? {
       schema_version: 1, expected_revision: profile.revision,
       model_settings: {
         schema_version: 1, use_default_model_settings: values.use_default_model_settings,
         saved_model: values.saved_model || null, saved_reasoning_effort: values.saved_reasoning_effort || null, saved_fast_mode: values.saved_fast_mode,
       },
     };
-    sent.current = body;
+    session.sent = body; session.values = values;
     return dataOf(await api.PATCH('/api/v2/settings/codex/{id}', { body, params: {
-      path: { id: profile.id }, header: intent.current.headers('PATCH', `/api/v2/settings/codex/${profile.id}`, body),
+      path: { id: profile.id }, header: session.intent.headers('PATCH', `/api/v2/settings/codex/${profile.id}`, body),
     } }));
   }, onSuccess: result => {
-    sent.current = undefined; intent.current.clear();
+    session.sent = undefined; session.values = undefined; session.intent.clear();
+    session.update({ pending: false, uncertain: false, error: undefined });
     query.setQueryData(['codex', 'profile', profile.id], result.resource);
     void refresh();
-  }, onError: () => { void message.error('设置更新失败，请重试'); } });
+  }, onError: error => {
+    const rejected = error instanceof ApiFailure && !!error.problem && error.status >= 400 && error.status < 500;
+    if (rejected || (error instanceof ApiFailure && error.code === 'OFFLINE')) {
+      session.sent = undefined; session.values = undefined; session.intent.clear();
+    }
+    session.update({ pending: false, uncertain: !rejected && !(error instanceof ApiFailure && error.code === 'OFFLINE'), error });
+    void message.error('设置更新失败，请检查输入或重试');
+  } });
   function save(values: Values) {
-    if (disabled || !online || mutation.isPending || mutation.isError || JSON.stringify(values) === JSON.stringify(profile.model_settings)
+    if (disabled || !online || state.pending || state.uncertain || JSON.stringify(values) === JSON.stringify(profile.model_settings)
       || !canSaveSettings(values, observation, profile, Date.now())) return;
+    session.update({ pending: true, error: undefined });
     mutation.mutate(values);
   }
   return <Space orientation="vertical" className="full-width">
     <ModelControls values={profile.model_settings} observation={observation} profile={profile}
-      disabled={disabled || !online || mutation.isPending || mutation.isError} save={save} />
-    {mutation.isPending && <Typography.Text role="status">正在保存</Typography.Text>}
-    <ErrorNotice error={mutation.error} />
-    {mutation.isError && <Space><Button disabled={!online} onClick={() => { if (mutation.variables) mutation.mutate(mutation.variables); }}>重试</Button>
-      <Button onClick={() => { mutation.reset(); sent.current = undefined; intent.current.clear(); void query.invalidateQueries({ queryKey: ['codex'] }); }}>重新载入</Button></Space>}
+      disabled={disabled || !online || state.pending || state.uncertain} save={save} />
+    {state.pending && <Typography.Text role="status">正在保存</Typography.Text>}
+    <ErrorNotice error={state.error} />
+    {state.uncertain && <Button disabled={!online} onClick={() => {
+      if (session.values) { session.update({ pending: true, error: undefined }); mutation.mutate(session.values); }
+    }}>重试</Button>}
+    {!!state.error && !state.uncertain && <Button onClick={() => { void query.invalidateQueries({ queryKey: ['codex'] }); }}>重新载入</Button>}
   </Space>;
 }
 function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Profile[]; onSelect: (id: string) => void }) {
@@ -148,7 +181,7 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
     mutate(profile);
   }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching, accountBusy, probe.isPending, mutate]);
   return <Space orientation="vertical" className="full-width" size="large">
-    {profile && <ChatgptAuth profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
+    {profile && <ChatgptAuth key={profile.id} profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
       disabled={query.isError || probe.isPending} onBusy={setAccountBusy} onChanged={accountChanged} />}
     <Card title="角色模型设置">
       <Space orientation="vertical" className="full-width">

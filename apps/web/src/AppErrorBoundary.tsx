@@ -1,5 +1,5 @@
 import { Component, type ReactNode } from 'react';
-import { Button, ConfigProvider, Popconfirm, Result, theme } from 'antd';
+import { Button, ConfigProvider, Result, theme } from 'antd';
 import { useColorTheme } from './theme';
 
 type Props = { children: ReactNode };
@@ -17,17 +17,7 @@ function Recovery() {
         <Result
           status="error"
           title={<h1 style={{ fontSize: 24 }}>页面暂时无法显示</h1>}
-          extra={
-            <Popconfirm
-              title="确认重新加载页面？"
-              description="未保存内容将丢失；已提交操作不会撤销。"
-              okText="确认重新加载"
-              cancelText="留在此页"
-              onConfirm={() => window.location.reload()}
-            >
-              <Button type="primary">重新加载页面</Button>
-            </Popconfirm>
-          }
+          extra={<Button type="primary" onClick={() => window.location.reload()}>重新加载页面</Button>}
         />
       </main>
     </ConfigProvider>

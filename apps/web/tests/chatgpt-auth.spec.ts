@@ -195,6 +195,32 @@ test('a lost model-save response retries the identical write', async ({ page }) 
   expect(profiles[0]!.revision).toBe('9007199254740994');
 });
 
+test('an uncertain model autosave keeps its retry identity after navigation', async ({ page }) => {
+  const { state } = await setup(page, true);
+  state.dropSaveAfterCommit = true;
+  await page.getByRole('switch', { name: '本机默认' }).click();
+  await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: '鉴权管理' }).click();
+  await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(page.getByRole('switch', { name: '本机默认' })).not.toBeChecked();
+  expect(state.saves).toHaveLength(2);
+  expect(state.saves[1]).toEqual(state.saves[0]);
+  expect(state.saveKeys[1]).toBe(state.saveKeys[0]);
+});
+
+test('the ChatGPT device challenge survives Settings navigation in memory', async ({ page }) => {
+  const { state } = await setup(page);
+  await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
+  await expect(page.getByLabel('ChatGPT 授权码')).toHaveText('TEST-ONLY');
+  await page.getByRole('tab', { name: '鉴权管理' }).click();
+  await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  await expect(page.getByLabel('ChatGPT 授权码')).toHaveText('TEST-ONLY');
+  expect(state.starts).toHaveLength(1);
+});
+
 test('lost login ACK reuses the original identity; success clears the code and refreshes models', async ({ page }, testInfo) => {
   const { state } = await setup(page); state.dropStart = true;
   await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();

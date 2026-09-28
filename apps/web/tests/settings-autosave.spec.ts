@@ -24,6 +24,7 @@ async function setup(page: Page) {
   const writes: { kind: string; key: string | undefined; body: unknown }[] = [];
   const secretId = '01990000-0000-7000-8000-000000000014';
   let failRuntime = false;
+  let rejectRuntime = false;
   let holdRuntime: Promise<void> | undefined;
   await page.route('**/api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
@@ -46,6 +47,13 @@ async function setup(page: Page) {
       const body: Schema['RuntimeUpdate'] = request.postDataJSON();
       writes.push({ kind: 'runtime', key: request.headers()['idempotency-key'], body });
       if (failRuntime) { failRuntime = false; return route.abort('failed'); }
+      if (rejectRuntime) {
+        rejectRuntime = false;
+        return route.fulfill({ status: 422, contentType: 'application/problem+json', body: JSON.stringify({
+          type: 'about:blank', title: 'Invalid integration origin', status: 422, code: 'INVALID_INTEGRATION_ORIGIN',
+          detail: 'Origin must not contain a path', request_id: secretId, retryable: false, safe_next_actions: [], field_errors: [],
+        }) });
+      }
       if (holdRuntime) { await holdRuntime; holdRuntime = undefined; }
       expect(body.expected_revision).toBe(runtime.revision);
       runtime.configuration = body.configuration; runtime.revision = (BigInt(runtime.revision) + 1n).toString();
@@ -73,7 +81,7 @@ async function setup(page: Page) {
   });
   await page.goto('/');
   await page.getByRole('menuitem', { name: '设置', exact: true }).click();
-  return { runtime, downstream, source, secretId, writes, failNextRuntime: () => { failRuntime = true; },
+  return { runtime, downstream, source, secretId, writes, failNextRuntime: () => { failRuntime = true; }, rejectNextRuntime: () => { rejectRuntime = true; },
     holdNextRuntime: () => {
       let release!: () => void;
       holdRuntime = new Promise<void>(resolve => { release = resolve; });
@@ -145,4 +153,91 @@ test('existing Runtime, Downstream and data source edits save without a Save act
   await page.getByRole('tab', { name: 'Codex', exact: true }).click();
   await page.getByRole('menuitem', { name: '研究', exact: true }).click();
   await expect(page.getByText('请先保存或取消更改')).toHaveCount(0);
+});
+
+test('closing and reopening an editor keeps writes ordered and uncertain retries identical', async ({ page }) => {
+  const { runtime, writes, holdNextRuntime, failNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  let dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  const release = holdNextRuntime();
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime B');
+  await expect.poll(() => writes.length).toBe(1);
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await expect(dialog.getByRole('textbox', { name: '名称' })).toHaveValue('Runtime B');
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime C');
+  await page.waitForTimeout(600);
+  expect(writes).toHaveLength(1);
+  release();
+  await expect.poll(() => runtime.configuration.name).toBe('Runtime C');
+  expect(writes.map(write => (write.body as Schema['RuntimeUpdate']).expected_revision)).toEqual(['1', '2']);
+  failNextRuntime();
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime D');
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await expect.poll(() => writes.length).toBe(3);
+  await page.getByRole('button', { name: '修改配置' }).click();
+  dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await expect(dialog.getByRole('button', { name: '重试' })).toBeVisible();
+  await dialog.getByRole('button', { name: '重试' }).click();
+  await expect.poll(() => runtime.configuration.name).toBe('Runtime D');
+  expect(writes[3]?.key).toBe(writes[2]?.key);
+  expect(writes[3]?.body).toEqual(writes[2]?.body);
+});
+
+test('a corrected server-rejected setting saves with a new request', async ({ page }) => {
+  const { runtime, writes, rejectNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  rejectNextRuntime();
+  await dialog.getByRole('textbox', { name: 'Runtime HTTPS origin' }).fill('https://runtime.example/path');
+  await expect(dialog.getByText('Origin must not contain a path')).toBeVisible();
+  await dialog.getByRole('textbox', { name: 'Runtime HTTPS origin' }).fill('https://runtime-b.example');
+  await expect.poll(() => runtime.configuration.endpoint).toBe('https://runtime-b.example');
+  expect(writes).toHaveLength(2);
+  expect(writes[1]?.key).not.toBe(writes[0]?.key);
+});
+
+test('a pending import survives navigation and retries with the same identity', async ({ page }) => {
+  await setup(page);
+  const exportRef = '01990000-0000-7000-8000-000000000021';
+  const report: Schema['HistoricalImportReportV1'] = { schema_version: 1, id: '01990000-0000-7000-8000-000000000022',
+    export_ref: exportRef, source_installation_id: '01990000-0000-7000-8000-000000000023', dry_run: true,
+    projected_rows: '0', new_rows: '0', existing_rows: '0', checked_relationships: '0',
+    unverified_relationships: [], manual_review_required: false };
+  const attempts: { key: string | undefined; body: unknown }[] = [];
+  let release!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/v2/migrations/**', async route => {
+    const request = route.request();
+    if (new URL(request.url()).pathname === '/api/v2/migrations/reports')
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schema_version: 1, items: [], next_cursor: null }) });
+    if (new URL(request.url()).pathname === '/api/v2/migrations/import') {
+      attempts.push({ key: request.headers()['idempotency-key'], body: request.postDataJSON() });
+      if (attempts.length === 1) { await hold; return route.abort('failed'); }
+      return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ schema_version: 1, replayed: true, resource: report }) });
+    }
+    return route.abort('blockedbyclient');
+  });
+  await page.getByRole('tab', { name: '迁移' }).click();
+  await page.getByRole('button', { name: '导入历史投影' }).click();
+  const dialog = page.getByRole('dialog', { name: '导入历史投影' });
+  await dialog.getByRole('textbox', { name: '已登记的导出编号' }).fill(exportRef);
+  await dialog.getByRole('button', { name: '提交导入请求' }).click();
+  await expect.poll(() => attempts.length).toBe(1);
+  await dialog.getByRole('button', { name: '返回' }).click();
+  await page.getByRole('tab', { name: '鉴权管理' }).click();
+  release();
+  await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '迁移' }).click();
+  const resumed = page.getByRole('dialog', { name: '导入历史投影' });
+  await expect(resumed.getByRole('button', { name: '重试同一导入请求' })).toBeVisible();
+  await resumed.getByRole('button', { name: '重试同一导入请求' }).click();
+  await expect(resumed.getByText(report.id)).toBeVisible();
+  expect(attempts[1]).toEqual(attempts[0]);
 });
