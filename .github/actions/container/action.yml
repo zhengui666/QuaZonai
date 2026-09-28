@@ -40,6 +40,7 @@ runs:
           bash -n "$script"
         done
         python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
+        RELEASE_BRANCH=dev python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
         sudo apparmor_parser -r deploy/docker/codex.apparmor
         if ! command -v rg >/dev/null; then
           sudo apt-get update
