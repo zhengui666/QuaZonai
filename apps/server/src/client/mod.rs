@@ -174,7 +174,17 @@ impl Connection {
         ca_certificate: Option<PathBuf>,
     ) -> Result<Self> {
         let origin = session::origin(&origin, development_http)?;
-        session::device_token(&credential)?;
+        let owner_device = session::device_token(&credential)?;
+        let loopback = origin.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|address| address.is_loopback())
+        });
+        if !owner_device && origin.scheme() == "http" && !loopback {
+            return Err(Failure::Configuration);
+        }
         let headers = service_http::bearer(&credential).map_err(|_| Failure::Credential)?;
         Ok(Self {
             client: session::http_client(&origin, ca_certificate.as_ref(), headers)?,
@@ -447,7 +457,7 @@ mod origin_tests {
     use super::*;
 
     #[tokio::test]
-    async fn cli_accepts_explicit_http_and_https_origins() {
+    async fn machine_http_stays_loopback_while_owner_devices_accept_explicit_http() {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("disposable-cli-token");
         let secret = integrations::authentication::random_capability();
@@ -462,8 +472,8 @@ mod origin_tests {
             ("https://127.0.0.1", false, true),
             ("http://localhost:8081", false, true),
             ("https://qz.example", false, true),
-            ("http://192.168.1.1:8081", false, true),
-            ("http://qz.example:8080", false, true),
+            ("http://192.168.1.1:8081", false, false),
+            ("http://qz.example:8080", false, false),
             ("https://qz.example/path", false, false),
             ("ftp://qz.example", false, false),
             ("https://qz.example?key=value", false, false),
@@ -487,6 +497,47 @@ mod origin_tests {
             };
             assert_eq!(Connection::open(&arguments).is_ok(), accepted, "{origin}");
         }
+    }
+
+    #[tokio::test]
+    async fn scoped_machine_http_is_rejected_before_a_network_connection() {
+        use std::net::{TcpListener, UdpSocket};
+        let route = UdpSocket::bind("0.0.0.0:0").unwrap();
+        route.connect("192.0.2.1:9").unwrap();
+        let host = route.local_addr().unwrap().ip();
+        assert!(!host.is_loopback());
+        let listener = TcpListener::bind((host, 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("scoped-credential");
+        let secret = integrations::authentication::random_capability();
+        let machine =
+            integrations::authentication::format_machine_token(Id::new(), &secret).unwrap();
+        std::fs::write(&file, machine).unwrap();
+        private::restrict(&file, false).unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            run(Arguments {
+                origin: Some(origin.clone()),
+                credential_file: Some(file),
+                ca_certificate: None,
+                development_http: true,
+                preview: false,
+                idempotency_key: None,
+                operator_grant: None,
+                command: commands::Command::Identity,
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(Failure::Configuration)));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        let owner = integrations::authentication::format_cli_token(Id::new(), &secret).unwrap();
+        assert!(Connection::connect(origin, owner, false, None).is_ok());
     }
 
     #[tokio::test]

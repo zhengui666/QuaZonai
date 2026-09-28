@@ -204,7 +204,7 @@ PY
 
 This uses the existing image, database, state and Worker; it performs no build or migration. The installation-root override survives application updates and rollback/retry because every manager Compose call loads it. A startup/check failure remains a failed apply: correct or restore the saved override and repeat after idle checks. If interrupted after the prepared message and either process may be running, use the revision-pinned `runtime-targets` recovery command above to resume without recreation before applying another change.
 
-On the client, run `quazonai client --origin http://research.lan:18080 login`, enter the password in your own terminal, then `quazonai client identity`. Saved connections retain the same origin and native CLI marker. This additional origin accepts only CLI login and cookie-free bearer API requests; it does not permit browser setup/login/session routes or relax MCP/Runtime transport validation.
+On the client, run `quazonai client --origin http://research.lan:18080 login`, enter the password in your own terminal, then `quazonai client identity`. Saved connections retain the same origin and native CLI marker. This additional origin accepts only CLI login and cookie-free owner-device (`qzc`) bearer API requests; scoped machine/Mission (`qz2`) credentials retain their existing HTTPS/loopback policy: the CLI rejects remote HTTP before sending them, and the server also rejects them at this origin. It does not permit browser setup/login/session routes or relax MCP/Runtime transport validation.
 
 <a id="recovery"></a>
 ## Backups and recovery

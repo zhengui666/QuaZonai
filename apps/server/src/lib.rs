@@ -637,13 +637,24 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
     let has_bearer = headers.contains_key(header::AUTHORIZATION);
     let origin = access::one_header(headers, "origin");
     // The marker selects a transport policy, never authority. Password/token checks
-    // still run normally; browser cookies and bootstrap/admin routes cannot use it.
+    // still run normally; scoped machine/Mission credentials, browser cookies and
+    // bootstrap/admin routes cannot use the owner-device HTTP exception.
     let cli_origin = state.policy.cli_http_origin.as_deref().filter(|expected| {
         access::one_header(headers, "x-quazonai-cli").ok().flatten() == Some("1")
             && !headers.contains_key(header::COOKIE)
             && origin.as_ref().ok().copied().flatten() == Some(*expected)
-            && ((path == "/api/v2/auth/cli/login" && *request.method() == Method::POST)
-                || (has_bearer && !browser_auth))
+            && ((path == "/api/v2/auth/cli/login"
+                && *request.method() == Method::POST
+                && !has_bearer)
+                || (!browser_auth
+                    && access::one_header(headers, "authorization")
+                        .ok()
+                        .flatten()
+                        .and_then(|authorization| authorization.split_once(' '))
+                        .is_some_and(|(scheme, token)| {
+                            scheme.eq_ignore_ascii_case("Bearer")
+                                && integrations::authentication::cli_token(token).is_ok()
+                        })))
     });
     let expected_origin = cli_origin.unwrap_or(state.policy.origin());
     let url_credential = request.uri().query().is_some_and(|query| {

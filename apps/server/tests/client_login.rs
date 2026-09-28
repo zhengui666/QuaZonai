@@ -701,6 +701,44 @@ async fn remote_http_cli_origin_logs_in_and_reuses_saved_authority(pool: PgPool)
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
         assert!(!response.headers().contains_key("set-cookie"));
     }
+    // A genuinely registered scoped qz2 credential works under the original
+    // public policy, but cannot opt into owner HTTP with the caller's marker.
+    let cookie = browser.cookie.as_deref().unwrap();
+    let principal = client::browser(&f, cookie, "http-machine-principal", "/api/v2/machine-principals", json!({
+        "schema_version":1,"name":"HTTP boundary regression","kind":"CLI","project_id":null,"downstream_id":null,"enabled":true
+    })).await;
+    assert_eq!(principal.status, StatusCode::CREATED);
+    let credential = client::browser(&f, cookie, "http-machine-credential", &format!("/api/v2/machine-principals/{}/credentials", principal.body["resource"]["id"].as_str().unwrap()), json!({
+        "schema_version":1,"scope_codes":["DOCTOR_READ"],"expires_at":chrono::Utc::now()+chrono::Duration::hours(1)
+    })).await;
+    assert_eq!(credential.status, StatusCode::CREATED);
+    let machine = credential.body["token"].as_str().unwrap();
+    integrations::authentication::machine_token(machine).unwrap();
+    let response = http
+        .get(format!("http://{backend_address}/api/v2/auth/machine"))
+        .header("host", "localhost")
+        .bearer_auth(machine)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = http
+        .get(format!("{origin}/api/v2/auth/machine"))
+        .header("origin", &origin)
+        .header("x-quazonai-cli", "1")
+        .bearer_auth(machine)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let file = directory.path().join("scoped-machine-token");
+    fs::write(&file, machine).unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    let rejected = client::invoke(&origin, &file, &["identity"], Value::Null).await;
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("CLI_CONFIGURATION_INVALID"));
+    assert!(!String::from_utf8_lossy(&rejected.stderr).contains(machine));
+    assert!(rejected.stdout.is_empty());
     // Browser policy on this same router remains the original TLS origin.
     let response = http
         .post(format!("http://{backend_address}/api/v2/auth/login"))
