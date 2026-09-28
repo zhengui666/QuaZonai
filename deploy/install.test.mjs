@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,7 +72,7 @@ test('deployment routes use prebuilt images without checkout or local image prod
 });
 
 async function releaseFixture(t, { system = 'Linux', architecture = 'x86_64', noPython = false } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'quazonai-release-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'quazonai-release-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const home = join(root, 'home with spaces');
   const assets = join(root, 'assets');
@@ -196,6 +196,14 @@ test('Linux installer dispatches new, legacy, pending install and pending update
   assert.doesNotMatch(await readFile(f.env.TEST_COMMAND_LOG, 'utf8'), /FORBIDDEN/);
 });
 
+test('default Linux installation reaches the manager without optional stack arguments', async t => {
+  const f = await releaseFixture(t);
+  installed(f.run());
+  assert.deepEqual(JSON.parse(await readFile(f.env.TEST_MANAGER_LOG, 'utf8')), [
+    'deploy', '--directory', join(f.home, '.local/share/quazonai'),
+  ]);
+});
+
 test('install rejects invalid tags, wrong target bundles and broken executables before replacement', async t => {
   const f = await releaseFixture(t);
   installed(f.run(['--cli-only']));
@@ -207,7 +215,7 @@ test('install rejects invalid tags, wrong target bundles and broken executables 
   f.packStack();
   await f.checksums();
   const wrong = f.run(['--directory', f.directory]);
-  assert.notEqual(wrong.status, 0);
+  assert.notEqual(wrong.status, 0, wrong.stderr);
   assert.match(wrong.stderr, /does not match the requested tag/);
   await writeFile(join(f.source, 'quazonai'), '#!/bin/sh\nexit 1\n');
   f.packCli();

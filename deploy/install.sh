@@ -95,7 +95,8 @@ cp "$work/cli/quazonai" "$staged"
 chmod 755 "$staged"
 if ! "$cli_only"; then
   verified_download quazonai-deploy.tar.gz
-  python3 - "$work" "$version" "$directory" "${deployment_args[@]}" <<'PY'
+  # Bash 3.2 treats an empty array as unset under nounset.
+  python3 - "$work" "$version" "$directory" ${deployment_args[@]+"${deployment_args[@]}"} <<'PY'
 import json
 from pathlib import Path
 import subprocess
