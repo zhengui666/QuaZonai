@@ -34,7 +34,7 @@ async function sendImport(body: Import, client: ReturnType<typeof useQueryClient
     if (result.resource.export_ref !== body.export_ref || result.resource.dry_run !== body.dry_run) throw new Error('导入回执与原请求不一致。');
     importIntent.clear();
     setImport({ submitted: undefined, receipt: result.resource, unknown: false });
-    await client.invalidateQueries({ queryKey: ['migration-reports'] });
+    void client.invalidateQueries({ queryKey: ['migration-reports'] });
   } catch (error) {
     const rejected = error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE');
     if (rejected) importIntent.clear();
