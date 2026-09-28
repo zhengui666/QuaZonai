@@ -62,8 +62,8 @@ function EvidenceSelect({ value, onChange }: { value?: string; onChange?: (id: s
 
 function SourceDialog({ source, close }: { source?: Source; close: () => void }) {
   type Values = { name: string; runtime_id: string; native_catalog_ref: string; enabled: boolean };
-  const [form] = Form.useForm<Values>(); const { command, state } = useSettingsCommand('source-create', '数据源登记');
-  const online = useOnline(); const refresh = useDataRefresh();
+  const [form] = Form.useForm<Values>(); const online = useOnline(); const refresh = useDataRefresh();
+  const { command, state } = useSettingsCommand('source-create', '数据源登记', source ? undefined : async () => { await refresh(); close(); });
   const runtimeId = Form.useWatch('runtime_id', form);
   const runtimeKey = `autosave:runtime:${runtimeId ?? ''}`;
   const runtimeSaving = useSettingsWorkKey(runtimeKey);
@@ -128,8 +128,8 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
 
 function GrantDialog({ source, close }: { source: Source; close: () => void }) {
   type Values = { license_reference: string; evidence_artifact_id: string; allowed_uses: Schema['DataUse']; valid_from: Dayjs | null | undefined; valid_until?: Dayjs | null | undefined };
-  const [form] = Form.useForm<Values>(); const { command, state } = useSettingsCommand(`grant:${source.id}`, `许可授权登记：${source.name}`);
-  const online = useOnline(); const refresh = useDataRefresh();
+  const [form] = Form.useForm<Values>(); const online = useOnline(); const refresh = useDataRefresh();
+  const { command, state } = useSettingsCommand(`grant:${source.id}`, `许可授权登记：${source.name}`, async () => { await refresh(); close(); });
   return <Modal open title={`授权数据用途：${source.name}`} maskClosable={false} closable={!state.pending}
     onCancel={() => { if (!state.pending) close(); }} onOk={() => { if (online && !state.pending) { if (state.unknown) command.retry(); else form.submit(); } }}
     okText={state.unknown ? '重试当前操作' : '确认登记不可变授权'} cancelText="返回" confirmLoading={state.pending} okButtonProps={{ disabled: !online }}>
@@ -157,8 +157,8 @@ function GrantDialog({ source, close }: { source: Source; close: () => void }) {
 
 function RevokeDialog({ grant, close }: { grant: Grant; close: () => void }) {
   type Values = { reason_code: string; reason: string; effective_at?: Dayjs | null | undefined };
-  const [form] = Form.useForm<Values>(); const { command, state } = useSettingsCommand(`revoke:${grant.id}`, `数据授权撤销：${grant.version}`);
-  const online = useOnline(); const refresh = useDataRefresh();
+  const [form] = Form.useForm<Values>(); const online = useOnline(); const refresh = useDataRefresh();
+  const { command, state } = useSettingsCommand(`revoke:${grant.id}`, `数据授权撤销：${grant.version}`, async () => { await refresh(); close(); });
   return <Modal open title="撤销这份数据授权？" maskClosable={false} closable={!state.pending} confirmLoading={state.pending}
     okText={state.unknown ? '重试当前操作' : '确认追加撤销记录'} cancelText="返回" okButtonProps={{ danger: true, disabled: !online }}
     onCancel={() => { if (!state.pending) close(); }} onOk={() => { if (online && !state.pending) { if (state.unknown) command.retry(); else form.submit(); } }}>
@@ -181,8 +181,8 @@ function RevokeDialog({ grant, close }: { grant: Grant; close: () => void }) {
 
 function RegisterDialog({ source, runtimeRevision, close }: { source: Source; runtimeRevision: string; close: () => void }) {
   type Values = { grant_id: string; native_storage_version: string; existing_universe_version_id?: string };
-  const [form] = Form.useForm<Values>(); const { command, state } = useSettingsCommand(`register:${source.id}`, `原生数据版本登记：${source.name}`);
-  const online = useOnline(); const refresh = useDataRefresh();
+  const [form] = Form.useForm<Values>(); const online = useOnline(); const refresh = useDataRefresh();
+  const { command, state } = useSettingsCommand(`register:${source.id}`, `原生数据版本登记：${source.name}`, async () => { await refresh(); close(); });
   return <Modal open title={`读取并登记原生数据：${source.name}`} maskClosable={false} closable={!state.pending}
     okText={state.unknown ? '重试当前操作' : '读取真实元数据并登记'} cancelText="返回" confirmLoading={state.pending} okButtonProps={{ disabled: !online }}
     onCancel={() => { if (!state.pending) close(); }} onOk={() => { if (online && !state.pending) { if (state.unknown) command.retry(); else form.submit(); } }}>

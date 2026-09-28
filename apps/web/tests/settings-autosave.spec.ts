@@ -227,9 +227,14 @@ test('uncertain Runtime creation keeps its command and credential across Setting
   await dialog.getByRole('button', { name: '返回' }).click();
   await page.getByRole('tab', { name: '数据', exact: true }).click();
   await expect(page.getByText('Runtime 登记结果待确认')).toBeVisible();
-  await page.getByRole('button', { name: '重试当前操作' }).click();
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
+  const reopened = page.getByRole('dialog', { name: '登记 Runtime' });
+  await expect(reopened.getByRole('button', { name: '重试当前操作' })).toBeVisible();
+  await reopened.getByRole('button', { name: '重试当前操作' }).click();
   await expect.poll(() => requests.length).toBe(2);
   expect(requests[1]).toEqual(requests[0]);
+  await expect(reopened).toHaveCount(0);
   await expect(page.getByText('Runtime 登记回执已确认')).toBeVisible();
   await expect(page.getByText(runtime.id)).toBeVisible();
   await page.getByRole('button', { name: '关闭回执' }).click();
@@ -698,6 +703,46 @@ test('a confirmed data source receipt survives a failed list refresh after retry
   await expect.poll(() => page.evaluate(async () => {
     const modulePath = '/src/settings-work.ts';
     return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+});
+
+test('a definite rejection after detached command retry stays visible until acknowledged', async ({ page }) => {
+  const { source } = await setup(page);
+  let attempts = 0;
+  await page.route(/\/api\/v2\/data\/sources(?:\?|$)/, async route => {
+    if (route.request().method() === 'GET') return route.fallback();
+    attempts++;
+    if (attempts === 1) return route.abort('failed');
+    return route.fulfill({ status: 422, contentType: 'application/problem+json', body: JSON.stringify({
+      type: 'about:blank', title: 'Invalid source', status: 422, code: 'INVALID_SOURCE', detail: 'Source rejected',
+      request_id: source.id, retryable: false, safe_next_actions: [], field_errors: [],
+    }) });
+  });
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await page.getByRole('button', { name: '登记数据源' }).click();
+  const dialog = page.getByRole('dialog', { name: '登记数据源' });
+  await dialog.getByRole('textbox', { name: '数据源名称' }).fill('New source');
+  await dialog.getByRole('combobox', { name: '选择已登记的 Runtime' }).click();
+  await page.getByText('Runtime A', { exact: true }).last().click();
+  await dialog.getByRole('textbox', { name: 'Runtime 原生目录登记键' }).fill('catalog/new-source');
+  await dialog.getByRole('button', { name: '登记', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: '重试当前操作' })).toBeVisible();
+  await dialog.getByRole('button', { name: '返回' }).click();
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await page.getByRole('button', { name: '重试当前操作' }).click();
+  await expect.poll(() => attempts).toBe(2);
+  await expect(page.getByText('数据源登记未完成')).toBeVisible();
+  await expect(page.getByText('Source rejected')).toBeVisible();
+  expect(await page.evaluate(async () => {
+    const path = '/src/settings-work.ts';
+    return (await import(path)).settingsWorkActive();
+  })).toBe(true);
+  await page.getByRole('button', { name: '关闭错误' }).click();
+  await expect(page.getByText('数据源登记未完成')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(async () => {
+    const path = '/src/settings-work.ts';
+    return (await import(path)).settingsWorkActive();
   })).toBe(false);
 });
 

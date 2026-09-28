@@ -119,7 +119,8 @@ export function SecretReference({ value, onChange, purpose, configured, disabled
 function RuntimeDialog({ original, close }: { original?: Runtime; close: () => void }) {
   type Values = Schema['RuntimeConfigurationV1'] & { credential_ref?: string; ca_certificate_ref?: string };
   const [form] = Form.useForm<Values>(); const [secretBusy, setSecretBusy] = useState(false);
-  const online = useOnline(); const { command, state } = useSettingsCommand('runtime-create', 'Runtime 登记'); const refresh = useRefresh();
+  const online = useOnline(); const refresh = useRefresh();
+  const { command, state } = useSettingsCommand('runtime-create', 'Runtime 登记', original ? undefined : async () => { await refresh(); close(); });
   const credentialKey = `runtime:${original?.id ?? 'new'}:credential`;
   const caKey = `runtime:${original?.id ?? 'new'}:ca`;
   const caSession = secretSessionFor(caKey);
@@ -274,7 +275,8 @@ function Runtimes() {
 function DownstreamDialog({ original, close }: { original?: Downstream; close: () => void }) {
   type Values = Schema['DownstreamConfigurationV1'] & { credential_ref?: string };
   const [form] = Form.useForm<Values>(); const [secretBusy, setSecretBusy] = useState(false); const online = useOnline();
-  const { command, state } = useSettingsCommand('downstream-create', '目标交付下游登记'); const refresh = useRefresh();
+  const refresh = useRefresh();
+  const { command, state } = useSettingsCommand('downstream-create', '目标交付下游登记', original ? undefined : async () => { await refresh(); close(); });
   const credentialKey = `downstream:${original?.id ?? 'new'}:credential`;
   const autosave = useFormAutosave(form, original && `downstream:${original.id}`, (original?.configuration ?? {}) as Values,
     original?.revision, original?.updated_at, online && !!original, async (values, revision, writeIntent) => {
