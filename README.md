@@ -16,7 +16,7 @@
 安装或更新最新**已完整发布的 dev 版本**，一行执行：
 
 ```sh
-python3 -c 'import json,urllib.request,subprocess; releases=json.load(urllib.request.urlopen("https://api.github.com/repos/zhengui666/QuaZonai/releases?per_page=100")); r=next(r for r in releases if not r["draft"] and "-dev." in r["tag_name"] and any(a["name"]=="install.sh" for a in r["assets"])); subprocess.run(["bash"],input=urllib.request.urlopen("https://github.com/zhengui666/QuaZonai/releases/download/"+r["tag_name"]+"/install.sh").read(),check=True)'
+python3 -c 'import json,re,urllib.request,subprocess; releases=json.load(urllib.request.urlopen("https://api.github.com/repos/zhengui666/QuaZonai/releases?per_page=100")); r=max((r for r in releases if not r["draft"] and re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*",r["tag_name"]) and any(a["name"]=="install.sh" for a in r["assets"])),key=lambda r:tuple(map(int,re.findall(r"[0-9]+",r["tag_name"])))); subprocess.run(["bash"],input=urllib.request.urlopen("https://github.com/zhengui666/QuaZonai/releases/download/"+r["tag_name"]+"/install.sh").read(),check=True)'
 ```
 
 首次安装前执行一次 `loginctl enable-linger "$USER"`。更新前完成运行并停止独立 Runtime；安装器保留原有数据、凭据、端口和恢复记录。

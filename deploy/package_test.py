@@ -2,6 +2,7 @@
 import io
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -30,6 +31,30 @@ def checksums(root):
 
 
 class PackageTests(unittest.TestCase):
+    def test_readme_selects_newest_complete_dev_tag_despite_publication_order(self):
+        command = next(line for line in (package.ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+                       if line.startswith("python3 -c '"))
+        program = shlex.split(command)[2]
+        newest = "v2.0.0-dev.20260928123456.100"
+        def release(tag, *, draft=False, complete=True):
+            return {"tag_name": tag, "draft": draft,
+                    "assets": [{"name": "install.sh"}] if complete else []}
+        candidates = [
+            release("v2.0.0-dev.20260927123456.999"),
+            release("v2.0.0-dev.20260929123456.101", draft=True),
+            release("v2.0.0-dev.20260929123456.102", complete=False),
+            release("v2.0.0-dev.999"), release("v2.0.0"),
+            release(newest), release("v2.0.0-dev.20260928123456.99"),
+        ]
+        for releases in (candidates, list(reversed(candidates))):
+            with patch("urllib.request.urlopen", side_effect=[io.BytesIO(json.dumps(releases).encode()),
+                                                               io.BytesIO(b"installer")]) as download, \
+                    patch("subprocess.run") as install:
+                exec(program, {})
+                self.assertEqual(download.call_args.args[0],
+                                 f"https://github.com/{package.REPOSITORY}/releases/download/{newest}/install.sh")
+                install.assert_called_once_with(["bash"], input=b"installer", check=True)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

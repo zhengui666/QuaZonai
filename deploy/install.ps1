@@ -60,7 +60,7 @@ try {
         [Environment]::SetEnvironmentVariable('Path', ($Bin + ';' + $UserPath), 'User')
     }
     if ([IO.File]::Exists($Destination)) {
-        [IO.File]::Replace($Staged, $Destination, $null)
+        [IO.File]::Replace($Staged, $Destination, [NullString]::Value)
     } else {
         [IO.File]::Move($Staged, $Destination)
     }

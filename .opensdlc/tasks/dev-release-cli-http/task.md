@@ -58,11 +58,13 @@ creating a recursive documentation commit on dev.
 <a id="verification"></a>
 ## Verification
 
-Local integrated checks passed: 91 Docker release/upgrade tests, 9 complete asset
-packaging tests, and 11 installer/documentation checks. The CLI author verified
+Local integrated checks passed: 91 Docker release/upgrade tests, 10 complete asset
+packaging tests, and 12 installer/documentation checks. The CLI author verified
 Linux native tests, Clippy, architecture and existing server CLI transport/help/
-Skill checks. Windows/macOS execution and complete container release acceptance
-remain pending native GitHub CI.
+Skill checks. Native Windows/macOS/Linux CI compiled, tested, packaged and ran
+the CLI. Native installer failures exposed Bash 3.2 empty-array handling and
+PowerShell null-string conversion; both are corrected and await final-Head CI.
+System Bash, Bash 3.2 and a symlinked temporary directory pass all 12 Unix checks.
 
 A real Linux CLI archive was installed and updated in a disposable home, with
 exact binary/checksum/version and offline contract verification. Four disposable
@@ -81,9 +83,13 @@ avoids contention with default-branch publishers without changing live main.
 [PR #132](https://github.com/zhengui666/QuaZonai/pull/132) targets dev.
 Independent local review identified and corrected missing portable-CI triggers,
 shared Codex tag races, incomplete Release detection and main/dev duplicate
-publication. Final-Head GitHub CI and explicit clean Codex review remain pending.
+publication. GitHub Codex also identified server rejection of remote HTTP login
+and out-of-order dev release selection; their corrections require fresh review.
+Final-Head GitHub CI and explicit clean Codex review remain pending.
 
 <a id="delivery"></a>
 ## Delivery
 
-Pending implementation, merge and automatic release verification.
+Implementation is in PR #132. Its final-Head CI, Codex review, merge SHA and
+automatic Release provide the delivery receipts; merge and publication remain
+gated on those checks rather than on this implementation record.
