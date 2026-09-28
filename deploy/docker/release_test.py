@@ -422,6 +422,7 @@ class DurabilityTests(unittest.TestCase):
 
 
 class GitSelectionTests(unittest.TestCase):
+    @patch.dict(os.environ, {"RELEASE_BRANCH": "main"})
     def test_lightweight_annotated_and_both_push_orders(self):
         previous = Path.cwd()
         with tempfile.TemporaryDirectory() as temporary:

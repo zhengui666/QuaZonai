@@ -98,11 +98,21 @@ Independent local review identified and corrected missing portable-CI triggers,
 shared Codex tag races, incomplete Release detection and main/dev duplicate
 publication. GitHub Codex also identified server rejection of remote HTTP login
 and out-of-order dev release selection; both are corrected with regression checks.
-Final-Head GitHub CI and explicit clean Codex review remain pending.
+Final Head `fef1a8e1d47b8178dc7c68c849d5209448a65d5e` passed all 12 checks
+and received an explicit clean Codex review. All review threads were resolved.
 
 <a id="delivery"></a>
 ## Delivery
 
-Implementation is in PR #132. Its final-Head CI, Codex review, merge SHA and
-automatic Release provide the delivery receipts; merge and publication remain
-gated on those checks rather than on this implementation record.
+PR #132 was merged into dev as `d6cc9bbbe442a53e636ab682d6e5017a1ec77edb`.
+Its automatic workflow created `v2.0.0-dev.20260928083602.36398316655` and
+all six source workflows passed. Web browser acceptance passed an unchanged-SHA
+rerun after a UI timeout; both pre-restart and post-restart receipts passed.
+
+Actual publication exposed a test fixture inheriting `RELEASE_BRANCH=dev` while
+its temporary Git repository intentionally contains only `origin/main`. The
+fixture now explicitly selects main, and the shared container check runs all
+release tests in dev context as well. This reproduces the publisher environment
+in ordinary CI without changing production ancestry validation. A follow-up PR
+must pass review and CI before merging; complete release publication remains
+the final delivery gate.
