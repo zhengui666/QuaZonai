@@ -5,7 +5,7 @@ import { Candidates } from './portfolio-candidates';
 import { EvaluationPolicies } from './evaluation-policies';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useContext, useRef, useState } from 'react';
-import { api, dataOf, displayTime, Intent, isDecimal } from './api';
+import { api, ApiFailure, dataOf, displayTime, Intent, isDecimal } from './api';
 import type { Schema } from './api';
 import { uuidPattern } from './api';
 import { ResourceSelect } from './resource-select';
@@ -94,6 +94,7 @@ function MandateDetail({ id, project, close }: { id: string; project: string; cl
 
 function MandateEditor({ project, close }: { project: string; close: () => void }) {
   const [form] = Form.useForm<Fields>(); const [dirty, setDirty] = useState(false); const intent = useRef(new Intent());
+  const submitted = useRef<Schema['MandateCreateV1'] | undefined>(undefined);
   const client = useQueryClient(); const online = useOnline(); const { modal, message } = App.useApp();
   const runtimeId: string | undefined = Form.useWatch('runtime_id', form);
   const runtimeKey = `autosave:runtime:${runtimeId ?? ''}`;
@@ -105,12 +106,18 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
   const risk = Form.useWatch(['content', 'risk_measure'], form);
   const objective = Form.useWatch(['content', 'objective'], form);
   const mutation = useMutation({ mutationFn: async (values: Fields) => {
-    const body = mandateRequest(project, values, runtime.data!.revision);
+    const body = submitted.current ?? mandateRequest(project, values, runtime.data!.revision);
+    submitted.current = body;
     return dataOf(await api.POST('/api/v2/portfolio-mandates', { body, params: { header: intent.current.headers('POST', '/api/v2/portfolio-mandates', body) } }));
   }, onSuccess: async result => {
-    intent.current.clear(); setDirty(false); await client.invalidateQueries({ queryKey: ['mandates', project] });
+    submitted.current = undefined; intent.current.clear(); setDirty(false); await client.invalidateQueries({ queryKey: ['mandates', project] });
     await message.success(result.replayed ? '已读取原配置回执，没有重复创建。' : `已保存不可变配置 v${result.resource.version}，未启动组合。`); close();
+  }, onError: error => {
+    if (error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE')) {
+      submitted.current = undefined; intent.current.clear();
+    }
   } });
+  const retry = mutation.isError && !!submitted.current;
   useGuard(dirty || mutation.isPending);
   function dismiss() {
     if (mutation.isPending) return;
@@ -120,7 +127,7 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
   return <Drawer title="新建不可变组合配置" open width={800} onClose={dismiss} maskClosable={!mutation.isPending} closable={!mutation.isPending}>
     
     <ErrorNotice error={runtime.error} /><ErrorNotice error={mutation.error} />
-    <Form form={form} layout="vertical" disabled={!online || mutation.isPending} onValuesChange={() => setDirty(true)} onFinish={values => { if (online && runtimeReady && !mutation.isPending) mutation.mutate(values); }} initialValues={{
+    <Form form={form} layout="vertical" disabled={!online || mutation.isPending || retry} onValuesChange={() => setDirty(true)} onFinish={values => { if (online && runtimeReady && !mutation.isPending) mutation.mutate(values); }} initialValues={{
       content: { objective: 'MIN_RISK', risk_measure: 'VARIANCE', exposure_tolerance: '0.000001',
         constraints: { long_only: true, min_cash_weight: '0', max_cash_weight: '0', min_asset_weight: '0', max_asset_weight: '1', max_gross_exposure: '1', min_net_exposure: '1', max_net_exposure: '1', max_turnover_per_rebalance: '2', group_bounds: [], asset_overrides: [] },
         rebalance_schedule: { kind: 'MANUAL', timezone: 'UTC', max_input_age_seconds: 60, target_ttl_seconds: 300 } },
@@ -182,7 +189,9 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
         <Form.Item name={['content', 'rebalance_schedule', 'max_input_age_seconds']} label="输入最大年龄（秒）" rules={[required, { type: 'integer', min: 1, max: 4294967295 }]}><InputNumber min={1} max={4294967295} precision={0} /></Form.Item>
         <Form.Item name={['content', 'rebalance_schedule', 'target_ttl_seconds']} label="目标有效期（秒）" rules={[required, { type: 'integer', min: 1, max: 4294967295 }]}><InputNumber min={1} max={4294967295} precision={0} /></Form.Item>
       </Card>
-      <Space wrap><Button type="primary" htmlType="submit" loading={mutation.isPending} disabled={!runtimeReady}>保存不可变配置</Button><Button onClick={dismiss}>取消</Button></Space>
+      <Space wrap><Button type="primary" htmlType={retry ? 'button' : 'submit'} loading={mutation.isPending}
+        disabled={!online || (!retry && !runtimeReady)} onClick={retry ? () => mutation.mutate(form.getFieldsValue(true)) : undefined}>
+        {retry ? '重试同一组合配置请求' : '保存不可变配置'}</Button><Button onClick={dismiss}>取消</Button></Space>
     </Form>
   </Drawer>;
 }

@@ -181,11 +181,11 @@ function RuntimeDialog({ original, close }: { original?: Runtime; close: () => v
         { value: 'SYSTEM_CA', label: '系统可信 CA' }, { value: 'PINNED_CA', label: '指定 CA 证书' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换 Runtime 凭据（不登记则保留）' : 'Runtime 服务凭据'} rules={original ? [] : [required]}>
-        <SecretReference purpose="RUNTIME" sessionKey={credentialKey} configured={shown?.credential_configured ?? false} disabled={pending || (!original && state.unknown) || autosave.saving || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="RUNTIME" sessionKey={credentialKey} configured={shown?.credential_configured ?? false} disabled={pending || (!original && state.unknown) || autosave.saving || autosave.uncertain || !online} onBusy={setSecretBusy} />
       </Form.Item>
       {tls === 'PINNED_CA' && <Form.Item name="ca_certificate_ref" label="指定 CA 证书" preserve={false}
         rules={shown?.configuration.tls_policy === 'PINNED_CA' && shown.ca_configured ? [] : [required]}>
-        <SecretReference purpose="TLS_CA" sessionKey={caKey} configured={shown?.configuration.tls_policy === 'PINNED_CA' && !!shown.ca_configured} disabled={pending || (!original && state.unknown) || autosave.saving || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="TLS_CA" sessionKey={caKey} configured={shown?.configuration.tls_policy === 'PINNED_CA' && !!shown.ca_configured} disabled={pending || (!original && state.unknown) || autosave.saving || autosave.uncertain || !online} onBusy={setSecretBusy} />
       </Form.Item>}
       <Form.Item name="allowed_capabilities" label="允许的任务类型" rules={[required]}><Select mode="multiple" options={jobs} /></Form.Item>
       <Form.Item name="enabled" label="允许新任务" valuePropName="checked"><Switch /></Form.Item>
@@ -318,7 +318,7 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
         { value: 'PAPER', label: '仅 Paper' }, { value: 'LIVE', label: '仅 Live' }, { value: 'BOTH', label: 'Paper 与 Live（仍须分别审批）' },
       ]} /></Form.Item>
       <Form.Item name="credential_ref" label={original ? '轮换下游服务凭据（可保留）' : '下游服务凭据'} rules={original ? [] : [required]}>
-        <SecretReference purpose="DOWNSTREAM" sessionKey={credentialKey} configured={shown?.credential_configured ?? false} disabled={pending || (!original && state.unknown) || autosave.saving || !online} onBusy={setSecretBusy} />
+        <SecretReference purpose="DOWNSTREAM" sessionKey={credentialKey} configured={shown?.credential_configured ?? false} disabled={pending || (!original && state.unknown) || autosave.saving || autosave.uncertain || !online} onBusy={setSecretBusy} />
       </Form.Item>
       
       <Form.Item name="enabled" label="允许未来目标交付" valuePropName="checked"><Switch /></Form.Item>

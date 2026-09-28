@@ -6,7 +6,7 @@ import { setSettingsWork } from './settings-work';
 type Result = { revision: string; updated_at: string };
 type Write<T> = (values: T, revision: string, intent: Intent) => Promise<Result>;
 type Reload<T> = () => Promise<Result & { values: T; resource: unknown }>;
-type Snapshot = { error?: unknown; saving: boolean; revision: string; updated_at: string; resource?: unknown };
+type Snapshot = { error?: unknown; saving: boolean; uncertain?: boolean; revision: string; updated_at: string; resource?: unknown };
 const sessions = new Map<string, Autosave<object>>();
 const empty: Snapshot = { saving: false, revision: '', updated_at: '' };
 const noSubscribe = () => () => {};
@@ -66,7 +66,7 @@ class Autosave<T extends object> {
     this.snapshot = { saving: false, revision, updated_at };
   }
   private emit() {
-    this.snapshot = { ...this.snapshot };
+    this.snapshot = { ...this.snapshot, uncertain: this.uncertain };
     this.listeners.forEach(listener => listener());
     setSettingsWork(`autosave:${this.key}`, this.running || this.reloading || this.uncertain || this.conflict || JSON.stringify(this.latest) !== this.saved);
   }
@@ -238,6 +238,6 @@ export function useFormAutosave<T extends object>(form: FormInstance<T>, key: st
     return () => session.detach(form);
   }, [session, form, revision, updated_at, enabled, message]);
   return { change: (changed: Partial<T>, values: T) => session?.change(changed, values), close: async () => { await session?.close(); },
-    retry: () => session?.retry(), error: snapshot.error, saving: snapshot.saving, revision: snapshot.revision,
+    retry: () => session?.retry(), error: snapshot.error, saving: snapshot.saving, uncertain: !!snapshot.uncertain, revision: snapshot.revision,
     updated_at: snapshot.updated_at, resource: snapshot.resource };
 }

@@ -233,6 +233,24 @@ test('uncertain Runtime creation keeps its command and credential across Setting
   })).toBe(false);
 });
 
+test('an uncertain Runtime credential binding cannot be abandoned before reconciliation', async ({ page }) => {
+  const { runtime, secretId, writes, failNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  failNextRuntime();
+  await dialog.getByRole('textbox', { name: '新的 RUNTIME 凭据' }).fill('a'.repeat(32));
+  await dialog.getByRole('button', { name: '登记凭据' }).click();
+  await expect(dialog.getByRole('button', { name: '重试' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '放弃本次绑定' })).toBeDisabled();
+  await dialog.getByRole('button', { name: '重试' }).click();
+  await expect.poll(() => runtime.revision).toBe('2');
+  expect(writes.map(write => write.key)).toEqual([writes[0]?.key, writes[0]?.key]);
+  expect((writes[1]?.body as Schema['RuntimeUpdate']).credential_ref).toBe(secretId);
+  await expect(dialog.getByRole('button', { name: '放弃本次绑定' })).toHaveCount(0);
+});
+
 test('uncertain Downstream creation keeps its command and credential across Settings navigation', async ({ page }) => {
   const { downstream, secretId } = await setup(page);
   const requests: { key: string | undefined; body: Schema['DownstreamCreate'] }[] = [];
@@ -383,6 +401,93 @@ test('immutable portfolio editors wait for a Runtime autosave and read its new r
   await again.getByRole('textbox', { name: 'Runtime 编号' }).fill(runtime.id);
   await expect(again.getByText('Runtime 配置版本：2')).toBeVisible();
   await expect(again.getByRole('button', { name: '保存不可变配置' })).toBeEnabled();
+});
+
+test('an uncertain execution assumption retries the original Runtime revision', async ({ page }) => {
+  const { runtime } = await setup(page);
+  const now = new Date().toISOString();
+  const projectId = '01990000-0000-7000-8000-000000000081';
+  const project: Schema['ProjectView'] = { id: projectId, root_lineage_id: projectId, name: 'Portfolio fixture',
+    description: '', state: 'ACTIVE', revision: '1', created_by: 'OPERATOR', created_at: now, updated_at: now };
+  await page.route(url => new URL(url).pathname === '/api/v2/projects', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, items: [project], next_cursor: null,
+  }) }));
+  const requests: { key: string | undefined; body: Schema['ExecutionAssumptionsCreateV1'] }[] = [];
+  await page.route('**/api/v2/execution-assumptions', route => {
+    const request = route.request();
+    requests.push({ key: request.headers()['idempotency-key'], body: request.postDataJSON() });
+    return route.abort('failed');
+  });
+  await page.getByRole('menuitem', { name: '组合', exact: true }).click();
+  await page.getByRole('combobox', { name: '选择组合所属项目' }).click();
+  await page.getByText(`Portfolio fixture · ${projectId}`, { exact: true }).last().click();
+  await page.getByRole('tab', { name: '执行假设' }).click();
+  await page.getByRole('button', { name: '新建执行假设' }).click();
+  const dialog = page.getByRole('dialog', { name: '新建不可变执行假设' });
+  const id = '01990000-0000-7000-8000-000000000082';
+  for (const [name, value] of [
+    ['Runtime 编号', runtime.id], ['冻结输入编号', id], ['数据版本编号', id], ['结算规则引用', 'T+0'],
+    ['基础币种', 'USD'], ['资本假设', '1000'], ['杠杆上限', '1'], ['敞口容差', '0.01'],
+    ['限价成交概率（0 至 1）', '0.5'], ['滑点概率（0 至 1）', '0.1'], ['随机种子', '1'],
+    ['基础延迟（纳秒）', '0'], ['插入附加延迟（纳秒）', '0'], ['更新附加延迟（纳秒）', '0'], ['取消附加延迟（纳秒）', '0'],
+    ['资产 1 标识', 'BTCUSD'], ['资产 1 maker 费率', '0.001'], ['资产 1 taker 费率', '0.002'],
+  ] as [string, string][]) await dialog.getByRole('textbox', { name }).fill(value);
+  await dialog.getByRole('combobox', { name: '模拟账户模型' }).click();
+  await page.getByText('现金', { exact: true }).last().click();
+  await dialog.getByRole('spinbutton', { name: '快照间隔（毫秒）' }).fill('1000');
+  await dialog.getByRole('button', { name: '保存不可变执行假设' }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0]?.body.expected_runtime_revision).toBe('1');
+  runtime.revision = '2';
+  await page.evaluate(async id => {
+    const modulePath = '/src/settings-work.ts';
+    const { setSettingsWork } = await import(modulePath);
+    setSettingsWork(`autosave:runtime:${id}`, true); setSettingsWork(`autosave:runtime:${id}`, false);
+  }, runtime.id);
+  await expect(dialog.getByText('Runtime 配置版本：2')).toBeVisible();
+  await dialog.getByRole('button', { name: '重试同一执行假设请求' }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1]).toEqual(requests[0]);
+});
+
+test('an uncertain portfolio mandate retries the original Runtime revision', async ({ page }) => {
+  const { runtime } = await setup(page);
+  const now = new Date().toISOString();
+  const projectId = '01990000-0000-7000-8000-000000000091';
+  const project: Schema['ProjectView'] = { id: projectId, root_lineage_id: projectId, name: 'Portfolio fixture',
+    description: '', state: 'ACTIVE', revision: '1', created_by: 'OPERATOR', created_at: now, updated_at: now };
+  await page.route(url => new URL(url).pathname === '/api/v2/projects', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    schema_version: 1, items: [project], next_cursor: null,
+  }) }));
+  const requests: { key: string | undefined; body: Schema['MandateCreateV1'] }[] = [];
+  await page.route('**/api/v2/portfolio-mandates', route => {
+    const request = route.request();
+    requests.push({ key: request.headers()['idempotency-key'], body: request.postDataJSON() });
+    return route.abort('failed');
+  });
+  await page.getByRole('menuitem', { name: '组合', exact: true }).click();
+  await page.getByRole('combobox', { name: '选择组合所属项目' }).click();
+  await page.getByText(`Portfolio fixture · ${projectId}`, { exact: true }).last().click();
+  await page.getByRole('button', { name: '新建组合配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '新建不可变组合配置' });
+  const id = '01990000-0000-7000-8000-000000000092';
+  for (const [name, value] of [
+    ['Runtime 编号', runtime.id], ['投资域版本编号', id], ['评估政策编号', id], ['执行假设编号', id],
+    ['基础币种', 'USD'], ['资本假设', '1000'], ['费用依据产物编号', id],
+  ] as [string, string][]) await dialog.getByRole('textbox', { name }).fill(value);
+  await dialog.getByRole('button', { name: '保存不可变配置' }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0]?.body.expected_runtime_revision).toBe('1');
+  runtime.revision = '2';
+  await page.evaluate(async id => {
+    const modulePath = '/src/settings-work.ts';
+    const { setSettingsWork } = await import(modulePath);
+    setSettingsWork(`autosave:runtime:${id}`, true); setSettingsWork(`autosave:runtime:${id}`, false);
+  }, runtime.id);
+  await expect(dialog.getByText('Runtime 配置版本：2')).toBeVisible();
+  await dialog.getByRole('button', { name: '重试同一组合配置请求' }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1]).toEqual(requests[0]);
 });
 
 test('a corrected server-rejected setting saves with a new request', async ({ page }) => {
