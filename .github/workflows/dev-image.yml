@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 85
     steps:
       - name: Check out the workflow's container action
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -30,7 +30,7 @@ jobs:
           SOURCE_BRANCH: ${{ inputs.source_branch }}
         run: git check-ref-format "refs/heads/$SOURCE_BRANCH"
       - name: Check out only a repository branch (or the read-only PR test source)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/heads/{0}', inputs.source_branch) || github.event.pull_request.head.sha }}
           path: source
