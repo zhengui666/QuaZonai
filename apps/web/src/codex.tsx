@@ -172,7 +172,6 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
     attempted.current = version;
     mutate(profile);
   }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching, accountBusy, editing, probe.isPending, mutate]);
-  useGuard(probe.isPending);
   return <Space orientation="vertical" className="full-width" size="large">
     {profile && <ChatgptAuth profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
       disabled={query.isError || probe.isPending || !!editing} onBusy={setAccountBusy} onChanged={accountChanged} />}

@@ -79,6 +79,8 @@ if (config.phase === 'before-restart') {
 
     const secondBrowser = await browser.newContext({ baseURL: config.baseUrl, storageState: await context.storageState(), viewport: { width: 1440, height: 1000 } });
     const cli = await browser.newContext({ baseURL: config.baseUrl });
+    const newPassword = randomBytes(24).toString('hex'); rememberPrivateValue(config, newPassword);
+    let restorePassword = false;
     try {
       const secondPage = await secondBrowser.newPage();
       await secondPage.goto('/');
@@ -93,7 +95,6 @@ if (config.phase === 'before-restart') {
       expect((await cli.request.get('/api/v2/auth/cli/session', { headers })).status()).toBe(200);
       await openAuthSettings(page);
       await expect(page.getByRole('row').filter({ hasText: 'Native acceptance machine' })).toHaveCount(1);
-      const newPassword = randomBytes(24).toString('hex'); rememberPrivateValue(config, newPassword);
       await page.getByLabel('当前密码', { exact: true }).fill(wrong);
       await page.getByLabel('新密码', { exact: true }).fill(newPassword);
       await page.getByLabel('确认新密码', { exact: true }).fill(newPassword);
@@ -102,6 +103,7 @@ if (config.phase === 'before-restart') {
       expect((await wrongCurrent).status()).toBe(401);
       await expect(page.getByLabel('当前密码', { exact: true })).toHaveValue('');
       expect((await page.request.get('/api/v2/auth/session')).status()).toBe(200);
+      restorePassword = true;
       await changePassword(page, config.password, newPassword);
       await secondPage.getByRole('button', { name: '刷新', exact: true }).click();
       await expect(secondPage.getByRole('heading', { name: '登录 QuaZonai', exact: true })).toBeVisible();
@@ -126,6 +128,36 @@ if (config.phase === 'before-restart') {
       }
       // Leave the same password for the console/restart checks; each test logs in normally.
       await changePassword(page, newPassword, config.password);
-    } finally { await secondBrowser.close(); await cli.close(); }
+      restorePassword = false;
+    } finally {
+      try {
+        if (restorePassword) {
+          const login = await cli.request.post('/api/v2/auth/login', {
+            headers: { Origin: config.baseUrl },
+            data: { schema_version: 1, password: newPassword, remember_device: false },
+          });
+          if (login.status() === 200) {
+            for (const cookie of await cli.cookies()) rememberPrivateValue(config, cookie.value);
+            const restored = await cli.request.post('/api/v2/auth/password', {
+              headers: { Origin: config.baseUrl },
+              data: { schema_version: 1, current_password: newPassword, new_password: config.password },
+            });
+            expect.soft(restored.status(), 'Native fixture password restoration failed').toBe(204);
+          } else {
+            expect.soft(login.status(), 'Native fixture password restoration login failed').toBe(401);
+            if (login.status() === 401) {
+              const original = await cli.request.post('/api/v2/auth/login', {
+                headers: { Origin: config.baseUrl },
+                data: { schema_version: 1, password: config.password, remember_device: false },
+              });
+              expect.soft(original.status(), 'Native fixture password was not restored').toBe(200);
+              for (const cookie of await cli.cookies()) rememberPrivateValue(config, cookie.value);
+            }
+          }
+        }
+      } catch {
+        expect.soft(false, 'Native fixture password restoration request failed').toBe(true);
+      } finally { await secondBrowser.close(); await cli.close(); }
+    }
   });
 }

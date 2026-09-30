@@ -111,6 +111,30 @@ The root agent owns independent review, PR #136 publication, final-head hosted C
 and read-only GitHub Codex review. The existing head's green CI and earlier review
 requests do not verify this amendment. Merge and delivery remain pending.
 
+### CI recovery: observational probe navigation
+
+Head `b333e2450afdf9036ce7c2c5576b90a05bc8d891` ended with nine successful checks,
+one Web failure and two cancelled jobs; all 14 Polymarket tests actually passed
+before the Rust job's later cancellation. Its checked operator artifact uploaded
+successfully. The first Web failure was a missing authentication heading after a
+successful temporary password change/login. Its DOM context was not retained,
+so that failure's cause remains unproved. Skipped password restoration caused
+four later tests to fail with the old fixture password before their own cases.
+
+Static inspection independently confirms the observational probe's global guard
+can discard Settings navigation. Remove only that guard; retain model-edit,
+credential/OAuth guards, probe controls and native revision/account checks.
+One compound browser regression holds automatic/manual probe responses through
+tab, role and main-menu navigation, then confirms a held login remains guarded.
+Promise gates release in `finally` without sleeps. The native auth test retains
+UI password restoration and also restores/confirms its test-owned password via
+the authenticated API in `finally`, using fixed diagnostics and status checks.
+These UI fixtures do not establish native authorization or scientific admission.
+
+Evidence is in the primary checkout's `.ai-bridge/polymarket-history/small-contract-continuation/cli-delivery/early-close-b333e245/`.
+No local tests/builds/installs run. The next head still requires all applicable
+hosted CI, explicit clean Codex review and remote `dev` merge/readback.
+
 <a id="handoff"></a>
 ## Handoff
 
