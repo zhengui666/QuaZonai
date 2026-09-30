@@ -2,6 +2,8 @@
 
 Operator tools acquire immutable source files, then convert supported records into the existing Nautilus catalog. The downloader is venue independent. Source-specific interpretation stays in the optional `polymarket-history` binary; scientific jobs remain offline and the generic research/API/database contracts are unchanged.
 
+For bounded free public API observations, see the [shared acquisition plugins](providers.md): Polymarket sampled marks and Coinbase candles. This operator-only foundation preserves raw responses and capability differences; it does not yet supply native crypto conversion or complete research admission.
+
 A downloaded archive is not automatically a qualified research dataset. Public Polymarket sources collectively cover much of its history, but no verified, free source currently establishes gap-free trades, continuous depth, historical instrument/fee changes and timestamped settlements for every market from launch through today.
 
 ## Source selection
