@@ -2,6 +2,8 @@
 
 This is an **operator-only acquisition foundation**, not a complete research-source integration. The shared runner supports two real public APIs without accounts, secrets, paid fallbacks or trading. Its normalized observations are inspection files, not native Nautilus data or qualified datasets. Scientific jobs remain offline; no service, HTTP contract or database admission path is added.
 
+Native preparation is available separately through the [operator source-plugin registry](source-plugins.md). This guide describes the unchanged acquisition-only contract; frozen provider descriptors are not rewritten when preparation capabilities are added.
+
 ## Supported capabilities
 
 | Provider | Explicit instrument | Acquired record | Selection and limitations |
@@ -71,7 +73,7 @@ The existing [Hugging Face snapshot downloader](snapshot.py), [corroborated EVM 
 
 A complete usable research plugin still needs:
 
-1. A native crypto BAR conversion step using the pinned Nautilus types/catalog and the original product definitions, exact price/size precision, currencies, observation times and source-evidence lineage. The current `polymarket-history` importer explicitly requires `BinaryOption` instruments on `POLYMARKET`; feeding Coinbase candles into it is unsupported. Extend the existing native job/preparation boundary with a generic converter rather than creating a second domain service or weakening the Polymarket checks
+1. The separate registry now supplies native crypto BAR conversion through `catalog-prepare ingest-candles`, retaining original definitions, exact precision and actual retrieval clocks. This enables native inspection/preparation, not historical forecast/PIT eligibility. The `polymarket-history` importer still explicitly requires `BinaryOption` instruments on `POLYMARKET`; Coinbase candles never go through that importer
 2. Source-specific historical instrument/universe, fee, calendar and availability evidence. Current product metadata must retain today's observation time. A new metadata request does not repair historical PIT. Polymarket sampled marks cannot satisfy the scientific BAR contract
 3. Explicit data-use grants, frozen partitions, original declarations, `catalog-prepare` and fresh `DATA_VALIDATE` through the existing registration path. Successful acquisition or native serialization cannot replace qualification
 4. Service/CLI/UI orchestration exposing capability differences, inspection, errors and these incomplete steps. This batch is an operator tool; it adds no fake ready state or automatically registered source
