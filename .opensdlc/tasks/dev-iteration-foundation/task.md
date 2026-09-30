@@ -60,6 +60,12 @@ model capabilities are blockers, never permission to change accounts or model.
   deadline. Empty notices and errors without deadlines have no polling timer.
   Expiration enables the explicit retry control without submitting a request.
 - Preserve editor identity on theme changes and native cancellation behavior.
+- Run unchanged frontend contract/type/unit/build/synthetic-browser checks before
+  compiling the Rust API. Still build and compare the actual native schema before
+  real browser acceptance; no check or prerequisite is skipped. A previous
+  [successful Web run](https://github.com/zhengui666/QuaZonai/actions/runs/36732632168)
+  spent 115 seconds on this native build before frontend feedback. This ordering
+  reduces avoidable feedback delay, not the claimed duration of successful CI.
 - Update review guidance to the owner's evaluation-only Codex boundary while
   retaining exact-Head CI and independent review gates.
 
@@ -79,6 +85,10 @@ higher (3,938.57 KiB versus 3,933.41 KiB), not a total download reduction.
 The four new synthetic browser cases could not launch local Chromium: its
 process-singleton socket operation is prohibited in this executor, including a
 permitted sandbox escalation. They must pass on the hosted browser runner before
-merge; no local browser pass is claimed. Final-head review/CI remains pending.
+merge; no local browser pass is claimed. The first hosted run executed all eight
+synthetic cases: seven passed; the idle-editor case timed out on an exact
+textbox-name locator. The amended test uses the same labelled-control lookup as
+the existing native acceptance suite, scoped to the editor, without removing its
+timer/edit/cancel assertions. Full final-head review/CI remains pending.
 Rust/PostgreSQL/native runtime acceptance and real Agent evaluation are not
 established by these baseline frontend and acquisition checks.

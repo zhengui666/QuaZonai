@@ -80,7 +80,8 @@ test('an idle editor has no error-clock interval and keeps its fields on theme c
   });
   await page.goto('/');
   await page.getByRole('button', { name: '新建研究', exact: true }).click();
-  const name = page.getByRole('textbox', { name: '研究名称', exact: true });
+  const editor = page.getByRole('dialog', { name: '新建研究项目', exact: true });
+  const name = editor.getByLabel('研究名称');
   await name.fill('保留未提交的研究');
   expect(await page.evaluate(() => (window as unknown as {
     __testOneSecondIntervals: Set<number>;
