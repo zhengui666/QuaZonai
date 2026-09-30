@@ -16,6 +16,14 @@ pub fn upload(request: &ArtifactCreate) -> Result<DbCounter, DomainError> {
         if !document.is_object() || document.get("schema_version") != Some(&serde_json::json!(1)) {
             return Err(invalid("content", "ARTIFACT_DOCUMENT"));
         }
+        if request.kind == ResearchArtifactKind::Report
+            && document
+                .get("report_kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("AGENT_EVALUATION")
+        {
+            crate::agent_evaluation::parse(request.content.as_bytes())?;
+        }
     }
     DbCounter::new(bytes as u64).map_err(|_| invalid("content", "ARTIFACT_SIZE"))
 }

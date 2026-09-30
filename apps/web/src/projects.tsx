@@ -8,6 +8,7 @@ import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, StateTag, useGua
 import { Briefs } from './briefs';
 import { Runs } from './runs';
 import { Cycles } from './cycles';
+import { AgentEvaluations } from './agent-evaluations';
 import { projectStateOptions } from './authoring-options';
 
 type Project = Schema['ProjectView'];
@@ -57,6 +58,7 @@ function ProjectDetail({ id }: { id: string }) {
         { key: 'briefs', label: '研究 Brief', children: <Briefs projectId={id} projectState={query.isError || query.isFetching ? undefined : query.data.state} /> },
         { key: 'cycles', label: '研究周期', children: <Cycles projectId={id} /> },
         { key: 'runs', label: '运行记录', children: <Runs projectId={id} /> },
+        { key: 'agent-evaluations', label: 'Agent 评估', children: <AgentEvaluations projectId={id} /> },
       ]} />
       {editing && <ProjectEditor project={editing} close={() => setEditing(undefined)} />}
     </>}

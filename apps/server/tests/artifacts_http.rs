@@ -476,6 +476,7 @@ async fn evaluator_only_objects_never_leak_through_general_artifact_routes(pool:
     for path in [
         format!("/api/v2/artifacts/{sealed}"),
         format!("/api/v2/artifacts/{sealed}/content"),
+        format!("/api/v2/artifacts/{sealed}/agent-evaluation"),
     ] {
         assert_eq!(
             send(&f, "GET", &path, "", Value::Null, Some(&cookie), None)
@@ -891,4 +892,248 @@ async fn expiry_during_native_io_cannot_publish_after_authority_expires(pool: Pg
         .join("artifacts")
         .join(id.to_string())
         .is_file());
+}
+
+fn agent_report() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../tests/fixtures/agent-evaluation/unrun-v1.json"
+    ))
+    .unwrap()
+}
+fn report_upload(project: Id, report: &Value) -> Value {
+    json!({"schema_version":1,"project_id":project,"kind":"REPORT","content":report.to_string()})
+}
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_report_retains_immutable_bytes_replay_and_stream_capacity(pool: PgPool) {
+    let (f, cookie, project, slots) = setup(&pool).await;
+    let mut report = agent_report();
+    report["recorded_at"] = json!("2026-9-30T00:00:00Z");
+    report["status"] = json!("BLOCKED");
+    report["cases"][0]["status"] = json!("BLOCKED");
+    report["cases"][0]["measurements"] = json!({"input_tokens":"9007199254740993","output_tokens":"0","elapsed_ms":null,"tool_calls":"9007199254740993","cost":{"amount":"0.000000000000000001","currency":"EUR"}});
+    let body = report_upload(project, &report);
+    let created = send(
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "agent-report",
+        body.clone(),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let replay = send(
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "agent-report",
+        body,
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(replay.body["resource"], created.body["resource"]);
+    assert_eq!(replay.body["replayed"], true);
+    let id = created.body["resource"]["id"].as_str().unwrap();
+    let available = slots.available_permits();
+    let response = raw(
+        &f,
+        &format!("/api/v2/artifacts/{id}/agent-evaluation"),
+        &cookie,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(slots.available_permits(), available - 1);
+    let bytes = to_bytes(response.into_body(), MAX_UPLOAD_BYTES)
+        .await
+        .unwrap();
+    let typed: Value = serde_json::from_slice(&bytes).unwrap();
+    let mut expected = report.clone();
+    expected["recorded_at"] = json!("2026-09-30T00:00:00Z");
+    assert_eq!(typed, expected);
+    assert_eq!(slots.available_permits(), available);
+    let original = raw(&f, &format!("/api/v2/artifacts/{id}/content"), &cookie).await;
+    assert_eq!(original.status(), StatusCode::OK);
+    let original = to_bytes(original.into_body(), MAX_UPLOAD_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(original.as_ref(), report.to_string().as_bytes());
+    assert_eq!(slots.available_permits(), available);
+    let qualifications: i64 = sqlx::query_scalar("SELECT count(*) FROM app.qualifications")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(qualifications, 0);
+}
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_report_rejects_forged_pass_and_unsupported_documents(pool: PgPool) {
+    let (f, cookie, project, _) = setup(&pool).await;
+    for (index, (pointer, replacement)) in [
+        ("/status", json!("PASS")),
+        ("/recorded_at", json!("+10000-01-01T00:00:00Z")),
+        ("/recorded_at", json!("2026-09-30T12:00:60Z")),
+        (
+            "/cases/0/measurements/input_tokens",
+            json!(9007199254740993_u64),
+        ),
+        (
+            "/held_out/sha256",
+            agent_report()["tuning"]["sha256"].clone(),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut report = agent_report();
+        *report.pointer_mut(pointer).unwrap() = replacement;
+        let rejected = send(
+            &f,
+            "POST",
+            "/api/v2/artifacts",
+            &format!("invalid-report-{index}"),
+            report_upload(project, &report),
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(
+            rejected.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            rejected.body
+        );
+    }
+    let mut report = agent_report();
+    report["forged_qualification"] = json!("PASS");
+    let rejected = send(
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "unknown-field",
+        report_upload(project, &report),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(rejected.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let ordinary = send(
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "ordinary",
+        report_upload(
+            project,
+            &json!({"schema_version":1,"note":"generic report remains supported"}),
+        ),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(ordinary.status, StatusCode::CREATED);
+    let id = ordinary.body["resource"]["id"].as_str().unwrap();
+    let response = raw(
+        &f,
+        &format!("/api/v2/artifacts/{id}/agent-evaluation"),
+        &cookie,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_report_read_enforces_project_scope_revocation_and_capacity(pool: PgPool) {
+    let (f, cookie, project, slots) = setup(&pool).await;
+    let created = send(
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "report",
+        report_upload(project, &agent_report()),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let id = created.body["resource"]["id"].as_str().unwrap();
+    let path = format!("/api/v2/artifacts/{id}/agent-evaluation");
+    assert_eq!(
+        send(&f, "GET", &path, "", Value::Null, None, None)
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    let (reader, credential) =
+        bearer(&f, &cookie, project, &["RESEARCH_READ"], "report-reader").await;
+    assert_eq!(
+        send(&f, "GET", &path, "", Value::Null, None, Some(&reader))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let other=send(&f,"POST","/api/v2/projects","other-project",json!({"schema_version":1,"name":"other","description":"scope fixture","fork_from_project_id":null}),Some(&cookie),None).await;
+    let other_id = other.body["resource"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+        .try_into()
+        .unwrap();
+    let (other_reader, _) = bearer(&f, &cookie, other_id, &["RESEARCH_READ"], "other-reader").await;
+    assert_eq!(
+        send(&f, "GET", &path, "", Value::Null, None, Some(&other_reader))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let permits = slots
+        .clone()
+        .acquire_many_owned(slots.available_permits() as u32)
+        .await
+        .unwrap();
+    assert_eq!(
+        raw(&f, &path, &cookie).await.status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    drop(permits);
+    let revoked = send(
+        &f,
+        "POST",
+        &format!("/api/v2/machine-credentials/{credential}/revoke"),
+        "revoke-report-reader",
+        json!({"schema_version":1,"reason":"read test complete"}),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(revoked.status, StatusCode::OK);
+    assert_eq!(
+        send(&f, "GET", &path, "", Value::Null, None, Some(&reader))
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn agent_report_and_binary_reads_share_backend_unavailable_mapping(pool: PgPool) {
+    let (f, cookie, project, _) = setup(&pool).await;
+    let id = Id::new();
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'REPORT','application/json','fixture','1','OBJECT_STORE','unsupported-test-object','1',10,'RESEARCH','SYNTHETIC','OPERATOR','AUDIT')")
+        .bind(id.as_uuid()).bind(project.as_uuid()).execute(&pool).await.unwrap();
+    for suffix in ["content", "agent-evaluation"] {
+        let reply = send(
+            &f,
+            "GET",
+            &format!("/api/v2/artifacts/{id}/{suffix}"),
+            "",
+            Value::Null,
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(reply.body["code"], "ARTIFACT_BACKEND_UNAVAILABLE");
+    }
 }

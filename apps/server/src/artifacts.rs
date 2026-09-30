@@ -149,16 +149,7 @@ pub async fn content(
         .store
         .artifact_content(&actor, id)
         .await
-        .map_err(|error| match error {
-            store::StoreError::Domain(domain::DomainError::CapabilityUnavailable(
-                "artifact_content_backend",
-            )) => ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "ARTIFACT_BACKEND_UNAVAILABLE",
-                "此产物的原生内容后端暂不可读取。",
-            ),
-            error => error.into(),
-        })?;
+        .map_err(content_backend_error)?;
     let objects = native(&state)?;
     native_content(
         objects,
@@ -168,6 +159,72 @@ pub async fn content(
     )
     .await
 }
+fn content_backend_error(error: store::StoreError) -> ApiError {
+    match error {
+        store::StoreError::Domain(domain::DomainError::CapabilityUnavailable(
+            "artifact_content_backend",
+        )) => ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "ARTIFACT_BACKEND_UNAVAILABLE",
+            "此产物的原生内容后端暂不可读取。",
+        ),
+        error => error.into(),
+    }
+}
+
+/// A typed view of the same immutable, scoped upload. Never an evaluation gate.
+#[utoipa::path(get,path="/api/v2/artifacts/{id}/agent-evaluation",tag="Artifacts",params(("id"=Id,Path)),responses((status=200,body=contracts::agent_evaluation::AgentEvaluationReportV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn agent_evaluation(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    capacity: ArtifactCapacity,
+    id: Result<Path<Id>, PathRejection>,
+) -> Result<Response, ApiError> {
+    let id = path(id)?;
+    // This is exactly the content read authority, including scope and revocation.
+    let locator = state
+        .store
+        .artifact_content(&actor, id)
+        .await
+        .map_err(content_backend_error)?;
+    if locator.metadata.kind != "REPORT"
+        || locator.metadata.byte_count.get() > MAX_UPLOAD_BYTES as u64
+    {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "AGENT_EVALUATION_REPORT_REQUIRED",
+            "此产物不是受支持的 Agent 评估报告。",
+        ));
+    }
+    let objects = native(&state)?;
+    let permit = capacity.0.clone();
+    let bytes = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let bytes = objects
+            .read(locator.local_object_id, locator.metadata.byte_count)
+            .map_err(|_| ApiError::internal())?;
+        let report = domain::agent_evaluation::parse(&bytes).map_err(|_| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "AGENT_EVALUATION_REPORT_REQUIRED",
+                "此产物不是有效的 Agent 评估报告。",
+            )
+        })?;
+        // The typed endpoint follows native wire serialization; the immutable
+        // original bytes remain available through /content for external hash checks.
+        serde_json::to_vec(&report).map_err(|_| ApiError::internal())
+    })
+    .await
+    .map_err(|_| ApiError::internal())??;
+    let mut response = buffered_content(bytes, id, capacity)?;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response.headers_mut().remove(header::CONTENT_DISPOSITION);
+    Ok(response)
+}
+
 pub(crate) async fn native_content(
     objects: Arc<ArtifactStore>,
     id: Id,
@@ -183,6 +240,13 @@ pub(crate) async fn native_content(
     })
     .await
     .map_err(|_| ApiError::internal())??;
+    buffered_content(bytes, id, capacity)
+}
+fn buffered_content(
+    bytes: Vec<u8>,
+    id: Id,
+    capacity: ArtifactCapacity,
+) -> Result<Response, ApiError> {
     // Keep the large-buffer permit in the native stream until EOF or disconnect.
     // Chunking prevents a slow consumer from moving every bounded buffer into an
     // unbounded set of already-returned response bodies.
@@ -209,4 +273,43 @@ pub(crate) async fn native_content(
             .map_err(|_| ApiError::internal())?,
     );
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::StreamExt;
+
+    #[tokio::test]
+    async fn artifact_buffer_holds_capacity_through_partial_reads_and_disconnect() {
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let capacity = ArtifactCapacity(Arc::new(slots.clone().acquire_owned().await.unwrap()));
+        let response = buffered_content(vec![b'x'; 128 * 1024], Id::new(), capacity).unwrap();
+        assert_eq!(slots.available_permits(), 0);
+        let mut stream = response.into_body().into_data_stream();
+        assert_eq!(stream.next().await.unwrap().unwrap().len(), 64 * 1024);
+        assert_eq!(slots.available_permits(), 0);
+        drop(stream);
+        assert_eq!(slots.available_permits(), 1);
+        let capacity = ArtifactCapacity(Arc::new(slots.clone().acquire_owned().await.unwrap()));
+        let response = buffered_content(vec![b'x'; 128 * 1024], Id::new(), capacity).unwrap();
+        axum::body::to_bytes(response.into_body(), 128 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn artifact_content_backend_error_has_the_shared_machine_readable_code() {
+        let response = content_backend_error(store::StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable("artifact_content_backend"),
+        ))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let problem: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(problem["code"], "ARTIFACT_BACKEND_UNAVAILABLE");
+    }
 }

@@ -4,6 +4,7 @@
 //! independent evaluation, or the complete Issue 62 acceptance contract.
 #![forbid(unsafe_code)]
 
+pub mod agent_evaluation;
 pub mod artifacts;
 pub mod auth;
 pub mod brief;
@@ -116,6 +117,7 @@ use utoipa::OpenApi;
     settings::DownstreamCreate,
     settings::DownstreamUpdate,
     settings::DownstreamView,
+    agent_evaluation::AgentEvaluationReportV1,
     artifacts::ArtifactCreate,
     artifacts::ArtifactView,
     evidence::AlphaView,
@@ -226,5 +228,6 @@ pub fn openapi_json() -> Result<String, serde_json::Error> {
     );
     let mut value = serde_json::to_value(document)?;
     value.sort_all_objects();
-    Ok(serde_json::to_string_pretty(&value)? + "\n")
+    // Machine-readable artifacts retain every native value without indentation.
+    Ok(serde_json::to_string(&value)? + "\n")
 }

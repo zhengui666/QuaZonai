@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazy, Suspense, useContext, useLayoutEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import AppErrorBoundary from './AppErrorBoundary';
+import { buttonConfig } from './button-config';
 import { PwaUpdate } from './pwa';
 import { AuthGate, LogoutButton } from './auth';
 import { GuardContext, GuardProvider, useOnline, useReducedMotion } from './ui';
@@ -84,7 +85,7 @@ export default function App() {
   const [motionProviderReady, setMotionProviderReady] = useState(false);
   useLayoutEffect(() => { setMotionProviderReady(true); }, []);
   const dark = colorTheme === 'dark';
-  return <ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{
+  return <ConfigProvider locale={zhCN} button={buttonConfig} theme={{
     algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
     cssVar: { key: 'quazonai' },
     components: {

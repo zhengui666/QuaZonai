@@ -409,7 +409,7 @@ function ValidationArtifacts({ runId, project, inputId }: { runId: string; proje
         locale={{ emptyText: <NoData text="这一项目产物页没有此运行的产物；可能尚未发布，请继续翻页或刷新。" /> }} columns={[
           { title: '产物 ID', dataIndex: 'id' }, { title: '生产运行', dataIndex: 'producer_run_id' }, { title: '生产尝试', dataIndex: 'producer_attempt_id' },
           { title: '种类 / 模式 / 来源', key: 'schema', render: (_, item) => `${item.kind} / ${item.schema_name}@${item.schema_version} / ${item.origin}` },
-          { title: '字节', dataIndex: 'byte_count' }, { title: '原始内容', key: 'download', render: (_, item) => <Button disabled={!online || run.isError || !run.data || query.isError || download.isPending} onClick={() => download.mutate(item)}>下载原始产物</Button> },
+          { title: '字节', dataIndex: 'byte_count' }, { title: '原始内容', key: 'download', render: (_, item) => <Button aria-busy={download.isPending} disabled={!online || run.isError || !run.data || query.isError || download.isPending} onClick={() => download.mutate(item)}>下载原始产物</Button> },
         ]} />
       <Pager history={history} next={query.isError ? undefined : query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
     </QueryPanel>
