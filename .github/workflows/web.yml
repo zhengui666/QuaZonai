@@ -103,7 +103,7 @@ jobs:
           set -euo pipefail
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
           rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv
-          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p server --bin server
+          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p server --bin server --example browser_data_fixture
           rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -q -p server -- openapi > /tmp/web-http.openapi.json
           diff -u contracts/generated/api-v2.openapi.json /tmp/web-http.openapi.json
       - name: Prepare the pinned native production gateway
