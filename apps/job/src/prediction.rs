@@ -1,6 +1,7 @@
 //! Thin prediction-market adaptation. Nautilus owns every fill, position and cash movement.
 use crate::catalog::NativeMarketData;
 use anyhow::{ensure, Result};
+use bigdecimal::BigDecimal;
 use contracts::science::{NativeBarSelectionV1, NativeSimulationSettingsV1};
 use nautilus_core::UnixNanos;
 use nautilus_execution::models::fee::{FeeModel, FeeModelHandle, MakerTakerFeeModel};
@@ -17,6 +18,7 @@ use rust_decimal::Decimal;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    str::FromStr,
 };
 
 /// The native expiry adapter emits a reduce-only EXPIRATION order. It represents
@@ -39,14 +41,28 @@ impl FeeModel for SettlementAwarePolymarketFee {
         if is_native_settlement_order(order.client_order_id().as_str()) && order.is_reduce_only() {
             return Ok(Money::zero(instrument.quote_currency()));
         }
+        let quantity_decimal = quantity.as_decimal();
+        let price_decimal = price.as_decimal();
         ensure!(
-            quantity
-                .as_decimal()
-                .checked_mul(price.as_decimal())
-                .is_some_and(|notional| notional >= Decimal::ONE),
-            "POLYMARKET_RESEARCH_MINIMUM_FILL_NOTIONAL"
+            quantity_decimal > Decimal::ZERO && price_decimal > Decimal::ZERO,
+            "POLYMARKET_TRADING_FILL_RANGE"
         );
-        PolymarketFeeModel.get_commission(order, quantity, price, instrument)
+        let commission = PolymarketFeeModel.get_commission(order, quantity, price, instrument)?;
+        ensure!(
+            commission.currency == instrument.quote_currency(),
+            "POLYMARKET_COMMISSION_CURRENCY_MISMATCH"
+        );
+        // Native rounding applies to each partial fill, not the submitted order.
+        // Preserve the frozen cost bound without imposing an amount floor on fills.
+        let rate = domain::prediction::planning_fee(&native_payload(instrument)?)?;
+        let gross = BigDecimal::from_str(&quantity_decimal.to_string())?
+            * BigDecimal::from_str(&price_decimal.to_string())?;
+        let actual_fee = BigDecimal::from_str(&commission.as_decimal().to_string())?;
+        ensure!(
+            actual_fee <= gross * rate.as_decimal(),
+            "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
+        );
+        Ok(commission)
     }
 }
 

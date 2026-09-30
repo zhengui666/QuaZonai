@@ -152,6 +152,151 @@ fn native_price_dependent_commission_is_not_a_fixed_planning_coefficient() {
 }
 
 #[test]
+fn native_partial_fill_uses_actual_rounded_fee_within_the_frozen_bound() {
+    use bigdecimal::BigDecimal;
+    use nautilus_core::UUID4;
+    use nautilus_execution::models::fee::FeeModel;
+    use nautilus_model::{
+        data::{Bar, BarType},
+        enums::{LiquiditySide, OrderSide, TimeInForce},
+        identifiers::{ClientOrderId, StrategyId, TraderId},
+        instruments::Instrument,
+        orders::{MarketOrder, Order, OrderAny},
+        types::{Money, Price, Quantity},
+    };
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_polymarket::models::PolymarketFeeModel;
+    use std::str::FromStr;
+
+    let instruments = prediction::instruments("0.05", 18 * STEP);
+    let price = Price::from("0.4000");
+    let mut order = OrderAny::Market(MarketOrder::new(
+        TraderId::from("TEST-001"),
+        StrategyId::from("TARGET-001"),
+        instruments[0].id(),
+        ClientOrderId::new("PARTIAL-FILL-FEE"),
+        OrderSide::Buy,
+        Quantity::from("500.000000"),
+        TimeInForce::Gtc,
+        UUID4::new(),
+        0_u64.into(),
+        false,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ));
+    order.set_liquidity_side(LiquiditySide::Taker);
+    for (volume, first_quantity, reject_fee) in [
+        ("8.000000", "2.000000", false),
+        ("0.001920", "0.000480", true),
+    ] {
+        let (_unused, mut request) = simulation("0.05", Some(["1.0000", "0.0000"]), 0);
+        request.target_points[0].targets[1].weight = "0".parse().unwrap();
+        request.target_points[0].cash_weight = "0.8".parse().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let catalog =
+            ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, None, None, None)
+                .unwrap();
+        catalog.write_instruments(instruments.clone()).unwrap();
+        for (index, kind) in request.selection.bar_types.iter().enumerate() {
+            let kind: BarType = kind.parse().unwrap();
+            let volume = Quantity::from(if index == 0 { volume } else { "1000000.000000" });
+            let bars = (1..=17_u64)
+                .map(|minute| {
+                    Bar::new_checked(
+                        kind,
+                        price,
+                        price,
+                        price,
+                        price,
+                        volume,
+                        (minute * STEP).into(),
+                        (minute * STEP + 1).into(),
+                    )
+                    .unwrap()
+                })
+                .collect::<Vec<_>>();
+            catalog.write_to_parquet(&bars, None, None, None).unwrap();
+        }
+        prediction::settle(root.path(), 18 * STEP, 19 * STEP, ["1.0000", "0.0000"]);
+        let result = job::simulation::simulate(root.path(), &request);
+        let quantity = Quantity::from(first_quantity);
+        let gross = BigDecimal::from_str(&quantity.as_decimal().to_string()).unwrap()
+            * BigDecimal::from_str(&price.as_decimal().to_string()).unwrap();
+        let bound = gross * request.settings.fee_rates[0].taker.as_decimal();
+        if reject_fee {
+            // The unchanged official model rounds .00000576 to .00001 pUSD;
+            // the frozen maximum for this fill is only .00000960096 pUSD.
+            let fee = PolymarketFeeModel
+                .get_commission(&order, quantity, price, &instruments[0])
+                .unwrap();
+            let actual = BigDecimal::from_str(&fee.as_decimal().to_string()).unwrap();
+            assert_eq!(actual, BigDecimal::from_str("0.00001").unwrap());
+            assert!(actual > bound);
+            // The fee error triggers native shutdown before expiry and before
+            // OrderFilled, leaving the accepted market order unsettled.
+            let error = result.unwrap_err();
+            assert!(
+                error.to_string().contains("NATIVE_ORDERS_NOT_SETTLED"),
+                "{error:#}"
+            );
+        } else {
+            let result = result.unwrap();
+            assert_eq!(result.summary["positions.open"], "0");
+            let fills = result.canonical_result["fills"].as_array().unwrap();
+            let buy = fills
+                .iter()
+                .map(|v| &v["event"]["Filled"])
+                .find(|f| f["order_side"] == "BUY" && f["instrument_id"] == IDS[0])
+                .unwrap();
+            assert_eq!(buy["last_px"], "0.4000");
+            assert_eq!(buy["last_qty"], first_quantity);
+            assert!(quantity.as_decimal() * price.as_decimal() < rust_decimal::Decimal::ONE);
+            let fee = Money::from_str(buy["commission"].as_str().unwrap()).unwrap();
+            let actual = BigDecimal::from_str(&fee.as_decimal().to_string()).unwrap();
+            assert_eq!(actual, BigDecimal::from_str("0.024").unwrap());
+            assert!(actual <= bound);
+            let closes = fills
+                .iter()
+                .map(|v| &v["event"]["Filled"])
+                .filter(|f| f["order_side"] == "SELL")
+                .collect::<Vec<_>>();
+            assert_eq!(closes.len(), 1);
+            for close in closes {
+                assert_eq!(
+                    Money::from_str(close["commission"].as_str().unwrap())
+                        .unwrap()
+                        .as_decimal(),
+                    rust_decimal::Decimal::ZERO
+                );
+            }
+            // Canonical identities are normalized, so inspect scalar order
+            // fields rather than deserializing them into native UUID types.
+            let submitted = result.canonical_result["orders"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| &v["Market"]["core"])
+                .find(|v| v["instrument_id"] == IDS[0] && v["side"] == "BUY")
+                .unwrap();
+            assert!(
+                Quantity::from_str(submitted["quantity"].as_str().unwrap())
+                    .unwrap()
+                    .as_decimal()
+                    * price.as_decimal()
+                    >= rust_decimal::Decimal::ONE
+            );
+        }
+    }
+}
+
+#[test]
 fn native_bar_remainder_cannot_trade_above_original_bounds_but_redemption_can() {
     use nautilus_model::{
         data::{Bar, BarType},
