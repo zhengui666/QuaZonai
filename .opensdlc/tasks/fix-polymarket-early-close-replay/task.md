@@ -83,6 +83,16 @@ types and one-job-per-process helper are reused. Synthetic fixture clocks remain
 explicitly separate from the motivating real evidence. No upstream source,
 service, collector or registered dataset is changed.
 
+The existing history CI already builds and checks `polymarket-history` and
+`catalog-prepare`. Upload those checked binaries with their source Head,
+`Cargo.lock` hash and byte checksums for the operator's actual data preparation.
+The installed scientific image contains only `job`; the preserved `b648201`
+preparation binaries use the removed fork and the current local files have no
+verified source provenance. Reusing
+the existing successful CI build requires no additional build step, dependency,
+ingestion architecture or local compilation. These are seven-day workflow
+artifacts, not a versioned release or an installed service update.
+
 <a id="verification"></a>
 ## Verification
 
