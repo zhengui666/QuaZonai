@@ -1,0 +1,1 @@
+Public offline controller self-test source bytes. Not a real candidate archive.
