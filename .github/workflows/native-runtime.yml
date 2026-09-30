@@ -57,6 +57,9 @@ jobs:
           rustup run "$RUSTUP_TOOLCHAIN" cargo clippy --locked -p server --test native_science_thread --features native-science -- -D warnings
           rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p runtime -p job -p server --bin runtime --bin job --bin server
           rustup run "$RUSTUP_TOOLCHAIN" rustc --edition=2021 -D warnings -C opt-level=1 -C debuginfo=0 -C strip=symbols tests/native/oci_probe.rs -o "$RUNNER_TEMP/isolation-probe"
+          rustup run "$RUSTUP_TOOLCHAIN" rustfmt --edition 2021 --check tests/native/oci_probe.rs
+          rustup run "$RUSTUP_TOOLCHAIN" rustc --edition=2021 -D warnings --test tests/native/oci_probe.rs -o "$RUNNER_TEMP/isolation-probe-tests"
+          "$RUNNER_TEMP/isolation-probe-tests"
           git diff --exit-code
       - name: Assemble a native immutable OCI image without a floating base or secret mounts
         run: |
