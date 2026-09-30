@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -210,6 +211,17 @@ class NativeCacheTests(unittest.TestCase):
 
 
 class NativeCacheWorkflowTests(unittest.TestCase):
+    def test_runtime_http_target_cannot_collide_with_registry_http(self):
+        # Native Cargo 1.98.1 reproduction: an auto target named http makes
+        # clean --workspace remove the unrelated registry crate's metadata.
+        # Keep the original source/test coverage with an explicit unique name.
+        manifest = tomllib.loads((ROOT / 'apps/runtime/Cargo.toml').read_text())
+        targets = [target for target in manifest['test'] if target.get('path') == 'tests/http.rs']
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]['name'], 'runtime_http')
+        self.assertNotIn('required-features', targets[0])
+        self.assertTrue((ROOT / 'apps/runtime/tests/http.rs').is_file())
+
     def test_opt_in_preserves_independent_acceptance_and_explicit_save_order(self):
         action = (ACTION / 'action.yml').read_text()
         self.assertIn("cache-native-dependencies:\n    description:", action)

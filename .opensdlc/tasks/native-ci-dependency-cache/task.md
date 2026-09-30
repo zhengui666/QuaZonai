@@ -126,3 +126,39 @@ The adjusted final Head still requires all applicable hosted checks, an actual
 compressed archive/transfer-size observation, and an actual warm restore/build
 measurement before any performance claim or merge. Docker's independent cache
 and runner variability must not be attributed to this host-dependency pilot.
+
+## Real warm result and native target collision
+
+At head `9427b0a6`, the [cold job](https://github.com/zhengui666/QuaZonai/actions/runs/36770681869/job/110075979248)
+compiled the host Job in17m49s and saved625,466,672 compressed bytes from a
+2,435,668,032-byte dependency tree, with85,794,074,624 free bytes before save.
+The [same-head warm job](https://github.com/zhengui666/QuaZonai/actions/runs/36770681869/job/110089143365)
+restored that exact archive/key, then used2.420s metadata priming and0.315s native
+pruning. Host build was16m56s. Compilation entries fell519→57, but that small
+elapsed difference is not a reliable speedup claim; all13 checks passed and the
+pilot remained draft while the expensive rebuilds were investigated.
+
+An isolated Rust1.98.1 native reproduction confirmed that the auto-discovered
+Runtime test target `http` collides with registry crate `http`. Cargo workspace
+clean removed the external crate's `.rmeta` and `.d` files even when Runtime was
+never built. QuaZonai's actual manifest, pointed only at the6.7-MB disposable
+target, removed exactly those two files; the next build reported missing metadata
+and rebuilt `http` plus its dependent. This follows Cargo's
+[target-name matching](https://doc.rust-lang.org/stable/nightly-rustc/src/cargo/ops/cargo_clean.rs.html#358-420).
+All54 external hosted warm recompiles are in the reverse-http dependency closure;
+the other3 are intentionally cleaned workspace crates. The original hosted
+fingerprint logs/archive were not inspected, so its exact causal attribution
+remains an inference supported by the actual-workspace reproduction.
+
+The narrow correction explicitly names that same unchanged test file
+`runtime_http` in the Runtime manifest. Official Cargo metadata sees exactly one
+target, the original test executes in the isolated control, and external `http`
+stays Fresh after the identical clean. Inventory of164 workspace targets found
+no other dependency-name collision; every package compiled by the cold run had
+its cached manifest checked, including custom library names. No tracked command
+references require migration, no test is disabled and native pruning stays intact.
+
+The existing manifest hash automatically selects a fresh cache key, bypassing
+the damaged immutable archive. A focused declaration regression protects this
+mapping. Final-head native CI, independent delta review and a new cold/warm
+measurement remain required; no post-correction speedup has been measured yet.
