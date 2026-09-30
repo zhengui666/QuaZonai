@@ -357,7 +357,11 @@ pub fn validate_native(
         let instrument = selected.instrument_at(available)?;
         if let Some(previous) = selected.bars.last() {
             ensure!(
-                previous.ts_event < bar.ts_event && previous.ts_init < bar.ts_init,
+                // A source response may publish several distinct historical bars
+                // together. Native APIs preserve equal receipt times; never invent
+                // per-row offsets. Event identities and availability order still
+                // reject duplicates, revisions and time travel.
+                previous.ts_event < bar.ts_event && previous.ts_init <= bar.ts_init,
                 "CATALOG_NONUNIQUE_OR_REVISED_BAR"
             );
         }

@@ -23,10 +23,14 @@ use std::{
 
 const MAX_JSON_BYTES: u64 = 1024 * 1024;
 
+#[path = "preparation/candles.rs"]
+mod candles;
+
 #[derive(Parser)]
 #[command(
     version,
-    about = "Prepare an isolated native BAR catalog without certifying its source"
+    about = "Prepare an isolated native BAR catalog without certifying its source",
+    after_help = "Native source import: catalog-prepare ingest-candles --help"
 )]
 struct Arguments {
     /// Original local native catalog; never modified.
@@ -348,7 +352,17 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
 }
 
 fn main() {
-    match prepare(&Arguments::parse()) {
+    // Preserve the original root invocation; the explicit source-import mode has
+    // its own argument contract and never manufactures a registration declaration.
+    let result =
+        if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("ingest-candles")) {
+            let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare ingest-candles"))
+                .chain(std::env::args_os().skip(2));
+            candles::run(&candles::Arguments::parse_from(argv))
+        } else {
+            prepare(&Arguments::parse()).and_then(|metadata| Ok(serde_json::to_value(metadata)?))
+        };
+    match result {
         Ok(metadata) => println!(
             "{}",
             serde_json::to_string(&metadata).expect("typed metadata")
