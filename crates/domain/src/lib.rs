@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod admission;
+pub mod agent_evaluation;
 pub mod artifacts;
 pub mod brief;
 pub mod catalogs;

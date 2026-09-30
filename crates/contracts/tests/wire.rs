@@ -191,6 +191,23 @@ fn generated_schema_describes_initial_slice_not_nonexistent_http_routes() {
 }
 
 #[test]
+fn native_domain_export_is_compact_deterministic_and_matches_the_committed_values() {
+    let generated = contracts::openapi_json().unwrap();
+    let document: serde_json::Value = serde_json::from_str(&generated).unwrap();
+    let committed = include_str!("../../../contracts/generated/domain-v1.openapi.json");
+    assert_eq!(
+        document,
+        serde_json::from_str::<serde_json::Value>(committed).unwrap()
+    );
+    assert_eq!(generated, serde_json::to_string(&document).unwrap() + "\n");
+    assert_eq!(generated, contracts::openapi_json().unwrap());
+    assert_eq!(
+        generated, committed,
+        "regenerate the native domain artifact"
+    );
+}
+
+#[test]
 fn metric_nullable_fields_are_present_not_silently_defaulted() {
     let value = json!({"schema_version":1,"evaluation_id":Id::new(),"metric_code":"risk","scope":"total",
         "value":null,"status":"INSUFFICIENT_DATA","reason_code":"NO_SAMPLES","unit":"fraction","period_start":"2026-01-01T00:00:00Z",

@@ -35,6 +35,16 @@ Store/HTTP tests use PostgreSQL 18 with PGMQ 1.10.0. [CI](../.github/workflows/c
 
 For a contract change, edit Rust DTOs/handlers, run the relevant native schema export from CI, then `npm --prefix apps/web run generate`. Commit the source and generated diff together. `quazonai openapi --list-schemas` and `quazonai openapi --schema ArtifactCreate` inspect an installed binary offline; they do not query a running server's version.
 
+Domain and HTTP exports are sorted compact JSON snapshots with a final newline;
+their native values and byte-for-byte drift checks remain authoritative. Response
+validators use the modular native Ajv graph and pinned Vite/esbuild transformer,
+with exports, aliases and validation errors preserved. Production consumers use
+selective scalar facades and asynchronous response validation; the eager facade
+is for compatibility. Edit the Rust source or generator rather than generated
+artifacts. Generator tests check independent output directories, native CJS/ESM
+loading and equivalence to the original response schemas; the production PWA
+retains its 2 MiB chunk gate.
+
 `npm --prefix apps/web run dev` is a development UI proxy for a real local API. Browser behavior is verified by the native harness, not a substitute backend. Scientific samples belong to tests, not product entrypoints.
 
 <a id="runtime-image-build"></a>
