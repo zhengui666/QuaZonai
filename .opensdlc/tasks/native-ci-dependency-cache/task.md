@@ -6,7 +6,7 @@ Bounded performance pilot from `dev` at
 `b66263507f50d39013daee5537d3ef8cacf10f71`, following the owner's native-only
 design, implementation and independent-review instruction. Codex remains an
 existing runtime under acceptance test, not an author or reviewer. No local
-`.agents/skills` exists. PR link and final-head hosted evidence are pending.
+`.agents/skills` exists. Delivery is tracked in [PR 140](https://github.com/zhengui666/QuaZonai/pull/140); final-head checks remain mandatory.
 
 Two green final-head Container jobs identified the host release compilation as
 the largest measured cost:
@@ -71,7 +71,7 @@ Cache service failures are optional; actual build/acceptance failures remain fat
 
 ## Verification and outstanding evidence
 
-- Sixteen focused Python policy/key/layout/pruning/order/size tests pass, covering dev/fork gates,
+- Seventeen focused Python policy/key/layout/pruning/order/size tests pass, covering dev/fork gates,
   exact restore handling, locked input and toolchain/profile invalidation,
   root/nested/spaced paths, empty inputs, source-code-only key stability,
   no caching credentials, unsupported target layouts and cold fallback
@@ -161,4 +161,47 @@ references require migration, no test is disabled and native pruning stays intac
 The existing manifest hash automatically selects a fresh cache key, bypassing
 the damaged immutable archive. A focused declaration regression protects this
 mapping. Final-head native CI, independent delta review and a new cold/warm
-measurement remain required; no post-correction speedup has been measured yet.
+measurement remained required at that point; the subsequent hosted observation follows.
+
+## Post-correction hosted reuse
+
+The corrected key's [cold host build](https://github.com/zhengui666/QuaZonai/actions/runs/36778373578/job/110101928467)
+at `c92edbe03e34c51c5ef41c5f1e243e414c4f2f12` took **26m03s** and
+saved **626,021,544 compressed bytes** from **2,437,374,242 dependency bytes**,
+with **85,792,276,480 available bytes** before save. Its later application-packaging
+stage was cancelled by a newer branch head; it is not an acceptance pass.
+
+At integrated head `c057cfac4f2018b0892b39a496b971967d1a69ff`, the
+[completed Container job](https://github.com/zhengui666/QuaZonai/actions/runs/36782360530/job/110115934310)
+restored that exact archive/key. Restore took about **12.7s**, metadata priming
+**2.869s**, and native pruning **0.214s**. The host Job release build then took
+**1m37s** and compiled only the intentionally pruned `contracts`, `domain` and
+`job` workspace crates. All external dependencies, including `http`, DataFusion
+and Nautilus, were reused. The compared Job/contracts/domain source, locked
+manifests and toolchain inputs are identical across these two heads; the same
+versioned key includes their manifest/toolchain configuration.
+
+This establishes a useful reduction in the observed host compilation stage,
+not a whole-CI A/B result or a guaranteed speedup on every runner. The independent
+application Docker build still took **9m33s**. The corrected cold job was cancelled
+after the host/cache stages, while the integrated warm Container job completed
+its install/update/recovery checks. Other exact-head checks remain independent;
+in particular, the Web retry regression must be fixed before this PR can merge.
+
+## Browser gate recovery
+
+A separate hosted upload regression at PR 145 head `895ad435` established that
+the official loading icon contributed `loading` to a retry button's accessible
+name after pending ended. This branch receives the same application-wide
+supported AntD `button.loadingIcon` configuration with a decorative hidden icon.
+Visible text, busy state, mutation guards and exact-role browser clicks remain.
+Data-validation pending/error/retry regressions and native AntD rendering checks
+cover the common behavior. The previous PR 140 timeout's identical cause is not
+proven by a passing diagnostic run. At `3c8023d`, the [complete Web job](https://github.com/zhengui666/QuaZonai/actions/runs/36787717263/job/110133022791)
+passed. Its [bounded diagnostic artifact](https://github.com/zhengui666/QuaZonai/actions/runs/36787717263/artifacts/11131165277)
+observed an enabled, nonbusy retry with one unhidden loading icon and zero exact
+role matches; the accessible name became valid 38 ms later, and the whole case
+finished in 3,873 ms. This establishes transient name contamination, not the
+earlier persistent timeout. Temporary count/phase logging is removed after
+retaining this evidence; useful accessible-name assertions remain.
+No retry timeout, acceptance check or scientific rule is loosened.
