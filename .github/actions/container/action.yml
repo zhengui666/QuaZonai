@@ -13,6 +13,9 @@ inputs:
   version:
     description: OCI version label.
     required: true
+  cache-native-dependencies:
+    description: Opt in to the bounded dependency-only native Job cache for dev CI.
+    default: 'false'
 outputs:
   runtime-image:
     description: Already-tested native scientific image ID.
@@ -52,6 +55,40 @@ runs:
         export XDG_RUNTIME_DIR="/run/user/$uid"
         systemctl --user show --property=Version
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+    - name: Install the pinned scientific Rust toolchain
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      run: rustup toolchain install 1.98.1 --profile minimal --target wasm32-unknown-unknown
+    - name: Prepare the bounded native dependency cache
+      id: native-cache
+      if: inputs.cache-native-dependencies == 'true'
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        CONTAINER_ACTION_PATH: ${{ github.action_path }}
+        CACHE_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_RELEASE_DEBUG: '0'
+      run: python3 -B "$CONTAINER_ACTION_PATH/native-cache.py" prepare
+    - name: Restore only native release dependencies
+      id: native-cache-restore
+      if: steps.native-cache.outputs.enabled == 'true'
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.native-cache.outputs.path }}
+        key: ${{ steps.native-cache.outputs.key }}
+    - name: Remove all restored workspace outputs
+      if: steps.native-cache.outputs.enabled == 'true'
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        CONTAINER_ACTION_PATH: ${{ github.action_path }}
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_RELEASE_DEBUG: '0'
+        CACHE_EXPECTED_KEY: ${{ steps.native-cache.outputs.key }}
+        CACHE_MATCHED_KEY: ${{ steps.native-cache-restore.outputs.cache-matched-key }}
+      run: python3 -B "$CONTAINER_ACTION_PATH/native-cache.py" prune
     - name: Build the scientific image from the same source
       id: native
       shell: bash
@@ -62,13 +99,33 @@ runs:
         CARGO_PROFILE_RELEASE_DEBUG: '0'
       run: |
         set -euo pipefail
-        rustup toolchain install 1.98.1 --profile minimal --target wasm32-unknown-unknown
         rustup run 1.98.1 cargo build --locked --release -p job
         assembly=$(mktemp -d "$RUNNER_TEMP/native-image.XXXXXX")
         node runtimes/native/build-native-image.mjs --profile release --output-dir "$assembly/image" --image-version "$IMAGE_VERSION"
         echo "image=$(cat "$assembly/image/image-id.txt")" >> "$GITHUB_OUTPUT"
-        # The image now owns its executable/toolchain. Free only this job's
-        # disposable Rust build output before the independent application build.
+    - name: Prune workspace outputs and bound the dependency archive
+      id: native-cache-save-check
+      if: steps.native-cache.outputs.enabled == 'true'
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        CONTAINER_ACTION_PATH: ${{ github.action_path }}
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_RELEASE_DEBUG: '0'
+      run: python3 -B "$CONTAINER_ACTION_PATH/native-cache.py" save-check
+    - name: Save only bounded native release dependencies
+      if: steps.native-cache.outputs.can-save == 'true' && steps.native-cache-save-check.outputs.save == 'true' && steps.native-cache-restore.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.native-cache.outputs.path }}
+        key: ${{ steps.native-cache.outputs.key }}
+    - name: Free the disposable native release build tree
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      run: |
+        # The image now owns its executable/toolchain. Save dependencies before
+        # freeing this job's output for the independent application build.
         rm -rf target/release
     - name: Build independent Codex images before installation
       id: codex

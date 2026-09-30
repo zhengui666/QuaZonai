@@ -88,3 +88,4 @@ jobs:
           image: quazonai-ci:${{ github.event.pull_request.head.sha || github.sha }}
           revision: ${{ github.event.pull_request.head.sha || github.sha }}
           version: ci
+          cache-native-dependencies: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'pull_request' && github.base_ref == 'dev') }}
