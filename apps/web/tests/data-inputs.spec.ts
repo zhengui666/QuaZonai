@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import type { Schema } from '../src/api';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
+import { createRetryDiagnostics, failureEvent, requestEvent } from './validation-retry-diagnostics';
 const capabilities: Schema['RuntimeCapabilitiesV1'] = JSON.parse(readFileSync(new URL('../../../tests/contracts/runtime-capabilities.fixture.json', import.meta.url), 'utf8'));
 
 // Synthetic browser interaction/transport fixtures only. No terminal Run,
@@ -139,17 +141,73 @@ test('Runtime expiry blocks validation, reload is explicit and FIXTURE stays vis
 });
 
 test('unknown validation preserves original Runtime revision, exact counters and one request identity', async ({ page }) => {
-  const state = await setup(page); const editor = await validate(page, state);
-  await expect(editor.getByRole('button', { name: '确认排队数据验证', exact: true })).toBeEnabled();
-  await editor.getByRole('button', { name: '确认排队数据验证', exact: true }).click();
-  await expect(editor.getByText(/提交结果未知：原请求和幂等键已锁定/)).toBeVisible();
-  state.runtime.revision = '9007199254740994'; state.stale = true;
-  await expect(editor.getByLabel('CPU 总秒数（精确整数）', { exact: true })).toBeDisabled();
-  await editor.getByRole('button', { name: '原样重试验证请求', exact: true }).click();
-  await expect.poll(() => state.writes.length).toBe(2);
-  expect(state.writes[1]).toEqual(state.writes[0]);
-  expect(state.writes[0]?.body).toMatchObject({ expected_runtime_revision: '9007199254740993', input_set_id: state.input.header.id,
-    limits: { cpu_seconds: '60', output_bytes: '1048576', experiments: 0 } });
+  const diagnostics = createRetryDiagnostics(() => performance.now()); diagnostics.mark('start');
+  page.on('framenavigated', frame => { if (frame === page.mainFrame()) diagnostics.count('main-navigation'); });
+  page.on('pageerror', () => diagnostics.count('page-error'));
+  page.on('console', entry => { if (entry.type() === 'error' && entry.text() === 'QuaZonai: rendering failed.') diagnostics.count('render-error'); });
+  page.on('request', request => diagnostics.count(requestEvent(request.method(), request.url())));
+  page.on('requestfailed', request => diagnostics.count(failureEvent(request.url())));
+  let assertionsCompleted = false;
+  try {
+    const state = await setup(page); diagnostics.mark('setup-ready');
+    const editor = await validate(page, state); diagnostics.mark('editor-ready');
+    await expect(editor.getByRole('button', { name: '确认排队数据验证', exact: true })).toBeEnabled();
+    await editor.getByRole('button', { name: '确认排队数据验证', exact: true }).click(); diagnostics.mark('submitted');
+    await expect(editor.getByText(/提交结果未知：原请求和幂等键已锁定/)).toBeVisible(); diagnostics.mark('unknown-visible');
+    state.runtime.revision = '9007199254740994'; state.stale = true;
+    await expect(editor.getByLabel('CPU 总秒数（精确整数）', { exact: true })).toBeDisabled(); diagnostics.mark('cpu-disabled');
+    diagnostics.mark('snapshot-start');
+    try {
+      const roleMatchedRetryButtons = await editor.getByRole('button', { name: '原样重试验证请求', exact: true }).count();
+      const dom = await page.evaluate(() => {
+        const visible = (node: Element) => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
+        const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(node => {
+          const title = node.getAttribute('aria-label') ?? document.getElementById(node.getAttribute('aria-labelledby') ?? '')?.textContent;
+          return title?.trim() === '单独请求 DATA_VALIDATE';
+        });
+        const buttons = dialogs.flatMap(node => [...node.querySelectorAll('button')]).filter(node => node.textContent?.trim() === '原样重试验证请求');
+        const first = buttons[0];
+        const loadingIcon = first?.querySelector('[role="img"][aria-label="loading"]');
+        const cpuLabel = dialogs.flatMap(node => [...node.querySelectorAll('label')]).find(node => node.textContent?.trim() === 'CPU 总秒数（精确整数）');
+        const cpu = cpuLabel ? document.getElementById(cpuLabel.htmlFor) : null;
+        const shown = (selector: string, text: string) => [...document.querySelectorAll(selector)].some(node => visible(node) && node.textContent?.trim() === text);
+        return { dialogs: dialogs.length, visibleDialogs: dialogs.filter(visible).length,
+          retryButtons: buttons.length, visibleRetryButtons: buttons.filter(visible).length,
+          dialogAriaHidden: dialogs.some(node => !!node.closest('[aria-hidden="true"]')),
+          retryDisabled: first ? first.disabled : null, retryBusy: first ? first.getAttribute('aria-busy') === 'true' : null,
+          loadingIconPresent: first ? !!loadingIcon : null,
+          loadingIconAriaHidden: loadingIcon ? !!loadingIcon.closest('[aria-hidden="true"]') : null,
+          retryHasAriaLabel: first ? first.hasAttribute('aria-label') : null,
+          cpuDisabled: cpu instanceof HTMLInputElement ? cpu.disabled : null, online: navigator.onLine,
+          loginVisible: shown('h2', '登录 QuaZonai'), fallbackVisible: shown('h1', '页面暂时无法显示'),
+          unknownWarningVisible: shown('.ant-alert-title', '提交结果未知：原请求和幂等键已锁定，重试不会改用新的 Runtime 版本。') };
+      });
+      diagnostics.capture({ ...dom, roleMatchedRetryButtons });
+    } catch { diagnostics.count('diagnostic-error'); }
+    diagnostics.mark('retry-name-start');
+    const textMatchedRetry = editor.locator('button').filter({ hasText: '原样重试验证请求' });
+    await expect(textMatchedRetry).toHaveCount(1);
+    await expect(textMatchedRetry).toHaveAccessibleName('原样重试验证请求');
+    diagnostics.mark('retry-name-ready');
+    diagnostics.mark('retry-start');
+    await editor.getByRole('button', { name: '原样重试验证请求', exact: true }).click(); diagnostics.mark('retry-end');
+    await expect.poll(() => state.writes.length).toBe(2);
+    expect(state.writes[1]).toEqual(state.writes[0]);
+    expect(state.writes[0]?.body).toMatchObject({ expected_runtime_revision: '9007199254740993', input_set_id: state.input.header.id,
+      limits: { cpu_seconds: '60', output_bytes: '1048576', experiments: 0 } });
+    diagnostics.mark('assertions-complete'); assertionsCompleted = true;
+  } finally {
+    // No browser calls here: a test timeout must not prevent the retained summary.
+    diagnostics.mark('finished');
+    try {
+      const directory = new URL('../test-results/native-summary/', import.meta.url);
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      writeFileSync(new URL('validation-retry-diagnostics.json', directory), diagnostics.json(assertionsCompleted), { mode: 0o600 });
+    } catch { diagnostics.count('diagnostic-error'); }
+    try { console.info(`validation-retry-diagnostics ${diagnostics.json(assertionsCompleted)}`); }
+    catch { diagnostics.count('diagnostic-error'); }
+    if (assertionsCompleted && !diagnostics.complete()) throw new Error('Synthetic retry diagnostics incomplete');
+  }
 });
 
 test('confirmed stale revision blocks retry until explicit reload and reconfirmation', async ({ page }) => {
