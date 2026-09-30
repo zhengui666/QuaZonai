@@ -20,8 +20,8 @@ use nautilus_execution::models::{
     latency::{LatencyModelHandle, StaticLatencyModel},
 };
 use nautilus_model::{
-    data::{Bar, BarType, Data, InstrumentClose},
-    enums::{AccountType, BookType, OmsType, OrderSide, OrderStatus},
+    data::{Bar, BarType, Data, InstrumentClose, InstrumentStatus},
+    enums::{AccountType, BookType, MarketStatusAction, OmsType, OrderSide, OrderStatus},
     events::{OrderDenied, OrderFilled, OrderRejected},
     identifiers::{ClientOrderId, InstrumentId, StrategyId, Venue},
     instruments::{Instrument, InstrumentAny},
@@ -60,6 +60,7 @@ fn count(value: usize) -> Result<DbCounter> {
 struct ReplayStatus {
     consumed: usize,
     failure: Option<&'static str>,
+    order_rejection: Option<String>,
     submitted_after_ns: u64,
     study_infeasible: bool,
     frames: Vec<NativePortfolioStudyFrameV1>,
@@ -105,8 +106,10 @@ nautilus_strategy!(TargetReplay, {
     fn on_order_denied(&mut self, _event: OrderDenied) {
         self.status.borrow_mut().failure = Some("NATIVE_ORDER_DENIED");
     }
-    fn on_order_rejected(&mut self, _event: OrderRejected) {
-        self.status.borrow_mut().failure = Some("NATIVE_ORDER_REJECTED");
+    fn on_order_rejected(&mut self, event: OrderRejected) {
+        let mut status = self.status.borrow_mut();
+        status.failure = Some("NATIVE_ORDER_REJECTED");
+        status.order_rejection = Some(event.reason.to_string());
     }
     fn on_order_filled(&mut self, event: &OrderFilled) {
         let now = event.ts_event.as_u64();
@@ -761,14 +764,38 @@ pub(crate) fn run(
             engine.add_instrument(&series.instrument)?;
             events.extend(series.bars.into_iter().map(Data::Bar));
         }
-        events.extend(closes.into_iter().map(Data::InstrumentClose));
+        for close in closes {
+            // A verified resolution closes trading before native redemption.
+            // This derived companion is not a separately received source status.
+            // Stable receipt-time sorting keeps it immediately before its close.
+            events.push(Data::InstrumentStatus(InstrumentStatus::new(
+                close.instrument_id,
+                MarketStatusAction::Close,
+                close.ts_event,
+                close.ts_init,
+                None,
+                None,
+                Some(false),
+                None,
+                None,
+            )));
+            events.push(Data::InstrumentClose(close));
+        }
         engine.add_strategy(strategy)?;
         engine.add_data(events, None, true, true)?;
         engine.run(None, None, None, false)?;
-        ensure!(
-            status.borrow().failure.is_none(),
-            "NATIVE_TARGET_REPLAY_FAILED"
-        );
+        {
+            let observed = status.borrow();
+            ensure!(
+                observed.failure.is_none(),
+                "NATIVE_TARGET_REPLAY_FAILED: {}",
+                observed
+                    .order_rejection
+                    .as_deref()
+                    .or(observed.failure)
+                    .unwrap_or_default()
+            );
+        }
         for instrument_id in &settled_ids {
             ensure!(
                 engine

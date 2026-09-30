@@ -229,7 +229,22 @@ pub(crate) fn catalog_closes(
         seen.len() == expected.len(),
         "POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"
     );
-    // Keep original arrival ordering, including ties; no synthetic timestamp is added.
+    // Catalogs do not preserve cross-type arrival order. A BAR for any selected
+    // portfolio member can submit orders, so its receipt tie with a close cannot
+    // be resolved by choosing an insertion order in the native replay vector.
+    let close_receipts = closes
+        .iter()
+        .map(|close| close.ts_init)
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        market
+            .series
+            .iter()
+            .flat_map(|series| &series.bars)
+            .all(|bar| !close_receipts.contains(&bar.ts_init)),
+        "POLYMARKET_CLOSE_BAR_RECEIPT_AMBIGUOUS"
+    );
+    // Sort by receipt time without inventing a cross-record arrival sequence.
     closes.sort_by_key(|c| c.ts_init);
     Ok(closes)
 }

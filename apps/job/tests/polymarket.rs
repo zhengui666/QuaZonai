@@ -152,6 +152,137 @@ fn native_price_dependent_commission_is_not_a_fixed_planning_coefficient() {
 }
 
 #[test]
+fn native_early_close_redeems_blocks_new_orders_and_rejects_ambiguous_receipts() {
+    use contracts::execution::NativeDatasetSelectionV1;
+    use nautilus_model::{
+        data::InstrumentClose,
+        enums::InstrumentCloseType,
+        instruments::InstrumentAny,
+        types::{Money, Price},
+    };
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use std::str::FromStr;
+
+    let (root, mut request) = simulation("0", None, 0);
+    let event = 8 * STEP;
+    let received = 9 * STEP;
+    let payouts = ["1.0000", "0.0000"];
+    request.settlements = prediction::settlement_groups(event, received, payouts);
+    prediction::settle(root.path(), event, received, payouts);
+    let data = job::catalog::load_catalog(root.path(), &request.selection).unwrap();
+    for series in &data.series {
+        let InstrumentAny::BinaryOption(binary) = &series.instrument else {
+            panic!("synthetic BinaryOption required");
+        };
+        assert_eq!(binary.expiration_ns.as_u64(), 18 * STEP);
+        assert!(received < binary.expiration_ns.as_u64());
+    }
+    let result = simulate(root.path(), &request).unwrap();
+    assert_eq!(result.summary["orders.open"], "0");
+    assert_eq!(result.summary["positions.open"], "0");
+    assert!((pnl(&result) - 100.0).abs() < 0.0001);
+    let redemptions = result.canonical_result["fills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| &value["event"]["Filled"])
+        .filter(|fill| fill["order_side"] == "SELL")
+        .collect::<Vec<_>>();
+    assert_eq!(redemptions.len(), 2);
+    for (id, payout) in IDS.iter().zip(payouts) {
+        let redemption = redemptions
+            .iter()
+            .find(|fill| fill["instrument_id"] == *id)
+            .unwrap();
+        assert_eq!(redemption["last_px"], payout);
+        assert_eq!(redemption["ts_event"], received.to_string());
+        assert_eq!(redemption["ts_init"], received.to_string());
+        assert_eq!(
+            Money::from_str(redemption["commission"].as_str().unwrap())
+                .unwrap()
+                .as_decimal(),
+            rust_decimal::Decimal::ZERO
+        );
+    }
+
+    // The only change from the successful replay is a real new native MARKET
+    // order after resolution receipt, still before the original scheduled expiry.
+    let mut after_close = request.clone();
+    let mut later = request.target_points[0].clone();
+    later.asof_ns = market::count(10 * STEP + 1);
+    later.targets[1].weight = "0".parse().unwrap();
+    later.cash_weight = "0.8".parse().unwrap();
+    assert!(later.asof_ns.get() > received);
+    assert_eq!(later.valid_until_ns.get(), 18 * STEP);
+    after_close.target_points.push(later);
+    let error = simulate(root.path(), &after_close).unwrap_err();
+    assert!(error.contains("NATIVE_TARGET_REPLAY_FAILED"), "{error}");
+    assert!(
+        error.contains(&format!(
+            "Market {} is CLOSED, cannot accept order ",
+            IDS[0]
+        )),
+        "{error}"
+    );
+
+    // Separate synthetic catalogs give only the chosen BAR a receipt tie with
+    // outcome 0's close. In the second case neither outcome ties its own BAR:
+    // only outcome 1's BAR can trigger portfolio orders at outcome 0's close.
+    for tied_series in 0..2 {
+        let tied = tempfile::tempdir().unwrap();
+        let catalog =
+            ParquetDataCatalog::from_uri(tied.path().to_str().unwrap(), None, None, None, None)
+                .unwrap();
+        let mut frozen = request.clone();
+        frozen.settlements[0].outcomes[0].ts_init = market::count(received + 1);
+        for (index, series) in data.series.iter().enumerate() {
+            catalog
+                .write_instruments(vec![series.instrument.clone()])
+                .unwrap();
+            let mut bars = series.bars.clone();
+            if index != tied_series {
+                bars.iter_mut()
+                    .find(|bar| bar.ts_event.as_u64() == received)
+                    .unwrap()
+                    .ts_init = (received + 2).into();
+            }
+            catalog.write_to_parquet(&bars, None, None, None).unwrap();
+        }
+        for (outcome, payout) in frozen.settlements[0].outcomes.iter().zip(payouts) {
+            let close = InstrumentClose::new(
+                outcome.instrument_id.parse().unwrap(),
+                Price::from(payout),
+                InstrumentCloseType::ContractExpired,
+                outcome.ts_event.get().into(),
+                outcome.ts_init.get().into(),
+            );
+            catalog
+                .write_to_parquet(&[close], None, None, None)
+                .unwrap();
+        }
+        let error = simulate(tied.path(), &frozen).unwrap_err();
+        assert!(
+            error.contains("POLYMARKET_CLOSE_BAR_RECEIPT_AMBIGUOUS"),
+            "tied series {tied_series}: {error}"
+        );
+        let selected = NativeDatasetSelectionV1 {
+            dataset_revision_id: contracts::Id::new(),
+            selection: frozen.selection,
+            settlements: frozen.settlements,
+        };
+        let error = job::catalog::measure_catalog(tied.path(), &selected, false)
+            .err()
+            .expect("ambiguous catalog measurement must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("POLYMARKET_CLOSE_BAR_RECEIPT_AMBIGUOUS"),
+            "tied series {tied_series}: {error:#}"
+        );
+    }
+}
+
+#[test]
 fn native_partial_fill_uses_actual_rounded_fee_within_the_frozen_bound() {
     use bigdecimal::BigDecimal;
     use nautilus_core::UUID4;
