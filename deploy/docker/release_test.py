@@ -472,6 +472,28 @@ class GitSelectionTests(unittest.TestCase):
         with patch.object(release, "api", return_value=[{"workflow_runs": [*runs, newer]}]):
             self.assertFalse(release.ci_ready("a" * 40))
 
+    def test_native_data_browser_is_an_exact_source_release_prerequisite(self):
+        required = ".github/workflows/native-data-browser.yml"
+        self.assertIn(required, release.CI_PATHS)
+        revision = "a" * 40
+        runs = [{"id": index, "path": path, "head_sha": revision, "status": "completed", "conclusion": "success"}
+                for index, path in enumerate(sorted(release.CI_PATHS - {required}), 1)]
+        new = {"id": 100, "path": required, "head_sha": revision, "status": "completed", "conclusion": "success"}
+        for candidate in (None, {**new, "head_sha": "b" * 40}, {**new, "status": "in_progress"},
+                          *({**new, "conclusion": value} for value in ("failure", "cancelled", "skipped", "timed_out"))):
+            with self.subTest(candidate=candidate), patch.object(release, "api", return_value=[{
+                    "workflow_runs": runs + ([candidate] if candidate else [])}]):
+                self.assertFalse(release.ci_ready(revision))
+        with patch.object(release, "api", return_value=[{"workflow_runs": [*runs, new]}]):
+            self.assertTrue(release.ci_ready(revision))
+        repository = Path(__file__).resolve().parents[2]
+        workflow = (repository / required).read_text()
+        self.assertIn("  pull_request:", workflow)
+        self.assertIn("    branches: [main, dev]", workflow)
+        self.assertNotIn("paths-ignore:", workflow)
+        self.assertNotIn("    paths:", workflow)
+        self.assertIn("Native data browser", (repository / ".github/workflows/release.yml").read_text())
+
     def test_published_version_cannot_move(self):
         existing = {"tag_name": "v1.0.0", "target_commitish": "a" * 40, "draft": False,
                     "assets": [{"name": x, "state": "uploaded", "size": 1} for x in release.asset_package().REQUIRED_ASSETS]}

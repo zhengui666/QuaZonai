@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 
 export type Fixture = {
   baseUrl: string; redactionsFile: string; password: string;
-  phase: 'before-restart' | 'after-restart' | 'data-admission';
+  phase: 'before-restart' | 'after-restart' | 'data-admission' | 'data-complete' | 'data-restored' | 'data-corrupt-admission' | 'data-corrupt-complete';
 };
 export function fixture(): Fixture {
   const path = process.env.QUAZONAI_WEB_E2E_FIXTURE;
@@ -15,7 +15,7 @@ export function fixture(): Fixture {
   const fields = value as Record<string, unknown>;
   if (typeof fields.baseUrl !== 'string' || fields.baseUrl !== process.env.QUAZONAI_WEB_E2E_ORIGIN
     || typeof fields.password !== 'string' || fields.password.length < 8
-    || !['before-restart', 'after-restart', 'data-admission'].includes(String(fields.phase))
+    || !['before-restart', 'after-restart', 'data-admission', 'data-complete', 'data-restored', 'data-corrupt-admission', 'data-corrupt-complete'].includes(String(fields.phase))
     || fields.redactionsFile !== resolve(dirname(path), 'redactions.jsonl')) {
     throw new Error('Private fixture fields do not match the test-owned runtime');
   }

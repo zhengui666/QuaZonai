@@ -28,6 +28,7 @@ npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 | Full Rust suite | `make check` | Real disposable dependencies; no production database |
 | Web and generated client | `make check-web` | No generated drift; types, tests and production build pass |
 | Browser/PWA | `CADDY_BIN=/path/to/caddy npm --prefix apps/web run test:e2e` | Real API, Worker, PostgreSQL, Caddy and systemd user manager; use the Web workflow setup |
+| Data acquisition/Worker/browser closure | [Native data browser workflow](../.github/workflows/native-data-browser.yml) | Original synthetic candle clocks, real preparation/registration/Worker/OCI, exact artifact downloads and restart identity; mandatory exact-source release gate |
 | Scientific/OCI boundaries | [Native Runtime workflow](../.github/workflows/native-runtime.yml) | Built native image, Docker/cgroup prerequisites, actual execution/cancellation/restore tests |
 | Container installer | [Container action](../.github/actions/container/action.yml) | Real installation, upgrade and recovery against disposable resources |
 

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Schema } from '../src/api';
 import { fixture, rememberPrivateValue } from './native-auth-support';
@@ -8,7 +8,7 @@ import { fixture, rememberPrivateValue } from './native-auth-support';
 const config = fixture();
 const root = dirname(config.redactionsFile);
 const checkpoint: { receipt: { resource: Schema['ProjectView'] } } = JSON.parse(readFileSync(resolve(root, 'restart-project.json'), 'utf8'));
-const peer: { credential: string; ca_pem: string; endpoint: string;
+const peer: { credential: string; ca_pem?: string; endpoint: string; mode?: 'native-execution';
   metadata: { registered_ref: string; storage_version: string; available_through: string; origin: string; pit_status: string };
 } = JSON.parse(readFileSync(resolve(root, 'native-data-peer.json'), 'utf8'));
 // This is the original browser session, retained by the real API restart phase.
@@ -26,19 +26,19 @@ test('registered fixture data freezes once and admits one original validation Ru
     expect(response.status(), path).toBe(expectedStatus);
     return await response.json() as { schema_version: 1; replayed: boolean; resource: T };
   }
-  // All initial domain objects use native authenticated HTTP. The TLS peer is
-  // deliberately synthetic transport evidence, never a production OCI Runtime.
+  // All objects use native authenticated HTTP. Ordinary admission retains its
+  // controlled TLS peer; explicit execution uses the actual loopback Runtime.
   const credential = await post<Schema['CredentialView']>('/api/v2/settings/credentials', {
     intent: { schema_version: 1, purpose: 'RUNTIME', label: 'Browser admission fixture' }, value: peer.credential,
   }, 201);
-  const ca = await post<Schema['CredentialView']>('/api/v2/settings/credentials', {
+  const ca = peer.mode === 'native-execution' ? undefined : await post<Schema['CredentialView']>('/api/v2/settings/credentials', {
     intent: { schema_version: 1, purpose: 'TLS_CA', label: 'Browser admission test CA' }, value: peer.ca_pem,
   }, 201);
   const runtimeName = 'Native browser admission Runtime';
   const runtime = await post<Schema['RuntimeView']>('/api/v2/integrations/runtimes', {
-    schema_version: 1, configuration: { name: runtimeName, endpoint: peer.endpoint, tls_policy: 'PINNED_CA',
-      allowed_capabilities: ['DATA_VALIDATE'], enabled: true, development_http: false },
-    credential_ref: credential.resource.id, ca_certificate_ref: ca.resource.id,
+    schema_version: 1, configuration: { name: runtimeName, endpoint: peer.endpoint, tls_policy: peer.mode === 'native-execution' ? 'SYSTEM_CA' : 'PINNED_CA',
+      allowed_capabilities: ['DATA_VALIDATE'], enabled: true, development_http: peer.mode === 'native-execution' },
+    credential_ref: credential.resource.id, ca_certificate_ref: ca?.resource.id ?? null,
   }, 201);
   const proof = await post<Schema['ArtifactView']>('/api/v2/artifacts', {
     schema_version: 1, project_id: project.id, kind: 'REPORT',
@@ -121,8 +121,12 @@ test('registered fixture data freezes once and admits one original validation Ru
   const validationEditor = page.getByRole('dialog', { name: '单独请求 DATA_VALIDATE', exact: true });
   await validationEditor.getByRole('combobox', { name: '确认实际数据 Runtime', exact: true }).click();
   await page.getByTitle(runtime.resource.id, { exact: true }).last().click();
-  await validationEditor.getByLabel('CPU 总秒数（精确整数）', { exact: true }).fill('10');
+  await validationEditor.getByLabel('CPU 总秒数（精确整数）', { exact: true }).fill(peer.mode === 'native-execution' ? '60' : '10');
   await validationEditor.getByLabel('输出上限（精确字节数，最多 64 MiB）', { exact: true }).fill('65536');
+  if (peer.mode === 'native-execution') {
+    await validationEditor.getByLabel('内存上限（MiB）', { exact: true }).fill('1024');
+    await validationEditor.getByLabel('墙钟时间上限（秒）', { exact: true }).fill('120');
+  }
   await expect(validationEditor.getByRole('button', { name: '确认排队数据验证', exact: true })).toBeEnabled();
   await validationEditor.getByRole('button', { name: '确认排队数据验证', exact: true }).click();
   await expect(validationEditor.getByText(/提交结果未知：原请求和幂等键已锁定/)).toBeVisible();
@@ -134,6 +138,14 @@ test('registered fixture data freezes once and admits one original validation Ru
   expect(admitted!.resource.kind).toBe('DATA_VALIDATE');
   expect(admitted!.resource.state).toBe('QUEUED');
   expect(admitted!.resource.input_set_id).toBe(inputId);
+  // Explicit refresh while pending is a read, never a second validation command.
+  await page.getByRole('button', { name: '刷新所选运行产物', exact: true }).click();
+  await expect(page.getByText('当前运行尚未成功；这里的产物不作为已通过的数据质量结论。', { exact: true })).toBeVisible();
+  expect(validation).toHaveLength(2);
+  if (peer.mode === 'native-execution') writeFileSync(resolve(root, 'native-data-admission.json'), JSON.stringify({
+    project, runtime: runtime.resource, dataset: dataset.resource, frozen, admitted,
+    creation: creation[0], validation: validation[0],
+  }), { mode: 0o600 });
   await page.getByRole('button', { name: '打开所选运行详情与取消', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText(admitted!.resource.id);
   // A fresh page recovers the same immutable input from the service, not a
@@ -149,4 +161,5 @@ test('registered fixture data freezes once and admits one original validation Ru
   const unchanged: Schema['DatasetView'] = await registered.json();
   expect(unchanged.origin).toBe('FIXTURE');
   expect(unchanged.pit_status).toBe('UNVERIFIED');
+  expect(validation).toHaveLength(2);
 });
