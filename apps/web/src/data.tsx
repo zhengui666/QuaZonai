@@ -1,4 +1,4 @@
-import { Alert, App, Button, Card, DatePicker, Descriptions, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, DatePicker, Descriptions, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import type { Dayjs } from 'dayjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
@@ -6,6 +6,7 @@ import { api, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useGuard, useOnline } from './ui';
 import { ResourceSelect } from './resource-select';
+import { useDialogClose } from './dialog-close';
 import { validateNativeCatalogKey } from '@quazonai/web/response-contract';
 
 type Source = Schema['DataSourceView'];
@@ -60,7 +61,7 @@ function EvidenceSelect({ value, onChange }: { value?: string; onChange?: (id: s
 function SourceDialog({ source, close }: { source?: Source; close: () => void }) {
   type Values = { name: string; runtime_id: string; native_catalog_ref: string; enabled: boolean };
   const [form] = Form.useForm<Values>(); const intent = useRef(new Intent());
-  const online = useOnline(); const refresh = useDataRefresh(); const { modal } = App.useApp();
+  const online = useOnline(); const refresh = useDataRefresh();
   const mutation = useMutation({ mutationFn: async (values: Values) => {
     if (source) {
       const body: Schema['DataSourceUpdate'] = { schema_version: 1, expected_revision: source.revision, name: values.name, enabled: values.enabled };
@@ -70,13 +71,9 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
     return dataOf(await api.POST('/api/v2/data/sources', { body, params: { header: intent.current.headers('POST','/api/v2/data/sources',body) } }));
   }, onSuccess: async () => { await refresh(); close(); } });
   useGuard(true);
-  function cancel() {
-    if (mutation.isPending) return;
-    if (form.isFieldsTouched()) modal.confirm({ title: '放弃未保存的数据源配置？', content: '已发送的请求不会因此撤销。', okText: '确认放弃', cancelText: '继续编辑', onOk: close });
-    else close();
-  }
+  const cancel = useDialogClose({ pending: mutation.isPending, failed: mutation.isError, dirty: () => form.isFieldsTouched(), close });
   return <Modal open title={source ? '修改数据源显示与启用状态' : '登记数据源'} onCancel={cancel} destroyOnHidden
-    okText={source ? '保存修改' : '登记'} cancelText="返回" confirmLoading={mutation.isPending} closable={!mutation.isPending} maskClosable={false}
+    okText={source ? '保存修改' : '登记'} cancelText="返回" confirmLoading={mutation.isPending} cancelButtonProps={{ disabled: mutation.isPending }} closable={!mutation.isPending} maskClosable={false}
     okButtonProps={{ disabled: !online, 'aria-label': source ? '保存修改' : '登记', 'aria-busy': mutation.isPending }} onOk={() => { if (online && !mutation.isPending) form.submit(); }}>
     <Form form={form} layout="vertical" initialValues={source ? { name: source.name, enabled: source.enabled } : { enabled: true }}
       disabled={mutation.isPending || !online} onFinish={values => mutation.mutate(values)}>
@@ -106,9 +103,10 @@ function GrantDialog({ source, close }: { source: Source; close: () => void }) {
       header: intent.current.headers('POST',`/api/v2/data/sources/${source.id}/grants`,body) } }));
   }, onSuccess: async () => { await refresh(); close(); } });
   useGuard(true);
+  const cancel = useDialogClose({ pending: mutation.isPending, failed: mutation.isError, dirty: () => form.isFieldsTouched(), close });
   return <Modal open title={`授权数据用途：${source.name}`} maskClosable={false} closable={!mutation.isPending}
-    onCancel={() => { if (!mutation.isPending) close(); }} onOk={() => { if (online && !mutation.isPending) form.submit(); }}
-    okText="确认登记不可变授权" cancelText="返回" confirmLoading={mutation.isPending} okButtonProps={{ disabled: !online }}>
+    onCancel={cancel} onOk={() => { if (online && !mutation.isPending) form.submit(); }}
+    okText="确认登记不可变授权" cancelText="返回" confirmLoading={mutation.isPending} cancelButtonProps={{ disabled: mutation.isPending }} okButtonProps={{ disabled: !online }}>
     
     <Form form={form} layout="vertical" initialValues={{ allowed_uses: 'RESEARCH' }} disabled={mutation.isPending || !online} onFinish={values => mutation.mutate(values)}>
       <Form.Item name="license_reference" label="许可出处或合同编号" rules={[required, { max: 2000, whitespace: true }]}><Input.TextArea rows={3} maxLength={2000} /></Form.Item>
@@ -133,9 +131,10 @@ function RevokeDialog({ grant, close }: { grant: Grant; close: () => void }) {
       header: intent.current.headers('POST',`/api/v2/data/grants/${grant.id}/revoke`,body) } }));
   }, onSuccess: async () => { await refresh(); close(); } });
   useGuard(true);
-  return <Modal open title="撤销这份数据授权？" maskClosable={false} closable={!mutation.isPending} confirmLoading={mutation.isPending}
+  const cancel = useDialogClose({ pending: mutation.isPending, failed: mutation.isError, dirty: () => form.isFieldsTouched(), close });
+  return <Modal open title="撤销这份数据授权？" maskClosable={false} closable={!mutation.isPending} confirmLoading={mutation.isPending} cancelButtonProps={{ disabled: mutation.isPending }}
     okText="确认追加撤销记录" cancelText="返回" okButtonProps={{ danger: true, disabled: !online }}
-    onCancel={() => { if (!mutation.isPending) close(); }} onOk={() => { if (online && !mutation.isPending) form.submit(); }}>
+    onCancel={cancel} onOk={() => { if (online && !mutation.isPending) form.submit(); }}>
     <Typography.Paragraph>授权版本 {grant.version} · {grant.license_reference}</Typography.Paragraph>
     <Alert type="warning" showIcon title="确认撤销数据授权？" />
     <Form form={form} layout="vertical" initialValues={{ reason_code: 'OPERATOR_REVOKED' }} disabled={mutation.isPending || !online} onFinish={values => mutation.mutate(values)}>
@@ -157,9 +156,10 @@ function RegisterDialog({ source, runtimeRevision, close }: { source: Source; ru
     return dataOf(await api.POST('/api/v2/data/revisions', { body, params: { header: intent.current.headers('POST','/api/v2/data/revisions',body) } }));
   }, onSuccess: async () => { await refresh(); close(); } });
   useGuard(true);
+  const cancel = useDialogClose({ pending: mutation.isPending, failed: mutation.isError, dirty: () => form.isFieldsTouched(), close });
   return <Modal open title={`读取并登记原生数据：${source.name}`} maskClosable={false} closable={!mutation.isPending}
-    okText="读取真实元数据并登记" cancelText="返回" confirmLoading={mutation.isPending} okButtonProps={{ disabled: !online }}
-    onCancel={() => { if (!mutation.isPending) close(); }} onOk={() => { if (online && !mutation.isPending) form.submit(); }}>
+    okText="读取真实元数据并登记" cancelText="返回" confirmLoading={mutation.isPending} cancelButtonProps={{ disabled: mutation.isPending }} okButtonProps={{ disabled: !online }}
+    onCancel={cancel} onOk={() => { if (online && !mutation.isPending) form.submit(); }}>
     
     <Form form={form} layout="vertical" disabled={mutation.isPending || !online} onFinish={values => mutation.mutate(values)}>
       <Form.Item name="grant_id" label="适用数据授权" rules={[required]}><ResourceSelect label="选择当前有效的授权" queryKey={['data','grant-options',source.id]}
