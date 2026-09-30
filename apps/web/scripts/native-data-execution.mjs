@@ -1,8 +1,9 @@
 /** Test-only production Runtime orchestration. No domain rows are written here. */
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { lstat, readFile, readdir, writeFile } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
+import { constants } from 'node:fs';
+import { lstat, open, readFile, realpath, writeFile } from 'node:fs/promises';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const digest = /^sha256:[0-9a-f]{64}$/;
@@ -167,17 +168,49 @@ export class NativeDataExecution {
     return { instance_id: journal.instance_id, containers: observations };
   }
   async corrupt() {
-    const paths = [];
-    const walk = async directory => {
-      for (const entry of await readdir(directory, { withFileTypes: true })) {
-        const path = resolve(directory, entry.name);
-        if (entry.isDirectory()) await walk(path);
-        else if (entry.isFile() && path.endsWith('.parquet') && path.includes('/bar/')) paths.push(path);
-      }
-    };
-    await walk(this.prepared.catalog_root);
-    assert.equal(paths.length, 1, 'Exactly one native candle partition must be corrupted');
-    await writeFile(paths[0], Buffer.from('explicit test-owned corrupt native parquet'));
+    // The fixture emits native BAR discovery after verifying the original rows.
+    // These are stable harness-owned directories, not a hostile-filesystem sandbox.
+    const root = resolve(this.root, 'native-source/prepared/catalog');
+    assert.equal(this.prepared.catalog_root, root, 'Corruption is scoped to the invocation-owned catalog');
+    assert.ok((await lstat(root)).isDirectory(), 'Native catalog must be a directory, not a symlink');
+    assert.equal(await realpath(root), root, 'Native catalog root must be canonical without symlinks');
+    const partitions = this.prepared.native_partitions;
+    assert.ok(Array.isArray(partitions), 'Native fixture partition manifest required');
+    assert.equal(partitions.length, 1, 'Exactly one native candle partition must be corrupted');
+    const partition = partitions[0];
+    assert.equal(partition?.data_kind, 'BAR', 'Only a discovered native BAR partition may be corrupted');
+    assert.deepEqual(this.prepared.selection.selection.bar_types, [partition.bar_type]);
+    assert.equal(typeof partition.relative_path, 'string');
+    assert.ok(!isAbsolute(partition.relative_path) && !partition.relative_path.includes('\\')
+      && partition.relative_path.split('/').every(part => part && part !== '.' && part !== '..'),
+    'Native partition path must be canonical and relative');
+    const path = resolve(root, partition.relative_path);
+    assert.equal(relative(root, path), partition.relative_path, 'Native partition must be inside the exact catalog root');
+    assert.equal(await realpath(path), path, 'Native partition must not traverse symlinks');
+    assert.ok((await lstat(path)).isFile(), 'Native partition must be a regular file');
+    assert.ok(Number.isSafeInteger(partition.size_bytes) && partition.size_bytes > 0, 'Native partition byte count required');
+    assert.match(partition.sha256, /^[0-9a-f]{64}$/, 'Native partition SHA256 required');
+    const file = await open(path, constants.O_RDWR | constants.O_NOFOLLOW);
+    try {
+      const stat = await file.stat();
+      assert.ok(stat.isFile() && stat.nlink === 1, 'Native partition must be a regular file without shared hard links');
+      assert.equal(stat.size, partition.size_bytes, 'Native partition byte count changed');
+      const before = await file.readFile();
+      assert.equal(before.length, partition.size_bytes, 'Native partition byte count changed');
+      const beforeHash = createHash('sha256').update(before).digest('hex');
+      assert.equal(beforeHash, partition.sha256, 'Native partition SHA256 changed');
+      const corrupt = Buffer.from('explicit test-owned corrupt native parquet');
+      const afterHash = createHash('sha256').update(corrupt).digest('hex');
+      assert.notEqual(beforeHash, afterHash, 'Corruption must change the native partition bytes');
+      const { bytesWritten } = await file.write(corrupt, 0, corrupt.length, 0);
+      assert.equal(bytesWritten, corrupt.length);
+      await file.truncate(corrupt.length);
+      const after = await readFile(path);
+      assert.deepEqual(after, corrupt);
+      assert.equal(createHash('sha256').update(after).digest('hex'), afterHash);
+      this.evidence.corruption = { ...partition, before_sha256: beforeHash, after_sha256: afterHash,
+        before_size_bytes: before.length, after_size_bytes: after.length };
+    } finally { await file.close(); }
   }
   // Called only after the shipped Worker and every owned Runtime process stopped.
   // A create ACK may be lost before container_id was persisted: reconcile exact

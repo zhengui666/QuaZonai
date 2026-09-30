@@ -63,6 +63,13 @@ snapshot against all same-shape host rewrites. Do not broaden that claim.
 - `apps/job/examples/browser_catalog_fixture.rs` executes the real plugin and
   native preparation, then reads the prepared Parquet back and checks each
   original candle, receipt clock, instrument definition and metadata hash.
+  Its test-only partition manifest comes from the pinned native catalog's BAR
+  discovery and verified series filter, requiring exactly one regular owned
+  file. Corruption consumes that descriptor, checks canonical root containment,
+  kind, series, size and SHA256, rejects symlinks/shared hard links, and records
+  actual before/after hashes. It never guesses directory names or selects
+  instrument definitions. This assumes stable harness-owned directories, not a
+  hostile-filesystem sandbox.
 - `QUAZONAI_WEB_DATA_MODE=native-execution` explicitly enables the actual Runtime
   path in the existing browser harness. The default remains TLS admission only.
   The original auth, native idle-Worker restart, API restart, accessibility and
@@ -116,3 +123,21 @@ The added cost is one serial Ubuntu job with a 45-minute ceiling, no paid model
 inference and no broad image matrix. Actual hosted duration/cost is not yet
 measured; elapsed runtime is not a billing estimate.
 
+Follow-up evidence on 2026-09-30:
+
+- Hosted [run 36790023072](https://github.com/zhengui666/QuaZonai/actions/runs/36790023072)
+  at `fdeaab69c659d622cbf390aad1ce695e817df6c7` passed actual preparation,
+  freeze/admission, Worker/OCI success, exact artifact download/retry checks and
+  API/Runtime restart with the same Run/container. It then stopped in corruption
+  setup because the hardcoded `/bar/` path matched no native partition; no
+  corruption or negative Run was attempted on that Head.
+- The descriptor correction passed 50 Node ownership/control-flow tests,
+  scoped Rust formatting, warnings-denied example Clippy and the example build.
+  An actual local native fixture discovered one 2,214-byte BAR partition with
+  the original three rows/clocks. The real helper changed only this partition to
+  the existing 42-byte corrupt payload; native preparation/readback succeeded
+  before and failed afterward. The 6,643-byte instrument Parquet stayed
+  byte-identical. No Docker, loopback or browser acceptance was run locally.
+- The mandatory failed-OCI/no-quality-artifact proof and all other final-Head
+  hosted checks remain required. Local byte/readback checks do not establish
+  that end-to-end negative result.
