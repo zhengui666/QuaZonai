@@ -1,7 +1,7 @@
 import { App, Grid, Select, Space, Tabs, Typography } from 'antd';
 import { useContext, useState } from 'react';
 import { GuardContext } from './ui';
-import { DataManagement } from './data';
+import { DataWorkbench } from './data-workbench';
 import { IntegrationManagement } from './integrations';
 import { CodexSettings } from './codex';
 import { MigrationManagement } from './migrations';
@@ -30,6 +30,6 @@ export function Settings() {
     {screens.md ? <Tabs activeKey={tab} onChange={changeTab} items={categories} />
       : <Select aria-label="设置类别" className="full-width" virtual={false} value={tab} onChange={changeTab}
         options={categories.map(({ key, label }) => ({ value: key, label }))} />}
-    {tab === 'codex' ? <CodexSettings /> : tab === 'auth' ? <AuthenticationSettings /> : tab === 'integrations' ? <IntegrationManagement /> : tab === 'migrations' ? <MigrationManagement /> : <DataManagement />}
+    {tab === 'codex' ? <CodexSettings /> : tab === 'auth' ? <AuthenticationSettings /> : tab === 'integrations' ? <IntegrationManagement /> : tab === 'migrations' ? <MigrationManagement /> : <DataWorkbench />}
   </Space>;
 }
