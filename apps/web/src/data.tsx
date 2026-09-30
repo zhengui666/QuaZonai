@@ -7,7 +7,7 @@ import type { Schema } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useGuard, useOnline } from './ui';
 import { ResourceSelect } from './resource-select';
 import { useDialogClose } from './dialog-close';
-import { validateNativeCatalogKey } from '@quazonai/web/response-contract';
+import { validateNativeCatalogKey } from '@quazonai/web/response-contract/catalog-key';
 
 type Source = Schema['DataSourceView'];
 type Grant = Schema['DataGrantView'];

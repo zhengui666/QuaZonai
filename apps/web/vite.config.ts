@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import responseOptimizer from './src/generated/response-contract/optimizer.json';
 
 // Tooling-only origin: never injected into the browser bundle. Native browser
 // tests allocate their own backend port instead of stopping an existing server.
@@ -19,7 +20,7 @@ const proxy = {
 export default defineConfig({
   // This same-origin UI has no browser secrets or .env-based backend settings.
   envDir: false,
-  optimizeDeps: { include: ['@quazonai/web/response-contract'] },
+  optimizeDeps: { include: responseOptimizer.include },
   plugins: [
     react(),
     VitePWA({
@@ -57,14 +58,14 @@ export default defineConfig({
     proxy,
   },
   preview: { host: '127.0.0.1', strictPort: true, proxy },
-  build: { target: ['es2022', 'safari16'], sourcemap: false,
-    commonjsOptions: { include: [/node_modules/, /generated\/responses\.cjs$/] },
+  build: { manifest: true, target: ['es2022', 'safari16'], sourcemap: false,
+    commonjsOptions: { include: [/node_modules/, /generated\/(responses\.cjs|response-contract\/.*\.cjs)$/] },
     // Keep the lazy chart engine separate from initial UI dependencies. Native
     // Rollup chunks remain static build assets in the existing PWA precache.
     rollupOptions: { output: {
       manualChunks(id) {
         if (/\/node_modules\/(echarts|zrender|echarts-for-react|size-sensor)\//.test(id)) return 'charts';
-        return id.includes('/node_modules/') ? 'vendor' : id.includes('/generated/responses.cjs') ? 'contracts' : undefined;
+        return id.includes('/node_modules/') ? 'vendor' : undefined;
       },
     } },
   },

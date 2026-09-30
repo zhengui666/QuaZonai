@@ -4,7 +4,16 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./response-contract": "./src/generated/responses.cjs"
+    "./response-contract": "./src/generated/responses.cjs",
+    "./response-contract/cost-currency": "./src/generated/response-contract/cost-currency.cjs",
+    "./response-contract/base-currency": "./src/generated/response-contract/base-currency.cjs",
+    "./response-contract/problem": "./src/generated/response-contract/problem.cjs",
+    "./response-contract/decimal": "./src/generated/response-contract/decimal.cjs",
+    "./response-contract/cost-amount": "./src/generated/response-contract/cost-amount.cjs",
+    "./response-contract/catalog-key": "./src/generated/response-contract/catalog-key.cjs",
+    "./response-contract/metadata": "./src/generated/response-contract/metadata.cjs",
+    "./response-contract/lazy": "./src/generated/response-contract/lazy.mjs",
+    "./response-contract/modules/*": "./src/generated/response-contract/modules/*.cjs"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -17,7 +26,10 @@
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "test": "vitest run",
     "test:auth-ui": "playwright test --config playwright.auth.config.ts",
-    "test:e2e": "node --test scripts/native-cleanup.test.mjs && node scripts/native-browser.mjs"
+    "test:e2e": "node --test scripts/native-cleanup.test.mjs && node scripts/native-browser.mjs",
+    "check:generated": "node scripts/generate-validators.mjs --check --require-tracked",
+    "test:validator-adapter": "node --test scripts/validator-*.test.mjs scripts/response-loader.test.mjs",
+    "test:validator-ui": "playwright test --config playwright.validators.config.ts"
   },
   "dependencies": {
     "@ant-design/icons": "6.3.1",
