@@ -44,3 +44,17 @@ jobs:
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- capture --help
           cargo run --locked -q -p job --features catalog-prepare --bin catalog-prepare -- --help
           git diff --exit-code
+      - name: Record checked operator binaries
+        run: |
+          set -euo pipefail
+          mkdir operator-native
+          cp target/debug/polymarket-history target/debug/catalog-prepare operator-native/
+          git rev-parse HEAD > operator-native/SOURCE_HEAD
+          sha256sum Cargo.lock > operator-native/CARGO_LOCK_SHA256
+          (cd operator-native && sha256sum polymarket-history catalog-prepare > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-data-tools-${{ env.EXPECTED_HEAD }}
+          path: operator-native/
+          if-no-files-found: error
+          retention-days: 7

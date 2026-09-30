@@ -42,6 +42,7 @@ async function setup(page: Page, ready = false) {
     const reply = (json: unknown, status = 200) => route.fulfill({ status, body: JSON.stringify(json), contentType: 'application/json' });
     if (path === '/api/v2/auth/status') return reply({ schema_version: 1, setup_required: false });
     if (path === '/api/v2/auth/session') return reply({ schema_version: 1, authenticated_at: now, expires_at: new Date(Date.now() + 43_200_000).toISOString() });
+    if (path === '/api/v2/auth/cli/devices') return reply([]);
     if (path === '/api/v2/projects') return reply({ schema_version: 1, items: [], next_cursor: null });
     if (path === '/api/v2/settings/codex') return reply({ schema_version: 1, items: profiles, next_cursor: null });
     const current = profiles.find(item => path === `/api/v2/settings/codex/${item.id}`);
@@ -91,6 +92,75 @@ async function setup(page: Page, ready = false) {
   await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeEnabled();
   return { state, open, profiles };
 }
+
+test('pending status probes allow navigation while account login remains guarded', async ({ page }) => {
+  test.setTimeout(60_000);
+  for (const mode of ['auto', 'manual'] as const) {
+    for (const destination of ['auth', 'role', 'menu'] as const) {
+      const { state, open } = await setup(page, true);
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      let response: Promise<void> | undefined;
+      const pattern = '**/api/v2/codex/probe';
+      await page.route(pattern, route => {
+        response = (async () => { await held; await route.fallback(); })();
+        return response;
+      });
+      const started = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === '/api/v2/codex/probe');
+      try {
+        if (mode === 'auto') { state.stale = true; await open(); }
+        else await page.getByRole('button', { name: '刷新', exact: true }).click();
+        await started;
+        await expect(page.getByRole('button', { name: '模型设置', exact: true })).toBeDisabled();
+        if (destination === 'auth') {
+          await page.getByRole('tab', { name: '鉴权管理', exact: true }).click();
+          await expect(page.getByRole('heading', { name: '鉴权管理', exact: true })).toBeVisible();
+        } else if (destination === 'role') {
+          state.stale = false;
+          const roles = page.getByRole('combobox', { name: 'Codex 角色' });
+          await expect(roles).toBeEnabled(); await roles.click();
+          await page.getByText('独立审阅员', { exact: true }).last().click();
+          await expect(page.getByRole('button', { name: '模型设置', exact: true })).toBeEnabled();
+        } else {
+          await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+          await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+        }
+        await expect(page.getByText('请先保存或取消更改', { exact: true })).toHaveCount(0);
+        await expect(page.getByRole('dialog')).toHaveCount(0);
+        expect(state.starts).toHaveLength(0); expect(state.cancels).toHaveLength(0); expect(state.saves).toHaveLength(0);
+      } finally {
+        release(); if (response) await response; await page.unroute(pattern);
+      }
+    }
+  }
+  const { state } = await setup(page);
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let response: Promise<void> | undefined;
+  const pattern = '**/api/v2/codex/login/start';
+  await page.route(pattern, route => {
+    response = (async () => { await held; await route.fallback(); })();
+    return response;
+  });
+  const started = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === '/api/v2/codex/login/start');
+  try {
+    await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
+    await started;
+    await expect(page.getByRole('combobox', { name: 'Codex 角色' })).toBeDisabled();
+    await page.getByRole('tab', { name: '鉴权管理', exact: true }).click();
+    await expect(page.getByText('请先保存或取消更改', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '鉴权管理', exact: true })).toHaveCount(0);
+    await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '放弃未保存的更改？', exact: true });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: '继续编辑', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+  } finally {
+    release(); if (response) await response; await page.unroute(pattern);
+  }
+  await expect(page.getByLabel('ChatGPT 授权码')).toHaveText('TEST-ONLY');
+  expect(state.starts).toHaveLength(1);
+});
 
 test('one shared account keeps model, reasoning and speed independent for each role', async ({ page }, testInfo) => {
   const { state, open, profiles } = await setup(page, true);
