@@ -1935,41 +1935,59 @@ async fn isolated_probe(
         .build();
     let created = docker.create_container(Some(options), body).await.unwrap();
     docker.start_container(&created.id, None).await.unwrap();
+    if mode == "memory" {
+        fs::write(input.join("memory-start"), b"started").unwrap();
+    }
     let outcome = tokio::time::timeout(Duration::from_secs(15), async {
-        let mut observed_terminal = None;
+        let mut observed = None;
+        let mut memory_released = false;
         loop {
             let current = docker.inspect_container(&created.id, None).await.unwrap();
             let state = current.state.as_ref().unwrap();
+            let snapshot = (state.running, state.exit_code, state.oom_killed);
+            if observed != Some(snapshot) {
+                let limits = current.host_config.as_ref().unwrap();
+                // Native scalar evidence only; no credentials, paths or environment.
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "scope": "test-owned native resource probe",
+                        "mode": mode,
+                        "running": state.running,
+                        "exit_code": state.exit_code,
+                        "oom_killed": state.oom_killed,
+                        "memory": limits.memory,
+                        "memory_swap": limits.memory_swap,
+                        "pids_limit": limits.pids_limit
+                    })
+                );
+                observed = Some(snapshot);
+            }
+            if mode == "memory"
+                && !memory_released
+                && state.oom_killed == Some(true)
+                && output.join("memory-verified").is_file()
+            {
+                fs::write(input.join("memory-observed"), b"observed").unwrap();
+                memory_released = true;
+            }
             if state.running == Some(false) {
-                let snapshot = (state.exit_code, state.oom_killed);
-                if observed_terminal != Some(snapshot) {
-                    let limits = current.host_config.as_ref().unwrap();
-                    // Native scalar evidence only; no credentials, paths or environment.
-                    println!(
-                        "{}",
-                        serde_json::json!({
-                            "scope": "test-owned native resource probe",
-                            "mode": mode,
-                            "running": state.running,
-                            "exit_code": state.exit_code,
-                            "oom_killed": state.oom_killed,
-                            "memory": limits.memory,
-                            "memory_swap": limits.memory_swap,
-                            "pids_limit": limits.pids_limit
-                        })
-                    );
-                    observed_terminal = Some(snapshot);
-                }
-                // Docker processes exit and OOM events separately. Do not delete
-                // the memory probe before observing both required facts.
-                if mode != "memory" || state.oom_killed == Some(true) {
-                    return current;
-                }
+                return current;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     })
     .await;
+    if mode == "memory" {
+        println!(
+            "{}",
+            serde_json::json!({
+                "scope": "test-owned native memory kernel evidence",
+                "evidence": fs::read_to_string(output.join("memory-evidence")).ok(),
+                "deadline_elapsed": outcome.is_err(),
+            })
+        );
+    }
     let cleanup = RemoveContainerOptionsBuilder::default()
         .force(true)
         .v(true)
@@ -1994,10 +2012,14 @@ async fn actual_native_namespaces_forbid_secret_socket_network_root_input_writes
 
 #[tokio::test]
 async fn actual_native_memory_pids_and_file_size_limits_are_enforced_by_the_kernel() {
-    let (memory, _) = isolated_probe("memory").await;
+    let (memory, directory) = isolated_probe("memory").await;
     let state = memory.state.unwrap();
     assert_eq!(state.oom_killed, Some(true));
-    assert_ne!(state.exit_code, Some(0));
+    assert_eq!(state.exit_code, Some(1));
+    assert_eq!(
+        fs::read(directory.path().join("output/memory-verified")).unwrap(),
+        b"native cgroup memory limit killed the pressure child"
+    );
     let (pids, directory) = isolated_probe("pids").await;
     assert_eq!(pids.state.unwrap().exit_code, Some(0));
     let children: u32 = fs::read_to_string(directory.path().join("output/pids-verified"))

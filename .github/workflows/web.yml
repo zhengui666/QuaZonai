@@ -83,16 +83,23 @@ jobs:
           node --test scripts/native-user-services.test.mjs
       - name: Verify generated client and runtime validators
         run: |
+          npm --ignore-scripts run check:generated
+          npm --ignore-scripts run test:validator-adapter
           npm --ignore-scripts run generate
           git diff --exit-code -- src/generated/
+          test -z "$(git ls-files --others --exclude-standard -- src/generated/)"
       - name: Typecheck and unit tests
         run: |
           npm --ignore-scripts run typecheck
           npm --ignore-scripts run test
       - name: Build production static assets
         run: node node_modules/vite/bin/vite.js build
+      - name: Verify complete lazy asset precache and startup closure
+        run: node scripts/measure-validator-build.mjs --assert-modular
       - name: Install Chromium and native browser dependencies
         run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Normal dev and production validator loading
+        run: npm --ignore-scripts run test:validator-ui
       - name: ChatGPT browser interaction contracts (synthetic, no OAuth account)
         run: npm --ignore-scripts run test:auth-ui
       # Frontend contracts and synthetic interactions do not depend on the native
@@ -103,7 +110,7 @@ jobs:
           set -euo pipefail
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
           rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv
-          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p server --bin server
+          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p server --bin server --example browser_data_fixture
           rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -q -p server -- openapi > /tmp/web-http.openapi.json
           diff -u contracts/generated/api-v2.openapi.json /tmp/web-http.openapi.json
       - name: Prepare the pinned native production gateway
@@ -131,7 +138,10 @@ jobs:
           CADDY_BIN: ${{ runner.temp }}/caddy
         run: npm --ignore-scripts run test:e2e
       - name: Require unchanged generated and handwritten source
-        run: git diff --exit-code
+        run: |
+          npm --ignore-scripts run check:generated
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard -- src/generated/)"
       - name: Preserve sanitized native acceptance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

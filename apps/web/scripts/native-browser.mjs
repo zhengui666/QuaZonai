@@ -19,6 +19,8 @@ const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(web, '../..');
 const report = resolve(process.env.QUAZONAI_WEB_TEST_REPORT_DIR ?? resolve(web, 'test-results/native-summary'));
 const binary = resolve(process.env.QUAZONAI_WEB_TEST_BIN ?? resolve(repo, 'target/debug/server'));
+const dataFixtureBinary = resolve(process.env.QUAZONAI_WEB_DATA_FIXTURE_BIN
+  ?? resolve(repo, 'target/debug/examples/browser_data_fixture'));
 const psql = process.env.QUAZONAI_WEB_TEST_PSQL ?? 'psql';
 const caddy = process.env.CADDY_BIN ? resolve(process.env.CADDY_BIN) : 'caddy';
 // Child processes receive only tooling essentials, never the administrator URL,
@@ -191,8 +193,13 @@ function cleanup(graceful) {
       try {
         terminate(service, 'SIGTERM');
         const force = setTimeout(() => terminate(service, 'SIGKILL'), 5_000);
-        await service.done;
+        const stopped = await service.done;
         clearTimeout(force);
+        if (graceful && service.expectedStopExitCode !== undefined && stopped.code !== service.expectedStopExitCode) {
+          // The process is confirmed dead: fail acceptance but still remove
+          // its owned database/role under the existing failure-retention policy.
+          failure ??= new Error('Test peer did not complete graceful native cleanup');
+        }
         await writeFile(resolve(report, `${service.name}.log`), diagnosticsSafe
           ? redact(service.stdout + service.stderr)
           : 'Diagnostics withheld: private redaction manifest unavailable.\n', { mode: 0o600 });
@@ -296,6 +303,33 @@ async function main() {
   await run('caddy-version', caddy, ['version'], { env: gatewayEnv, timeout: 10_000 });
   await run('caddy-validate', caddy, ['validate', '--config', gatewayConfig, '--adapter', 'caddyfile'],
     { env: gatewayEnv, timeout: 10_000 });
+  // Controlled test transport only. The typed Rust fixture owns its schemas;
+  // the browser will create all domain resources through authenticated APIs.
+  const dataFixturePath = resolve(privateDir, 'native-data-peer.json');
+  // Reused native fixture TLS keys stay within this harness's verified cleanup
+  // root even if startup is interrupted before signal handlers are installed.
+  const dataPeer = launch(dataFixtureBinary, [dataFixturePath], { env: { ...childEnv, TMPDIR: privateDir } });
+  dataPeer.name = 'native-data-peer'; dataPeer.expectedStopExitCode = 0; services.push(dataPeer);
+  const dataPeerDeadline = Date.now() + 30_000;
+  let dataFixture;
+  while (Date.now() < dataPeerDeadline && !stopping) {
+    if (dataPeer.exited) throw new Error('Controlled data peer exited before publication');
+    try {
+      const bytes = await readFile(dataFixturePath);
+      if (bytes.length > 1024 * 1024) throw new Error('Controlled data peer publication too large');
+      dataFixture = JSON.parse(bytes.toString('utf8'));
+      break;
+    } catch (error) {
+      if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+      await new Promise((fulfil) => setTimeout(fulfil, 50));
+    }
+  }
+  if (dataFixture?.schema_version !== 1 || !Array.isArray(dataFixture.runtime_targets)
+    || dataFixture.runtime_targets.length !== 1 || typeof dataFixture.credential !== 'string'
+    || dataFixture.metadata?.origin !== 'FIXTURE' || dataFixture.metadata?.pit_status !== 'UNVERIFIED') {
+    throw new Error('Controlled data peer did not publish its explicit fixture contract');
+  }
+  privateValues.add(dataFixture.credential);
   userServices = new NativeUserServices({
     repo, root: privateDir, release, binary: installedBinary, run, env: childEnv,
     interrupted: () => stopping,
@@ -306,7 +340,7 @@ async function main() {
     // An explicit unavailable deployment prevents discovery of the host owner's
     // native Codex account during browser login fault-injection tests.
     CODEX_IMAGE: 'quazonai-web-test-unavailable:missing',
-    RUNTIME_TARGETS: '[]', DOWNSTREAM_TARGETS: '[]', RUST_LOG: 'warn',
+    RUNTIME_TARGETS: JSON.stringify(dataFixture.runtime_targets), DOWNSTREAM_TARGETS: '[]', RUST_LOG: 'warn',
   });
   const first = await userServices.start('api');
   const firstWorker = await userServices.start('worker');
@@ -318,10 +352,10 @@ async function main() {
   const fixture = resolve(privateDir, 'fixture.json');
   const browserPassword = randomBytes(24).toString('hex');
   privateValues.add(browserPassword);
-  const browser = async (phase) => {
-    await writeFile(fixture, JSON.stringify({ baseUrl, phase, redactionsFile, password: browserPassword }), { mode: 0o600 });
+  const browser = async (phase, config = 'playwright.config.ts') => {
+    await writeFile(fixture, JSON.stringify({ baseUrl, phase, redactionsFile, password: browserPassword, dataFixturePath }), { mode: 0o600 });
     await run(`browser-${phase}`, process.execPath, [resolve(web, 'node_modules/@playwright/test/cli.js'),
-      'test', '--config', 'playwright.config.ts'], {
+      'test', '--config', config], {
       cwd: web, timeout: 600_000,
       env: { ...childEnv, QUAZONAI_WEB_E2E_FIXTURE: fixture, QUAZONAI_WEB_E2E_ORIGIN: baseUrl },
     });
@@ -355,6 +389,21 @@ async function main() {
   await browser('after-restart');
   await userServices.assertRunning('api', restarted);
   await userServices.assertRunning('worker', restartedWorker);
+  // Both original auth/restart phases and idle Worker assertions have passed.
+  // This distinct scenario tests real admission/replay, not Worker/OCI execution.
+  await userServices.stop('worker');
+  await browser('data-admission', 'playwright.data.config.ts');
+  await sql('require-one-real-data-admission', `DO $data$ BEGIN
+    IF (SELECT count(*) FROM app.input_sets) <> 1
+       OR (SELECT count(*) FROM app.runs WHERE kind='DATA_VALIDATE' AND state='QUEUED') <> 1
+       OR (SELECT count(*) FROM app.runs) <> 1
+       OR (SELECT count(*) FROM app.run_native_tasks) <> 1
+       OR (SELECT count(*) FROM pgmq.q_runs) <> 1
+       OR EXISTS(SELECT 1 FROM app.qualifications) THEN
+      RAISE EXCEPTION 'Expected exactly one real queued data validation without qualification';
+    END IF;
+  END $data$;\n`, { ...adminEnv, PGDATABASE: database });
+
   for (const mode of ['light', 'dark']) {
     for (const width of [1440, 768, 390]) {
       for (const surface of ['projects', 'codex']) {

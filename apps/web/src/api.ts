@@ -1,6 +1,9 @@
 import createClient from 'openapi-fetch';
 import type { components, paths } from './generated/api';
-import { responseKind, validateDecimal, validateProblem, validateResponse } from '@quazonai/web/response-contract';
+import { responseKind } from '@quazonai/web/response-contract/metadata';
+import { validateDecimal } from '@quazonai/web/response-contract/decimal';
+import { validateProblem } from '@quazonai/web/response-contract/problem';
+import { ResponseValidatorLoadError, validateResponseAsync } from '@quazonai/web/response-contract/lazy';
 
 export type Schema = components['schemas'];
 export type Problem = Schema['Problem'];
@@ -23,27 +26,43 @@ export function retryAt(value: string | null, now = Date.now()): number {
   const timestamp = /^\d+$/.test(value) ? now + Number(value) * 1000 : Date.parse(value);
   return Number.isFinite(timestamp) && timestamp > now ? timestamp : 0;
 }
-export async function responseFailure(response: Response, schemaPath: string, method: string): Promise<ApiFailure> {
+export async function responseFailure(response: Response, schemaPath: string, method: string, signal?: AbortSignal): Promise<ApiFailure> {
+  signal?.throwIfAborted();
   const contentType = response.headers.get('content-type');
   const media = contentType?.split(';', 1)[0]?.trim().toLowerCase();
   const declared = media === 'application/problem+json' && response.status >= 400
     && responseKind(schemaPath, method, response.status, contentType) === 'json';
   let value: unknown;
   if (declared) {
-    try { value = await response.json(); } catch { value = undefined; }
+    try { value = await response.json(); } catch { signal?.throwIfAborted(); value = undefined; }
   }
   let failure: ApiFailure;
-  if (declared && validateProblem(value) && value.status === response.status
-    && validateResponse(schemaPath, method, response.status, value, contentType)) {
-    failure = new ApiFailure(value.code, value.detail, response.status, value, retryAt(response.headers.get('retry-after')));
-  } else failure = new ApiFailure('HTTP_CONTRACT_ERROR', `响应无效（HTTP ${response.status}）`, response.status);
-  if (response.status === 401 && ['AUTH_REQUIRED', 'HTTP_CONTRACT_ERROR'].includes(failure.code)) {
+  try {
+    if (declared && validateProblem(value) && value.status === response.status
+      && await validateResponseAsync(schemaPath, method, response.status, value, contentType)) {
+      failure = new ApiFailure(value.code, value.detail, response.status, value, retryAt(response.headers.get('retry-after')));
+    } else failure = new ApiFailure('HTTP_CONTRACT_ERROR', `响应无效（HTTP ${response.status}）`, response.status);
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (!(error instanceof ResponseValidatorLoadError)) throw error;
+    failure = validatorLoadFailure();
+  }
+  signal?.throwIfAborted();
+  if (response.status === 401 && ['AUTH_REQUIRED', 'HTTP_CONTRACT_ERROR', 'RESPONSE_VALIDATOR_UNAVAILABLE'].includes(failure.code)) {
     authenticationEvents.dispatchEvent(new Event('required'));
   }
   return failure;
 }
 
-export async function validateSuccessfulResponse(response: Response, schemaPath: string, method: string): Promise<Response> {
+function validatorLoadFailure(): ApiFailure {
+  // This is a local, uncertain outcome even when the raw HTTP status was 201.
+  // Generic intent recovery must not treat an unvalidated receipt as rejection.
+  return new ApiFailure('RESPONSE_VALIDATOR_UNAVAILABLE',
+    '响应校验组件加载失败；操作可能已提交。请刷新并查询原操作结果，不要更改请求后重复提交。');
+}
+
+export async function validateSuccessfulResponse(response: Response, schemaPath: string, method: string, signal?: AbortSignal): Promise<Response> {
+  signal?.throwIfAborted();
   const kind = responseKind(schemaPath, method, response.status, response.headers.get('content-type'));
   if (kind === undefined) {
     throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应格式不兼容', response.status);
@@ -54,11 +73,18 @@ export async function validateSuccessfulResponse(response: Response, schemaPath:
   let value: unknown;
   if (kind === 'json') {
     try { value = await response.clone().json(); }
-    catch { throw new ApiFailure('HTTP_CONTRACT_ERROR', 'JSON 响应无效'); }
+    catch { signal?.throwIfAborted(); throw new ApiFailure('HTTP_CONTRACT_ERROR', 'JSON 响应无效'); }
   }
-  if (!validateResponse(schemaPath, method, response.status, value, response.headers.get('content-type'))) {
-    throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应数据不兼容');
+  try {
+    if (!await validateResponseAsync(schemaPath, method, response.status, value, response.headers.get('content-type'))) {
+      throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应数据不兼容');
+    }
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof ResponseValidatorLoadError) throw validatorLoadFailure();
+    throw error;
   }
+  signal?.throwIfAborted();
   return response;
 }
 
@@ -78,8 +104,8 @@ export function makeClient(baseUrl: string) {
       return request;
     },
     async onResponse({ response, request, schemaPath }) {
-      if (response.ok) return validateSuccessfulResponse(response, schemaPath, request.method);
-      const failure = await responseFailure(response, schemaPath, request.method);
+      if (response.ok) return validateSuccessfulResponse(response, schemaPath, request.method, request.signal);
+      const failure = await responseFailure(response, schemaPath, request.method, request.signal);
       throw failure;
     },
     onError({ error }) {

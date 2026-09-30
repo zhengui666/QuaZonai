@@ -8,7 +8,7 @@ import { briefContent, initialBudget, initialStop } from './brief-fields';
 import { BudgetFields, counterRules } from './budget-fields';
 import { bindingAccessOptions } from './authoring-options';
 import { bindingListError } from './authoring-constraints';
-import { validateBaseCurrency } from '@quazonai/web/response-contract';
+import { validateBaseCurrency } from '@quazonai/web/response-contract/base-currency';
 import { BriefExecution } from './cycles';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
 

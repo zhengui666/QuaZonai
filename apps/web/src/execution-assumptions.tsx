@@ -5,7 +5,7 @@ import { api, dataOf, displayTime, Intent, isCounter, isDecimal } from './api';
 import type { Schema } from './api';
 import { uuidPattern } from './api';
 import { counterRules } from './budget-fields';
-import { validateBaseCurrency } from '@quazonai/web/response-contract';
+import { validateBaseCurrency } from '@quazonai/web/response-contract/base-currency';
 import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
 
 type View = Schema['ExecutionAssumptionsViewV1'];
