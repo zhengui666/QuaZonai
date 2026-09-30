@@ -37,11 +37,15 @@ check-architecture:
 	$(CARGO) test --locked -p contracts --test architecture
 
 check-web:
+	npm --prefix apps/web run check:generated
+	npm --prefix apps/web run test:validator-adapter
 	npm --prefix apps/web run generate
 	git diff --exit-code -- apps/web/src/generated/
+	test -z "$$(git ls-files --others --exclude-standard -- apps/web/src/generated/)"
 	npm --prefix apps/web run typecheck
 	npm --prefix apps/web test
 	cd apps/web && node node_modules/vite/bin/vite.js build
+	node apps/web/scripts/measure-validator-build.mjs --assert-modular
 
 require-test-database:
 	@test -n "$$DATABASE_URL" || { printf '%s\n' 'DATABASE_URL is required: use only a disposable PostgreSQL18 + PGMQ1.10.0 test instance.' >&2; exit 1; }
