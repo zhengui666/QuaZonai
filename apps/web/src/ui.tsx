@@ -55,10 +55,25 @@ export function useClock() {
   return now;
 }
 export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
-  const now = useClock();
   if (error === null || error === undefined) return null;
+  return <FailureNotice error={error} retry={retry} />;
+}
+function FailureNotice({ error, retry }: { error: unknown; retry?: () => void }) {
   const failure = error instanceof ApiFailure ? error : undefined;
-  const wait = failure ? Math.max(0, Math.ceil((failure.retryAt - now) / 1000)) : 0;
+  const deadline = failure?.retryAt ?? 0;
+  const [, update] = useState(0);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      const remaining = deadline - Date.now();
+      if (Number.isFinite(remaining) && remaining > 0) {
+        timer = setTimeout(() => { update(value => value + 1); schedule(); }, Math.min(1000, remaining));
+      }
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, [deadline]);
+  const wait = Number.isFinite(deadline) ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 0;
   return <Alert type="error" showIcon title={failure?.message ?? '请求失败，请重试'}
     description={<Space orientation="vertical" size="small">
       {failure?.problem && <>

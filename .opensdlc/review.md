@@ -13,6 +13,8 @@ A finding identifies the changed path, triggering conditions, observable failure
 <a id="approval"></a>
 ## Merge
 
-GitHub Codex performs read-only review; the web author fixes findings. Merge only when the final PR Head has all applicable CI passing, actionable review findings resolved and explicit clean Codex review. An old-Head review, emoji-only acknowledgement, skipped check or written handoff is not that evidence. Recheck the final Head and merge result in GitHub.
+For the owner's dev iteration authorized on 2026-09-30, Codex is an evaluation subject only: do not delegate design, implementation or code review to it. A separate native reviewer inspects the exact final Head; the implementation author fixes findings. Merge only into `dev`, after all applicable final-Head CI passes and actionable independent-review findings are resolved. An old-Head review, emoji-only acknowledgement, skipped check or written handoff is not that evidence. Recheck the final Head and merge result in GitHub. Preserve existing PR scope and evidence; this workflow change does not retroactively review or approve those PRs.
+
+Executed Agent evaluations must first verify that the native model catalog actually offers exact `gpt-6-luna` with `max` reasoning, and record requested and observed model identity. No fallback model, undisclosed identity or synthetic transcript counts as a successful evaluation. Unavailable model, authorization or runtime is an explicit blocked evaluation, independent of deterministic test results. Keep tuning and held-out validation separate; do not add task answers to production logic. Applicable evaluation evidence accompanies changes to Agent behavior; UI and infrastructure checks do not claim model quality.
 
 Account authorization and deployment require their own scoped execution. Fixture tests, scoped maintenance and a merged PR do not establish unperformed end-to-end account results.

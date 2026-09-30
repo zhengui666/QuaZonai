@@ -1,6 +1,6 @@
 # Instruction review cases
 
-Use a fresh read-only reviewer for changes to [AGENTS](../../AGENTS.md) or the service Skill. Give the repository revision and task input; request inspected paths, observable results and findings, not hidden reasoning. Keep the actual response in the native PR review or task. Document inspection is not an executed model benchmark.
+Use a fresh independent native read-only reviewer for changes to [AGENTS](../../AGENTS.md) or the service Skill. Codex is an evaluation subject only under the [current dev workflow](../review.md#approval). Give the repository revision and task input; request inspected paths, observable results and findings, not hidden reasoning. Keep the actual response in the PR review or task. Document inspection is not an executed model benchmark.
 
 ## Contributor navigation
 
