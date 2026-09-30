@@ -81,15 +81,6 @@ jobs:
           node --check scripts/native-user-services.mjs
           node --check scripts/native-cleanup.test.mjs
           node --test scripts/native-user-services.test.mjs
-      - name: Build real Rust API and verify native HTTP contract
-        working-directory: .
-        run: |
-          set -euo pipefail
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv
-          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p server --bin server
-          rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -q -p server -- openapi > /tmp/web-http.openapi.json
-          diff -u contracts/generated/api-v2.openapi.json /tmp/web-http.openapi.json
       - name: Verify generated client and runtime validators
         run: |
           npm --ignore-scripts run generate
@@ -104,6 +95,17 @@ jobs:
         run: node node_modules/@playwright/test/cli.js install --with-deps chromium
       - name: ChatGPT browser interaction contracts (synthetic, no OAuth account)
         run: npm --ignore-scripts run test:auth-ui
+      # Frontend contracts and synthetic interactions do not depend on the native
+      # executable. Fail early, then still compare the real API before acceptance.
+      - name: Build real Rust API and verify native HTTP contract
+        working-directory: .
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv
+          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p server --bin server
+          rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -q -p server -- openapi > /tmp/web-http.openapi.json
+          diff -u contracts/generated/api-v2.openapi.json /tmp/web-http.openapi.json
       - name: Prepare the pinned native production gateway
         run: |
           set -euo pipefail

@@ -1,20 +1,24 @@
-import { App as AntApp, Alert, Button, ConfigProvider, Drawer, Grid, Layout, Menu, Space, Typography, theme } from 'antd';
+import { App as AntApp, Alert, Button, ConfigProvider, Drawer, Grid, Layout, Menu, Skeleton, Space, Typography, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { ApartmentOutlined, ExperimentOutlined, ExportOutlined, FundOutlined, MenuOutlined, MoonOutlined, PlayCircleOutlined, SettingOutlined, SunOutlined } from '@ant-design/icons';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useContext, useLayoutEffect, useState } from 'react';
+import { lazy, Suspense, useContext, useLayoutEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Projects } from './projects';
-import { Alphas } from './alphas';
-import { Portfolios } from './portfolio';
-import { Delivery } from './delivery';
-import { Runs } from './runs';
-import { Settings } from './settings';
+import AppErrorBoundary from './AppErrorBoundary';
 import { PwaUpdate } from './pwa';
 import { AuthGate, LogoutButton } from './auth';
 import { GuardContext, GuardProvider, useOnline, useReducedMotion } from './ui';
 import { useColorTheme } from './theme';
 import type { ColorTheme } from './theme';
+
+// Load a section only when it is selected. Shared dialogs remain ordinary
+// module imports, and every emitted chunk stays in the existing PWA precache.
+const Projects = lazy(() => import('./projects').then(module => ({ default: module.Projects })));
+const Alphas = lazy(() => import('./alphas').then(module => ({ default: module.Alphas })));
+const Portfolios = lazy(() => import('./portfolio').then(module => ({ default: module.Portfolios })));
+const Delivery = lazy(() => import('./delivery').then(module => ({ default: module.Delivery })));
+const Runs = lazy(() => import('./runs').then(module => ({ default: module.Runs })));
+const Settings = lazy(() => import('./settings').then(module => ({ default: module.Settings })));
 
 const queries = new QueryClient({ defaultOptions: {
   queries: { retry: false, staleTime: 15_000, gcTime: 60_000, networkMode: 'always', refetchOnWindowFocus: true },
@@ -61,7 +65,11 @@ function Console({ colorTheme, toggleTheme }: { colorTheme: ColorTheme; toggleTh
         <Layout.Content className="console-content" id="main-content" tabIndex={-1}>
           <a className="skip-link" href="#main-content">跳至主要内容</a>
           {!online && <Alert className="global-notice" showIcon type="warning" title="离线，无法提交操作" />}
-          {content}
+          <AppErrorBoundary key={active} contained>
+            <Suspense fallback={<div role="status" aria-label="正在载入页面"><Skeleton active paragraph={{ rows: 5 }} /></div>}>
+              {content}
+            </Suspense>
+          </AppErrorBoundary>
         </Layout.Content>
       </Layout>
       <Drawer title="主导航" placement="left" open={menuOpen && !screens.lg} onClose={() => setMenuOpen(false)} width={280}>{menu}</Drawer>

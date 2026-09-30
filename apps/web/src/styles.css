@@ -11,7 +11,7 @@ body { margin: 0; min-width: 320px; }
 .console-sidebar { border-right: 1px solid var(--ant-color-border-secondary); }
 .brand { padding: 28px 24px 14px; }
 .console-header { height: auto; min-height: 80px; padding: max(12px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) 12px max(24px, env(safe-area-inset-left)); display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--ant-color-bg-container); border-bottom: 1px solid var(--ant-color-border-secondary); line-height: 1.5; }
-.console-content { padding: 32px; width: 100%; max-width: 1600px; margin-inline: auto; }
+.console-content { padding: 32px; width: 100%; min-width: 0; max-width: 1600px; margin-inline: auto; }
 .page-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
 /* Ant Design's popup anchor stays inside the long, independently scrolling form. */

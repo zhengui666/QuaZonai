@@ -2,21 +2,23 @@ import { Component, type ReactNode } from 'react';
 import { Button, ConfigProvider, Popconfirm, Result, theme } from 'antd';
 import { useColorTheme } from './theme';
 
-type Props = { children: ReactNode };
+type Props = { children: ReactNode; contained?: boolean };
 type State = { failed: boolean };
 
-function Recovery() {
+function Recovery({ contained = false }: { contained?: boolean }) {
   const [colorTheme] = useColorTheme();
   const dark = colorTheme === 'dark';
+  const Container = contained ? 'section' : 'main';
   return (
     <ConfigProvider theme={{
       algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
       token: { colorPrimary: '#2857b4', motion: false },
     }}>
-      <main style={{ maxWidth: 640, margin: '48px auto', padding: 24 }}>
+      <Container style={{ maxWidth: 640, margin: '48px auto', padding: 24 }}>
         <Result
           status="error"
           title={<h1 style={{ fontSize: 24 }}>页面暂时无法显示</h1>}
+          subTitle={contained ? '可以从主导航切换到其他页面，或重新加载。' : undefined}
           extra={
             <Popconfirm
               title="确认重新加载页面？"
@@ -29,7 +31,7 @@ function Recovery() {
             </Popconfirm>
           }
         />
-      </main>
+      </Container>
     </ConfigProvider>
   );
 }
@@ -43,6 +45,6 @@ export default class AppErrorBoundary extends Component<Props, State> {
   }
 
   override render() {
-    return this.state.failed ? <Recovery /> : this.props.children;
+    return this.state.failed ? <Recovery contained={this.props.contained} /> : this.props.children;
   }
 }
