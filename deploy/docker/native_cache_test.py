@@ -128,6 +128,26 @@ class NativeCacheTests(unittest.TestCase):
                                     (100, reserve + 100, True)]:
             self.assertEqual(cache.save_allowed(size, free), allowed)
 
+    def test_measured_dependency_tree_fits_the_bounded_three_gib_pilot(self):
+        # Actual first hosted cold run after native workspace pruning; no archive
+        # was saved under the initial 2 GiB ceiling.
+        measured = 2_435_668_032
+        self.assertEqual(cache.MAX_BYTES, 3 * 1024**3)
+        self.assertGreater(measured, 2 * 1024**3)
+        self.assertTrue(cache.save_allowed(measured, measured + cache.HEADROOM_BYTES))
+        self.assertFalse(cache.save_allowed(measured, measured + cache.HEADROOM_BYTES - 1))
+
+    def test_restore_headroom_includes_archive_extraction_and_reserve(self):
+        required = 2 * cache.MAX_BYTES + cache.HEADROOM_BYTES
+        self.assertEqual(required, 7 * 1024**3)
+        for free, enabled in [(required - 1, False), (required, True)]:
+            (self.root / 'output').unlink(missing_ok=True)
+            with cwd(self.source), patch.dict(os.environ, self.env, clear=True), patch.object(
+                cache, 'measure', return_value=(0, free)
+            ), patch.object(cache, 'run', return_value='observed compiler'), patch.object(cache, 'cache_key', return_value='exact-key'):
+                cache.main('prepare')
+            self.assertIn(f'enabled={str(enabled).lower()}\n', (self.root / 'output').read_text())
+
     def test_prepare_skips_without_headroom_or_complete_identity(self):
         with cwd(self.source), patch.dict(os.environ, self.env, clear=True), patch.object(cache, 'measure', return_value=(0, 1)):
             cache.main('prepare')

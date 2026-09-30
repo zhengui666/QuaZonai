@@ -63,15 +63,15 @@ removal. Saving does not claim acceptance; independent Docker/Codex builds and
 installation/update/recovery checks still follow on every run.
 
 `du` and `df` log uncompressed bytes and available disk at restore, pruning and
-save boundaries; priming/clean durations are logged separately. Require 5 GiB
-free before restore (up to 2 GiB archive, 2 GiB extraction and 1 GiB reserve).
-Skip save if empty, larger than 2 GiB uncompressed, or if free space is less than
+save boundaries; priming/clean durations are logged separately. Require 7 GiB
+free before restore (up to 3 GiB archive, 3 GiB extraction and 1 GiB reserve).
+Skip save if empty, larger than 3 GiB uncompressed, or if free space is less than
 the archive size plus 1 GiB. No storage quota, retention or billing setting changes.
 Cache service failures are optional; actual build/acceptance failures remain fatal.
 
 ## Verification and outstanding evidence
 
-- Fourteen focused Python policy/key/layout/pruning/order/size tests pass, covering dev/fork gates,
+- Sixteen focused Python policy/key/layout/pruning/order/size tests pass, covering dev/fork gates,
   exact restore handling, locked input and toolchain/profile invalidation,
   root/nested/spaced paths, empty inputs, source-code-only key stability,
   no caching credentials, unsupported target layouts and cold fallback
@@ -102,3 +102,27 @@ measurements remain required before merge or any speedup claim. A miss, oversize
 cache, metadata failure or external dependency rebuild is measured honestly and
 must not weaken checks to make the pilot appear faster. The main performance
 hypothesis is avoiding repeated third-party compilation, not reducing downloads.
+
+## First hosted cold observation and bounded adjustment
+
+Head `db2043bec423a3460fd906b863bccfde1d918234` passed all applicable
+checks, including the additional Dev image job. The
+[Container cold job](https://github.com/zhengui666/QuaZonai/actions/runs/36764703938/job/110055822340)
+missed its exact cache key. Host Job release compilation took **21m01s**; native
+offline workspace pruning took **0.264s** and removed 33 workspace files.
+The retained dependency tree measured **2,435,668,032 bytes** (about 2.27 GiB),
+with **85,863,993,344 available bytes** before saving. The initial 2 GiB guard
+correctly skipped saving. No compressed archive, transfer size or warm reuse was
+measured in that run, so it establishes no speedup.
+
+The pilot ceiling is now a bounded **3 GiB uncompressed**, with **7 GiB** free
+required before restore and the unchanged archive-plus-1-GiB reserve before
+saving. The exact dependency key, native pruning, source boundaries, save
+authority, cold fallback and all acceptance checks are unchanged. This does not
+change repository storage limits, retention, billing or permissions. Two added
+unit checks cover the measured tree and exact restore-headroom boundary.
+
+The adjusted final Head still requires all applicable hosted checks, an actual
+compressed archive/transfer-size observation, and an actual warm restore/build
+measurement before any performance claim or merge. Docker's independent cache
+and runner variability must not be attributed to this host-dependency pilot.

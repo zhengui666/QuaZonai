@@ -11,7 +11,7 @@ import tomllib
 
 RUST = "1.98.1"
 PREFIX = "quazonai-native-job-default-release-v1"
-MAX_BYTES = 2 * 1024**3
+MAX_BYTES = 3 * 1024**3
 HEADROOM_BYTES = 1024**3
 LAYOUT_ENV = ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR", "CARGO_BUILD_TARGET", "CARGO_BUILD_BUILD_DIR")
 BUILD_ENV = ("CARGO_BUILD_", "CARGO_PROFILE_", "CARGO_TARGET_", "CARGO_ENCODED_RUSTFLAGS",
@@ -159,7 +159,7 @@ def main(command):
             allowed = save_allowed(size, free)
             output(save=allowed)
             if not allowed:
-                print("Native dependency cache: skip save (empty, over 2 GiB, or insufficient archive headroom)", flush=True)
+                print("Native dependency cache: skip save (empty, over 3 GiB, or insufficient archive headroom)", flush=True)
         else:
             raise ValueError("unknown cache command")
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
