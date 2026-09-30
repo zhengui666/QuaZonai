@@ -131,14 +131,17 @@ test('a cancelled delayed report validation cannot populate a later upload', asy
 });
 
 const artifactReceiptModule = moduleFor('/api/v2/artifacts', 'post', 201);
-for (const fault of ['lost-ack', 'receipt-validator'] as const) {
+for (const fault of ['lost-ack', 'delayed-lost-ack', 'receipt-validator'] as const) {
   test(`an uncertain report ${fault} locks original content and key until explicit abandonment`, async ({ page }) => {
     await session(page, true);
     const writes: { key: string | undefined; body: string | null }[] = [];
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
     await page.route('**/api/v2/artifacts', async route => {
       if (route.request().method() !== 'POST') return route.fallback();
       writes.push({ key: route.request().headers()['idempotency-key'], body: route.request().postData() });
-      if (fault === 'lost-ack') return route.abort('failed');
+      if (fault === 'delayed-lost-ack' && writes.length === 1) await held;
+      if (fault !== 'receipt-validator') return route.abort('failed');
       return route.fulfill({ status: 201, json: { schema_version: 1, replayed: writes.length > 1, resource: {
         id: '01990000-0000-7000-8000-000000000002', project_id: id, kind: 'REPORT', media_type: 'application/json',
         schema_name: 'qz.operator_report', schema_version: '1', access_class: 'RESEARCH', origin: 'SYNTHETIC',
@@ -151,7 +154,16 @@ for (const fault of ['lost-ack', 'receipt-validator'] as const) {
     await editor.locator('input[type=file]').setInputFiles({ name: 'original-report.json', mimeType: 'application/json', buffer: reportFixture });
     await expect(editor.getByRole('button', { name: '上传报告', exact: true })).toBeEnabled();
     await editor.getByRole('button', { name: '上传报告', exact: true }).click();
-    await expect(editor.getByText(fault === 'lost-ack' ? /连接中断，提交结果未知/ : /响应校验组件加载失败/)).toBeVisible();
+    try {
+      if (fault === 'delayed-lost-ack') {
+        await expect.poll(() => writes.length).toBe(1);
+        const pending = editor.getByRole('button', { name: '原样重试上传请求', exact: true });
+        await expect(pending).toHaveAccessibleName('原样重试上传请求');
+        await expect(pending).toHaveAttribute('aria-busy', 'true');
+        await expect(pending).toBeDisabled();
+      }
+    } finally { release(); }
+    await expect(editor.getByText(fault !== 'receipt-validator' ? /连接中断，提交结果未知/ : /响应校验组件加载失败/)).toBeVisible();
     await expect(editor.getByText(/原报告内容与幂等键已锁定/)).toBeVisible();
     await expect(editor.getByRole('button', { name: '选择 JSON 报告', exact: true })).toBeDisabled();
     await expect(editor.locator('input[type=file]')).toBeDisabled();
@@ -159,6 +171,7 @@ for (const fault of ['lost-ack', 'receipt-validator'] as const) {
     const retryButton = editor.locator('button').filter({ hasText: '原样重试上传请求' });
     await expect(retryButton).toHaveCount(1);
     await expect(retryButton).toHaveAccessibleName('原样重试上传请求');
+    await expect(retryButton).toHaveAttribute('aria-busy', 'false');
     await editor.getByRole('button', { name: '原样重试上传请求', exact: true }).click();
     await expect.poll(() => writes.length).toBe(2);
     await expect(editor.getByRole('button', { name: '取消', exact: true })).toBeEnabled();

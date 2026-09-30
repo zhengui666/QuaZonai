@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, request } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -73,11 +73,18 @@ async function terminalRun(page: Page, id: string, state: 'SUCCEEDED' | 'FAILED'
   expect(run!.input_set_id).toBe(admitted.frozen.resource.header.id);
   return run!;
 }
-async function runtimeBytes(page: Page, path: string) {
-  const response = await page.request.get(`${peer.endpoint}/runtime/v1/${path}`, {
-    headers: { Authorization: `Bearer ${peer.credential}` },
+async function runtimeBytes(path: string) {
+  // page.request shares the browser's host cookies across loopback ports.
+  // The production Runtime deliberately rejects cookies, even with a bearer.
+  const client = await request.newContext({
+    storageState: { cookies: [], origins: [] },
+    extraHTTPHeaders: { Authorization: `Bearer ${peer.credential}` },
   });
-  expect(response.status()).toBe(200); return response.body();
+  try {
+    const response = await client.get(`${peer.endpoint}/runtime/v1/${path}`);
+    expect(response.status()).toBe(200);
+    return await response.body();
+  } finally { await client.dispose(); }
 }
 async function replay(page: Page) {
   for (const [path, intent, original, status] of [
@@ -121,7 +128,7 @@ test('real Worker publishes original OCI bytes and preserves identities across p
     const run = await terminalRun(page, negative.resource.id, 'FAILED');
     const outputs = await artifacts(page, run);
     expect(outputs.map(item => item.schema_name)).toEqual(['qz.job_result']);
-    const raw = await runtimeBytes(page, `jobs/${encodeURIComponent(`${run.id}/1`)}/result`);
+    const raw = await runtimeBytes(`jobs/${encodeURIComponent(`${run.id}/1`)}/result`);
     const manifest: Manifest = JSON.parse(raw.toString());
     expect(manifest.state).toBe('FAILED'); expect(manifest.started_at).toBeTruthy();
     expect(manifest.artifacts).toEqual([]); expect(manifest.error?.code).toBe('NATIVE_JOB_FAILED');
@@ -136,14 +143,14 @@ test('real Worker publishes original OCI bytes and preserves identities across p
   const run = await terminalRun(page, admitted.admitted.resource.id, 'SUCCEEDED');
   const outputs = await artifacts(page, run);
   expect(outputs.map(item => item.schema_name).sort()).toEqual(['qz.data_quality', 'qz.job_result']);
-  const manifestBytes = await runtimeBytes(page, `jobs/${encodeURIComponent(`${run.id}/1`)}/result`);
+  const manifestBytes = await runtimeBytes(`jobs/${encodeURIComponent(`${run.id}/1`)}/result`);
   const manifest: Manifest = JSON.parse(manifestBytes.toString());
   expect(manifest).toMatchObject({ run_id: run.id, attempt_no: 1, external_job_id: `${run.id}/1`,
     input_set_id: admitted.frozen.resource.header.id, state: 'SUCCEEDED', error: null });
   expect(manifest.started_at).toBeTruthy(); expect(manifest.artifacts).toHaveLength(1);
   const descriptor = manifest.artifacts[0]!;
   expect(descriptor.schema).toEqual({ name: 'qz.data_quality', version: '1' });
-  const qualityBytes = await runtimeBytes(page, `jobs/${encodeURIComponent(`${run.id}/1`)}/artifacts/${descriptor.storage_ref}`);
+  const qualityBytes = await runtimeBytes(`jobs/${encodeURIComponent(`${run.id}/1`)}/artifacts/${descriptor.storage_ref}`);
   expect(String(qualityBytes.length)).toBe(descriptor.byte_count);
   const quality: Quality = JSON.parse(qualityBytes.toString());
   expect(quality.schema_version).toBe(1); expect(quality.native_version).toBe('nautilus-persistence/0.63.0');
@@ -164,14 +171,26 @@ test('real Worker publishes original OCI bytes and preserves identities across p
     const expected = item.schema_name === 'qz.job_result' ? manifestBytes : qualityBytes;
     const row = page.getByRole('row').filter({ hasText: item.id });
     await expect(row).toContainText(run.active_attempt_id!); await expect(row).toContainText('FIXTURE');
+    const action = row.getByRole('button', { name: '下载原始产物', exact: true });
+    await expect(action).toHaveAccessibleName('下载原始产物');
+    await expect(action).toHaveAttribute('aria-busy', 'false');
+    // Fail only this read, then retry the same actual native bytes through the UI.
+    // No synthetic artifact or terminal Run is inserted.
+    await page.route(`**/api/v2/artifacts/${item.id}/content`, route => route.abort('failed'), { times: 1 });
+    await action.click();
+    await expect(page.getByText('连接中断，提交结果未知；请重试当前操作', { exact: true })).toBeVisible();
+    await expect(action).toHaveAccessibleName('下载原始产物');
+    await expect(action).toHaveAttribute('aria-busy', 'false');
+    await expect(action).toBeEnabled();
     const downloaded = page.waitForEvent('download');
-    await row.getByRole('button', { name: '下载原始产物', exact: true }).click();
+    await action.click();
     const download = await downloaded; expect(await download.failure()).toBeNull();
     expect(download.suggestedFilename()).toBe(`${item.id}.bin`);
     const stream = await download.createReadStream(); expect(stream).toBeTruthy();
     const chunks: Buffer[] = []; for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
     const actual = Buffer.concat(chunks); expect(actual).toEqual(expected);
     expect(String(actual.length)).toBe(item.byte_count);
+    await expect(action).toHaveAttribute('aria-busy', 'false');
     downloads.push({ id: item.id, schema: item.schema_name, sha256: hash(actual) });
   }
   const evidence = { run_id: run.id, attempt_id: run.active_attempt_id, downloads: downloads.sort((a, b) => a.id.localeCompare(b.id)), quality };
@@ -197,6 +216,10 @@ test('real Worker publishes original OCI bytes and preserves identities across p
   await requested;
   const cancelled = page.waitForEvent('requestfailed', { predicate: request => request.url().endsWith(path) });
   try {
+    const pending = page.getByRole('row').filter({ hasText: item.id }).getByRole('button', { name: '下载原始产物', exact: true });
+    await expect(pending).toHaveAccessibleName('下载原始产物');
+    await expect(pending).toHaveAttribute('aria-busy', 'true');
+    await expect(pending).toBeDisabled();
     await page.getByRole('tab', { name: '数据登记', exact: true }).click();
     await cancelled;
   } finally { release(); }

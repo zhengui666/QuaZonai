@@ -145,11 +145,32 @@ test('unknown validation preserves original Runtime revision, exact counters and
   await expect(editor.getByText(/提交结果未知：原请求和幂等键已锁定/)).toBeVisible();
   state.runtime.revision = '9007199254740994'; state.stale = true;
   await expect(editor.getByLabel('CPU 总秒数（精确整数）', { exact: true })).toBeDisabled();
+  await expect(editor.locator('button').filter({ hasText: '原样重试验证请求' })).toHaveAccessibleName('原样重试验证请求');
   await editor.getByRole('button', { name: '原样重试验证请求', exact: true }).click();
   await expect.poll(() => state.writes.length).toBe(2);
   expect(state.writes[1]).toEqual(state.writes[0]);
   expect(state.writes[0]?.body).toMatchObject({ expected_runtime_revision: '9007199254740993', input_set_id: state.input.header.id,
     limits: { cpu_seconds: '60', output_bytes: '1048576', experiments: 0 } });
+});
+
+test('pending validation keeps its action name through the failed-request transition', async ({ page }) => {
+  const state = await setup(page); const editor = await validate(page, state);
+  let release!: () => void; state.hold = new Promise<void>(resolve => { release = resolve; });
+  try {
+    await editor.getByRole('button', { name: '确认排队数据验证', exact: true }).click();
+    await expect.poll(() => state.writes.length).toBe(1);
+    const pending = editor.getByRole('button', { name: '原样重试验证请求', exact: true });
+    await expect(pending).toHaveAccessibleName('原样重试验证请求');
+    await expect(pending).toHaveAttribute('aria-busy', 'true');
+    await expect(editor.getByLabel('CPU 总秒数（精确整数）', { exact: true })).toBeDisabled();
+  } finally { release(); state.hold = undefined; }
+  await expect(editor.getByText(/提交结果未知：原请求和幂等键已锁定/)).toBeVisible();
+  const retry = editor.getByRole('button', { name: '原样重试验证请求', exact: true });
+  await expect(retry).toHaveAccessibleName('原样重试验证请求');
+  await expect(retry).toHaveAttribute('aria-busy', 'false');
+  await retry.click();
+  await expect.poll(() => state.writes.length).toBe(2);
+  expect(state.writes[1]).toEqual(state.writes[0]);
 });
 
 test('confirmed stale revision blocks retry until explicit reload and reconfirmation', async ({ page }) => {

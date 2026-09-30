@@ -145,11 +145,11 @@ function ReportUpload({ projectId, close, uploaded }: { projectId: string; close
         }
         finally { if (current === sequence.current) setReading(false); }
         return Upload.LIST_IGNORE;
-      }}><Button icon={<UploadOutlined aria-hidden />} loading={reading} disabled={mutation.isPending || reading || !!request}>选择 JSON 报告</Button></Upload>
+      }}><Button icon={<UploadOutlined aria-hidden />} loading={reading} aria-busy={reading} disabled={mutation.isPending || reading || !!request}>选择 JSON 报告</Button></Upload>
       {file && <Typography.Text>{file.name} · {new TextEncoder().encode(file.content).length} bytes</Typography.Text>}
       <ErrorNotice error={error ?? mutation.error} />
       {request && mutation.isError && <Alert type="warning" showIcon title="原报告内容与幂等键已锁定；只能原样重试。选择其他报告前须明确关闭本次上传。" />}
-      <Space wrap><Button type="primary" loading={mutation.isPending} disabled={!file || reading || !online || mutation.isPending} onClick={submit}>{request ? '原样重试上传请求' : '上传报告'}</Button><Button onClick={dismiss} disabled={mutation.isPending}>取消</Button></Space>
+      <Space wrap><Button type="primary" loading={mutation.isPending} aria-busy={mutation.isPending} disabled={!file || reading || !online || mutation.isPending} onClick={submit}>{request ? '原样重试上传请求' : '上传报告'}</Button><Button onClick={dismiss} disabled={mutation.isPending}>取消</Button></Space>
     </Space>
   </Drawer>;
 }
