@@ -90,14 +90,50 @@ def archive_bytes(image, version):
     return destination.bytes
 
 
-def image_identity(image, revision):
+def image_identity(image, revision, version=None):
     value = json.loads(run(['docker', 'image', 'inspect', image]))[0]
     if value['Config']['Labels'].get('org.opencontainers.image.revision') != revision:
         raise ValueError('Measured image does not match the requested source revision.')
+    if version is not None:
+        if value['Config']['Labels'].get('org.opencontainers.image.version') != version:
+            raise ValueError('Measured image does not match the requested packaging version.')
+        if (value.get('Os'), value.get('Architecture')) != ('linux', 'amd64'):
+            raise ValueError('Measured image does not match the native producer platform.')
     return {'id': value['Id'], 'size_bytes': value['Size']}
 
 
-def report(directory, baseline, candidate, revision, version):
+def native_identity(source):
+    """Recompute from the current checkout, never from an image's self-report."""
+    source = source.resolve()
+    return json.loads(run(['node', str(source / 'deploy/docker/native-inputs.mjs'),
+                           'identity', str(source), 'linux/amd64']))
+
+
+def validate_native_build(payload, expected, application_hashes):
+    native = payload['native_build']
+    # Schema 1 remains historical revision-bound evidence. It cannot be promoted
+    # to input-bound provenance or have its old metrics silently reinterpreted.
+    if native.get('schema_version') != 2:
+        raise ValueError('Native producer schema 2 required; historical schema 1 is not input-bound evidence.')
+    for key in ('input_sha256', 'recipe_sha256', 'platform'):
+        if native.get(key) != expected[key]:
+            raise ValueError('Native producer does not match current-source ' + key + '.')
+    names = {'server', 'runtime', 'catalog-prepare', 'polymarket-history'}
+    hashes = payload.get('elf_sha256', {})
+    if (set(hashes) != names or native.get('elf_sha256') != hashes
+            or any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value) for value in hashes.values())
+            or any(hashes[name] != value for name, value in application_hashes.items())
+            or set(application_hashes) != {'server', 'runtime'}):
+        raise ValueError('Native producer ELF hashes do not identify the measured payload.')
+    sizes = payload['stripped_binary_bytes']
+    if set(sizes) != {'catalog-prepare', 'polymarket-history'} or any(type(value) is not int or value <= 0 for value in sizes.values()):
+        raise ValueError('Native binary size measurements are incomplete.')
+    for key in ('original_native_build_elapsed_seconds', 'original_disk_before_bytes', 'original_disk_after_bytes'):
+        if type(native.get(key)) is not int or native[key] < 0:
+            raise ValueError('Missing original producer measurement: ' + key)
+
+
+def report(directory, baseline, candidate, revision, version, source=None):
     marks = {name: json.loads((directory / (name + '.json')).read_text())
              for name in ('candidate-start', 'candidate-end', 'baseline-start', 'baseline-end')}
     def elapsed(kind):
@@ -105,8 +141,9 @@ def report(directory, baseline, candidate, revision, version):
         if value < 0:
             raise ValueError('Invalid build measurement chronology.')
         return value / 1_000_000_000
-    before = image_identity(baseline, revision)
-    after = image_identity(candidate, revision)
+    expected = native_identity(source or Path(__file__).resolve().parents[2])
+    before = image_identity(baseline, revision, version)
+    after = image_identity(candidate, revision, version)
     container = ['docker', 'run', '--rm', '--network', 'none', '--read-only', '--no-healthcheck',
                  '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--entrypoint']
     run([*container, '/bin/sh', baseline, '-c', 'test ! -e /opt/quazonai/operator && ! command -v python3'])
@@ -117,18 +154,34 @@ def report(directory, baseline, candidate, revision, version):
         if len(sizes) != 2:
             raise ValueError('Application binary size measurement is incomplete.')
         measurement['stripped_application_binary_bytes'] = dict(zip(('server', 'runtime'), map(int, sizes)))
-    program = """import json
+        hashes = run([*container, '/usr/bin/sha256sum', image,
+                      '/opt/quazonai/bin/server', '/opt/quazonai/bin/runtime']).splitlines()
+        if len(hashes) != 2:
+            raise ValueError('Application binary hash measurement is incomplete.')
+        measurement['application_elf_sha256'] = dict(zip(('server', 'runtime'),
+                                                        (line.split()[0] for line in hashes)))
+    program = """import hashlib, json
 from pathlib import Path
 root=Path('/opt/quazonai/operator')
 bins={name:(root/'bin'/name).stat().st_size for name in ('catalog-prepare','polymarket-history')}
-print(json.dumps({'stripped_binary_bytes':bins,'operator_payload_bytes':sum(path.stat().st_size for path in root.rglob('*') if path.is_file()),'native_build':json.loads((root/'build-metrics.json').read_text())}))
+files={name:root/'bin'/name for name in bins}
+files.update({name:Path('/opt/quazonai/bin')/name for name in ('server','runtime')})
+hashes={}
+for name,path in files.items():
+    with path.open('rb') as stream:
+        if stream.read(4) != bytes([127,69,76,70]):
+            raise ValueError('Measured native output is not ELF: '+name)
+        stream.seek(0)
+        hashes[name]=hashlib.file_digest(stream,'sha256').hexdigest()
+print(json.dumps({'stripped_binary_bytes':bins,'elf_sha256':hashes,'operator_payload_bytes':sum(path.stat().st_size for path in root.rglob('*') if path.is_file()),'native_build':json.loads((root/'build-metrics.json').read_text())}))
 """
     payload = json.loads(run([*container, '/usr/bin/python3', candidate, '-E', '-s', '-B', '-c', program]))
-    if payload['native_build']['revision'] != revision or any(value <= 0 for value in payload['stripped_binary_bytes'].values()):
-        raise ValueError('Native build measurements do not identify the measured release payload.')
+    validate_native_build(payload, expected, before['application_elf_sha256'])
+    if after['application_elf_sha256'] != before['application_elf_sha256']:
+        raise ValueError('Baseline and candidate application ELFs differ.')
     before['compressed_archive_bytes'] = archive_bytes(before['id'], version)
     after['compressed_archive_bytes'] = archive_bytes(after['id'], version)
-    result = {'schema_version': 1, 'revision': revision, 'version': version,
+    result = {'schema_version': 2, 'revision': revision, 'version': version,
               'scope': 'same-source application-base without operator versus full candidate; actual bytes, no estimates',
               'baseline': before, 'candidate': after, 'payload': payload,
               'delta_image_bytes': after['size_bytes'] - before['size_bytes'],
@@ -138,7 +191,7 @@ print(json.dumps({'stripped_binary_bytes':bins,'operator_payload_bytes':sum(path
               'cache_conditions': [
                   'The normal candidate builds first with the existing configured GHA/BuildKit caches; this is not a cold-build claim.',
                   'The same-source baseline builds afterward and can reuse common candidate layers; its timing is not an independent cold comparison.',
-                  'Native operator-only build seconds are measured in its producer stage with shared Cargo caches; a cached stage can retain that original measurement.',
+                  'Original native operator build seconds and disk observations belong to the producer execution; layer reuse retains them unchanged. Current build elapsed time comes only from the external marks.',
                   'Disk observations are before/after samples, not a continuous peak measurement.'],
               'archive_method': 'actual docker image save stream, gzip level 1, mtime 0; no archive retained',
               'admission': 'Measured costs require review; this report does not establish source or research qualification.'}
@@ -155,6 +208,7 @@ def main():
     parser.add_argument('--candidate')
     parser.add_argument('--revision')
     parser.add_argument('--version')
+    parser.add_argument('--source', type=Path, help='Current checkout; defaults to this script’s repository root')
     args = parser.parse_args()
     if args.command == 'mark':
         if not args.phase:
@@ -163,7 +217,7 @@ def main():
     else:
         if not all((args.baseline, args.candidate, args.revision, args.version)):
             parser.error('report requires both actual images, revision and version')
-        report(args.directory, args.baseline, args.candidate, args.revision, args.version)
+        report(args.directory, args.baseline, args.candidate, args.revision, args.version, args.source)
 
 
 if __name__ == '__main__':
