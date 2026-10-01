@@ -1,9 +1,34 @@
 # Operator source plugins
 
-`source_plugins.py` is one capability-oriented entrypoint for bounded free public
+`source_plugins.py` is one capability-oriented entrypoint for bounded public-source
 acquisition and existing native preparation. It does not call a QuaZonai service,
 create grants, register catalogs, place orders, or qualify research data. No
 account, secret, authenticated request or paid fallback is introduced.
+
+## Source rights and acceptance
+
+Public access, a free HTTP response, or an SDK license does not establish data-use
+rights. Checked on 2026-10-01: the official [Exchange introduction](https://docs.cdp.coinbase.com/exchange/introduction/welcome)
+links public market-data APIs to [Coinbase Market Data Terms](https://www.coinbase.com/legal/market_data)
+(updated 2026-08-07); the [candles endpoint](https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-product-candles)
+belongs to that Exchange API. Without prior express written consent, section 3(5)
+restricts using market data to develop, validate, benchmark or improve AI/ML
+models, algorithms, agents or other automated systems; section 3(2) restricts
+external redistribution of the data and derived works.
+
+New Coinbase acquisition and acceptance for QuaZonai's intended live research and
+automated-system validation remain blocked pending applicable independently
+verified permission. Calling the same validation an availability observation does
+not change its purpose. Offline help/plans and the capabilities below describe
+technical interfaces, not permission. A supplied terms file or QuaZonai grant
+cannot establish upstream rights by itself.
+
+Dated source observations remain historical evidence. Synthetic `FIXTURE` /
+`UNVERIFIED` runs and native installation checks demonstrate only their recorded
+technical paths; they do not establish live-source acceptance, research eligibility
+or a completed release installed for a user. Original definitions, historical
+fees, PIT/availability evidence, grants and fresh validation remain separate
+requirements.
 
 ## Capabilities and compatibility
 
@@ -55,9 +80,11 @@ authenticity, completeness, permission, or point-in-time attestation.
 
 ## Native executables
 
-The installed source command uses the application image's matching operator
-payload; consult the [deployment guide](../../deploy/docker/README.md). It requires
-no source checkout or host build tools. With `--native-bin` omitted, this module
+For an installation whose completed release includes the source tools, the
+installed source command uses the application image's matching operator payload;
+consult the [installed guide](../../deploy/docker/README.md#installed-free-source-tools)
+and check that release's command help and plugin inventory. No source checkout or
+host build tools are required for installed execution. With `--native-bin` omitted, this module
 selects its adjacent `bin/catalog-prepare` for candle conversion and all catalog
 preparation, or `bin/polymarket-history` for history conversion. It never searches
 `PATH` or falls back to a debug build. Installed mode rejects executable overrides.
@@ -79,11 +106,15 @@ not accepted.
 
 ## Coinbase OHLCV
 
-These paths and the small epoch window are examples; choose the actual original
-terms and requested market/window. Definitions must be an original Nautilus
+The plan below is offline. Download/conversion examples describe the interface
+for independently permitted inputs; the [source-use block](#source-rights-and-acceptance)
+must be resolved before intended live validation. These paths and the small epoch
+window are examples. Definitions must be an original Nautilus
 `InstrumentAny` JSON array with supported identity, currency, precision and real
 observation clocks. The runner does not generate definitions from today's product
-metadata or guessed fee/tick settings.
+metadata or guessed fee/tick settings. Coinbase's [Exchange fees](https://help.coinbase.com/en/exchange/trading-and-funding/exchange-fees)
+are tiered; a current schedule alone does not establish the applicable historical
+maker/taker rate.
 
 ```sh
 python3 -B runtimes/data/source_plugins.py plan coinbase-candles \
@@ -111,7 +142,7 @@ and rechecks it afterward. The final report must bind the SHA-256 of both origin
 input files, report the exact selected BAR count, retain conservative admission
 flags, and attest native readback. Actual catalog Parquet and detached source
 evidence must exist. The native report and its limitations are returned unchanged
-inside a preparation result. The importer handles one explicitly selected product
+inside the conversion result. The importer handles one explicitly selected product
 per acquisition, with original native definitions and supported tick-only versions.
 Its `native_selection` uses BAR event-label bounds and the actual availability
 cutoff, suitable for inspection and the existing separately declared partition

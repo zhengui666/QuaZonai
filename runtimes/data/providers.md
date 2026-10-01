@@ -1,8 +1,8 @@
-# Free public-source acquisition plugins
+# Public-source acquisition plugins
 
 This is an **operator-only acquisition foundation**, not a complete research-source integration. The shared runner supports two real public APIs without accounts, secrets, paid fallbacks or trading. Its normalized observations are inspection files, not native Nautilus data or qualified datasets. Scientific jobs remain offline; no service, HTTP contract or database admission path is added.
 
-Native preparation is available separately through the [operator source-plugin registry](source-plugins.md). This guide describes the unchanged acquisition-only contract; frozen provider descriptors are not rewritten when preparation capabilities are added.
+Native preparation is available separately through the [operator source-plugin registry](source-plugins.md). This guide describes the unchanged acquisition-only contract; frozen provider descriptors are not rewritten when preparation capabilities are added. Capabilities describe implemented interfaces, subject to the [current source-use boundary](source-plugins.md#source-rights-and-acceptance).
 
 ## Supported capabilities
 
@@ -30,7 +30,7 @@ python3 -B runtimes/data/acquire.py plan \
 
 That example selects the 24 hourly bucket starts on 2024-01-01 UTC. Plans show the exact requests and bounds; they do not promise the endpoint retains those observations.
 
-Before downloading, independently review the applicable source terms and preserve their original text or document in a local file. Neither provider is assigned an open-data license. [Coinbase Market Data Terms](https://www.coinbase.com/legal/market_data) restrict use and redistribution; public API access is not an unrestricted data grant. [Polymarket terms](https://polymarket.com/tos) must also be assessed for the intended use. A supplied terms file is retained as unverified operator evidence, not an automatic grant or proof of legal compliance. The existing QuaZonai data-use grant and research-admission checks remain independent.
+Before downloading, independently establish permission for the intended use and preserve the applicable source terms in a local file. Neither provider is assigned an open-data license. The Coinbase download interface below is conditional on resolving the [source-use block](source-plugins.md#source-rights-and-acceptance); it is not a live-validation instruction. [Polymarket terms](https://polymarket.com/tos) must also be assessed for the intended use. A supplied terms file is retained as unverified operator evidence, not an automatic grant or proof of legal compliance. The existing QuaZonai data-use grant and research-admission checks remain independent.
 
 ```sh
 python3 -B runtimes/data/acquire.py download \
@@ -69,15 +69,16 @@ Publication reuses [snapshot.py](snapshot.py)'s symlink checks and atomic no-rep
 
 ## Existing boundaries and remaining work
 
-The existing [Hugging Face snapshot downloader](snapshot.py), [corroborated EVM collector](evm.py), [Polymarket native importer](../../apps/job/src/bin/polymarket-history.rs) and [catalog preparation](../../apps/job/src/bin/catalog-prepare.rs) remain unchanged. Their source contracts are not replaced by this acquisition manifest.
+The [Hugging Face snapshot downloader](snapshot.py), [corroborated EVM collector](evm.py), [Polymarket native importer](../../apps/job/src/bin/polymarket-history.rs) and [catalog preparation](../../apps/job/src/bin/catalog-prepare.rs) retain their separate source and preparation contracts. This acquisition manifest does not replace them.
 
-A complete usable research plugin still needs:
+The [source-plugin registry](source-plugins.md) supplies native Coinbase BAR conversion through `catalog-prepare ingest-candles` and preparation of supported native BAR catalogs. Conversion retains original definitions, exact precision and actual retrieval clocks; it does not establish historical forecast/PIT eligibility. The `polymarket-history` importer requires `BinaryOption` instruments on `POLYMARKET`; Coinbase candles use the separate native candle importer.
 
-1. The separate registry now supplies native crypto BAR conversion through `catalog-prepare ingest-candles`, retaining original definitions, exact precision and actual retrieval clocks. This enables native inspection/preparation, not historical forecast/PIT eligibility. The `polymarket-history` importer still explicitly requires `BinaryOption` instruments on `POLYMARKET`; Coinbase candles never go through that importer
-2. Source-specific historical instrument/universe, fee, calendar and availability evidence. Current product metadata must retain today's observation time. A new metadata request does not repair historical PIT. Polymarket sampled marks cannot satisfy the scientific BAR contract
-3. Explicit data-use grants, frozen partitions, original declarations, `catalog-prepare` and fresh `DATA_VALIDATE` through the existing registration path. Successful acquisition or native serialization cannot replace qualification
-4. Service/CLI/UI orchestration exposing capability differences, inspection, errors and these incomplete steps. This batch is an operator tool; it adds no fake ready state or automatically registered source
-5. Broader source adapters, independent historical coverage checks and any streaming capability as separate bounded extensions. Existing archives and EVM evidence should be wrapped/reused where useful rather than duplicated
+An admitted research workflow still requires:
+
+1. Source-specific historical instrument/universe, fee, calendar and availability evidence. Current product metadata must retain today's observation time. A new metadata request does not repair historical PIT. Polymarket sampled marks cannot satisfy the scientific BAR contract
+2. Original declarations and selections for isolated partitions, explicit data-use grants, Runtime catalog configuration, service source/dataset registration, frozen InputSets and fresh `DATA_VALIDATE` through the existing registration path. Successful acquisition, conversion or preparation cannot replace qualification
+
+The operator tools do not automate those service steps. Broader source adapters, independent historical coverage checks and streaming remain separate extensions; generic file acquisition does not imply support for converting their records.
 
 ## Verification
 
