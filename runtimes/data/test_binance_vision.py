@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 import warnings
 import zipfile
+import zlib
 
 import acquire
 import binance_vision as vision
@@ -60,6 +61,15 @@ def archive_bytes(body=None, selection=SELECTION, members=None, compression=zipf
 
 def checksum(archive, selection=SELECTION):
     return f"{hashlib.sha256(archive).hexdigest()}  {vision.plan(selection)['archive_name']}\n".encode()
+
+
+def forged_member_size(archive, visible):
+    """Synthetic ZIP central declaration hiding decoded bytes after visible."""
+    changed = bytearray(archive)
+    central = changed.index(b"PK\x01\x02")
+    struct.pack_into("<I", changed, central + 16, zlib.crc32(visible) & 0xFFFFFFFF)
+    struct.pack_into("<I", changed, central + 24, len(visible))
+    return bytes(changed)
 
 
 class ParsingTest(unittest.TestCase):
@@ -216,6 +226,33 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(self.decode(stream.getvalue())["counts"]["rows"], "1")
         self.assertEqual(vision.plan(SELECTION)["container_validation"], "STDLIB_MEMBER_VALIDATION_NOT_CANONICAL_ZIP")
 
+    def test_forged_size_and_matching_prefix_crc_cannot_hide_rows(self):
+        for compression in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            original = archive_bytes(compression=compression)
+            self.assertEqual(self.decode(original)["counts"]["rows"], "2")
+            for visible in (b"", csv_bytes([row()])):
+                forged = forged_member_size(original, visible)
+                with self.subTest(compression=compression, visible=len(visible)), self.assertRaises(ValueError):
+                    self.decode(forged)
+
+    def test_forged_size_cannot_bypass_decoded_byte_budget(self):
+        archive = archive_bytes(b"x" * (vision.LIMITS["csv_bytes"] + 2))
+        forged = forged_member_size(archive, b"")
+        self.assertLess(len(forged), vision.LIMITS["archive_bytes"])
+        with patch.object(vision, "decode_csv", side_effect=AssertionError("oversized bytes reached CSV parser")):
+            with self.assertRaises(ValueError):
+                self.decode(forged)
+
+    def test_bounded_read_retains_original_member_overlap_checks(self):
+        for compression in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            archive = bytearray(archive_bytes(compression=compression))
+            central = archive.index(b"PK\x01\x02")
+            with zipfile.ZipFile(io.BytesIO(archive)) as container:
+                compressed_size = container.infolist()[0].compress_size
+            struct.pack_into("<I", archive, central + 20, compressed_size + 1)
+            with self.subTest(compression=compression), self.assertRaises(ValueError):
+                self.decode(bytes(archive))
+
 
 class BundleTest(unittest.TestCase):
     def setUp(self):
@@ -241,6 +278,36 @@ class BundleTest(unittest.TestCase):
 
     def rewrite(self, manifest):
         (self.output / "archive.json").write_bytes(vision.json_bytes(manifest))
+
+    def test_hidden_rows_cannot_publish_or_verify_legacy_frozen_prefix(self):
+        for compression in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            for visible in (b"", csv_bytes([row()])):
+                with self.subTest(compression=compression, visible=len(visible)):
+                    self.output = self.root / f"frozen-{compression}-{len(visible)}"
+                    forged = forged_member_size(archive_bytes(compression=compression), visible)
+                    self.archive.write_bytes(forged)
+                    self.checksum.write_bytes(checksum(forged))
+                    with self.assertRaises(ValueError):
+                        self.freeze()
+                    self.assertFalse(self.output.exists())
+                    self.assertEqual(self.archive.read_bytes(), forged)
+                    self.assertEqual(self.checksum.read_bytes(), checksum(forged))
+
+                    # Recreate a previously accepted bundle: all retained-byte
+                    # hashes agree, but decoded records describe only a prefix.
+                    self.archive.write_bytes(archive_bytes(visible, compression=compression))
+                    self.checksum.write_bytes(checksum(self.archive.read_bytes()))
+                    manifest = self.freeze()
+                    for name, body in {"raw/archive.zip": forged, "raw/archive.CHECKSUM": checksum(forged)}.items():
+                        (self.output / name).write_bytes(body)
+                        manifest["files"][name] = vision.file_record(name, body)
+                    digest = hashlib.sha256(forged).hexdigest()
+                    manifest["archive_identity"] = "sha256:" + digest
+                    manifest["checksum_sha256"] = digest
+                    self.rewrite(manifest)
+                    with self.assertRaises(ValueError):
+                        vision.verify(self.output)
+                    self.assertEqual((self.output / "raw/archive.zip").read_bytes(), forged)
 
     def test_original_bytes_reproduced_synthetic_and_unknown_are_distinct(self):
         original = self.archive.read_bytes()

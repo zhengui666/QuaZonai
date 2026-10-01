@@ -3,8 +3,8 @@
 ## Scope
 
 Bounded first batch of the owner's autonomous `dev` iteration, based on
-`bfa3cfc625a752fdb554d9136b9b2eb4412c6f24`. Publication and independent review are
-coordinator-owned and pending. No issue or PR has been published for this batch.
+`bfa3cfc625a752fdb554d9136b9b2eb4412c6f24`. The first batch was delivered in
+[PR 153](https://github.com/zhengui666/QuaZonai/pull/153), merged as `1b01b2eb`.
 The maintained [archive guide](../../../runtimes/data/binance-vision.md) defines
 the API, envelope, bounds, actual verification scope and remaining work.
 
@@ -50,3 +50,28 @@ actionable review findings, and coordinator authorization remain required before
 merge to `dev`, under the [review rules](../../review.md). A handoff artifact or
 local Python pass does not satisfy those gates. No real data qualification is
 part of this batch.
+
+## Decoded-member truncation correction
+
+A synthetic independent native-parser comparison found that Python's
+`ZipExtFile` clips emitted bytes to the central directory's declared decoded
+size. A two-row stored or deflate member with a forged one-row size and matching
+prefix CRC could pass inspection, freeze and verification while omitting the
+second valid row. A zero-size/CRC declaration could hide both rows. Retained
+original ZIP bytes were intact, but the decoded-member integrity claim was wrong.
+
+The correction keeps the original member metadata unchanged and uses the public
+`copy.copy` API plus a copied `ZipInfo.file_size` set to the independent decoded
+byte budget. The canonical-name probe and associated overlap checks remain;
+actual bounded output must match the original size and CRC before parsing.
+There is no new dependency, private ZIP field access or custom container parser.
+The frozen v1 envelope and valid-source output stay compatible; old malformed
+bundles are rejected on re-verification without modifying their retained bytes.
+
+Regressions cover both compression methods, hidden first-row/empty prefixes,
+freeze refusal before output publication, rejection of self-consistent legacy
+bundles, oversized decoded data and retained overlap rejection. Existing tests
+still cover valid empty/full/sparse data, exact values, original clocks and
+accepted ZIP64/trailing variants. Exact compressed-stream termination and
+canonical container validation remain explicitly outside this stdlib profile.
+Independent review and final-head hosted checks are still required for this fix.
