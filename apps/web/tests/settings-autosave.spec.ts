@@ -416,6 +416,7 @@ test('immutable portfolio editors wait for a Runtime autosave and read its new r
   await expect.poll(() => writes.filter(write => write.kind === 'runtime').length).toBe(1);
   await page.getByRole('dialog', { name: '修改 Runtime 配置' }).getByRole('button', { name: '关闭' }).click();
   await page.getByRole('menuitem', { name: '组合', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '组合', exact: true })).toBeVisible();
   await page.getByRole('combobox', { name: '选择组合所属项目' }).click();
   await page.getByText(`Portfolio fixture · ${projectId}`, { exact: true }).last().click();
   await page.getByRole('button', { name: '新建组合配置' }).click();
@@ -458,6 +459,7 @@ test('an uncertain execution assumption retries the original Runtime revision', 
     return route.abort('failed');
   });
   await page.getByRole('menuitem', { name: '组合', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '组合', exact: true })).toBeVisible();
   await page.getByRole('combobox', { name: '选择组合所属项目' }).click();
   await page.getByText(`Portfolio fixture · ${projectId}`, { exact: true }).last().click();
   await page.getByRole('tab', { name: '执行假设' }).click();
@@ -505,6 +507,7 @@ test('an uncertain portfolio mandate retries the original Runtime revision', asy
     return route.abort('failed');
   });
   await page.getByRole('menuitem', { name: '组合', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '组合', exact: true })).toBeVisible();
   await page.getByRole('combobox', { name: '选择组合所属项目' }).click();
   await page.getByText(`Portfolio fixture · ${projectId}`, { exact: true }).last().click();
   await page.getByRole('button', { name: '新建组合配置' }).click();
@@ -684,6 +687,8 @@ test('a confirmed data source receipt survives a failed list refresh after retry
     return (await import(modulePath)).settingsWorkActive();
   })).toBe(true);
   await dialog.getByRole('button', { name: '返回' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: '放弃未保存的更改？', exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: '集成' }).click();
   await page.getByRole('tab', { name: '数据', exact: true }).click();
   await expect(page.getByText('数据源登记结果待确认')).toBeVisible();
@@ -728,6 +733,8 @@ test('a definite rejection after detached command retry stays visible until ackn
   await dialog.getByRole('button', { name: '登记', exact: true }).click();
   await expect(dialog.getByRole('button', { name: '重试当前操作' })).toBeVisible();
   await dialog.getByRole('button', { name: '返回' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: '放弃未保存的更改？', exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: '集成' }).click();
   await page.getByRole('tab', { name: '数据', exact: true }).click();
   await page.getByRole('button', { name: '重试当前操作' }).click();
