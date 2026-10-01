@@ -65,3 +65,7 @@ arrow-array = "=56.2.0"
 nautilus-model = { version = "=0.63.0", default-features = false, features = ["test-support"] }
 tempfile = "=3.27.0"
 wat = "=1.258.0"
+
+[[example]]
+name = "browser_catalog_fixture"
+required-features = ["catalog-prepare"]
