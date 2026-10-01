@@ -2,6 +2,7 @@ import { Alert, Button, Descriptions, Empty, Skeleton, Space, Tag, Typography } 
 import { createContext, useCallback, useContext, useEffect, useId, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { ApiFailure, displayTime } from './api';
+import { settingsWorkActive, useSettingsWork } from './settings-work';
 
 export const GuardContext = createContext({
   blocked: false,
@@ -12,12 +13,18 @@ export const protectedWorkActive = () => protectedWorkIds.size > 0;
 export function GuardProvider({ children }: { children: ReactNode }) {
   const [guards, setGuards] = useState<Set<string>>(new Set());
   const blocked = guards.size > 0;
+  const settingsWork = useSettingsWork();
+  // Detached Settings work permits in-app navigation but still belongs to this document.
+  const unloadBlocked = blocked || settingsWork;
   useEffect(() => {
-    if (!blocked) return;
-    const stop = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    if (!unloadBlocked) return;
+    const stop = (event: BeforeUnloadEvent) => {
+      if (!protectedWorkActive() && !settingsWorkActive()) return;
+      event.preventDefault(); event.returnValue = '';
+    };
     window.addEventListener('beforeunload', stop);
     return () => window.removeEventListener('beforeunload', stop);
-  }, [blocked]);
+  }, [unloadBlocked]);
   const setGuard = useCallback((id: string, active: boolean) => {
     if (active) protectedWorkIds.add(id); else protectedWorkIds.delete(id);
     setGuards(previous => {
