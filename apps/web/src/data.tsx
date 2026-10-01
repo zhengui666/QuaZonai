@@ -90,7 +90,7 @@ function SourceDialog({ source, close }: { source?: Source; close: () => void })
       return { values: { name: current.name, enabled: current.enabled } as Values,
         revision: current.revision, updated_at: current.updated_at, resource: current };
     });
-  const closeCreate = useDialogClose({ pending: state.pending, failed: false, dirty: () => form.isFieldsTouched(), close });
+  const closeCreate = useDialogClose({ pending: state.pending, failed: false, retainedRequest: state.unknown, dirty: () => form.isFieldsTouched(), close });
   function cancel() {
     if (source) void autosave.close().then(close);
     else closeCreate();
@@ -131,7 +131,7 @@ function GrantDialog({ source, close }: { source: Source; close: () => void }) {
   type Values = { license_reference: string; evidence_artifact_id: string; allowed_uses: Schema['DataUse']; valid_from: Dayjs | null | undefined; valid_until?: Dayjs | null | undefined };
   const [form] = Form.useForm<Values>(); const online = useOnline(); const refresh = useDataRefresh();
   const { command, state } = useSettingsCommand(`grant:${source.id}`, `许可授权登记：${source.name}`, async () => { await refresh(); close(); });
-  const cancel = useDialogClose({ pending: state.pending, failed: false, dirty: () => form.isFieldsTouched(), close });
+  const cancel = useDialogClose({ pending: state.pending, failed: false, retainedRequest: state.unknown, dirty: () => form.isFieldsTouched(), close });
   return <Modal open title={`授权数据用途：${source.name}`} maskClosable={false} closable={!state.pending}
     onCancel={cancel} onOk={() => { if (online && !state.pending) { if (state.unknown) command.retry(); else form.submit(); } }}
     okText={state.unknown ? '重试当前操作' : '确认登记不可变授权'} cancelText="返回" confirmLoading={state.pending} cancelButtonProps={{ disabled: state.pending }} okButtonProps={{ disabled: !online }}>
@@ -161,7 +161,7 @@ function RevokeDialog({ grant, close }: { grant: Grant; close: () => void }) {
   type Values = { reason_code: string; reason: string; effective_at?: Dayjs | null | undefined };
   const [form] = Form.useForm<Values>(); const online = useOnline(); const refresh = useDataRefresh();
   const { command, state } = useSettingsCommand(`revoke:${grant.id}`, `数据授权撤销：${grant.version}`, async () => { await refresh(); close(); });
-  const cancel = useDialogClose({ pending: state.pending, failed: false, dirty: () => form.isFieldsTouched(), close });
+  const cancel = useDialogClose({ pending: state.pending, failed: false, retainedRequest: state.unknown, dirty: () => form.isFieldsTouched(), close });
   return <Modal open title="撤销这份数据授权？" maskClosable={false} closable={!state.pending} confirmLoading={state.pending}
     okText={state.unknown ? '重试当前操作' : '确认追加撤销记录'} cancelText="返回" cancelButtonProps={{ disabled: state.pending }} okButtonProps={{ danger: true, disabled: !online }}
     onCancel={cancel} onOk={() => { if (online && !state.pending) { if (state.unknown) command.retry(); else form.submit(); } }}>
@@ -186,7 +186,7 @@ function RegisterDialog({ source, runtimeRevision, close }: { source: Source; ru
   type Values = { grant_id: string; native_storage_version: string; existing_universe_version_id?: string };
   const [form] = Form.useForm<Values>(); const online = useOnline(); const refresh = useDataRefresh();
   const { command, state } = useSettingsCommand(`register:${source.id}`, `原生数据版本登记：${source.name}`, async () => { await refresh(); close(); });
-  const cancel = useDialogClose({ pending: state.pending, failed: false, dirty: () => form.isFieldsTouched(), close });
+  const cancel = useDialogClose({ pending: state.pending, failed: false, retainedRequest: state.unknown, dirty: () => form.isFieldsTouched(), close });
   return <Modal open title={`读取并登记原生数据：${source.name}`} maskClosable={false} closable={!state.pending}
     okText={state.unknown ? '重试当前操作' : '读取真实元数据并登记'} cancelText="返回" confirmLoading={state.pending} cancelButtonProps={{ disabled: state.pending }} okButtonProps={{ disabled: !online }}
     onCancel={cancel} onOk={() => { if (online && !state.pending) { if (state.unknown) command.retry(); else form.submit(); } }}>

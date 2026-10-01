@@ -1,19 +1,19 @@
 import { App } from 'antd';
 import { useRef } from 'react';
 
-export function closeDecision(pending: boolean, dirty: boolean, failed: boolean) {
-  return pending ? 'wait' : dirty || failed ? 'confirm' : 'close';
+export function closeDecision(pending: boolean, dirty: boolean, failed: boolean, retainedRequest = false) {
+  return pending ? 'wait' : retainedRequest ? 'close' : dirty || failed ? 'confirm' : 'close';
 }
 
-/** Closing an editor never cancels a write or keeps its in-memory retry intent. */
-export function useDialogClose({ pending, failed, dirty, close }: {
-  pending: boolean; failed: boolean; dirty: () => boolean; close: () => void;
+/** Detach only when the caller retains the exact request outside this editor. Closing never cancels a write. */
+export function useDialogClose({ pending, failed, dirty, close, retainedRequest = false }: {
+  pending: boolean; failed: boolean; dirty: () => boolean; close: () => void; retainedRequest?: boolean;
 }) {
   const { modal } = App.useApp();
   const confirming = useRef(false);
   return () => {
     if (confirming.current) return;
-    const decision = closeDecision(pending, dirty(), failed);
+    const decision = closeDecision(pending, dirty(), failed, retainedRequest);
     if (decision === 'wait') return;
     if (decision === 'close') { close(); return; }
     confirming.current = true;

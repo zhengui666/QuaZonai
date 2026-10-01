@@ -108,9 +108,12 @@ export function makeClient(baseUrl: string) {
       const failure = await responseFailure(response, schemaPath, request.method, request.signal);
       throw failure;
     },
-    onError({ error }) {
+    onError({ error, request }) {
       if (error instanceof ApiFailure) return error;
       if (error instanceof Error && error.name === 'AbortError') return error;
+      if (['GET', 'HEAD'].includes(request.method)) {
+        return new ApiFailure('NETWORK_READ_FAILED', '连接中断，未能读取数据；请重试');
+      }
       return new ApiFailure('NETWORK_UNKNOWN', '连接中断，提交结果未知；请重试当前操作');
     },
   });
