@@ -7,6 +7,8 @@ export const GuardContext = createContext({
   blocked: false,
   setGuard: (_id: string, _active: boolean) => {},
 });
+const protectedWorkIds = new Set<string>();
+export const protectedWorkActive = () => protectedWorkIds.size > 0;
 export function GuardProvider({ children }: { children: ReactNode }) {
   const [guards, setGuards] = useState<Set<string>>(new Set());
   const blocked = guards.size > 0;
@@ -16,12 +18,15 @@ export function GuardProvider({ children }: { children: ReactNode }) {
     window.addEventListener('beforeunload', stop);
     return () => window.removeEventListener('beforeunload', stop);
   }, [blocked]);
-  const setGuard = useCallback((id: string, active: boolean) => setGuards(previous => {
-    if (previous.has(id) === active) return previous;
-    const next = new Set(previous);
-    if (active) next.add(id); else next.delete(id);
-    return next;
-  }), []);
+  const setGuard = useCallback((id: string, active: boolean) => {
+    if (active) protectedWorkIds.add(id); else protectedWorkIds.delete(id);
+    setGuards(previous => {
+      if (previous.has(id) === active) return previous;
+      const next = new Set(previous);
+      if (active) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
   return <GuardContext.Provider value={{ blocked, setGuard }}>{children}</GuardContext.Provider>;
 }
 export function useGuard(active: boolean) {
