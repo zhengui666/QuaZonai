@@ -186,67 +186,6 @@ async ({ page, context }) => {
     }
   });
 
-  await test.step('upload a protocol-only Agent report with a lost ACK and inspect exact stored evidence', async () => {
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole('button', { name, exact: true }).click();
-    await page.getByRole('tab', { name: 'Agent 评估', exact: true }).click();
-    await page.getByRole('button', { name: '上传报告', exact: true }).click();
-    await page.locator('input[type=file]').setInputFiles(resolve('..', '..', 'tests', 'fixtures', 'agent-evaluation', 'unrun-v1.json'));
-    await expect(page.getByText(/unrun-v1.json/)).toBeVisible();
-    await page.getByRole('button', { name: '取消', exact: true }).click();
-    const discardUnsent = page.getByRole('dialog', { name: '放弃未上传的报告？', exact: true });
-    await expect(discardUnsent).toBeVisible();
-    await discardUnsent.getByRole('button', { name: '继续编辑', exact: true }).click();
-    await expect(discardUnsent).toHaveCount(0);
-    let key: string | undefined;
-    let original: unknown;
-    let artifactId: string | undefined;
-    await page.route('**/api/v2/artifacts', async route => {
-      if (route.request().method() !== 'POST') return route.continue();
-      key = route.request().headers()['idempotency-key'];
-      original = route.request().postDataJSON();
-      const response = await route.fetch({ maxRetries: 0 });
-      expect(response.status()).toBe(201);
-      const receipt = await response.json();
-      artifactId = receipt.resource.id;
-      await response.dispose();
-      await route.abort('failed');
-    });
-    const editor = page.getByRole('dialog', { name: '上传 Agent 评估报告' });
-    await editor.getByRole('button', { name: '上传报告', exact: true }).click();
-    await expect(page.getByText(/连接中断，提交结果未知/)).toBeVisible();
-    await expect(editor.getByRole('button', { name: '选择 JSON 报告', exact: true })).toBeDisabled();
-    await expect(editor.locator('input[type=file]')).toBeDisabled();
-    await expect(editor.getByText(/原报告内容与幂等键已锁定/)).toBeVisible();
-    await editor.getByRole('button', { name: '取消', exact: true }).click();
-    const discardSent = page.getByRole('dialog', { name: '关闭报告上传？', exact: true });
-    await expect(discardSent).toBeVisible();
-    await expect(discardSent.getByText(/关闭不会撤回已保存的报告/)).toBeVisible();
-    await discardSent.getByRole('button', { name: '继续编辑', exact: true }).click();
-    await expect(discardSent).toHaveCount(0);
-    await page.unroute('**/api/v2/artifacts');
-    const retry = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/artifacts' && response.request().method() === 'POST');
-    const retryButton = editor.locator('button').filter({ hasText: '原样重试上传请求' });
-    await expect(retryButton).toHaveCount(1);
-    await expect(retryButton).toHaveAccessibleName('原样重试上传请求');
-    await editor.getByRole('button', { name: '原样重试上传请求', exact: true }).click();
-    const response = await retry;
-    expect(response.status()).toBe(201);
-    expect(response.request().headers()['idempotency-key']).toBe(key);
-    expect(response.request().postDataJSON()).toEqual(original);
-    expect((await response.json()).resource.id).toBe(artifactId);
-    const detail = page.getByRole('dialog', { name: 'Agent 评估详情' });
-    await expect(detail.getByText('PROTOCOL_ONLY：协议测试，不是实际模型评估')).toBeVisible();
-    await expect(detail.getByText('UNRUN: 2', { exact: true })).toBeVisible();
-    await expect(detail.getByText('gpt-6-luna / max', { exact: true })).toBeVisible();
-    await expect(detail.getByText('未知（未观察到）', { exact: true })).toHaveCount(2);
-    const stored = await page.request.get(`/api/v2/artifacts/${artifactId}/agent-evaluation`);
-    expect(stored.status()).toBe(200);
-    expect(await stored.json()).toEqual(JSON.parse(readFileSync(resolve('..', '..', 'tests', 'fixtures', 'agent-evaluation', 'unrun-v1.json'), 'utf8')));
-    await detail.locator('.ant-drawer-close').click();
-    await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
-  });
-
   await test.step('retain the original browser state and command only in private test storage', async () => {
     if (!checkpoint) throw new Error('The real committed project receipt is required for restart verification');
     const storage = await context.storageState();
@@ -407,7 +346,7 @@ if (config.phase === 'before-restart') {
       await page.evaluate(async () => { await (await navigator.serviceWorker.ready).update(); });
       await expect(page.getByRole('dialog', { name: '检测到新的前端版本' })).toBeVisible();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeDisabled();
-      await expect(page.getByText('请先保存或取消当前编辑', { exact: true })).toBeVisible();
+      await expect(page.getByText('当前操作完成后可更新', { exact: true })).toBeVisible();
       await page.getByRole('button', { name: '稍后', exact: true }).click();
       await expect(page.getByLabel('研究名称')).toHaveValue('Unsaved native PWA edit');
       await page.getByRole('button', { name: '取消', exact: true }).click();

@@ -1,12 +1,15 @@
 import { Component, type ReactNode } from 'react';
 import { Button, ConfigProvider, Popconfirm, Result, theme } from 'antd';
 import { useColorTheme } from './theme';
+import { useSettingsWork } from './settings-work';
+import { guardWorkActive } from './ui';
 
 type Props = { children: ReactNode; contained?: boolean };
-type State = { failed: boolean };
+type State = { failed: boolean; protectedAtFailure: boolean };
 
-function Recovery({ contained = false }: { contained?: boolean }) {
+function Recovery({ contained = false, protectedAtFailure }: { contained?: boolean; protectedAtFailure: boolean }) {
   const [colorTheme] = useColorTheme();
+  const recoverableWork = useSettingsWork() || protectedAtFailure;
   const dark = colorTheme === 'dark';
   const Container = contained ? 'section' : 'main';
   return (
@@ -19,17 +22,10 @@ function Recovery({ contained = false }: { contained?: boolean }) {
           status="error"
           title={<h1 style={{ fontSize: 24 }}>页面暂时无法显示</h1>}
           subTitle={contained ? '可以从主导航切换到其他页面，或重新加载。' : undefined}
-          extra={
-            <Popconfirm
-              title="确认重新加载页面？"
-              description="未保存内容将丢失；已提交操作不会撤销。"
-              okText="确认重新加载"
-              cancelText="留在此页"
-              onConfirm={() => window.location.reload()}
-            >
-              <Button type="primary">重新加载页面</Button>
-            </Popconfirm>
-          }
+          extra={recoverableWork ? <Popconfirm title="操作内容可能丢失" description="重新加载会清除本页输入、重试身份或回执。若刚提交请求，请先核对结果。"
+            okText="确认重新加载" cancelText="留在此页" onConfirm={() => window.location.reload()}>
+            <Button type="primary">重新加载页面</Button>
+          </Popconfirm> : <Button type="primary" onClick={() => window.location.reload()}>重新加载页面</Button>}
         />
       </Container>
     </ConfigProvider>
@@ -38,13 +34,13 @@ function Recovery({ contained = false }: { contained?: boolean }) {
 
 /** Render recovery only: never retry commands or expose exception contents. */
 export default class AppErrorBoundary extends Component<Props, State> {
-  override state: State = { failed: false };
+  override state: State = { failed: false, protectedAtFailure: false };
 
   static getDerivedStateFromError(): State {
-    return { failed: true };
+    return { failed: true, protectedAtFailure: guardWorkActive() };
   }
 
   override render() {
-    return this.state.failed ? <Recovery contained={this.props.contained} /> : this.props.children;
+    return this.state.failed ? <Recovery contained={this.props.contained} protectedAtFailure={this.state.protectedAtFailure} /> : this.props.children;
   }
 }

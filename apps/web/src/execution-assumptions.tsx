@@ -1,18 +1,18 @@
 import { App, Button, Checkbox, Descriptions, Drawer, Form, Input, InputNumber, Select, Space, Table, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
-import { api, dataOf, displayTime, Intent, isCounter, isDecimal } from './api';
+import { api, ApiFailure, dataOf, displayTime, Intent, isCounter, isDecimal } from './api';
 import type { Schema } from './api';
 import { uuidPattern } from './api';
-import { counterRules } from './budget-fields';
 import { validateBaseCurrency } from '@quazonai/web/response-contract/base-currency';
+import { useSettingsWorkKey, useSettingsWorkVersion } from './settings-work';
 import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
 
 type View = Schema['ExecutionAssumptionsViewV1'];
 type Settings = Schema['NativeSimulationSettingsV1'];
 type Fill = Extract<Schema['NativeModelRefV1'], { adapter_kind: 'NAUTILUS_DEFAULT_FILL' }>['parameters'];
 type Latency = Extract<Schema['NativeModelRefV1'], { adapter_kind: 'NAUTILUS_STATIC_LATENCY' }>['parameters'];
-type Fields = Omit<Schema['ExecutionAssumptionsCreateV1'], 'schema_version' | 'project_id' | 'settings'> & {
+type Fields = Omit<Schema['ExecutionAssumptionsCreateV1'], 'schema_version' | 'project_id' | 'settings' | 'expected_runtime_revision'> & {
   fee_kind?: 'NAUTILUS_MAKER_TAKER' | 'NAUTILUS_POLYMARKET';
   use_bar_liquidity?: boolean;
   use_rolling_liquidity?: boolean;
@@ -72,12 +72,20 @@ function Detail({ id, close }: { id: string; close: () => void }) {
 
 function Editor({ project, close }: { project: string; close: () => void }) {
   const [form] = Form.useForm<Fields>(); const [dirty, setDirty] = useState(false); const intent = useRef(new Intent());
+  const submitted = useRef<Schema['ExecutionAssumptionsCreateV1'] | undefined>(undefined);
+  const runtimeId: string | undefined = Form.useWatch('runtime_id', form);
+  const runtimeKey = `autosave:runtime:${runtimeId ?? ''}`;
+  const runtimeSaving = useSettingsWorkKey(runtimeKey); const runtimeVersion = useSettingsWorkVersion(runtimeKey);
+  const runtime = useQuery({ queryKey: ['assumptions-runtime', runtimeId, runtimeVersion], enabled: !!runtimeId && !runtimeSaving, staleTime: 0,
+    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId! } }, signal })) });
+  const runtimeReady = !!runtimeId && !runtimeSaving && runtime.data?.id === runtimeId && !runtime.isError && !runtime.isFetching;
   const useBarLiquidity = Form.useWatch('use_bar_liquidity', form);
   const useRollingLiquidity = Form.useWatch('use_rolling_liquidity', form);
   const client = useQueryClient(); const online = useOnline(); const { modal, message } = App.useApp();
   const mutation = useMutation({ mutationFn: async (values: Fields) => {
     const { fee_kind, fill, latency, use_bar_liquidity, bar_liquidity, use_rolling_liquidity, rolling_liquidity, ...source } = values;
-    const body: Schema['ExecutionAssumptionsCreateV1'] = { ...source, schema_version: 1, project_id: project,
+    const body: Schema['ExecutionAssumptionsCreateV1'] = submitted.current ?? { ...source, schema_version: 1, project_id: project,
+      expected_runtime_revision: runtime.data!.revision,
       bar_liquidity: use_bar_liquidity && bar_liquidity ? { ...bar_liquidity, schema_version: 1 } : null,
       rolling_liquidity: use_rolling_liquidity && rolling_liquidity ? { ...rolling_liquidity, schema_version: 1 } : null,
       settings: { ...source.settings, schema_version: 1,
@@ -87,11 +95,17 @@ function Editor({ project, close }: { project: string; close: () => void }) {
       fill_model: { schema_version: 1, adapter_kind: 'NAUTILUS_DEFAULT_FILL', upstream_class: 'nautilus_execution::models::fill::DefaultFillModel', upstream_version: '0.63.0', parameters: fill },
       latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.63.0', parameters: latency },
     } };
+    submitted.current = body;
     return dataOf(await api.POST('/api/v2/execution-assumptions', { body, params: { header: intent.current.headers('POST', '/api/v2/execution-assumptions', body) } }));
   }, onSuccess: async result => {
-    intent.current.clear(); setDirty(false); await client.invalidateQueries({ queryKey: ['execution-assumptions', project] });
+    submitted.current = undefined; intent.current.clear(); setDirty(false); await client.invalidateQueries({ queryKey: ['execution-assumptions', project] });
     await message.success(result.replayed ? '已读取原假设回执，没有重复创建。' : '已保存不可变执行假设，未启动模拟。'); close();
+  }, onError: error => {
+    if (error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE')) {
+      submitted.current = undefined; intent.current.clear();
+    }
   } });
+  const retry = mutation.isError && !!submitted.current;
   useGuard(dirty || mutation.isPending);
   function dismiss() {
     if (mutation.isPending) return;
@@ -100,10 +114,10 @@ function Editor({ project, close }: { project: string; close: () => void }) {
   }
   return <Drawer title="新建不可变执行假设" open width={800} onClose={dismiss} closable={!mutation.isPending} maskClosable={!mutation.isPending}>
     
-    <ErrorNotice error={mutation.error} />
-    <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)} onFinish={values => mutation.mutate(values)} disabled={!online || mutation.isPending} initialValues={{ fee_kind: 'NAUTILUS_MAKER_TAKER', settings: { fee_rates: [{}] } }}>
+    <ErrorNotice error={runtime.error} /><ErrorNotice error={mutation.error} />
+    <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)} onFinish={values => { if (runtimeReady && !mutation.isPending) mutation.mutate(values); }} disabled={!online || mutation.isPending || retry} initialValues={{ fee_kind: 'NAUTILUS_MAKER_TAKER', settings: { fee_rates: [{}] } }}>
       {([['runtime_id', 'Runtime 编号'], ['input_set_id', '冻结输入编号'], ['dataset_revision_id', '数据版本编号']] as const).map(([name, label]) => <Form.Item key={name} name={name} label={label} rules={ids}><Input /></Form.Item>)}
-      <Form.Item name="expected_runtime_revision" label="Runtime 配置版本" rules={counterRules}><Input inputMode="numeric" /></Form.Item>
+      {runtime.data && runtime.data.id === runtimeId && <Typography.Text>Runtime 配置版本：{runtime.data.revision}</Typography.Text>}
       <Form.Item name="settlement_rule_ref" label="结算规则引用" rules={[required, { max: 200, whitespace: true }]}><Input /></Form.Item>
       <Form.Item name="use_bar_liquidity" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending || !!useRollingLiquidity}>绑定历史单 BAR 流动性假设</Checkbox></Form.Item>
       <Form.Item name="use_rolling_liquidity" valuePropName="checked"><Checkbox disabled={!online || mutation.isPending || !!useBarLiquidity}>登记滚动 BAR 流动性政策</Checkbox></Form.Item>
@@ -140,7 +154,9 @@ function Editor({ project, close }: { project: string; close: () => void }) {
         </Space>)}
         <Button disabled={fields.length >= 256} onClick={() => add()}>添加费用资产</Button>
       </>}</Form.List>
-      <Space wrap><Button type="primary" htmlType="submit" loading={mutation.isPending}>保存不可变执行假设</Button><Button onClick={dismiss}>取消</Button></Space>
+      <Space wrap><Button type="primary" htmlType={retry ? 'button' : 'submit'} loading={mutation.isPending}
+        disabled={!online || (!retry && !runtimeReady)} onClick={retry ? () => mutation.mutate(form.getFieldsValue(true)) : undefined}>
+        {retry ? '重试同一执行假设请求' : '保存不可变执行假设'}</Button><Button onClick={dismiss}>取消</Button></Space>
     </Form>
   </Drawer>;
 }
