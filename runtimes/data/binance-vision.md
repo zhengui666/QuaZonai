@@ -178,8 +178,12 @@ The [stdlib ZIP APIs](https://docs.python.org/3/library/zipfile.html) enumerate
 exactly one regular member, compare its expected basename, reject path aliases,
 directories/special-file metadata, duplicate/extra members, encryption flags and
 unsupported compression. Only stored/deflate is accepted. A canonical public
-`ZipInfo` name probe rejects NUL suffix aliases; the original member is then
-opened and read to EOF for the stdlib's local-header/overlap and CRC checks.
+`ZipInfo` name probe rejects NUL suffix aliases. A shallow copy of the member
+retains the stdlib's local-header/overlap checks while its public decoded-size
+field is set to the independent byte budget for reading. This prevents a forged
+declared size and matching prefix CRC from clipping away later rows. The original
+size, CRC and metadata remain unchanged and are compared with the bounded decoded
+bytes; over-budget data and mismatches are rejected before CSV parsing.
 There are no private ZIP API calls, extraction calls or handwritten container or
 compression parsers. Advertised sizes, emitted bytes and CRC are checked; an
 exposed nonzero first local-header offset is rejected as a prefix.

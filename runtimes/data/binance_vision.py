@@ -6,7 +6,7 @@ Use zipfile/csv public APIs; see binance-vision.md for container validation limi
 """
 
 import argparse
-from copy import deepcopy
+from copy import copy, deepcopy
 import csv
 from dataclasses import asdict, dataclass
 import datetime as dt
@@ -223,13 +223,19 @@ def decode(archive, checksum, selection):
                 raise ValueError("unsafe or unsupported ZIP member, prefix, compression or size")
             # ZipInfo.filename can normalize a NUL suffix. Ask zipfile to check
             # the local name against a canonical, publicly constructed ZipInfo;
-            # then use the original member for its normal structural/CRC checks.
+            # the bounded read below preserves the original structural/CRC checks.
             canonical = zipfile.ZipInfo(spec["member_name"])
             for attribute in ("header_offset", "compress_type", "compress_size", "file_size", "CRC", "flag_bits"):
                 setattr(canonical, attribute, getattr(member, attribute))
             with container.open(canonical):
                 pass
-            with container.open(member) as stream:
+            # ZipExtFile clips output at ZipInfo.file_size. Read with our own
+            # budget so a forged size/CRC cannot hide a valid trailing row.
+            # Copy the member to retain ZipFile's associated structural checks;
+            # the original declaration stays unchanged for comparison below.
+            bounded_member = copy(member)
+            bounded_member.file_size = LIMITS["csv_bytes"] + 1
+            with container.open(bounded_member) as stream:
                 body = stream.read(LIMITS["csv_bytes"] + 1)
                 if len(body) > LIMITS["csv_bytes"] or stream.read(1) or len(body) != member.file_size:
                     raise ValueError("decoded ZIP member exceeds limit or declared size")
