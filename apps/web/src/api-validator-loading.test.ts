@@ -17,6 +17,12 @@ beforeEach(() => { control.failure = false; control.pending = undefined; vi.mock
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('lazy response validation at the HTTP boundary', () => {
+  it('does not relabel a GET validator failure as a read transport failure', async () => {
+    control.failure = true;
+    const fetch = vi.fn(async () => Response.json(page)); vi.stubGlobal('fetch', fetch);
+    await expect(makeClient('http://localhost').GET('/api/v2/projects')).rejects.toMatchObject({ code: 'RESPONSE_VALIDATOR_UNAVAILABLE' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it('keeps loader failures distinct from malformed data and unknown submission transport', async () => {
     control.failure = true;
     const response = Response.json(page);
