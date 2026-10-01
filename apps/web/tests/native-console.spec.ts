@@ -252,6 +252,36 @@ async ({ page, context }) => {
           path: resolve(dirname(config.redactionsFile), `projects-${mode}-${viewport.width}.png`),
           animations: 'disabled',
         });
+        if (mode === 'light' && viewport.width === 1440) {
+          const cdp = await context.newCDPSession(page);
+          try {
+            await cdp.send('DOM.enable'); await cdp.send('CSS.enable');
+            const { root } = await cdp.send('DOM.getDocument');
+            const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '.research-heading h1' });
+            const { fonts } = await cdp.send('CSS.getPlatformFontsForNode', { nodeId });
+            expect(fonts.some(font => font.glyphCount >= 2 && /Noto Sans CJK SC|PingFang SC|Microsoft YaHei/.test(font.familyName))).toBe(true);
+            writeFileSync(resolve(dirname(config.redactionsFile), 'cjk-fonts.json'), JSON.stringify({ platform: process.platform, fonts }, null, 2));
+          } finally { await cdp.detach(); }
+        }
+        await page.getByRole('button', { name, exact: true }).click();
+        await expect(page.getByRole('heading', { name: '当前 Brief', exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { name: '尚无研究周期', exact: true })).toBeVisible();
+        for (const [tab, surface] of [['工作概览', 'project-workspace'], ['研究 Brief', 'project-briefs'], ['冻结输入', 'project-inputs'], ['研究周期', 'project-cycles']] as const) {
+          if (viewport.width >= 768) await page.getByRole('tab', { name: tab, exact: true }).click();
+          else {
+            await page.getByLabel('研究项目章节', { exact: true }).click();
+            await page.getByTitle(tab, { exact: true }).last().click();
+          }
+          await expect(page.locator('.ant-skeleton:visible')).toHaveCount(0);
+          await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
+          if (tab === '冻结输入') {
+            await expect(page.getByLabel('冻结输入所属研究项目', { exact: true })).toHaveCount(0);
+            await expect(page.getByRole('button', { name: '新建冻结输入', exact: true })).toBeVisible();
+          }
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await page.locator('.console-layout').screenshot({ path: resolve(dirname(config.redactionsFile), `${surface}-${mode}-${viewport.width}.png`), animations: 'disabled' });
+        }
+        await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
       }
     }
   });

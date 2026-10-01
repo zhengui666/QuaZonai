@@ -65,16 +65,17 @@ function DatasetFacts({ dataset, source }: { dataset: Dataset; source?: Source }
   </Space>;
 }
 
-export function DataInputs() {
-  const [project, setProject] = useState<string>(); const { blocked } = useContext(GuardContext);
+export function DataInputs({ projectId }: { projectId?: string } = {}) {
+  const [selection, setProject] = useState<string>();
+  const project = projectId ?? selection; const { blocked } = useContext(GuardContext);
   return <Space orientation="vertical" className="full-width" size="large">
     <Typography.Title level={2}>冻结输入与数据验证</Typography.Title>
-    <Typography.Paragraph>先选择项目，再创建不可变输入。独立数据质量验证单独排队，不修改登记数据、PIT 或许可。</Typography.Paragraph>
-    <ResourceSelect label="冻结输入所属研究项目" value={project} disabled={blocked} onChange={setProject}
+    <Typography.Paragraph>{projectId ? '为当前研究准备不可变输入。' : '先选择项目，再创建不可变输入。'}独立数据质量验证单独排队，不修改登记数据、PIT 或许可。</Typography.Paragraph>
+    {!projectId && <ResourceSelect label="冻结输入所属研究项目" value={project} disabled={blocked} onChange={setProject}
       queryKey={['data','input-projects']} load={async (cursor, signal) => {
         const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
         return { items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })), next_cursor: page.next_cursor };
-      }} />
+      }} />}
     {project ? <ProjectInputs key={project} project={project} /> : <NoData text="明确选择一个研究项目后查看冻结输入。" />}
   </Space>;
 }

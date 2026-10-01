@@ -51,10 +51,7 @@ runs:
         python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
         RELEASE_BRANCH=dev python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
         sudo apparmor_parser -r deploy/docker/codex.apparmor
-        if ! command -v rg >/dev/null; then
-          sudo apt-get update
-          sudo apt-get install -y ripgrep
-        fi
+        python3 -B deploy/docker/setup_ripgrep.py
         uid=$(id -u)
         sudo loginctl enable-linger "$uid"
         sudo systemctl start "user@$uid.service"
