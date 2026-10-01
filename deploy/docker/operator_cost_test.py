@@ -1,4 +1,5 @@
 """Cost measurement gates must reject missing or mismatched evidence."""
+import copy
 import gzip
 import io
 import json
@@ -32,6 +33,104 @@ class CostTests(unittest.TestCase):
             self.assertEqual(cost.image_identity('candidate', 'b' * 40)['size_bytes'], 123)
             with self.assertRaises(ValueError):
                 cost.image_identity('candidate', 'c' * 40)
+
+    def native_fixture(self):
+        expected = {'input_sha256': '1' * 64, 'recipe_sha256': '2' * 64, 'platform': 'linux/amd64'}
+        hashes = {name: str(index) * 64 for index, name in enumerate(
+            ('server', 'runtime', 'catalog-prepare', 'polymarket-history'), 3)}
+        native = {'schema_version': 2, **expected, 'elf_sha256': hashes.copy(),
+                  'original_native_build_elapsed_seconds': 1576,
+                  'original_disk_before_bytes': 123456, 'original_disk_after_bytes': 45678}
+        payload = {'native_build': native, 'elf_sha256': hashes.copy(),
+                   'stripped_binary_bytes': {'catalog-prepare': 321, 'polymarket-history': 654}}
+        application = {name: hashes[name] for name in ('server', 'runtime')}
+        return payload, expected, application
+
+    def test_cached_producer_retains_original_measurements(self):
+        payload, expected, application = self.native_fixture()
+        before = copy.deepcopy(payload)
+        # Packaging revision is deliberately not a producer field. Reuse is
+        # admitted only by current native inputs, recipe and measured ELF bytes.
+        cost.validate_native_build(payload, expected, application)
+        self.assertEqual(payload, before)
+        self.assertEqual(payload['native_build']['original_native_build_elapsed_seconds'], 1576)
+
+    def test_stale_inputs_recipe_platform_or_elf_are_rejected(self):
+        for key in ('input_sha256', 'recipe_sha256', 'platform'):
+            payload, expected, application = self.native_fixture()
+            payload['native_build'][key] = 'stale'
+            with self.subTest(field=key), self.assertRaises(ValueError):
+                cost.validate_native_build(payload, expected, application)
+        for which in ('producer', 'measured', 'baseline'):
+            payload, expected, application = self.native_fixture()
+            if which == 'producer':
+                payload['native_build']['elf_sha256']['catalog-prepare'] = 'a' * 64
+            elif which == 'measured':
+                payload['elf_sha256']['server'] = 'a' * 64
+            else:
+                application['runtime'] = 'a' * 64
+            with self.subTest(which=which), self.assertRaises(ValueError):
+                cost.validate_native_build(payload, expected, application)
+
+    def test_historical_or_incomplete_producer_is_not_reinterpreted(self):
+        for change in ('historical', 'missing', 'negative', 'bool', 'missing-elf', 'empty-binary'):
+            payload, expected, application = self.native_fixture()
+            if change == 'historical':
+                payload['native_build'] = {'revision': 'a' * 40, 'native_build_elapsed_seconds': 1576}
+            elif change == 'missing':
+                del payload['native_build']['original_disk_before_bytes']
+            elif change == 'negative':
+                payload['native_build']['original_native_build_elapsed_seconds'] = -1
+            elif change == 'bool':
+                payload['native_build']['original_disk_after_bytes'] = True
+            elif change == 'missing-elf':
+                del payload['elf_sha256']['server']
+            else:
+                payload['stripped_binary_bytes']['catalog-prepare'] = 0
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                cost.validate_native_build(payload, expected, application)
+
+    def test_packaging_version_and_platform_are_checked_separately(self):
+        value = [{'Id': 'sha256:' + 'a' * 64, 'Size': 123, 'Os': 'linux', 'Architecture': 'amd64',
+                  'Config': {'Labels': {'org.opencontainers.image.revision': 'b' * 40,
+                                       'org.opencontainers.image.version': 'v1'}}}]
+        with patch.object(cost, 'run', return_value=json.dumps(value)):
+            cost.image_identity('candidate', 'b' * 40, 'v1')
+            with self.assertRaisesRegex(ValueError, 'packaging version'):
+                cost.image_identity('candidate', 'b' * 40, 'v2')
+        value[0]['Architecture'] = 'arm64'
+        with patch.object(cost, 'run', return_value=json.dumps(value)), self.assertRaisesRegex(ValueError, 'platform'):
+            cost.image_identity('candidate', 'b' * 40, 'v1')
+
+    def test_report_separates_current_packaging_time_from_original_producer(self):
+        payload, expected, application = self.native_fixture()
+        original = copy.deepcopy(payload)
+        def measured(args):
+            if '/usr/bin/stat' in args:
+                return '100\n200'
+            if '/usr/bin/sha256sum' in args:
+                return '\n'.join(application[name] + '  /opt/quazonai/bin/' + name for name in ('server', 'runtime'))
+            if '/usr/bin/python3' in args:
+                return json.dumps(payload)
+            return ''
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for phase, seconds in (('candidate-start', 10), ('candidate-end', 13),
+                                   ('baseline-start', 13), ('baseline-end', 14)):
+                (root / (phase + '.json')).write_text(json.dumps({'monotonic_ns': seconds * 1_000_000_000}))
+            with patch.object(cost, 'native_identity', return_value=expected), \
+                    patch.object(cost, 'image_identity', side_effect=[{'id': 'base', 'size_bytes': 1000},
+                                                                      {'id': 'candidate', 'size_bytes': 1500}]), \
+                    patch.object(cost, 'run', side_effect=measured), \
+                    patch.object(cost, 'archive_bytes', side_effect=[100, 150]), patch('sys.stdout', new_callable=io.StringIO):
+                cost.report(root, 'base', 'candidate', 'b' * 40, 'new-packaging-version')
+            report = json.loads((root / 'report.json').read_text())
+            self.assertEqual(report['schema_version'], 2)
+            self.assertEqual(report['revision'], 'b' * 40)
+            self.assertEqual(report['version'], 'new-packaging-version')
+            self.assertEqual(report['normal_candidate_build_seconds'], 3)
+            self.assertEqual(report['payload']['native_build'], original['native_build'])
+            self.assertEqual(report['payload']['native_build']['original_native_build_elapsed_seconds'], 1576)
 
     def test_missing_build_observation_does_not_produce_report(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,4 +1,5 @@
 **
+!.dockerignore
 !Cargo.toml
 !Cargo.lock
 !rust-toolchain.toml
@@ -32,6 +33,9 @@
 !deploy/
 !deploy/docker/
 !deploy/docker/Dockerfile
+!deploy/docker/Dockerfile.dockerignore
+!deploy/docker/native-inputs.mjs
+!deploy/docker/native-build.sh
 !deploy/docker/Caddyfile
 !deploy/docker/entrypoint.sh
 **/node_modules
