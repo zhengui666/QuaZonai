@@ -56,9 +56,9 @@ data paths and honest cold/same-builder-warm total timings are retained.
 
 Local locked/offline Cargo checks and focused Python checks are recorded with
 the staged delivery. Local disk is too constrained for release linking and
-Docker is unavailable. New-dispatcher execution, installed container acceptance,
-release byte measurements and cold/warm timings remain UNRUN until hosted jobs
-produce evidence for the reviewed head. No size or speed gain is claimed.
+Docker is unavailable. Hosted evidence is tracked in
+[PR 152](https://github.com/zhengui666/QuaZonai/pull/152); current qualification
+limits are recorded below. No controlled size or speed gain is claimed.
 Codex Agent evaluation remains UNRUN and is not needed to substitute for native
 packaging tests. Independent final-head review and all applicable CI are required
 before dev merge; no live Coinbase acquisition is part of this batch.
@@ -68,3 +68,30 @@ with already-existing legacy history/catalog executables. Import remained
 `UNPROVEN`/`UNVERIFIED`, preparation remained `FIXTURE`/`UNVERIFIED`, and original
 native definitions matched. This checks fixture construction only; those older
 executables do not establish the changed dispatcher's or packaged image's result.
+
+## Controlled comparison repair
+
+At head `8d70f49`, all thirteen ordinary hosted jobs passed, including actual
+dispatcher/history, installed source paths, Worker/browser, Runtime and Container
+acceptance. The additional cost comparison failed: the two measurement hosts
+had different CPU models, runner images, memory totals and Docker/containerd
+identity. Original server/runtime ELF sizes matched but their hashes differed;
+the cause is unresolved and admission remains blocked. Observed full-image bytes
+were 619,747,868 versus 507,052,423; gzip bytes were 237,495,992 versus 196,774,504.
+These retained observations are not controlled attribution or a speed claim.
+
+The repaired experiment measures both variants sequentially on one hosted
+runner, each with an independently verified empty builder. Its 95-minute job
+reserves time for cleanup and evidence; each variant requires at least 40 GB free
+or reports blocked. Cleanup removes only owned resources and restores temporary
+archive aliases. Reports retain all mismatches, input failures, original ELF
+bytes and binutils diagnostics before nonzero exit. Application hash equality
+is now mandatory; no compiler flags or bytes are normalized to force equality.
+
+The fixed historical baseline is an experiment for this delivery. Automatic
+triggers cover its workflow and comparison helpers; manual execution remains
+available. Ordinary production installation/function gates are unchanged. The
+actual final repair head must pass a new paired hosted run and all applicable CI;
+that run is still **UNRUN**. Independent review reproduced and resolved numeric
+overflow reporting and expired-deadline archive-alias cleanup failures. Thirty-one
+focused helper tests pass; they do not establish hosted measurement validity.

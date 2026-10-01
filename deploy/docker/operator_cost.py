@@ -12,10 +12,22 @@ import time
 
 
 MAX_ARCHIVE = 2_000_000_000  # Same conservative limit as release.archive_images.
+COMMAND_DEADLINE = None  # Hosted comparison only; ordinary reports retain their behavior.
+CLEANUP_DEADLINE = None  # The hosted job reserves this time before artifact upload.
+
+
+def command_timeout(limit=300):
+    if COMMAND_DEADLINE is None:
+        return None
+    remaining = COMMAND_DEADLINE - time.time()
+    if remaining <= 0:
+        raise TimeoutError('Measurement command budget exhausted; retain partial evidence.')
+    return min(limit, remaining)
 
 
 def run(args):
-    return subprocess.run(args, check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(args, check=True, capture_output=True, text=True,
+                          timeout=command_timeout()).stdout.strip()
 
 
 def observe():
@@ -46,12 +58,15 @@ class CountedArchive:
         pass
 
 
-def archive_bytes(image, version):
+def archive_bytes(image, version, cleanup_evidence=None):
+    global COMMAND_DEADLINE
     if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}', version):
         raise ValueError('Archive measurement requires an exact supported image tag.')
     # Docker serializes RepoTags in the archive. Use the actual release spelling,
     # not a measurement-only alias, and preserve any previously assigned image.
     local = 'quazonai-bundle/application:' + version
+    if COMMAND_DEADLINE is not None and (CLEANUP_DEADLINE is None or CLEANUP_DEADLINE <= COMMAND_DEADLINE):
+        raise ValueError('Bounded archive measurement requires reserved alias cleanup time.')
     def assigned():
         identities = run(['docker', 'image', 'ls', '--no-trunc', '--quiet', local]).splitlines()
         if len(identities) > 1 or any(not re.fullmatch(r'sha256:[0-9a-f]{64}', identity) for identity in identities):
@@ -61,13 +76,26 @@ def archive_bytes(image, version):
     measured = run(['docker', 'image', 'inspect', '--format', '{{.Id}}', image])
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', measured):
         raise ValueError('Archive measurement image identity is invalid.')
-    if previous != measured:
-        run(['docker', 'image', 'tag', measured, local])
+    records = json.loads(cleanup_evidence.read_text()) if cleanup_evidence and cleanup_evidence.exists() else []
+    record = {'tag': local, 'original_id': previous, 'measured_id': measured, 'status': 'pending'}
+    records.append(record)
+    def retain_cleanup():
+        if cleanup_evidence:
+            cleanup_evidence.write_text(json.dumps(records, indent=2) + '\n')
+    retain_cleanup()
     destination = CountedArchive()
     try:
+        if previous != measured:
+            run(['docker', 'image', 'tag', measured, local])
         if assigned() != measured:
             raise ValueError('Archive measurement tag changed before serialization.')
-        with subprocess.Popen(['docker', 'image', 'save', local], stdout=subprocess.PIPE) as process:
+        command = ['docker', 'image', 'save', local]
+        if COMMAND_DEADLINE is not None:
+            # Bound the stream read as well as wait(); a stalled pipe must not
+            # consume the job's evidence-upload reserve.
+            command = ['timeout', '--signal=TERM', '--kill-after=10s',
+                       str(command_timeout(600)) + 's', *command]
+        with subprocess.Popen(command, stdout=subprocess.PIPE) as process:
             try:
                 with gzip.GzipFile(fileobj=destination, mode='wb', compresslevel=1, mtime=0) as archive:
                     shutil.copyfileobj(process.stdout, archive)
@@ -77,17 +105,33 @@ def archive_bytes(image, version):
                 process.kill()
                 process.wait()
                 raise
+    except Exception as error:
+        record['measurement_error'] = type(error).__name__ + ': ' + str(error)
+        raise
     finally:
-        if assigned() != measured:
-            raise ValueError('Archive measurement tag changed; its current assignment was preserved.')
-        if previous and previous != measured:
-            run(['docker', 'image', 'tag', previous, local])
-            if assigned() != previous:
-                raise ValueError('The original archive tag assignment could not be confirmed; current tags were preserved.')
-        elif previous is None:
-            run(['docker', 'image', 'rm', local])
-            if assigned() is not None:
-                raise ValueError('The archive tag was reassigned during cleanup; its current assignment was preserved.')
+        measurement_deadline = COMMAND_DEADLINE
+        if CLEANUP_DEADLINE is not None:
+            COMMAND_DEADLINE = CLEANUP_DEADLINE
+        try:
+            current = record['observed_before_cleanup'] = assigned()
+            if current != measured:
+                raise ValueError('Archive measurement tag changed; its current assignment was preserved.')
+            if previous and previous != measured:
+                run(['docker', 'image', 'tag', previous, local])
+            elif previous is None:
+                run(['docker', 'image', 'rm', local])
+            record['observed_after_cleanup'] = assigned()
+            if record['observed_after_cleanup'] != previous:
+                raise ValueError('The original archive tag assignment could not be confirmed; current assignment was preserved.')
+            record['status'] = 'complete'
+            record['outcome'] = 'removed' if previous is None else 'restored' if previous != measured else 'unchanged'
+        except Exception as error:
+            record['status'] = 'blocked'
+            record['error'] = type(error).__name__ + ': ' + str(error)
+            raise
+        finally:
+            COMMAND_DEADLINE = measurement_deadline
+            retain_cleanup()
     return destination.bytes
 
 
@@ -196,10 +240,18 @@ def report(directory, baseline, candidate, revision, version, layout='single', e
             raise ValueError('Invalid build measurement chronology.')
         return value / 1_000_000_000
     before = measure_image(baseline, revision)
+    image_observations = {'baseline': before}
+    evidence_path = directory / 'image-observations.json'
+    evidence_path.write_text(json.dumps(image_observations, indent=2) + '\n')
     after = measure_image(candidate, revision, layout)
+    image_observations['candidate'] = after
+    evidence_path.write_text(json.dumps(image_observations, indent=2) + '\n')
     payload = after.pop('payload')
-    before['compressed_archive_bytes'] = archive_bytes(before['id'], version)
-    after['compressed_archive_bytes'] = archive_bytes(after['id'], version)
+    image_observations['payload'] = payload
+    before['compressed_archive_bytes'] = archive_bytes(before['id'], version, directory / 'archive-tags.json')
+    evidence_path.write_text(json.dumps(image_observations, indent=2) + '\n')
+    after['compressed_archive_bytes'] = archive_bytes(after['id'], version, directory / 'archive-tags.json')
+    evidence_path.write_text(json.dumps(image_observations, indent=2) + '\n')
     result = {'schema_version': 1, 'revision': revision, 'version': version,
               'scope': 'same-source application-base without operator versus full candidate; actual bytes, no estimates',
               'baseline': before, 'candidate': after, 'payload': payload,

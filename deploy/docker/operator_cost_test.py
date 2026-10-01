@@ -5,6 +5,8 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+import time
 import unittest
 from unittest.mock import patch
 
@@ -186,6 +188,101 @@ class CostTests(unittest.TestCase):
                     self.assertEqual(compressions[-1], compressions[0])
                     self.assertEqual(tags.get(local), original)
                     self.assertEqual(tags['unrelated:original'], previous)
+
+    def test_report_keeps_measured_bytes_if_archive_measurement_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for phase in ('candidate-start', 'candidate-end', 'baseline-start', 'baseline-end'):
+                cost.mark(directory, phase)
+            baseline = {'id': 'sha256:' + 'a' * 64, 'size_bytes': 100}
+            candidate = {'id': 'sha256:' + 'b' * 64, 'size_bytes': 200, 'payload': {'operator_payload_bytes': 100}}
+            with patch.object(cost, 'measure_image', side_effect=[baseline, candidate]), \
+                    patch.object(cost, 'archive_bytes', side_effect=[50, TimeoutError('bounded archive')]):
+                with self.assertRaises(TimeoutError):
+                    cost.report(directory, 'base', 'full', 'a' * 40, 'ci')
+            observations = json.loads((directory / 'image-observations.json').read_text())
+            self.assertEqual(observations['baseline']['size_bytes'], 100)
+            self.assertEqual(observations['candidate']['size_bytes'], 200)
+            self.assertEqual(observations['baseline']['compressed_archive_bytes'], 50)
+            self.assertEqual(observations['payload']['operator_payload_bytes'], 100)
+            self.assertFalse((directory / 'report.json').exists())
+
+    def test_hosted_deadline_bounds_commands_and_expiration_fails_closed(self):
+        with patch.object(cost, 'COMMAND_DEADLINE', time.time() + 30):
+            self.assertGreater(cost.command_timeout(), 0)
+            self.assertLessEqual(cost.command_timeout(), 30)
+            with patch.object(cost.subprocess, 'run') as run:
+                cost.run(['docker', 'version'])
+                self.assertLessEqual(run.call_args.kwargs['timeout'], 30)
+        with patch.object(cost, 'COMMAND_DEADLINE', time.time() - 1), self.assertRaises(TimeoutError):
+            cost.run(['docker', 'version'])
+
+    def test_expired_save_uses_reserved_time_to_restore_or_remove_archive_alias(self):
+        identity, previous = 'sha256:' + 'a' * 64, 'sha256:' + 'b' * 64
+        local = 'quazonai-bundle/application:ci'
+        for original in (None, previous, identity):
+            with self.subTest(original=original), tempfile.TemporaryDirectory() as temporary:
+                now, tags, calls = [1], {}, []
+                if original:
+                    tags[local] = original
+                def docker(args, **kwargs):
+                    calls.append((args, now[0], kwargs['timeout']))
+                    output = ''
+                    if args[:3] == ['docker', 'image', 'ls']:
+                        output = tags.get(args[-1], '')
+                    elif args[:3] == ['docker', 'image', 'inspect']:
+                        output = identity
+                    elif args[:3] == ['docker', 'image', 'tag']:
+                        tags[args[-1]] = args[-2]
+                    elif args[:3] == ['docker', 'image', 'rm']:
+                        tags.pop(args[-1], None)
+                    return subprocess.CompletedProcess(args, 0, output, '')
+                class ExpiredSave:
+                    def __init__(self, args, **kwargs):
+                        self.stdout = io.BytesIO(b'partial archive')
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *args):
+                        return False
+                    def wait(self):
+                        now[0] = 11
+                        return 124
+                    def kill(self):
+                        pass
+                evidence = Path(temporary) / 'archive-tags.json'
+                with patch.object(cost, 'COMMAND_DEADLINE', 10), patch.object(cost, 'CLEANUP_DEADLINE', 190), \
+                        patch.object(cost.time, 'time', side_effect=lambda: now[0]), \
+                        patch.object(cost.subprocess, 'run', side_effect=docker), \
+                        patch.object(cost.subprocess, 'Popen', ExpiredSave):
+                    with self.assertRaisesRegex(ValueError, 'archive measurement failed'):
+                        cost.archive_bytes(identity, 'ci', evidence)
+                    self.assertEqual(cost.COMMAND_DEADLINE, 10)
+                self.assertEqual(tags.get(local), original)
+                record = json.loads(evidence.read_text())[0]
+                self.assertEqual(record['status'], 'complete')
+                self.assertEqual(record['original_id'], original)
+                self.assertEqual(record['observed_after_cleanup'], original)
+                cleanup_calls = [call for call in calls if call[1] == 11]
+                self.assertTrue(cleanup_calls)
+                self.assertTrue(all(timeout == 179 for _, _, timeout in cleanup_calls))
+
+    def test_archive_cleanup_failure_is_retained_and_no_reserve_refuses_mutation(self):
+        identity = 'sha256:' + 'a' * 64
+        with patch.object(cost, 'COMMAND_DEADLINE', 10), patch.object(cost, 'CLEANUP_DEADLINE', None), \
+                patch.object(cost, 'run') as docker:
+            with self.assertRaisesRegex(ValueError, 'reserved alias cleanup time'):
+                cost.archive_bytes(identity, 'ci')
+            docker.assert_not_called()
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / 'archive-tags.json'
+            changed = 'sha256:' + 'b' * 64
+            with patch.object(cost, 'run', side_effect=['', identity, '', changed, changed]), \
+                    self.assertRaisesRegex(ValueError, 'current assignment was preserved'):
+                cost.archive_bytes(identity, 'ci', evidence)
+            record = json.loads(evidence.read_text())[0]
+            self.assertEqual(record['status'], 'blocked')
+            self.assertEqual(record['observed_before_cleanup'], changed)
+            self.assertIn('current assignment was preserved', record['error'])
 
     def test_concurrently_reassigned_archive_tag_is_preserved(self):
         identity = 'sha256:' + 'a' * 64
