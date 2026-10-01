@@ -92,6 +92,9 @@ export default function App() {
     cssVar: { key: 'quazonai' },
     components: {
       Button: {
+        // Enabled actions must not inherit unreadable in-between disabled colors.
+        // This public component token leaves loading-icon (slow) motion intact.
+        motionDurationMid: '0s',
         primaryColor: '#fff',
         defaultHoverColor: dark ? '#b0ccff' : '#1f4796',
         defaultHoverBorderColor: dark ? '#b0ccff' : '#1f4796',

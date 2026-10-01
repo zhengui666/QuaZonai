@@ -129,6 +129,60 @@ async function setup(page: Page, ready = false) {
   return { state, open, profiles };
 }
 
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`enabled primary and default buttons keep contrast during ${colorScheme} state changes`, async ({ page, context }) => {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'no-preference' });
+    await setup(page);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', colorScheme);
+    const login = page.getByRole('button', { name: '登录 ChatGPT', exact: true });
+    const refresh = page.getByRole('button', { name: '刷新', exact: true });
+    await expect(refresh).toBeEnabled();
+    await context.setOffline(true);
+    await expect(login).toBeDisabled();
+    await expect(refresh).toBeDisabled();
+
+    for (const button of [login, refresh]) {
+      await button.evaluate(async element => {
+        // Establish the disabled starting style; do not wait for the subsequent
+        // enabled color transition, which is the behavior under test.
+        getComputedStyle(element).color;
+        await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {})));
+        element.setAttribute('data-state-contrast', 'disabled');
+        const observe = new MutationObserver(() => {
+          if ((element as HTMLButtonElement).disabled) return;
+          // Flush the first enabled style and freeze any color interpolation at
+          // 30%. Axe then examines a deterministic intermediate frame, even on
+          // a slow runner. The fixed component has no such interpolation.
+          getComputedStyle(element).color;
+          for (const animation of element.getAnimations()) {
+            if (!(animation instanceof CSSTransition)
+              || !['color', 'background-color'].includes(animation.transitionProperty)) continue;
+            const duration = animation.effect?.getTiming().duration;
+            if (typeof duration === 'number' && duration > 0) {
+              animation.pause();
+              animation.currentTime = duration * 0.3;
+            }
+          }
+          element.setAttribute('data-state-contrast', 'enabled');
+          observe.disconnect();
+        });
+        observe.observe(element, { attributes: true, attributeFilter: ['disabled'] });
+      });
+    }
+
+    await context.setOffline(false);
+    for (const button of [login, refresh]) {
+      await expect(button).toBeEnabled();
+      await expect(button).toHaveAttribute('data-state-contrast', 'enabled');
+    }
+    const result = await new AxeBuilder({ page }).include('[data-state-contrast="enabled"]')
+      .withRules(['color-contrast']).analyze();
+    expect(result.violations).toEqual([]);
+    await login.focus();
+    await expect(login).toBeFocused();
+  });
+}
+
 test('one shared account keeps model, reasoning and speed independent for each role', async ({ page }, testInfo) => {
   const { state, open, profiles } = await setup(page, true);
   await expect(page.getByText('共享 ChatGPT 账号', { exact: true })).toBeVisible();
