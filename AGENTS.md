@@ -2,7 +2,7 @@
 
 ## 定位
 
-单人本机量化研究与 target-only 交付。后端 Rust，前端 React / TypeScript / 官方 Ant Design。复用 Codex、NautilusTrader、Clarabel、Arrow 和 PostgreSQL/PGMQ 的原生能力。
+单人本机量化研究与 target-only 交付。后端 Rust，前端 React / TypeScript；按研究工作流选择成熟的官方 UI 组件，不强制采用单一组件库。复用 Codex、NautilusTrader、Clarabel、Arrow 和 PostgreSQL/PGMQ 的原生能力。
 
 ## 按任务定位
 
