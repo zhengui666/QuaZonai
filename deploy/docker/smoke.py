@@ -15,6 +15,8 @@ import signal
 import socket
 import secrets
 import shutil
+import sqlite3
+import stat
 import time
 import subprocess
 import sys
@@ -728,6 +730,111 @@ def verify_installed_sources(config: dict) -> None:
             print(f'Source smoke did not complete; diagnostics and partial artifacts retained at {root}', file=sys.stderr)
 
 
+def runtime_native_exit_facts(directory: Path, spec: dict) -> dict:
+    """Inspect only this smoke's owned SQLite exit record, including live WAL."""
+    unavailable = {"native_exit": "unavailable"}
+    try:
+        run, attempt, external = spec["run_id"], spec["attempt_no"], spec["external_job_id"]
+        if (type(run) is not str or str(uuid.UUID(run)) != run or type(attempt) is not int
+                or not 1 <= attempt <= 4294967295 or external != f"{run}/{attempt}"):
+            return unavailable
+        # Pin every directory component and file without traversing symlinks.
+        # Snapshot bounded regular files instead of allowing SQLite to follow
+        # live WAL/SHM paths or write a shared-memory index in the source root.
+        with contextlib.ExitStack() as handles:
+            def opened(name, flags, parent=None):
+                fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                handles.callback(os.close, fd)
+                return fd
+            def identity(info):
+                return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            if not directory.is_absolute() or ".." in directory.parts:
+                return unavailable
+            parent = opened("/", os.O_RDONLY | os.O_DIRECTORY)
+            for part in (*directory.parts[1:], "state"):
+                parent = opened(part, os.O_RDONLY | os.O_DIRECTORY, parent)
+            snapshots, observed = {}, {}
+            for name in ("journal.sqlite", "journal.sqlite-wal"):
+                try:
+                    fd = opened(name, os.O_RDONLY, parent)
+                except FileNotFoundError:
+                    if name == "journal.sqlite":
+                        raise
+                    observed[name] = None
+                    continue
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 8 * 1024 * 1024:
+                    return unavailable
+                with os.fdopen(fd, "rb", closefd=False) as source:
+                    snapshots[name] = source.read(8 * 1024 * 1024 + 1)
+                if len(snapshots[name]) != info.st_size or identity(os.fstat(fd)) != identity(info):
+                    return unavailable
+                observed[name] = identity(info)
+            # A single coherent observation only: never retry a changing source.
+            for name, before in observed.items():
+                try:
+                    after = identity(os.stat(name, dir_fd=parent, follow_symlinks=False))
+                except FileNotFoundError:
+                    after = None
+                if after != before:
+                    return unavailable
+        with tempfile.TemporaryDirectory(prefix="quazonai-exit-snapshot-") as temporary:
+            root = Path(temporary)
+            for name, content in snapshots.items():
+                (root / name).write_bytes(content)
+            with contextlib.closing(sqlite3.connect((root / "journal.sqlite").as_uri() + "?mode=ro", uri=True,
+                                                   timeout=0.1)) as journal:
+                journal.execute("PRAGMA query_only=ON")
+                journal.execute("PRAGMA trusted_schema=OFF")
+                deadline = time.monotonic() + 1
+                journal.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+                for table in ("runtime_jobs", "native_exit_observations"):
+                    schema = journal.execute(f"PRAGMA table_list('{table}')").fetchone()
+                    if schema is None or schema[2] != "table" or schema[5] != 1:
+                        return unavailable
+                row = journal.execute(
+                    "SELECT e.exit_code, e.oom_killed FROM native_exit_observations AS e "
+                    "JOIN runtime_jobs AS j ON e.external_id=j.external_id AND e.container_id=j.container_id "
+                    "AND e.started_us=j.started_us WHERE j.external_id=? AND j.run_id=? AND j.attempt_no=? "
+                    "AND j.phase='TERMINAL' AND typeof(j.attempt_no)='integer' "
+                    "AND typeof(e.exit_code)='integer' AND typeof(e.oom_killed)='integer' LIMIT 2",
+                    (external, run, attempt)).fetchall()
+                if len(row) != 1 or type(row[0][0]) is not int or type(row[0][1]) is not int or row[0][1] not in (0, 1):
+                    return unavailable
+                return {"native_exit": "read", "exit_code": row[0][0], "oom_killed": bool(row[0][1])}
+    except Exception:
+        return unavailable
+
+
+def runtime_failure_facts(request, route: str, status: dict) -> dict:
+    """Read the owned result before cleanup, exposing only closed contract codes."""
+    if status.get("has_result") is not True:
+        return {"result": "not_available"}
+    try:
+        result = request("GET", route + "/result")
+        if not isinstance(result, dict) or any(
+            result.get(key) != status[key]
+            for key in ("run_id", "attempt_no", "external_job_id", "state")
+        ):
+            return {"result": "identity_mismatch"}
+        error = result.get("error")
+        if error is None:
+            return {"result": "read", "error": None}
+        if not isinstance(error, dict):
+            return {"result": "invalid_error"}
+        classes = ("RETRYABLE_INFRA", "PERMANENT_CONFIG", "INVALID_INPUT", "RESOURCE_LIMIT")
+        codes = ("ENGINE_UNAVAILABLE", "IMAGE_UNAVAILABLE", "CONTRACT_UNSUPPORTED",
+                 "INPUT_UNAVAILABLE", "INVALID_INPUT", "NATIVE_JOB_FAILED", "INVALID_OUTPUT",
+                 "CPU_LIMIT", "MEMORY_LIMIT", "OUTPUT_LIMIT", "DEADLINE_EXCEEDED")
+        return {"result": "read",
+                "error_class": error.get("class") if error.get("class") in classes else "UNRECOGNIZED",
+                "error_code": error.get("code") if error.get("code") in codes else "UNRECOGNIZED"}
+    except Exception:
+        # Do not replace the original failure or expose response bodies, URLs,
+        # credentials, native stderr, or arbitrary exception text in CI logs.
+        return {"result": "unavailable"}
+
+
 def verify_runtime(config: dict) -> None:
     # Use only the image-extracted gateway and the selected job image. Compilation
     # here is the actual scientific COMPILE_MODEL operation inside its job container.
@@ -817,6 +924,9 @@ def verify_runtime(config: dict) -> None:
                 time.sleep(0.2)
             else:
                 raise AssertionError("Native compile did not reach a terminal state")
+            if status["state"] != "SUCCEEDED":
+                facts = {**runtime_failure_facts(request, route, status), **runtime_native_exit_facts(directory, spec)}
+                print("Native compile failure: " + json.dumps(facts, sort_keys=True), file=sys.stderr, flush=True)
             assert status["state"] == "SUCCEEDED", status
             result = request("GET", route + "/result")
             assert result["state"] == "SUCCEEDED" and result["run_id"] == run_id

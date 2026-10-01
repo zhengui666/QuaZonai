@@ -1,6 +1,39 @@
 import { expect, test } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Dialog, Page } from '@playwright/test';
 import type { Schema } from '../src/api';
+
+async function browserReload(page: Page, decision: 'stay' | 'leave' | 'clean') {
+  const originalDocument = await page.evaluate(() => performance.timeOrigin);
+  const dialogs: string[] = [];
+  const decisions: Promise<void>[] = [];
+  const decisionErrors: unknown[] = [];
+  const handleDialog = (dialog: Dialog) => {
+    dialogs.push(dialog.type());
+    decisions.push((decision === 'stay' ? dialog.dismiss() : dialog.accept())
+      .catch(error => { decisionErrors.push(error); }));
+  };
+  const controller = new AbortController();
+  page.on('dialog', handleDialog);
+  const expectedDialog = decision === 'stay' ? page.waitForEvent('dialog', { signal: controller.signal }) : undefined;
+  try {
+    // A canceled reload has no new document for page.reload() to await.
+    if (decision === 'stay') await Promise.all([
+      expectedDialog,
+      page.evaluate(() => { window.location.reload(); }),
+    ]);
+    else await page.reload({ waitUntil: 'domcontentloaded' });
+    await Promise.all(decisions);
+    expect(decisionErrors).toEqual([]);
+    expect(dialogs).toEqual(decision === 'clean' ? [] : ['beforeunload']);
+    const currentDocument = await page.evaluate(() => performance.timeOrigin);
+    if (decision === 'stay') expect(currentDocument).toBe(originalDocument);
+    else expect(currentDocument).not.toBe(originalDocument);
+  } finally {
+    page.off('dialog', handleDialog);
+    controller.abort();
+    await Promise.allSettled([expectedDialog, ...decisions]);
+  }
+}
 
 async function setup(page: Page) {
   const now = new Date().toISOString();
@@ -653,9 +686,80 @@ test('an offline edit closed before debounce saves on reconnect without reopenin
   expect(writes).toHaveLength(1);
 });
 
-test('a confirmed data source receipt survives a failed list refresh after retry', async ({ page }) => {
+test('detached pending autosaves protect browser reload until every write settles', async ({ page }) => {
+  const { runtime, source, writes, holdNextRuntime, holdNextSource } = await setup(page);
+  const releaseRuntime = holdNextRuntime();
+  const releaseSource = holdNextSource();
+  try {
+    await page.getByRole('tab', { name: '集成' }).click();
+    await page.getByRole('button', { name: '配置与原生探测' }).click();
+    await page.getByRole('button', { name: '修改配置' }).click();
+    const runtimeDialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+    await runtimeDialog.getByRole('textbox', { name: '名称' }).fill('Runtime pending');
+    await expect.poll(() => writes.length).toBe(1);
+    await runtimeDialog.getByRole('button', { name: '关闭' }).click();
+    await expect(runtimeDialog).toHaveCount(0);
+    await page.getByRole('tab', { name: '数据', exact: true }).click();
+    await page.getByRole('button', { name: '查看许可与版本登记' }).click();
+    await page.getByRole('button', { name: '修改数据源' }).click();
+    const sourceDialog = page.getByRole('dialog', { name: '修改数据源显示与启用状态' });
+    await sourceDialog.getByRole('textbox', { name: '数据源名称' }).fill('Source pending');
+    await expect.poll(() => writes.length).toBe(2);
+    await sourceDialog.getByRole('button', { name: '关闭' }).click();
+    await expect(sourceDialog).toHaveCount(0);
+    await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await browserReload(page, 'stay');
+    expect(writes.map(write => write.kind)).toEqual(['runtime', 'source']);
+    expect(runtime.configuration.name).toBe('Runtime A');
+    expect(source.name).toBe('Source A');
+    releaseRuntime();
+    await expect.poll(() => runtime.configuration.name).toBe('Runtime pending');
+    await browserReload(page, 'stay');
+    expect(writes).toHaveLength(2);
+    expect(source.name).toBe('Source A');
+    releaseSource();
+    await expect.poll(() => source.name).toBe('Source pending');
+    await expect.poll(() => page.evaluate(async () => {
+      const modulePath = '/src/settings-work.ts';
+      return (await import(modulePath)).settingsWorkActive();
+    })).toBe(false);
+    await browserReload(page, 'clean');
+    await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
+    expect(writes).toHaveLength(2);
+    expect([runtime.revision, source.revision]).toEqual(['2', '2']);
+  } finally { releaseRuntime(); releaseSource(); }
+});
+
+test('a local dirty project keeps its existing browser and in-app leave warnings', async ({ page }) => {
+  await setup(page);
+  const mutations: string[] = [];
+  page.on('request', request => { if (!['GET', 'HEAD'].includes(request.method())) mutations.push(request.url()); });
+  await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+  await page.getByRole('button', { name: '新建研究', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: '新建研究项目', exact: true });
+  const name = editor.getByLabel('研究名称');
+  await expect(name).toHaveRole('textbox');
+  await name.fill('Unsaved research');
+  await browserReload(page, 'stay');
+  await expect(name).toHaveValue('Unsaved research');
+  await editor.getByRole('button', { name: '取消', exact: true }).click();
+  const confirmation = page.getByRole('dialog', { name: '放弃尚未保存的修改？', exact: true });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole('button', { name: '继续编辑', exact: true }).click();
+  await expect(name).toHaveValue('Unsaved research');
+  await editor.getByRole('button', { name: '取消', exact: true }).click();
+  await confirmation.getByRole('button', { name: '放弃修改', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await browserReload(page, 'clean');
+  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
+  expect(mutations).toHaveLength(0);
+});
+
+test('a detached data source command protects browser reload through retry and receipt acknowledgement', async ({ page }) => {
   const { source } = await setup(page);
-  const requests: { key: string | undefined; body: Schema['DataSourceCreate'] }[] = [];
+  const requests: { method: string; path: string; key: string | undefined; body: Schema['DataSourceCreate'] }[] = [];
   let releaseRefresh!: () => void;
   const heldRefresh = new Promise<void>(resolve => { releaseRefresh = resolve; });
   let refreshes = 0;
@@ -666,7 +770,7 @@ test('a confirmed data source receipt survives a failed list refresh after retry
       return route.fallback();
     }
     const body: Schema['DataSourceCreate'] = request.postDataJSON();
-    requests.push({ key: request.headers()['idempotency-key'], body });
+    requests.push({ method: request.method(), path: new URL(request.url()).pathname, key: request.headers()['idempotency-key'], body });
     if (requests.length === 1) return route.abort('failed');
     return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({
       schema_version: 1, replayed: true, resource: { ...source, name: body.name, native_catalog_ref: body.native_catalog_ref },
@@ -690,6 +794,15 @@ test('a confirmed data source receipt survives a failed list refresh after retry
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('dialog', { name: '放弃未保存的更改？', exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: '放弃未保存的更改？', exact: true })).toHaveCount(0);
+  await expect(page.getByText('数据源登记结果待确认')).toBeVisible();
+  await browserReload(page, 'stay');
+  await expect(page.getByText('数据源登记结果待确认')).toBeVisible();
+  expect(requests).toHaveLength(1);
+  expect(requests[0]?.key).toBeTruthy();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
   await page.getByRole('tab', { name: '数据', exact: true }).click();
   await expect(page.getByText('数据源登记结果待确认')).toBeVisible();
   await page.getByRole('button', { name: '重试当前操作' }).click();
@@ -704,11 +817,17 @@ test('a confirmed data source receipt survives a failed list refresh after retry
   releaseRefresh();
   await expect(page.getByText('数据源登记回执已确认')).toBeVisible();
   await expect(page.getByText(source.id)).toBeVisible();
+  await browserReload(page, 'stay');
+  await expect(page.getByText('数据源登记回执已确认')).toBeVisible();
+  expect(requests).toHaveLength(2);
   await page.getByRole('button', { name: '关闭回执' }).click();
   await expect.poll(() => page.evaluate(async () => {
     const modulePath = '/src/settings-work.ts';
     return (await import(modulePath)).settingsWorkActive();
   })).toBe(false);
+  await browserReload(page, 'clean');
+  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
+  expect(requests).toHaveLength(2);
 });
 
 test('a definite rejection after detached command retry stays visible until acknowledged', async ({ page }) => {
@@ -745,12 +864,62 @@ test('a definite rejection after detached command retry stays visible until ackn
     const path = '/src/settings-work.ts';
     return (await import(path)).settingsWorkActive();
   })).toBe(true);
+  await browserReload(page, 'stay');
+  await expect(page.getByText('Source rejected')).toBeVisible();
+  expect(attempts).toBe(2);
   await page.getByRole('button', { name: '关闭错误' }).click();
   await expect(page.getByText('数据源登记未完成')).toHaveCount(0);
   await expect.poll(() => page.evaluate(async () => {
     const path = '/src/settings-work.ts';
     return (await import(path)).settingsWorkActive();
   })).toBe(false);
+  await browserReload(page, 'clean');
+  expect(attempts).toBe(2);
+});
+
+test('accepting browser reload discards an uncertain command without replaying it', async ({ page }) => {
+  await setup(page);
+  const requests: { key: string | undefined; body: Schema['DataSourceCreate'] }[] = [];
+  let release!: () => void;
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/api\/v2\/data\/sources(?:\?|$)/, async route => {
+    const request = route.request();
+    if (request.method() === 'GET') return route.fallback();
+    requests.push({ key: request.headers()['idempotency-key'], body: request.postDataJSON() });
+    await hold;
+    return route.abort('failed');
+  });
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await page.getByRole('button', { name: '登记数据源' }).click();
+  const dialog = page.getByRole('dialog', { name: '登记数据源' });
+  await dialog.getByRole('textbox', { name: '数据源名称' }).fill('Uncertain source');
+  await dialog.getByRole('combobox', { name: '选择已登记的 Runtime' }).click();
+  await page.getByText('Runtime A', { exact: true }).last().click();
+  await dialog.getByRole('textbox', { name: 'Runtime 原生目录登记键' }).fill('catalog/uncertain-source');
+  try {
+    await dialog.getByRole('button', { name: '登记', exact: true }).click();
+    await expect.poll(() => requests.length).toBe(1);
+    await expect(dialog.getByRole('button', { name: '返回' })).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeVisible();
+    await expect(page.getByRole('dialog', { name: '放弃未保存的更改？', exact: true })).toHaveCount(0);
+  } finally { release(); }
+  await expect(dialog.getByRole('button', { name: '重试当前操作' })).toBeVisible();
+  await dialog.getByRole('button', { name: '返回' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText('数据源登记结果待确认')).toBeVisible();
+  await browserReload(page, 'leave');
+  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '数据', exact: true }).click();
+  await expect(page.getByRole('button', { name: '登记数据源' })).toBeVisible();
+  await expect(page.getByText('数据源登记结果待确认')).toHaveCount(0);
+  await expect(page.getByText('数据源登记回执已确认')).toHaveCount(0);
+  expect(await page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+  expect(requests).toHaveLength(1);
 });
 
 test('a newly bound Runtime CA remains configured for later autosaves', async ({ page }) => {
