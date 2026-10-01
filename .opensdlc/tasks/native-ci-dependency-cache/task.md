@@ -21,10 +21,10 @@ variability makes these bottleneck observations, not an A/B speedup measurement.
 
 ## Design
 
-The shared [container action](../../../.github/actions/container/action.yml)
-adds `cache-native-dependencies`, default `false`. Only the existing Container
-workflow opts in on dev pushes or dev-targeted PRs. Publishing, version release
-and Dev image callers remain uncached, including the latter's `source: source`
+The initial shared [container action](../../../.github/actions/container/action.yml)
+pilot added `cache-native-dependencies`, default `false`. Only the existing Container
+workflow opted in on dev pushes or dev-targeted PRs. Publishing, version release
+and Dev image callers initially remained uncached, including the latter's `source: source`
 checkout. The helper derives paths from the source working directory and accepts
 both repository-root and nested checkouts. `contents: read` stays unchanged.
 
@@ -205,3 +205,41 @@ finished in 3,873 ms. This establishes transient name contamination, not the
 earlier persistent timeout. Temporary count/phase logging is removed after
 retaining this evidence; useful accessible-name assertions remain.
 No retry timeout, acceptance check or scientific rule is loosened.
+
+## Dev-release caller reuse, 2026-10-01
+
+The [version publisher](../../../.github/workflows/release-version.yml) now opts
+into the same bounded dependency cache only when its branch input is `dev`, the
+caller event is `push`, and its ref is `refs/heads/dev`. Main, tag and manual
+release callers and the separate Dev image workflow remain excluded. The
+default remains false. The existing dev-push Container workflow can seed the
+same branch-scoped cache before the exact-source release gate succeeds.
+
+Both callers use the same root checkout, pinned compiler, default Job features,
+release profile and shared action. No helper, key, path, permission, save policy,
+3 GiB ceiling, 7 GiB restore headroom, native workspace pruning or cold fallback
+changes. Every build and acceptance stage still runs; a cache hit is not a
+source or test result. GitHub preserves the caller's event/ref context in
+[reusable workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#github-context).
+
+At source `bfa3cfc`, the successful [dev Container job](https://github.com/zhengui666/QuaZonai/actions/runs/36811437274/job/110207133814)
+restored **626,025,650 compressed bytes** and retained **2,437,374,242 dependency
+bytes** after pruning. It rebuilt only `contracts`, `domain` and `job` in
+**1m53s**. The same-source [uncached release](https://github.com/zhengui666/QuaZonai/actions/runs/36811438022/job/110217444967)
+compiled the host Job in **25m36s**. Their runner image revisions differ
+(`20260920.314.1` and `20260927.320.1`), so the unchanged exact key would miss
+between this particular pair. These observations motivate reuse; they do not
+measure the new caller or establish a controlled release speedup. Its independent
+application build took **40.403s** with existing BuildKit hits; the stored operator
+producer duration is not a fresh compilation measurement.
+
+The caller regression keeps Container's dev/fork policy and the Dev image
+exclusion, and checks all three release opt-in conditions. Final-head review,
+the complete applicable CI and deployment tests remain required. The publisher
+is push-only, so this changed caller cannot be executed by a PR check: an actual
+authorized dev release must still demonstrate the exact key/matched key, cache
+bytes and headroom, fresh first-party compilation, source-bound native OCI,
+normal smoke, published image/bundle readback and fresh no-checkout cold install.
+Until those observations exist, release cache reuse is **unverified**. Record
+miss/cold fallback honestly, and keep cache overhead, host compilation, application
+build and whole-release duration separate. Do not widen keys to manufacture hits.

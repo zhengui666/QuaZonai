@@ -245,14 +245,15 @@ class NativeCacheWorkflowTests(unittest.TestCase):
             self.assertNotIn('      if:', section)
             self.assertIn('working-directory: ${{ inputs.source }}', section)
 
-    def test_only_container_dev_events_opt_in_and_callers_stay_unchanged(self):
+    def test_container_dev_events_and_dev_push_release_opt_in(self):
         workflow = (ROOT / '.github/workflows/container.yml').read_text()
         self.assertIn('permissions:\n  contents: read\n', workflow)
         self.assertIn("cache-native-dependencies: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'pull_request' && github.base_ref == 'dev') }}", workflow)
         self.assertIn('ref: ${{ github.event.pull_request.head.sha || github.sha }}', workflow)
-        for name in ['dev-image.yml', 'release-version.yml']:
-            caller = (ROOT / '.github/workflows' / name).read_text()
-            self.assertNotIn('cache-native-dependencies:', caller)
+        release = (ROOT / '.github/workflows/release-version.yml').read_text()
+        self.assertEqual(release.count('cache-native-dependencies:'), 1)
+        self.assertIn("cache-native-dependencies: ${{ inputs.branch == 'dev' && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}", release)
+        self.assertNotIn('cache-native-dependencies:', (ROOT / '.github/workflows/dev-image.yml').read_text())
         self.assertIn('source: source', (ROOT / '.github/workflows/dev-image.yml').read_text())
 
 

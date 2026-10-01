@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import type { Schema } from '../src/api';
 
 // Synthetic presentation/transport fixtures only. Native API acceptance stays
 // in the independently provisioned Rust/PostgreSQL browser harness.
@@ -107,6 +108,45 @@ test('retry countdown expires without replaying the request automatically', asyn
   await expect(page.getByText(/秒后可重试/)).toHaveCount(0);
   expect(reads()).toBe(1);
   await retry.click();
-  await expect(page.getByText('暂无研究项目', { exact: true })).toBeVisible();
+  await expect(page.getByText('你的下一个研究，从这里开始', { exact: true })).toBeVisible();
   expect(reads()).toBe(2);
+});
+
+test('research workbench offers an actionable empty state and guarded shortcuts', async ({ page }) => {
+  await session(page);
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '研究项目', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '你的下一个研究，从这里开始' })).toBeVisible();
+  await expect(page.getByLabel('搜索本页研究项目')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '下一页', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '创建第一个研究' }).click();
+  await expect(page.getByRole('dialog', { name: '新建研究项目' })).toBeVisible();
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await page.getByRole('button', { name: '运行记录 追踪执行、状态与回执' }).click();
+  await expect(page.getByRole('heading', { name: '运行', exact: true })).toBeVisible();
+});
+
+test('project cards search only the loaded page and clear the filter when paging', async ({ page }) => {
+  await session(page);
+  const project = (index: number, name: string): Schema['ProjectView'] => ({
+    id: `01990000-0000-7000-8000-00000000000${index}`, name, description: 'Research evidence', state: 'DRAFT',
+    created_by: 'OPERATOR', revision: '1', root_lineage_id: `01990000-0000-7000-8000-00000000000${index}`,
+    created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z', current_brief_id: null,
+  });
+  await page.route('**/api/v2/projects?*', route => {
+    const next = new URL(route.request().url()).searchParams.has('cursor');
+    return route.fulfill({ json: { schema_version: 1,
+      items: next ? [project(3, '第三个研究')] : [project(1, '动量研究'), project(2, '均值回归')], next_cursor: next ? null : '01990000-0000-7000-8000-000000000002' } });
+  });
+  await page.goto('/');
+  const search = page.getByLabel('搜索本页研究项目');
+  await expect(page.getByRole('article')).toHaveCount(2);
+  await search.fill('动量');
+  await expect(page.getByRole('article')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: '动量研究', exact: true })).toBeVisible();
+  await search.fill('不存在');
+  await expect(page.getByRole('heading', { name: '本页没有匹配的项目' })).toBeVisible();
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
+  await expect(search).toHaveValue('');
+  await expect(page.getByRole('button', { name: '第三个研究', exact: true })).toBeVisible();
 });

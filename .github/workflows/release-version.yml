@@ -51,6 +51,7 @@ jobs:
           image: ${{ env.LOCAL_IMAGE }}
           revision: ${{ inputs.revision }}
           version: ${{ inputs.version }}
+          cache-native-dependencies: ${{ inputs.branch == 'dev' && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io

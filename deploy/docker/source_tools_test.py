@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -21,6 +22,8 @@ INVENTORY = [
      'public_network_operations': ['download']},
     {'id': 'hf-snapshot', 'capabilities': ['plan', 'download', 'verify'],
      'public_network_operations': ['plan', 'download']},
+    {'id': 'binance-vision-spot-klines', 'capabilities': ['plan', 'inspect', 'freeze', 'verify', 'convert', 'prepare'],
+     'public_network_operations': []},
 ]
 
 
@@ -72,6 +75,12 @@ class InstalledSourceTests(unittest.TestCase):
             command = self.command([operation, 'coinbase-candles', '--output', str(self.output / 'new')],
                                    [self.input], self.output)
             self.assertEqual(command[command.index('--network') + 1], 'bridge' if operation == 'download' else 'none')
+        for operation in ('plan', 'inspect', 'verify', 'freeze', 'convert', 'prepare'):
+            arguments = [operation, 'binance-vision-spot-klines']
+            if operation in ('freeze', 'convert', 'prepare'):
+                arguments += ['--output', str(self.output / 'new')]
+            command = self.command(arguments, [self.input], self.output)
+            self.assertEqual(command[command.index('--network') + 1], 'none')
         for arguments in (['plugins'], ['--help'], ['download', 'hf-snapshot', '--help']):
             self.calls.clear()
             command = self.command(arguments)
@@ -174,6 +183,54 @@ class InstalledSourceTests(unittest.TestCase):
             self.command(['convert', 'coinbase-candles', '--output', str(self.output / 'new')])
         self.assertEqual(sentinel.read_bytes(), b'unchanged failed artifact')
         self.run.assert_not_called()
+
+    def test_archive_freezing_requires_new_owned_output_before_docker(self):
+        for destination, output in [(str(self.output / 'new'), None), ('relative', self.output),
+                                    (str(self.input / 'new'), self.output), (str(self.output), self.output)]:
+            with self.subTest(destination=destination, output=output), self.assertRaises(ValueError):
+                self.command(['freeze', 'binance-vision-spot-klines', '--output', destination], [self.input], output)
+        self.run.assert_not_called()
+
+    def test_installed_archive_fixture_reproduces_original_rows_and_synthetic_clocks(self):
+        data = Path(__file__).resolve().parents[2] / 'runtimes/data'
+        with patch.object(sys, 'path', [str(data), *sys.path]):
+            import acquire
+            import binance_vision as vision
+            import providers
+        template, original, frozen = self.root / 'template', self.root / 'archive-original', self.root / 'frozen'
+        template.mkdir()
+        original.mkdir()
+        smoke.source_fixture(template, acquire.plan('coinbase-candles', providers.Selection('BTC-USD', 0, 180, 60)))
+        selection = vision.Selection('BTCUSDT', 'BTC', 'USDT', '2024-01-01', '1m')
+        plan = vision.plan(selection)
+        smoke.archive_source_fixture(original, template, plan)
+        before = {path.name: path.read_bytes() for path in original.iterdir()}
+        manifest = vision.freeze(selection, original / plan['archive_name'],
+            original / (plan['archive_name'] + '.CHECKSUM'), frozen, provenance_path=original / 'provenance.json')
+        self.assertEqual(vision.verify(frozen)['integrity'], 'VERIFIED')
+        self.assertEqual(manifest['provenance_kind'], 'SYNTHETIC')
+        self.assertEqual(manifest['counts']['rows'], '3')
+        self.assertEqual(manifest['counts']['missing_buckets'], '1437')
+        rows = [json.loads(line) for line in (frozen / 'records.jsonl').read_text().splitlines()]
+        self.assertTrue(all(row['observed_at'] is None and row['historical_available_at'] is None for row in rows))
+        self.assertEqual({row['declared_observed_at'] for row in rows}, {'2024-01-02T00:00:01Z'})
+        self.assertEqual({row['source_timestamp_unit'] for row in rows}, {'ms'})
+        self.assertEqual(before, {path.name: path.read_bytes() for path in original.iterdir()})
+        native_selection = json.loads((original / 'selection.json').read_bytes())['selection']
+        self.assertEqual(native_selection['bar_types'], ['BTCUSDT.BINANCE-1-MINUTE-LAST-EXTERNAL'])
+        self.assertEqual(native_selection['event_start_ns'], rows[0]['event_end_ns'])
+        self.assertEqual(native_selection['event_end_ns'], str(int(rows[-1]['event_end_ns']) + 60_000_000_000))
+
+    def test_registry_cannot_give_archive_freezing_or_inspection_network_access(self):
+        for operation in ('inspect', 'freeze'):
+            invalid = [{'id': 'example', 'capabilities': [operation], 'public_network_operations': [operation]}]
+            arguments = [operation, 'example']
+            if operation == 'freeze':
+                arguments += ['--output', str(self.output / 'new')]
+            with self.subTest(operation=operation), patch.object(manage, 'run', side_effect=[
+                    '[]', json.dumps({'org.opencontainers.image.revision': self.release['revision']}), json.dumps(invalid)]), \
+                    self.assertRaisesRegex(ValueError, 'offline'):
+                self.command(arguments, [self.input], self.output)
 
     def test_native_override_pending_update_and_remote_daemon_reject(self):
         for override in ('--native-bin', '--native-bin=/other'):

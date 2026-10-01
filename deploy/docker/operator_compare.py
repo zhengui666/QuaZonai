@@ -7,6 +7,7 @@ import math
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import tempfile
 import time
@@ -15,12 +16,30 @@ import uuid
 import operator_cost as cost
 
 
-OLD_REVISION = 'bfa3cfc625a752fdb554d9136b9b2eb4412c6f24'
+OLD_REVISION = 'b58ec6d153d5b211b2941bf0d603ea3a3108a68b'
+PRIOR_PACKAGING_REVISION = '56aad24e0c73b31a9255e37adaa0abcd812a7c42'
+REPORT_SCHEMA = 3
 MIN_FREE_BYTES = 40_000_000_000
 LOCKED_INPUTS = ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'apps/web/package-lock.json')
 HARNESS_FILES = ('deploy/docker/operator_compare.py', 'deploy/docker/operator_cost.py',
+                 'deploy/docker/native-inputs.mjs', 'deploy/docker/native-build.sh',
                  '.github/workflows/operator-cost-comparison.yml')
 OPERATOR_RECIPE = 'CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --locked --release -p job --features polymarket-history,catalog-prepare'
+LAUNCHERS = ('catalog-prepare', 'polymarket-history')
+LAUNCHER_COPIES = ''.join('COPY --chmod=755 deploy/docker/operator/' + name +
+                          ' /opt/quazonai/operator/bin/' + name + '\n' for name in LAUNCHERS)
+NATIVE_SUBSTITUTIONS = (
+    ('--bin catalog-prepare --bin polymarket-history', '--bin source-tools'),
+    ('    install -Dm755 target/release/catalog-prepare /operator/bin/catalog-prepare\n'
+     '    install -Dm755 target/release/polymarket-history /operator/bin/polymarket-history\n'
+     '    strip /operator/bin/catalog-prepare /operator/bin/polymarket-history\n',
+     '    install -Dm755 target/release/source-tools /operator/bin/source-tools\n'
+     '    strip /operator/bin/source-tools\n'),
+    ('"catalog-prepare":"%s","polymarket-history":"%s"', '"source-tools":"%s"'),
+    ('      "$(sha256sum /operator/bin/catalog-prepare | cut -d \' \' -f 1)" \\\n'
+     '      "$(sha256sum /operator/bin/polymarket-history | cut -d \' \' -f 1)" \\\n',
+     '      "$(sha256sum /operator/bin/source-tools | cut -d \' \' -f 1)" \\\n'),
+)
 
 
 def write_json(path, value):
@@ -40,19 +59,36 @@ def harness_identity():
             'file_sha256': {name: hashlib.sha256((source / name).read_bytes()).hexdigest() for name in names}}
 
 
+def substitute_native_recipe(body):
+    """Apply only the reviewed build/install/strip/operator-hash substitutions."""
+    for before, after in NATIVE_SUBSTITUTIONS:
+        if body.count(before) != 1:
+            raise ValueError('Pinned native helper does not contain the exact approved operator recipe.')
+        body = body.replace(before, after, 1)
+    return body
+
+
 def verify_sources(old, candidate, revision):
     if not re.fullmatch(r'[0-9a-f]{40}', revision) or revision == OLD_REVISION:
         raise ValueError('Candidate must be a distinct, exact source SHA.')
-    recipes, dockerfiles = [], []
-    for source, expected, bins in ((old, OLD_REVISION, '--bin catalog-prepare --bin polymarket-history'),
-                                   (candidate, revision, '--bin source-tools')):
+    recipes, dockerfiles, helpers, common_inputs = [], [], [], []
+    for source, expected, layout, bins in ((old, OLD_REVISION, 'standalone', '--bin catalog-prepare --bin polymarket-history'),
+                                          (candidate, revision, 'shared', '--bin source-tools')):
         if cost.run(['git', '-C', str(source), 'rev-parse', 'HEAD']) != expected or \
                 cost.run(['git', '-C', str(source), 'status', '--porcelain']):
             raise ValueError('Measurement requires clean checkouts at the exact requested revisions.')
-        dockerfile = (source / 'deploy/docker/Dockerfile').read_text()
+        tree = cost.run(['git', '-C', str(source), 'rev-parse', 'HEAD^{tree}'])
+        if not re.fullmatch(r'[0-9a-f]{40}', tree):
+            raise ValueError('Measurement source tree identity is invalid.')
+        dockerfile = (source / 'deploy/docker/Dockerfile').read_bytes().decode('utf-8')
+        helper = (source / 'deploy/docker/native-build.sh').read_bytes().decode('utf-8')
         dockerfiles.append(dockerfile)
-        normalized = ' '.join(dockerfile.replace('\\\n', ' ').split())
-        if OPERATOR_RECIPE + ' ' + bins + ' &&' not in normalized or \
+        helpers.append(helper)
+        common_inputs.append({name: hashlib.sha256((source / name).read_bytes()).hexdigest()
+                              for name in ('deploy/docker/native-inputs.mjs', '.dockerignore',
+                                           'deploy/docker/Dockerfile.dockerignore')})
+        normalized = ' '.join(helper.replace('\\\n', ' ').split())
+        if OPERATOR_RECIPE + ' ' + bins + ' install' not in normalized or \
                 'ENV RUSTUP_TOOLCHAIN=1.98.1 CARGO_BUILD_JOBS=2' not in dockerfile:
             raise ValueError('The comparison no longer uses the approved native recipe.')
         images = re.findall(r'^FROM (\S+)', dockerfile, re.MULTILINE)
@@ -64,29 +100,40 @@ def verify_sources(old, candidate, revision):
             raise ValueError('The pinned native compiler image is missing.')
         hashes = {name: hashlib.sha256((source / name).read_bytes()).hexdigest()
                   for name in LOCKED_INPUTS}
-        recipes.append({'revision': expected, 'base_images': external, 'locked_inputs_sha256': hashes,
+        recipes.append({'revision': expected, 'tree': tree, 'layout': layout,
+                        'base_images': external, 'locked_inputs_sha256': hashes,
                         'dockerfile_sha256': hashlib.sha256(dockerfile.encode()).hexdigest(),
+                        'native_build_sha256': hashlib.sha256(helper.encode()).hexdigest(),
+                        'common_inputs_sha256': common_inputs[-1],
                         'operator_build_command': OPERATOR_RECIPE + ' ' + bins, 'rust_image': rust[0],
-                        'platform': 'linux/amd64',
-                        # The operator stage is the deliberately changed treatment.
-                        # All other Docker instructions, including server/runtime
-                        # compiler, strip and base-image recipes, must be identical.
-                        'common_recipe_sha256': hashlib.sha256(re.sub(
-                            r'^FROM server AS operator\n.*?(?=^FROM )', '', dockerfile,
-                            flags=re.MULTILINE | re.DOTALL).encode()).hexdigest()})
-    for field in ('base_images', 'locked_inputs_sha256', 'rust_image', 'platform', 'common_recipe_sha256'):
+                        'platform': 'linux/amd64'})
+    for field in ('base_images', 'locked_inputs_sha256', 'rust_image', 'platform', 'common_inputs_sha256'):
         if recipes[0][field] != recipes[1][field]:
             raise ValueError('Old and candidate comparison inputs differ: ' + field)
-    normalized = [' '.join(body.replace('\\\n', ' ').split()) for body in dockerfiles]
-    expected = normalized[0].replace('--bin catalog-prepare --bin polymarket-history', '--bin source-tools').replace(
-        'install -Dm755 target/release/catalog-prepare /operator/bin/catalog-prepare && '
-        'install -Dm755 target/release/polymarket-history /operator/bin/polymarket-history && '
-        'strip /operator/bin/catalog-prepare /operator/bin/polymarket-history',
-        'install -Dm755 target/release/source-tools /operator/bin/source-tools && '
-        'strip /operator/bin/source-tools && '
-        'install -m755 deploy/docker/operator/catalog-prepare deploy/docker/operator/polymarket-history /operator/bin/')
-    if normalized[1] != expected:
-        raise ValueError('Only the approved operator packaging instructions may differ from the historical recipe.')
+    if helpers[1] != substitute_native_recipe(helpers[0]):
+        raise ValueError('Only the approved native operator substitutions may differ; the server and common helper must be identical.')
+    anchor = 'COPY --from=operator /operator/ /opt/quazonai/operator/\n'
+    if dockerfiles[0].count(anchor) != 1 or dockerfiles[1] != dockerfiles[0].replace(anchor, anchor + LAUNCHER_COPIES, 1):
+        raise ValueError('Only the two exact final-stage launcher COPY instructions may differ.')
+    for name in LAUNCHERS:
+        launcher = candidate / 'deploy/docker/operator' / name
+        wanted = '#!/bin/sh\nexec /opt/quazonai/operator/bin/source-tools ' + name + ' "$@"\n'
+        if not stat.S_ISREG(launcher.lstat().st_mode) or launcher.read_bytes() != wanted.encode():
+            raise ValueError('Candidate launcher must be an exact regular fixed-path script: ' + name)
+    for ancestor in (OLD_REVISION, PRIOR_PACKAGING_REVISION):
+        cost.run(['git', '-C', str(candidate), 'merge-base', '--is-ancestor', ancestor, revision])
+    # No helper block is discarded: bind the entire old recipe and the verified
+    # positive substitution above, including every server/common instruction.
+    common = hashlib.sha256(json.dumps({'dockerfile': dockerfiles[0], 'native_build': helpers[0],
+                                       'common_inputs': common_inputs[0]}, sort_keys=True).encode()).hexdigest()
+    for source, recipe in zip((old, candidate), recipes):
+        identity = cost.native_identity(source)
+        if type(identity.get('schema_version')) is not int or identity['schema_version'] != 1 or identity.get('platform') != 'linux/amd64' or any(
+                not isinstance(identity.get(key), str) or not re.fullmatch(r'[0-9a-f]{64}', identity[key])
+                for key in ('input_sha256', 'recipe_sha256')):
+            raise ValueError('Native source collector returned malformed identity.')
+        recipe['common_recipe_sha256'] = common
+        recipe['native_identity'] = {key: identity[key] for key in ('input_sha256', 'recipe_sha256', 'platform')}
     return recipes
 
 
@@ -191,13 +238,14 @@ def extract_application(directory, image, owner, resources):
     return result
 
 
-def cleanup_owned(directory, resources):
+def cleanup_owned(directory, resources, archive_evidence=None):
     """Delete only names whose recorded identity and exclusive ownership match."""
     result = {'status': 'complete', 'removed': [], 'errors': [], 'archive_tags': []}
-    archive_evidence = directory / 'archive-tags.json'
+    archive_evidence = archive_evidence if archive_evidence is not None else directory / 'archive-tags.json'
     if archive_evidence.exists():
         try:
             result['archive_tags'] = json.loads(archive_evidence.read_text())
+            cost.archive_cleanup_records(archive_evidence)
             expected_tags = {}
             for record in result['archive_tags']:
                 if record['status'] != 'complete':
@@ -210,6 +258,13 @@ def cleanup_owned(directory, resources):
         except Exception as error:
             result['status'] = 'blocked'
             result['errors'].append({'kind': 'archive-alias', 'error': str(error)})
+            # A formerly complete restore can fail this final live readback.
+            # Retain that uncertainty for the next variant or resumed attempt;
+            # never overwrite malformed or already-blocked journal evidence.
+            if cost.archive_cleanup_confirmed(archive_evidence):
+                result['archive_tags'].append({'status': 'blocked',
+                    'phase': 'post-measurement-cleanup', 'error': str(error)})
+                write_json(archive_evidence, result['archive_tags'])
     def remove(kind, name, identity):
         try:
             owner = resources['owner']
@@ -267,12 +322,29 @@ def cleanup_owned(directory, resources):
     return result
 
 
+def pair_archive_evidence(directory):
+    """Keep unresolved prior attempts, including pre-pair per-variant journals."""
+    shared = directory.parent / 'archive-tags.json'
+    for variant in ('old', 'candidate'):
+        previous = directory.parent / variant / 'archive-tags.json'
+        if previous.exists() and not cost.archive_cleanup_confirmed(previous):
+            if cost.archive_cleanup_confirmed(shared):
+                records = cost.archive_cleanup_records(shared)
+                records.append({'status': 'blocked', 'phase': 'prior-variant-journal',
+                                'evidence': str(previous)})
+                write_json(shared, records)
+    return shared
+
+
 def measure(old, candidate, revision, variant, directory, version, builder_image, deadline=None):
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise ValueError('Run this expensive comparison only in its GitHub-hosted workflow.')
     if not re.fullmatch(r'moby/buildkit@sha256:[0-9a-f]{64}', builder_image):
         raise ValueError('Both builders require the same resolved official BuildKit image digest.')
     directory.mkdir(parents=True, exist_ok=True)
+    # Both sequential variants and resumed attempts share the same archive tag.
+    # Keep its pending/blocked state outside either variant's report directory.
+    archive_evidence = pair_archive_evidence(directory)
     # The workflow fixes this absolute deadline before setup, leaving ten
     # minutes of its 95-minute job for comparison and artifact upload.
     deadline = deadline if deadline is not None else time.time() + 80 * 60
@@ -284,7 +356,7 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
     base_image = 'quazonai-operator-measure:' + owner + '-base'
     resources = {'owner': owner, 'builder_image': builder_image, 'builder_id': None, 'builder_created': False, 'planned_images': [], 'diagnosed_images': [], 'images': {}, 'containers': {}}
     detail = {'variant': variant, 'old_revision': OLD_REVISION, 'candidate_revision': revision}
-    result = {'schema_version': 2, 'revision': OLD_REVISION if variant == 'old' else revision,
+    result = {'schema_version': REPORT_SCHEMA, 'revision': OLD_REVISION if variant == 'old' else revision,
               'version': version, 'measurement_status': 'running', 'hosted_comparison': detail}
     write_json(directory / 'report.json', result)
     write_json(directory / 'owned-resources.json', resources)
@@ -301,12 +373,14 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
             raise ValueError('Blocked: at least 40 GB free is required before each variant; no global prune is permitted.')
         detail['harness'] = harness_identity()
         write_json(directory / 'harness.json', detail['harness'])
+        if detail['harness']['revision'] != revision:
+            raise ValueError('Final comparison harness must be the exact candidate revision.')
         recipes = verify_sources(old, candidate, revision)
         recipe = detail['recipe'] = recipes[0 if variant == 'old' else 1]
         write_json(directory / 'recipes.json', recipes)
         selected_revision = recipe['revision']
         source = old if variant == 'old' else candidate
-        layout = 'legacy' if variant == 'old' else 'single'
+        layout = 'standalone' if variant == 'old' else 'shared'
         environment = detail['environment'] = environment_identity(owner, builder_image)
         write_json(directory / 'environment.json', environment)
         for image in recipe['base_images']:
@@ -354,12 +428,14 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
         detail['application_diagnostics']['baseline'] = extract_application(directory / 'baseline-elf', baseline['id'], owner, resources)
         resources['diagnosed_images'].append(base_image)
         write_json(directory / 'owned-resources.json', resources)
-        result.update(cost.report(directory, base_image, full_image, selected_revision, version, layout, emit=False))
-        result['schema_version'] = 2
+        result.update(cost.report(directory, base_image, full_image, selected_revision, version,
+                                  source=source, layout=layout, emit=False, strict=False,
+                                  cleanup_evidence=archive_evidence))
+        result['schema_version'] = REPORT_SCHEMA
         result['hosted_comparison'] = detail
         for image_kind in ('baseline', 'candidate'):
             for binary, evidence in detail['application_diagnostics'][image_kind].items():
-                if evidence['sha256'] != result[image_kind]['application_binary_sha256'][binary] or evidence['size_bytes'] != result[image_kind]['stripped_application_binary_bytes'][binary]:
+                if evidence['sha256'] != result[image_kind]['application_elf_sha256'][binary] or evidence['size_bytes'] != result[image_kind]['stripped_application_binary_bytes'][binary]:
                     raise ValueError('Retained ELF does not match the measured image: ' + image_kind + '/' + binary)
         detail.update({
             'independent_cold_full_build_seconds': elapsed(directory, 'candidate'),
@@ -376,7 +452,7 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
         result['cache_conditions'] = [detail['cold_scope'], detail['warm_scope'],
             'Same-source no-operator baseline follows the full builds and reuses their layers.',
             'Disk observations are endpoint samples; disk and memory peaks are unknown. No speed claim.']
-        result['measurement_status'] = 'complete'
+        result['measurement_status'] = 'blocked' if result['validation_errors'] else 'complete'
     except Exception as error:
         result['measurement_status'] = 'blocked'
         result['error'] = type(error).__name__ + ': ' + str(error)
@@ -389,7 +465,7 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
                                         if path.stem.endswith(('-start', '-end'))}
         write_json(directory / 'report.json', result)
         cost.COMMAND_DEADLINE = deadline
-        result['cleanup'] = cleanup_owned(directory, resources)
+        result['cleanup'] = cleanup_owned(directory, resources, archive_evidence)
         if result['cleanup']['status'] != 'complete':
             result['measurement_status'] = 'blocked'
         write_json(directory / 'report.json', result)
@@ -454,6 +530,7 @@ def compare(old, candidate, revision):
         'hosted_comparison.runtime_packages': text,
     }
     required_equal['hosted_comparison.recipe.locked_inputs_sha256'] = lambda x: isinstance(x, dict) and set(x) == set(LOCKED_INPUTS) and all(sha(v) for v in x.values())
+    required_equal['hosted_comparison.recipe.common_inputs_sha256'] = lambda x: isinstance(x, dict) and set(x) == {'deploy/docker/native-inputs.mjs', '.dockerignore', 'deploy/docker/Dockerfile.dockerignore'} and all(sha(v) for v in x.values())
     required_equal['hosted_comparison.harness.file_sha256'] = lambda x: isinstance(x, dict) and set(x) == set(HARNESS_FILES) and all(sha(v) for v in x.values())
     env = 'hosted_comparison.environment.'
     for name in ('buildx_version', 'rustc', 'runner_os', 'runner_arch', 'memory', 'docker_version',
@@ -469,24 +546,64 @@ def compare(old, candidate, revision):
     if not commit(revision) or revision == OLD_REVISION:
         reasons.append({'kind': 'invalid-request', 'field': 'candidate_revision', 'observed': revision})
     for side, expected in (('old', OLD_REVISION), ('candidate', revision)):
+        layout = 'standalone' if side == 'old' else 'shared'
+        value(side, 'schema_version', lambda x: type(x) is int and x == REPORT_SCHEMA)
+        value(side, 'validation_errors', lambda x: isinstance(x, list) and not x)
+        value(side, 'hosted_comparison.recipe.tree', commit)
+        value(side, 'hosted_comparison.recipe.native_build_sha256', sha)
+        value(side, 'payload.layout', lambda x: x == layout)
         for path, wanted in (('revision', expected), ('hosted_comparison.variant', side),
                              ('hosted_comparison.recipe.revision', expected),
+                             ('layout', layout), ('hosted_comparison.recipe.layout', layout),
+                             ('hosted_comparison.harness.revision', revision),
                              ('hosted_comparison.old_revision', OLD_REVISION),
                              ('hosted_comparison.candidate_revision', revision),
                              ('measurement_status', 'complete'), ('cleanup.status', 'complete')):
             observed = value(side, path, text)
             if observed is not None and observed != wanted:
                 reasons.append({'kind': 'unexpected', 'field': side + '.' + path, 'expected': wanted, 'observed': observed})
+        if side == 'candidate':
+            source_tree = value(side, 'hosted_comparison.recipe.tree', commit)
+            harness_tree = value(side, 'hosted_comparison.harness.tree', commit)
+            if source_tree is not None and harness_tree is not None and source_tree != harness_tree:
+                reasons.append({'kind': 'harness-tree-mismatch', 'field': side + '.hosted_comparison.recipe.tree',
+                                'source': source_tree, 'harness': harness_tree})
         bins = '--bin catalog-prepare --bin polymarket-history' if side == 'old' else '--bin source-tools'
         value(side, 'hosted_comparison.recipe.operator_build_command', lambda x: x == OPERATOR_RECIPE + ' ' + bins)
         value(side, env + 'initial_cache_empty', lambda x: x is True)
         value(side, env + 'initial_cache', lambda x: isinstance(x, str) and cache_is_empty(x))
+        # Source identities are recomputed independently for B and C. Approved
+        # relocation/recipe changes can alter both digests, but each producer and
+        # measured source must match its own preflight, never the other variant.
+        value(side, 'payload.native_build.schema_version', lambda x: type(x) is int and x == 2)
+        for field, predicate in (('input_sha256', sha), ('recipe_sha256', sha),
+                                 ('platform', lambda x: x == 'linux/amd64')):
+            observed = [value(side, prefix + field, predicate) for prefix in (
+                'hosted_comparison.recipe.native_identity.', 'source_native_identity.', 'payload.native_build.')]
+            if all(item is not None for item in observed) and len(set(observed)) != 1:
+                reasons.append({'kind': 'native-source-mismatch', 'field': side + '.' + field,
+                                'preflight': observed[0], 'measured_source': observed[1], 'producer': observed[2]})
+        names = {'server', 'runtime'} | ({'catalog-prepare', 'polymarket-history'} if side == 'old' else {'source-tools'})
+        hashes = value(side, 'payload.elf_sha256', lambda x: isinstance(x, dict) and set(x) == names and all(sha(v) for v in x.values()))
+        producer = value(side, 'payload.native_build.elf_sha256', lambda x: isinstance(x, dict) and set(x) == names and all(sha(v) for v in x.values()))
+        if hashes is not None and producer is not None and hashes != producer:
+            reasons.append({'kind': 'producer-elf-mismatch', 'field': side + '.payload.elf_sha256',
+                            'measured': hashes, 'producer': producer})
+        for binary in ('server', 'runtime'):
+            actual = value(side, 'candidate.application_elf_sha256.' + binary, sha)
+            if hashes is not None and actual is not None and hashes[binary] != actual:
+                reasons.append({'kind': 'payload-application-mismatch', 'field': side + '.payload.elf_sha256.' + binary,
+                                'payload': hashes[binary], 'application': actual})
+        for field in ('original_native_build_elapsed_seconds', 'original_disk_before_bytes', 'original_disk_after_bytes'):
+            value(side, 'payload.native_build.' + field, lambda x: type(x) is int and x >= 0)
+        for image in ('baseline', 'candidate'):
+            value(side, image + '.compressed_archive_bytes', lambda x: integer(x) and x < cost.MAX_ARCHIVE)
     builders = [value(side, env + 'builder_name', text) for side in reports]
     if None not in builders and builders[0] == builders[1]:
         reasons.append({'kind': 'shared-builder', 'field': env + 'builder_name', 'observed': builders[0]})
     identical = True
     for binary in ('server', 'runtime'):
-        for measure, predicate in (('application_binary_sha256', sha), ('stripped_application_binary_bytes', integer)):
+        for measure, predicate in (('application_elf_sha256', sha), ('stripped_application_binary_bytes', integer)):
             identical = equal('candidate.' + measure + '.' + binary, predicate) and identical
             for side in reports:
                 full = value(side, 'candidate.' + measure + '.' + binary, predicate)
@@ -520,11 +637,11 @@ def compare(old, candidate, revision):
     for name in ('independent_cold_full_build_seconds', 'same_builder_warm_full_build_seconds'):
         left, right = [value(side, 'hosted_comparison.' + name, seconds) for side in reports]
         timings[name] = {'old': left, 'candidate': right, 'delta': right - left if None not in (left, right) else None}
-    return {'schema_version': 2, 'scope': 'historical pinned bfa full image versus candidate full image; hosted actual bytes',
+    return {'schema_version': REPORT_SCHEMA, 'scope': 'pinned equivalent-capability two-ELF full image versus integrated shared-ELF full image; hosted actual bytes',
             'old_revision': OLD_REVISION, 'candidate_revision': revision, 'delta': deltas, 'build_seconds': timings,
             'application_binaries_identical': identical, 'required_size_reductions_observed': reductions,
             'admissible': not reasons, 'reasons': reasons, 'observations': observations,
-            'required_equal_fields': list(required_equal) + ['candidate.application_binary_sha256.{server,runtime}', 'candidate.stripped_application_binary_bytes.{server,runtime}'],
+            'required_equal_fields': list(required_equal) + ['candidate.application_elf_sha256.{server,runtime}', 'candidate.stripped_application_binary_bytes.{server,runtime}'],
             'diagnostic_only_fields': ['builder_inspect', 'ELF section/program-header diagnostics',
                                        'disk endpoint samples', 'build timings', 'dockerfile_sha256'],
             'timing_interpretation': 'Raw timings retained even when incomparable. Sequential order and host prerequisite cache remain caveats; no speed claim. Memory and disk peaks are unknown.',
@@ -560,13 +677,31 @@ def main():
     measurement.add_argument('--version', required=True)
     measurement.add_argument('--builder-image', required=True)
     measurement.add_argument('--deadline', type=float, required=True)
+    verification = subcommands.add_parser('verify-sources')
+    verification.add_argument('--old-source', type=Path, required=True)
+    verification.add_argument('--candidate-source', type=Path, required=True)
+    verification.add_argument('--revision', required=True)
+    verification.add_argument('--output', type=Path, required=True)
     comparison = subcommands.add_parser('compare')
     comparison.add_argument('--old', type=Path, required=True)
     comparison.add_argument('--candidate', type=Path, required=True)
     comparison.add_argument('--revision', required=True)
     comparison.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    if args.command == 'measure':
+    if args.command == 'verify-sources':
+        result = {'schema_version': REPORT_SCHEMA, 'status': 'blocked'}
+        try:
+            result['harness'] = harness_identity()
+            if result['harness']['revision'] != args.revision:
+                raise ValueError('Final comparison harness must be the exact candidate revision.')
+            result['recipes'] = verify_sources(args.old_source.resolve(), args.candidate_source.resolve(), args.revision)
+            result['status'] = 'complete'
+        except Exception as error:
+            result['error'] = type(error).__name__ + ': ' + str(error)
+        write_json(args.output, result)
+        if result['status'] != 'complete':
+            parser.exit(1, 'Source comparison blocked before building; see preflight report.\n')
+    elif args.command == 'measure':
         result = measure(args.old_source.resolve(), args.candidate_source.resolve(), args.revision, args.variant,
                          args.directory.resolve(), args.version, args.builder_image, args.deadline)
         if result['measurement_status'] != 'complete':

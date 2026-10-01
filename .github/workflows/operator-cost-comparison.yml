@@ -1,7 +1,7 @@
 name: Operator packaging cost comparison
 on:
   pull_request:
-    # This is a fixed historical qualification, not a gate on future product
+    # This is a fixed equivalent-capability qualification, not a gate on future product
     # dependencies. Changes to this harness itself must qualify the final head.
     paths:
       - '.github/workflows/operator-cost-comparison.yml'
@@ -10,14 +10,14 @@ on:
   workflow_dispatch:
     inputs:
       candidate_revision:
-        description: Exact reviewed candidate commit SHA to compare with bfa3cfc (no publication).
+        description: Exact reviewed candidate commit SHA to compare with b58ec6d (no publication).
         required: true
         type: string
 permissions:
   contents: read
 env:
   CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
-  HARNESS_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+  HARNESS_REVISION: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
 concurrency:
   group: operator-comparison-${{ github.event.pull_request.number || inputs.candidate_revision }}
   cancel-in-progress: true
@@ -33,12 +33,12 @@ jobs:
           set -euo pipefail
           echo "MEASUREMENT_DEADLINE=$(( $(date +%s) + 85 * 60 ))" >> "$GITHUB_ENV"
           [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
-          test "$CANDIDATE_REVISION" != bfa3cfc625a752fdb554d9136b9b2eb4412c6f24
+          test "$CANDIDATE_REVISION" != b58ec6d153d5b211b2941bf0d603ea3a3108a68b
       - name: Check out the measurement harness
         timeout-minutes: 5
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
           persist-credentials: false
       - name: Verify the exact measurement harness revision
         run: test "$(git rev-parse HEAD)" = "$HARNESS_REVISION"
@@ -46,7 +46,7 @@ jobs:
         timeout-minutes: 5
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: bfa3cfc625a752fdb554d9136b9b2eb4412c6f24
+          ref: b58ec6d153d5b211b2941bf0d603ea3a3108a68b
           path: old-source
           persist-credentials: false
       - name: Check out the exact candidate source
@@ -55,7 +55,15 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
           path: candidate-source
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify immutable source inputs and approved native substitutions before building
+        timeout-minutes: 3
+        run: |
+          python3 -B deploy/docker/operator_compare.py verify-sources \
+            --old-source old-source --candidate-source candidate-source \
+            --revision "$CANDIDATE_REVISION" \
+            --output "$RUNNER_TEMP/operator-comparison/source-preflight.json"
       - timeout-minutes: 5
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:

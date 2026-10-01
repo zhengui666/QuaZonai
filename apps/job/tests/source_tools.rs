@@ -48,12 +48,19 @@ fn original_parsers_help_versions_errors_and_exit_codes_are_preserved() {
         );
         equivalent("polymarket-history", &[OsStr::new(sub)], 2);
     }
-    equivalent(
-        "catalog-prepare",
-        &[OsStr::new("ingest-candles"), OsStr::new("--help")],
-        0,
-    );
-    equivalent("catalog-prepare", &[OsStr::new("ingest-candles")], 2);
+    for sub in ["ingest-candles", "ingest-archive-candles"] {
+        equivalent(
+            "catalog-prepare",
+            &[OsStr::new(sub), OsStr::new("--help")],
+            0,
+        );
+        equivalent("catalog-prepare", &[OsStr::new(sub)], 2);
+        equivalent(
+            "catalog-prepare",
+            &[OsStr::new(sub), OsStr::new("--not-an-option")],
+            2,
+        );
+    }
     let directory = tempfile::tempdir().unwrap();
     let missing = directory
         .path()
@@ -84,6 +91,21 @@ fn original_parsers_help_versions_errors_and_exit_codes_are_preserved() {
         ],
         1,
     );
+    for sub in ["ingest-candles", "ingest-archive-candles"] {
+        equivalent(
+            "catalog-prepare",
+            &[
+                OsStr::new(sub),
+                OsStr::new("--acquisition"),
+                missing.as_os_str(),
+                OsStr::new("--instruments"),
+                missing.as_os_str(),
+                OsStr::new("--output"),
+                output.as_os_str(),
+            ],
+            1,
+        );
+    }
     assert!(!output.exists());
 }
 
@@ -103,6 +125,21 @@ fn non_utf8_paths_keep_the_original_failure_contract() {
         ],
         1,
     );
+    for sub in ["ingest-candles", "ingest-archive-candles"] {
+        equivalent(
+            "catalog-prepare",
+            &[
+                OsStr::new(sub),
+                OsStr::new("--acquisition"),
+                &path,
+                OsStr::new("--instruments"),
+                &path,
+                OsStr::new("--output"),
+                &path,
+            ],
+            1,
+        );
+    }
 }
 
 #[test]

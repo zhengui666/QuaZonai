@@ -1,4 +1,4 @@
-import { App as AntApp, Alert, Button, ConfigProvider, Drawer, Grid, Layout, Menu, Skeleton, Space, Typography, theme } from 'antd';
+import { App as AntApp, Alert, Button, ConfigProvider, Drawer, Grid, Layout, Menu, Skeleton, Space, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { ApartmentOutlined, ExperimentOutlined, ExportOutlined, FundOutlined, MenuOutlined, MoonOutlined, PlayCircleOutlined, SettingOutlined, SunOutlined } from '@ant-design/icons';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -52,16 +52,16 @@ function Console({ colorTheme, toggleTheme }: { colorTheme: ColorTheme; toggleTh
     case 'delivery': content = <Delivery />; break;
     case 'runs': content = <Runs />; break;
     case 'settings': content = <Settings />; break;
-    default: content = <Projects />;
+    default: content = <Projects onNavigate={navigate} />;
   }
   const themeLabel = colorTheme === 'light' ? '切换为深色主题' : '切换为浅色主题';
   return <>
     <section className="update-bar" aria-label="应用版本"><PwaUpdate /></section>
     <Layout className="console-layout">
-      {screens.lg && <Layout.Sider width={216} theme={colorTheme} className="console-sidebar"><Typography.Title level={3} className="brand">QuaZonai</Typography.Title>{menu}</Layout.Sider>}
+      {screens.lg && <Layout.Sider width={224} theme={colorTheme} className="console-sidebar"><div className="brand"><span className="brand-mark" aria-hidden>Q</span><span>QuaZonai<small>QUANT RESEARCH</small></span></div><div className="nav-caption">工作空间</div>{menu}<div className="sidebar-footer"><span className="sidebar-footer-mark">QZ</span><div>研究 · 验证 · 交付<small>让决策建立在证据之上</small></div></div></Layout.Sider>}
       <Layout>
         <Layout.Header className="console-header">
-          <Space>{!screens.lg && <Button icon={<MenuOutlined aria-hidden />} aria-label="打开主导航" onClick={() => setMenuOpen(true)} />}<Typography.Text strong>QuaZonai</Typography.Text></Space>
+          <Space>{!screens.lg && <Button icon={<MenuOutlined aria-hidden />} aria-label="打开主导航" onClick={() => setMenuOpen(true)} />}<span className="header-location">工作空间 <span aria-hidden>/</span> <strong>{navigation.find(item => item.key === active)?.label}</strong></span></Space>
           <Space><Button icon={colorTheme === 'light' ? <MoonOutlined aria-hidden /> : <SunOutlined aria-hidden />} aria-label={themeLabel} title={themeLabel} onClick={toggleTheme} /><LogoutButton /></Space>
         </Layout.Header>
         <Layout.Content className="console-content" id="main-content" tabIndex={-1}>
@@ -109,7 +109,7 @@ export default function App() {
       },
     },
     token: {
-      colorPrimary: '#2857b4',
+      colorPrimary: '#216653',
       colorLink: dark ? '#83b2ff' : '#2857b4',
       colorLinkHover: dark ? '#b0ccff' : '#1f4796',
       colorLinkActive: dark ? '#5f9cff' : '#183b80',
@@ -120,7 +120,10 @@ export default function App() {
       colorTextTertiary: dark ? '#c1c7d0' : '#596273',
       colorTextDescription: dark ? '#c1c7d0' : '#596273',
       colorTextPlaceholder: dark ? '#c1c7d0' : '#596273',
-      borderRadius: 8, controlHeight: 44, fontSize: 15, motion: motionProviderReady && !reducedMotion,
+      colorBgLayout: dark ? '#111a18' : '#f6f7f3',
+      colorBgContainer: dark ? '#192520' : '#ffffff',
+      fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+      borderRadius: 10, controlHeight: 44, fontSize: 15, motion: motionProviderReady && !reducedMotion,
     },
   }}>
     <AntApp><QueryClientProvider client={queries}><AuthGate><GuardProvider><Console colorTheme={colorTheme} toggleTheme={toggleTheme} /></GuardProvider></AuthGate></QueryClientProvider></AntApp>
