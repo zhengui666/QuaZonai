@@ -4,6 +4,7 @@
 import argparse
 from dataclasses import dataclass
 from functools import partial
+import hashlib
 import http.client
 import json
 import os
@@ -29,6 +30,7 @@ ARCHIVE_FORMATS = ("moose-fills", "time-seventeen-v2", "joseph-books")
 class Capability:
     configure: Callable
     run: Callable
+    public_network: bool = False
 
 
 @dataclass(frozen=True)
@@ -179,8 +181,8 @@ def window_options(parser):
 
 
 def native_options(parser):
-    parser.add_argument("--native-bin", type=Path, required=True,
-                        help="explicit locally built native converter executable; never a shell command")
+    parser.add_argument("--native-bin", type=Path,
+                        help="explicit native executable; otherwise use the matching packaged bin/ executable")
     parser.add_argument("--output", type=Path, required=True, help="new native output directory")
 
 
@@ -206,11 +208,13 @@ def history_options(parser, capture=False):
                             help="existing original evm.py evidence; native v2 adapter verifies it")
 
 
-def run_native(args, argv):
+def run_native(args, argv, binary_name="catalog-prepare"):
+    if os.environ.get("QZ_OPERATOR_INSTALLED") == "1" and args.native_bin is not None:
+        raise ValueError("installed source operations require their matching packaged native executable")
     output = local_path(args.output)
     if output.exists():
         raise ValueError("native output must be a new directory; failed artifacts are never removed")
-    binary = local_path(args.native_bin)
+    binary = local_path(args.native_bin or Path(__file__).parent / "bin" / binary_name)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError("native-bin must be an existing executable file")
     # Diagnostics and original native stdout are retained on stderr, leaving one JSON result on stdout.
@@ -222,22 +226,7 @@ def run_native(args, argv):
     return output
 
 
-def published_native(output):
-    report = load_json(snapshot.safe_local(output, "import-report.json"))
-    if (type(report.get("schema_version")) is not int or report["schema_version"] != 1
-            or report.get("native_version") != "0.63.0"
-            or report.get("catalog_relative_path") != "catalog"
-            or report.get("coverage") != "UNPROVEN"
-            or report.get("historical_availability") != "UNVERIFIED"
-            or report.get("registered_in_quazonai") is not False
-            or ("research_qualified" in report and report["research_qualified"] is not False)
-            or not isinstance(report.get("limitations"), list) or not report["limitations"]
-            or any(not isinstance(item, str) or not item.strip() for item in report["limitations"])):
-        raise ValueError("invalid native publication report or admission boundary")
-    for key in ("instruments", "instrument_versions"):
-        providers.integer(report.get(key), f"native report {key}", minimum=1, maximum=1_000_000)
-    if report["instruments"] > report["instrument_versions"]:
-        raise ValueError("invalid native instrument counts")
+def published_catalog(output):
     catalog = snapshot.safe_local(output, "catalog")
     if not catalog.is_dir():
         raise ValueError("published native catalog is missing")
@@ -257,6 +246,26 @@ def published_native(output):
                 parquet_count += 1
     if not parquet_count:
         raise ValueError("published native catalog contains no Parquet files")
+    return catalog
+
+
+def published_native(output):
+    report = load_json(snapshot.safe_local(output, "import-report.json"))
+    if (type(report.get("schema_version")) is not int or report["schema_version"] != 1
+            or report.get("native_version") != "0.63.0"
+            or report.get("catalog_relative_path") != "catalog"
+            or report.get("coverage") != "UNPROVEN"
+            or report.get("historical_availability") != "UNVERIFIED"
+            or report.get("registered_in_quazonai") is not False
+            or ("research_qualified" in report and report["research_qualified"] is not False)
+            or not isinstance(report.get("limitations"), list) or not report["limitations"]
+            or any(not isinstance(item, str) or not item.strip() for item in report["limitations"])):
+        raise ValueError("invalid native publication report or admission boundary")
+    for key in ("instruments", "instrument_versions"):
+        providers.integer(report.get(key), f"native report {key}", minimum=1, maximum=1_000_000)
+    if report["instruments"] > report["instrument_versions"]:
+        raise ValueError("invalid native instrument counts")
+    published_catalog(output)
     evidence = load_json(snapshot.safe_local(output, "source-evidence.json"), MAX_EVIDENCE_BYTES)
     return report, evidence
 
@@ -333,7 +342,7 @@ def history_convert(args, capture=False):
             acquire.local_bytes(inputs[-1], MAX_EVIDENCE_BYTES)
             argv += ["--chain-evidence", str(inputs[-1])]
     hashes = [sha256(path) for path in inputs]
-    output = run_native(args, argv)
+    output = run_native(args, argv, "polymarket-history")
     if ([sha256(path) for path in inputs] != hashes
             or verified_snapshot(args.snapshot, args.max_bytes) != original):
         raise ValueError("native conversion inputs changed during preparation")
@@ -362,6 +371,95 @@ def history_convert(args, capture=False):
     return converted("polymarket-capture" if capture else "polymarket-archive", output, report)
 
 
+def prepare_options(parser):
+    native_options(parser)
+    parser.add_argument("--native-output", type=Path, required=True,
+                        help="existing published native output with a nonempty BAR catalog")
+    parser.add_argument("--declaration", type=Path, required=True,
+                        help="explicit original catalog declaration; native measurement supplies quality/row_count")
+    parser.add_argument("--selection", type=Path, required=True,
+                        help="explicit original NativeDatasetSelectionV1; no inferred event or receipt bounds")
+
+
+def file_record(path, limit):
+    body = acquire.local_bytes(path, limit)
+    return {"path": str(path), "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()}
+
+
+def catalog_identity(value):
+    # Only the two handoff hints are read here. Native code owns the complete metadata contract.
+    if (not isinstance(value, dict) or type(value.get("schema_version")) is not int
+            or value["schema_version"] != 1
+            or any(not isinstance(value.get(key), str) or not value[key].strip()
+                   or len(value[key]) > limit
+                   for key, limit in (("registered_ref", 512), ("storage_version", 120)))):
+        raise ValueError("catalog preparation requires explicit valid identity hints")
+    return {"native_catalog_ref": value["registered_ref"],
+            "native_storage_version": value["storage_version"]}
+
+
+def prepare_source(plugin_id, args):
+    source = local_path(args.native_output)
+    output = local_path(args.output)
+    declaration = local_path(args.declaration)
+    selection = local_path(args.selection)
+    if output == source or source in output.parents or output in source.parents:
+        raise ValueError("catalog preparation output must not overlap the original native output")
+    paths = {"import_report": (snapshot.safe_local(source, "import-report.json"), MAX_REPORT_BYTES),
+             "source_evidence": (snapshot.safe_local(source, "source-evidence.json"), MAX_EVIDENCE_BYTES),
+             "declaration": (declaration, MAX_REPORT_BYTES), "selection": (selection, MAX_REPORT_BYTES)}
+    originals = {name: file_record(path, limit) for name, (path, limit) in paths.items()}
+    identity = catalog_identity(load_json(declaration))
+    load_json(selection)  # Bounded original JSON only; the native parser owns selection semantics.
+    report, evidence = published_native(source)
+    providers.integer(report.get("bars"), "native preparation bars", minimum=1, maximum=1_000_000)
+    if plugin_id == "coinbase-candles":
+        if (report.get("source_provider") != plugin_id
+                or report.get("source_record_kind") != "OHLCV_CANDLE"
+                or report.get("source_evidence_relative_path") != "source-evidence.json"
+                or report.get("native_readback_verified") is not True
+                or report.get("research_qualified") is not False):
+            raise ValueError("native publication does not belong to the candle prepare capability")
+    else:
+        metadata = evidence.get("source_metadata")
+        formats = ("lokima-dual-capture",) if plugin_id == "polymarket-capture" else (
+            "moose-fills", "time-seventeen-v2")
+        if (plugin_id not in ("polymarket-capture", "polymarket-archive")
+                or not isinstance(metadata, dict) or metadata.get("format") not in formats
+                or not isinstance(evidence.get("bars"), list) or len(evidence["bars"]) != report["bars"]
+                or not isinstance(report.get("source_reference"), str) or not report["source_reference"].strip()
+                or report["source_reference"] != evidence.get("source_reference")):
+            raise ValueError("native publication is not a supported source BAR preparation")
+    if any(file_record(path, limit) != originals[name] for name, (path, limit) in paths.items()):
+        raise ValueError("catalog preparation inputs changed during input checks")
+    output = run_native(args, ["--catalog", str(source / "catalog"),
+                               "--declaration", str(declaration), "--selection", str(selection)])
+    if any(file_record(path, limit) != originals[name] for name, (path, limit) in paths.items()):
+        raise ValueError("catalog preparation inputs changed during native execution; artifacts retained")
+    catalog = published_catalog(output)
+    metadata_file = snapshot.safe_local(output, "catalog-metadata.json")
+    try:
+        body = acquire.local_bytes(metadata_file, MAX_REPORT_BYTES)
+        published_identity = catalog_identity(providers.read_json(body))
+    except (OSError, ValueError):
+        raise ValueError("catalog preparation final metadata is missing, invalid or too large; artifacts retained") from None
+    if published_identity != identity:
+        raise ValueError("catalog preparation published identity differs from the explicit declaration")
+    result = {"schema": "qz.source_preparation/1", "plugin": plugin_id, "status": "CATALOG_PREPARED",
+              "output": str(output), "catalog_root": str(catalog), "metadata_file": str(metadata_file),
+              "metadata_bytes": len(body), "metadata_sha256": hashlib.sha256(body).hexdigest(),
+              "catalog_registration": {"root": str(catalog), "metadata_file": str(metadata_file)},
+              "identity_hints": identity,
+              "source_artifacts": {name: originals[name] for name in ("import_report", "source_evidence")},
+              "admission": dict(acquire.ADMISSION),
+              "unperformed_steps": ["runtime_configuration", "source_registration", "source_grant_registration",
+                                    "dataset_registration", "frozen_input_set", "fresh_DATA_VALIDATE"]}
+    producer = {name: os.environ.get(f"QZ_OPERATOR_{name.upper()}") for name in ("version", "revision", "image")}
+    if all(producer.values()):
+        result["producer"] = producer  # Informational installed image identity, never source authority.
+    return result
+
+
 def source_plugin(plugin_id, source_format, capabilities, limitations):
     return SourcePlugin({"id": plugin_id, "source_format": source_format,
                          "access": "PUBLIC_FREE", "authentication": "NONE", "operator_only": True,
@@ -371,20 +469,23 @@ def source_plugin(plugin_id, source_format, capabilities, limitations):
 def http_plugin(provider_id):
     return source_plugin(provider_id, "qz.public_acquisition/1", {
         "plan": Capability(http_options, partial(http_plan, provider_id)),
-        "download": Capability(partial(http_options, download=True), partial(http_download, provider_id)),
+        "download": Capability(partial(http_options, download=True), partial(http_download, provider_id),
+                               public_network=True),
         "verify": Capability(http_verify_options, partial(http_verify, provider_id)),
     }, ["Frozen provider descriptors remain unchanged; lifecycle capabilities are listed here",
         "Observed public data and saved terms do not establish permission or historical availability"])
 
 
 def snapshot_capabilities():
-    return {"plan": Capability(snapshot_options, snapshot_plan),
-            "download": Capability(partial(snapshot_options, download=True), snapshot_download),
+    return {"plan": Capability(snapshot_options, snapshot_plan, public_network=True),
+            "download": Capability(partial(snapshot_options, download=True), snapshot_download, public_network=True),
             "verify": Capability(snapshot_verify_options, snapshot_verify)}
 
 
 PLUGINS = {provider_id: http_plugin(provider_id) for provider_id in providers.PROVIDERS}
 PLUGINS["coinbase-candles"].capabilities["convert"] = Capability(candle_options, candle_convert)
+PLUGINS["coinbase-candles"].capabilities["prepare"] = Capability(
+    prepare_options, partial(prepare_source, "coinbase-candles"))
 PLUGINS["polymarket-prices"].descriptor["limitations"].append(
     "PRICE_MARK cannot be converted into trades, OHLCV bars or qualified native research data")
 PLUGINS["coinbase-candles"].descriptor["limitations"].append(
@@ -393,33 +494,38 @@ PLUGINS["hf-snapshot"] = source_plugin("hf-snapshot", "immutable public Hugging 
     snapshot_capabilities(), ["Raw acquisition only; arbitrary Hugging Face Parquet has no native converter"])
 PLUGINS["polymarket-capture"] = source_plugin("polymarket-capture", "lokima-dual-capture",
     snapshot_capabilities() | {"convert": Capability(partial(history_options, capture=True),
-                                                       partial(history_convert, capture=True))},
+                                                       partial(history_convert, capture=True)),
+                               "prepare": Capability(prepare_options, partial(prepare_source, "polymarket-capture"))},
     ["Requires original historical Gamma and both recorded CLOB feeds in the supported lokima schema",
      "Matching captured feeds do not prove all-exchange or all-market completeness"])
 PLUGINS["polymarket-archive"] = source_plugin("polymarket-archive", list(ARCHIVE_FORMATS),
-    snapshot_capabilities() | {"convert": Capability(history_options, history_convert)},
+    snapshot_capabilities() | {"convert": Capability(history_options, history_convert),
+                               "prepare": Capability(prepare_options, partial(prepare_source, "polymarket-archive"))},
     ["Only the three listed existing native formats; original native definitions are required",
-     "Archive conversion preserves each native adapter's existing semantics and limitations"])
+     "Archive conversion preserves each native adapter's existing semantics and limitations",
+     "Preparation requires existing nonempty BAR output from moose-fills or time-seventeen-v2; joseph-books is unsupported"])
 
 
 def plugin_descriptors():
     return [{**plugin.descriptor, "capabilities": sorted(plugin.capabilities),
+             "public_network_operations": sorted(operation for operation, capability in plugin.capabilities.items()
+                                                 if capability.public_network),
              "admission": dict(acquire.ADMISSION)} for plugin in PLUGINS.values()]
 
 
 def parser():
-    result = argparse.ArgumentParser(description=__doc__)
+    result = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     commands = result.add_subparsers(dest="command", required=True)
-    commands.add_parser("plugins", help="list actual per-source lifecycle capabilities").set_defaults(
+    commands.add_parser("plugins", help="list actual per-source lifecycle capabilities", allow_abbrev=False).set_defaults(
         run=lambda _: plugin_descriptors())
     operations = sorted({operation for plugin in PLUGINS.values() for operation in plugin.capabilities})
     for operation in operations:
-        command = commands.add_parser(operation)
+        command = commands.add_parser(operation, allow_abbrev=False)
         sources = command.add_subparsers(dest="plugin", required=True)
         for plugin_id, plugin in PLUGINS.items():
             capability = plugin.capabilities.get(operation)
             if capability is not None:
-                sub = sources.add_parser(plugin_id)
+                sub = sources.add_parser(plugin_id, allow_abbrev=False)
                 capability.configure(sub)
                 sub.set_defaults(run=capability.run)
     return result
@@ -435,6 +541,9 @@ def main(argv=None):
         print(f"source-plugins: public source HTTP error {error.code}; no authenticated or paid fallback", file=sys.stderr)
     except subprocess.TimeoutExpired:
         print("source-plugins: native converter timed out; original diagnostics and artifacts retained", file=sys.stderr)
+    except KeyboardInterrupt:
+        print("source-plugins: interrupted; original diagnostics and artifacts retained", file=sys.stderr)
+        return 130
     except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as error:
         message = str(error) if type(error) is ValueError else "source or local I/O failed"
         print(f"source-plugins: {message}", file=sys.stderr)

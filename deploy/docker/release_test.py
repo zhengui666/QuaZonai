@@ -791,8 +791,17 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(manage.configuration(self.root), self.old)
 
     def test_every_container_build_base_has_an_exact_digest(self):
-        bases = [line.split()[1] for name in ('Dockerfile', 'Codex.Dockerfile')
-                 for line in (manage.BUNDLE / name).read_text().splitlines() if line.startswith('FROM ')]
+        bases = []
+        for name in ('Dockerfile', 'Codex.Dockerfile'):
+            stages = set()
+            for line in (manage.BUNDLE / name).read_text().splitlines():
+                if not line.startswith('FROM '):
+                    continue
+                parts = line.split()
+                if parts[1] not in stages:
+                    bases.append(parts[1])
+                if len(parts) == 4 and parts[2] == 'AS':
+                    stages.add(parts[3])
         self.assertEqual(len(bases), 6)
         for image in bases:
             self.assertRegex(image, r'^[^ ]+@sha256:[a-f0-9]{64}\Z')

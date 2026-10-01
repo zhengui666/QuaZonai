@@ -10,26 +10,33 @@ account, secret, authenticated request or paid fallback is introduced.
 ```sh
 python3 -B runtimes/data/source_plugins.py plugins
 python3 -B runtimes/data/source_plugins.py convert --help
+python3 -B runtimes/data/source_plugins.py prepare --help
 ```
 
 - `polymarket-prices`: plan, download, verify. Original sampled price marks have
   no native BAR/trade conversion
-- `coinbase-candles`: plan, download, verify, convert. Original OHLCV observations
+- `coinbase-candles`: plan, download, verify, convert, prepare. Original OHLCV observations
   are converted by `catalog-prepare ingest-candles` using original native
   instrument definitions
 - `hf-snapshot`: plan, download, verify. Generic immutable public files only;
   arbitrary Parquet is not promised a native converter
-- `polymarket-capture`: the snapshot lifecycle plus conversion through existing
+- `polymarket-capture`: the snapshot lifecycle plus conversion and BAR preparation through existing
   `polymarket-history capture`, specifically the supported lokima format with
   original Gamma responses and both recorded CLOB feeds
 - `polymarket-archive`: the snapshot lifecycle plus existing `archive` conversion
-  for `moose-fills`, `time-seventeen-v2`, and `joseph-books`
+  for `moose-fills`, `time-seventeen-v2`, and `joseph-books`. Preparation requires
+  nonempty native BAR output from `moose-fills` or `time-seventeen-v2`;
+  `joseph-books` is not supported for preparation
 
 CLI commands and source-specific options come from the registry's capabilities.
 An unsupported operation is absent from the CLI, rather than a false ready state.
 To extend it, register a `SourcePlugin` containing each supported `Capability`'s
 argument configurator and handler. Native adapters remain responsible for source
 interpretation, exact quantities, original clocks, and native serialization.
+Each capability also declares whether it needs public network access. Inventory
+returns `public_network_operations`: only HTTP downloads and snapshot
+planning/downloads need a network. Verification, conversion and preparation are
+offline operations.
 
 The runner calls the original [HTTP acquisition](acquire.py) and
 [snapshot helper](snapshot.py), not a second transport or Parquet decoder.
@@ -46,9 +53,16 @@ can resume the same verified selection; mutable HTTP acquisitions require a new
 directory. Snapshot verification is offline file-integrity checking, not source
 authenticity, completeness, permission, or point-in-time attestation.
 
-## Native prerequisites
+## Native executables
 
-Build the repository's pinned official native dependencies as described in the
+The installed source command uses the application image's matching operator
+payload; consult the [deployment guide](../../deploy/docker/README.md). It requires
+no source checkout or host build tools. With `--native-bin` omitted, this module
+selects its adjacent `bin/catalog-prepare` for candle conversion and all catalog
+preparation, or `bin/polymarket-history` for history conversion. It never searches
+`PATH` or falls back to a debug build. Installed mode rejects executable overrides.
+
+For source-checkout development, build the repository's pinned official native dependencies as described in the
 [project guide](../../.opensdlc/project.md#commands):
 
 ```sh
@@ -56,10 +70,12 @@ cargo build --locked -p job --features polymarket-history,catalog-prepare \
   --bin polymarket-history --bin catalog-prepare
 ```
 
-Supply the actual executable file through `--native-bin`. The runner never
+Supply that actual executable file through `--native-bin`. The runner never
 interpolates a shell command, installs dependencies, or invokes a development
 agent. The existing root `catalog-prepare --catalog ... --declaration ...
---selection ... --output ...` interface remains separate and unchanged.
+--selection ... --output ...` interface remains unchanged and is used by the
+prepare capability below. Option names must be spelled out; abbreviations are
+not accepted.
 
 ## Coinbase OHLCV
 
@@ -171,14 +187,86 @@ need an appropriate `--max-bytes` on verification/conversion. Chain acquisition,
 live capture collection, arbitrary vendor schemas, and source-specific native
 extensions are not added by this wrapper.
 
+## Prepare an existing native BAR catalog
+
+Preparation takes an existing published native output, an explicit original
+declaration, an explicit `NativeDatasetSelectionV1`, and a new output directory.
+It neither reacquires the source nor generates declarations. The declaration must
+retain the intended partition, identities, origin, PIT status, revision policy,
+availability explanation, universe, calendar and membership evidence. Selection
+must use the actual native BAR event-label bounds and an explicit decision cutoff.
+See the [history guide](README.md) for the native preparation contract.
+
+```sh
+python3 -B runtimes/data/source_plugins.py prepare coinbase-candles \
+  --native-bin target/debug/catalog-prepare \
+  --native-output /absolute/native/coinbase-selection \
+  --declaration /absolute/original-declaration.json \
+  --selection /absolute/original-native-selection.json \
+  --output /absolute/prepared/coinbase-discovery
+```
+
+Use `polymarket-capture` or `polymarket-archive` with their matching native output
+for supported BAR preparation. Sampled PRICE_MARK, arbitrary Hugging Face files,
+empty BAR output and `joseph-books` output cannot use this path. An existing import
+report is a publication record, not an independent attestation of historical
+authenticity.
+
+The wrapper checks source publication and artifact presence, then invokes the
+existing root `catalog-prepare` command with those three original paths and the
+new output. Native code owns declaration validation, selection, original
+definitions and fees, settlements, measured row count and quality, isolated
+copying, and native readback. Do not supply derived `row_count` or `quality` in the
+declaration. Missing original fees, definitions from the future, or insufficient
+evidence remain native failures. Original event/receipt clocks and numerical
+values are retained, and Sealed metadata follows native redaction. No fixture or
+unverified source is promoted by the wrapper.
+
+Successful stdout contains one `CATALOG_PREPARED` handoff with:
+
+- Canonical output, catalog root and original `catalog-metadata.json` paths
+- Byte length and SHA-256 of the exact final metadata file, including its original
+  formatting; native stdout is not the metadata byte source
+- `catalog_registration` containing exactly `root` and `metadata_file`, for the
+  Runtime's existing `CatalogRegistration` entry
+- `identity_hints` containing only `native_catalog_ref` from `registered_ref` and
+  `native_storage_version` from `storage_version`; both must match the explicit
+  declaration
+- Local source report/evidence paths with byte lengths and digests, plus remaining
+  registration and validation steps
+- Optional `producer` version, revision and immutable image identity, supplied by
+  the installed manager only when all `QZ_OPERATOR_VERSION`,
+  `QZ_OPERATOR_REVISION` and `QZ_OPERATOR_IMAGE` values are present. These values
+  identify the operator image and do not certify source quality or provenance
+
+Keep the handoff and detached source artifacts local. They can include private
+filesystem paths. SHA-256 binds file bytes; it does not authenticate their upstream
+source. The handoff does not embed or replace the authoritative metadata document.
+Runtime still reads and validates the original metadata bytes from `metadata_file`,
+and service registration still fetches them from the selected Runtime. Hints cannot
+supply quality, origin or PIT status. Keep source evidence outside the research
+catalog mount, and use paths that exist verbatim on that Runtime's host.
+
 ## Failure and evidence boundaries
 
-Native conversion requires a new output directory. It uses a fixed argv list,
+Native conversion and preparation require a new output directory. They use a fixed argv list,
 closed stdin, no shell, and a one-hour process bound. Missing/invalid publication,
 changed inputs, unexpected admission flags, incomplete artifacts or nonzero exit
-are failures. Report reads are bounded to 1 MiB and detached evidence to 128 MiB. Exit zero alone is insufficient. Failed outputs and raw evidence
+are failures. Report, declaration, selection and final metadata reads are bounded
+to 1 MiB; detached evidence reads are bounded to 128 MiB. Preparation rechecks the
+exact declaration, selection and source publication bytes around native execution.
+Exit zero alone is insufficient: the final `catalog-metadata.json` and native
+catalog must exist, and a partial metadata file does not count. Failed outputs and raw evidence
 are never deleted or reused; inspect the original native diagnostics and retry
 only into a new output directory.
+
+Preparation also rejects source/output overlap, symlink paths and mismatched
+published identities. Nonzero exit, timeout or interruption never emits a success
+handoff. A wrapper check can fail after native metadata has been published; it
+retains that output for inspection and does not delete a valid native artifact or
+the original acquisition. Native failures keep the existing
+`QZ_CATALOG_PREPARATION_FAILED` diagnostic; the wrapper does not invent a more
+specific scientific reason or expose exception chains.
 
 `NATIVE_ARTIFACTS_VALIDATED` means that the wrapper checked the native publication
 report, provenance links and artifact presence/framing. It is not an independent
@@ -191,8 +279,11 @@ failures only and are not a live-source or scientific validation claim.
 python3 -B -m unittest discover -s runtimes/data -v
 ```
 
-Source grants, service registration, Runtime mounting, frozen InputSets, separate
-Discovery/Validation/Sealed preparation and fresh `DATA_VALIDATE` are not performed
-by any plugin operation. Consult the [history guide](README.md) and
+`CATALOG_PREPARED` means native publication and the wrapper's handoff checks
+succeeded, not that a catalog is registered or research is admitted. Preparing
+each intended Discovery/Validation/Sealed partition requires its own explicit
+declaration, selection and new output. Source/grant registration, dataset
+registration, Runtime configuration, frozen InputSets and fresh `DATA_VALIDATE`
+remain separate steps. Consult the [history guide](README.md) and
 [acquisition provider guide](providers.md) for original evidence requirements and
 unsupported source coverage.

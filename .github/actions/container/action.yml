@@ -141,6 +141,10 @@ runs:
         echo "image=$(docker image inspect quazonai-codex-candidate --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
         echo "version=$version" >> "$GITHUB_OUTPUT"
     - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+    - name: Start normal candidate build measurement
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      run: python3 -B deploy/docker/operator_cost.py mark --directory "$RUNNER_TEMP/operator-cost" --phase candidate-start
     - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
       with:
         context: ${{ inputs.source }}
@@ -154,6 +158,43 @@ runs:
           REVISION=${{ inputs.revision }}
         cache-from: type=gha,scope=quazonai-container
         cache-to: type=gha,mode=max,scope=quazonai-container
+    - name: Finish candidate measurement and start warm same-source baseline
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      run: |
+        python3 -B deploy/docker/operator_cost.py mark --directory "$RUNNER_TEMP/operator-cost" --phase candidate-end
+        python3 -B deploy/docker/operator_cost.py mark --directory "$RUNNER_TEMP/operator-cost" --phase baseline-start
+    - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+      with:
+        context: ${{ inputs.source }}
+        file: ${{ inputs.source }}/deploy/docker/Dockerfile
+        target: application-base
+        platforms: linux/amd64
+        load: true
+        push: false
+        tags: ${{ inputs.image }}-operator-baseline
+        build-args: |
+          VERSION=${{ inputs.version }}
+          REVISION=${{ inputs.revision }}
+        cache-from: type=gha,scope=quazonai-container
+    - name: Measure original image archives and stripped operator payload
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        IMAGE: ${{ inputs.image }}
+        REVISION: ${{ inputs.revision }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        python3 -B deploy/docker/operator_cost.py mark --directory "$RUNNER_TEMP/operator-cost" --phase baseline-end
+        python3 -B deploy/docker/operator_cost.py report --directory "$RUNNER_TEMP/operator-cost" \
+          --baseline "$IMAGE-operator-baseline" --candidate "$IMAGE" --revision "$REVISION" --version "$VERSION"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: operator-cost-${{ inputs.revision }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/operator-cost
+        retention-days: 7
+        if-no-files-found: error
     - name: Verify real installation, upgrade, failure retry and database restore
       shell: bash
       working-directory: ${{ inputs.source }}
@@ -172,6 +213,14 @@ runs:
         python3 -B deploy/docker/smoke.py --image "$IMAGE" --revision "$REVISION" \
           --runtime-image "$RUNTIME_IMAGE" --codex-image "$CODEX_IMAGE" --codex-version "$CODEX_VERSION" \
           --previous-codex-image quazonai-codex-previous --previous-codex-version 0.156.1
+    - name: Retain bounded failed source invocation facts
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: failure()
+      with:
+        name: source-invocations-container-${{ inputs.revision }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/quazonai-source*/diagnostics/*.json
+        retention-days: 7
+        if-no-files-found: ignore
     - name: Remove the test host's Codex user namespace profile
       if: always()
       shell: bash

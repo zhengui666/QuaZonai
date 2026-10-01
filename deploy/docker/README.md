@@ -106,6 +106,74 @@ For an installed copy, its bundle is `<installation>/current/deployment`. Open t
 
 Follow `runtime-targets` to set the exact HTTPS `origin` and reachable `addresses`, close admissions, preserve configuration and apply both the API and Worker environments using the installed manager. Editing `installation.json` alone or repeating a same-version deployment is insufficient. Then register the matching endpoint and credential in Runtime settings, probe readiness, and register actual catalogs. A successful probe or empty catalog list is not research data.
 
+### Installed free-source tools
+
+The application image also carries the matching public-source helpers and native
+importers. Use the installed manager as the installation owner; no checkout,
+Python package installation or Cargo build is needed:
+
+```sh
+installation="$HOME/.local/share/quazonai"
+python3 "$installation/current/deployment/manage.py" source -- plugins
+python3 "$installation/current/deployment/manage.py" source -- \
+  plan coinbase-candles --instrument BTC-USD --start-seconds 1788220800 \
+  --end-seconds 1788220980 --interval-seconds 60
+```
+
+Add `--directory /absolute/installation` immediately after `source` for a custom
+installation. The active release's immutable image supplies both the helpers and
+native binaries. An incomplete application update must finish first. Installed
+operations reject `--native-bin` overrides.
+
+File operations need explicit owner-managed mounts. Each `--read-only` input may
+be a directory or regular file. A writing operation also requires a separate,
+existing `--output-parent`; its `--output` must name a new child. Inputs and output
+parents cannot overlap, contain symlinks, expose installation/Codex state, or
+replace container system/tool paths. Mount paths support spaces and Unicode but
+not control characters, colons, commas, double quotes or backslashes. Original and failed
+artifacts are retained. Use another new output name for a retry.
+
+For example, after a supported native conversion and after supplying the original
+explicit declaration and native selection:
+
+```sh
+python3 "$installation/current/deployment/manage.py" source \
+  --read-only /absolute/native/lokima-selection \
+  --read-only /absolute/declarations --output-parent /absolute/prepared -- \
+  prepare polymarket-capture --native-output /absolute/native/lokima-selection \
+  --declaration /absolute/declarations/discovery.json \
+  --selection /absolute/declarations/discovery-selection.json \
+  --output /absolute/prepared/lokima-discovery
+```
+
+The image's capability inventory determines network access: inventory,
+verification, conversion and preparation are offline; only public acquisition
+and snapshot planning receive network access. No installation credentials or
+Docker socket enter the one-shot source container. The API/Worker are not
+restarted. See the [source guide](../../runtimes/data/source-plugins.md) for actual
+format capabilities, original input requirements and source-checkout examples;
+the installed command accepts the same operation arguments without `--native-bin`.
+
+The manager prints a source invocation identity before starting containers. Use
+`--invocation-id` with a new 32-character lowercase hexadecimal value when a
+caller needs to record that identity before launch. The actual and inventory
+containers carry that identity, installation and owner labels, with names
+`quazonai-source-<identity>` and `quazonai-source-<identity>-inventory`. A stopped
+terminal or lost Docker CLI does not confirm container cancellation: inspect the
+matching owned containers before stopping them or removing their mounted files.
+Keep diagnostics and partial output when the actual outcome is uncertain.
+
+Preparation returns the original metadata file's byte digest, host paths,
+`catalog_registration` and two identity hints. The host paths are mounted at the
+same absolute locations in the container, so they can be used verbatim by a
+Runtime on that host. Keep source evidence outside the catalog mount. Copy only
+the registration fragment into the chosen Runtime configuration through its
+normal stopped/configuration-apply process. Service registration still fetches
+the actual document from Runtime. Choose the Runtime, grant/permission evidence,
+Universe and InputSet explicitly, and perform fresh `DATA_VALIDATE`. Missing
+definitions, fees, historical membership or availability are never filled in by
+the tools; successful preparation does not qualify research data.
+
 <a id="codex-update"></a>
 ## Update Codex
 
