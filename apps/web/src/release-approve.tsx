@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { api, ApiFailure, sameInstant, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ResourceSelect } from './resource-select';
+import { useSettingsWorkKey, useSettingsWorkVersion } from './settings-work';
 import { ErrorNotice, useGuard, useOnline } from './ui';
 
 export function ReleaseApprove({ release, close }: { release: Schema['ReleaseViewV1']; close: () => void }) {
@@ -14,7 +15,9 @@ export function ReleaseApprove({ release, close }: { release: Schema['ReleaseVie
   const [receipt, setReceipt] = useState<Schema['ApprovalViewV1']>();
   const intent = useRef(new Intent()); const unknown = useRef(false);
   const online = useOnline(); const client = useQueryClient(); const { modal } = App.useApp();
-  const source = useQuery({ queryKey: ['approval-source', release.id, downstream, environment], enabled: !!downstream && !!environment && !submitted && !receipt, queryFn: async ({ signal }) => {
+  const downstreamKey = `autosave:downstream:${downstream ?? ''}`;
+  const downstreamSaving = useSettingsWorkKey(downstreamKey); const downstreamVersion = useSettingsWorkVersion(downstreamKey);
+  const source = useQuery({ queryKey: ['approval-source', release.id, downstream, environment, downstreamVersion], enabled: !!downstream && !!environment && !submitted && !receipt && !downstreamSaving, queryFn: async ({ signal }) => {
     const down = dataOf(await api.GET('/api/v2/integrations/downstreams/{id}', { params: { path: { id: downstream! } }, signal }));
     if (down.id !== downstream) throw new Error('返回的下游配置不匹配。');
     let cursor: string | undefined; let latest: Schema['ReleaseDecisionViewV1'] | undefined;
@@ -43,7 +46,7 @@ export function ReleaseApprove({ release, close }: { release: Schema['ReleaseVie
   } });
   useGuard(!receipt);
   const timestamp = Date.parse(until);
-  const ready = !!environment && !!source.data && !source.isFetching && !source.isError && source.data.down.configuration.enabled
+  const ready = !!environment && !downstreamSaving && !!source.data && !source.isFetching && !source.isError && source.data.down.configuration.enabled
     && (source.data.down.configuration.environments === 'BOTH' || source.data.down.configuration.environments === environment) && source.data.latest?.decision !== 'REJECT'
     && Number.isFinite(timestamp) && timestamp > Date.now() && timestamp <= Date.parse(release.valid_until);
   function submit() {

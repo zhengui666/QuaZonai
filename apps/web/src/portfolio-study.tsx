@@ -6,6 +6,7 @@ import type { Schema } from './api';
 import { counterRules } from './budget-fields';
 import { ResourceSelect } from './resource-select';
 import { RunDetail } from './runs';
+import { useSettingsWorkKey, useSettingsWorkVersion } from './settings-work';
 import { ErrorNotice, useGuard, useOnline } from './ui';
 
 type Request = Schema['PortfolioStudyRequestV1'];
@@ -20,6 +21,8 @@ export function PortfolioStudy({ candidate, close }: { candidate: Schema['Candid
   const [showRun, setShowRun] = useState(false);
   const cycleId: string | undefined = Form.useWatch('cycle_id', form);
   const runtimeId: string | undefined = Form.useWatch('runtime_id', form);
+  const runtimeKey = `autosave:runtime:${runtimeId ?? ''}`;
+  const runtimeSaving = useSettingsWorkKey(runtimeKey); const runtimeVersion = useSettingsWorkVersion(runtimeKey);
   const mandate = useQuery({ queryKey: ['mandate', candidate.mandate_id], queryFn: async ({ signal }) => {
     const value = dataOf(await api.GET('/api/v2/portfolio-mandates/{id}', { params: { path: { id: candidate.mandate_id } }, signal }));
     if (value.id !== candidate.mandate_id || value.project_id !== candidate.project_id) throw new Error('Mandate 不属于原候选。');
@@ -33,11 +36,11 @@ export function PortfolioStudy({ candidate, close }: { candidate: Schema['Candid
   } });
   const cycle = useQuery({ queryKey: ['cycle', cycleId], enabled: !!cycleId, staleTime: 0,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/cycles/{id}', { params: { path: { id: cycleId! } }, signal })) });
-  const runtime = useQuery({ queryKey: ['study-runtime', runtimeId], enabled: !!runtimeId, staleTime: 0,
+  const runtime = useQuery({ queryKey: ['study-runtime', runtimeId, runtimeVersion], enabled: !!runtimeId && !runtimeSaving, staleTime: 0,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId! } }, signal })) });
   const ready = !!policy.data?.portfolio_study_plan && !!policy.data.portfolio_metric_requirements
     && cycle.data?.id === cycleId && cycle.data?.project_id === candidate.project_id && cycle.data.state === 'RUNNING'
-    && runtime.data?.id === runtimeId && runtime.data?.configuration.enabled && runtime.data.configuration.allowed_capabilities.includes('PORTFOLIO_SIMULATE')
+    && !runtimeSaving && runtime.data?.id === runtimeId && runtime.data?.configuration.enabled && runtime.data.configuration.allowed_capabilities.includes('PORTFOLIO_SIMULATE')
     && [mandate, policy, cycle, runtime].every(query => !query.isError && !query.isFetching);
   const mutation = useMutation({ mutationFn: async (body: Request) => {
     const result = dataOf(await api.POST('/api/v2/portfolio-studies', { params: { header: intent.current.headers('POST', '/api/v2/portfolio-studies', body) }, body }));

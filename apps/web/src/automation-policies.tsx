@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ResourceSelect } from './resource-select';
+import { useSettingsWorkKey, useSettingsWorkVersion } from './settings-work';
 import { Requirements } from './evaluation-policies';
 import { PolicyRevoke } from './approval-revoke';
 import { counterRules } from './budget-fields';
@@ -37,6 +38,11 @@ function PolicyEditor({ project, close }: { project: string; close: () => void }
   const [form] = Form.useForm<Content>(); const [submitted, setSubmitted] = useState<Schema['AutomationAuthorizeV1']>();
   const [receipt, setReceipt] = useState<Schema['AutomationPolicyViewV1']>(); const [error, setError] = useState<unknown>();
   const intent = useRef(new Intent()); const unknown = useRef(false); const online = useOnline(); const client = useQueryClient(); const { modal } = App.useApp();
+  const downstreamId: string | undefined = Form.useWatch('downstream_id', form);
+  const downstreamKey = `autosave:downstream:${downstreamId ?? ''}`;
+  const downstreamSaving = useSettingsWorkKey(downstreamKey); const downstreamVersion = useSettingsWorkVersion(downstreamKey);
+  const downstream = useQuery({ queryKey: ['automation-downstream', downstreamId, downstreamVersion], enabled: !!downstreamId && !downstreamSaving && !submitted && !receipt,
+    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/downstreams/{id}', { params: { path: { id: downstreamId! } }, signal })) });
   const current = useQuery({ queryKey: ['automation-project', project], enabled: !submitted && !receipt, queryFn: async ({ signal }) => {
     const value = dataOf(await api.GET('/api/v2/projects/{id}', { params: { path: { id: project } }, signal }));
     if (value.id !== project) throw new Error('项目版本不匹配。'); return value;
@@ -53,7 +59,8 @@ function PolicyEditor({ project, close }: { project: string; close: () => void }
   async function submit() {
     if (!online || mutation.isPending || receipt) return;
     if (submitted) { mutation.mutate(submitted); return; }
-    if (!current.data || current.isFetching || current.isError || current.data.state === 'ARCHIVED') return;
+    if (!current.data || current.isFetching || current.isError || current.data.state === 'ARCHIVED'
+      || downstreamSaving || downstream.data?.id !== downstreamId || !downstream.data?.configuration.enabled || downstream.isFetching || downstream.isError) return;
     try {
       const values = await form.validateFields();
       const metrics = (items: Schema['MetricRequirementV1'][] | undefined) => {
@@ -90,6 +97,8 @@ function PolicyEditor({ project, close }: { project: string; close: () => void }
       <Form.Item name="valid_until" label="授权截止时间（本地时间）" rules={[{ required: true }, { validator: async (_, value) => { if (!Number.isFinite(Date.parse(value)) || Date.parse(value) <= Date.now()) throw new Error('请选择未来时间。'); } }]}><Input type="datetime-local" /></Form.Item>
       <Form.Item name="enabled_for_new_rebalances" valuePropName="checked"><Checkbox>允许新的自动再平衡</Checkbox></Form.Item>
     </Form>}
-    {!receipt && <Button type="primary" loading={mutation.isPending} disabled={!online || (!submitted && (!current.data || current.isFetching || current.isError || current.data.state === 'ARCHIVED'))} onClick={() => { void submit(); }}>{submitted ? '重试同一政策' : '确认冻结政策'}</Button>}
+    <ErrorNotice error={downstream.error} />
+    {!receipt && <Button type="primary" loading={mutation.isPending} disabled={!online || (!submitted && (!current.data || current.isFetching || current.isError || current.data.state === 'ARCHIVED'
+      || downstreamSaving || downstream.data?.id !== downstreamId || !downstream.data?.configuration.enabled || downstream.isFetching || downstream.isError))} onClick={() => { void submit(); }}>{submitted ? '重试同一政策' : '确认冻结政策'}</Button>}
   </Drawer>;
 }

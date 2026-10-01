@@ -1,20 +1,57 @@
-import { Alert, App, Button, Checkbox, Collapse, Descriptions, Drawer, Form, Input, Modal, Space, Table, Typography } from 'antd';
+import { Alert, Button, Checkbox, Collapse, Descriptions, Drawer, Form, Input, Modal, Space, Table, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { uuidPattern } from './api';
-import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
+import { ErrorNotice, NoData, Pager, QueryPanel, useOnline } from './ui';
+import { setSettingsWork } from './settings-work';
 
 type Report = Schema['HistoricalImportReportV1'];
 type Import = Schema['HistoricalImportRequestV1'];
+type ImportDraft = Omit<Import, 'schema_version'>;
+type ImportState = { draft: ImportDraft; submitted?: Import; receipt?: Report; error?: unknown; pending: boolean; unknown: boolean };
+let importState: ImportState = { draft: { export_ref: '', dry_run: true }, pending: false, unknown: false };
+const importListeners = new Set<() => void>();
+const importIntent = new Intent();
+function setImport(state: Partial<ImportState>) {
+  importState = { ...importState, ...state };
+  importListeners.forEach(listener => listener());
+  setSettingsWork('historical-import', importState.pending || importState.unknown || !!importState.receipt);
+}
+function useImportState() {
+  return useSyncExternalStore(listener => {
+    importListeners.add(listener);
+    return () => { importListeners.delete(listener); };
+  }, () => importState, () => importState);
+}
+async function sendImport(body: Import, client: ReturnType<typeof useQueryClient>) {
+  if (importState.pending) return;
+  setImport({ submitted: body, pending: true, error: undefined });
+  try {
+    const result = dataOf(await api.POST('/api/v2/migrations/import', { body,
+      params: { header: importIntent.headers('POST', '/api/v2/migrations/import', body) } }));
+    if (result.resource.export_ref !== body.export_ref || result.resource.dry_run !== body.dry_run) throw new Error('导入回执与原请求不一致。');
+    importIntent.clear();
+    setImport({ submitted: undefined, receipt: result.resource, unknown: false });
+    void client.invalidateQueries({ queryKey: ['migration-reports'] });
+  } catch (error) {
+    const rejected = error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE');
+    if (rejected) importIntent.clear();
+    setImport({ submitted: rejected ? undefined : body, unknown: !rejected, error });
+  } finally { setImport({ pending: false }); }
+}
 export function MigrationManagement() {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
-  const [creating, setCreating] = useState(false); const [selected, setSelected] = useState<string>();
+  const [creating, setCreating] = useState(() => (!!importState.submitted || !!importState.error) && !importState.receipt); const [selected, setSelected] = useState<string>();
+  const importStatus = useImportState();
   const query = useQuery({ queryKey: ['migration-reports', history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/migrations/reports', { params: { query: { cursor: history.at(-1), limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="large">
     
-    <Button onClick={() => setCreating(true)}>导入历史投影</Button>
+    <Button onClick={() => { if ((!importState.submitted && !importState.error) || importState.receipt) { importIntent.clear(); setImport({ draft: { export_ref: '', dry_run: true }, submitted: undefined, receipt: undefined, error: undefined, unknown: false }); } setCreating(true); }}>导入历史投影</Button>
+    {importStatus.receipt && !creating && <Alert showIcon type="success" title="导入回执已保存"
+      description={<Typography.Text className="break-word">{importStatus.receipt.id}</Typography.Text>}
+      action={<Button onClick={() => setImport({ receipt: undefined })}>关闭回执</Button>} />}
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Report> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="尚无历史导入报告。" /> }} columns={[
         { title: '导入报告', key: 'id', render: (_, row) => <Button disabled={query.isError} onClick={() => setSelected(row.id)}>{row.id}</Button> },
@@ -29,41 +66,28 @@ export function MigrationManagement() {
   </Space>;
 }
 function ImportEditor({ close }: { close: () => void }) {
-  const [form] = Form.useForm<Omit<Import, 'schema_version'>>(); const [submitted, setSubmitted] = useState<Import>();
-  const [receipt, setReceipt] = useState<Report>(); const intent = useRef(new Intent()); const unknown = useRef(false);
-  const client = useQueryClient(); const online = useOnline(); const { modal } = App.useApp();
-  const mutation = useMutation({ mutationFn: async (body: Import) => {
-    const result = dataOf(await api.POST('/api/v2/migrations/import', { body, params: { header: intent.current.headers('POST', '/api/v2/migrations/import', body) } }));
-    if (result.resource.export_ref !== body.export_ref || result.resource.dry_run !== body.dry_run) throw new Error('导入回执与原请求不一致。');
-    return result.resource;
-  }, onSuccess: async result => { setReceipt(result); intent.current.clear(); await client.invalidateQueries({ queryKey: ['migration-reports'] }); }, onError: error => {
-    const rejected = error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE');
-    if (!rejected) unknown.current = true;
-    if (rejected && !unknown.current) setSubmitted(undefined);
-  } });
-  useGuard(!receipt);
+  const [form] = Form.useForm<ImportDraft>(); const state = useImportState();
+  const client = useQueryClient(); const online = useOnline();
   async function submit() {
-    if (!online || mutation.isPending || receipt) return;
-    if (submitted) { mutation.mutate(submitted); return; }
+    if (!online || state.pending || state.receipt) return;
+    if (state.submitted) { void sendImport(state.submitted, client); return; }
     const fields = await form.validateFields().catch(() => undefined);
-    if (fields) { const body: Import = { schema_version: 1, export_ref: fields.export_ref, dry_run: fields.dry_run }; setSubmitted(body); mutation.mutate(body); }
+    if (fields) void sendImport({ schema_version: 1, export_ref: fields.export_ref, dry_run: fields.dry_run }, client);
   }
-  function dismiss() {
-    if (mutation.isPending) return;
-    if (submitted && !receipt) modal.confirm({ title: '关闭结果尚未确认的导入？', content: '关闭不会撤销可能已提交的导入。请先核对原报告，避免创建重复请求。', okText: '关闭并核对', cancelText: '保留原请求', onOk: close });
-    else close();
-  }
-  return <Modal open title="导入历史投影" onCancel={dismiss} onOk={() => { void submit(); }} maskClosable={false} closable={!mutation.isPending} confirmLoading={mutation.isPending}
-    okText={submitted ? '重试同一导入请求' : '提交导入请求'} cancelText="返回" okButtonProps={{ disabled: !online }} footer={receipt ? <Button onClick={close}>返回报告列表</Button> : undefined}>
+  return <Modal open title="导入历史投影" onCancel={close} maskClosable={false} closable
+    footer={<Space><Button onClick={close}>{state.receipt ? '返回报告列表' : '返回'}</Button>
+      {!state.receipt && <Button type="primary" loading={state.pending} disabled={!online || state.pending} onClick={() => { void submit(); }}>
+        {state.submitted ? '重试同一导入请求' : '提交导入请求'}</Button>}</Space>}>
     <Space orientation="vertical" className="full-width" size="middle">
       
-      <Form form={form} layout="vertical" disabled={!!submitted || !online} initialValues={{ dry_run: true }}>
+      <Form form={form} layout="vertical" disabled={!!state.submitted || !online} initialValues={state.draft}
+        onValuesChange={(_, values) => setImport({ draft: values })}>
         <Form.Item name="export_ref" label="已登记的导出编号" rules={[{ required: true, message: '请输入原导出编号。' }, { pattern: uuidPattern, message: '请输入完整 UUIDv7 编号。' }]}><Input autoComplete="off" /></Form.Item>
         <Form.Item name="dry_run" valuePropName="checked"><Checkbox>仅试运行，不创建历史记录</Checkbox></Form.Item>
       </Form>
-      <ErrorNotice error={mutation.error} />
-      {submitted && mutation.isError && <Alert showIcon type="warning" title="提交结果未知，请重试当前操作" />}
-      {receipt && <><Alert showIcon type={receipt.manual_review_required ? 'warning' : 'info'} title={receipt.dry_run ? '试运行报告已保存' : '只读历史导入报告已保存'} /><Typography.Text className="break-word">{receipt.id}</Typography.Text></>}
+      <ErrorNotice error={state.error} />
+      {state.unknown && <Alert showIcon type="warning" title="提交结果未知，请重试当前操作" />}
+      {state.receipt && <><Alert showIcon type={state.receipt.manual_review_required ? 'warning' : 'info'} title={state.receipt.dry_run ? '试运行报告已保存' : '只读历史导入报告已保存'} /><Typography.Text className="break-word">{state.receipt.id}</Typography.Text></>}
     </Space>
   </Modal>;
 }
