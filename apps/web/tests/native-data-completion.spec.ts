@@ -178,7 +178,7 @@ test('real Worker publishes original OCI bytes and preserves identities across p
     // No synthetic artifact or terminal Run is inserted.
     await page.route(`**/api/v2/artifacts/${item.id}/content`, route => route.abort('failed'), { times: 1 });
     await action.click();
-    await expect(page.getByText('连接中断，提交结果未知；请重试当前操作', { exact: true })).toBeVisible();
+    await expect(page.getByText('连接中断，未能读取数据；请重试', { exact: true })).toBeVisible();
     await expect(action).toHaveAccessibleName('下载原始产物');
     await expect(action).toHaveAttribute('aria-busy', 'false');
     await expect(action).toBeEnabled();

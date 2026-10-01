@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import ts from 'typescript';
 import { generateOutputs } from './generate-validators.mjs';
@@ -27,6 +27,34 @@ const corpus = [undefined, null, false, true, -1, 0, 1, 1.25, NaN, Infinity, -In
   { schema_version: 1, authenticated_at: '2026-09-30T00:00:00Z', expires_at: '2026-10-01T00:00:00Z' }];
 
 let outputs;
+test('browser application imports use selective validators instead of the eager compatibility facade', () => {
+  const root = fileURLToPath(new URL('../src/', import.meta.url));
+  const violations = [];
+  const walk = directory => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === 'generated') continue;
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) { walk(file); continue; }
+      if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) continue;
+      const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+      const visit = node => {
+        let specifier;
+        if (ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly) specifier = node.moduleSpecifier;
+        if (ts.isExportDeclaration(node) && !node.isTypeOnly) specifier = node.moduleSpecifier;
+        if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+          || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) specifier = node.arguments[0];
+        if (specifier && ts.isStringLiteralLike(specifier) && specifier.text === '@quazonai/web/response-contract') {
+          violations.push(path.relative(root, file) + ':' + (source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1));
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+  };
+  walk(root);
+  assert.deepEqual(violations, [], 'Browser imports must use a selective validator or the lazy response loader');
+});
+
 test('fresh complete repeated generation is byte-identical, schema-local, and checkable', { timeout: 120_000 }, async () => {
   const started = performance.now(); outputs = await generateOutputs(document); const firstMs = performance.now() - started;
   const second = await generateOutputs(structuredClone(document)); assert.deepEqual([...second], [...outputs]);
