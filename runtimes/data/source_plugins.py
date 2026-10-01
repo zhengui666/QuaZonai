@@ -459,7 +459,7 @@ def catalog_identity(value):
             "native_storage_version": value["storage_version"]}
 
 
-def candle_publication(plugin_id, report, evidence):
+def candle_publication(plugin_id, report, evidence, *, declaration=None):
     if (report.get("source_provider") != plugin_id
             or report.get("source_record_kind") != "OHLCV_CANDLE"
             or report.get("source_evidence_relative_path") != "source-evidence.json"
@@ -485,7 +485,7 @@ def archive_receipt(acquisition):
         raise ValueError("native archive receipt provenance is missing or malformed") from error
 
 
-def archive_publication(report, evidence):
+def archive_publication(report, evidence, *, declaration=None):
     candle_publication(binance_vision.PROVIDER["id"], report, evidence)
     acquisition = evidence.get("acquisition")
     if (not isinstance(acquisition, dict) or acquisition.get("schema") != binance_vision.SCHEMA
@@ -499,9 +499,13 @@ def archive_publication(report, evidence):
             or report.get("supported_zip_profile") != profile
             or evidence.get("supported_zip_profile") != profile):
         raise ValueError("native archive receipt or supported format differs from preserved evidence")
+    # Reject a known origin contradiction; PIT remains a separate native declaration contract.
+    if (declaration is not None and acquisition["provenance"]["kind"] == "SYNTHETIC"
+            and declaration.get("origin") == "REAL"):
+        raise ValueError("catalog origin REAL contradicts preserved SYNTHETIC source provenance")
 
 
-def history_publication(plugin_id, report, evidence):
+def history_publication(plugin_id, report, evidence, *, declaration=None):
     metadata = evidence.get("source_metadata")
     formats = ("lokima-dual-capture",) if plugin_id == "polymarket-capture" else (
         "moose-fills", "time-seventeen-v2")
@@ -513,11 +517,11 @@ def history_publication(plugin_id, report, evidence):
         raise ValueError("native publication is not a supported source BAR preparation")
 
 
-def validate_native(plugin_id, report, evidence):
+def validate_native(plugin_id, report, evidence, *, declaration=None):
     plugin = PLUGINS.get(plugin_id)
     if plugin is None or plugin.validate_native is None:
         raise ValueError("source plugin has no native publication validator")
-    plugin.validate_native(report, evidence)
+    plugin.validate_native(report, evidence, declaration=declaration)
 
 
 def prepare_source(plugin_id, args):
@@ -531,11 +535,12 @@ def prepare_source(plugin_id, args):
              "source_evidence": (snapshot.safe_local(source, "source-evidence.json"), MAX_EVIDENCE_BYTES),
              "declaration": (declaration, MAX_REPORT_BYTES), "selection": (selection, MAX_REPORT_BYTES)}
     originals = {name: file_record(path, limit) for name, (path, limit) in paths.items()}
-    identity = catalog_identity(load_json(declaration))
+    declared = load_json(declaration)
+    identity = catalog_identity(declared)
     load_json(selection)  # Bounded original JSON only; the native parser owns selection semantics.
     report, evidence = published_native(source)
     providers.integer(report.get("bars"), "native preparation bars", minimum=1, maximum=1_000_000)
-    validate_native(plugin_id, report, evidence)
+    validate_native(plugin_id, report, evidence, declaration=declared)
     if any(file_record(path, limit) != originals[name] for name, (path, limit) in paths.items()):
         raise ValueError("catalog preparation inputs changed during input checks")
     output = run_native(args, ["--catalog", str(source / "catalog"),

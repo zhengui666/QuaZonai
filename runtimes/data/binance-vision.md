@@ -140,6 +140,13 @@ the original field, exact nanoseconds and `OPERATOR_DECLARED_UNVERIFIED` or
 in preserved evidence. Local import time never becomes retrieval, and declared
 initialization is not attested market receipt or historical PIT evidence.
 
+The source-plugin `prepare` path compares the original catalog declaration with
+the preserved publication. Known `SYNTHETIC` archive provenance rejects
+`origin=REAL` before invoking native preparation or creating its output. Other
+origin/PIT values retain the native declaration contract; this is an origin
+consistency check, not verification or reassignment of operator-declared PIT
+status. Receipt clocks, source evidence and metadata bytes are not rewritten.
+
 `implementation_sha256` records the local importer file when freezing.
 `implementation_status=RECORDED_LOCAL_HASH_NOT_ATTESTED` and
 `implementation_revision=null` are deliberate: verification checks its format,

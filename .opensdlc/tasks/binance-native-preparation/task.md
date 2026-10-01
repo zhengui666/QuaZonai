@@ -87,3 +87,38 @@ changes the paused operator single-binary experiment.
 User entrypoints: [archive guide](../../../runtimes/data/binance-vision.md),
 [source registry](../../../runtimes/data/source-plugins.md), and
 [installed guide](../../../deploy/docker/README.md#installed-free-source-tools).
+
+## Known synthetic origin consistency
+
+A focused source review of [PR 158](https://github.com/zhengui666/QuaZonai/pull/158)
+found that preparation validated preserved `SYNTHETIC` archive provenance but
+passed an independent `origin=REAL` catalog declaration to native preparation.
+Those contradictory labels could survive in catalog metadata; downstream
+`DATA_VALIDATE` does not reopen the detached source evidence. This was inherited
+source behavior, not a native source-relocation regression.
+
+The source-plugin publication validator now receives the original declaration
+when preparing a catalog. For a known synthetic archive it rejects only the
+positive `origin=REAL` contradiction, before native invocation or output creation.
+`SYNTHETIC`, `FIXTURE` and `LEGACY_UNKNOWN` declarations retain the native
+contract. PIT status remains separately operator-declared: the current metadata
+contract requires `VERIFIED` to use `AS_KNOWN_THEN`, but does not prohibit that
+pair solely because origin is synthetic. The archive's unverified simulation
+receipt does not itself prove a PIT claim. This change creates no attestation or
+new qualification policy, and leaves other sources and direct root preparation
+at their existing trusted-operator boundary.
+
+Offline verification passed 128 Python source tests and 21 installed-source
+helper tests, plus syntax and diff-whitespace checks. The new orchestration
+regressions cover all three PIT statuses for rejected `REAL`, the nine non-REAL
+origin/PIT combinations without relabelling, unchanged operator-declared `REAL`
+behavior, exact original evidence/clock bytes and hashes, and no native call or
+output for a contradiction. Native subprocesses are stubbed in these tests;
+they do not establish full native metadata acceptance. Running the new rejection
+regression against the preceding published source reaches the forbidden native
+call for all three PIT statuses; the corrected source rejects each first.
+No native build, Docker,
+market request, hosted CI, registration or scientific qualification ran for this
+correction. Full documentation checks were not run because the local link linter
+is absent and CLI checks require native dependencies. Independent review of the
+final source and applicable exact-head CI remain coordinator-owned gates.

@@ -86,6 +86,34 @@ class ArchivePluginTest(unittest.TestCase):
             return SimpleNamespace(returncode=0)
         return run
 
+    def use_synthetic_archive(self):
+        synthetic = {**deepcopy(DECLARED), 'kind': 'SYNTHETIC'}
+        self.provenance.write_text(json.dumps(synthetic))
+        self.bundle = self.root / 'synthetic'
+        self.manifest = vision.freeze(SELECTION, self.archive, self.checksum, self.bundle, provenance_path=self.provenance)
+        self.args.acquisition = self.bundle / 'archive.json'
+
+    def preparation_args(self, origin='FIXTURE', pit_status='UNVERIFIED'):
+        declaration, selection = self.root / 'declaration.json', self.root / 'selection.json'
+        declared = {'schema_version': 1, 'registered_ref': 'synthetic-archive', 'storage_version': 'fixture-v1',
+                    'origin': origin, 'pit_status': pit_status,
+                    'revision_policy': 'AS_KNOWN_THEN' if pit_status == 'VERIFIED' else 'UNKNOWN'}
+        declaration.write_text(json.dumps(declared, indent=4) + '\n')
+        selection.write_text('{"selection":"native validation is tested separately"}')
+        return SimpleNamespace(native_output=self.output, declaration=declaration, selection=selection,
+                               output=self.root / ('prepared-' + origin + '-' + pit_status), native_bin=self.binary)
+
+    def preparation_runner(self, args, body):
+        def prepare(argv, **kwargs):
+            self.assertEqual(argv, [str(self.binary), '--catalog', str(self.output / 'catalog'),
+                '--declaration', str(args.declaration), '--selection', str(args.selection), '--output', str(args.output)])
+            args.output.mkdir()
+            (args.output / 'catalog').mkdir()
+            (args.output / 'catalog/fixture.parquet').write_bytes(b'PAR1-stub-only-PAR1')
+            (args.output / 'catalog-metadata.json').write_bytes(body)
+            return SimpleNamespace(returncode=0)
+        return prepare
+
     def test_registry_plan_inspect_freeze_verify_are_real_offline_operations(self):
         provider = vision.PROVIDER['id']
         self.assertEqual(self.invoke(['plan', provider, *self.selection_args]), vision.plan(SELECTION))
@@ -133,11 +161,7 @@ class ArchivePluginTest(unittest.TestCase):
             self.assertFalse(self.output.exists())
 
     def test_synthetic_receipt_is_never_promoted(self):
-        synthetic = {**deepcopy(DECLARED), 'kind': 'SYNTHETIC'}
-        self.provenance.write_text(json.dumps(synthetic))
-        self.bundle = self.root / 'synthetic'
-        self.manifest = vision.freeze(SELECTION, self.archive, self.checksum, self.bundle, provenance_path=self.provenance)
-        self.args.acquisition = self.bundle / 'archive.json'
+        self.use_synthetic_archive()
         with patch.object(plugins.subprocess, 'run', side_effect=self.runner()):
             result = plugins.archive_convert(self.args)
         self.assertEqual(result['native_report']['receipt_basis']['kind'], 'SYNTHETIC')
@@ -179,23 +203,10 @@ class ArchivePluginTest(unittest.TestCase):
     def test_archive_prepare_preserves_metadata_bytes_and_rejects_changed_receipt(self):
         with patch.object(plugins.subprocess, 'run', side_effect=self.runner()):
             plugins.archive_convert(self.args)
-        declaration, selection = self.root / 'declaration.json', self.root / 'selection.json'
-        identity = {'schema_version': 1, 'registered_ref': 'synthetic-archive', 'storage_version': 'fixture-v1'}
-        declaration.write_text(json.dumps(identity))
-        selection.write_text('{"selection":"native validation is tested separately"}')
-        prepared = self.root / 'prepared'
-        args = SimpleNamespace(native_output=self.output, declaration=declaration, selection=selection,
-                               output=prepared, native_bin=self.binary)
-        body = (json.dumps(identity, indent=4) + '\n').encode()
-        def prepare(argv, **kwargs):
-            self.assertEqual(argv, [str(self.binary), '--catalog', str(self.output / 'catalog'),
-                '--declaration', str(declaration), '--selection', str(selection), '--output', str(prepared)])
-            prepared.mkdir()
-            (prepared / 'catalog').mkdir()
-            (prepared / 'catalog/fixture.parquet').write_bytes(b'PAR1-stub-only-PAR1')
-            (prepared / 'catalog-metadata.json').write_bytes(body)
-            return SimpleNamespace(returncode=0)
-        with patch.object(plugins.subprocess, 'run', side_effect=prepare):
+        args = self.preparation_args()
+        prepared = args.output
+        body = args.declaration.read_bytes()
+        with patch.object(plugins.subprocess, 'run', side_effect=self.preparation_runner(args, body)):
             result = plugins.prepare_source(vision.PROVIDER['id'], args)
         self.assertEqual(result['status'], 'CATALOG_PREPARED')
         self.assertEqual(result['catalog_registration'], {
@@ -213,13 +224,65 @@ class ArchivePluginTest(unittest.TestCase):
             plugins.prepare_source(vision.PROVIDER['id'], args)
         run.assert_not_called()
 
+    def test_synthetic_archive_rejects_real_declaration_before_native_or_output(self):
+        self.use_synthetic_archive()
+        self.publish_stub(*self.publication())
+        for pit_status in ('UNVERIFIED', 'VERIFIED', 'INVALID'):
+            args = self.preparation_args('REAL', pit_status)
+            originals = {path: path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
+            with self.subTest(pit_status=pit_status), \
+                    patch.object(plugins.subprocess, 'run', side_effect=AssertionError('native must not run')) as run:
+                with self.assertRaisesRegex(ValueError, 'origin REAL contradicts preserved SYNTHETIC'):
+                    plugins.prepare_source(vision.PROVIDER['id'], args)
+                run.assert_not_called()
+                self.assertFalse(args.output.exists())
+                self.assertEqual({path: path.read_bytes() for path in self.root.rglob('*') if path.is_file()}, originals)
+
+    def test_synthetic_archive_preserves_non_real_declarations_and_source_evidence(self):
+        self.use_synthetic_archive()
+        self.publish_stub(*self.publication())
+        for origin in ('SYNTHETIC', 'FIXTURE', 'LEGACY_UNKNOWN'):
+            for pit_status in ('UNVERIFIED', 'INVALID', 'VERIFIED'):
+                args = self.preparation_args(origin, pit_status)
+                body = args.declaration.read_bytes()
+                originals = {path: path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
+                with self.subTest(origin=origin, pit_status=pit_status), \
+                        patch.object(plugins.subprocess, 'run', side_effect=self.preparation_runner(args, body)) as run:
+                    result = plugins.prepare_source(vision.PROVIDER['id'], args)
+                run.assert_called_once()
+                self.assertEqual(result['status'], 'CATALOG_PREPARED')
+                self.assertEqual((args.output / 'catalog-metadata.json').read_bytes(), body)
+                self.assertEqual(result['metadata_sha256'], plugins.sha256(args.output / 'catalog-metadata.json'))
+                for name, filename in (('import_report', 'import-report.json'), ('source_evidence', 'source-evidence.json')):
+                    self.assertEqual(result['source_artifacts'][name]['sha256'], plugins.sha256(self.output / filename))
+                self.assertEqual({path: path.read_bytes() for path in originals}, originals)
+                self.assertEqual(result['admission']['historical_availability'], 'UNVERIFIED')
+                self.assertFalse(result['admission']['research_qualified'])
+                self.assertFalse(result['admission']['registered_in_quazonai'])
+
+    def test_declared_archive_keeps_native_authority_over_origin_and_pit(self):
+        self.publish_stub(*self.publication())
+        for pit_status in ('UNVERIFIED', 'VERIFIED', 'INVALID'):
+            args = self.preparation_args('REAL', pit_status)
+            body = args.declaration.read_bytes()
+            with self.subTest(pit_status=pit_status), \
+                    patch.object(plugins.subprocess, 'run', side_effect=self.preparation_runner(args, body)) as run:
+                result = plugins.prepare_source(vision.PROVIDER['id'], args)
+            run.assert_called_once()
+            self.assertEqual(result['status'], 'CATALOG_PREPARED')
+            self.assertEqual((args.output / 'catalog-metadata.json').read_bytes(), body)
+            self.assertFalse(result['admission']['research_qualified'])
+
     def test_native_validation_is_owned_by_the_registered_plugin(self):
         report, evidence = self.publication()
         seen = []
-        example = plugins.SourcePlugin({'id': 'example'}, {}, lambda r, e: seen.append((r, e)))
+        example = plugins.SourcePlugin({'id': 'example'}, {}, lambda r, e, **context: seen.append((r, e, context)))
+        declared = {'origin': 'REAL', 'pit_status': 'VERIFIED', 'revision_policy': 'AS_KNOWN_THEN'}
         with patch.dict(plugins.PLUGINS, {'example': example}):
             plugins.validate_native('example', report, evidence)
-        self.assertEqual(seen, [(report, evidence)])
+            plugins.validate_native('example', report, evidence, declaration=declared)
+        self.assertEqual(seen, [(report, evidence, {'declaration': None}),
+                                (report, evidence, {'declaration': declared})])
         with self.assertRaises(ValueError):
             plugins.validate_native('hf-snapshot', report, evidence)
 
