@@ -39,12 +39,13 @@ class RegistryTest(unittest.TestCase):
         self.assertNotIn("convert", result["hf-snapshot"]["capabilities"])
         self.assertNotIn("prepare", result["polymarket-prices"]["capabilities"])
         self.assertNotIn("prepare", result["hf-snapshot"]["capabilities"])
-        for name in ("coinbase-candles", "polymarket-capture", "polymarket-archive"):
+        for name in ("coinbase-candles", "polymarket-capture", "polymarket-archive", "binance-vision-spot-klines"):
             self.assertIn("convert", result[name]["capabilities"])
             self.assertIn("prepare", result[name]["capabilities"])
         for name, item in result.items():
-            self.assertEqual(item["public_network_operations"], ["download"] if name in providers.PROVIDERS
-                             else ["download", "plan"])
+            expected = [] if name == "binance-vision-spot-klines" else (
+                ["download"] if name in providers.PROVIDERS else ["download", "plan"])
+            self.assertEqual(item["public_network_operations"], expected)
         for item in result.values():
             self.assertEqual(item["access"], "PUBLIC_FREE")
             self.assertEqual(item["authentication"], "NONE")

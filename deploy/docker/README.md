@@ -152,12 +152,22 @@ python3 "$installation/current/deployment/manage.py" source \
 ```
 
 The image's capability inventory determines network access: inventory,
-verification, conversion and preparation are offline; only public acquisition
+archive inspection/freezing, verification, conversion and preparation are offline; only public acquisition
 and snapshot planning receive network access. No installation credentials or
 Docker socket enter the one-shot source container. The API/Worker are not
 restarted. See the [source guide](../../runtimes/data/source-plugins.md) for actual
 format capabilities, original input requirements and source-checkout examples;
 the installed command accepts the same operation arguments without `--native-bin`.
+
+For an already supplied Binance spot archive, use
+`binance-vision-spot-klines` through the same source command. Its offline lifecycle
+is `plan`, `inspect`, `freeze`, `verify`, `convert`, then `prepare`; `freeze`,
+`convert` and `prepare` each need a separate new output under an explicitly
+mounted output parent. The [archive guide](../../runtimes/data/binance-vision.md)
+describes original file/definition requirements, explicit unverified or synthetic
+receipt clocks, and the ordinary ZIP profile. There is no archive downloader or
+terms-acceptance flag. A native result is not upstream permission or research
+qualification.
 
 The manager prints a source invocation identity before starting containers. Use
 `--invocation-id` with a new 32-character lowercase hexadecimal value when a

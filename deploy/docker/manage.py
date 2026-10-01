@@ -783,7 +783,7 @@ def source_command(root: Path, inputs: list[Path], output: Path | None, argument
         if any(path == other or path in other.parents or other in path.parents for other, _ in mounts[:index]):
             raise ValueError('Source input mounts and the output parent must not overlap.')
     help_only = arguments[-1] in ('-h', '--help')
-    if arguments[0] in ('download', 'convert', 'prepare') and not help_only:
+    if arguments[0] in ('download', 'freeze', 'convert', 'prepare') and not help_only:
         destinations = [arg.split('=', 1)[1] for arg in arguments if arg.startswith('--output=')]
         for index, arg in enumerate(arguments):
             if arg == '--output' and index + 1 < len(arguments):
@@ -823,8 +823,8 @@ def source_command(root: Path, inputs: list[Path], output: Path | None, argument
         if not isinstance(public, list) or any(not isinstance(item, str) or item not in selected[0]['capabilities'] for item in public):
             raise ValueError('Installed source network capability declaration is invalid.')
         if arguments[0] in public:
-            if arguments[0] in ('verify', 'convert', 'prepare'):
-                raise ValueError('Installed verification, conversion and preparation must remain offline.')
+            if arguments[0] in ('inspect', 'freeze', 'verify', 'convert', 'prepare'):
+                raise ValueError('Installed inspection, freezing, verification, conversion and preparation must remain offline.')
             network = 'bridge'
     command = source_container(config, release, network, invocation)
     for path, mode in mounts:

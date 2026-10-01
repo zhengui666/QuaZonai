@@ -1,11 +1,14 @@
-# Offline Binance Vision archive inspection
+# Offline Binance Vision source plugin
 
-This is a source-checkout library and CLI stage, **not a complete source plugin**.
-It validates one already supplied spot kline archive without accessing a dataset
-endpoint. It has no download, native conversion, preparation, installed-image
-payload or registry capability. Existing Coinbase/Polymarket descriptors and
-`qz.public_acquisition/1` remain unchanged. Use the existing
-[source-plugin guide](source-plugins.md) for implemented installed capabilities.
+The source registry supports offline plan, inspect, freeze, verify, native
+conversion and catalog preparation for one already supplied spot kline archive.
+It has no download or terms-acceptance operation. The standalone Python library
+and its plan/inspect/freeze/verify CLI remain compatible; native operations use
+the existing `catalog-prepare` executable. Existing Coinbase/Polymarket frozen
+descriptors and `qz.public_acquisition/1` remain unchanged. An installation must
+use a completed release containing this plugin before these capabilities are
+available. See the [source-plugin guide](source-plugins.md) and
+[installed source command](../../deploy/docker/README.md#installed-free-source-tools).
 
 ## Scope and source identity
 
@@ -129,9 +132,13 @@ Only `declared_observed_at` may preserve the supplied archive completion time.
 Generated `imported_at` and `published_at` describe this local operation, never
 retrieval or historical receipt. Verification rejects future publication/import
 clocks and inconsistent order, but cannot independently authenticate any
-self-consistent local clock. A future native converter must resolve this missing
-observation evidence explicitly; it must not silently turn a declaration into
-`ts_init` or use local import as original retrieval.
+self-consistent local clock. Native conversion refuses `UNKNOWN` or a missing
+retrieval object, including a `SYNTHETIC` declaration without clocks. It preserves
+the explicit archive completion as `ts_init` with a `receipt_basis` identifying
+the original field, exact nanoseconds and `OPERATOR_DECLARED_UNVERIFIED` or
+`SYNTHETIC` status. The original null observation/availability fields remain null
+in preserved evidence. Local import time never becomes retrieval, and declared
+initialization is not attested market receipt or historical PIT evidence.
 
 `implementation_sha256` records the local importer file when freezing.
 `implementation_status=RECORDED_LOCAL_HASH_NOT_ATTESTED` and
@@ -197,8 +204,68 @@ stream termination or absence of bytes outside the decoded member. Synthetic
 tests explicitly demonstrate accepted ZIP64/trailing variants and preserve their
 complete original bytes. Output names this limitation as
 `STDLIB_MEMBER_VALIDATION_NOT_CANONICAL_ZIP`; verification's integrity scope is
-`RETAINED_BYTES_AND_DECODED_MEMBER_ONLY`. Native verification and any stronger
-container profile remain a separately reviewed stage.
+`RETAINED_BYTES_AND_DECODED_MEMBER_ONLY`. The separate native profile below does
+not relabel or broaden that frozen Python verification claim.
+
+## Native conversion and preparation
+
+The native profile `CLASSIC_SINGLE_MEMBER_STORED_OR_DEFLATE_V1` supports one
+ordinary stored/deflate member, including supported comments/extra fields and
+classic streaming descriptors. It refuses ZIP64, multi-disk, encryption,
+unsupported flags/versions, prefixes and unsupported tails. Python integrity
+verification may accept a broader container that this native profile refuses;
+the original frozen v1 envelope and stdlib validation label remain unchanged.
+
+Official public typed ZIP parsers validate the complete selected central span,
+raw expected names, required version, local metadata and data extent. Independent
+bounded decompression must reach a complete stream, reproduce the declared size
+and CRC, and retain every row. No private APIs, copied parser implementation or
+handwritten ZIP field parser is used. The native converter separately reproduces
+the entire original manifest and normalized records from the retained ZIP,
+checksum, provenance and evidence before producing artifacts.
+
+For source-checkout use, supply the actual built `catalog-prepare` binary:
+
+```sh
+python3 -B runtimes/data/source_plugins.py verify binance-vision-spot-klines \
+  --acquisition /absolute/private/new-archive-bundle/archive.json
+
+python3 -B runtimes/data/source_plugins.py convert binance-vision-spot-klines \
+  --native-bin target/debug/catalog-prepare \
+  --acquisition /absolute/private/new-archive-bundle/archive.json \
+  --instruments /absolute/original-binance-instruments.json \
+  --output /absolute/native/binance-selection
+
+python3 -B runtimes/data/source_plugins.py prepare binance-vision-spot-klines \
+  --native-bin target/debug/catalog-prepare \
+  --native-output /absolute/native/binance-selection \
+  --declaration /absolute/original-discovery-declaration.json \
+  --selection /absolute/original-native-selection.json \
+  --output /absolute/prepared/binance-discovery
+```
+
+`freeze` in the source registry accepts the same explicit selection/file flags
+as the standalone example above. Registry `verify` uses `--acquisition` pointing
+to the final `archive.json`. Installed commands use the same operation arguments
+through `manage.py source`, explicit read-only input mounts and a distinct
+output-parent mount, without `--native-bin` or host Cargo. All six operations
+remain offline.
+
+Original native `CurrencyPair` definitions must match venue, symbol, base/quote,
+precision and historical version clocks. They are never synthesized from the
+symbol or current metadata. Decimal-to-native conversion rejects rounding,
+unsupported precision, tick/quantity grids, future definitions and ambiguous
+definition/receipt ties. The native catalog is read back with exact BAR and
+definition equality, original source files are rechecked, and the final report
+is published last. Failed/partial output is retained, not reused.
+
+The report's native BAR event-label bounds and explicit receipt cutoff are
+inspection inputs, not an automatically generated partition declaration.
+Preparation still requires a separately supplied original declaration and
+selection. Existing registration metadata requires microsecond-representable
+timestamps; unsupported precision rejects rather than truncating original
+nanoseconds. The resulting host-path/digest handoff uses the existing catalog
+registration flow and does not itself register or qualify a dataset.
 
 ## Permission and remaining work
 
@@ -211,10 +278,8 @@ authority. Saved terms, public URLs, synthetic tests and file hashes do not
 replace that action. No account, credentials, paid download, automatic agreement
 acceptance, redistribution or public real-source fixture is introduced.
 
-Native independent ZIP/CSV revalidation, original native definitions, exact
-price/volume precision, actual observation evidence, conversion/readback,
-partition preparation and installed synthetic tests are unfinished. No existing
-native importer accepts this envelope. Research additionally requires original
+The offline native path does not supply actual observation evidence or a data-use
+grant. Research still requires original
 rights, historical definitions/fees, availability, partitions and fresh
 `DATA_VALIDATE`; every manifest retains `UNPROVEN` coverage, `UNVERIFIED`
 historical availability, false qualification/registration and independent
@@ -233,6 +298,8 @@ python3 -B -m unittest discover -s runtimes/data -v
 temporary local files. They cover multiple symbols/dates/intervals, the ms/us
 transition, exact amounts, sparse/full/empty days, malicious ZIP/CSV/provenance,
 changed inputs and unpublished failures, CLI operation and unchanged acquisition
-contracts. They do not establish real endpoint availability, native conversion,
-installation, permission or scientific qualification. See the
-[task record](../../.opensdlc/tasks/binance-vision-spot-archive/task.md).
+contracts. These Python tests do not establish native conversion or installation;
+the separate Rust and installed Container gates execute those paths. Neither
+establishes real endpoint availability, permission or scientific qualification.
+See the [archive task](../../.opensdlc/tasks/binance-vision-spot-archive/task.md)
+and [native integration task](../../.opensdlc/tasks/binance-native-preparation/task.md).

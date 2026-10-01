@@ -52,16 +52,22 @@ python3 -B runtimes/data/source_plugins.py prepare --help
   for `moose-fills`, `time-seventeen-v2`, and `joseph-books`. Preparation requires
   nonempty native BAR output from `moose-fills` or `time-seventeen-v2`;
   `joseph-books` is not supported for preparation
+- `binance-vision-spot-klines`: offline plan, inspect, freeze, verify, convert and
+  prepare for an already supplied single-symbol/day spot archive. No download or
+  terms-acceptance capability; native conversion uses the restricted ordinary ZIP
+  profile and original definitions described in the [archive guide](binance-vision.md)
 
 CLI commands and source-specific options come from the registry's capabilities.
 An unsupported operation is absent from the CLI, rather than a false ready state.
 To extend it, register a `SourcePlugin` containing each supported `Capability`'s
-argument configurator and handler. Native adapters remain responsible for source
+argument configurator and handler. A preparation-capable plugin also registers
+its native-publication validator; the common handoff does not infer a provider
+from a path or maintain a separate source dispatch list. Native adapters remain responsible for source
 interpretation, exact quantities, original clocks, and native serialization.
 Each capability also declares whether it needs public network access. Inventory
 returns `public_network_operations`: only HTTP downloads and snapshot
-planning/downloads need a network. Verification, conversion and preparation are
-offline operations.
+planning/downloads need a network. Archive inspection/freezing, verification,
+conversion and preparation are offline operations.
 
 The runner calls the original [HTTP acquisition](acquire.py) and
 [snapshot helper](snapshot.py), not a second transport or Parquet decoder.
@@ -237,7 +243,7 @@ python3 -B runtimes/data/source_plugins.py prepare coinbase-candles \
   --output /absolute/prepared/coinbase-discovery
 ```
 
-Use `polymarket-capture` or `polymarket-archive` with their matching native output
+Use `polymarket-capture`, `polymarket-archive` or `binance-vision-spot-klines` with their matching native output
 for supported BAR preparation. Sampled PRICE_MARK, arbitrary Hugging Face files,
 empty BAR output and `joseph-books` output cannot use this path. An existing import
 report is a publication record, not an independent attestation of historical
@@ -302,7 +308,7 @@ specific scientific reason or expose exception chains.
 `NATIVE_ARTIFACTS_VALIDATED` means that the wrapper checked the native publication
 report, provenance links and artifact presence/framing. It is not an independent
 Python decode of native Parquet. The Coinbase native converter supplies the
-explicit readback result; existing Polymarket native behavior and its Rust
+explicit readback result, as does the archive candle converter; existing Polymarket native behavior and its Rust
 roundtrip tests remain authoritative. Stub subprocess tests exercise orchestration
 failures only and are not a live-source or scientific validation claim.
 

@@ -2,7 +2,8 @@
 """Operator-only free-source lifecycle dispatch; native preparation is not research admission."""
 
 import argparse
-from dataclasses import dataclass
+import csv
+from dataclasses import dataclass, replace
 from functools import partial
 import hashlib
 import http.client
@@ -17,6 +18,7 @@ import urllib.error
 import urllib.parse
 
 import acquire
+import binance_vision
 import providers
 import snapshot
 
@@ -37,6 +39,7 @@ class Capability:
 class SourcePlugin:
     descriptor: dict
     capabilities: dict[str, Capability]
+    validate_native: Callable | None = None
 
 
 def local_path(value):
@@ -92,6 +95,50 @@ def http_verify(provider_id, args):
     if result["provider"] != provider_id:
         raise ValueError("acquisition does not belong to this source plugin")
     return result
+
+
+def archive_options(parser, operation):
+    for name in ("symbol", "base-asset", "quote-asset", "day", "interval"):
+        parser.add_argument("--" + name, required=True)
+    if operation in ("inspect", "freeze"):
+        parser.add_argument("--archive", type=Path, required=True)
+        parser.add_argument("--checksum", type=Path, required=True)
+    if operation == "freeze":
+        parser.add_argument("--output", type=Path, required=True)
+        parser.add_argument("--provenance", type=Path)
+        for role in binance_vision.EVIDENCE_ROLES:
+            parser.add_argument("--" + role.replace("_", "-") + "-file", type=Path)
+
+
+def archive_selection(args):
+    return binance_vision.Selection(args.symbol, args.base_asset, args.quote_asset, args.day, args.interval)
+
+
+def archive_operation(operation, args):
+    selection = archive_selection(args)
+    if operation == "plan":
+        return binance_vision.plan(selection)
+    if operation == "inspect":
+        result = binance_vision.decode(
+            binance_vision.local_bytes(args.archive, binance_vision.LIMITS["archive_bytes"]),
+            binance_vision.local_bytes(args.checksum, binance_vision.LIMITS["checksum_bytes"]), selection)
+        del result["rows"]  # Keep original observations out of the command summary.
+        return {**result, "admission": dict(binance_vision.ADMISSION)}
+    return binance_vision.freeze(selection, args.archive, args.checksum, args.output,
+        provenance_path=args.provenance,
+        evidence_paths={role: getattr(args, role + "_file") for role in binance_vision.EVIDENCE_ROLES
+                        if getattr(args, role + "_file") is not None})
+
+
+def archive_verify_options(parser):
+    parser.add_argument("--acquisition", type=Path, required=True, help="original archive.json")
+
+
+def archive_verify(args):
+    path = local_path(args.acquisition)
+    if path.name != "archive.json":
+        raise ValueError("expected the original archive.json")
+    return binance_vision.verify(path.parent)
 
 
 def byte_budget_options(parser):
@@ -186,9 +233,9 @@ def native_options(parser):
     parser.add_argument("--output", type=Path, required=True, help="new native output directory")
 
 
-def candle_options(parser):
+def candle_options(parser, acquisition_options=http_verify_options):
     native_options(parser)
-    http_verify_options(parser)
+    acquisition_options(parser)
     parser.add_argument("--instruments", type=Path, required=True,
                         help="original native InstrumentAny JSON array, with original clocks")
 
@@ -276,8 +323,8 @@ def converted(plugin_id, output, report):
             "native_report": report, "admission": dict(acquire.ADMISSION)}
 
 
-def candle_convert(args):
-    verified = http_verify("coinbase-candles", args)
+def convert_candles(plugin_id, args, *, verify, native_mode, record_count):
+    verified = verify(args)
     acquisition = local_path(args.acquisition)
     instruments = local_path(args.instruments)
     # The native parser owns original definition semantics and exact decimal conversion.
@@ -285,14 +332,14 @@ def candle_convert(args):
     original_acquisition = load_json(acquisition)
     hashes = {"acquisition_sha256": sha256(acquisition),
               "instrument_definitions_sha256": sha256(instruments)}
-    output = run_native(args, ["ingest-candles", "--acquisition", str(acquisition),
+    output = run_native(args, [native_mode, "--acquisition", str(acquisition),
                                "--instruments", str(instruments)])
-    if (http_verify("coinbase-candles", args) != verified
+    if (verify(args) != verified
             or sha256(acquisition) != hashes["acquisition_sha256"]
             or sha256(instruments) != hashes["instrument_definitions_sha256"]):
         raise ValueError("native conversion inputs changed during preparation")
     report, evidence = published_native(output)
-    if (report.get("source_provider") != "coinbase-candles"
+    if (report.get("source_provider") != plugin_id
             or report.get("source_record_kind") != "OHLCV_CANDLE"
             or report.get("source_evidence_relative_path") != "source-evidence.json"
             or report.get("native_readback_verified") is not True
@@ -306,9 +353,23 @@ def candle_convert(args):
             or report["instrument_versions"] != len(original_definitions)):
         raise ValueError("native candle report does not match its verified source inputs")
     providers.integer(report.get("bars"), "native bars", minimum=1, maximum=providers.MAX_RECORDS)
-    if report["bars"] != verified["record_count"]:
+    if report["bars"] != record_count(verified):
         raise ValueError("native candle count differs from verified acquisition")
-    return converted("coinbase-candles", output, report)
+    validate_native(plugin_id, report, evidence)
+    return converted(plugin_id, output, report)
+
+
+def candle_convert(args):
+    return convert_candles("coinbase-candles", args, verify=partial(http_verify, "coinbase-candles"),
+                           native_mode="ingest-candles", record_count=lambda value: value["record_count"])
+
+
+def archive_convert(args):
+    archive_receipt(load_json(local_path(args.acquisition)))
+    return convert_candles(binance_vision.PROVIDER["id"], args, verify=archive_verify,
+        native_mode="ingest-archive-candles",
+        record_count=lambda value: binance_vision.unsigned(value["counts"]["rows"], "rows",
+                                                          binance_vision.LIMITS["rows"]))
 
 
 def history_convert(args, capture=False):
@@ -398,6 +459,67 @@ def catalog_identity(value):
             "native_storage_version": value["storage_version"]}
 
 
+def candle_publication(plugin_id, report, evidence):
+    if (report.get("source_provider") != plugin_id
+            or report.get("source_record_kind") != "OHLCV_CANDLE"
+            or report.get("source_evidence_relative_path") != "source-evidence.json"
+            or report.get("native_readback_verified") is not True
+            or report.get("research_qualified") is not False):
+        raise ValueError("native publication does not belong to the candle prepare capability")
+
+
+def archive_receipt(acquisition):
+    try:
+        provenance = acquisition["provenance"]
+        kind = provenance["kind"]
+        if kind not in ("OPERATOR_DECLARED", "SYNTHETIC") or provenance["retrieval"] is None:
+            raise ValueError("native archive conversion requires explicit original receipt provenance")
+        clock = provenance["retrieval"]["archive"]["completed_at"]
+        timestamp = binance_vision.utc_ns(clock)
+        if timestamp > 2**63 - 1:
+            raise ValueError("declared receipt exceeds the native timestamp range")
+        return {"kind": "OPERATOR_DECLARED_UNVERIFIED" if kind == "OPERATOR_DECLARED" else "SYNTHETIC",
+                "source_clock": "provenance.retrieval.archive.completed_at",
+                "declared_observed_at": clock, "ts_init_ns": str(timestamp)}
+    except (KeyError, TypeError) as error:
+        raise ValueError("native archive receipt provenance is missing or malformed") from error
+
+
+def archive_publication(report, evidence):
+    candle_publication(binance_vision.PROVIDER["id"], report, evidence)
+    acquisition = evidence.get("acquisition")
+    if (not isinstance(acquisition, dict) or acquisition.get("schema") != binance_vision.SCHEMA
+            or acquisition.get("provider") != binance_vision.PROVIDER
+            or report.get("source_schema") != binance_vision.SCHEMA):
+        raise ValueError("native archive report does not match its original source format")
+    receipt = archive_receipt(acquisition)
+    profile = "CLASSIC_SINGLE_MEMBER_STORED_OR_DEFLATE_V1"
+    if (report.get("receipt_basis") != receipt or evidence.get("receipt_basis") != receipt
+            or report.get("source_provenance_kind") != acquisition["provenance"]["kind"]
+            or report.get("supported_zip_profile") != profile
+            or evidence.get("supported_zip_profile") != profile):
+        raise ValueError("native archive receipt or supported format differs from preserved evidence")
+
+
+def history_publication(plugin_id, report, evidence):
+    metadata = evidence.get("source_metadata")
+    formats = ("lokima-dual-capture",) if plugin_id == "polymarket-capture" else (
+        "moose-fills", "time-seventeen-v2")
+    if (plugin_id not in ("polymarket-capture", "polymarket-archive")
+            or not isinstance(metadata, dict) or metadata.get("format") not in formats
+            or not isinstance(evidence.get("bars"), list) or len(evidence["bars"]) != report["bars"]
+            or not isinstance(report.get("source_reference"), str) or not report["source_reference"].strip()
+            or report["source_reference"] != evidence.get("source_reference")):
+        raise ValueError("native publication is not a supported source BAR preparation")
+
+
+def validate_native(plugin_id, report, evidence):
+    plugin = PLUGINS.get(plugin_id)
+    if plugin is None or plugin.validate_native is None:
+        raise ValueError("source plugin has no native publication validator")
+    plugin.validate_native(report, evidence)
+
+
 def prepare_source(plugin_id, args):
     source = local_path(args.native_output)
     output = local_path(args.output)
@@ -413,23 +535,7 @@ def prepare_source(plugin_id, args):
     load_json(selection)  # Bounded original JSON only; the native parser owns selection semantics.
     report, evidence = published_native(source)
     providers.integer(report.get("bars"), "native preparation bars", minimum=1, maximum=1_000_000)
-    if plugin_id == "coinbase-candles":
-        if (report.get("source_provider") != plugin_id
-                or report.get("source_record_kind") != "OHLCV_CANDLE"
-                or report.get("source_evidence_relative_path") != "source-evidence.json"
-                or report.get("native_readback_verified") is not True
-                or report.get("research_qualified") is not False):
-            raise ValueError("native publication does not belong to the candle prepare capability")
-    else:
-        metadata = evidence.get("source_metadata")
-        formats = ("lokima-dual-capture",) if plugin_id == "polymarket-capture" else (
-            "moose-fills", "time-seventeen-v2")
-        if (plugin_id not in ("polymarket-capture", "polymarket-archive")
-                or not isinstance(metadata, dict) or metadata.get("format") not in formats
-                or not isinstance(evidence.get("bars"), list) or len(evidence["bars"]) != report["bars"]
-                or not isinstance(report.get("source_reference"), str) or not report["source_reference"].strip()
-                or report["source_reference"] != evidence.get("source_reference")):
-            raise ValueError("native publication is not a supported source BAR preparation")
+    validate_native(plugin_id, report, evidence)
     if any(file_record(path, limit) != originals[name] for name, (path, limit) in paths.items()):
         raise ValueError("catalog preparation inputs changed during input checks")
     output = run_native(args, ["--catalog", str(source / "catalog"),
@@ -460,10 +566,10 @@ def prepare_source(plugin_id, args):
     return result
 
 
-def source_plugin(plugin_id, source_format, capabilities, limitations):
+def source_plugin(plugin_id, source_format, capabilities, limitations, *, validate_native=None):
     return SourcePlugin({"id": plugin_id, "source_format": source_format,
                          "access": "PUBLIC_FREE", "authentication": "NONE", "operator_only": True,
-                         "limitations": limitations}, capabilities)
+                         "limitations": limitations}, capabilities, validate_native)
 
 
 def http_plugin(provider_id):
@@ -486,6 +592,8 @@ PLUGINS = {provider_id: http_plugin(provider_id) for provider_id in providers.PR
 PLUGINS["coinbase-candles"].capabilities["convert"] = Capability(candle_options, candle_convert)
 PLUGINS["coinbase-candles"].capabilities["prepare"] = Capability(
     prepare_options, partial(prepare_source, "coinbase-candles"))
+PLUGINS["coinbase-candles"] = replace(PLUGINS["coinbase-candles"],
+    validate_native=partial(candle_publication, "coinbase-candles"))
 PLUGINS["polymarket-prices"].descriptor["limitations"].append(
     "PRICE_MARK cannot be converted into trades, OHLCV bars or qualified native research data")
 PLUGINS["coinbase-candles"].descriptor["limitations"].append(
@@ -497,13 +605,26 @@ PLUGINS["polymarket-capture"] = source_plugin("polymarket-capture", "lokima-dual
                                                        partial(history_convert, capture=True)),
                                "prepare": Capability(prepare_options, partial(prepare_source, "polymarket-capture"))},
     ["Requires original historical Gamma and both recorded CLOB feeds in the supported lokima schema",
-     "Matching captured feeds do not prove all-exchange or all-market completeness"])
+     "Matching captured feeds do not prove all-exchange or all-market completeness"],
+    validate_native=partial(history_publication, "polymarket-capture"))
 PLUGINS["polymarket-archive"] = source_plugin("polymarket-archive", list(ARCHIVE_FORMATS),
     snapshot_capabilities() | {"convert": Capability(history_options, history_convert),
                                "prepare": Capability(prepare_options, partial(prepare_source, "polymarket-archive"))},
     ["Only the three listed existing native formats; original native definitions are required",
      "Archive conversion preserves each native adapter's existing semantics and limitations",
-     "Preparation requires existing nonempty BAR output from moose-fills or time-seventeen-v2; joseph-books is unsupported"])
+     "Preparation requires existing nonempty BAR output from moose-fills or time-seventeen-v2; joseph-books is unsupported"],
+    validate_native=partial(history_publication, "polymarket-archive"))
+PLUGINS[binance_vision.PROVIDER["id"]] = source_plugin(binance_vision.PROVIDER["id"], binance_vision.SCHEMA,
+    {**{operation: Capability(partial(archive_options, operation=operation), partial(archive_operation, operation))
+        for operation in ("plan", "inspect", "freeze")},
+     "verify": Capability(archive_verify_options, archive_verify),
+     "convert": Capability(partial(candle_options, acquisition_options=archive_verify_options), archive_convert),
+     "prepare": Capability(prepare_options, partial(prepare_source, binance_vision.PROVIDER["id"]))},
+    ["Offline operator-supplied original archive and checksum only; no download or financial-terms acceptance",
+     "Native conversion supports classic single-member stored/deflate ZIP; ZIP64 and other unsupported layouts reject",
+     "Original native spot definitions and explicit declared or synthetic receipt clocks are required",
+     "SYNTHETIC stays synthetic; declared clocks are unverified and confer no PIT or data-use permission"],
+    validate_native=archive_publication)
 
 
 def plugin_descriptors():
@@ -544,7 +665,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("source-plugins: interrupted; original diagnostics and artifacts retained", file=sys.stderr)
         return 130
-    except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as error:
+    except (OSError, ValueError, csv.Error, urllib.error.URLError, http.client.HTTPException) as error:
         message = str(error) if type(error) is ValueError else "source or local I/O failed"
         print(f"source-plugins: {message}", file=sys.stderr)
     return 1

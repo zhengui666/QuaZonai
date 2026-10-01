@@ -79,7 +79,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=operator /operator/ /opt/quazonai/operator/
-COPY runtimes/data/source_plugins.py runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py /opt/quazonai/operator/
+COPY runtimes/data/source_plugins.py runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py runtimes/data/binance_vision.py /opt/quazonai/operator/
 RUN python3 -E -s -B /opt/quazonai/operator/source_plugins.py plugins > /dev/null \
  && /opt/quazonai/operator/bin/catalog-prepare --help > /dev/null \
  && /opt/quazonai/operator/bin/polymarket-history --help > /dev/null

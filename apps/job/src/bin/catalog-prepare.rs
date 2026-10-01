@@ -23,14 +23,20 @@ use std::{
 
 const MAX_JSON_BYTES: u64 = 1024 * 1024;
 
+#[path = "preparation/archive_candles.rs"]
+mod archive_candles;
+#[path = "preparation/bars.rs"]
+mod bars;
 #[path = "preparation/candles.rs"]
 mod candles;
+#[path = "preparation/classic_zip.rs"]
+mod classic_zip;
 
 #[derive(Parser)]
 #[command(
     version,
     about = "Prepare an isolated native BAR catalog without certifying its source",
-    after_help = "Native source import: catalog-prepare ingest-candles --help"
+    after_help = "Native source imports: catalog-prepare ingest-candles --help; catalog-prepare ingest-archive-candles --help"
 )]
 struct Arguments {
     /// Original local native catalog; never modified.
@@ -359,6 +365,14 @@ fn main() {
             let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare ingest-candles"))
                 .chain(std::env::args_os().skip(2));
             candles::run(&candles::Arguments::parse_from(argv))
+        } else if std::env::args_os().nth(1).as_deref()
+            == Some(std::ffi::OsStr::new("ingest-archive-candles"))
+        {
+            let argv = std::iter::once(std::ffi::OsString::from(
+                "catalog-prepare ingest-archive-candles",
+            ))
+            .chain(std::env::args_os().skip(2));
+            archive_candles::run(&archive_candles::Arguments::parse_from(argv))
         } else {
             prepare(&Arguments::parse()).and_then(|metadata| Ok(serde_json::to_value(metadata)?))
         };
