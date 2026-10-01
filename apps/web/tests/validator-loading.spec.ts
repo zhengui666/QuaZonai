@@ -49,7 +49,7 @@ async function session(page: Page, evaluation = false) {
 
 test('normal browser loading uses selective CJS interop without reaching the eager facade', async ({ page }) => {
   await session(page); const requests: string[] = []; page.on('request', request => requests.push(request.url()));
-  await page.goto('/'); await expect(page.getByText('暂无研究项目', { exact: true })).toBeVisible();
+  await page.goto('/'); await expect(page.getByText('你的下一个研究，从这里开始', { exact: true })).toBeVisible();
   expect(requests.some(url => url.includes(listModule))).toBe(true);
   expect(requests.some(url => /\/generated\/responses\.cjs|response-contract\.js(?:\?|$)/.test(url))).toBe(false);
 });
@@ -69,7 +69,7 @@ test('a delayed response validator cannot replace a newer navigation choice', as
 test('a failed validator preserves the write intent and edits without automatic replay', async ({ page }) => {
   const state = await session(page); let fail = true;
   await page.route(url => url.pathname.includes(receiptModule), route => fail ? route.abort('failed') : route.continue());
-  await page.goto('/'); await expect(page.getByText('暂无研究项目', { exact: true })).toBeVisible();
+  await page.goto('/'); await expect(page.getByText('你的下一个研究，从这里开始', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '新建研究', exact: true }).click();
   await page.getByLabel('研究名称').fill(project.name);
   await page.getByRole('button', { name: '保存项目', exact: true }).click();
@@ -209,7 +209,7 @@ test.describe('production PWA validator precache', () => {
     const deferredModule = moduleFor('/api/v2/artifacts/{id}', 'get', 200);
     let blocked = 0;
     await context.route(url => url.pathname.includes(deferredModule), route => { blocked++; return route.abort('failed'); });
-    await page.goto('/'); await expect(page.getByText('暂无研究项目', { exact: true })).toBeVisible();
+    await page.goto('/'); await expect(page.getByText('你的下一个研究，从这里开始', { exact: true })).toBeVisible();
     await expect.poll(() => blocked).toBeGreaterThan(0);
     await expect.poll(() => page.evaluate(async () => {
       const registration = await navigator.serviceWorker.getRegistration();
@@ -224,7 +224,7 @@ test.describe('production PWA validator precache', () => {
     const deferredModule = moduleFor('/api/v2/artifacts/{id}', 'get', 200);
     let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); let pending = 0;
     await context.route(url => url.pathname.includes(deferredModule), async route => { pending++; await held; await route.continue(); });
-    await page.goto('/'); await expect(page.getByText('暂无研究项目', { exact: true })).toBeVisible();
+    await page.goto('/'); await expect(page.getByText('你的下一个研究，从这里开始', { exact: true })).toBeVisible();
     await expect.poll(() => pending).toBeGreaterThan(0);
     expect(await page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(false);
     release(); await page.evaluate(async () => { await navigator.serviceWorker.ready; });
