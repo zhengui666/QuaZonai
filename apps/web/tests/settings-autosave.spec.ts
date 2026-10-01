@@ -1096,7 +1096,7 @@ test('a pending import survives navigation and retries with the same identity', 
   expect(attempts[1]).toEqual(attempts[0]);
 });
 
-test('a completed import receipt remains visible when the report list fails', async ({ page }) => {
+for (const completion of ['before navigation', 'after return'] as const) test(`an import receipt completed ${completion} remains visible when the report list fails`, async ({ page }) => {
   await setup(page);
   const exportRef = '01990000-0000-7000-8000-000000000051';
   const report: Schema['HistoricalImportReportV1'] = { schema_version: 1, id: '01990000-0000-7000-8000-000000000052',
@@ -1105,12 +1105,13 @@ test('a completed import receipt remains visible when the report list fails', as
     unverified_relationships: [], manual_review_required: false };
   let release!: () => void;
   const hold = new Promise<void>(resolve => { release = resolve; });
-  let attempts = 0;
+  const attempts: { key: string | undefined; body: unknown }[] = [];
   await page.route('**/api/v2/migrations/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/v2/migrations/reports') return route.abort('failed');
     if (path === '/api/v2/migrations/import') {
-      attempts++; await hold;
+      attempts.push({ key: route.request().headers()['idempotency-key'], body: route.request().postDataJSON() });
+      await hold;
       return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({
         schema_version: 1, replayed: false, resource: report,
       }) });
@@ -1122,11 +1123,29 @@ test('a completed import receipt remains visible when the report list fails', as
   const dialog = page.getByRole('dialog', { name: '导入历史投影' });
   await dialog.getByRole('textbox', { name: '已登记的导出编号' }).fill(exportRef);
   await dialog.getByRole('button', { name: '提交导入请求' }).click();
-  await expect.poll(() => attempts).toBe(1);
-  await dialog.getByRole('button', { name: '返回' }).click();
-  await page.getByRole('tab', { name: '鉴权管理' }).click();
-  release();
-  await page.getByRole('tab', { name: '迁移' }).click();
+  await expect.poll(() => attempts.length).toBe(1);
+  try {
+    if (completion === 'before navigation') {
+      release();
+      await expect(dialog.getByText(report.id)).toBeVisible();
+      await expect(dialog.getByText('试运行报告已保存')).toBeVisible();
+      await dialog.getByRole('button', { name: '返回报告列表' }).click();
+      await page.getByRole('tab', { name: '鉴权管理' }).click();
+      await page.getByRole('tab', { name: '迁移' }).click();
+    } else {
+      await dialog.getByRole('button', { name: '返回' }).click();
+      await page.getByRole('tab', { name: '鉴权管理' }).click();
+      await page.getByRole('tab', { name: '迁移' }).click();
+      // Hold the response until the pending editor has actually remounted.
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole('button', { name: '重试同一导入请求' })).toBeDisabled();
+      expect(attempts).toHaveLength(1);
+      release();
+      await expect(dialog.getByText(report.id)).toBeVisible();
+      await expect(dialog.getByText('试运行报告已保存')).toBeVisible();
+      await dialog.getByRole('button', { name: '返回报告列表' }).click();
+    }
+  } finally { release(); }
   await expect(page.getByText('导入回执已保存')).toBeVisible();
   await expect(page.getByText(report.id)).toBeVisible();
   await expect.poll(() => page.evaluate(async () => {
@@ -1139,6 +1158,9 @@ test('a completed import receipt remains visible when the report list fails', as
     const modulePath = '/src/settings-work.ts';
     return (await import(modulePath)).settingsWorkActive();
   })).toBe(false);
+  expect(attempts).toHaveLength(1);
+  expect(attempts[0]?.key).toBeTruthy();
+  expect(attempts[0]?.body).toEqual({ schema_version: 1, export_ref: exportRef, dry_run: true });
 });
 
 test('error recovery asks before discarding a recoverable settings operation', async ({ page }) => {
