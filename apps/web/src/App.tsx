@@ -10,6 +10,7 @@ import { PwaUpdate } from './pwa';
 import { AuthGate, LogoutButton } from './auth';
 import { GuardContext, GuardProvider, useOnline, useReducedMotion } from './ui';
 import { useColorTheme } from './theme';
+import { SettingsCommandRecovery } from './settings-command';
 import type { ColorTheme } from './theme';
 
 // Load a section only when it is selected. Shared dialogs remain ordinary
@@ -66,6 +67,7 @@ function Console({ colorTheme, toggleTheme }: { colorTheme: ColorTheme; toggleTh
         <Layout.Content className="console-content" id="main-content" tabIndex={-1}>
           <a className="skip-link" href="#main-content">跳至主要内容</a>
           {!online && <Alert className="global-notice" showIcon type="warning" title="离线，无法提交操作" />}
+          <SettingsCommandRecovery />
           <AppErrorBoundary key={active} contained>
             <Suspense fallback={<div role="status" aria-label="正在载入页面"><Skeleton active paragraph={{ rows: 5 }} /></div>}>
               {content}
@@ -90,6 +92,7 @@ export default function App() {
     cssVar: { key: 'quazonai' },
     components: {
       Button: {
+        primaryColor: '#fff',
         defaultHoverColor: dark ? '#b0ccff' : '#1f4796',
         defaultHoverBorderColor: dark ? '#b0ccff' : '#1f4796',
         defaultActiveColor: dark ? '#83b2ff' : '#183b80',

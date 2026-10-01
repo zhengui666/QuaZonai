@@ -89,28 +89,26 @@ test('a pristine unsubmitted data editor closes without a warning', async ({ pag
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
-test('pending and lost-response writes preserve the original retry even without edits', async ({ page }) => {
+test('lost-response autosave survives closing and reopens with the original retry', async ({ page }) => {
   const state = await setup(page);
   let release!: () => void;
   state.hold = new Promise<void>(resolve => { release = resolve; });
   await page.getByRole('button', { name: '修改数据源', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: '修改数据源显示与启用状态', exact: true });
+  let editor = page.getByRole('dialog', { name: '修改数据源显示与启用状态', exact: true });
+  const name = editor.getByLabel('数据源名称', { exact: true });
   try {
-    await editor.getByRole('button', { name: '保存修改', exact: true }).click();
+    await name.fill('交互测试目录更新');
     await expect.poll(() => state.writes.length).toBe(1);
-    await expect(editor.getByRole('button', { name: '返回', exact: true })).toBeDisabled();
-    await editor.press('Escape');
-    await expect(editor).toBeVisible();
   } finally { release(); state.hold = undefined; }
   await expect(editor.getByText('连接中断，提交结果未知；请重试当前操作', { exact: true })).toBeVisible();
-  await editor.getByRole('button', { name: '返回', exact: true }).click();
-  const confirm = page.getByRole('dialog', { name: '离开当前提交窗口？', exact: true });
-  await expect(confirm.getByText(/重新打开会丢失当前重试标识/)).toBeVisible();
-  await confirm.getByRole('button', { name: '继续编辑', exact: true }).click();
-  await expect(confirm).toHaveCount(0);
-  await editor.getByRole('button', { name: '保存修改', exact: true }).click();
+  await editor.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+
+  await page.getByRole('button', { name: '修改数据源', exact: true }).click();
+  editor = page.getByRole('dialog', { name: '修改数据源显示与启用状态', exact: true });
+  await expect(editor.getByLabel('数据源名称', { exact: true })).toHaveValue('交互测试目录更新');
+  await editor.getByRole('button', { name: '重试', exact: true }).click();
   await expect.poll(() => state.writes.length).toBe(2);
   expect(state.writes[0]!.key).toBeTruthy();
   expect(state.writes[1]).toEqual(state.writes[0]);
-  await expect(editor).toBeVisible();
 });

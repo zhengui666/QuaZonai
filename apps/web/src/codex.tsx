@@ -1,14 +1,90 @@
-import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Select, Slider, Space, Switch, Tag, Typography } from 'antd';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { Alert, App, Button, Card, Descriptions, Select, Slider, Space, Switch, Tag, Typography } from 'antd';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { api, ApiFailure, dataOf, Intent } from './api';
 import type { Schema } from './api';
-import { ErrorNotice, GuardContext, NoData, QueryPanel, useClock, useGuard, useOnline } from './ui';
+import { ErrorNotice, NoData, QueryPanel, useClock, useOnline } from './ui';
 import { ChatgptAuth } from './chatgpt-auth';
+import { setSettingsWork } from './settings-work';
 
 type Profile = Schema['CodexProfileViewV1'];
 type Observation = Schema['CodexObservationV1'];
 type Values = Schema['SavedModelSettingsV1'];
+type ModelState = { pending: boolean; uncertain: boolean; error?: unknown };
+class ModelSaveSession {
+  intent = new Intent(); sent?: Schema['CodexProfileUpdateV1']; values?: Values;
+  state: ModelState = { pending: false, uncertain: false };
+  private listeners = new Set<() => void>();
+  constructor(readonly profileId: string) {}
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  getSnapshot = () => this.state;
+  update(changes: Partial<ModelState>) {
+    this.state = { ...this.state, ...changes };
+    this.listeners.forEach(listener => listener());
+    modelListeners.forEach(listener => listener());
+    setSettingsWork(`codex-model:${this.profileId}`, this.state.pending || this.state.uncertain);
+  }
+}
+const modelSessions = new Map<string, ModelSaveSession>();
+const modelListeners = new Set<() => void>();
+const subscribeModelSaves = (listener: () => void) => { modelListeners.add(listener); return () => { modelListeners.delete(listener); }; };
+const modelSavesBusy = () => [...modelSessions.values()].some(session => session.state.pending || session.state.uncertain);
+function modelSessionFor(id: string) {
+  let session = modelSessions.get(id);
+  if (!session) { session = new ModelSaveSession(id); modelSessions.set(id, session); }
+  return session;
+}
+type ProbeState = { pending: boolean; uncertain: boolean; error?: unknown };
+class ProbeSession {
+  private intent = new Intent();
+  private body?: Schema['CodexProbeRequestV1'];
+  private listeners = new Set<() => void>();
+  attemptedRevision?: string;
+  state: ProbeState = { pending: false, uncertain: false };
+  constructor(readonly profileId: string) {}
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  getSnapshot = () => this.state;
+  private update(changes: Partial<ProbeState>) {
+    this.state = { ...this.state, ...changes };
+    this.listeners.forEach(listener => listener());
+    probeListeners.forEach(listener => listener());
+    setSettingsWork(`codex-probe:${this.profileId}`, this.state.pending || this.state.uncertain);
+  }
+  async run(profile: Profile, client: QueryClient) {
+    if (this.state.pending) return;
+    if (!this.body) {
+      this.body = { schema_version: 1, profile_id: profile.id, expected_revision: profile.revision };
+      this.attemptedRevision = profile.revision;
+    }
+    const body = this.body;
+    this.update({ pending: true, uncertain: false, error: undefined });
+    try {
+      dataOf(await api.POST('/api/v2/codex/probe', { body, params: {
+        header: this.intent.headers('POST', '/api/v2/codex/probe', body),
+      } }));
+      this.body = undefined; this.intent.clear();
+      this.update({ pending: false, uncertain: false, error: undefined });
+      void Promise.allSettled([
+        client.invalidateQueries({ queryKey: ['codex','profile',profile.id], exact: true }),
+        client.invalidateQueries({ queryKey: ['codex','observation',profile.id], exact: true }),
+      ]);
+    } catch (error) {
+      const rejected = error instanceof ApiFailure && !!error.problem && error.status >= 400 && error.status < 500;
+      const offline = error instanceof ApiFailure && error.code === 'OFFLINE';
+      if (rejected || offline) { this.body = undefined; this.intent.clear(); }
+      this.update({ pending: false, uncertain: !rejected && !offline, error });
+    }
+  }
+}
+const probeSessions = new Map<string, ProbeSession>();
+const probeListeners = new Set<() => void>();
+const subscribeProbes = (listener: () => void) => { probeListeners.add(listener); return () => { probeListeners.delete(listener); }; };
+const probesBusy = () => [...probeSessions.values()].some(session => session.state.pending || session.state.uncertain);
+function probeSessionFor(id: string) {
+  let session = probeSessions.get(id);
+  if (!session) { session = new ProbeSession(id); probeSessions.set(id, session); }
+  return session;
+}
 const failures: Record<Schema['CodexProbeFailureV1'], string> = {
   DEPLOYMENT_UNAVAILABLE: 'Codex 运行环境不可用，请检查部署配置',
   NATIVE_UNAVAILABLE: 'Codex 连接失败，请重试',
@@ -40,160 +116,155 @@ function useRefresh() {
   const client = useQueryClient();
   return async () => { await client.invalidateQueries({ queryKey: ['codex'] }); };
 }
-function ModelControls({ form, observation, profile, disabled }: {
-  form: ReturnType<typeof Form.useForm<Values>>[0]; observation?: Observation; profile: Profile; disabled: boolean;
+function ModelControls({ values, observation, profile, disabled, save }: {
+  values: Values; observation?: Observation; profile: Profile; disabled: boolean; save: (values: Values) => void;
 }) {
   const now = useClock();
-  const defaults = Form.useWatch('use_default_model_settings', form) ?? true;
-  const selected = Form.useWatch('saved_model', form) as string | null | undefined;
-  const effort = Form.useWatch('saved_reasoning_effort', form) as string | null | undefined;
-  const savedFast = Form.useWatch('saved_fast_mode', form) ?? false;
-  function setEffort(value: string | null) { form.setFields([{ name: 'saved_reasoning_effort', value, touched: true }]); }
+  const { use_default_model_settings: defaults, saved_model: selected, saved_reasoning_effort: effort, saved_fast_mode: savedFast } = values;
   const valid = fresh(observation, profile, now);
   const native = observation?.observation?.outcome.status === 'AVAILABLE' ? observation.observation.outcome : undefined;
   const models = valid ? native?.models ?? [] : [];
   const selectedModel = models.find(item => item.capability.model === (selected || native?.native_default_model));
   const efforts = selectedModel?.capability.supported_reasoning_efforts ?? [];
   const index = effort ? efforts.findIndex(item => item.reasoning_effort === effort) : -1;
+  const canonicalPosition = index >= 0 ? index + 1 : 0;
+  const [position, setPosition] = useState(canonicalPosition);
+  useEffect(() => setPosition(canonicalPosition), [canonicalPosition, profile.revision, selected]);
   const fastSupported = selectedModel?.service_tiers.some(tier => tier.id === 'priority' || tier.id === 'fast') ?? false;
   const options = models.map(item => ({ value: item.capability.model, label: item.capability.display_name }));
   if (selected && !options.some(option => option.value === selected)) options.unshift({ value: selected, label: selected });
   return <>
-    <Form.Item name="use_default_model_settings" label="本机默认" valuePropName="checked"><Switch /></Form.Item>
+    <Space><Typography.Text>本机默认</Typography.Text><Switch aria-label="本机默认" checked={defaults}
+      disabled={disabled || (defaults && !valid)} onChange={checked => save({ ...values, use_default_model_settings: checked })} /></Space>
     {!valid && <Alert type="warning" showIcon title="模型目录未就绪" />}
-    <Form.Item name="saved_model" label="模型">
-      <Select allowClear showSearch optionFilterProp="label" options={options} disabled={disabled || defaults || !valid}
-        placeholder={native?.native_default_model ?? '本机默认'} onChange={() => setEffort(null)} />
-    </Form.Item>
-    <Form.Item name="saved_reasoning_effort" hidden><Input /></Form.Item>
-    <Form.Item label="推理强度">
-      <Space orientation="vertical" className="full-width">
-        <Typography.Text>{effort ?? '本机默认'}</Typography.Text>
-        {efforts.length > 0 ? <Slider min={0} max={efforts.length} step={1} value={index >= 0 ? index + 1 : 0}
-          ariaLabelForHandle="推理强度" disabled={disabled || defaults || !valid}
-          marks={{ 0: '默认', ...Object.fromEntries(efforts.flatMap((item, position) => efforts.length <= 6 || position === efforts.length - 1 || position === index ? [[position + 1, item.reasoning_effort]] : [])) }}
-          tooltip={{ formatter: value => value === undefined ? '' : value === 0 ? '本机默认' : efforts[value - 1]?.reasoning_effort ?? '' }}
-          onChange={value => { const chosen = efforts[value - 1]; if (value === 0) setEffort(null); else if (chosen) setEffort(chosen.reasoning_effort); }} />
-          : <Typography.Text type="secondary">暂无选项</Typography.Text>}
-        {effort && <Button disabled={disabled || defaults} onClick={() => setEffort(null)}>恢复默认强度</Button>}
-      </Space>
-    </Form.Item>
-    <Form.Item name="saved_fast_mode" label="速度" valuePropName="checked">
-      <Switch checkedChildren="加速" unCheckedChildren="标准" disabled={disabled || defaults || ((!valid || !fastSupported) && !savedFast)} />
-    </Form.Item>
+    <div className="full-width"><Typography.Text>模型</Typography.Text><div>
+      <Select aria-label="模型" className="full-width" allowClear showSearch optionFilterProp="label" options={options} value={selected}
+        disabled={disabled || defaults || !valid} placeholder={native?.native_default_model ?? '本机默认'}
+        onChange={model => save({ ...values, saved_model: model || null, saved_reasoning_effort: null,
+          saved_fast_mode: !!models.find(item => item.capability.model === (model || native?.native_default_model))?.service_tiers.some(tier => tier.id === 'priority' || tier.id === 'fast') && savedFast })} />
+    </div></div>
+    <Space orientation="vertical" className="full-width"><Typography.Text>推理强度：{effort ?? '本机默认'}</Typography.Text>
+      {efforts.length > 0 ? <Slider min={0} max={efforts.length} step={1} value={position} onChange={setPosition}
+        ariaLabelForHandle="推理强度" disabled={disabled || defaults || !valid}
+        marks={{ 0: '默认', ...Object.fromEntries(efforts.flatMap((item, position) => efforts.length <= 6 || position === efforts.length - 1 || position === index ? [[position + 1, item.reasoning_effort]] : [])) }}
+        tooltip={{ formatter: value => value === undefined ? '' : value === 0 ? '本机默认' : efforts[value - 1]?.reasoning_effort ?? '' }}
+        onChangeComplete={next => {
+          setPosition(canonicalPosition);
+          save({ ...values, saved_reasoning_effort: next === 0 ? null : efforts[next - 1]?.reasoning_effort ?? null });
+        }} />
+        : <Typography.Text type="secondary">暂无选项</Typography.Text>}
+      {effort && <Button disabled={disabled || defaults} onClick={() => save({ ...values, saved_reasoning_effort: null })}>恢复默认强度</Button>}
+    </Space>
+    <Space><Typography.Text>速度</Typography.Text><Switch aria-label="速度" checkedChildren="加速" unCheckedChildren="标准" checked={savedFast}
+      disabled={disabled || defaults || !valid || (!fastSupported && !savedFast)} onChange={checked => save({ ...values, saved_fast_mode: checked })} /></Space>
   </>;
 }
-function ModelDialog({ original, observation, close }: { original: Profile; observation?: Observation; close: () => void }) {
-  const [form] = Form.useForm<Values>();
-  const online = useOnline(); const { modal } = App.useApp(); const refresh = useRefresh();
-  const now = useClock();
-  const watched = Form.useWatch(values => values, form) as Values | undefined;
-  const valid = canSaveSettings(watched ?? original.model_settings, observation, original, now);
-  const intent = useRef(new Intent()); const sent = useRef<Schema['CodexProfileUpdateV1'] | undefined>(undefined);
-  const hadUnknown = useRef(false); const [saveValues, setSaveValues] = useState<Values>();
+function ModelSettings({ profile, observation, disabled }: { profile: Profile; observation?: Observation; disabled: boolean }) {
+  const online = useOnline(); const refresh = useRefresh(); const query = useQueryClient();
+  const { message } = App.useApp();
+  const session = modelSessionFor(profile.id);
+  const state = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const mutation = useMutation({ mutationFn: async (values: Values) => {
-    if (!sent.current && !canSaveSettings(values, observation, original, Date.now())) {
-      throw new ApiFailure('MODEL_SETTINGS_UNAVAILABLE', '请刷新模型目录或使用本机默认');
-    }
-    const body = sent.current ?? {
-      schema_version: 1 as const, expected_revision: original.revision,
+    const body: Schema['CodexProfileUpdateV1'] = session.sent ?? {
+      schema_version: 1, expected_revision: profile.revision,
       model_settings: {
-        schema_version: 1 as const, use_default_model_settings: values.use_default_model_settings,
+        schema_version: 1, use_default_model_settings: values.use_default_model_settings,
         saved_model: values.saved_model || null, saved_reasoning_effort: values.saved_reasoning_effort || null, saved_fast_mode: values.saved_fast_mode,
       },
     };
-    sent.current = body;
+    session.sent = body; session.values = values;
     return dataOf(await api.PATCH('/api/v2/settings/codex/{id}', { body, params: {
-      path: { id: original.id }, header: intent.current.headers('PATCH', `/api/v2/settings/codex/${original.id}`, body),
+      path: { id: profile.id }, header: session.intent.headers('PATCH', `/api/v2/settings/codex/${profile.id}`, body),
     } }));
-  }, onSuccess: async () => { close(); await refresh(); }, onError: error => {
-    if (!(error instanceof ApiFailure) || error.code === 'NETWORK_UNKNOWN' || error.code === 'HTTP_CONTRACT_ERROR') hadUnknown.current = true;
-    if (!hadUnknown.current) { sent.current = undefined; setSaveValues(undefined); }
+  }, onSuccess: result => {
+    session.sent = undefined; session.values = undefined; session.intent.clear();
+    session.update({ pending: false, uncertain: false, error: undefined });
+    query.setQueryData(['codex', 'profile', profile.id], result.resource);
+    void refresh();
+  }, onError: error => {
+    const rejected = error instanceof ApiFailure && !!error.problem && error.status >= 400 && error.status < 500;
+    if (rejected || (error instanceof ApiFailure && error.code === 'OFFLINE')) {
+      session.sent = undefined; session.values = undefined; session.intent.clear();
+    }
+    session.update({ pending: false, uncertain: !rejected && !(error instanceof ApiFailure && error.code === 'OFFLINE'), error });
+    void message.error('设置更新失败，请检查输入或重试');
   } });
-  const pending = mutation.isPending;
-  const unknown = !!saveValues && mutation.isError;
-  useGuard(true);
-  function cancel() {
-    if (pending) return;
-    if (form.isFieldsTouched() || unknown) modal.confirm({
-      title: unknown ? '关闭结果未确认的操作？' : '放弃未保存的更改？',
-      okText: '关闭', cancelText: '继续编辑', onOk: close,
-    });
-    else close();
+  function save(values: Values) {
+    if (disabled || !online || state.pending || state.uncertain || JSON.stringify(values) === JSON.stringify(profile.model_settings)
+      || !canSaveSettings(values, observation, profile, Date.now())) return;
+    session.update({ pending: true, error: undefined });
+    mutation.mutate(values);
   }
-  return <Modal open title={`${original.name} · 模型设置`} width={680} maskClosable={false} closable={!pending} onCancel={cancel}
-    onOk={() => { if (online && !pending) { if (unknown && saveValues) mutation.mutate(saveValues); else if (valid) form.submit(); } }}
-    okText={unknown ? '重试保存' : '保存'} cancelText="取消" confirmLoading={pending} okButtonProps={{ disabled: !online || (!unknown && !valid) }}>
-    {unknown && <Alert type="warning" showIcon title="保存结果未知，请重试当前操作" />}
-    {!unknown && !valid && <Alert type="warning" showIcon title="请刷新模型目录或使用本机默认" />}
-    <Form form={form} layout="vertical" disabled={!online || pending || unknown} initialValues={original.model_settings}
-      onFinish={values => {
-        if (!online || pending || unknown || !canSaveSettings(values, observation, original, Date.now())) return;
-        const request = structuredClone(values); setSaveValues(request); mutation.mutate(request);
-      }}>
-      <ModelControls form={form} observation={observation} profile={original} disabled={!online || pending || unknown} />
-      <ErrorNotice error={mutation.error} />
-    </Form>
-  </Modal>;
+  async function reloadProfile() {
+    try {
+      const latest = dataOf(await api.GET('/api/v2/settings/codex/{id}', { params: { path: { id: profile.id } } }));
+      query.setQueryData(['codex', 'profile', profile.id], latest);
+      session.update({ error: undefined });
+      void query.invalidateQueries({ queryKey: ['codex', 'observation', profile.id], exact: true });
+    } catch (error) { session.update({ error }); }
+  }
+  return <Space orientation="vertical" className="full-width">
+    <ModelControls values={profile.model_settings} observation={observation} profile={profile}
+      disabled={disabled || !online || state.pending || state.uncertain} save={save} />
+    {state.pending && <Typography.Text role="status">正在保存</Typography.Text>}
+    <ErrorNotice error={state.error} />
+    {state.uncertain && <Button disabled={!online} onClick={() => {
+      if (session.values) { session.update({ pending: true, error: undefined }); mutation.mutate(session.values); }
+    }}>重试</Button>}
+    {!!state.error && !state.uncertain && <Button onClick={() => { void reloadProfile(); }}>重新载入</Button>}
+  </Space>;
 }
 function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Profile[]; onSelect: (id: string) => void }) {
-  const online = useOnline(); const now = useClock(); const client = useQueryClient(); const intent = useRef(new Intent());
-  const { blocked } = useContext(GuardContext);
+  const online = useOnline(); const now = useClock(); const client = useQueryClient();
+  const probe = probeSessionFor(id);
+  const probeState = useSyncExternalStore(probe.subscribe, probe.getSnapshot, probe.getSnapshot);
+  const currentModel = modelSessionFor(id);
+  const currentModelState = useSyncExternalStore(currentModel.subscribe, currentModel.getSnapshot, currentModel.getSnapshot);
+  const modelSaving = currentModelState.pending || currentModelState.uncertain;
+  const modelBusy = useSyncExternalStore(subscribeModelSaves, modelSavesBusy, () => false);
+  const probeBusy = useSyncExternalStore(subscribeProbes, probesBusy, () => false);
   const [accountBusy, setAccountBusy] = useState(true);
-  const [editing, setEditing] = useState<Profile>(); const attempted = useRef<string | undefined>(undefined);
   const accountChanged = useCallback(async () => {
-    attempted.current = undefined; intent.current.clear();
+    probe.attemptedRevision = undefined;
     await client.invalidateQueries({ queryKey: ['codex'] });
-  }, [client]);
+  }, [client, probe]);
   const query = useQuery({ queryKey: ['codex','profile',id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/settings/codex/{id}', { params: { path: { id } }, signal })) });
   const observation = useQuery({ queryKey: ['codex','observation',id], refetchInterval: online ? 15_000 : false,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/codex/models', { params: { query: { profile_id: id } }, signal })) });
-  const probe = useMutation({ mutationFn: async (profile: Profile) => {
-    const body: Schema['CodexProbeRequestV1'] = { schema_version: 1, profile_id: id, expected_revision: profile.revision };
-    return dataOf(await api.POST('/api/v2/codex/probe', { body, params: { header: intent.current.headers('POST','/api/v2/codex/probe',body) } }));
-  }, onSuccess: async () => {
-    intent.current.clear();
-    await Promise.all([
-      client.invalidateQueries({ queryKey: ['codex','profile',id], exact: true }),
-      client.invalidateQueries({ queryKey: ['codex','observation',id], exact: true }),
-    ]);
-  } });
   const profile = query.data; const view = observation.data; const native = view?.observation;
   const detected = native?.outcome.status === 'AVAILABLE' ? native.outcome : undefined;
   const tier = detected?.effective.service_tier;
   const speed = !tier || tier === 'default' ? '标准'
     : detected?.models.find(item => item.capability.model === detected.effective.model)?.service_tiers.find(item => item.id === tier)?.name ?? tier;
   const valid = !accountBusy && !query.isError && !observation.isError && fresh(view, profile, now);
-  const mutate = probe.mutate;
   useEffect(() => {
-    if (!online || !profile || !view || query.isError || observation.isError || query.isFetching || observation.isFetching || accountBusy || editing || probe.isPending) return;
-    const version = `${profile.id}:${profile.revision}`;
-    if (attempted.current === version || (view.state !== 'NEVER_PROBED' && view.state !== 'STALE')) return;
-    attempted.current = version;
-    mutate(profile);
-  }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching, accountBusy, editing, probe.isPending, mutate]);
-  useGuard(probe.isPending);
+    if (!online || !profile || !view || query.isError || observation.isError || query.isFetching || observation.isFetching
+      || accountBusy || modelSaving || probeState.pending || probeState.uncertain) return;
+    if (probe.attemptedRevision === profile.revision || (view.state !== 'NEVER_PROBED' && view.state !== 'STALE')) return;
+    void probe.run(profile, client);
+  }, [online, profile, view, query.isError, observation.isError, query.isFetching, observation.isFetching,
+    accountBusy, modelSaving, probeState.pending, probeState.uncertain, probe, client]);
   return <Space orientation="vertical" className="full-width" size="large">
-    {profile && <ChatgptAuth profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
-      disabled={query.isError || probe.isPending || !!editing} onBusy={setAccountBusy} onChanged={accountChanged} />}
+    {profile && <ChatgptAuth key={profile.id} profile={profile} account={valid && native?.outcome.status === 'AVAILABLE' ? native.outcome.account : undefined}
+      disabled={query.isError || probeBusy || modelBusy} onBusy={setAccountBusy} onChanged={accountChanged} />}
     <Card title="角色模型设置">
       <Space orientation="vertical" className="full-width">
         <Typography.Text type="secondary">模型、推理强度和速度按角色独立保存。</Typography.Text>
-        <Select aria-label="Codex 角色" className="full-width" value={id} disabled={blocked} onChange={onSelect}
+        <Select aria-label="Codex 角色" className="full-width" value={id} onChange={onSelect}
           options={profiles.map(item => ({ value: item.id, label: item.name }))} />
         <QueryPanel pending={query.isPending} error={query.error} stale={!!profile} reload={() => { void query.refetch(); }}>
           {profile && <Space orientation="vertical" className="full-width">
-            <Space wrap>
-              <Button disabled={!online || query.isError || probe.isPending || accountBusy} onClick={() => setEditing(profile)}>模型设置</Button>
-              <Button loading={probe.isPending} disabled={!online || query.isError || accountBusy} onClick={() => probe.mutate(profile)}>刷新</Button>
-              {view && <Tag>{view.state === 'AVAILABLE' && !valid ? states.STALE : states[view.state]}</Tag>}
-            </Space>
+            <Space wrap><Button loading={probeState.pending} disabled={!online || query.isError || accountBusy || modelSaving}
+              onClick={() => { void probe.run(profile, client); }}>刷新</Button>
+              {view && <Tag>{view.state === 'AVAILABLE' && !valid ? states.STALE : states[view.state]}</Tag>}</Space>
+            <ModelSettings key={profile.id} profile={profile} observation={query.isError || observation.isError ? undefined : view}
+              disabled={query.isError || probeState.pending || probeState.uncertain || accountBusy} />
             <Descriptions column={1} items={[
               { key: 'defaults', label: '设置', children: profile.model_settings.use_default_model_settings ? '本机默认' : '自定义模型' },
               { key: 'saved', label: '模型 / 推理强度', children: `${profile.model_settings.saved_model ?? '默认'} / ${profile.model_settings.saved_reasoning_effort ?? '默认'}` },
               { key: 'speed', label: '速度', children: profile.model_settings.use_default_model_settings ? '本机默认' : profile.model_settings.saved_fast_mode ? '加速' : '标准' },
             ]} />
-            <ErrorNotice error={probe.error} />
+            <ErrorNotice error={probeState.error} />
           </Space>}
         </QueryPanel>
         <QueryPanel pending={observation.isPending} error={observation.error} stale={!!view} reload={() => { void observation.refetch(); }}>
@@ -208,7 +279,6 @@ function ProfileDetails({ id, profiles, onSelect }: { id: string; profiles: Prof
             ]} />
           </>}
         </QueryPanel>
-        {editing && <ModelDialog original={editing} observation={query.isError || observation.isError ? undefined : view} close={() => setEditing(undefined)} />}
       </Space>
     </Card>
   </Space>;

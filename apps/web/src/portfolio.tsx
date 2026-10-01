@@ -5,18 +5,18 @@ import { Candidates } from './portfolio-candidates';
 import { EvaluationPolicies } from './evaluation-policies';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useContext, useRef, useState } from 'react';
-import { api, dataOf, displayTime, Intent, isDecimal } from './api';
+import { api, ApiFailure, dataOf, displayTime, Intent, isDecimal } from './api';
 import type { Schema } from './api';
 import { uuidPattern } from './api';
-import { counterRules } from './budget-fields';
 import { ResourceSelect } from './resource-select';
+import { useSettingsWorkKey, useSettingsWorkVersion } from './settings-work';
 import { ErrorNotice, GuardContext, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
-import { validateBaseCurrency } from '@quazonai/web/response-contract/base-currency';
+import { validateBaseCurrency } from '@quazonai/web/response-contract';
 
 type Mandate = Schema['MandateViewV1'];
 type Content = Schema['MandateContentV1'];
 type Parameters = Extract<Schema['NativeModelRefV1'], { adapter_kind: 'CLARABEL_QP' }>['parameters'];
-type Fields = { runtime_id: string; expected_runtime_revision: string; content: Omit<Content, 'optimizer' | 'alpha_ensemble' | 'covariance_estimator'>; parameters: Parameters };
+type Fields = { runtime_id: string; content: Omit<Content, 'optimizer' | 'alpha_ensemble' | 'covariance_estimator'>; parameters: Parameters };
 const required = { required: true, message: '请填写此项。' };
 const uuidRules = [required, { pattern: uuidPattern, message: '需要现有记录的完整 UUIDv7 编号。' }];
 const decimalRules = [required, { validator: async (_: unknown, value: unknown) => { if (!isDecimal(value)) throw new Error('请输入可精确保存的十进制字符串，不使用指数格式。'); } }];
@@ -24,9 +24,9 @@ const optionalDecimal = [{ validator: async (_: unknown, value: unknown) => { if
 const exposures = [['min_cash_weight', '现金下限'], ['max_cash_weight', '现金上限'], ['min_asset_weight', '资产默认下限'], ['max_asset_weight', '资产默认上限'], ['max_gross_exposure', '总敞口上限'], ['min_net_exposure', '净敞口下限'], ['max_net_exposure', '净敞口上限'], ['max_turnover_per_rebalance', '单次换手上限']] as const;
 const blank = (value: string | null | undefined) => value === '' || value == null ? null : value;
 
-function mandateRequest(project: string, values: Fields): Schema['MandateCreateV1'] {
+function mandateRequest(project: string, values: Fields, runtimeRevision: string): Schema['MandateCreateV1'] {
   const c = values.content; const schedule = c.rebalance_schedule;
-  return { schema_version: 1, project_id: project, runtime_id: values.runtime_id, expected_runtime_revision: values.expected_runtime_revision,
+  return { schema_version: 1, project_id: project, runtime_id: values.runtime_id, expected_runtime_revision: runtimeRevision,
     content: { ...c,
       covariance_estimator: { schema_version: 1, adapter_kind: 'SAMPLE_COVARIANCE', upstream_class: 'ndarray_stats::CorrelationExt::cov', upstream_version: '0.7.0', parameters: { ddof: 1 } },
       alpha_ensemble: { schema_version: 1, adapter_kind: 'FIXED_WEIGHTED_FORECAST', upstream_class: 'ndarray::ArrayBase::dot', upstream_version: '0.17.1', parameters: {} },
@@ -94,17 +94,30 @@ function MandateDetail({ id, project, close }: { id: string; project: string; cl
 
 function MandateEditor({ project, close }: { project: string; close: () => void }) {
   const [form] = Form.useForm<Fields>(); const [dirty, setDirty] = useState(false); const intent = useRef(new Intent());
+  const submitted = useRef<Schema['MandateCreateV1'] | undefined>(undefined);
   const client = useQueryClient(); const online = useOnline(); const { modal, message } = App.useApp();
+  const runtimeId: string | undefined = Form.useWatch('runtime_id', form);
+  const runtimeKey = `autosave:runtime:${runtimeId ?? ''}`;
+  const runtimeSaving = useSettingsWorkKey(runtimeKey); const runtimeVersion = useSettingsWorkVersion(runtimeKey);
+  const runtime = useQuery({ queryKey: ['mandate-runtime', runtimeId, runtimeVersion], enabled: !!runtimeId && !runtimeSaving, staleTime: 0,
+    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId! } }, signal })) });
+  const runtimeReady = !!runtimeId && !runtimeSaving && runtime.data?.id === runtimeId && !runtime.isError && !runtime.isFetching;
   const kind = Form.useWatch(['content', 'rebalance_schedule', 'kind'], form);
   const risk = Form.useWatch(['content', 'risk_measure'], form);
   const objective = Form.useWatch(['content', 'objective'], form);
   const mutation = useMutation({ mutationFn: async (values: Fields) => {
-    const body = mandateRequest(project, values);
+    const body = submitted.current ?? mandateRequest(project, values, runtime.data!.revision);
+    submitted.current = body;
     return dataOf(await api.POST('/api/v2/portfolio-mandates', { body, params: { header: intent.current.headers('POST', '/api/v2/portfolio-mandates', body) } }));
   }, onSuccess: async result => {
-    intent.current.clear(); setDirty(false); await client.invalidateQueries({ queryKey: ['mandates', project] });
+    submitted.current = undefined; intent.current.clear(); setDirty(false); await client.invalidateQueries({ queryKey: ['mandates', project] });
     await message.success(result.replayed ? '已读取原配置回执，没有重复创建。' : `已保存不可变配置 v${result.resource.version}，未启动组合。`); close();
+  }, onError: error => {
+    if (error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE')) {
+      submitted.current = undefined; intent.current.clear();
+    }
   } });
+  const retry = mutation.isError && !!submitted.current;
   useGuard(dirty || mutation.isPending);
   function dismiss() {
     if (mutation.isPending) return;
@@ -113,8 +126,8 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
   }
   return <Drawer title="新建不可变组合配置" open width={800} onClose={dismiss} maskClosable={!mutation.isPending} closable={!mutation.isPending}>
     
-    <ErrorNotice error={mutation.error} />
-    <Form form={form} layout="vertical" disabled={!online || mutation.isPending} onValuesChange={() => setDirty(true)} onFinish={values => { if (online && !mutation.isPending) mutation.mutate(values); }} initialValues={{
+    <ErrorNotice error={runtime.error} /><ErrorNotice error={mutation.error} />
+    <Form form={form} layout="vertical" disabled={!online || mutation.isPending || retry} onValuesChange={() => setDirty(true)} onFinish={values => { if (online && runtimeReady && !mutation.isPending) mutation.mutate(values); }} initialValues={{
       content: { objective: 'MIN_RISK', risk_measure: 'VARIANCE', exposure_tolerance: '0.000001',
         constraints: { long_only: true, min_cash_weight: '0', max_cash_weight: '0', min_asset_weight: '0', max_asset_weight: '1', max_gross_exposure: '1', min_net_exposure: '1', max_net_exposure: '1', max_turnover_per_rebalance: '2', group_bounds: [], asset_overrides: [] },
         rebalance_schedule: { kind: 'MANUAL', timezone: 'UTC', max_input_age_seconds: 60, target_ttl_seconds: 300 } },
@@ -123,7 +136,7 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
       <Card title="原始引用与执行环境">
         
         <Form.Item name="runtime_id" label="Runtime 编号" rules={uuidRules}><Input /></Form.Item>
-        <Form.Item name="expected_runtime_revision" label="Runtime 配置版本" rules={counterRules}><Input inputMode="numeric" /></Form.Item>
+        {runtime.data && runtime.data.id === runtimeId && <Typography.Text>Runtime 配置版本：{runtime.data.revision}</Typography.Text>}
         {([['universe_version_id', '投资域版本编号'], ['required_evaluation_policy_id', '评估政策编号'], ['execution_assumptions_id', '执行假设编号']] as const).map(([name, label]) => <Form.Item key={name} name={['content', name]} label={label} rules={uuidRules}><Input /></Form.Item>)}
         <Form.Item name={['content', 'base_currency']} label="基础币种" rules={[required, { validator: async (_, value) => { if (!validateBaseCurrency(value)) throw new Error('请选择服务器支持的研究币种。'); } }]}><Input maxLength={6} /></Form.Item>
         <Form.Item name={['content', 'capital_assumption']} label="资本假设" rules={decimalRules}><Input inputMode="decimal" /></Form.Item>
@@ -176,7 +189,9 @@ function MandateEditor({ project, close }: { project: string; close: () => void 
         <Form.Item name={['content', 'rebalance_schedule', 'max_input_age_seconds']} label="输入最大年龄（秒）" rules={[required, { type: 'integer', min: 1, max: 4294967295 }]}><InputNumber min={1} max={4294967295} precision={0} /></Form.Item>
         <Form.Item name={['content', 'rebalance_schedule', 'target_ttl_seconds']} label="目标有效期（秒）" rules={[required, { type: 'integer', min: 1, max: 4294967295 }]}><InputNumber min={1} max={4294967295} precision={0} /></Form.Item>
       </Card>
-      <Space wrap><Button type="primary" htmlType="submit" loading={mutation.isPending}>保存不可变配置</Button><Button onClick={dismiss}>取消</Button></Space>
+      <Space wrap><Button type="primary" htmlType={retry ? 'button' : 'submit'} loading={mutation.isPending}
+        disabled={!online || (!retry && !runtimeReady)} onClick={retry ? () => mutation.mutate(form.getFieldsValue(true)) : undefined}>
+        {retry ? '重试同一组合配置请求' : '保存不可变配置'}</Button><Button onClick={dismiss}>取消</Button></Space>
     </Form>
   </Drawer>;
 }

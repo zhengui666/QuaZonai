@@ -6,6 +6,7 @@ import type { Schema } from './api';
 import { counterRules } from './budget-fields';
 import { ResourceSelect } from './resource-select';
 import { RunDetail } from './runs';
+import { useSettingsWorkKey, useSettingsWorkVersion } from './settings-work';
 import { ErrorNotice, useGuard, useOnline } from './ui';
 
 type Request = Schema['PortfolioBuildRequestV1'];
@@ -20,6 +21,8 @@ export function PortfolioBuild({ mandate, close }: { mandate: Schema['MandateVie
   const [showRun, setShowRun] = useState(false);
   const cycleId: string | undefined = Form.useWatch('cycle_id', form);
   const runtimeId: string | undefined = Form.useWatch('runtime_id', form);
+  const runtimeKey = `autosave:runtime:${runtimeId ?? ''}`;
+  const runtimeSaving = useSettingsWorkKey(runtimeKey); const runtimeVersion = useSettingsWorkVersion(runtimeKey);
   const sourceKind = Form.useWatch('source_kind', form);
   const environment = Form.useWatch('environment', form);
   const inputId = Form.useWatch('input_set_id', form);
@@ -27,11 +30,11 @@ export function PortfolioBuild({ mandate, close }: { mandate: Schema['MandateVie
     dataOf(await api.GET('/api/v2/input-sets/{id}', { params: { path: { id: inputId! } }, signal })) });
   const cycle = useQuery({ queryKey: ['cycle', cycleId], enabled: !!cycleId, staleTime: 0,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/cycles/{id}', { params: { path: { id: cycleId! } }, signal })) });
-  const runtime = useQuery({ queryKey: ['build-runtime', runtimeId], enabled: !!runtimeId, staleTime: 0,
+  const runtime = useQuery({ queryKey: ['build-runtime', runtimeId, runtimeVersion], enabled: !!runtimeId && !runtimeSaving, staleTime: 0,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId! } }, signal })) });
   const ready = input.data?.header.id === inputId && input.data?.header.project_id === mandate.project_id && input.data.header.purpose === 'FORWARD'
     && cycle.data?.id === cycleId && cycle.data?.project_id === mandate.project_id && cycle.data.state === 'RUNNING'
-    && runtime.data?.id === runtimeId && runtime.data?.configuration.enabled && runtime.data.configuration.allowed_capabilities.includes('PORTFOLIO_BUILD')
+    && !runtimeSaving && runtime.data?.id === runtimeId && runtime.data?.configuration.enabled && runtime.data.configuration.allowed_capabilities.includes('PORTFOLIO_BUILD')
     && [input, cycle, runtime].every(query => !query.isError && !query.isFetching);
   const mutation = useMutation({ mutationFn: async (body: Request) => {
     const result = dataOf(await api.POST('/api/v2/portfolio-builds', { params: { header: intent.current.headers('POST', '/api/v2/portfolio-builds', body) }, body }));
