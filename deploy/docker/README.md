@@ -108,12 +108,17 @@ Follow `runtime-targets` to set the exact HTTPS `origin` and reachable `addresse
 
 ### Installed free-source tools
 
-The application image also carries the matching public-source helpers and native
-importers. Use the installed manager as the installation owner; no checkout,
-Python package installation or Cargo build is needed:
+These commands require a completed release that includes the source tools in its
+manager and application image; a source-checkout build does not add them to an
+older installation. Check the active release's help and plugin inventory first.
+The examples below only inspect help, capabilities and an offline HTTP plan;
+Coinbase live research acceptance remains subject to the [source-use block](../../runtimes/data/source-plugins.md#source-rights-and-acceptance).
+Use the installed manager as the installation owner; no checkout, Python package
+installation or Cargo build is needed:
 
 ```sh
 installation="$HOME/.local/share/quazonai"
+python3 "$installation/current/deployment/manage.py" source --help
 python3 "$installation/current/deployment/manage.py" source -- plugins
 python3 "$installation/current/deployment/manage.py" source -- \
   plan coinbase-candles --instrument BTC-USD --start-seconds 1788220800 \
