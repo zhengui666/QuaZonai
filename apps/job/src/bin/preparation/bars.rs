@@ -187,7 +187,7 @@ pub(super) fn candle(
         "NATIVE_VOLUME_PRECISION_LOSS"
     );
     ensure!(ts_event <= received, "CANDLE_EVENT_AFTER_OBSERVATION");
-    Ok(Bar::new_checked(
+    Bar::new_checked(
         kind,
         price(values[0])?,
         price(values[1])?,
@@ -196,7 +196,7 @@ pub(super) fn candle(
         volume,
         ts_event.into(),
         received.into(),
-    )?)
+    )
 }
 
 pub(super) fn write_catalog(
