@@ -28,10 +28,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     started=$(date +%s) \
  && disk_before=$(df -B1 --output=avail /build | tail -n 1 | tr -d ' ') \
  && CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --locked --release -p job \
-      --features polymarket-history,catalog-prepare --bin catalog-prepare --bin polymarket-history \
- && install -Dm755 target/release/catalog-prepare /operator/bin/catalog-prepare \
- && install -Dm755 target/release/polymarket-history /operator/bin/polymarket-history \
- && strip /operator/bin/catalog-prepare /operator/bin/polymarket-history \
+      --features polymarket-history,catalog-prepare --bin source-tools \
+ && install -Dm755 target/release/source-tools /operator/bin/source-tools \
+ && strip /operator/bin/source-tools \
+ && install -m755 deploy/docker/operator/catalog-prepare deploy/docker/operator/polymarket-history /operator/bin/ \
  && elapsed=$(($(date +%s) - started)) \
  && disk_after=$(df -B1 --output=avail /build | tail -n 1 | tr -d ' ') \
  && printf '{"revision":"%s","native_build_elapsed_seconds":%s,"disk_before_bytes":%s,"disk_after_bytes":%s,"cache":"shared BuildKit Cargo caches; not an independent cold build"}\n' \

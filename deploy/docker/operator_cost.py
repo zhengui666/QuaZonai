@@ -2,6 +2,7 @@
 """Measure the shipped operator payload; never substitute debug sizes or estimates."""
 import argparse
 import gzip
+import inspect
 import json
 from pathlib import Path
 import re
@@ -92,12 +93,101 @@ def archive_bytes(image, version):
 
 def image_identity(image, revision):
     value = json.loads(run(['docker', 'image', 'inspect', image]))[0]
-    if value['Config']['Labels'].get('org.opencontainers.image.revision') != revision:
+    if (value['Config'].get('Labels') or {}).get('org.opencontainers.image.revision') != revision:
         raise ValueError('Measured image does not match the requested source revision.')
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', value['Id']) or type(value['Size']) is not int or value['Size'] <= 0:
+        raise ValueError('Measured image has an invalid identity or size.')
     return {'id': value['Id'], 'size_bytes': value['Size']}
 
 
-def report(directory, baseline, candidate, revision, version):
+def payload_inventory(root, revision, layout):
+    # This self-contained function also runs in the actual, read-only image.
+    import hashlib
+    import json
+    import os
+    from pathlib import Path
+    import stat
+
+    root = Path(root)
+    selected = {'single': {'source-tools'}, 'legacy': {'catalog-prepare', 'polymarket-history'}}
+    if layout not in selected:
+        raise ValueError('Unknown operator executable layout.')
+    expected = selected[layout]
+    launchers = {'catalog-prepare', 'polymarket-history'} if layout == 'single' else set()
+    if not stat.S_ISDIR(root.lstat().st_mode):
+        raise ValueError('Operator payload must be a regular directory.')
+    files, binaries, scripts, hashes = {}, {}, {}, {}
+    for path in sorted(root.rglob('*')):
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            continue
+        if not stat.S_ISREG(mode):
+            raise ValueError('Operator payload contains a symlink or non-regular file: ' + str(path))
+        relative = path.relative_to(root).as_posix()
+        size = path.stat().st_size
+        files[relative] = size
+        with path.open('rb') as stream:
+            header = stream.read(20)
+            stream.seek(0)
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        hashes[relative] = digest
+        if header.startswith(b'\x7fELF'):
+            if relative not in {'bin/' + name for name in expected}:
+                raise ValueError('Unexpected operator ELF: ' + relative)
+            if not mode & 0o111 or not os.access(path, os.X_OK):
+                raise ValueError('Selected operator ELF is not executable: ' + relative)
+            if len(header) != 20 or header[4] not in (1, 2) or header[5] not in (1, 2) or \
+                    int.from_bytes(header[16:18], 'little' if header[5] == 1 else 'big') not in (2, 3):
+                raise ValueError('Selected operator ELF has an invalid executable header: ' + relative)
+            binaries[path.name] = size
+        elif relative.startswith('bin/'):
+            if relative not in {'bin/' + name for name in launchers} or \
+                    not header.startswith(b'#!/bin/sh\n') or not mode & 0o111 or not os.access(path, os.X_OK):
+                raise ValueError('Selected operator launcher is not a regular executable shell script: ' + relative)
+            scripts[path.name] = size
+    if set(binaries) != expected or set(scripts) != launchers:
+        raise ValueError('Operator executable or launcher payload is missing.')
+    native_build = json.loads((root / 'build-metrics.json').read_text())
+    if native_build['revision'] != revision:
+        raise ValueError('Native build measurements do not identify the measured release payload.')
+    return {'layout': layout,
+            # Historical field retained; it always means actual ELF bytes.
+            'stripped_binary_bytes': binaries, 'launcher_bytes': scripts,
+            'operator_payload_bytes': sum(files.values()),
+            'operator_payload_file_bytes': files, 'operator_payload_sha256': hashes,
+            'native_build': native_build}
+
+
+def measure_image(image, revision, layout=None):
+    measurement = image_identity(image, revision)
+    container = ['docker', 'run', '--rm', '--network', 'none', '--read-only', '--no-healthcheck',
+                 '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--entrypoint']
+    # Use the resolved ID throughout so a concurrent tag reassignment cannot
+    # switch the inspected binaries or archive after the revision check.
+    identity = measurement['id']
+    paths = ['/opt/quazonai/bin/server', '/opt/quazonai/bin/runtime']
+    sizes = run([*container, '/usr/bin/stat', identity, '-c', '%s', *paths]).splitlines()
+    checksums = run([*container, '/usr/bin/sha256sum', identity, *paths]).splitlines()
+    if len(sizes) != 2 or len(checksums) != 2 or any(
+            not re.fullmatch(r'[0-9a-f]{64}  ' + re.escape(path), line)
+            for path, line in zip(paths, checksums)):
+        raise ValueError('Application binary measurement is incomplete.')
+    measurement['stripped_application_binary_bytes'] = dict(zip(('server', 'runtime'), map(int, sizes)))
+    measurement['application_binary_sha256'] = dict(zip(('server', 'runtime'),
+                                                       (line.split()[0] for line in checksums)))
+    if layout is None:
+        run([*container, '/bin/sh', identity, '-c',
+             'test ! -e /opt/quazonai/operator && test ! -L /opt/quazonai/operator && ! command -v python3'])
+        measurement['operator_payload'] = 'absent, checked in the actual baseline image'
+    else:
+        program = 'import json\n' + inspect.getsource(payload_inventory) + '\nprint(json.dumps(payload_inventory(' + \
+                  repr('/opt/quazonai/operator') + ', ' + repr(revision) + ', ' + repr(layout) + ')))\n'
+        measurement['payload'] = json.loads(run([*container, '/usr/bin/python3', identity,
+                                                '-E', '-s', '-B', '-c', program]))
+    return measurement
+
+
+def report(directory, baseline, candidate, revision, version, layout='single', emit=True):
     marks = {name: json.loads((directory / (name + '.json')).read_text())
              for name in ('candidate-start', 'candidate-end', 'baseline-start', 'baseline-end')}
     def elapsed(kind):
@@ -105,27 +195,9 @@ def report(directory, baseline, candidate, revision, version):
         if value < 0:
             raise ValueError('Invalid build measurement chronology.')
         return value / 1_000_000_000
-    before = image_identity(baseline, revision)
-    after = image_identity(candidate, revision)
-    container = ['docker', 'run', '--rm', '--network', 'none', '--read-only', '--no-healthcheck',
-                 '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--entrypoint']
-    run([*container, '/bin/sh', baseline, '-c', 'test ! -e /opt/quazonai/operator && ! command -v python3'])
-    before['operator_payload'] = 'absent, checked in the actual baseline image'
-    for image, measurement in ((baseline, before), (candidate, after)):
-        sizes = run([*container, '/usr/bin/stat', image, '-c', '%s',
-                     '/opt/quazonai/bin/server', '/opt/quazonai/bin/runtime']).splitlines()
-        if len(sizes) != 2:
-            raise ValueError('Application binary size measurement is incomplete.')
-        measurement['stripped_application_binary_bytes'] = dict(zip(('server', 'runtime'), map(int, sizes)))
-    program = """import json
-from pathlib import Path
-root=Path('/opt/quazonai/operator')
-bins={name:(root/'bin'/name).stat().st_size for name in ('catalog-prepare','polymarket-history')}
-print(json.dumps({'stripped_binary_bytes':bins,'operator_payload_bytes':sum(path.stat().st_size for path in root.rglob('*') if path.is_file()),'native_build':json.loads((root/'build-metrics.json').read_text())}))
-"""
-    payload = json.loads(run([*container, '/usr/bin/python3', candidate, '-E', '-s', '-B', '-c', program]))
-    if payload['native_build']['revision'] != revision or any(value <= 0 for value in payload['stripped_binary_bytes'].values()):
-        raise ValueError('Native build measurements do not identify the measured release payload.')
+    before = measure_image(baseline, revision)
+    after = measure_image(candidate, revision, layout)
+    payload = after.pop('payload')
     before['compressed_archive_bytes'] = archive_bytes(before['id'], version)
     after['compressed_archive_bytes'] = archive_bytes(after['id'], version)
     result = {'schema_version': 1, 'revision': revision, 'version': version,
@@ -143,7 +215,9 @@ print(json.dumps({'stripped_binary_bytes':bins,'operator_payload_bytes':sum(path
               'archive_method': 'actual docker image save stream, gzip level 1, mtime 0; no archive retained',
               'admission': 'Measured costs require review; this report does not establish source or research qualification.'}
     (directory / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
-    print(json.dumps(result, indent=2))
+    if emit:
+        print(json.dumps(result, indent=2))
+    return result
 
 
 def main():
@@ -155,6 +229,7 @@ def main():
     parser.add_argument('--candidate')
     parser.add_argument('--revision')
     parser.add_argument('--version')
+    parser.add_argument('--layout', choices=('single', 'legacy'), default='single')
     args = parser.parse_args()
     if args.command == 'mark':
         if not args.phase:
@@ -163,7 +238,7 @@ def main():
     else:
         if not all((args.baseline, args.candidate, args.revision, args.version)):
             parser.error('report requires both actual images, revision and version')
-        report(args.directory, args.baseline, args.candidate, args.revision, args.version)
+        report(args.directory, args.baseline, args.candidate, args.revision, args.version, args.layout)
 
 
 if __name__ == '__main__':

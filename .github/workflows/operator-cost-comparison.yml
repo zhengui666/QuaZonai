@@ -1,0 +1,137 @@
+name: Operator packaging cost comparison
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/operator-cost-comparison.yml'
+      - 'deploy/docker/operator_cost*'
+      - 'deploy/docker/operator_compare*'
+      - 'deploy/docker/Dockerfile*'
+      - 'deploy/docker/operator/**'
+      - 'apps/job/Cargo.toml'
+      - 'apps/job/src/lib.rs'
+      - 'apps/job/src/operator/**'
+      - 'apps/job/src/bin/source-tools.rs'
+      - 'apps/job/src/bin/catalog-prepare.rs'
+      - 'apps/job/src/bin/polymarket-history.rs'
+      - 'apps/job/src/bin/history/**'
+      - 'apps/job/src/bin/preparation/**'
+  workflow_dispatch:
+    inputs:
+      candidate_revision:
+        description: Exact reviewed candidate commit SHA to compare with bfa3cfc (no publication).
+        required: true
+        type: string
+permissions:
+  contents: read
+env:
+  CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
+  HARNESS_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+concurrency:
+  group: operator-comparison-${{ github.event.pull_request.number || inputs.candidate_revision }}
+  cancel-in-progress: true
+jobs:
+  prerequisites:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      builder-image: ${{ steps.builder.outputs.image }}
+    steps:
+      - name: Validate the exact candidate revision
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          test "$CANDIDATE_REVISION" != bfa3cfc625a752fdb554d9136b9b2eb4412c6f24
+      - name: Resolve one official BuildKit image for both independent builders
+        id: builder
+        run: |
+          set -euo pipefail
+          docker pull moby/buildkit:buildx-stable-1
+          image=$(docker image inspect --format '{{index .RepoDigests 0}}' moby/buildkit:buildx-stable-1)
+          [[ "$image" =~ ^moby/buildkit@sha256:[0-9a-f]{64}$ ]]
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+  measure:
+    needs: prerequisites
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [old, candidate]
+    # Separate hosted jobs give the two cold measurements independent Docker
+    # stores. Each helper also creates and removes its own empty cache builder.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Check out the measurement harness
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify the exact measurement harness revision
+        run: test "$(git rev-parse HEAD)" = "$HARNESS_REVISION"
+      - name: Check out the immutable old full image source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: bfa3cfc625a752fdb554d9136b9b2eb4412c6f24
+          path: old-source
+          persist-credentials: false
+      - name: Check out the exact candidate source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
+          path: candidate-source
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver: docker
+      - name: Measure independent cold, same-builder warm and same-source no-operator images
+        env:
+          VARIANT: ${{ matrix.variant }}
+          BUILDER_IMAGE: ${{ needs.prerequisites.outputs.builder-image }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          python3 -B deploy/docker/operator_compare.py measure \
+            --old-source old-source --candidate-source candidate-source \
+            --revision "$CANDIDATE_REVISION" --variant "$VARIANT" \
+            --directory "$RUNNER_TEMP/operator-comparison" \
+            --version "operator-compare-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --builder-image "$BUILDER_IMAGE"
+      - name: Retain cost evidence and build logs, including failure observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: operator-comparison-${{ matrix.variant }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/operator-comparison/
+          retention-days: 7
+          if-no-files-found: error
+  compare:
+    needs: measure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify the exact measurement harness revision
+        run: test "$(git rev-parse HEAD)" = "$HARNESS_REVISION"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: operator-comparison-old-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/old
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: operator-comparison-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate
+      - name: Compare actual full image, archive, payload and timing evidence
+        run: |
+          set -euo pipefail
+          python3 -B deploy/docker/operator_compare.py compare \
+            --old "$RUNNER_TEMP/old/report.json" --candidate "$RUNNER_TEMP/candidate/report.json" \
+            --revision "$CANDIDATE_REVISION" --output "$RUNNER_TEMP/comparison.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: operator-comparison-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/comparison.json
+          retention-days: 7
+          if-no-files-found: error

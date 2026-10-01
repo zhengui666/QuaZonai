@@ -23,6 +23,11 @@ name = "polymarket-history"
 path = "src/bin/polymarket-history.rs"
 required-features = ["polymarket-history"]
 
+[[bin]]
+name = "source-tools"
+path = "src/bin/source-tools.rs"
+required-features = ["catalog-prepare", "polymarket-history"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

@@ -34,6 +34,8 @@
 !deploy/docker/Dockerfile
 !deploy/docker/Caddyfile
 !deploy/docker/entrypoint.sh
+!deploy/docker/operator/
+!deploy/docker/operator/**
 **/node_modules
 **/target
 **/dist

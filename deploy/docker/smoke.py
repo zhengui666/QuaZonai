@@ -511,6 +511,42 @@ def source_fixture(root: Path, plan: dict) -> None:
                 'instrument_id': 'BTC-USD.COINBASE', 'valid_from': '1970-01-01T00:00:00Z',
                 'valid_until': None, 'available_at': '1970-01-01T00:00:00Z', 'groups': None}]}}
     (root / 'declaration.json').write_bytes(encoded(declaration))
+    history_fixture(root, declaration, selection)
+
+
+def history_fixture(root: Path, candle_declaration: dict, candle_selection: dict) -> None:
+    """Original synthetic native records for offline packaged import and native readback."""
+    identity = 'fixture-event-101.POLYMARKET'
+    kind = identity + '-1-MINUTE-LAST-EXTERNAL'
+    instrument = {'id': identity, 'raw_symbol': '101', 'asset_class': 'ALTERNATIVE',
+        'currency': 'pUSD', 'activation_ns': 0, 'expiration_ns': 60000000000000,
+        'price_precision': 4, 'size_precision': 6, 'price_increment': '0.0001',
+        'size_increment': '0.000001', 'margin_init': '0', 'margin_maint': '0',
+        'maker_fee': '0', 'taker_fee': '0', 'outcome': None, 'description': None,
+        'max_quantity': None, 'min_quantity': None, 'max_notional': None, 'min_notional': None,
+        'max_price': None, 'min_price': None, 'tick_scheme': None,
+        'info': {'condition_id': 'fixture-event', 'token_id': '101',
+                 'fee_schedule': {'rate': 0.0, 'exponent': 1, 'rebateRate': 0.2, 'takerOnly': True},
+                 'source_reference': 'SYNTHETIC_INSTALLED_HISTORY_TEST'}, 'ts_event': 0, 'ts_init': 0}
+    bars = [{'type': 'Bar', 'bar_type': kind, 'open': '0.4200', 'high': '0.4300',
+             'low': '0.4100', 'close': '0.4250', 'volume': '2.000000',
+             'ts_event': step * 60000000000, 'ts_init': step * 60000000000 + 1000}
+            for step in range(1, 4)]
+    archive = {'schema_version': 1, 'source_reference': 'FIXTURE: installed history import',
+               'source_observed_at': '2024-01-02T00:00:01Z', 'source_metadata': {'origin': 'FIXTURE'},
+               'instruments': [{'BinaryOption': instrument}], 'bars': bars}
+    declaration = json.loads(json.dumps(candle_declaration))
+    declaration.update(registered_ref='synthetic-installed-history',
+                       native_snapshot_ref='synthetic-installed-history-discovery',
+                       provenance_reference='SYNTHETIC_INSTALLED_HISTORY_TEST',
+                       availability_provenance='Synthetic native clocks, not historical availability evidence')
+    declaration['universe']['name'] = 'Synthetic installed binary-option fixture'
+    declaration['universe']['membership'][0]['instrument_id'] = identity
+    selection = json.loads(json.dumps(candle_selection))
+    selection['selection']['bar_types'] = [kind]
+    for name, value in [('history.json', archive), ('history-declaration.json', declaration),
+                        ('history-selection.json', selection)]:
+        (root / name).write_text(json.dumps(value) + '\n')
 
 
 def source_container_ids(config: dict, invocation: str) -> list[str]:
@@ -568,23 +604,30 @@ def reconcile_source_invocation(config: dict, invocation: str, *, uncertain: boo
 
 
 def invoke_installed_source(config: dict, root: Path, arguments: list[str], inputs=(), output=None):
+    def command_for(invocation):
+        command = [sys.executable, '-B', str(Path(config['bundle']) / 'manage.py'), 'source',
+                   '--directory', config['root'], '--invocation-id', invocation]
+        for path in inputs:
+            command += ['--read-only', str(path)]
+        if output:
+            command += ['--output-parent', str(output)]
+        return command + ['--', *arguments]
+    return invoke_source_process(config, root, arguments[0], command_for)
+
+
+def invoke_source_process(config: dict, root: Path, operation: str, command_for):
+    """Track actual container ownership for registry and direct packaged smoke commands."""
     invocation = secrets.token_hex(16)
     diagnostics = root / 'diagnostics'
     diagnostics.mkdir(exist_ok=True)
     record = diagnostics / (invocation + '.json')
-    metadata = {'invocation': invocation, 'operation': arguments[0], 'state': 'starting',
+    metadata = {'invocation': invocation, 'operation': operation, 'state': 'starting',
                 'installation': config['project'], 'owner_uid': config['uid'], 'image': config['image'],
                 'container_names': ['quazonai-source-' + invocation, 'quazonai-source-' + invocation + '-inventory']}
     record.write_text(json.dumps(metadata, indent=2) + '\n')
-    command = [sys.executable, '-B', str(Path(config['bundle']) / 'manage.py'), 'source',
-               '--directory', config['root'], '--invocation-id', invocation]
-    for path in inputs:
-        command += ['--read-only', str(path)]
-    if output:
-        command += ['--output-parent', str(output)]
     timed_out, local_finished, stdout, stderr, returncode = False, False, '', '', None
     try:
-        with subprocess.Popen(command + ['--', *arguments], stdout=subprocess.PIPE,
+        with subprocess.Popen(command_for(invocation), stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
             try:
                 stdout, stderr = process.communicate(timeout=180)
@@ -614,6 +657,71 @@ def invoke_installed_source(config: dict, root: Path, arguments: list[str], inpu
     if timed_out or returncode != 0:
         raise RuntimeError(f'Installed source operation failed; invocation {invocation}; artifacts retained at {root}')
     return json.loads(stdout)
+
+
+
+def invoke_packaged_history(config: dict, root: Path, inputs: Path, output: Path):
+    """Exercise the shipped history launcher, then read its catalog through native preparation."""
+    release_identity = manage.manifest(Path(config['bundle']))
+    assert all(release_identity[key] == config[key] for key in ('image', 'version', 'revision'))
+    source = manage.source_path(inputs, config)
+    target = manage.source_path(output, config, output=True)
+    assert source != target and source not in target.parents and target not in source.parents
+    program = r'''
+import json, os, shutil, stat, subprocess, sys
+from pathlib import Path
+inputs, output = map(Path, sys.argv[1:])
+binroot = Path('/opt/quazonai/operator/bin')
+assert not shutil.which('cargo') and not shutil.which('rustc')
+assert not Path('/build/Cargo.toml').exists()
+elf = binroot / 'source-tools'
+assert stat.S_ISREG(elf.lstat().st_mode) and os.access(elf, os.X_OK)
+with elf.open('rb') as stream:
+    assert stream.read(4) == b'\x7fELF'
+for name, modes in [('catalog-prepare', ['', 'ingest-candles']),
+                    ('polymarket-history', ['', 'fetch', 'import', 'archive', 'chain', 'capture'])]:
+    launcher = binroot / name
+    assert stat.S_ISREG(launcher.lstat().st_mode) and os.access(launcher, os.X_OK)
+    assert launcher.read_text() == '#!/bin/sh\nexec /opt/quazonai/operator/bin/source-tools ' + name + ' "$@"\n'
+    for mode in modes:
+        args = ([mode] if mode else []) + ['--help']
+        direct = subprocess.run([str(elf), name, *args], capture_output=True, timeout=30)
+        wrapped = subprocess.run([str(launcher), *args], capture_output=True, timeout=30)
+        assert direct.returncode == wrapped.returncode == 0
+        assert direct.stdout == wrapped.stdout and direct.stderr == wrapped.stderr
+native = output / 'history import [行情]'
+prepared = output / 'history readback [行情]'
+command = [str(binroot / 'polymarket-history'), 'import', '--input', str(inputs / 'history.json'), '--output', str(native)]
+result = subprocess.run(command, capture_output=True, timeout=90)
+assert result.returncode == 0, result.stderr.decode(errors='replace')
+report = json.loads(result.stdout)
+assert report == json.loads((native / 'import-report.json').read_text())
+assert report['bars'] == 3 and report['instruments'] == report['instrument_versions'] == 1
+assert all(report[key] == 0 for key in ('trades', 'quotes', 'deltas', 'closes'))
+assert report['coverage'] == 'UNPROVEN' and report['historical_availability'] == 'UNVERIFIED'
+assert report['registered_in_quazonai'] is False
+original = json.loads((inputs / 'history.json').read_text())
+evidence = json.loads((native / 'source-evidence.json').read_text())
+assert all(evidence[key] == original[key] for key in original)
+reused = subprocess.run(command, capture_output=True, timeout=30)
+assert reused.returncode == 1 and reused.stderr == b'QZ_POLYMARKET_HISTORY_FAILED\n' and not reused.stdout
+readback = subprocess.run([str(binroot / 'catalog-prepare'), '--catalog', str(native / 'catalog'),
+    '--declaration', str(inputs / 'history-declaration.json'), '--selection', str(inputs / 'history-selection.json'),
+    '--output', str(prepared)], capture_output=True, timeout=90)
+assert readback.returncode == 0, readback.stderr.decode(errors='replace')
+metadata = json.loads(readback.stdout)
+assert metadata == json.loads((prepared / 'catalog-metadata.json').read_text())
+assert metadata['origin'] == 'FIXTURE' and metadata['pit_status'] == 'UNVERIFIED' and metadata['row_count'] == '3'
+assert metadata['universe']['instrument_definitions'] == original['instruments']
+print(json.dumps({'history_import_bars': report['bars'], 'native_readback_rows': metadata['row_count'],
+                  'origin': metadata['origin'], 'pit_status': metadata['pit_status']}))
+'''
+    def command_for(invocation):
+        command = manage.source_container(config, release_identity, 'none', invocation)
+        command += ['--mount', f'type=bind,source={source},target={source},readonly',
+                    '--mount', f'type=bind,source={target},target={target}']
+        return command + [release_identity['image'], '-E', '-s', '-B', '-c', program, str(source), str(target)]
+    return invoke_source_process(config, root, 'packaged_history_import_readback', command_for)
 
 
 def verify_source_output_reuse(config: dict, root: Path, arguments: list[str], inputs, output: Path) -> None:
@@ -674,6 +782,7 @@ def verify_installed_sources(config: dict) -> None:
     binary_root = installation / 'releases' / config['version'] / 'bin'
     assert not (binary_root / 'catalog-prepare').exists()
     assert not (binary_root / 'polymarket-history').exists()
+    assert not (binary_root / 'source-tools').exists()
     before = processor_identity(config)
     # Outside the enclosing installation TemporaryDirectory: its cleanup must
     # never remove mounts still owned by an uncertain source invocation.
@@ -718,6 +827,10 @@ def verify_installed_sources(config: dict) -> None:
         assert handoff['producer'] == {'version': config['version'], 'revision': config['revision'], 'image': config['image']}
         verify_source_output_reuse(config, root, arguments, [inputs, converted], prepared_parent)
         assert (output / 'catalog-metadata.json').read_bytes() == original
+        assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest for path, digest in frozen.items())
+        history = invoke_packaged_history(config, root, inputs, converted_parent)
+        assert history == {'history_import_bars': 3, 'native_readback_rows': '3',
+                           'origin': 'FIXTURE', 'pit_status': 'UNVERIFIED'}
         assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest for path, digest in frozen.items())
         assert processor_identity(config) == before
         complete = True

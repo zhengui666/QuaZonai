@@ -4,6 +4,8 @@ pub mod catalog;
 pub mod forecast;
 pub mod forward;
 pub mod managed;
+#[cfg(any(feature = "catalog-prepare", feature = "polymarket-history"))]
+pub mod operator;
 mod optimization;
 pub mod portfolio;
 mod prediction;

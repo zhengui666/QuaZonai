@@ -354,3 +354,26 @@ fn imported_native_bars_use_the_unchanged_partition_preparation_and_quality_path
     assert_eq!(metadata["available_through"], OBSERVED);
     assert!(output.join("catalog-metadata.json").is_file());
 }
+
+#[cfg(feature = "polymarket-history")]
+#[test]
+fn installed_dispatch_preserves_candle_artifacts() {
+    let f = Fixture::new();
+    let original = f.command();
+    let result = Command::new(env!("CARGO_BIN_EXE_source-tools"))
+        .arg("catalog-prepare")
+        .args(original.get_args())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["bars"], 3);
+    assert_eq!(report["native_readback_verified"], true);
+    assert_eq!(report["historical_availability"], "UNVERIFIED");
+    assert_eq!(report["research_qualified"], false);
+    assert_eq!(f.native_rows().len(), 3);
+}
