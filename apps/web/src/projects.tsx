@@ -1,4 +1,4 @@
-import { App, Button, Card, Drawer, Form, Input, Select, Space, Table, Tabs, Typography } from 'antd';
+import { App, Button, Card, Descriptions, Drawer, Form, Grid, Input, Select, Space, Table, Tabs, Typography } from 'antd';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
@@ -14,6 +14,7 @@ import { projectStateOptions } from './authoring-options';
 type Project = Schema['ProjectView'];
 type Fields = Pick<Project, 'name' | 'description' | 'state'>;
 export function Projects() {
+  const compact = !Grid.useBreakpoint().md;
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const [selected, setSelected] = useState<Project>();
   const [editing, setEditing] = useState<Project | 'new'>();
@@ -22,6 +23,9 @@ export function Projects() {
   const query = useQuery({ queryKey: ['projects', cursor], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects', {
     params: { query: { cursor, limit: 25 } }, signal,
   })) });
+  const projectName = (project: Project) => <Button type="link" className="table-title" onClick={() => setSelected(project)}>{project.name}</Button>;
+  const projectBrief = (project: Project) => project.current_brief_id ? <Typography.Text className="break-word">{project.current_brief_id}</Typography.Text> : '尚未选择';
+  const projectEdit = (project: Project) => <Button disabled={!online || query.isError} onClick={() => setEditing(project)}>编辑</Button>;
   if (selected) return <Space orientation="vertical" size="large" className="full-width">
     <Button onClick={() => setSelected(undefined)}>返回研究列表</Button>
     <ProjectDetail id={selected.id} />
@@ -31,14 +35,25 @@ export function Projects() {
       <Button icon={<PlusOutlined aria-hidden />} type="primary" disabled={!online} onClick={() => setEditing('new')}>新建研究</Button></div>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Card extra={<Button icon={<ReloadOutlined aria-hidden />} aria-label="刷新" aria-busy={query.isFetching} loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新</Button>}>
-        <Table<Project> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 760 }}
+        <Table<Project> rowKey="id" dataSource={query.data?.items} pagination={false}
+          scroll={compact ? undefined : { x: 760 }} tableLayout={compact ? 'fixed' : undefined}
           locale={{ emptyText: <NoData text="暂无研究项目" /> }}
-          columns={[
-            { title: '研究项目', dataIndex: 'name', key: 'name', render: (_, project) => <Button type="link" className="table-title" onClick={() => setSelected(project)}>{project.name}</Button> },
+          columns={compact ? [
+            { title: '研究项目', key: 'summary', render: (_, project) => <div className="project-summary">
+              {projectName(project)}
+              <Descriptions className="full-width" size="small" column={1} items={[
+                { key: 'state', label: '状态', children: <StateTag value={project.state} /> },
+                { key: 'brief', label: 'Brief', children: projectBrief(project) },
+                { key: 'updated', label: '更新于', children: <time dateTime={project.updated_at}>{displayTime(project.updated_at)}</time> },
+              ]} />
+              {projectEdit(project)}
+            </div> },
+          ] : [
+            { title: '研究项目', dataIndex: 'name', key: 'name', render: (_, project) => projectName(project) },
             { title: '状态', key: 'state', render: (_, project) => <StateTag value={project.state} /> },
-            { title: 'Brief', key: 'brief', render: (_, project) => project.current_brief_id ? <Typography.Text className="break-word">{project.current_brief_id}</Typography.Text> : '尚未选择' },
+            { title: 'Brief', key: 'brief', render: (_, project) => projectBrief(project) },
             { title: '更新于', key: 'updated', render: (_, project) => displayTime(project.updated_at) },
-            { title: '操作', key: 'edit', render: (_, project) => <Button disabled={!online || query.isError} onClick={() => setEditing(project)}>编辑</Button> },
+            { title: '操作', key: 'edit', render: (_, project) => projectEdit(project) },
           ]} />
       </Card>
       <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
