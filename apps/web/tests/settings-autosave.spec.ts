@@ -6,25 +6,33 @@ async function browserReload(page: Page, decision: 'stay' | 'leave' | 'clean') {
   const originalDocument = await page.evaluate(() => performance.timeOrigin);
   const dialogs: string[] = [];
   const decisions: Promise<void>[] = [];
+  const decisionErrors: unknown[] = [];
   const handleDialog = (dialog: Dialog) => {
     dialogs.push(dialog.type());
-    decisions.push(decision === 'stay' ? dialog.dismiss() : dialog.accept());
+    decisions.push((decision === 'stay' ? dialog.dismiss() : dialog.accept())
+      .catch(error => { decisionErrors.push(error); }));
   };
+  const controller = new AbortController();
   page.on('dialog', handleDialog);
+  const expectedDialog = decision === 'stay' ? page.waitForEvent('dialog', { signal: controller.signal }) : undefined;
   try {
-    try { await page.reload({ waitUntil: 'domcontentloaded' }); }
-    catch (error) {
-      // Chromium can reject the navigation when the user chooses to stay.
-      if (decision !== 'stay' || dialogs.length !== 1 || dialogs[0] !== 'beforeunload') throw error;
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain('net::ERR_ABORTED');
-    }
+    // A canceled reload has no new document for page.reload() to await.
+    if (decision === 'stay') await Promise.all([
+      expectedDialog,
+      page.evaluate(() => { window.location.reload(); }),
+    ]);
+    else await page.reload({ waitUntil: 'domcontentloaded' });
     await Promise.all(decisions);
+    expect(decisionErrors).toEqual([]);
     expect(dialogs).toEqual(decision === 'clean' ? [] : ['beforeunload']);
     const currentDocument = await page.evaluate(() => performance.timeOrigin);
     if (decision === 'stay') expect(currentDocument).toBe(originalDocument);
     else expect(currentDocument).not.toBe(originalDocument);
-  } finally { page.off('dialog', handleDialog); }
+  } finally {
+    page.off('dialog', handleDialog);
+    controller.abort();
+    await Promise.allSettled([expectedDialog, ...decisions]);
+  }
 }
 
 async function setup(page: Page) {
@@ -731,14 +739,16 @@ test('a local dirty project keeps its existing browser and in-app leave warnings
   await page.getByRole('menuitem', { name: '研究', exact: true }).click();
   await page.getByRole('button', { name: '新建研究', exact: true }).click();
   const editor = page.getByRole('dialog', { name: '新建研究项目', exact: true });
-  await editor.getByRole('textbox', { name: '研究名称', exact: true }).fill('Unsaved research');
+  const name = editor.getByLabel('研究名称');
+  await expect(name).toHaveRole('textbox');
+  await name.fill('Unsaved research');
   await browserReload(page, 'stay');
-  await expect(editor.getByRole('textbox', { name: '研究名称', exact: true })).toHaveValue('Unsaved research');
+  await expect(name).toHaveValue('Unsaved research');
   await editor.getByRole('button', { name: '取消', exact: true }).click();
   const confirmation = page.getByRole('dialog', { name: '放弃尚未保存的修改？', exact: true });
   await expect(confirmation).toBeVisible();
   await confirmation.getByRole('button', { name: '继续编辑', exact: true }).click();
-  await expect(editor.getByRole('textbox', { name: '研究名称', exact: true })).toHaveValue('Unsaved research');
+  await expect(name).toHaveValue('Unsaved research');
   await editor.getByRole('button', { name: '取消', exact: true }).click();
   await confirmation.getByRole('button', { name: '放弃修改', exact: true }).click();
   await expect(editor).toHaveCount(0);
