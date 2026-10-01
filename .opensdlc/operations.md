@@ -21,6 +21,30 @@ Release requires successful current-source CI, Web console, Native Runtime, [Nat
 
 Push the chosen immutable tag only within release authorization. Reconcile an existing tag/draft before retrying. Verify the published revision, image digest, package visibility and `quazonai-deploy.tar.gz`; repository visibility alone does not set GHCR visibility. Deployment uses the [versioned bundle](../deploy/docker/README.md), not a developer checkout.
 
+Installed source preparation uses the same application image digest through
+`manage.py source`; it adds no service, fifth image or deployment archive member.
+The source tools stay outside `/opt/quazonai/bin`, which the installer extracts
+onto the host. The existing no-checkout smoke executes real packaged candle
+conversion/preparation and preserves explicit fixture/unverified status before
+and after update. This does not qualify live or historical data.
+
+Container CI publishes `operator-cost-<revision>-<run>-<attempt>` with actual
+stripped executable sizes, same-source baseline/candidate image and compressed
+archive bytes, native operator build time, normal candidate elapsed time and disk
+observations. The normal candidate builds first with configured caches; the
+`application-base` comparison is built afterward and can reuse those layers.
+Neither timing is an independent cold-build comparison. Native-stage timing is
+recorded in the producer image and may be reused with a cached stage. Before
+merging packaging changes, review these measured costs and the existing archive
+limit; missing measurements or failed installed acceptance are not a pass. Debug
+binary sizes are not release-size estimates.
+
+Failed source acceptance retains a `source-invocations-*` CI artifact containing
+only bounded invocation identities, state, exit and cleanup facts. Raw source
+payloads, declarations and stdout/stderr are excluded. When container ownership
+or terminal state cannot be confirmed, the smoke keeps its mount roots outside
+the installation's temporary cleanup; a local CLI exit is not cancellation proof.
+
 <a id="dev-release"></a>
 ### Automatic development releases
 

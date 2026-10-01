@@ -10,6 +10,8 @@ import http.cookiejar
 import json
 import os
 from pathlib import Path
+import re
+import signal
 import socket
 import secrets
 import shutil
@@ -265,6 +267,7 @@ def exercise(root: Path, images: dict, revision: str, previous: tuple[str, str])
         verify_container_codex(original)
         verify_codex_update(original, (images["codex_version"], images["codex_image"]), previous)
         verify_runtime(original)
+        verify_installed_sources(original)
         key = fingerprint(installation)
         assert manage.sql(original, "SELECT extversion FROM pg_extension WHERE extname='pgmq'") == "1.10.0"
         manage.sql(original, "CREATE TABLE public.container_release_smoke (value text PRIMARY KEY); "
@@ -380,6 +383,7 @@ def exercise(root: Path, images: dict, revision: str, previous: tuple[str, str])
                                    "-Atc", "SELECT value FROM public.container_release_smoke", capture=True)
         assert restored == "persisted"
         verify_runtime(latest)
+        verify_installed_sources(latest)
         print(f"Real install/update/failure-retry/restart/PG-restore passed: {revision}")
     finally:
         cleanup_installation(installation)
@@ -444,6 +448,284 @@ def fixture_id() -> str:
     value[6] = (value[6] & 0x0f) | 0x70
     value[8] = (value[8] & 0x3f) | 0x80
     return str(uuid.UUID(bytes=bytes(value)))
+
+
+def source_fixture(root: Path, plan: dict) -> None:
+    """Synthetic provider-shaped bytes only; native tools still do the conversion."""
+    acquired = root / 'acquired'
+    (acquired / 'raw').mkdir(parents=True)
+    encoded = lambda value: (json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False) + '\n').encode()
+    record = lambda name, body: {'path': name, 'size': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
+    observed = '2024-01-02T00:00:01Z'
+    values = ['42000.01', '42001.02', '41999.00', '42000.99', '0.10000001']
+    raw = ('[' + ','.join(f'[{index * 60},{values[2]},{values[1]},{values[0]},{values[3]},{values[4]}]'
+                         for index in range(3)) + ']').encode()
+    rows = [{'selection_time_seconds': index * 60, 'event_time_seconds': (index + 1) * 60,
+             'open': values[0], 'high': values[1], 'low': values[2], 'close': values[3], 'volume': values[4],
+             'instrument': 'BTC-USD', 'kind': 'OHLCV_CANDLE', 'interval_seconds': 60,
+             'observed_at': observed, 'historical_available_at': None,
+             'source_response': 'raw/0000.json', 'source_row_index': index} for index in range(3)]
+    records = b''.join(encoded(row) for row in rows)
+    terms = b'Synthetic provider terms for deterministic installed native tests only.'
+    for name, body in [('raw/0000.json', raw), ('records.jsonl', records), ('source-terms.bin', terms)]:
+        (acquired / name).write_bytes(body)
+    manifest = {**plan, 'created_at': '2024-01-02T00:00:02Z',
+                'source_terms': {'file': record('source-terms.bin', terms),
+                                 'reference': plan['provider']['terms_reference'],
+                                 'evidence_status': 'OPERATOR_SUPPLIED_NOT_INDEPENDENTLY_VERIFIED'},
+                'responses': [{'request': plan['requests'][0], 'observation': {
+                    'status': 200, 'headers': {'Content-Type': 'application/json'},
+                    'request_started_at': '2024-01-02T00:00:00Z', 'retrieved_at': observed},
+                    'file': record('raw/0000.json', raw),
+                    'counts': {'source_rows': 3, 'selected_rows': 3, 'outside_request_window': 0}}],
+                'records': record('records.jsonl', records), 'record_count': 3,
+                'raw_response_bytes': len(raw), 'observation_status': 'OBSERVED'}
+    (acquired / 'acquisition.json').write_bytes(encoded(manifest))
+    # Native CurrencyPair Serde shape from the existing candle_acquisition fixture.
+    # Every value here is explicitly a test fixture, never a historical definition.
+    instrument = {'id': 'BTC-USD.COINBASE', 'raw_symbol': 'BTC-USD', 'base_currency': 'BTC',
+                  'quote_currency': 'USD', 'price_precision': 2, 'size_precision': 8,
+                  'price_increment': '0.01', 'size_increment': '0.00000001', 'multiplier': '1',
+                  'lot_size': None, 'margin_init': '0', 'margin_maint': '0',
+                  'maker_fee': '0.004', 'taker_fee': '0.006', 'max_quantity': None,
+                  'min_quantity': None, 'max_notional': None, 'min_notional': None,
+                  'max_price': None, 'min_price': None, 'tick_scheme': None, 'info': None,
+                  'ts_event': 0, 'ts_init': 0}
+    (root / 'instruments.json').write_bytes(encoded([{'CurrencyPair': instrument}]))
+    selection = {'dataset_revision_id': fixture_id(), 'settlements': [], 'selection': {
+        'schema_version': 1, 'bar_types': ['BTC-USD.COINBASE-1-MINUTE-LAST-EXTERNAL'],
+        'event_start_ns': '60000000000', 'event_end_ns': '240000000000',
+        'decision_cutoff_ns': '1704153601000000000', 'maximum_rows': 3}}
+    (root / 'selection.json').write_bytes(encoded(selection))
+    declaration = {'schema_version': 1, 'registered_ref': 'synthetic-installed-candles',
+        'native_snapshot_ref': 'synthetic-installed-candles-discovery', 'storage_version': 'fixture-v1',
+        'provider_kind': 'NAUTILUS_CATALOG', 'data_kind': 'BAR', 'partition': 'DISCOVERY',
+        'event_start': '1970-01-01T00:01:00Z', 'event_end': '1970-01-01T00:04:00Z',
+        'available_through': observed, 'origin': 'FIXTURE', 'pit_status': 'UNVERIFIED',
+        'revision_policy': 'UNKNOWN', 'provenance_reference': 'SYNTHETIC_INSTALLED_SOURCE_TEST',
+        'availability_provenance': 'Synthetic late REST batch; no historical publication evidence',
+        'universe': {'name': 'Synthetic installed BTC-USD fixture', 'calendar_ref': 'synthetic-utc',
+            'calendar_version': '1', 'selection_asof': '1970-01-01T00:00:00Z',
+            'has_historical_membership': False, 'coverage_start': '1970-01-01T00:00:00Z',
+            'coverage_end': '2024-01-03T00:00:00Z', 'membership': [{
+                'instrument_id': 'BTC-USD.COINBASE', 'valid_from': '1970-01-01T00:00:00Z',
+                'valid_until': None, 'available_at': '1970-01-01T00:00:00Z', 'groups': None}]}}
+    (root / 'declaration.json').write_bytes(encoded(declaration))
+
+
+def source_container_ids(config: dict, invocation: str) -> list[str]:
+    ids = manage.run(['docker', 'ps', '--all', '--quiet', '--no-trunc',
+                      '--filter', 'label=io.quazonai.source.invocation=' + invocation,
+                      '--filter', 'label=io.quazonai.source.installation=' + config['project'],
+                      '--filter', 'label=io.quazonai.source.owner=' + str(config['uid'])], capture=True).splitlines()
+    if len(ids) > 2 or len(ids) != len(set(ids)) or any(not re.fullmatch(r'[0-9a-f]{64}', item) for item in ids):
+        raise ValueError('Source invocation container identity is ambiguous.')
+    return ids
+
+
+def reconcile_source_invocation(config: dict, invocation: str, *, uncertain: bool) -> bool:
+    """Confirm actual owned-container removal before any input/output cleanup."""
+    try:
+        ids = source_container_ids(config, invocation)
+        identified = False
+        for container in ids:
+            try:
+                inspected = json.loads(manage.run(['docker', 'inspect', '--format', '{{json .}}', container], capture=True))
+            except subprocess.CalledProcessError:
+                if container not in source_container_ids(config, invocation):
+                    # It was selected by all three ownership labels and has now
+                    # actually disappeared, normally through --rm completion.
+                    identified = True
+                    continue
+                return False
+            if not isinstance(inspected, dict) or not isinstance(inspected.get('Config'), dict):
+                return False
+            labels = inspected['Config'].get('Labels', {})
+            if (not isinstance(labels, dict) or inspected.get('Id') != container
+                    or inspected.get('Name') not in ('/quazonai-source-' + invocation,
+                                                     '/quazonai-source-' + invocation + '-inventory')
+                    or inspected['Config'].get('Image') != config['image']
+                    or labels.get('io.quazonai.source.invocation') != invocation
+                    or labels.get('io.quazonai.source.installation') != config['project']
+                    or labels.get('io.quazonai.source.owner') != str(config['uid'])):
+                return False
+            identified = True
+            # Stop only this positively identified invocation. A CLI timeout or
+            # exit is never taken as evidence that its native container stopped.
+            stopped = subprocess.run(['docker', 'stop', '--time', '10', container],
+                                     capture_output=True, text=True, timeout=20, check=False)
+            remaining = source_container_ids(config, invocation)
+            if container in remaining:
+                if stopped.returncode != 0:
+                    return False
+                removed = subprocess.run(['docker', 'rm', container], capture_output=True,
+                                         text=True, timeout=20, check=False)
+                if removed.returncode != 0 and container in source_container_ids(config, invocation):
+                    return False
+        return not source_container_ids(config, invocation) and (identified or not uncertain)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return False
+
+
+def invoke_installed_source(config: dict, root: Path, arguments: list[str], inputs=(), output=None):
+    invocation = secrets.token_hex(16)
+    diagnostics = root / 'diagnostics'
+    diagnostics.mkdir(exist_ok=True)
+    record = diagnostics / (invocation + '.json')
+    metadata = {'invocation': invocation, 'operation': arguments[0], 'state': 'starting',
+                'installation': config['project'], 'owner_uid': config['uid'], 'image': config['image'],
+                'container_names': ['quazonai-source-' + invocation, 'quazonai-source-' + invocation + '-inventory']}
+    record.write_text(json.dumps(metadata, indent=2) + '\n')
+    command = [sys.executable, '-B', str(Path(config['bundle']) / 'manage.py'), 'source',
+               '--directory', config['root'], '--invocation-id', invocation]
+    for path in inputs:
+        command += ['--read-only', str(path)]
+    if output:
+        command += ['--output-parent', str(output)]
+    timed_out, local_finished, stdout, stderr, returncode = False, False, '', '', None
+    try:
+        with subprocess.Popen(command + ['--', *arguments], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
+            try:
+                stdout, stderr = process.communicate(timeout=180)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                # This is only local process cleanup. The separate Docker
+                # reconciliation below owns the actual container outcome.
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    stdout, stderr = process.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    stdout, stderr = process.communicate(timeout=10)
+            returncode = process.returncode
+            local_finished = True
+    finally:
+        confirmed = reconcile_source_invocation(config, invocation, uncertain=not local_finished or timed_out or returncode != 0)
+        (diagnostics / (invocation + '.stdout')).write_text(stdout)
+        (diagnostics / (invocation + '.stderr')).write_text(stderr)
+        metadata.update(state='terminal' if confirmed else 'container_outcome_uncertain',
+                        cli_returncode=returncode, local_timeout=timed_out, container_cleanup_confirmed=confirmed)
+        record.write_text(json.dumps(metadata, indent=2) + '\n')
+    if not confirmed:
+        raise RuntimeError(f'Source container outcome is uncertain; invocation {invocation}; artifacts retained at {root}')
+    if timed_out or returncode != 0:
+        raise RuntimeError(f'Installed source operation failed; invocation {invocation}; artifacts retained at {root}')
+    return json.loads(stdout)
+
+
+def verify_source_output_reuse(config: dict, root: Path, arguments: list[str], inputs, output: Path) -> None:
+    """Execute the installed preflight and prove rejection before any process launch."""
+    invocation = secrets.token_hex(16)
+    diagnostics = root / 'diagnostics'
+    diagnostics.mkdir(exist_ok=True)
+    facts = {'invocation': invocation, 'operation': 'reuse_preflight', 'state': 'starting',
+             'container_cleanup_confirmed': False, 'docker_calls': 0,
+             'cli_returncode': None, 'local_timeout': False}
+    record = diagnostics / (invocation + '.json')
+    record.write_text(json.dumps(facts, indent=2) + '\n')
+    program = '''
+import importlib.util, json, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('installed_source_manager', sys.argv[1])
+manager = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(manager)
+calls = []
+def forbidden(*args, **kwargs):
+    calls.append(True)
+    raise AssertionError('Output reuse reached process launch')
+manager.run = forbidden
+manager.subprocess.run = forbidden
+manager.subprocess.Popen = forbidden
+manager.os.execv = forbidden
+manager.os.execvp = forbidden
+try:
+    manager.source_command(Path(sys.argv[2]), [Path(value) for value in json.loads(sys.argv[3])],
+                           Path(sys.argv[4]), json.loads(sys.argv[5]), sys.argv[6])
+except ValueError as error:
+    assert str(error) == 'Source output must be new; original and failed artifacts are retained.'
+else:
+    raise AssertionError('Installed preflight accepted an existing output')
+assert not calls
+print(json.dumps({'rejected_before_launch': True, 'docker_calls': 0}))
+'''
+    try:
+        result = subprocess.run([sys.executable, '-B', '-c', program,
+                                 str(Path(config['bundle']) / 'manage.py'), config['root'],
+                                 json.dumps([str(path) for path in inputs]), str(output),
+                                 json.dumps(arguments), invocation], capture_output=True, text=True, timeout=20, check=False)
+        facts.update(cli_returncode=result.returncode, state='preflight_rejection_unconfirmed')
+        if result.returncode == 0 and json.loads(result.stdout) == {'rejected_before_launch': True, 'docker_calls': 0}:
+            facts.update(state='rejected_before_launch', container_cleanup_confirmed=True)
+    except subprocess.TimeoutExpired:
+        facts.update(state='preflight_timeout', local_timeout=True)
+    except (OSError, ValueError):
+        facts.update(state='preflight_result_invalid')
+    finally:
+        record.write_text(json.dumps(facts, indent=2) + '\n')
+    assert facts['container_cleanup_confirmed'], 'Installed output-reuse preflight proof failed'
+
+
+def verify_installed_sources(config: dict) -> None:
+    """No checkout modules or compiler: actual installed manager and image payload."""
+    installation = Path(config['root'])
+    binary_root = installation / 'releases' / config['version'] / 'bin'
+    assert not (binary_root / 'catalog-prepare').exists()
+    assert not (binary_root / 'polymarket-history').exists()
+    before = processor_identity(config)
+    # Outside the enclosing installation TemporaryDirectory: its cleanup must
+    # never remove mounts still owned by an uncertain source invocation.
+    root = Path(tempfile.mkdtemp(prefix='quazonai-source tools [行情] ', dir=os.environ.get('RUNNER_TEMP')))
+    complete = False
+    def invoke_source(arguments, inputs=(), output=None):
+        return invoke_installed_source(config, root, arguments, inputs, output)
+    try:
+        inventory = invoke_source(['plugins'])
+        assert 'prepare' in next(item for item in inventory if item['id'] == 'coinbase-candles')['capabilities']
+        inputs, converted_parent, prepared_parent = (root / name for name in ('inputs', 'converted', 'prepared'))
+        for path in (inputs, converted_parent, prepared_parent):
+            path.mkdir()
+        plan = invoke_source(['plan', 'coinbase-candles', '--instrument', 'BTC-USD', '--start-seconds', '0',
+                              '--end-seconds', '180', '--interval-seconds', '60'])
+        source_fixture(inputs, plan)
+        frozen = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs.rglob('*') if path.is_file()}
+        acquisition = str(inputs / 'acquired/acquisition.json')
+        verified = invoke_source(['verify', 'coinbase-candles', '--acquisition', acquisition], [inputs])
+        assert verified['record_count'] == 3
+        converted = converted_parent / 'native'
+        report = invoke_source(['convert', 'coinbase-candles', '--acquisition', acquisition,
+                                '--instruments', str(inputs / 'instruments.json'), '--output', str(converted)],
+                               [inputs], converted_parent)
+        assert report['native_report']['bars'] == 3
+        assert report['native_report']['native_readback_verified'] is True
+        assert report['admission']['research_qualified'] is False
+        output = prepared_parent / 'discovery'
+        arguments = ['prepare', 'coinbase-candles', '--native-output', str(converted),
+                     '--declaration', str(inputs / 'declaration.json'), '--selection', str(inputs / 'selection.json'),
+                     '--output', str(output)]
+        handoff = invoke_source(arguments, [inputs, converted], prepared_parent)
+        assert handoff['status'] == 'CATALOG_PREPARED'
+        assert handoff['catalog_registration'] == {'root': str(output / 'catalog'), 'metadata_file': str(output / 'catalog-metadata.json')}
+        original = (output / 'catalog-metadata.json').read_bytes()
+        assert handoff['metadata_bytes'] == len(original)
+        assert handoff['metadata_sha256'] == hashlib.sha256(original).hexdigest()
+        metadata = json.loads(original)
+        assert metadata['row_count'] == '3' and metadata['origin'] == 'FIXTURE' and metadata['pit_status'] == 'UNVERIFIED'
+        assert metadata['available_through'] == '2024-01-02T00:00:01Z'
+        assert handoff['identity_hints'] == {'native_catalog_ref': metadata['registered_ref'], 'native_storage_version': metadata['storage_version']}
+        assert handoff['producer'] == {'version': config['version'], 'revision': config['revision'], 'image': config['image']}
+        verify_source_output_reuse(config, root, arguments, [inputs, converted], prepared_parent)
+        assert (output / 'catalog-metadata.json').read_bytes() == original
+        assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest for path, digest in frozen.items())
+        assert processor_identity(config) == before
+        complete = True
+    finally:
+        if complete:
+            shutil.rmtree(root)
+        else:
+            print(f'Source smoke did not complete; diagnostics and partial artifacts retained at {root}', file=sys.stderr)
 
 
 def verify_runtime(config: dict) -> None:
@@ -594,6 +876,7 @@ def verify_published_bundle(root: Path, bundle: Path, assets: Path | None = None
         original_key = fingerprint(installation)
         verify_container_codex(config)
         verify_runtime(config)
+        verify_installed_sources(config)
         if assets:
             binary = str(root / "client-bin/quazonai")
             assert selected["version"] in manage.run([binary, "--version"], capture=True)
@@ -661,6 +944,9 @@ def main() -> None:
                 "published_bundle_install": "passed" if args.manifest else "not_run",
                 "one_line_installer_and_cli": "passed" if args.installer_assets else "not_run",
                 "install_update_restore": "passed", "native_runtime_compile_restart": "passed",
+                "installed_source_conversion_preparation": "passed",
+                "source_successful_invocation_terminal_observation": "passed",
+                "source_real_docker_timeout_cancellation": "not_run",
                 "host_build_commands": 0,
             }, indent=2) + "\n")
 
