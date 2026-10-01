@@ -61,6 +61,28 @@ runs:
         export XDG_RUNTIME_DIR="/run/user/$uid"
         systemctl --user show --property=Version
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+    - id: native-builder
+      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+    - name: Verify the real filtered native input context before compiling
+      id: native-input-preflight
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        NATIVE_BUILDER: ${{ steps.native-builder.outputs.name }}
+      run: |
+        set -euo pipefail
+        timeout --signal=INT --kill-after=10s 180s docker buildx build \
+          --builder "$NATIVE_BUILDER" --platform linux/amd64 --progress plain \
+          --file deploy/docker/Dockerfile --target native-inputs \
+          --output type=cacheonly . 2>&1 | tee "$RUNNER_TEMP/native-input-preflight.log"
+    - name: Retain native input context preflight evidence
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: native-input-preflight-${{ inputs.revision }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/native-input-preflight.log
+        retention-days: 7
+        if-no-files-found: ignore
     - name: Install the pinned scientific Rust toolchain
       shell: bash
       working-directory: ${{ inputs.source }}
@@ -146,8 +168,6 @@ runs:
         python3 -B deploy/docker/release.py build-codex --codex-version 0.156.1 --image quazonai-codex-previous
         echo "image=$(docker image inspect quazonai-codex-candidate --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
         echo "version=$version" >> "$GITHUB_OUTPUT"
-    - id: native-builder
-      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
     - name: Start normal candidate build measurement
       shell: bash
       working-directory: ${{ inputs.source }}
@@ -223,6 +243,7 @@ runs:
           --runtime-image "$RUNTIME_IMAGE" --codex-image "$CODEX_IMAGE" --codex-version "$CODEX_VERSION" \
           --previous-codex-image quazonai-codex-previous --previous-codex-version 0.156.1
     - name: Verify one bounded same-builder native cache reuse
+      id: native-input-cache
       if: inputs.verify-native-input-cache == 'true'
       shell: bash
       working-directory: ${{ inputs.source }}
@@ -240,7 +261,7 @@ runs:
           --builder-driver "$BUILDER_DRIVER" --builder-nodes "$BUILDER_NODES" \
           --deadline "$PROBE_DEADLINE" --directory "$RUNNER_TEMP/native-cache-probe"
     - name: Retain native cache probe execution and cleanup evidence
-      if: always() && inputs.verify-native-input-cache == 'true'
+      if: always() && inputs.verify-native-input-cache == 'true' && steps.native-input-cache.outcome != 'skipped' && steps.native-input-cache.outcome != ''
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: native-cache-probe-${{ inputs.revision }}-${{ github.run_id }}-${{ github.run_attempt }}

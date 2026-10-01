@@ -126,8 +126,9 @@ def cached_evidence(raw):
 
 
 def add_noise(source, token):
-    name = 'QZ_NATIVE_CACHE_PROBE_' + token + '.md'
-    # Fail if future packaging starts copying root documents or the full context.
+    name = 'skills/QZ_NATIVE_CACHE_PROBE_' + token + '.md'
+    # This directory is admitted by the reviewed Docker context rules, but it is
+    # outside native inputs and every current final-image COPY source.
     # The existing Dockerfile uses simple line-based COPY instructions only.
     stage = None
     for line in (source / 'deploy/docker/Dockerfile').read_text().splitlines():
@@ -137,13 +138,15 @@ def add_noise(source, token):
             tokens = [word for word in shlex.split(line)[1:] if not word.startswith('--')]
             if len(tokens) < 2 or any(word.startswith('[') for word in tokens):
                 raise ValueError('Review changed Docker COPY syntax before probing')
-            if any(word.rstrip('/') == '.' or fnmatch.fnmatchcase(name, word.lstrip('./')) for word in tokens[:-1]):
+            patterns = [word.removeprefix('./').rstrip('/') for word in tokens[:-1]]
+            if any(pattern in ('', '.') or fnmatch.fnmatchcase(name, pattern)
+                   or name.startswith(pattern + '/') for pattern in patterns):
                 raise ValueError('Probe noise would enter final image inputs')
     body = ('Same-builder native cache probe only; not product source.\n' + token + '\n').encode()
     with (source / name).open('xb') as stream:
         stream.write(body)
     return {'path': name, 'sha256': hashlib.sha256(body).hexdigest(),
-            'reason': 'Unique root Markdown file: outside the native closure and every non-collector context COPY source.'}
+            'reason': 'Unique admitted skills document: outside the native closure and every non-collector context COPY source.'}
 
 
 SNAPSHOT = """import hashlib,json

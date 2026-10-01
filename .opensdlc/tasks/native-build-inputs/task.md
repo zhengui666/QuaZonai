@@ -87,7 +87,8 @@ name is introduced. The probe records its setup name/driver/nodes, actual builde
 inspection and observed Buildx version.
 
 An owned temporary `git archive` of the asserted actual HEAD receives one unique
-root `QZ_NATIVE_CACHE_PROBE_<token>.md` document. It is outside the native closure
+`skills/QZ_NATIVE_CACHE_PROBE_<token>.md` document, inside the existing allowed
+context tree. It is outside the native closure
 and all non-collector image COPY sources; changing those COPY rules fails the
 probe's exclusion check. The source digest is recomputed before and after this
 single added file. No fake commit or packaging revision is created.
@@ -132,3 +133,38 @@ unfinished execution, cache conflict or error still fails. Both regressions fail
 against the prior implementation and pass after the correction. The final focused
 probe/projection/cost suite passes 28 tests; Docker and final-head CI remain unrun
 locally, including actual cache reuse and the existing AF_UNIX-dependent check.
+
+## Hosted context failure and correction
+
+The first published head `cfe3c41967c823aa9f18283366c308ddd5e10dbf` failed
+its [Container build](https://github.com/zhengui666/QuaZonai/actions/runs/36889939487/job/110462710504)
+because the collector could not read `/source/.dockerignore`. No application
+image, installation acceptance or warm reuse proof completed on that head.
+The local tests had copied a complete checkout rather than the filtered Docker
+context. The [Dockerfile-specific ignore rules](https://docs.docker.com/build/concepts/context/#dockerignore-files)
+take precedence over root rules. They now explicitly admit the two context
+control files and native helpers. The collector verifies the reviewed specific
+rule-file digest as well as root rules and includes both in recipe identity;
+changed exclusions require review instead of silently changing native inputs.
+
+The same existing, owned Buildx builder now runs only the real `native-inputs`
+target before the heavy native host build, with a 180-second interrupt deadline,
+a further 10-second force-exit allowance, and the
+official [cache-only exporter](https://docs.docker.com/build/exporters/#cache-only-export).
+The pinned Node stage validates the actual filtered context; this does not run
+Rust or replace final image/installation checks. Its log is retained, and the
+job's total budget is unchanged. Client exit does not prove remote solve
+termination; the existing owned-builder post cleanup remains responsible for it.
+This adds an observed preflight cost to the
+whole job; the later candidate-build phase is not an independent cold benchmark.
+
+The probe document moved into the already admitted `skills/` context tree so
+Docker really sees the noise. It remains outside native inputs and every final
+image COPY source. The guard now also rejects future directory COPY consumers.
+No new root glob or broad context inclusion is added. Probe artifacts remain
+mandatory after an attempted probe; an earlier build failure no longer creates
+a second misleading missing-probe-artifact error.
+
+The correction passes 29 focused projection/probe/cost tests and syntax/whitespace
+checks locally. The new real preflight, final installation, immutable ELF binding
+and actual cached-RUN proof remain pending on the corrected hosted head.

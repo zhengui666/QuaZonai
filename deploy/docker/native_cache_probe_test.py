@@ -99,15 +99,20 @@ class ProbeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='probe noise ') as temporary:
             root = Path(temporary)
             (root / 'deploy/docker').mkdir(parents=True)
+            (root / 'skills').mkdir()
             source = Path(__file__).with_name('Dockerfile').read_text()
             (root / 'deploy/docker/Dockerfile').write_text(source)
             item = probe.add_noise(root, 'abc')
+            self.assertTrue(item['path'].startswith('skills/'))
             self.assertTrue((root / item['path']).is_file())
             with self.assertRaises(FileExistsError):
                 probe.add_noise(root, 'abc')
             (root / 'deploy/docker/Dockerfile').write_text(source + '\nCOPY *.md /opt/docs/\n')
             with self.assertRaisesRegex(ValueError, 'final image'):
                 probe.add_noise(root, 'def')
+            (root / 'deploy/docker/Dockerfile').write_text(source + '\nCOPY skills /opt/skills/\n')
+            with self.assertRaisesRegex(ValueError, 'final image'):
+                probe.add_noise(root, 'ghi')
 
     def test_command_timeout_and_log_cap_are_real_and_bounded(self):
         with tempfile.TemporaryDirectory() as temporary:

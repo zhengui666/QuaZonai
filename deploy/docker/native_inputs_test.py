@@ -88,6 +88,7 @@ class NativeInputsTests(unittest.TestCase):
             ('apps/job/src/main.rs', lambda s: s + '\nconst X: &str = include_str!("../../../README.md");\n'),
             ('apps/job/src/main.rs', lambda s: s + '\nconst X: &str = include_str!(concat!("x", "y"));\n'),
             ('.dockerignore', lambda s: s + '\ncrates\n'),
+            ('deploy/docker/Dockerfile.dockerignore', lambda s: s + '\ncrates/**\n'),
         ]
         for name, change in edits:
             with self.subTest(path=name):
@@ -116,6 +117,18 @@ class NativeInputsTests(unittest.TestCase):
             self.assertNotEqual(self.invoke('identity', self.root, check=False).returncode, 0)
         finally:
             file.write_bytes(before)
+
+    def test_context_control_files_are_admitted_and_required(self):
+        rules = (self.root / 'deploy/docker/Dockerfile.dockerignore').read_text().splitlines()
+        for name in ('.dockerignore', 'deploy/docker/Dockerfile.dockerignore'):
+            self.assertIn('!' + name, rules)
+            file = self.root / name
+            before = file.read_bytes()
+            try:
+                file.unlink()
+                self.assertNotEqual(self.invoke('prepare', self.root, self.root.parent / 'missing-control', check=False).returncode, 0)
+            finally:
+                file.write_bytes(before)
 
     def test_symlink_input_and_ancestor_fail(self):
         for name in ('apps/job/src/main.rs', 'apps'):

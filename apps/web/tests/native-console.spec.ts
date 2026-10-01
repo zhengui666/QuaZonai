@@ -54,7 +54,7 @@ async ({ page, context }) => {
       const items: { items: Schema['ProjectView'][] } = await listing.json();
       expect(items.items).toHaveLength(1);
       expect(items.items[0]).toEqual(saved.receipt.resource);
-      await expect(page.getByRole('row').filter({ hasText: saved.receipt.resource.name })).toHaveCount(1);
+      await expect(page.getByRole('article').filter({ hasText: saved.receipt.resource.name })).toHaveCount(1);
     });
 
     await test.step('retain the theme and expose no legacy login operations', async () => {
@@ -135,7 +135,7 @@ async ({ page, context }) => {
     expect(receipt.schema_version).toBe(1);
     expect(receipt).toEqual({ ...originalReceipt, replayed: true });
     expect(retried.request().postDataJSON()).toEqual(initialRequest);
-    await expect(page.getByRole('row').filter({ hasText: name })).toHaveCount(1);
+    await expect(page.getByRole('article').filter({ hasText: name })).toHaveCount(1);
     const response = await page.request.get('/api/v2/projects?limit=100');
     expect(response.status()).toBe(200);
     const listing: { items: { id: string; name: string; revision: unknown; state: string }[] } = await response.json();
@@ -178,23 +178,26 @@ async ({ page, context }) => {
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
         await page.getByRole('button', { name: '取消', exact: true }).click();
         await expect(page.getByLabel('研究名称')).toHaveCount(0);
-        await expect(page.locator('.ant-table-thead').getByRole('columnheader')).toHaveText(viewport.width < 768
-          ? ['研究项目'] : ['研究项目', '状态', 'Brief', '更新于', '操作']);
+        await expect(page.getByRole('heading', { name: '研究项目', exact: true })).toBeVisible();
+        await expect(page.getByRole('article')).toHaveCount(1);
         if (viewport.width < 768) {
-          const row = page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
+          const row = page.getByRole('article').filter({ has: page.getByRole('button', { name, exact: true }) });
           await expect(row).toHaveCount(1);
+          // The workbench permits normal vertical scrolling; the complete card
+          // must fit once brought into view, without horizontal clipping.
+          await row.scrollIntoViewIfNeeded();
           // Assert every complete value/action before click() can auto-scroll
           // a clipped control. Page overflow alone misses an inner table scroll.
           for (const control of [
             row.getByRole('button', { name, exact: true }),
             row.getByText('草稿', { exact: true }),
-            row.getByText('尚未选择', { exact: true }),
+            row.getByText('下一步：建立研究 Brief', { exact: true }),
             row.locator('time'),
             row.getByRole('button', { name: '编辑', exact: true }),
           ]) await expect(control).toBeInViewport({ ratio: 1 });
           await expect(row.locator('time')).toHaveAttribute('datetime', originalProject.updated_at);
           await expect(row.locator('time')).toHaveText(/\d/);
-          await expect.poll(() => page.locator('.ant-table-content').evaluate(element =>
+          await expect.poll(() => row.evaluate(element =>
             element.scrollWidth <= element.clientWidth + 1 && element.scrollLeft === 0)).toBe(true);
 
           await row.getByRole('button', { name: '编辑', exact: true }).click();
@@ -238,8 +241,10 @@ async ({ page, context }) => {
           await row.getByRole('button', { name, exact: true }).click();
           await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
           await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+          await row.scrollIntoViewIfNeeded();
           await expect(row.getByRole('button', { name: '编辑', exact: true })).toBeInViewport({ ratio: 1 });
         }
+        await page.evaluate(() => window.scrollTo(0, 0));
         // Capture only the project surface, never browser session material.
         await expect(page.getByLabel('动态验证码')).toHaveCount(0);
         await expect(page.getByLabel('一次性初始化凭据')).toHaveCount(0);
