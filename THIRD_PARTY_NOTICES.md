@@ -41,6 +41,13 @@ A dependency inventory is not a completed license audit. Before distribution, in
 
 ## Dependency inventory
 
+The optional offline archive preparation path retains the original license texts
+for its 16 added registry package versions in
+[archive preparation notices](licenses/archive-source/README.md). Exact duplicate
+texts are stored once, with every package mapped to its applicable texts. The
+application image includes these files and verifies their recorded byte digests.
+This scoped addition does not claim a complete repository license audit.
+
 The committed Cargo/npm lockfiles identify resolved dependency versions. Use
 `cargo tree --locked` and the relevant npm lockfile to inspect a build's graph;
 verify upstream license texts and redistribution obligations before distribution.

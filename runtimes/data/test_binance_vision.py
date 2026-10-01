@@ -471,7 +471,7 @@ class BundleTest(unittest.TestCase):
                 self.freeze()
             self.assertFalse((self.output / "archive.json").exists())
 
-    def test_cli_offline_plan_inspect_freeze_verify_and_absent_capabilities(self):
+    def test_standalone_cli_remains_offline_and_lifecycle_conversion_is_separate(self):
         args = ["--symbol", "BTCUSDT", "--base-asset", "BTC", "--quote-asset", "USDT",
                 "--day", "2025-01-01", "--interval", "1m"]
         for command, options in [("plan", args), ("inspect", args + ["--archive", str(self.archive), "--checksum", str(self.checksum)]),
@@ -489,7 +489,10 @@ class BundleTest(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 vision.main([command])
         self.assertNotIn(PROVIDER_ID := vision.PROVIDER["id"], providers.PROVIDERS)
-        self.assertNotIn(PROVIDER_ID, source_plugins.PLUGINS)
+        plugin = source_plugins.PLUGINS[PROVIDER_ID]
+        self.assertNotIn("download", plugin.capabilities)
+        self.assertEqual(set(plugin.capabilities), {"plan", "inspect", "freeze", "verify", "convert", "prepare"})
+        self.assertTrue(all(not capability.public_network for capability in plugin.capabilities.values()))
 
     def test_old_acquisition_contract_remains_independent(self):
         old = acquire.plan("coinbase-candles", providers.Selection("BTC-USD", 0, 60, 60))

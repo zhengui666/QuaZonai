@@ -26,6 +26,7 @@ import urllib.error
 import urllib.request
 import urllib.parse
 import uuid
+import zipfile
 
 import codex
 import manage
@@ -515,6 +516,42 @@ def source_fixture(root: Path, plan: dict) -> None:
     (root / 'declaration.json').write_bytes(encoded(declaration))
 
 
+def archive_source_fixture(root: Path, template: Path, plan: dict) -> None:
+    """Independent synthetic ZIP inputs; the installed freeze tool publishes the bundle."""
+    assert plan['selection']['day'] == '2024-01-01' and plan['source_timestamp_unit'] == 'ms'
+    start = int(plan['start_ns']) // 1_000_000
+    rows = [[str(start + index * 60000), '42000.01', '42001.02', '41999.00', '42000.99',
+             '0.10000001', str(start + (index + 1) * 60000 - 1), '4200.10', '3', '0.05', '2100.00', '0']
+            for index in range(3)]
+    body = ('\n'.join(','.join(row) for row in rows) + '\n').encode('ascii')
+    archive = root / plan['archive_name']
+    with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as writer:
+        writer.writestr(plan['member_name'], body)
+    (root / (plan['archive_name'] + '.CHECKSUM')).write_text(
+        f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {plan['archive_name']}\n")
+    provenance = {'kind': 'SYNTHETIC', 'retrieval': {
+        'checksum': {'started_at': '2024-01-02T00:00:00Z', 'completed_at': '2024-01-02T00:00:00Z'},
+        'archive': {'started_at': '2024-01-02T00:00:00Z', 'completed_at': '2024-01-02T00:00:01Z'}}}
+    (root / 'provenance.json').write_text(json.dumps(provenance))
+    instruments = json.loads((template / 'instruments.json').read_bytes())
+    instruments[0]['CurrencyPair'].update(id='BTCUSDT.BINANCE', raw_symbol='BTCUSDT', quote_currency='USDT')
+    (root / 'instruments.json').write_text(json.dumps(instruments))
+    selection = json.loads((template / 'selection.json').read_bytes())
+    selection['dataset_revision_id'] = fixture_id()
+    selection['selection'].update(bar_types=['BTCUSDT.BINANCE-1-MINUTE-LAST-EXTERNAL'],
+        event_start_ns=str(int(plan['start_ns']) + 60_000_000_000),
+        event_end_ns=str(int(plan['start_ns']) + 240_000_000_000))
+    (root / 'selection.json').write_text(json.dumps(selection))
+    declaration = json.loads((template / 'declaration.json').read_bytes())
+    declaration.update(registered_ref='synthetic-installed-archive', native_snapshot_ref='synthetic-installed-archive-discovery',
+        event_start='2024-01-01T00:01:00Z', event_end='2024-01-01T00:04:00Z',
+        provenance_reference='SYNTHETIC_INSTALLED_ARCHIVE_TEST',
+        availability_provenance='Explicit synthetic archive receipt; not an attested market observation')
+    declaration['universe']['name'] = 'Synthetic installed BTCUSDT archive fixture'
+    declaration['universe']['membership'][0]['instrument_id'] = 'BTCUSDT.BINANCE'
+    (root / 'declaration.json').write_text(json.dumps(declaration))
+
+
 def source_container_ids(config: dict, invocation: str) -> list[str]:
     ids = manage.run(['docker', 'ps', '--all', '--quiet', '--no-trunc',
                       '--filter', 'label=io.quazonai.source.invocation=' + invocation,
@@ -721,6 +758,60 @@ def verify_installed_sources(config: dict) -> None:
         verify_source_output_reuse(config, root, arguments, [inputs, converted], prepared_parent)
         assert (output / 'catalog-metadata.json').read_bytes() == original
         assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest for path, digest in frozen.items())
+        archive_plugin = 'binance-vision-spot-klines'
+        archive_inventory = next(item for item in inventory if item['id'] == archive_plugin)
+        assert set(archive_inventory['capabilities']) == {'plan', 'inspect', 'freeze', 'verify', 'convert', 'prepare'}
+        assert archive_inventory['public_network_operations'] == []
+        archive_inputs, frozen_parent = root / 'archive inputs', root / 'archive frozen'
+        archive_inputs.mkdir()
+        frozen_parent.mkdir()
+        selection_args = ['--symbol', 'BTCUSDT', '--base-asset', 'BTC', '--quote-asset', 'USDT',
+                          '--day', '2024-01-01', '--interval', '1m']
+        archive_plan = invoke_source(['plan', archive_plugin, *selection_args])
+        archive_source_fixture(archive_inputs, inputs, archive_plan)
+        original_hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                           for path in archive_inputs.iterdir() if path.is_file()}
+        bundle = frozen_parent / 'bundle'
+        manifest = invoke_source(['freeze', archive_plugin, *selection_args,
+            '--archive', str(archive_inputs / archive_plan['archive_name']),
+            '--checksum', str(archive_inputs / (archive_plan['archive_name'] + '.CHECKSUM')),
+            '--provenance', str(archive_inputs / 'provenance.json'), '--output', str(bundle)],
+            [archive_inputs], frozen_parent)
+        assert manifest['provenance_kind'] == 'SYNTHETIC' and manifest['counts']['rows'] == '3'
+        assert (bundle / 'raw/archive.zip').read_bytes() == (archive_inputs / archive_plan['archive_name']).read_bytes()
+        original_bundle_hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                                  for path in bundle.rglob('*') if path.is_file()}
+        verified_archive = invoke_source(['verify', archive_plugin, '--acquisition', str(bundle / 'archive.json')], [bundle])
+        assert verified_archive['integrity'] == 'VERIFIED' and verified_archive['provenance_status'] == 'SYNTHETIC'
+        archive_native = converted_parent / 'archive-native'
+        imported = invoke_source(['convert', archive_plugin, '--acquisition', str(bundle / 'archive.json'),
+            '--instruments', str(archive_inputs / 'instruments.json'), '--output', str(archive_native)],
+            [bundle, archive_inputs], converted_parent)
+        assert imported['native_report']['bars'] == 3 and imported['native_report']['native_readback_verified'] is True
+        assert imported['native_report']['source_provenance_kind'] == 'SYNTHETIC'
+        assert imported['native_report']['receipt_basis'] == {
+            'kind': 'SYNTHETIC', 'source_clock': 'provenance.retrieval.archive.completed_at',
+            'declared_observed_at': '2024-01-02T00:00:01Z', 'ts_init_ns': '1704153601000000000'}
+        assert imported['admission']['research_qualified'] is False
+        archive_prepared = prepared_parent / 'archive-discovery'
+        archive_arguments = ['prepare', archive_plugin, '--native-output', str(archive_native),
+            '--declaration', str(archive_inputs / 'declaration.json'), '--selection', str(archive_inputs / 'selection.json'),
+            '--output', str(archive_prepared)]
+        archive_handoff = invoke_source(archive_arguments, [archive_inputs, archive_native], prepared_parent)
+        assert archive_handoff['status'] == 'CATALOG_PREPARED'
+        assert archive_handoff['catalog_registration'] == {
+            'root': str(archive_prepared / 'catalog'), 'metadata_file': str(archive_prepared / 'catalog-metadata.json')}
+        archive_metadata = (archive_prepared / 'catalog-metadata.json').read_bytes()
+        assert archive_handoff['metadata_bytes'] == len(archive_metadata)
+        assert archive_handoff['metadata_sha256'] == hashlib.sha256(archive_metadata).hexdigest()
+        archived = json.loads(archive_metadata)
+        assert archived['row_count'] == '3' and archived['origin'] == 'FIXTURE' and archived['pit_status'] == 'UNVERIFIED'
+        assert archived['available_through'] == '2024-01-02T00:00:01Z'
+        assert archive_handoff['producer'] == {'version': config['version'], 'revision': config['revision'], 'image': config['image']}
+        verify_source_output_reuse(config, root, archive_arguments, [archive_inputs, archive_native], prepared_parent)
+        assert (archive_prepared / 'catalog-metadata.json').read_bytes() == archive_metadata
+        assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
+                   for path, digest in {**original_hashes, **original_bundle_hashes}.items())
         assert processor_identity(config) == before
         complete = True
     finally:
@@ -1055,6 +1146,7 @@ def main() -> None:
                 "one_line_installer_and_cli": "passed" if args.installer_assets else "not_run",
                 "install_update_restore": "passed", "native_runtime_compile_restart": "passed",
                 "installed_source_conversion_preparation": "passed",
+                "installed_archive_freeze_conversion_preparation": "passed",
                 "source_successful_invocation_terminal_observation": "passed",
                 "source_real_docker_timeout_cancellation": "not_run",
                 "host_build_commands": 0,
