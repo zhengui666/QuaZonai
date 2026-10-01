@@ -68,7 +68,8 @@ async ({ page, context }) => {
     return;
   }
 
-  const name = `Native browser ${randomUUID()}`;
+  // Exercise the 120-character limit, including an unbroken segment on mobile.
+  const name = `Native browser ${randomUUID()} ${'x'.repeat(68)}`;
   let projectId: string;
   let initialKey: string | undefined;
   let initialRequest: Schema['ProjectCreate'] | undefined;
@@ -162,6 +163,8 @@ async ({ page, context }) => {
   });
 
   await test.step('keep both themes and the local editor inside three viewports', async () => {
+    if (!checkpoint) throw new Error('The original project is required for responsive editing checks');
+    const originalProject = checkpoint.receipt.resource;
     for (const mode of ['light', 'dark']) {
       if (await page.locator('html').getAttribute('data-theme') !== mode) {
         await page.getByRole('button', { name: mode === 'dark' ? '切换为深色主题' : '切换为浅色主题' }).click();
@@ -175,6 +178,68 @@ async ({ page, context }) => {
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
         await page.getByRole('button', { name: '取消', exact: true }).click();
         await expect(page.getByLabel('研究名称')).toHaveCount(0);
+        await expect(page.locator('.ant-table-thead').getByRole('columnheader')).toHaveText(viewport.width < 768
+          ? ['研究项目'] : ['研究项目', '状态', 'Brief', '更新于', '操作']);
+        if (viewport.width < 768) {
+          const row = page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
+          await expect(row).toHaveCount(1);
+          // Assert every complete value/action before click() can auto-scroll
+          // a clipped control. Page overflow alone misses an inner table scroll.
+          for (const control of [
+            row.getByRole('button', { name, exact: true }),
+            row.getByText('草稿', { exact: true }),
+            row.getByText('尚未选择', { exact: true }),
+            row.locator('time'),
+            row.getByRole('button', { name: '编辑', exact: true }),
+          ]) await expect(control).toBeInViewport({ ratio: 1 });
+          await expect(row.locator('time')).toHaveAttribute('datetime', originalProject.updated_at);
+          await expect(row.locator('time')).toHaveText(/\d/);
+          await expect.poll(() => page.locator('.ant-table-content').evaluate(element =>
+            element.scrollWidth <= element.clientWidth + 1 && element.scrollLeft === 0)).toBe(true);
+
+          await row.getByRole('button', { name: '编辑', exact: true }).click();
+          const editor = page.getByRole('dialog', { name: '编辑研究项目', exact: true });
+          const draftName = `Unsaved ${name.slice(0, 112)}`;
+          const draftDescription = 'Unsaved mobile editor text; no research qualification claims.';
+          await editor.getByLabel('研究名称').fill(draftName);
+          await editor.getByLabel('研究说明', { exact: true }).fill(draftDescription);
+          for (const width of [768, 1440, 390]) {
+            await page.setViewportSize({ width, height: viewport.height });
+            await expect(editor).toHaveCount(1);
+            await expect(editor.getByLabel('研究名称')).toHaveValue(draftName);
+            await expect(editor.getByLabel('研究说明', { exact: true })).toHaveValue(draftDescription);
+          }
+
+          // The real second tab changes the stored theme while the first tab's
+          // modal editor remains open; no forced click through its mask.
+          const themePage = await context.newPage();
+          try {
+            await themePage.goto('/');
+            await themePage.getByRole('button', { name: mode === 'light' ? '切换为深色主题' : '切换为浅色主题' }).click();
+            await expect(page.locator('html')).toHaveAttribute('data-theme', mode === 'light' ? 'dark' : 'light');
+            await expect(editor.getByLabel('研究名称')).toHaveValue(draftName);
+            await expect(editor.getByLabel('研究说明', { exact: true })).toHaveValue(draftDescription);
+            await themePage.getByRole('button', { name: mode === 'light' ? '切换为浅色主题' : '切换为深色主题' }).click();
+            await expect(page.locator('html')).toHaveAttribute('data-theme', mode);
+          } finally {
+            await themePage.close();
+          }
+
+          await editor.getByRole('button', { name: '取消', exact: true }).click();
+          const discard = page.getByRole('dialog', { name: '放弃尚未保存的修改？', exact: true });
+          await discard.getByRole('button', { name: '继续编辑', exact: true }).click();
+          await expect(editor.getByLabel('研究名称')).toHaveValue(draftName);
+          await editor.getByRole('button', { name: '取消', exact: true }).click();
+          await discard.getByRole('button', { name: '放弃修改', exact: true }).click();
+          await expect(editor).toHaveCount(0);
+          const unchanged = await page.request.get(`/api/v2/projects/${projectId}`);
+          expect(unchanged.status()).toBe(200);
+          expect(await unchanged.json()).toEqual(originalProject);
+          await row.getByRole('button', { name, exact: true }).click();
+          await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+          await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+          await expect(row.getByRole('button', { name: '编辑', exact: true })).toBeInViewport({ ratio: 1 });
+        }
         // Capture only the project surface, never browser session material.
         await expect(page.getByLabel('动态验证码')).toHaveCount(0);
         await expect(page.getByLabel('一次性初始化凭据')).toHaveCount(0);

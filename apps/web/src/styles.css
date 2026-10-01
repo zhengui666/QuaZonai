@@ -21,6 +21,8 @@ body { margin: 0; min-width: 320px; }
 .update-bar:empty { display: none; }
 .update-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; padding-inline: 16px; background: var(--ant-color-bg-container); }
 .table-title { white-space: normal; height: auto; min-height: 44px; text-align: left; }
+.project-summary { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.project-summary .table-title { width: 100%; padding-inline: 0; justify-content: flex-start; overflow-wrap: anywhere; }
 .state-select { width: 220px; max-width: 100%; }
 .skip-link { position: absolute; left: -10000px; z-index: 2000; background: var(--ant-color-bg-container); padding: 12px; }
 .skip-link:focus { left: 16px; top: 16px; }
