@@ -3,5 +3,5 @@
   "version": "2.0.0-dev.1",
   "private": true,
   "description": "Pinned official Codex CI fixture; runtime discovers the local executable from PATH",
-  "dependencies": {"@openai/codex": "0.156.1"}
+  "dependencies": {"@openai/codex": "0.159.0"}
 }
