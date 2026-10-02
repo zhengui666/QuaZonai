@@ -81,6 +81,22 @@ class NativeInputsTests(unittest.TestCase):
         finally:
             file.write_text(before)
 
+    def test_each_link_strip_setting_invalidates_producer_identity(self):
+        file = self.root / 'deploy/docker/native-build.sh'
+        before = file.read_text()
+        original = self.identity()
+        try:
+            for package in ('server', 'runtime'):
+                with self.subTest(package=package):
+                    setting = f'profile.release.package.{package}.strip="symbols"'
+                    self.assertEqual(before.count(setting), 1)
+                    file.write_text(before.replace(setting, setting.replace('symbols', 'none')))
+                    changed = self.identity()
+                    self.assertNotEqual(changed['recipe_sha256'], original['recipe_sha256'])
+                    self.assertNotEqual(changed['input_sha256'], original['input_sha256'])
+        finally:
+            file.write_text(before)
+
     def test_unsupported_workspace_config_paths_and_dynamic_includes_fail(self):
         edits = [
             ('Cargo.toml', lambda s: s.replace('resolver = "2"', 'resolver = "2"\nexclude = ["apps/elsewhere"]')),

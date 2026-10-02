@@ -7,6 +7,7 @@ import math
 import os
 from pathlib import Path
 import re
+import resource
 import stat
 import subprocess
 import tempfile
@@ -17,8 +18,10 @@ import operator_cost as cost
 import operator_elf_forensics as forensics
 
 
-OLD_REVISION = 'b58ec6d153d5b211b2941bf0d603ea3a3108a68b'
+OLD_REVISION = 'dc9c8cf30704781615ba6524f50368d0c148d9b3'
 PRIOR_PACKAGING_REVISION = '56aad24e0c73b31a9255e37adaa0abcd812a7c42'
+REFERENCE_REVISION = '183fe2c4bfec6a04bece3a550cc705217ab391d3'
+REFERENCE_IMAGE = 'ghcr.io/zhengui666/quazonai@sha256:a01c07cc9ce2ce0132d85e8bce28466f8784178b9dbd052119844085d43b76f5'
 REPORT_SCHEMA = 3
 DIAGNOSTIC_SCHEMA = 1
 DIAGNOSTIC_KIND = 'application-elf-diagnostic'
@@ -361,7 +364,7 @@ def pair_archive_evidence(directory):
     return shared
 
 
-def measure(old, candidate, revision, variant, directory, version, builder_image, deadline=None, *, application_only=False, prestrip=False):
+def measure(old, candidate, revision, variant, directory, version, builder_image, deadline=None, *, application_only=False, prestrip=False, compatibility=False):
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise ValueError('Run this expensive comparison only in its GitHub-hosted workflow.')
     if not re.fullmatch(r'moby/buildkit@sha256:[0-9a-f]{64}', builder_image):
@@ -456,6 +459,8 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
                 if detail['forensic_recipe']['production_dockerfile_sha256'] != recipe['dockerfile_sha256'] or \
                         detail['forensic_recipe']['context_rules_sha256'] != recipe['common_inputs_sha256']['deploy/docker/Dockerfile.dockerignore']:
                     raise ValueError('Forensic prefix or context rules differ from the verified production recipe.')
+                if detail['forensic_recipe']['native_build_sha256'] != recipe['native_build_sha256']:
+                    raise ValueError('Retained native helper differs from the verified source recipe.')
                 command[command.index('--file') + 1] = str(dockerfile)
                 command[command.index('--target') + 1] = 'application-forensics'
             write_json(directory / 'build-command.json', command)
@@ -479,6 +484,26 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
                     observed = detail['application_diagnostics'][binary]
                     if (original['sha256'], original['size_bytes']) != (observed['sha256'], observed['size_bytes']):
                         raise ValueError('Complete coverage differs from the retained original ELF identity.')
+                if compatibility:
+                    detail['native_compatibility'] = {}
+                    for binary in ('server', 'runtime'):
+                        native = detail['native_compatibility'][binary] = forensics.observe_native(
+                            directory / 'application-elf' / binary, directory / 'forensics', binary + '-stripped',
+                            detail['forensic_coverage']['binaries'][binary + '-stripped'],
+                            (directory / 'forensics' / (binary + '-stripped-readelf.txt')).read_text())
+                        native['prestrip'] = forensics.observe_native(
+                            directory / 'forensics' / binary, directory / 'forensics', binary + '-prestrip',
+                            detail['forensic_coverage']['binaries'][binary + '-prestrip'],
+                            (directory / 'forensics' / (binary + '-prestrip-readelf.txt')).read_text())
+                        native['link_time_strip_checks'] = (
+                            native['prestrip']['status'] == 'complete' and
+                            native['prestrip'].get('structure', {}).get('static_symbols_absent') is True and
+                            native.get('structure', {}).get('static_symbols_absent') is True and
+                            native['prestrip']['structure']['build_id'] == native.get('structure', {}).get('build_id') and
+                            native['prestrip']['structure']['section_sha256'] == native.get('structure', {}).get('section_sha256') and
+                            native['prestrip'].get('loader') == native.get('loader'))
+                    if any(item['status'] != 'complete' or not item['link_time_strip_checks'] for item in detail['native_compatibility'].values()):
+                        raise ValueError('Producer dynamic/unwind or link-time strip checks are blocked.')
             result['diagnostic_status'] = 'complete'
             return result
         command = build_command(source, owner, full_image, selected_revision, version)
@@ -547,6 +572,100 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
     return result
 
 
+
+def reference_native(directory, deadline):
+    """Extract the exact released image without starting it or deleting shared images."""
+    directory.mkdir(parents=True, exist_ok=True)
+    owner = 'operator-measure-' + uuid.uuid4().hex
+    resources = {'owner': owner, 'builder_id': None, 'containers': {}, 'images': {}}
+    result = {'qualification': 'DIAGNOSTIC_ONLY', 'status': 'running', 'image': REFERENCE_IMAGE,
+              'revision': REFERENCE_REVISION, 'native': {}, 'coverage': {}}
+    previous = cost.COMMAND_DEADLINE, cost.CLEANUP_DEADLINE
+    cost.COMMAND_DEADLINE, cost.CLEANUP_DEADLINE = deadline - DIAGNOSTIC_CLEANUP_SECONDS, deadline
+    write_json(directory / 'owned-resources.json', resources)
+    try:
+        if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
+            raise ValueError('Released-reference extraction requires the GitHub-hosted diagnostic.')
+        precheck = cost.observe()
+        docker_root = cost.run(['docker', 'info', '--format', '{{.DockerRootDir}}'])
+        precheck['docker_free_bytes'] = cost.shutil.disk_usage(docker_root).free
+        precheck['required_free_bytes'] = MIN_FREE_BYTES
+        write_json(directory / 'precheck.json', precheck)
+        if min(precheck['disk_free_bytes'], precheck['docker_free_bytes']) < MIN_FREE_BYTES:
+            raise ValueError('Reference pull requires at least 40 GB free; shared images are preserved.')
+        cost.run(['docker', 'pull', '--platform', 'linux/amd64', REFERENCE_IMAGE])
+        image = json.loads(cost.run(['docker', 'image', 'inspect', REFERENCE_IMAGE]))[0]
+        if (image.get('Os'), image.get('Architecture')) != ('linux', 'amd64') or \
+                (image['Config'].get('Labels') or {}).get('org.opencontainers.image.revision') != REFERENCE_REVISION or \
+                REFERENCE_IMAGE not in image.get('RepoDigests', []) or not re.fullmatch(r'sha256:[0-9a-f]{64}', image['Id']):
+            raise ValueError('Released reference digest, revision or platform is not verified.')
+        result['image_identity'] = image['Id']
+        name = owner + '-extract-reference'
+        container = cost.run(['docker', 'create', '--name', name, '--label', 'quazonai.measurement=' + owner, image['Id']])
+        if not re.fullmatch(r'[0-9a-f]{64}', container):
+            raise ValueError('Reference extraction container has no verified identity.')
+        resources['containers'][name] = container
+        write_json(directory / 'owned-resources.json', resources)
+        remaining = forensics.MAX_REFERENCE_ELF_BYTES
+        for binary in ('server', 'runtime'):
+            path = directory / binary
+            def bound_copy():
+                resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+                resource.setrlimit(resource.RLIMIT_FSIZE, (remaining, remaining))
+            if remaining <= 0 or path.exists():
+                raise ValueError('Reference original-byte allowance is exhausted or output exists.')
+            subprocess.run(['docker', 'cp', container + ':/opt/quazonai/bin/' + binary, str(path)],
+                           check=True, capture_output=True, timeout=cost.command_timeout(), preexec_fn=bound_copy)
+            if not stat.S_ISREG(path.lstat().st_mode) or not 0 < path.stat().st_size <= remaining:
+                raise ValueError('Reference extraction did not yield a bounded regular original ELF.')
+            remaining -= path.stat().st_size
+            headers = forensics.bounded_readelf(path, directory / (binary + '-readelf.txt'))
+            result['coverage'][binary] = forensics.coverage(path, headers)
+            if len(json.dumps(result['coverage'][binary], indent=2).encode()) > 256 * 1024:
+                raise ValueError('Released-reference coverage exceeded its metadata allowance.')
+            result['native'][binary] = forensics.observe_native(path, directory, binary, result['coverage'][binary], headers)
+        if any(value['status'] != 'complete' for value in result['native'].values()):
+            raise ValueError('Released-reference dynamic/unwind evidence is incomplete.')
+        result['status'] = 'complete'
+    except Exception as error:
+        result['status'] = 'blocked'
+        result['error'] = type(error).__name__ + ': ' + str(error)
+    finally:
+        cost.COMMAND_DEADLINE = deadline
+        result['cleanup'] = cleanup_owned(directory, resources)
+        if result['cleanup']['status'] != 'complete':
+            result['status'] = 'blocked'
+        write_json(directory / 'report.json', result)
+        cost.COMMAND_DEADLINE, cost.CLEANUP_DEADLINE = previous
+    return result
+
+
+def producer_checks(reference, first, second, observations):
+    reasons, details = [], {}
+    try:
+        if reference['status'] != 'complete' or reference['cleanup']['status'] != 'complete':
+            reasons.append('released reference is unavailable')
+        for binary in ('server', 'runtime'):
+            expected = reference['native'][binary]
+            sides = [report['hosted_comparison']['native_compatibility'][binary] for report in (first, second)]
+            details[binary] = {'reference_original_sha256': expected['original_sha256'],
+                'loader_compatible': all(value['loader'] == expected['loader'] for value in sides),
+                'dynamic_unwind_and_strip_complete': all(value['status'] == 'complete' and value['link_time_strip_checks'] for value in sides),
+                'prestrip_aa_equal': observations['binaries'][binary + '-prestrip']['whole_equal'],
+                'stripped_aa_equal': observations['binaries'][binary + '-stripped']['whole_equal'],
+                'raw_section_sha256': {'reference': expected['structure']['section_sha256'],
+                                      'a1': sides[0]['structure']['section_sha256'],
+                                      'a2': sides[1]['structure']['section_sha256']}}
+            for field in ('loader_compatible', 'dynamic_unwind_and_strip_complete', 'prestrip_aa_equal', 'stripped_aa_equal'):
+                if details[binary][field] is not True:
+                    reasons.append(binary + ': ' + field)
+    except (KeyError, TypeError) as error:
+        reasons.append('missing native compatibility evidence: ' + str(error))
+    return {'qualification': 'DIAGNOSTIC_ONLY', 'status': 'blocked' if reasons else 'complete',
+            'reasons': reasons, 'binaries': details,
+            'scope': 'Decoded loader semantics and unwind evidence versus the exact released reference; raw section hashes are observations, never normalized.'}
+
+
 def diagnostic_pair(left, right, relation):
     """Observe original whole-ELF equality; this can never qualify packaging."""
     reasons, binaries = [], {}
@@ -591,14 +710,16 @@ def diagnostic_pair(left, right, relation):
             'binaries': binaries}
 
 
-def diagnose_application(old, candidate, revision, directory, version, builder_image, deadline, *, prestrip=False):
+def diagnose_application(old, candidate, revision, directory, version, builder_image, deadline, *, prestrip=False, compatibility=False):
     """Sequential A1/A2, then C only after exact A/A equality and spare budget."""
     if not math.isfinite(deadline):
         raise ValueError('Diagnostic deadline must be a finite absolute time.')
+    if compatibility and not prestrip:
+        raise ValueError('Producer compatibility requires the original pre-strip A/A mode.')
     deadline = min(deadline, time.time() + DIAGNOSTIC_SECONDS)
     directory.mkdir(parents=True, exist_ok=True)
     # Never overwrite or reuse prior repetitions, even after an interrupted run.
-    if any((directory / name).exists() for name in ('diagnostic.json', 'old-a1', 'old-a2', 'candidate')):
+    if any((directory / name).exists() for name in ('diagnostic.json', 'old-a1', 'old-a2', 'candidate', 'reference')):
         raise ValueError('Diagnostic repetitions require fresh evidence directories.')
     result = {'schema_version': DIAGNOSTIC_SCHEMA, 'report_kind': DIAGNOSTIC_KIND,
               'qualification': 'DIAGNOSTIC_ONLY', 'admissible': False, 'measurement_status': 'not-performed',
@@ -615,6 +736,10 @@ def diagnose_application(old, candidate, revision, directory, version, builder_i
     write_json(output, result)
     durations = []
     try:
+        if compatibility:
+            result['reference'] = reference_native(directory / 'reference', deadline)
+            if result['reference']['status'] != 'complete':
+                raise ValueError('Released reference could not be verified; no native builds started.')
         repetitions = [('old-a1', 'old'), ('old-a2', 'old')]
         if not prestrip:
             repetitions.append(('candidate', 'candidate'))
@@ -630,6 +755,8 @@ def diagnose_application(old, candidate, revision, directory, version, builder_i
             options = {'application_only': True}
             if prestrip:
                 options['prestrip'] = True
+            if compatibility:
+                options['compatibility'] = True
             report = measure(old, candidate, revision, variant, directory / name, version, builder_image, deadline, **options)
             durations.append(time.monotonic() - started)
             result['repetitions'][name] = report
@@ -660,6 +787,12 @@ def diagnose_application(old, candidate, revision, directory, version, builder_i
                     if any(value['status'] != 'complete' for value in result['forensic_observations']['ordered_symbol_text'].values()):
                         result['diagnostic_status'] = 'blocked'
                         result['stop_reason'] = 'Original ordered symbol comparison unavailable; partial evidence retained'
+                    if compatibility:
+                        result['producer_checks'] = producer_checks(result['reference'], result['repetitions']['old-a1'], report,
+                                                                    result['forensic_observations'])
+                        if result['producer_checks']['status'] != 'complete':
+                            result['diagnostic_status'] = 'blocked'
+                            result['stop_reason'] = 'Fixed-producer A/A or dynamic/unwind compatibility checks failed'
                     break
                 if not aa['original_elf_equal']:
                     result['stop_reason'] = 'A/A original ELF mismatch' if aa['status'] == 'observed' else 'A/A controls failed'
@@ -895,6 +1028,7 @@ def main():
     diagnostic.add_argument('--builder-image', required=True)
     diagnostic.add_argument('--deadline', type=float, required=True)
     diagnostic.add_argument('--prestrip-aa-only', action='store_true', help='Retain original pre-strip evidence for A/A only; never qualify packaging.')
+    diagnostic.add_argument('--verify-producer-compatibility', action='store_true')
     verification = subcommands.add_parser('verify-sources')
     verification.add_argument('--old-source', type=Path, required=True)
     verification.add_argument('--candidate-source', type=Path, required=True)
@@ -927,7 +1061,7 @@ def main():
     elif args.command == 'diagnose-application':
         result = diagnose_application(args.old_source.resolve(), args.candidate_source.resolve(), args.revision,
                                       args.directory.resolve(), args.version, args.builder_image, args.deadline,
-                                      prestrip=args.prestrip_aa_only)
+                                      prestrip=args.prestrip_aa_only, compatibility=args.verify_producer_compatibility)
         if 'forensic_observations' in result:
             summary = json.dumps(result['forensic_observations'], allow_nan=False)
             print(summary if len(summary.encode()) <= 64 * 1024 else 'Original forensic observations retained in diagnostic.json.')

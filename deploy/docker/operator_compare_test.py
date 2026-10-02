@@ -539,7 +539,7 @@ class ComparisonTests(unittest.TestCase):
                 docker.assert_not_called()
                 save.assert_not_called()
 
-    def measure_fixture(self, directory, variant='candidate', build_failure=False, cache=EMPTY_CACHE, free=50_000_000_000, extraction_failure=False, report_cleanup_paths=None, application_only=False, source_mismatch=False, prestrip=False, forensic_failure=False, prefix_mismatch=False):
+    def measure_fixture(self, directory, variant='candidate', build_failure=False, cache=EMPTY_CACHE, free=50_000_000_000, extraction_failure=False, report_cleanup_paths=None, application_only=False, source_mismatch=False, prestrip=False, forensic_failure=False, prefix_mismatch=False, helper_mismatch=False, compatibility=False, native_failure=False):
         old, candidate = self.reports()
         reports = {'old': old, 'candidate': candidate}
         if application_only:
@@ -591,9 +591,19 @@ class ComparisonTests(unittest.TestCase):
                     resources['containers'][owner + '-extract-application-elf'] = SHA
             return diagnostics
         forensic_recipe = {'production_dockerfile_sha256': 'f' * 64 if prefix_mismatch else SHA,
-                           'context_rules_sha256': SHA, 'capture_suffix_sha256': SHA}
-        coverage = {'binaries': {name + '-stripped': {'sha256': SHA, 'size_bytes': size}
-                                for name, size in (('server', 100), ('runtime', 200))}}
+                           'context_rules_sha256': SHA, 'capture_suffix_sha256': SHA,
+                           'native_build_sha256': 'f' * 64 if helper_mismatch else SHA}
+        coverage = {'binaries': {name + '-' + kind: {'sha256': SHA, 'size_bytes': size}
+                                for name, size in (('server', 100), ('runtime', 200)) for kind in ('stripped', 'prestrip')}}
+        def observe(path, stripped):
+            path.mkdir(parents=True, exist_ok=True)
+            for name in coverage['binaries']:
+                (path / (name + '-readelf.txt')).write_text('fixture headers')
+            return coverage
+        native = {'status': 'complete', 'loader': {'needed': ['fixture.so']},
+                  'structure': {'static_symbols_absent': not native_failure, 'build_id': SHA,
+                                'section_sha256': {'.dynsym': SHA, '.eh_frame': SHA}},
+                  'frames': {'status': 'complete'}}
         with patch.dict('os.environ', {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted'}), \
                 patch.object(comparison.cost.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(100_000_000_000, 0, free)), \
                 patch.object(comparison, 'harness_identity', return_value=candidate['hosted_comparison']['harness']), \
@@ -606,10 +616,11 @@ class ComparisonTests(unittest.TestCase):
                 patch.object(comparison.forensics, 'prepare_dockerfile', return_value=(directory / 'forensic.Dockerfile', forensic_recipe)), \
                 patch.object(comparison.forensics, 'extract_originals', return_value={'status': 'complete'},
                              side_effect=ValueError('blocked-original-byte-budget') if forensic_failure else None), \
-                patch.object(comparison.forensics, 'observe', return_value=coverage), \
+                patch.object(comparison.forensics, 'observe', side_effect=observe), \
+                patch.object(comparison.forensics, 'observe_native', side_effect=lambda *args: copy.deepcopy(native)), \
                 patch.object(comparison.cost, 'report', return_value=copy.deepcopy(reports[variant])) as report:
             result = comparison.measure(Path('old'), Path('candidate'), COMMIT, variant, directory, 'ci', BUILDKIT,
-                                        time.time() + 600, application_only=application_only, prestrip=prestrip)
+                                        time.time() + 600, application_only=application_only, prestrip=prestrip, compatibility=compatibility)
             if application_only:
                 report.assert_not_called()
             if report_cleanup_paths is not None:

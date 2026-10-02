@@ -32,9 +32,13 @@ FILES = tuple(dict.fromkeys((*FILES,
       for name in (*ELF_FILES, 'native-identity.json', 'native-input.sha256', 'native-recipe.sha256')))))
 FILES += tuple(variant + '/forensics/' + name for variant in ('old-a1', 'old-a2')
                for name in ('coverage.json', 'capture-status.txt', 'sizes.txt', 'producer-tools.txt',
-                            'forensic.Dockerfile', 'forensic.Dockerfile.dockerignore',
+                            'forensic.Dockerfile', 'forensic.Dockerfile.dockerignore', 'native-build.sh',
                             'server-prestrip-readelf.txt', 'server-stripped-readelf.txt',
-                            'runtime-prestrip-readelf.txt', 'runtime-stripped-readelf.txt'))
+                            'runtime-prestrip-readelf.txt', 'runtime-stripped-readelf.txt',
+                            'server-prestrip-loader.txt', 'server-stripped-loader.txt',
+                            'runtime-prestrip-loader.txt', 'runtime-stripped-loader.txt'))
+FILES += tuple('reference/' + name for name in ('report.json', 'owned-resources.json', 'cleanup.json', 'precheck.json',
+               'server-readelf.txt', 'runtime-readelf.txt', 'server-loader.txt', 'runtime-loader.txt'))
 
 
 def section_observations(payloads, names=None, labels=('old', 'candidate')):

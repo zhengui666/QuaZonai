@@ -9,6 +9,8 @@ import re
 import resource
 import stat
 import subprocess
+import tempfile
+import time
 
 import operator_cost as cost
 
@@ -17,10 +19,14 @@ MIB = 1024 * 1024
 MAX_EXTRA_BYTES = 1024 * MIB
 MAX_SYMBOL_BYTES = 64 * MIB
 MAX_REPORT_BYTES = 8 * MIB
-MAX_REPETITION_BYTES = (MAX_EXTRA_BYTES - MAX_REPORT_BYTES) // 2
+MAX_REFERENCE_BYTES = 128 * MIB
+MAX_REFERENCE_ELF_BYTES = MAX_REFERENCE_BYTES - MAX_REPORT_BYTES
+MAX_REPETITION_BYTES = (MAX_EXTRA_BYTES - MAX_REPORT_BYTES - MAX_REFERENCE_BYTES) // 2
 MAX_RAW_BYTES = MAX_REPETITION_BYTES - 2 * MAX_SYMBOL_BYTES - MAX_REPORT_BYTES
 MAX_SYMBOL_PREVIEW_BYTES = 1024
 MAX_SYMBOL_DIFF_BYTES = 512 * 1024
+MAX_NATIVE_HELPER_BYTES = 64 * 1024
+MAX_NATIVE_REPORT_BYTES = 128 * 1024
 FILES = ('capture-status.txt', 'producer-tools.txt', 'server', 'runtime',
          'server-symbols.txt', 'runtime-symbols.txt')
 # The original Dockerfile is an exact byte prefix. Nothing below changes its
@@ -63,18 +69,32 @@ def prepare_dockerfile(source, directory):
     directory.mkdir(parents=True, exist_ok=True)
     original = (source / 'deploy/docker/Dockerfile').read_bytes()
     ignore = (source / 'deploy/docker/Dockerfile.dockerignore').read_bytes()
+    entrypoints = re.findall(rb'^[ \t]*(sh deploy/docker/native-build\.sh server)[ \t]*$', original, re.MULTILINE)
+    if len(entrypoints) != 1:
+        raise ValueError('Production server helper entrypoint is missing or ambiguous.')
+    helper = source / 'deploy/docker/native-build.sh'
+    if not stat.S_ISREG(helper.lstat().st_mode) or helper.stat().st_size > MAX_NATIVE_HELPER_BYTES:
+        raise ValueError('Production native helper must be a bounded regular file.')
+    with helper.open('rb') as stream:
+        helper_bytes = stream.read(MAX_NATIVE_HELPER_BYTES + 1)
+    if len(helper_bytes) > MAX_NATIVE_HELPER_BYTES:
+        raise ValueError('Production native helper exceeded its byte budget.')
     path = directory / 'forensic.Dockerfile'
     # Exclusive creation prevents accidental reuse of a changed diagnostic recipe.
     with path.open('xb') as output:
         output.write(original + SUFFIX)
     with Path(str(path) + '.dockerignore').open('xb') as output:
         output.write(ignore)
+    with (directory / 'native-build.sh').open('xb') as output:
+        output.write(helper_bytes)
     digest = lambda body: hashlib.sha256(body).hexdigest()
     return path, {'qualification': 'DIAGNOSTIC_ONLY', 'production_prefix_bytes': len(original),
                   'production_dockerfile_sha256': digest(original), 'capture_suffix_sha256': digest(SUFFIX),
                   'executed_dockerfile_sha256': digest(original + SUFFIX),
                   'context_rules_sha256': digest(ignore), 'target': 'application-forensics',
-                  'original_command': 'cargo build --locked --release -p server -p runtime',
+                  'production_entrypoint': entrypoints[0].decode('ascii'),
+                  'native_build_sha256': digest(helper_bytes), 'native_build_bytes': len(helper_bytes),
+                  'native_build_artifact': 'native-build.sh',
                   'linker_argv': {'status': 'unavailable', 'reason': 'No instrumentation was added to the production compilation.'}}
 
 
@@ -164,7 +184,8 @@ def coverage(binary, headers):
         if not re.fullmatch(r'[0-9a-fA-F]+', offset) or not re.fullmatch(r'[0-9a-fA-F]+', size):
             raise ValueError('Invalid GNU section offset or size.')
         offset, size = int(offset, 16), int(size, 16)
-        sections.append({'index': index, 'name': name, 'type': kind, 'offset': offset, 'size_bytes': size,
+        address = int(parts[1 if index == 0 else 2], 16)
+        sections.append({'index': index, 'name': name, 'type': kind, 'offset': offset, 'address': address, 'size_bytes': size,
                          'file_backed': kind != 'NOBITS'})
         if kind != 'NOBITS' and size:
             ranges.append(('section:' + str(index) + ':' + name, offset, size))
@@ -285,4 +306,210 @@ def compare_symbol_text(left, right):
     except (OSError, ValueError, TimeoutError) as error:
         result['reason'] = str(error)
         result['observed_differing_lines_before_failure'] = changed
+    return result
+
+
+def bounded_tool(command, output, maximum):
+    """A GNU diagnostic or stopped-container copy cannot grow past its allowance."""
+    def limits():
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (maximum, maximum))
+    with output.open('xb') as stream:
+        return subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=False,
+                              timeout=cost.command_timeout(), preexec_fn=limits).returncode
+
+
+def loader_semantics(text):
+    """Read this producer's GNU dynamic table, symbols and version-needs output."""
+    if re.search(r'\b(?:Warning|Error):', text) or 'Version definition section' in text:
+        raise ValueError('Unsupported or erroneous GNU dynamic/version output.')
+    def count(pattern):
+        values = re.findall(pattern, text)
+        if len(values) != 1:
+            raise ValueError('Missing or ambiguous GNU dynamic/version table.')
+        return int(values[0])
+    dynamic_count = count(r'Dynamic section at offset 0x[0-9a-f]+ contains (\d+) entries:')
+    symbol_count = count(r"Symbol table '\.dynsym' contains (\d+) entries:")
+    version_count = count(r"Version symbols section '\.gnu.version' contains (\d+) entries:")
+    provider_count = count(r"Version needs section '\.gnu.version_r' contains (\d+) entr(?:y|ies):")
+    if not 0 < symbol_count <= 4096 or version_count != symbol_count:
+        raise ValueError('Missing or inconsistent dynamic symbol/version counts.')
+    dynamic = re.findall(r'^[ \t]*0x[0-9a-f]+[ \t]+\(([^)]+)\)[ \t]*(.*)$', text, re.MULTILINE)
+    if len(dynamic) != dynamic_count:
+        raise ValueError('Incomplete GNU dynamic table.')
+    needed = []
+    options = []
+    for tag, value in dynamic:
+        value = value.strip()
+        if tag == 'NEEDED':
+            match = re.fullmatch(r'Shared library: \[([^\]\s]+)\]', value)
+            if not match:
+                raise ValueError('Unparseable DT_NEEDED entry.')
+            needed.append(match[1])
+        elif tag in ('FLAGS', 'FLAGS_1', 'RPATH', 'RUNPATH', 'SONAME', 'BIND_NOW', 'SYMBOLIC', 'TEXTREL'):
+            options.append([tag, value])
+    if not needed:
+        raise ValueError('Missing loader dependencies.')
+    version_need = text.split("Version needs section '.gnu.version_r'", 1)[1]
+    versions, providers, provider, remaining = {}, 0, None, 0
+    for line in version_need.splitlines():
+        match = re.fullmatch(r'\s*(?:0x)?[0-9a-f]+: Version: 1\s+File: (\S+)\s+Cnt: (\d+)\s*', line)
+        if match:
+            if remaining:
+                raise ValueError('Incomplete GNU version need group.')
+            provider, remaining = match[1], int(match[2]); providers += 1
+            if provider not in needed or not remaining:
+                raise ValueError('Unknown version provider.')
+            continue
+        match = re.fullmatch(r'\s*(?:0x)?[0-9a-f]+:\s+Name: (\S+)\s+Flags: (\S+)\s+Version: (\d+)\s*', line)
+        if match:
+            index = int(match[3])
+            if not remaining or index < 2 or index in versions:
+                raise ValueError('Invalid GNU version need index or count.')
+            versions[index] = {'provider': provider, 'name': match[1], 'flags': match[2]}
+            remaining -= 1
+        elif re.match(r'\s*(?:0x)?[0-9a-f]+:', line):
+            raise ValueError('Unparseable GNU version need row.')
+    if providers != provider_count or remaining or not versions:
+        raise ValueError('Missing or incomplete GNU version requirements.')
+    version_text = text.split("Version symbols section '.gnu.version'", 1)[1].split('Version needs section', 1)[0]
+    version_symbols = []
+    for line in version_text.splitlines():
+        row = re.match(r'^\s*([0-9a-f]+):\s+(.*)$', line)
+        if not row:
+            continue
+        if int(row[1], 16) != len(version_symbols):
+            raise ValueError('Incomplete GNU version-symbol rows.')
+        entries = re.findall(r'([0-9a-f]+)(h?)\s*\(([^)]+)\)', row[2])
+        if not entries or re.sub(r'([0-9a-f]+)(h?)\s*\(([^)]+)\)', '', row[2]).strip():
+            raise ValueError('Unparseable GNU version-symbol row.')
+        version_symbols.extend((int(index, 16), bool(hidden), name) for index, hidden, name in entries)
+    if len(version_symbols) != symbol_count:
+        raise ValueError('Missing GNU version-symbol entries.')
+    rows = text.split("Symbol table '.dynsym'", 1)[1].split('Version symbols section', 1)[0]
+    symbols = []
+    for line in rows.splitlines():
+        if not re.match(r'^\s*\d+:', line):
+            continue
+        match = re.fullmatch(r'\s*(\d+):\s+[0-9a-f]+\s+(0x[0-9a-f]+|\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*(.*?)\s*', line)
+        if not match or int(match[1]) != len(symbols):
+            raise ValueError('Missing or unparseable GNU dynamic symbol row.')
+        number, size, kind, binding, visibility, section, name = match.groups()
+        if kind not in ('NOTYPE', 'OBJECT', 'FUNC', 'SECTION', 'FILE', 'COMMON', 'TLS', 'IFUNC') or \
+                binding not in ('LOCAL', 'GLOBAL', 'WEAK', 'UNIQUE') or \
+                visibility not in ('DEFAULT', 'INTERNAL', 'HIDDEN', 'PROTECTED') or \
+                not re.fullmatch(r'UND|ABS|COM|[0-9]+', section):
+            raise ValueError('Unsupported GNU dynamic symbol attributes.')
+        index, hidden, label = version_symbols[int(number)]
+        annotation = re.search(r' \((\d+)\)$', name)
+        if annotation:
+            if int(annotation[1]) != index:
+                raise ValueError('Dynamic symbol version annotation disagrees with GNU version table.')
+            name = name[:annotation.start()]
+        version = None
+        if index > 1:
+            version = versions.get(index)
+            if version is None or version['name'] != label or not name.endswith('@' + label):
+                raise ValueError('Dynamic symbol has unresolved GNU version semantics.')
+            name = name[:-(len(label) + 1)]
+            default = name.endswith('@')
+            name = name.removesuffix('@')
+            version = {**version, 'hidden': hidden, 'default': default}
+        elif label != ('*local*' if index == 0 else '*global*') or hidden or '@' in name:
+            raise ValueError('Invalid unversioned GNU dynamic symbol.')
+        if (not name and int(number) != 0) or any(character.isspace() for character in name):
+            raise ValueError('Unsupported dynamic symbol name.')
+        symbols.append({'name': name, 'type': kind, 'binding': binding, 'visibility': visibility,
+                        'version_scope': 'local' if index == 0 else 'global' if index == 1 else 'versioned',
+                        'definition': section if section in ('UND', 'ABS', 'COM') else 'defined',
+                        'object_bytes': int(size, 16 if size.startswith('0x') else 10) if kind in ('OBJECT', 'TLS') else None, 'version': version})
+    if len(symbols) != symbol_count:
+        raise ValueError('Incomplete GNU dynamic symbols.')
+    return {'needed': needed, 'loader_options': sorted(options),
+            'symbols': sorted(symbols, key=lambda value: json.dumps(value, sort_keys=True)),
+            'version_requirements': sorted(versions.values(), key=lambda value: json.dumps(value, sort_keys=True))}
+
+
+def frame_decode(binary, directory):
+    """Keep a bounded summary; only generated temporary decoder output is removed."""
+    result = {'status': 'blocked', 'warnings': [], 'excerpt': [], 'maximum_temporary_bytes': 64 * MIB}
+    with tempfile.TemporaryDirectory(prefix='frames-', dir=directory) as temporary:
+        output = Path(temporary) / 'frames.txt'
+        try:
+            result['exit_code'] = bounded_tool(['readelf', '--debug-dump=frames', str(binary)], output, 64 * MIB)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            result['error'] = type(error).__name__ + ': ' + str(error)
+        digest, length, cie, fde, line_count, warning_count = hashlib.sha256(), 0, 0, 0, 0, 0
+        if output.exists():
+            deadline_exhausted = False
+            with output.open('rb') as stream:
+                while True:
+                    if cost.COMMAND_DEADLINE is not None and time.time() >= cost.COMMAND_DEADLINE:
+                        deadline_exhausted = True
+                        result['error'] = 'Measurement deadline exhausted during frame-output hashing.'
+                        break
+                    body = stream.readline(16 * 1024 + 1)
+                    if not body:
+                        break
+                    digest.update(body); length += len(body); line_count += 1
+                    if len(body) > 16 * 1024:
+                        result['error'] = 'Unparseable oversized GNU frame output line.'
+                    text = body.decode('utf-8', errors='backslashreplace').rstrip('\n')
+                    if len(result['excerpt']) < 12:
+                        result['excerpt'].append(text[:512])
+                    if re.search(r'\b(?:Warning|Error|Invalid|Corrupt|Unsupported|Unknown)\b', text, re.IGNORECASE):
+                        warning_count += 1
+                        if len(result['warnings']) < 32:
+                            result['warnings'].append(text[:512])
+                    cie += bool(re.match(r'^[0-9a-f]+\s+[0-9a-f]+\s+[0-9a-f]+\s+CIE\b', text))
+                    fde += bool(re.match(r'^[0-9a-f]+\s+[0-9a-f]+\s+[0-9a-f]+\s+FDE\b', text))
+            complete_hash = not deadline_exhausted and length == output.stat().st_size
+            result.update(output_sha256=digest.hexdigest() if complete_hash else None,
+                          output_bytes=output.stat().st_size, hashed_bytes=length,
+                          output_hash_complete=complete_hash, output_lines=line_count,
+                          cie_count=cie, fde_count=fde, warning_count=warning_count,
+                          warnings_truncated=warning_count > len(result['warnings']))
+        if result.get('exit_code') == 0 and not result.get('error') and not warning_count and cie and fde:
+            result['status'] = 'complete'
+    return result
+
+
+def native_structure(covered, headers):
+    sections = {value['name']: value for value in covered['sections']}
+    required = ('.dynsym', '.dynstr', '.eh_frame', '.eh_frame_hdr', '.gcc_except_table', '.note.gnu.build-id')
+    for name in required:
+        if name not in sections or not sections[name]['file_backed'] or sections[name]['size_bytes'] <= 0:
+            raise ValueError('Missing nonempty native section: ' + name)
+    identifiers = re.findall(r'\bBuild ID: ([0-9a-f]+)[ \t]*$', headers, re.MULTILINE)
+    if len(identifiers) != 1 or len(identifiers[0]) < 16 or len(identifiers[0]) % 2 or \
+            not int(identifiers[0], 16) or 'NT_GNU_BUILD_ID' not in headers:
+        raise ValueError('Missing genuine GNU build-ID note.')
+    rows = re.findall(r'^\s*GNU_EH_FRAME\s+(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+0x[0-9a-f]+\s+(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+R\s+0x[0-9a-f]+\s*$', headers, re.MULTILINE)
+    header = sections['.eh_frame_hdr']
+    if len(rows) != 1 or [int(value, 16) for value in rows[0]] != [header['offset'], header['address'], header['size_bytes'], header['size_bytes']]:
+        raise ValueError('PT_GNU_EH_FRAME does not describe the retained .eh_frame_hdr.')
+    return {'build_id': identifiers[0], 'static_symbols_absent': not ({'.symtab', '.strtab'} & sections.keys()),
+            'gnu_eh_frame_matches_header': True,
+            'section_sha256': {name: next(value['sha256'] for value in covered['ranges'] if value['name'].endswith(':' + name)) for name in required}}
+
+
+def observe_native(binary, directory, name, covered, headers):
+    result = {'status': 'blocked', 'original_sha256': covered['sha256'], 'original_size_bytes': covered['size_bytes']}
+    try:
+        result['structure'] = native_structure(covered, headers)
+        output = directory / (name + '-loader.txt')
+        code = bounded_tool(['readelf', '--wide', '--dyn-syms', '--dynamic', '--version-info', str(binary)], output, 256 * 1024)
+        result['loader_exit_code'] = code
+        if code:
+            raise ValueError('GNU loader decoding failed or exceeded its output budget.')
+        result['loader'] = loader_semantics(output.read_text())
+        result['frames'] = frame_decode(binary, directory)
+        if result['frames']['status'] != 'complete':
+            raise ValueError('GNU unwind decoding is incomplete or reports warnings.')
+        result['status'] = 'complete'
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        result['error'] = type(error).__name__ + ': ' + str(error)
+    if len(json.dumps(result, indent=2).encode()) > MAX_NATIVE_REPORT_BYTES:
+        result.pop('loader', None)
+        result.update(status='blocked', error='Native compatibility report exceeded 128 KiB; original GNU output retained.')
     return result

@@ -16,6 +16,7 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NativeUserServices } from './native-user-services.mjs';
 import { NativeDataExecution } from './native-data-execution.mjs';
+import { reconcileExecution } from './web-ci.mjs';
 
 const dataMode = process.env.QUAZONAI_WEB_DATA_MODE ?? 'admission';
 if (!['admission', 'native-execution'].includes(dataMode)) throw new Error('Unknown explicit native data mode');
@@ -39,6 +40,8 @@ const stages = [];
 const services = [];
 const commands = new Set();
 const screenshots = [];
+let cjkFonts;
+const browserInstances = [];
 let diagnosticsSafe = true;
 let interruptedExitCode;
 let privateDir;
@@ -374,11 +377,21 @@ async function main() {
   privateValues.add(browserPassword);
   const browser = async (phase, config = 'playwright.config.ts') => {
     await writeFile(fixture, JSON.stringify({ baseUrl, phase, redactionsFile, password: browserPassword, dataFixturePath }), { mode: 0o600 });
+    const browserEnv = { ...childEnv, QUAZONAI_WEB_E2E_FIXTURE: fixture, QUAZONAI_WEB_E2E_ORIGIN: baseUrl };
+    // List the full current phase immediately before executing it. Raw JSON
+    // diagnostics remain private alongside the fixture and are never uploaded.
+    const discovered = JSON.parse(await run(`browser-${phase}-inventory`, process.execPath,
+      [resolve(web, 'node_modules/@playwright/test/cli.js'), 'test', '--config', config, '--list', '--reporter=json'],
+      { cwd: web, env: browserEnv, privateOutput: true, recordStage: false }));
+    const executionPath = resolve(privateDir, `browser-${phase}.json`);
     await run(`browser-${phase}`, process.execPath, [resolve(web, 'node_modules/@playwright/test/cli.js'),
-      'test', '--config', config], {
+      'test', '--config', config, '--reporter=list,json'], {
       cwd: web, timeout: 600_000,
-      env: { ...childEnv, QUAZONAI_WEB_E2E_FIXTURE: fixture, QUAZONAI_WEB_E2E_ORIGIN: baseUrl },
+      env: { ...browserEnv, PLAYWRIGHT_JSON_OUTPUT_FILE: executionPath },
     });
+    const instances = reconcileExecution(discovered, JSON.parse(await readFile(executionPath, 'utf8')))
+      .map(({ id: [project, file, titles], ...result }) => ({ ...result, id: [redact(project), redact(file), titles.map(redact)] }));
+    browserInstances.push({ phase, instances });
   };
   await browser('before-restart');
 
@@ -487,12 +500,13 @@ async function main() {
 
   for (const mode of ['light', 'dark']) {
     for (const width of [1440, 768, 390]) {
-      for (const surface of ['projects', 'codex']) {
+      for (const surface of ['projects', 'codex', 'project-workspace', 'project-briefs', 'project-inputs', 'project-cycles']) {
         const name = `${surface}-${mode}-${width}.png`;
         screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
       }
     }
   }
+  cjkFonts = await readFile(resolve(privateDir, 'cjk-fonts.json'));
   for (const surface of ['auth-setup', 'auth-settings']) {
     for (const width of [1440, 390]) {
       const name = `${surface}-${width}.png`;
@@ -523,11 +537,12 @@ try { await cleanup(!failure && !stopping); }
 catch (error) { failure ??= error; }
 if (adminEnv) {
   // Failed tests or cleanup never publish images from the private runtime.
+  if (!failure && cjkFonts) await writeFile(resolve(report, 'cjk-fonts.json'), cjkFonts, { mode: 0o600 });
   if (!failure) for (const { name, bytes } of screenshots) {
     await writeFile(resolve(report, name), bytes, { mode: 0o600 });
   }
   await writeFile(resolve(report, 'result.json'), JSON.stringify({ schema_version: 1,
-    status: failure ? 'FAILED' : 'PASSED', data_mode: dataMode, stages,
+    status: failure ? 'FAILED' : 'PASSED', data_mode: dataMode, stages, browser_instances: browserInstances,
     error: failure ? redact(failure.message) : null,
     acceptance_scope: 'shipped systemd user units with real packaged API/Worker and production Caddy routes; password setup and login, session-only and 30-day browser cookies, logout, password changes and browser session invalidation, persistent CLI device registration and revocation; idle Worker native automatic restart, retained session/project/receipt/theme after normal API stop/start, CSRF, both themes in three viewports navigation/accessibility, blank authentication surfaces at desktop/mobile sizes, actual service-worker updates, offline mutation prevention, and absent legacy bootstrap/verification routes',
     private_artifacts_retained: privateArtifactsRetained,

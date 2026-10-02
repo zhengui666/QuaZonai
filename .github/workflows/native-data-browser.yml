@@ -64,6 +64,7 @@ jobs:
           npm --prefix apps/web --ignore-scripts run test
           node apps/web/node_modules/vite/bin/vite.js build --config apps/web/vite.config.ts apps/web
           node apps/web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          bash apps/web/scripts/ensure-cjk-fonts.sh
       - name: Build default native stack and original candle preparation executables
         run: |
           set -euo pipefail

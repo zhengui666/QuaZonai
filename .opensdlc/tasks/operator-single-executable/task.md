@@ -2,11 +2,16 @@
 
 ## Scope
 
-Final native packaging integration uses actual merged dev baseline
-`b58ec6d153d5b211b2941bf0d603ea3a3108a68b` (B), including PR 158
-archive ingestion and PR 159 native input isolation. The original PR 152 head
-`56aad24e0c73b31a9255e37adaa0abcd812a7c42` and B must both remain
-ancestors of the final integration commit (C); publication is a fast-forward.
+The current diagnostic integration uses exact producer PR candidate
+`dc9c8cf30704781615ba6524f50368d0c148d9b3` (P), whose parent is dev
+`183fe2c4bfec6a04bece3a550cc705217ab391d3`. P is not a dev merge and is the
+baseline only for the bounded fixed-producer A/A. Final full qualification must
+replace it with the actual producer merge M. Historical b58 evidence stays
+historical. The original PR 152 head
+`56aad24e0c73b31a9255e37adaa0abcd812a7c42` and the selected exact baseline must both remain
+ancestors of the integration commit (C). The prepared integration preserves
+both current PR head `cbe9bd11746b2de17f9573d2afb5134fbf44cea3` and P as
+parents, retaining P's current-dev changes and the consolidated operator.
 Preserve the existing installed
 `catalog-prepare` and `polymarket-history` command contracts through regular-file
 launchers. Each launcher executes the fixed packaged `source-tools` path, a
@@ -21,7 +26,7 @@ host-extracted service binaries, updater bundle members/schema, source mount
 and ownership guards, or installed native override rejection. Preserve the
 merged native collector
 and its closure. The exact build/install/strip/hash substitution is in
-`native-build.sh`; its server branch is unchanged. Fixed launchers are copied
+`native-build.sh`; its server branch is identical to the selected producer baseline. Fixed launchers are copied
 only in the final packaging stage, outside Rust inputs. The unchanged
 Dockerignore already admits them through its `!deploy/docker/` parent rule.
 
@@ -238,7 +243,7 @@ closure; its linker/system libraries differ from the pinned production Docker
 environment. It is neither a production repeatability result nor evidence of
 the hosted failure's cause, and no dependency change follows from it. Local
 Python checks validate orchestration and evidence handling only; production
-application-only repetitions remain UNRUN at this preparation stage.
+application-only repetitions were UNRUN at that preparation stage.
 
 ## Same-source failure and original pre-strip evidence
 
@@ -253,8 +258,8 @@ binary, with matching GNU header/layout observations. That section list omitted
 `.shstrtab` and did not cover file gaps or original pre-strip symbol/string
 tables, so it does not prove all other link-output bytes were identical.
 
-The next investigative head enables `--prestrip-aa-only`. It runs exactly one
-A1/A2 pair at the historical baseline and disables C even if A/A matches. The
+The subsequent capture head enabled `--prestrip-aa-only`. It ran one
+A1/A2 pair at the historical baseline and disabled C even if A/A matched. The
 production Dockerfile remains an exact byte prefix of a separately recorded
 diagnostic Dockerfile; no trailing newline is normalized. The original
 Dockerfile-specific ignore file is copied unchanged alongside the diagnostic
@@ -293,7 +298,8 @@ explicit and blocks diagnostic completion. These results travel in the small
 artifact, while the untouched complete symbol texts remain in the large archive.
 
 Extra retained evidence has a 1 GiB ceiling: each repetition reserves at most
-508 MiB, with a separate 8 MiB report reserve. That per-repetition allowance
+444 MiB, with 128 MiB reserved for the released reference and a separate
+8 MiB report reserve. That per-repetition allowance
 reserves 64 MiB per symbol output and 8 MiB for metadata before allowing the raw
 copies. The small artifact in this mode is limited to 8 MiB including its
 manifest; original pre-strip ELFs and symbol texts remain in the original large
@@ -302,9 +308,81 @@ archive. The existing 35-minute total deadline, 3-minute owned-cleanup reserve,
 uploads remain unchanged. Failed controls stop further repetitions.
 
 Actual linker argv is explicitly unavailable: no logging hooks are added to
-the production build. The exact original Cargo command and available producer
-tool versions are observations, not proof of which linker invocation produced
+the production build. The production helper entrypoint and available producer
+tool versions are observations, not proof of which Cargo or linker invocation produced
 the files. Upstream LLVM's whole-link-output build-ID mechanism motivates this
 capture but does not establish the actual linker's identity or the failure's
-cause. This next pre-strip A/A run remains UNRUN until independently reviewed
-and executed. It cannot replace full current-base packaging qualification.
+cause. That pre-strip A/A run was UNRUN at the original preparation stage. It cannot replace full current-base packaging qualification.
+
+## Fixed-producer repetition preparation
+
+The original pre-strip diagnostic subsequently ran as `36962973323` at
+`cbe9bd11746b2de17f9573d2afb5134fbf44cea3`. Its historical evidence remains
+separate from the proposed producer correction and does not qualify packaging.
+
+Forensic recipe metadata records the actual production entrypoint
+`sh deploy/docker/native-build.sh server`, together with a byte-exact copy of
+the selected source's `native-build.sh`. The helper must be a regular file no
+larger than 64 KiB, and its copied-byte SHA-256 must equal the native helper
+hash from source verification before any build starts. Its original bytes are
+allowlisted in the small artifact. The metadata no longer hardcodes Cargo
+arguments that could become stale when the producer changes. Capture still
+does not instrument or modify the production Dockerfile prefix or helper.
+
+The exact producer candidate P is now
+`dc9c8cf30704781615ba6524f50368d0c148d9b3`, with tree
+`4ad08b0fb89322e2e02b2a0e64b10b386ebfc5e6` and sole parent
+`183fe2c4bfec6a04bece3a550cc705217ab391d3`. The prepared C mechanically
+integrates P. Comparator and workflow pins both select P for the bounded A/A;
+P is a producer PR candidate, not a dev merge. No corrected-producer hosted
+result is claimed before execution. P's standalone layout and
+C's consolidated layout must share the identical fixed common native recipe;
+positive operator substitutions, source binding, ancestry of P and the prior
+packaging head, original whole-ELF equality and diagnostic-only rejection all
+remain required. Do not inject new flags into the historical b58 baseline.
+
+After P's applicable CI and fixed-producer A/A evidence pass, merge the producer
+change first. Final PR 152 qualification must use that actual dev merge M as B,
+integrate M into C, and restore the complete full comparison. An unmerged P,
+earlier baseline or successful diagnostic operation cannot substitute for M's
+full current-base qualification.
+
+## Bounded dynamic-link and unwind compatibility evidence
+
+The fixed-producer A/A also enables `--verify-producer-compatibility`. Before
+compiling, it checks 40 GB headroom and extracts original server/runtime ELFs
+from the verified released 183fe image
+`ghcr.io/zhengui666/quazonai@sha256:a01c07cc9ce2ce0132d85e8bce28466f8784178b9dbd052119844085d43b76f5`.
+The immutable digest, revision label and linux/amd64 platform must match. The
+reference application is never started, and no old source is compiled. Only an
+owned UUID container is created and removed after identity-checked cleanup;
+pre-existing/shared images are not removed. Reference originals have a combined
+120 MiB file-size allowance enforced before writes, leaving 8 MiB of its
+128 MiB envelope for metadata. The full retained-evidence ceiling stays 1 GiB.
+
+For reference and fixed outputs, bounded GNU dynamic-symbol, dynamic-tag and
+version-info text is retained. The comparison resolves version IDs to provider,
+version name, flags and hidden/default semantics, and compares loader-required
+symbol names, types, binding, visibility, definition kind, object/TLS sizes,
+DT_NEEDED order and loader options. Raw dynamic section SHA-256 values remain
+observations: old/new addresses and numeric version IDs may legitimately
+change. No ELF is transformed and no original whole-ELF gate is weakened.
+Unparseable, missing, oversized or erroneous GNU output blocks the diagnostic.
+
+For every fixed ELF before and after final stripping, nonempty `.dynsym`,
+`.dynstr`, `.eh_frame`, `.eh_frame_hdr`, `.gcc_except_table` and the GNU build-ID
+note must exist. `PT_GNU_EH_FRAME` must describe `.eh_frame_hdr` at its recorded
+file offset, address and size. GNU frame decoding must finish with CIE/FDE
+records and no warnings or errors. Each generated decoder output is limited to
+64 MiB before growth; status, complete-output hash, byte count, record counts,
+warnings and a bounded excerpt survive in the small report. Only generated
+temporary decoder text is removed afterward. Original ELFs remain untouched.
+
+Static `.symtab`/`.strtab` must already be absent before final stripping. The
+nonempty genuine build ID, dynamic/unwind section bytes and decoded loader
+semantics must survive that final strip unchanged. A1/A2 whole-file SHA-256 and
+length equality remain exact requirements separately before and after strip.
+The existing 35-minute absolute deadline, 3-minute cleanup reserve, 40 GB
+per-build admission and disabled C remain. All successful diagnostics still
+carry `DIAGNOSTIC_ONLY` and fail full packaging qualification; actual fixed-
+producer hosted A/A, final-head CI and independent review remain required.

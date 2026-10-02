@@ -4,7 +4,11 @@
 set -eu
 case "$1" in
   server)
-    cargo build --locked --release -p server -p runtime
+    # Omit static symbols before the linker computes the build ID. Keep this
+    # combined build and scope the profile change to the two shipped packages.
+    cargo build --locked --release -p server -p runtime \
+      --config 'profile.release.package.server.strip="symbols"' \
+      --config 'profile.release.package.runtime.strip="symbols"'
     install -Dm755 target/release/server /out/server
     install -Dm755 target/release/runtime /out/runtime
     strip /out/server /out/runtime

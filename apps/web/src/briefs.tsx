@@ -1,4 +1,4 @@
-import { App, Alert, Button, Card, ConfigProvider, Divider, Drawer, Form, Input, Select, Space, Table, Typography } from 'antd';
+import { App, Alert, Button, Card, ConfigProvider, Divider, Drawer, Form, Input, Select, Space, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, Intent } from './api';
@@ -10,13 +10,13 @@ import { bindingAccessOptions } from './authoring-options';
 import { bindingListError } from './authoring-constraints';
 import { validateBaseCurrency } from '@quazonai/web/response-contract/base-currency';
 import { BriefExecution } from './cycles';
-import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
+import { ErrorNotice, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
 
 type Brief = Schema['BriefView'];
 type Content = Schema['BriefContentV1'];
 type Fields = { content: Content; bindings: Schema['BriefBindingV1'][] };
 const uuidRules = [{ required: true, pattern: uuidPattern, message: '需要现有记录的完整 UUIDv7 编号。' }];
-export function Briefs({ projectId, projectState }: { projectId: string; projectState?: Schema['ProjectState'] }) {
+export function Briefs({ projectId, projectState, currentBriefId }: { projectId: string; projectState?: Schema['ProjectState']; currentBriefId?: string | null }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const [editing, setEditing] = useState<Brief | 'new'>();
   const [executing, setExecuting] = useState<Brief>();
@@ -25,14 +25,18 @@ export function Briefs({ projectId, projectState }: { projectId: string; project
   const query = useQuery({ queryKey: ['briefs', projectId, cursor], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}/briefs', { params: { path: { id: projectId }, query: { cursor, limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="middle">
     
-    <Button type="primary" disabled={!online || !editable} onClick={() => setEditing('new')}>新建 Brief 草稿</Button>
+    <div className="section-toolbar"><div><h2>研究 Brief</h2><p>明确假设与边界，保留每个版本的研究依据。</p></div><Button type="primary" disabled={!online || !editable} onClick={() => setEditing('new')}>新建 Brief 草稿</Button></div>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Brief> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 600 }} locale={{ emptyText: <NoData text="暂无 Brief" /> }} columns={[
-        { title: '版本', dataIndex: 'version' }, { title: '假设', key: 'hypothesis', render: (_, item) => <Typography.Paragraph ellipsis={{ rows: 2, expandable: true }}>{item.content.hypothesis}</Typography.Paragraph> },
-        { title: '状态', key: 'state', render: (_, item) => <StateTag value={item.state} /> },
-        { title: '操作', key: 'open', render: (_, item) => <Space wrap><Button disabled={query.isError} onClick={() => setEditing(item)}>{item.state === 'DRAFT' ? '查看 / 编辑' : '查看冻结版本'}</Button><Button disabled={!online || query.isError || !projectState || (item.state === 'DRAFT' ? projectState === 'ARCHIVED' : projectState !== 'ACTIVE')} onClick={() => setExecuting(item)}>{item.state === 'DRAFT' ? '冻结执行上下文' : '启动新 Cycle'}</Button></Space> },
-      ]} />
-      <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
+      {query.data?.items.length === 0 ? <div className="research-empty"><h3>先把研究问题写清楚</h3><p>建立 Brief 草稿，定义假设、数据边界与预算。保存草稿不会启动研究。</p><Button disabled={!online || !editable} onClick={() => setEditing('new')}>编写第一个 Brief</Button></div> : <div className="brief-list">{query.data?.items.map(item => <article className="brief-record" key={item.id}>
+        <div className="brief-record-main"><div className="record-label"><span>BRIEF · 版本 {item.version}</span><StateTag value={item.state} />{item.id === currentBriefId && <span className="current-record">当前版本</span>}</div>
+          <h3>{item.content.hypothesis}</h3><p className="brief-rationale">{item.content.economic_rationale}</p>
+          <div className="record-meta"><span>预测单位：{item.content.target_kind}</span><span>基础币种：{item.content.base_currency}</span><span>数据绑定：{item.bindings.length}</span></div>
+          <details className="record-details"><summary>版本记录与修订</summary><ResourceFacts id={item.id} revision={item.revision} updated={item.updated_at} /></details></div>
+        <div className="record-actions"><p>{item.state === 'DRAFT' ? '下一步：确认数据与执行上下文后冻结' : projectState === 'ACTIVE' ? '可用冻结版本启动新的研究周期' : '启动研究周期前，项目必须处于启用状态'}</p>
+          <Button disabled={query.isError} onClick={() => setEditing(item)}>{item.state === 'DRAFT' ? '查看 / 编辑' : '查看冻结版本'}</Button>
+          <Button type="primary" disabled={!online || query.isError || !projectState || (item.state === 'DRAFT' ? projectState === 'ARCHIVED' : projectState !== 'ACTIVE')} onClick={() => setExecuting(item)}>{item.state === 'DRAFT' ? '冻结执行上下文' : '启动新 Cycle'}</Button></div>
+      </article>)}</div>}
+      {(history.length > 1 || query.data?.next_cursor) && <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />}
     </QueryPanel>
     {editing && <BriefEditor projectId={projectId} editable={editable} brief={editing === 'new' ? undefined : editing} close={() => setEditing(undefined)} />}
     {executing && <BriefExecution brief={executing} close={() => setExecuting(undefined)} />}

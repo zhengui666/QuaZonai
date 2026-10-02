@@ -1,11 +1,13 @@
-import { App, Button, Drawer, Form, Input, Select, Space, Tabs, Typography } from 'antd';
+import { App, Button, Drawer, Form, Grid, Input, Select, Space, Tabs, Typography } from 'antd';
 import { ArrowRightOutlined, ArrowLeftOutlined, ExperimentOutlined, FileTextOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { useContext, useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
-import { ErrorNotice, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
+import { ErrorNotice, GuardContext, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
 import { Briefs } from './briefs';
+import { DataInputs } from './data-inputs';
+import { ResearchOverview } from './research-overview';
 import { Runs } from './runs';
 import { Cycles } from './cycles';
 import { AgentEvaluations } from './agent-evaluations';
@@ -18,6 +20,11 @@ export function Projects({ onNavigate }: { onNavigate?: (section: string) => voi
   const [selected, setSelected] = useState<Project>();
   const [editing, setEditing] = useState<Project | 'new'>();
   const [search, setSearch] = useState('');
+  const { blocked } = useContext(GuardContext); const { message } = App.useApp();
+  function returnToProjects() {
+    if (blocked) { void message.info('请先完成、保存或取消当前操作'); return; }
+    setSelected(undefined);
+  }
   const online = useOnline();
   const cursor = history.at(-1);
   const query = useQuery({ queryKey: ['projects', cursor], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects', {
@@ -26,7 +33,7 @@ export function Projects({ onNavigate }: { onNavigate?: (section: string) => voi
   const projects = query.data?.items ?? [];
   const visible = projects.filter(project => `${project.name} ${project.description ?? ''}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   if (selected) return <Space orientation="vertical" size="large" className="full-width">
-    <Button type="text" icon={<ArrowLeftOutlined aria-hidden />} onClick={() => setSelected(undefined)}>返回研究列表</Button>
+    <Button type="text" icon={<ArrowLeftOutlined aria-hidden />} onClick={returnToProjects}>返回研究列表</Button>
     <ProjectDetail id={selected.id} />
   </Space>;
   return <div className="research-workspace">
@@ -61,7 +68,7 @@ export function Projects({ onNavigate }: { onNavigate?: (section: string) => voi
         </QueryPanel>
       </section>
       <aside className="research-side" aria-label="研究资源">
-        <div className="workspace-note"><span className="eyebrow">研究原则</span><h2>证据先行。<br />边界清晰。</h2><p>计算成功不等于证据通过。保留独立评估、试验账本与预算约束，让结论可追溯。</p><div className="note-footer"><span className="brief-dot ready" />仅交付目标组合，不发送券商订单</div></div>
+
         {onNavigate && <nav className="workspace-shortcuts" aria-label="研究快捷入口"><h3>工作台入口</h3>{[
           ['alpha', 'Alpha 证据', '查看研究成果与评估'], ['portfolio', '组合构建', '从候选策略到目标组合'], ['runs', '运行记录', '追踪执行、状态与回执'],
         ].map(([key, title, description]) => <button key={key} onClick={() => onNavigate(key!)}><span><strong>{title}</strong><small>{description}</small></span><ArrowRightOutlined aria-hidden /></button>)}</nav>}
@@ -72,20 +79,35 @@ export function Projects({ onNavigate }: { onNavigate?: (section: string) => voi
 }
 function ProjectDetail({ id }: { id: string }) {
   const [editing, setEditing] = useState<Project>(); const online = useOnline();
+  const [tab, setTab] = useState('overview');
+  const screens = Grid.useBreakpoint();
+  const { blocked } = useContext(GuardContext); const { message } = App.useApp();
+  function changeTab(next: string) {
+    if (next === tab) return;
+    if (blocked) { void message.info('请先完成、保存或取消当前操作'); return; }
+    setTab(next);
+  }
   const query = useQuery({ queryKey: ['project', id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}', { params: { path: { id } }, signal })) });
-  return <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-    {query.data && <><Typography.Title level={1}>{query.data.name}</Typography.Title>
-      <Space wrap><StateTag value={query.data.state} /><Typography.Text type="secondary">{query.data.description || ''}</Typography.Text></Space>
-      <ResourceFacts id={id} revision={query.data.revision} updated={query.data.updated_at} />
-      <Button disabled={!online || query.isError || query.isFetching} onClick={() => setEditing(query.data)}>修改项目状态</Button>
-      <Tabs destroyOnHidden items={[
-        { key: 'briefs', label: '研究 Brief', children: <Briefs projectId={id} projectState={query.isError || query.isFetching ? undefined : query.data.state} /> },
+  const projectState = query.isError || query.isFetching ? undefined : query.data?.state;
+  const sections = query.data ? [
+        { key: 'overview', label: '工作概览', children: <ResearchOverview project={query.data} current={projectState !== undefined} navigate={changeTab} /> },
+        { key: 'briefs', label: '研究 Brief', children: <Briefs projectId={id} projectState={projectState} currentBriefId={query.data.current_brief_id} /> },
+        { key: 'inputs', label: '冻结输入', children: <DataInputs projectId={id} /> },
         { key: 'cycles', label: '研究周期', children: <Cycles projectId={id} /> },
         { key: 'runs', label: '运行记录', children: <Runs projectId={id} /> },
         { key: 'agent-evaluations', label: 'Agent 评估', children: <AgentEvaluations projectId={id} /> },
-      ]} />
+      ] : [];
+  return <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+    {query.data && <div className="project-workspace">
+      <header className="project-detail-heading"><div><span className="eyebrow">RESEARCH PROJECT</span><Typography.Title level={1}>{query.data.name}</Typography.Title>
+        <div className="project-detail-status"><StateTag value={query.data.state} /><span>更新于 {displayTime(query.data.updated_at)}</span></div>
+        {query.data.description && <p className="project-detail-description">{query.data.description}</p>}</div>
+        <Button disabled={!online || query.isError || query.isFetching} onClick={() => setEditing(query.data)}>修改项目状态</Button></header>
+      <details className="record-details"><summary>项目记录与修订</summary><ResourceFacts id={id} revision={query.data.revision} updated={query.data.updated_at} /></details>
+      {!screens.md && <Select className="full-width research-section-select" aria-label="研究项目章节" virtual={false} value={tab} onChange={changeTab} options={sections.map(({ key, label }) => ({ value: key, label }))} />}
+      <Tabs key="project-sections" className="research-tabs" activeKey={tab} onChange={changeTab} destroyOnHidden items={sections} />
       {editing && <ProjectEditor project={editing} close={() => setEditing(undefined)} />}
-    </>}
+    </div>}
   </QueryPanel>;
 }
 function ProjectEditor({ project, close }: { project?: Project; close: () => void }) {

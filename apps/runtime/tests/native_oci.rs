@@ -2,6 +2,8 @@
 //! native-runtime CI; no test is ignored and missing native prerequisites are failures.
 #[path = "../../../tests/support/catalog_metadata.rs"]
 mod catalog_fixture;
+#[path = "support/compiler_memory_observation.rs"]
+mod compiler_memory_observation;
 #[path = "../../job/tests/support/market.rs"]
 mod market;
 #[path = "../../job/tests/support/polymarket.rs"]
@@ -1755,6 +1757,90 @@ async fn cancelled_native_identity_blocks_both_late_create_and_old_id_start() {
     f.assert_private_logs();
 }
 
+async fn original_compiler_memory_observer(
+    docker: &bollard::Docker,
+    spec: &JobSpecV1,
+) -> Result<(String, compiler_memory_observation::Observer), &'static str> {
+    use bollard::query_parameters::ListContainersOptionsBuilder;
+    let deadline =
+        std::time::Instant::now() + Duration::from_secs(u64::from(spec.limits.wall_seconds));
+    let observe = async {
+        let filters = std::collections::HashMap::from([(
+            "label".to_owned(),
+            vec![format!("io.quazonai.run={}", spec.run_id)],
+        )]);
+        let options = ListContainersOptionsBuilder::default()
+            .all(true)
+            .filters(&filters)
+            .build();
+        let mut id = None;
+        loop {
+            if id.is_none() {
+                let containers = docker
+                    .list_containers(Some(options.clone()))
+                    .await
+                    .map_err(|_| "container_list_unavailable")?;
+                if containers.len() > 1 {
+                    return Err("container_identity_ambiguous");
+                }
+                id = containers
+                    .first()
+                    .and_then(|container| container.id.clone());
+            }
+            if let Some(id) = &id {
+                let container = docker
+                    .inspect_container(id, None)
+                    .await
+                    .map_err(|_| "container_inspect_unavailable")?;
+                let labels = container
+                    .config
+                    .as_ref()
+                    .and_then(|config| config.labels.as_ref())
+                    .ok_or("container_labels_unavailable")?;
+                let expected = [
+                    ("io.quazonai.run", spec.run_id.to_string()),
+                    ("io.quazonai.attempt", spec.attempt_no.to_string()),
+                    ("io.quazonai.external-id", spec.external_job_id.clone()),
+                    ("io.quazonai.role", "JOB".to_owned()),
+                ];
+                if container.id.as_ref() != Some(id)
+                    || container.image.as_ref() != Some(&spec.image_ref)
+                    || expected
+                        .iter()
+                        .any(|(key, value)| labels.get(*key) != Some(value))
+                {
+                    return Err("container_identity_mismatch");
+                }
+                let state = container.state.ok_or("container_state_unavailable")?;
+                if state.running == Some(true) {
+                    return compiler_memory_observation::Observer::start(
+                        id,
+                        state.pid.ok_or("no_live_pid")?,
+                        deadline,
+                    )
+                    .map(|observer| (id.clone(), observer));
+                }
+                if matches!(
+                    state.status,
+                    Some(
+                        bollard::models::ContainerStateStatusEnum::EXITED
+                            | bollard::models::ContainerStateStatusEnum::DEAD
+                    )
+                ) {
+                    return Err("container_exited_before_observation");
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(
+        deadline.saturating_duration_since(std::time::Instant::now()),
+        observe,
+    )
+    .await
+    .map_err(|_| "container_observation_deadline")?
+}
+
 #[tokio::test]
 async fn real_native_compile_oom_is_reported_as_a_safe_resource_failure() {
     let mut f = Fixture::open().await;
@@ -1763,14 +1849,58 @@ async fn real_native_compile_oom_is_reported_as_a_safe_resource_failure() {
     let code = format!("{SIGNAL}\n#[used] static PRESSURE: [u8; 1 << 30] = [1; 1 << 30];\n");
     let mut spec = f.compile(&code, 30).await;
     spec.limits.memory_mib = 64;
-    let accepted = f.submit(&spec).await;
+    let docker = docker().await;
+    // Poll the owned identity before submission, then sample its original live
+    // PID/cgroup. This neither delays START nor changes the image or compiler.
+    let (memory_observer, accepted) = tokio::join!(
+        biased;
+        original_compiler_memory_observer(&docker, &spec),
+        f.submit(&spec),
+    );
     let terminal = f.terminal(&spec).await;
     let manifest = f.manifest(&spec).await;
+    let memory = memory_observer.and_then(|(id, observer)| {
+        observer
+            .finish()
+            .map(|memory| (id, memory))
+            .ok_or("observer_join_failed")
+    });
+    let id = f.native_container(&spec).await.id.unwrap();
+    let sample = |sample: Option<compiler_memory_observation::Sample>| {
+        sample.map(|sample| {
+            serde_json::json!({
+                "max": sample.max,
+                "oom": sample.oom,
+                "oom_kill": sample.oom_kill,
+                "memory_peak": sample.memory_peak,
+                "memory_limit": sample.memory_limit,
+                "swap_limit": sample.swap_limit,
+                "pids_max_events": sample.pids_max_events,
+                "pids_limit": sample.pids_limit,
+            })
+        })
+    };
+    println!(
+        "{}",
+        serde_json::json!({
+            "scope": "test-owned original compiler cgroup samples",
+            "container_id": memory.as_ref().ok().map(|(id, _)| id),
+            "sampling": "best_effort_not_an_acceptance_oracle",
+            "unavailable_reason": memory.as_ref().err(),
+            "observation": memory.ok().map(|(_, memory)| serde_json::json!({
+                "state": if memory.first.is_some() { "read" } else { "unavailable" },
+                "samples": memory.samples,
+                "deadline_elapsed": memory.deadline_elapsed,
+                "stopped_reason": memory.stopped_reason,
+                "last_unavailable_reason": memory.last_unavailable_reason,
+                "first": sample(memory.first),
+                "last": sample(memory.last),
+            })),
+        })
+    );
     // Preserve exact-container scalar evidence before any assertion can drop the
     // fixture. Compiler stderr is deliberately discarded by production code;
     // do not substitute an inferred OOM or expose input/configuration bodies.
-    let docker = docker().await;
-    let id = f.native_container(&spec).await.id.unwrap();
     let began = std::time::Instant::now();
     let mut previous = None;
     loop {

@@ -36,16 +36,23 @@ class ForensicTests(unittest.TestCase):
         for final_newline in (True, False):
             source = self.root / str(final_newline)
             (source / 'deploy/docker').mkdir(parents=True)
-            production = b'FROM pinned AS server\nRUN original-command' + (b'\n' if final_newline else b'')
+            production = b'FROM pinned AS server\nRUN \\\n    sh deploy/docker/native-build.sh server\n# original final comment' + (b'\n' if final_newline else b'')
             ignore = b'**\n!original\n'
+            helper = b'#!/bin/sh\n# retain original bytes and arguments\ncargo build --locked --release -p server -p runtime\n'
             (source / 'deploy/docker/Dockerfile').write_bytes(production)
             (source / 'deploy/docker/Dockerfile.dockerignore').write_bytes(ignore)
+            (source / 'deploy/docker/native-build.sh').write_bytes(helper)
             path, identity = forensic.prepare_dockerfile(source, source / 'evidence')
             self.assertEqual(path.read_bytes(), production + forensic.SUFFIX)
             self.assertEqual(Path(str(path) + '.dockerignore').read_bytes(), ignore)
             self.assertEqual(identity['production_dockerfile_sha256'], hashlib.sha256(production).hexdigest())
             self.assertEqual(identity['executed_dockerfile_sha256'], hashlib.sha256(path.read_bytes()).hexdigest())
             self.assertEqual(identity['linker_argv']['status'], 'unavailable')
+            self.assertEqual(identity['production_entrypoint'], 'sh deploy/docker/native-build.sh server')
+            self.assertNotIn('original_command', identity)
+            self.assertEqual(identity['native_build_sha256'], hashlib.sha256(helper).hexdigest())
+            self.assertEqual(identity['native_build_bytes'], len(helper))
+            self.assertEqual((path.parent / identity['native_build_artifact']).read_bytes(), helper)
             self.assertNotIn(b'ENV ', forensic.SUFFIX)
             self.assertNotIn(b'cargo build', forensic.SUFFIX)
             self.assertIn(b'FROM server AS application-forensics', forensic.SUFFIX)
@@ -62,6 +69,42 @@ class ForensicTests(unittest.TestCase):
         self.assertIn('ulimit -f 65536; readelf --wide --symbols', script)
         self.assertLessEqual(2 * forensic.MAX_REPETITION_BYTES + forensic.MAX_REPORT_BYTES, forensic.MAX_EXTRA_BYTES)
         self.assertEqual(forensic.MAX_EXTRA_BYTES, 1024 ** 3)
+
+    def test_actual_helper_bytes_are_retained_without_inferring_cargo_arguments(self):
+        source = self.root / 'source'
+        (source / 'deploy/docker').mkdir(parents=True)
+        (source / 'deploy/docker/Dockerfile').write_bytes(b'FROM pinned AS server\nRUN \\\n    sh deploy/docker/native-build.sh server\n')
+        (source / 'deploy/docker/Dockerfile.dockerignore').write_bytes(b'**\n!original\n')
+        helper = b'#!/bin/sh\n# changed producer configuration\n: "$@"'
+        (source / 'deploy/docker/native-build.sh').write_bytes(helper)
+        path, identity = forensic.prepare_dockerfile(source, self.root / 'captured')
+        self.assertEqual((path.parent / 'native-build.sh').read_bytes(), helper)
+        self.assertEqual(identity['native_build_sha256'], hashlib.sha256(helper).hexdigest())
+        self.assertEqual(identity['production_entrypoint'], 'sh deploy/docker/native-build.sh server')
+        self.assertNotIn('original_command', identity)
+        self.assertEqual(identity['linker_argv']['status'], 'unavailable')
+
+    def test_missing_entrypoint_oversized_and_symlink_helpers_fail_before_artifact_write(self):
+        for mutation in ('missing-entrypoint', 'ambiguous-entrypoint', 'oversized', 'symlink'):
+            with self.subTest(mutation=mutation):
+                source = self.root / mutation
+                (source / 'deploy/docker').mkdir(parents=True)
+                original = b'FROM pinned AS server\nRUN \\\n    sh deploy/docker/native-build.sh server\n'
+                if mutation == 'missing-entrypoint':
+                    original = original.replace(b'native-build.sh server', b'other-helper.sh server')
+                elif mutation == 'ambiguous-entrypoint':
+                    original += b'    sh deploy/docker/native-build.sh server\n'
+                (source / 'deploy/docker/Dockerfile').write_bytes(original)
+                (source / 'deploy/docker/Dockerfile.dockerignore').write_bytes(b'**\n!original\n')
+                helper = source / 'deploy/docker/native-build.sh'
+                if mutation == 'symlink':
+                    helper.symlink_to(self.binary)
+                else:
+                    helper.write_bytes(b'x' * (forensic.MAX_NATIVE_HELPER_BYTES + 1) if mutation == 'oversized' else b'#!/bin/sh\n')
+                with self.assertRaises(ValueError):
+                    forensic.prepare_dockerfile(source, source / 'evidence')
+                self.assertFalse((source / 'evidence/forensic.Dockerfile').exists())
+                self.assertFalse((source / 'evidence/native-build.sh').exists())
 
     def test_every_original_byte_is_covered_including_shstrtab_headers_gaps_and_trailer(self):
         with self.binary.open('ab') as output:
@@ -184,12 +227,16 @@ class ForensicTests(unittest.TestCase):
         (extra / 'server').write_bytes(self.binary.read_bytes())
         (extra / 'server-symbols.txt').write_text('symbols belong to the large original archive')
         (extra / 'coverage.json').write_text('{"qualification":"DIAGNOSTIC_ONLY"}\n')
+        helper = b'#!/bin/sh\n# original actual helper bytes\n: "$@"'
+        (extra / 'native-build.sh').write_bytes(helper)
         result = diagnostics.collect(source, output, COMMIT, forensic=True)
         self.assertEqual(result['maximum_total_bytes'], 8 * 1024 * 1024)
         self.assertTrue((output / 'old-a1/forensics/coverage.json').exists())
         self.assertFalse((output / 'old-a1/forensics/server').exists())
         self.assertFalse((output / 'old-a1/forensics/server-symbols.txt').exists())
         self.assertTrue((extra / 'server').exists())
+        self.assertEqual((output / 'old-a1/forensics/native-build.sh').read_bytes(), helper)
+        self.assertEqual(result['files']['old-a1/forensics/native-build.sh']['sha256'], hashlib.sha256(helper).hexdigest())
 
     def test_production_measurement_forensic_branch_retains_recipe_and_cleanup_with_no_full_build(self):
         fixture = comparison_tests.ComparisonTests()
@@ -207,7 +254,7 @@ class ForensicTests(unittest.TestCase):
 
     def test_changed_production_prefix_blocks_before_build_and_failed_capture_keeps_original_cleanup(self):
         fixture = comparison_tests.ComparisonTests()
-        for error in ('prefix_mismatch', 'forensic_failure'):
+        for error in ('prefix_mismatch', 'helper_mismatch', 'forensic_failure'):
             result, calls, builds = fixture.measure_fixture(self.root / error, application_only=True,
                                                           prestrip=True, **{error: True})
             self.assertEqual(result['diagnostic_status'], 'blocked', result)
@@ -216,6 +263,9 @@ class ForensicTests(unittest.TestCase):
             if error == 'prefix_mismatch':
                 self.assertFalse(builds)
                 self.assertIn('differ from the verified production recipe', result['error'])
+            elif error == 'helper_mismatch':
+                self.assertFalse(builds)
+                self.assertIn('Retained native helper differs from the verified source recipe', result['error'])
             else:
                 self.assertEqual(len(builds), 1)
                 self.assertIn('blocked-original-byte-budget', result['error'])
