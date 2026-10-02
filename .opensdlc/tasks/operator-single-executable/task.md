@@ -239,3 +239,72 @@ environment. It is neither a production repeatability result nor evidence of
 the hosted failure's cause, and no dependency change follows from it. Local
 Python checks validate orchestration and evidence handling only; production
 application-only repetitions remain UNRUN at this preparation stage.
+
+## Same-source failure and original pre-strip evidence
+
+The subsequent hosted run `36957287977` at
+`1fc1e74de2888e0a7a10c07a6247ae1b07f81c3a` completed the diagnostic operation
+and correctly failed qualification. A1/A2 used the same b58 source, checkout
+path, native input/recipe identity and runner, with distinct verified-empty
+builders and completed owned cleanup. Their original whole-ELF hashes differed
+and reproduced the two historical B/C identities; candidate C was not started.
+Only `.note.gnu.build-id` differed among the 28 sections captured for each
+binary, with matching GNU header/layout observations. That section list omitted
+`.shstrtab` and did not cover file gaps or original pre-strip symbol/string
+tables, so it does not prove all other link-output bytes were identical.
+
+The next investigative head enables `--prestrip-aa-only`. It runs exactly one
+A1/A2 pair at the historical baseline and disables C even if A/A matches. The
+production Dockerfile remains an exact byte prefix of a separately recorded
+diagnostic Dockerfile; no trailing newline is normalized. The original
+Dockerfile-specific ignore file is copied unchanged alongside the diagnostic
+Dockerfile, retaining the same context and native source identity. The original
+production recipe digest, executed Dockerfile digest and appended capture
+suffix digest are separate observations and must match between repetitions.
+
+The appended stage derives from the completed production `server` stage and
+mounts its `/build/target` cache read-only. It never invokes Cargo or changes
+the original command, environment, helper, compiler, linker flags or source.
+It retains original `target/release/server` and `runtime` alongside the existing
+`/out` binaries, ordered GNU symbol tables and producer tool versions. Original
+sizes are checked before copying. Each symbol output has an operating-system
+file-size limit before output starts. Missing or oversized originals and symbol
+output failure write an explicit blocked capture status; the completed image
+still permits retention of the original `/out` evidence before the diagnostic
+operation stops. No capture failure can admit the comparison or start A2.
+
+GNU `readelf` offsets and lengths define checked file-backed section ranges,
+including `.symtab`, `.strtab`, `.shstrtab` and any debug sections that exist.
+Coverage also hashes the ELF/program/section headers and every gap or trailer.
+Missing tables, invalid counts, overlapping ranges and ranges beyond the
+original file block the observation. The disjoint interval partition covers
+every original byte, and its whole-file digest must match the existing stripped
+ELF observation. The original binaries are never rewritten or normalized.
+
+The runner also streams the two original ordered symbol texts, without sorting
+or interpreting symbols. `diagnostic.json` retains each complete file's original
+byte SHA-256 and line count, the total differing-line count, and the first 32
+differing original line pairs. Each preview is bounded to 1,024 bytes and has a
+byte-preserving base64 prefix, readable escaped text, original line length/hash
+and an explicit truncation flag. Missing lines are explicit nulls. Sampling or
+output truncation never substitutes for the total count or whole-file hash;
+each pair report is bounded to 512 KiB. Unavailable or incomplete comparison is
+explicit and blocks diagnostic completion. These results travel in the small
+artifact, while the untouched complete symbol texts remain in the large archive.
+
+Extra retained evidence has a 1 GiB ceiling: each repetition reserves at most
+508 MiB, with a separate 8 MiB report reserve. That per-repetition allowance
+reserves 64 MiB per symbol output and 8 MiB for metadata before allowing the raw
+copies. The small artifact in this mode is limited to 8 MiB including its
+manifest; original pre-strip ELFs and symbol texts remain in the original large
+archive. The existing 35-minute total deadline, 3-minute owned-cleanup reserve,
+40 GB admission checks, full-mode 85/95-minute limits and unconditional evidence
+uploads remain unchanged. Failed controls stop further repetitions.
+
+Actual linker argv is explicitly unavailable: no logging hooks are added to
+the production build. The exact original Cargo command and available producer
+tool versions are observations, not proof of which linker invocation produced
+the files. Upstream LLVM's whole-link-output build-ID mechanism motivates this
+capture but does not establish the actual linker's identity or the failure's
+cause. This next pre-strip A/A run remains UNRUN until independently reviewed
+and executed. It cannot replace full current-base packaging qualification.

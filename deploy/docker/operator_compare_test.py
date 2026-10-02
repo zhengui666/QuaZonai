@@ -539,7 +539,7 @@ class ComparisonTests(unittest.TestCase):
                 docker.assert_not_called()
                 save.assert_not_called()
 
-    def measure_fixture(self, directory, variant='candidate', build_failure=False, cache=EMPTY_CACHE, free=50_000_000_000, extraction_failure=False, report_cleanup_paths=None, application_only=False, source_mismatch=False):
+    def measure_fixture(self, directory, variant='candidate', build_failure=False, cache=EMPTY_CACHE, free=50_000_000_000, extraction_failure=False, report_cleanup_paths=None, application_only=False, source_mismatch=False, prestrip=False, forensic_failure=False, prefix_mismatch=False):
         old, candidate = self.reports()
         reports = {'old': old, 'candidate': candidate}
         if application_only:
@@ -547,6 +547,7 @@ class ComparisonTests(unittest.TestCase):
                 report['hosted_comparison']['recipe']['base_images'] = [
                     'node:22-bookworm-slim@sha256:' + SHA, 'rust:1.98.1-bookworm@sha256:' + SHA,
                     'debian:bookworm-slim@sha256:' + SHA]
+                report['hosted_comparison']['recipe']['dockerfile_sha256'] = SHA
         environment = copy.deepcopy(reports[variant]['hosted_comparison']['environment'])
         calls, builds = [], []
         def run(args):
@@ -556,7 +557,10 @@ class ComparisonTests(unittest.TestCase):
             if args[:3] in (['docker', 'image', 'ls'], ['docker', 'buildx', 'ls']):
                 return ''
             if args[:3] == ['docker', 'container', 'inspect']:
-                return json.dumps([{'Id': SHA, 'Config': {'Image': BUILDKIT}}])
+                return json.dumps([{'Id': SHA, 'Config': {'Image': BUILDKIT,
+                    'Labels': {'quazonai.measurement': args[-1].split('-extract-', 1)[0]}}}])
+            if args[:3] == ['docker', 'container', 'ls']:
+                return ''
             if args[:3] == ['docker', 'buildx', 'inspect']:
                 return 'Name: ' + args[-1] + '\nDriver: docker-container'
             if args[:3] == ['docker', 'buildx', 'du']:
@@ -583,7 +587,13 @@ class ComparisonTests(unittest.TestCase):
                 if source_mismatch:
                     identity['input_sha256'] = 'f' * 64
                 comparison.write_json(path / 'native-identity.json', identity)
+                if prestrip:
+                    resources['containers'][owner + '-extract-application-elf'] = SHA
             return diagnostics
+        forensic_recipe = {'production_dockerfile_sha256': 'f' * 64 if prefix_mismatch else SHA,
+                           'context_rules_sha256': SHA, 'capture_suffix_sha256': SHA}
+        coverage = {'binaries': {name + '-stripped': {'sha256': SHA, 'size_bytes': size}
+                                for name, size in (('server', 100), ('runtime', 200))}}
         with patch.dict('os.environ', {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted'}), \
                 patch.object(comparison.cost.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(100_000_000_000, 0, free)), \
                 patch.object(comparison, 'harness_identity', return_value=candidate['hosted_comparison']['harness']), \
@@ -593,9 +603,13 @@ class ComparisonTests(unittest.TestCase):
                 patch.object(comparison.subprocess, 'run', side_effect=build), \
                 patch.object(comparison, 'extract_application', side_effect=extract), \
                 patch.object(comparison.cost, 'image_identity', return_value={'id': 'sha256:' + SHA}), \
+                patch.object(comparison.forensics, 'prepare_dockerfile', return_value=(directory / 'forensic.Dockerfile', forensic_recipe)), \
+                patch.object(comparison.forensics, 'extract_originals', return_value={'status': 'complete'},
+                             side_effect=ValueError('blocked-original-byte-budget') if forensic_failure else None), \
+                patch.object(comparison.forensics, 'observe', return_value=coverage), \
                 patch.object(comparison.cost, 'report', return_value=copy.deepcopy(reports[variant])) as report:
             result = comparison.measure(Path('old'), Path('candidate'), COMMIT, variant, directory, 'ci', BUILDKIT,
-                                        time.time() + 600, application_only=application_only)
+                                        time.time() + 600, application_only=application_only, prestrip=prestrip)
             if application_only:
                 report.assert_not_called()
             if report_cleanup_paths is not None:
@@ -657,7 +671,8 @@ class ComparisonTests(unittest.TestCase):
         paths = body.split('    paths:\n')[1].split('  workflow_dispatch:')[0]
         self.assertEqual([line.strip() for line in paths.splitlines() if line.strip()], [
             "- '.github/workflows/operator-cost-comparison.yml'", "- 'deploy/docker/operator_cost*'",
-            "- 'deploy/docker/operator_compare*'", "- 'deploy/docker/operator_diagnostics*'"])
+            "- 'deploy/docker/operator_compare*'", "- 'deploy/docker/operator_diagnostics*'",
+            "- 'deploy/docker/operator_elf_forensics*'"])
         self.assertIn('timeout-minutes: 95', body)
         self.assertIn('for variant in old candidate', body)
         self.assertIn('85 * 60', body)

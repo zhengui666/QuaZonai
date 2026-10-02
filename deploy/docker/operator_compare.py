@@ -14,6 +14,7 @@ import time
 import uuid
 
 import operator_cost as cost
+import operator_elf_forensics as forensics
 
 
 OLD_REVISION = 'b58ec6d153d5b211b2941bf0d603ea3a3108a68b'
@@ -26,6 +27,7 @@ DIAGNOSTIC_CLEANUP_SECONDS = 180
 MIN_FREE_BYTES = 40_000_000_000
 LOCKED_INPUTS = ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'apps/web/package-lock.json')
 HARNESS_FILES = ('deploy/docker/operator_compare.py', 'deploy/docker/operator_cost.py',
+                 'deploy/docker/operator_elf_forensics.py',
                  'deploy/docker/native-inputs.mjs', 'deploy/docker/native-build.sh',
                  '.github/workflows/operator-cost-comparison.yml')
 OPERATOR_RECIPE = 'CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --locked --release -p job --features polymarket-history,catalog-prepare'
@@ -359,7 +361,7 @@ def pair_archive_evidence(directory):
     return shared
 
 
-def measure(old, candidate, revision, variant, directory, version, builder_image, deadline=None, *, application_only=False):
+def measure(old, candidate, revision, variant, directory, version, builder_image, deadline=None, *, application_only=False, prestrip=False):
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise ValueError('Run this expensive comparison only in its GitHub-hosted workflow.')
     if not re.fullmatch(r'moby/buildkit@sha256:[0-9a-f]{64}', builder_image):
@@ -449,6 +451,13 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
             raise ValueError('Fresh builder did not prove an empty cache; blocked before building.')
         if application_only:
             command = build_command(source, owner, full_image, selected_revision, version, 'server')
+            if prestrip:
+                dockerfile, detail['forensic_recipe'] = forensics.prepare_dockerfile(source, directory / 'forensics')
+                if detail['forensic_recipe']['production_dockerfile_sha256'] != recipe['dockerfile_sha256'] or \
+                        detail['forensic_recipe']['context_rules_sha256'] != recipe['common_inputs_sha256']['deploy/docker/Dockerfile.dockerignore']:
+                    raise ValueError('Forensic prefix or context rules differ from the verified production recipe.')
+                command[command.index('--file') + 1] = str(dockerfile)
+                command[command.index('--target') + 1] = 'application-forensics'
             write_json(directory / 'build-command.json', command)
             measured_build(directory, 'application', command)
             image_id = server_image_identity(full_image)
@@ -461,6 +470,15 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
             result['source_native_identity'] = json.loads((directory / 'application-elf/native-identity.json').read_text())
             if result['source_native_identity'] != recipe['native_identity']:
                 raise ValueError('Extracted server-stage native identity differs from the verified source closure.')
+            if prestrip:
+                container = resources['containers'][owner + '-extract-application-elf']
+                detail['forensic_capture'] = forensics.extract_originals(container, directory / 'forensics')
+                detail['forensic_coverage'] = forensics.observe(directory / 'forensics', directory / 'application-elf')
+                for binary in ('server', 'runtime'):
+                    original = detail['forensic_coverage']['binaries'][binary + '-stripped']
+                    observed = detail['application_diagnostics'][binary]
+                    if (original['sha256'], original['size_bytes']) != (observed['sha256'], observed['size_bytes']):
+                        raise ValueError('Complete coverage differs from the retained original ELF identity.')
             result['diagnostic_status'] = 'complete'
             return result
         command = build_command(source, owner, full_image, selected_revision, version)
@@ -573,7 +591,7 @@ def diagnostic_pair(left, right, relation):
             'binaries': binaries}
 
 
-def diagnose_application(old, candidate, revision, directory, version, builder_image, deadline):
+def diagnose_application(old, candidate, revision, directory, version, builder_image, deadline, *, prestrip=False):
     """Sequential A1/A2, then C only after exact A/A equality and spare budget."""
     if not math.isfinite(deadline):
         raise ValueError('Diagnostic deadline must be a finite absolute time.')
@@ -588,11 +606,19 @@ def diagnose_application(old, candidate, revision, directory, version, builder_i
               'deadline': deadline, 'cleanup_reserve_seconds': DIAGNOSTIC_CLEANUP_SECONDS,
               'scope': 'Production server stage only; no operator, web, installed-image, size or performance qualification.',
               'repetitions': {}, 'observations': {}, 'candidate_status': 'not-started'}
+    if prestrip:
+        result.update(forensic_capture='AA-only', maximum_extra_bytes=forensics.MAX_EXTRA_BYTES,
+                      maximum_small_report_bytes=forensics.MAX_REPORT_BYTES,
+                      linker_argv={'status': 'unavailable'},
+                      scope='Original production A1/A2 pre-strip and stripped byte evidence only; candidate is disabled.')
     output = directory / 'diagnostic.json'
     write_json(output, result)
     durations = []
     try:
-        for name, variant in (('old-a1', 'old'), ('old-a2', 'old'), ('candidate', 'candidate')):
+        repetitions = [('old-a1', 'old'), ('old-a2', 'old')]
+        if not prestrip:
+            repetitions.append(('candidate', 'candidate'))
+        for name, variant in repetitions:
             # Observed complete repetition duration includes setup/extraction/
             # cleanup. Keep cleanup time and a minute of margin on top of it.
             needed = (max(durations) if durations else 0) + DIAGNOSTIC_CLEANUP_SECONDS + 60
@@ -601,8 +627,10 @@ def diagnose_application(old, candidate, revision, directory, version, builder_i
                 result['diagnostic_status'] = 'blocked' if name != 'candidate' else 'complete'
                 break
             started = time.monotonic()
-            report = measure(old, candidate, revision, variant, directory / name, version, builder_image,
-                             deadline, application_only=True)
+            options = {'application_only': True}
+            if prestrip:
+                options['prestrip'] = True
+            report = measure(old, candidate, revision, variant, directory / name, version, builder_image, deadline, **options)
             durations.append(time.monotonic() - started)
             result['repetitions'][name] = report
             write_json(output, result)
@@ -612,6 +640,27 @@ def diagnose_application(old, candidate, revision, directory, version, builder_i
                 break
             if name == 'old-a2':
                 aa = result['observations']['AA'] = diagnostic_pair(result['repetitions']['old-a1'], report, 'AA')
+                if prestrip:
+                    first = result['repetitions']['old-a1']['hosted_comparison']
+                    second = report['hosted_comparison']
+                    if first['forensic_recipe'] != second['forensic_recipe']:
+                        raise ValueError('A/A forensic capture suffix or production recipe changed.')
+                    result['forensic_observations'] = forensics.compare(first['forensic_coverage'], second['forensic_coverage'])
+                    previous_deadline = cost.COMMAND_DEADLINE
+                    try:
+                        cost.COMMAND_DEADLINE = deadline - DIAGNOSTIC_CLEANUP_SECONDS
+                        result['forensic_observations']['ordered_symbol_text'] = {
+                            binary: forensics.compare_symbol_text(directory / 'old-a1/forensics' / (binary + '-symbols.txt'),
+                                                                 directory / 'old-a2/forensics' / (binary + '-symbols.txt'))
+                            for binary in ('server', 'runtime')}
+                    finally:
+                        cost.COMMAND_DEADLINE = previous_deadline
+                    result['diagnostic_status'] = 'complete' if aa['status'] == 'observed' else 'blocked'
+                    result['stop_reason'] = 'AA-only original pre-strip evidence retained; candidate disabled'
+                    if any(value['status'] != 'complete' for value in result['forensic_observations']['ordered_symbol_text'].values()):
+                        result['diagnostic_status'] = 'blocked'
+                        result['stop_reason'] = 'Original ordered symbol comparison unavailable; partial evidence retained'
+                    break
                 if not aa['original_elf_equal']:
                     result['stop_reason'] = 'A/A original ELF mismatch' if aa['status'] == 'observed' else 'A/A controls failed'
                     result['diagnostic_status'] = 'complete' if aa['status'] == 'observed' else 'blocked'
@@ -845,6 +894,7 @@ def main():
     diagnostic.add_argument('--version', required=True)
     diagnostic.add_argument('--builder-image', required=True)
     diagnostic.add_argument('--deadline', type=float, required=True)
+    diagnostic.add_argument('--prestrip-aa-only', action='store_true', help='Retain original pre-strip evidence for A/A only; never qualify packaging.')
     verification = subcommands.add_parser('verify-sources')
     verification.add_argument('--old-source', type=Path, required=True)
     verification.add_argument('--candidate-source', type=Path, required=True)
@@ -876,7 +926,11 @@ def main():
             parser.exit(1, 'Measurement blocked; see retained report, original binaries, logs and cleanup evidence.\n')
     elif args.command == 'diagnose-application':
         result = diagnose_application(args.old_source.resolve(), args.candidate_source.resolve(), args.revision,
-                                      args.directory.resolve(), args.version, args.builder_image, args.deadline)
+                                      args.directory.resolve(), args.version, args.builder_image, args.deadline,
+                                      prestrip=args.prestrip_aa_only)
+        if 'forensic_observations' in result:
+            summary = json.dumps(result['forensic_observations'], allow_nan=False)
+            print(summary if len(summary.encode()) <= 64 * 1024 else 'Original forensic observations retained in diagnostic.json.')
         print('DIAGNOSTIC_ONLY: ' + result['diagnostic_status'] + '; packaging qualification remains unperformed.')
         if result['diagnostic_status'] != 'complete':
             parser.exit(1, 'Application diagnostic blocked; see retained evidence.\n')

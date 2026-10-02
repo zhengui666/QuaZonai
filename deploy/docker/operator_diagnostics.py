@@ -30,6 +30,11 @@ FILES = tuple(dict.fromkeys((*FILES,
     *(variant + '/' + name for variant in REPETITIONS for name in VARIANT_FILES),
     *(variant + '/application-elf/' + name for variant in REPETITIONS
       for name in (*ELF_FILES, 'native-identity.json', 'native-input.sha256', 'native-recipe.sha256')))))
+FILES += tuple(variant + '/forensics/' + name for variant in ('old-a1', 'old-a2')
+               for name in ('coverage.json', 'capture-status.txt', 'sizes.txt', 'producer-tools.txt',
+                            'forensic.Dockerfile', 'forensic.Dockerfile.dockerignore',
+                            'server-prestrip-readelf.txt', 'server-stripped-readelf.txt',
+                            'runtime-prestrip-readelf.txt', 'runtime-stripped-readelf.txt'))
 
 
 def section_observations(payloads, names=None, labels=('old', 'candidate')):
@@ -68,7 +73,7 @@ def section_observations(payloads, names=None, labels=('old', 'candidate')):
         return {'status': 'unavailable', 'reason': 'malformed original ELF diagnostics; raw files retained'}
 
 
-def collect(source, destination, revision):
+def collect(source, destination, revision, *, forensic=False):
     if not re.fullmatch(r'[0-9a-f]{40}', revision):
         raise ValueError('Require the exact reviewed harness revision.')
     if source.is_symlink() or not source.is_dir():
@@ -79,6 +84,7 @@ def collect(source, destination, revision):
     if destination == source or source in destination.parents:
         raise ValueError('Keep the small diagnostic output outside the original archive.')
     payloads, missing, total = {}, [], 0
+    maximum = min(MAX_TOTAL_BYTES, 8 * 1024 * 1024 - 64 * 1024) if forensic else MAX_TOTAL_BYTES
     for name in FILES:
         path = source
         absent = False
@@ -99,7 +105,7 @@ def collect(source, destination, revision):
         with path.open('rb') as stream:
             body = stream.read(MAX_FILE_BYTES + 1)
         total += len(body)
-        if len(body) > MAX_FILE_BYTES or total > MAX_TOTAL_BYTES:
+        if len(body) > MAX_FILE_BYTES or total > maximum:
             raise ValueError('Small diagnostic budget exceeded; original archive is preserved.')
         payloads[name] = body
     manifest = {
@@ -107,6 +113,7 @@ def collect(source, destination, revision):
         'qualification': 'DIAGNOSTIC_ONLY',
         'scope': 'Original diagnostic bytes only; not packaging qualification or a root-cause claim.',
         'input_bytes': total, 'missing_files': missing,
+        'maximum_total_bytes': maximum + 64 * 1024,
         'files': {name: {'bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
                   for name, body in payloads.items()},
         'section_observations': section_observations(payloads),
@@ -132,8 +139,9 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--destination', type=Path, required=True)
     parser.add_argument('--revision', required=True)
+    parser.add_argument('--forensic-aa-only', action='store_true')
     args = parser.parse_args()
-    result = collect(args.source, args.destination, args.revision)
+    result = collect(args.source, args.destination, args.revision, forensic=args.forensic_aa_only)
     summary = json.dumps({'input_bytes': result['input_bytes'],
                           'missing_files': result['missing_files'],
                           'section_observations': result['section_observations'],

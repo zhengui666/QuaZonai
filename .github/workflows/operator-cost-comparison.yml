@@ -8,6 +8,7 @@ on:
       - 'deploy/docker/operator_cost*'
       - 'deploy/docker/operator_compare*'
       - 'deploy/docker/operator_diagnostics*'
+      - 'deploy/docker/operator_elf_forensics*'
   workflow_dispatch:
     inputs:
       candidate_revision:
@@ -86,14 +87,14 @@ jobs:
           image=$(timeout 30s docker image inspect --format '{{index .RepoDigests 0}}' moby/buildkit:buildx-stable-1)
           [[ "$image" =~ ^moby/buildkit@sha256:[0-9a-f]{64}$ ]]
           echo "image=$image" >> "$GITHUB_OUTPUT"
-      - name: Diagnose application A1/A2 then candidate, or measure full old/candidate
+      - name: Capture original pre-strip A1/A2 evidence, or measure full old/candidate
         env:
           BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
           set -uo pipefail
           if test "$COMPARISON_MODE" = application-elf-diagnostic; then
-            python3 -B deploy/docker/operator_compare.py diagnose-application \
+            python3 -B deploy/docker/operator_compare.py diagnose-application --prestrip-aa-only \
               --old-source old-source --candidate-source candidate-source \
               --revision "$CANDIDATE_REVISION" \
               --directory "$RUNNER_TEMP/operator-comparison" \
@@ -117,7 +118,11 @@ jobs:
         run: |
           status=0
           old=old
-          if test "$COMPARISON_MODE" = application-elf-diagnostic; then old=old-a1; fi
+          diagnostic_options=()
+          if test "$COMPARISON_MODE" = application-elf-diagnostic; then
+            old=old-a1
+            diagnostic_options+=(--forensic-aa-only)
+          fi
           python3 -B deploy/docker/operator_compare.py compare \
             --old "$RUNNER_TEMP/operator-comparison/$old/report.json" \
             --candidate "$RUNNER_TEMP/operator-comparison/candidate/report.json" \
@@ -126,7 +131,7 @@ jobs:
           python3 -B deploy/docker/operator_diagnostics.py \
             --source "$RUNNER_TEMP/operator-comparison" \
             --destination "$RUNNER_TEMP/operator-comparison-diagnostics" \
-            --revision "$CANDIDATE_REVISION"
+            --revision "$CANDIDATE_REVISION" "${diagnostic_options[@]}"
           # A completed diagnostic is still non-qualifying, even if a future
           # comparator change accidentally returns zero. This head must not merge.
           if test "$COMPARISON_MODE" = application-elf-diagnostic; then exit 1; fi
