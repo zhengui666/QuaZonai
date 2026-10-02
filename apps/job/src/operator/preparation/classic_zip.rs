@@ -306,7 +306,7 @@ save('false_zero_bomb',bomb,False)
                     "{name}"
                 );
                 assert_eq!(
-                    crate::bars::digest(&bytes),
+                    super::super::bars::digest(&bytes),
                     case["expected_sha256"].as_str().unwrap(),
                     "{name}"
                 );

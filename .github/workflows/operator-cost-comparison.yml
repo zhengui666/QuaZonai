@@ -1,0 +1,156 @@
+name: Operator packaging cost comparison
+on:
+  pull_request:
+    # Investigative head: DIAGNOSTIC_ONLY, never merge on this result. Restore
+    # full mode and qualify the actual current-base integration before merging.
+    paths:
+      - '.github/workflows/operator-cost-comparison.yml'
+      - 'deploy/docker/operator_cost*'
+      - 'deploy/docker/operator_compare*'
+      - 'deploy/docker/operator_diagnostics*'
+      - 'deploy/docker/operator_elf_forensics*'
+  workflow_dispatch:
+    inputs:
+      candidate_revision:
+        description: Exact reviewed candidate commit SHA to diagnose against producer candidate dc9c8cf (not a dev merge).
+        required: true
+        type: string
+permissions:
+  contents: read
+env:
+  COMPARISON_MODE: application-elf-diagnostic
+  CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
+  HARNESS_REVISION: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
+concurrency:
+  group: operator-comparison-${{ github.event.pull_request.number || inputs.candidate_revision }}
+  cancel-in-progress: true
+jobs:
+  compare:
+    # One host, sequential verified-empty owned builders. Diagnostic operations
+    # have 35 minutes including a 3-minute cleanup reserve. The separately
+    # bounded comparison/uploads below allow 10 more minutes for evidence.
+    # Preserve the original full-mode 85-minute measurement / 95-minute job.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    steps:
+      - name: Bound measurement time and validate the exact candidate revision
+        run: |
+          set -euo pipefail
+          case "$COMPARISON_MODE" in
+            full) seconds=$(( 85 * 60 )) ;;
+            application-elf-diagnostic) seconds=$(( 35 * 60 )) ;;
+            *) echo 'Unsupported comparison mode'; exit 1 ;;
+          esac
+          echo "MEASUREMENT_DEADLINE=$(( $(date +%s) + seconds ))" >> "$GITHUB_ENV"
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          test "$CANDIDATE_REVISION" != dc9c8cf30704781615ba6524f50368d0c148d9b3
+      - name: Check out the measurement harness
+        timeout-minutes: 5
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
+          persist-credentials: false
+      - name: Verify the exact measurement harness revision
+        run: test "$(git rev-parse HEAD)" = "$HARNESS_REVISION"
+      - name: Check out the immutable old full image source
+        timeout-minutes: 5
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: dc9c8cf30704781615ba6524f50368d0c148d9b3
+          path: old-source
+          persist-credentials: false
+      - name: Check out the exact candidate source
+        timeout-minutes: 5
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
+          path: candidate-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify immutable source inputs and approved native substitutions before building
+        timeout-minutes: 3
+        run: |
+          python3 -B deploy/docker/operator_compare.py verify-sources \
+            --old-source old-source --candidate-source candidate-source \
+            --revision "$CANDIDATE_REVISION" \
+            --output "$RUNNER_TEMP/operator-comparison/source-preflight.json"
+      - timeout-minutes: 5
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver: docker
+      - name: Resolve one official BuildKit digest for both builders
+        timeout-minutes: 4
+        id: builder
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=10s 180s docker pull moby/buildkit:buildx-stable-1
+          image=$(timeout 30s docker image inspect --format '{{index .RepoDigests 0}}' moby/buildkit:buildx-stable-1)
+          [[ "$image" =~ ^moby/buildkit@sha256:[0-9a-f]{64}$ ]]
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - name: Capture original pre-strip A1/A2 evidence, or measure full old/candidate
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -uo pipefail
+          if test "$COMPARISON_MODE" = application-elf-diagnostic; then
+            python3 -B deploy/docker/operator_compare.py diagnose-application --prestrip-aa-only --verify-producer-compatibility \
+              --old-source old-source --candidate-source candidate-source \
+              --revision "$CANDIDATE_REVISION" \
+              --directory "$RUNNER_TEMP/operator-comparison" \
+              --version "operator-compare-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              --builder-image "$BUILDER_IMAGE" --deadline "$MEASUREMENT_DEADLINE"
+            exit "$?"
+          fi
+          status=0
+          for variant in old candidate; do
+            python3 -B deploy/docker/operator_compare.py measure \
+              --old-source old-source --candidate-source candidate-source \
+              --revision "$CANDIDATE_REVISION" --variant "$variant" \
+              --directory "$RUNNER_TEMP/operator-comparison/$variant" \
+              --version "operator-compare-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              --builder-image "$BUILDER_IMAGE" --deadline "$MEASUREMENT_DEADLINE" || status=1
+          done
+          exit "$status"
+      - name: Retain every comparison observation and admission failure
+        timeout-minutes: 1
+        if: always()
+        run: |
+          status=0
+          old=old
+          diagnostic_options=()
+          if test "$COMPARISON_MODE" = application-elf-diagnostic; then
+            old=old-a1
+            diagnostic_options+=(--forensic-aa-only)
+          fi
+          python3 -B deploy/docker/operator_compare.py compare \
+            --old "$RUNNER_TEMP/operator-comparison/$old/report.json" \
+            --candidate "$RUNNER_TEMP/operator-comparison/candidate/report.json" \
+            --revision "$CANDIDATE_REVISION" \
+            --output "$RUNNER_TEMP/operator-comparison/comparison.json" || status=$?
+          python3 -B deploy/docker/operator_diagnostics.py \
+            --source "$RUNNER_TEMP/operator-comparison" \
+            --destination "$RUNNER_TEMP/operator-comparison-diagnostics" \
+            --revision "$CANDIDATE_REVISION" "${diagnostic_options[@]}"
+          # A completed diagnostic is still non-qualifying, even if a future
+          # comparator change accidentally returns zero. This head must not merge.
+          if test "$COMPARISON_MODE" = application-elf-diagnostic; then exit 1; fi
+          exit "$status"
+      - name: Retain bounded original section diagnostics separately
+        timeout-minutes: 1
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: operator-comparison-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/operator-comparison-diagnostics/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Retain original ELF files, diagnostics, reports and failure logs
+        timeout-minutes: 8
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: operator-comparison-paired-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/operator-comparison/
+          retention-days: 7
+          if-no-files-found: error

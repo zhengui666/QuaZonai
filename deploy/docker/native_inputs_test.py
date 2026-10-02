@@ -40,7 +40,9 @@ class NativeInputsTests(unittest.TestCase):
                    str(next((self.root / 'apps/runtime/migrations').glob('*.sql')).relative_to(self.root))]
         unrelated = ['README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md',
                      'apps/web/src/main.tsx', 'runtimes/data/source_plugins.py',
-                     '.github/actions/container/action.yml']
+                     '.github/actions/container/action.yml',
+                     'deploy/docker/operator/catalog-prepare',
+                     'deploy/docker/operator/polymarket-history']
         for name in native + unrelated:
             with self.subTest(path=name):
                 file = self.root / name
@@ -170,6 +172,7 @@ class NativeInputsTests(unittest.TestCase):
             self.assertFalse((output / 'README.md').exists())
             self.assertFalse((output / 'apps/web').exists())
             self.assertFalse((output / 'runtimes/data').exists())
+            self.assertFalse((output / 'deploy/docker/operator').exists())
             # Existing destinations are rejected instead of retaining deleted files.
             self.assertNotEqual(self.invoke('prepare', self.root, output, check=False).returncode, 0)
 

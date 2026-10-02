@@ -168,3 +168,15 @@ a second misleading missing-probe-artifact error.
 The correction passes 29 focused projection/probe/cost tests and syntax/whitespace
 checks locally. The new real preflight, final installation, immutable ELF binding
 and actual cached-RUN proof remain pending on the corrected hosted head.
+
+
+## Follow-on single-executable integration
+
+The [PR 152 integration](../operator-single-executable/task.md) uses actual merged
+dev `b58ec6d153d5b211b2941bf0d603ea3a3108a68b` as its two-ELF baseline.
+It preserves this collector, closure and server recipe, substitutes only the
+operator build/install/strip/hash entries, and packages both fixed launchers
+outside Rust inputs. The four-ELF observations above describe this batch's
+standalone layout. Final integration reports and the same-builder probe check
+three real ELFs plus the exact launchers, without changing schema 2 producer
+meaning or claiming fresh-runner reuse or five-minute CI.

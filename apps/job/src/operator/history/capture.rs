@@ -946,7 +946,7 @@ mod tests {
             .map(historical_instrument)
             .collect::<Result<Vec<_>>>()
             .unwrap();
-        let report = crate::import(archive, &args.output).unwrap();
+        let report = super::super::super::import(archive, &args.output).unwrap();
         assert_eq!(report.instruments, 2);
         assert_eq!(report.instrument_versions, 3);
         let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
@@ -991,7 +991,7 @@ mod tests {
             archive.instruments[0].ts_init().as_u64(),
             (START - 10) * 1_000_000_000
         );
-        let report = crate::import(archive, &args.output).unwrap();
+        let report = super::super::super::import(archive, &args.output).unwrap();
         assert_eq!(report.bars, 1);
         assert_eq!(report.closes, 2);
         assert!(!report.registered_in_quazonai);
@@ -1039,7 +1039,7 @@ mod tests {
                 .copied()
                 .map(nautilus_model::data::Data::Trade)
                 .collect::<Vec<_>>();
-            crate::import(archive, &args.output).unwrap();
+            super::super::super::import(archive, &args.output).unwrap();
             let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
                 args.output.join("catalog").to_str().unwrap(),
                 None,

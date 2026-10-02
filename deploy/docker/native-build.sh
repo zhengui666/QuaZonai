@@ -17,17 +17,15 @@ case "$1" in
     started=$(date +%s)
     disk_before=$(df -B1 --output=avail /build | tail -n 1 | tr -d ' ')
     CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --locked --release -p job \
-      --features polymarket-history,catalog-prepare --bin catalog-prepare --bin polymarket-history
-    install -Dm755 target/release/catalog-prepare /operator/bin/catalog-prepare
-    install -Dm755 target/release/polymarket-history /operator/bin/polymarket-history
-    strip /operator/bin/catalog-prepare /operator/bin/polymarket-history
+      --features polymarket-history,catalog-prepare --bin source-tools
+    install -Dm755 target/release/source-tools /operator/bin/source-tools
+    strip /operator/bin/source-tools
     elapsed=$(($(date +%s) - started))
     disk_after=$(df -B1 --output=avail /build | tail -n 1 | tr -d ' ')
-    printf '{"schema_version":2,"input_sha256":"%s","recipe_sha256":"%s","platform":"linux/amd64","elf_sha256":{"server":"%s","runtime":"%s","catalog-prepare":"%s","polymarket-history":"%s"},"original_native_build_elapsed_seconds":%s,"original_disk_before_bytes":%s,"original_disk_after_bytes":%s,"cache":"original producer observations with shared BuildKit Cargo caches; retained unchanged on layer reuse; not a current or independent cold build"}\n' \
+    printf '{"schema_version":2,"input_sha256":"%s","recipe_sha256":"%s","platform":"linux/amd64","elf_sha256":{"server":"%s","runtime":"%s","source-tools":"%s"},"original_native_build_elapsed_seconds":%s,"original_disk_before_bytes":%s,"original_disk_after_bytes":%s,"cache":"original producer observations with shared BuildKit Cargo caches; retained unchanged on layer reuse; not a current or independent cold build"}\n' \
       "$(cat .native-input.sha256)" "$(cat .native-recipe.sha256)" \
       "$(sha256sum /out/server | cut -d ' ' -f 1)" "$(sha256sum /out/runtime | cut -d ' ' -f 1)" \
-      "$(sha256sum /operator/bin/catalog-prepare | cut -d ' ' -f 1)" \
-      "$(sha256sum /operator/bin/polymarket-history | cut -d ' ' -f 1)" \
+      "$(sha256sum /operator/bin/source-tools | cut -d ' ' -f 1)" \
       "$elapsed" "$disk_before" "$disk_after" > /operator/build-metrics.json
     ;;
   *) echo 'Unsupported native producer target' >&2; exit 1 ;;

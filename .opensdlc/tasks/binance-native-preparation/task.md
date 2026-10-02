@@ -122,3 +122,13 @@ market request, hosted CI, registration or scientific qualification ran for this
 correction. Full documentation checks were not run because the local link linter
 is absent and CLI checks require native dependencies. Independent review of the
 final source and applicable exact-head CI remain coordinator-owned gates.
+
+
+## Follow-on packaging integration
+
+The [PR 152 integration](../operator-single-executable/task.md) relocates these
+reviewed archive modules into the shared operator library, preserving dependency
+versions, licenses, parser behavior, receipt clocks and installed archive
+acceptance. This task's original two-executable implementation is retained in
+the exact final comparison baseline; only the integrated candidate packages a
+single operator ELF with fixed compatibility launchers.

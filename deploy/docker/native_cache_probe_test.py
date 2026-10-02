@@ -82,6 +82,39 @@ class ProbeTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 probe.compare_snapshots(before, after, expected)
 
+    def test_warm_probe_rejects_standalone_or_invalid_shared_layout(self):
+        standalone, expected, _ = operator_cost_test.CostTests().native_fixture('standalone')
+        with self.assertRaises(ValueError):
+            probe.compare_snapshots(standalone, copy.deepcopy(standalone), expected)
+        for change in ('missing-source-tools', 'extra-elf', 'launcher-elf', 'launcher-body',
+                       'launcher-mode', 'current-source', 'historical-producer'):
+            before, expected, _ = operator_cost_test.CostTests().native_fixture()
+            if change == 'missing-source-tools':
+                del before['elf_sha256']['source-tools']
+            elif change == 'extra-elf':
+                before['elf_sha256']['unexpected'] = 'a' * 64
+            elif change == 'launcher-elf':
+                before['stripped_binary_bytes']['catalog-prepare'] = before['launcher_bytes'].pop('catalog-prepare')
+            elif change == 'launcher-body':
+                before['operator_payload_sha256']['bin/polymarket-history'] = 'b' * 64
+            elif change == 'launcher-mode':
+                before['operator_payload_file_modes']['bin/catalog-prepare'] = 0o644
+            elif change == 'current-source':
+                expected['input_sha256'] = 'c' * 64
+            else:
+                before['native_build']['schema_version'] = 1
+            # Equal snapshots alone must never establish valid warm reuse.
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                probe.compare_snapshots(before, copy.deepcopy(before), expected)
+
+    def test_probe_uses_the_same_exact_shared_inventory_as_normal_reports(self):
+        self.assertEqual(probe.SNAPSHOT, probe.operator_cost.payload_program('shared'))
+        before, expected, _ = operator_cost_test.CostTests().native_fixture()
+        after = copy.deepcopy(before)
+        after['operator_payload_sha256']['source_plugins.py'] = 'a' * 64
+        with self.assertRaisesRegex(ValueError, 'Warm probe changed'):
+            probe.compare_snapshots(before, after, expected)
+
     def test_duplicate_initial_vertex_keeps_completion_but_new_execution_does_not(self):
         values = events()
         server = values[0]['vertexes'][1]

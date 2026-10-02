@@ -149,19 +149,8 @@ def add_noise(source, token):
             'reason': 'Unique admitted skills document: outside the native closure and every non-collector context COPY source.'}
 
 
-SNAPSHOT = """import hashlib,json
-from pathlib import Path
-root=Path('/opt/quazonai/operator')
-files={name:root/'bin'/name for name in ('catalog-prepare','polymarket-history')}
-files.update({name:Path('/opt/quazonai/bin')/name for name in ('server','runtime')})
-hashes={}
-for name,path in files.items():
-    with path.open('rb') as stream:
-        if stream.read(4)!=bytes([127,69,76,70]): raise ValueError('Not ELF: '+name)
-        stream.seek(0)
-        hashes[name]=hashlib.file_digest(stream,'sha256').hexdigest()
-print(json.dumps({'elf_sha256':hashes,'stripped_binary_bytes':{name:files[name].stat().st_size for name in ('catalog-prepare','polymarket-history')},'native_build':json.loads((root/'build-metrics.json').read_text())}))
-"""
+# Normal candidate probes always inspect the shared ELF and fixed launchers.
+SNAPSHOT = operator_cost.payload_program('shared')
 
 
 def image_info(image, revision, version, deadline):
@@ -195,7 +184,7 @@ def snapshot(image, owned, token, containers, deadline):
 def compare_snapshots(before, after, expected):
     for snapshot in (before, after):
         operator_cost.validate_native_build(snapshot, expected,
-            {name: snapshot['elf_sha256'][name] for name in ('server', 'runtime')})
+            {name: snapshot.get('elf_sha256', {}).get(name) for name in ('server', 'runtime')})
     if before != after:
         raise ValueError('Warm probe changed actual ELF bytes, sizes or original native producer records')
 
@@ -251,7 +240,7 @@ def probe(args):
     tag = 'quazonai-native-cache-probe:' + token
     owned = Path(tempfile.mkdtemp(prefix='quazonai-native-cache-probe-'))
     containers, probe_image, build_state = [], None, 'not-started'
-    result = {'schema_version': 1, 'revision': args.revision, 'version': args.version,
+    result = {'schema_version': 2, 'layout': 'shared', 'revision': args.revision, 'version': args.version,
               'builder': args.builder, 'tag': tag, 'status': 'running', 'execution_status': 'running',
               'scope': 'same-builder warm reuse only; not new-runner GHA restoration or whole-PR five-minute proof',
               'build_limit_seconds': 180, 'total_limit_seconds': 240,
