@@ -556,26 +556,87 @@ async fn native_cli_rejects_wrong_status_duplicate_json_and_escaped_reflection_w
 }
 
 #[tokio::test]
-async fn native_cli_artifact_export_uses_declared_media_and_exact_immutable_bytes() {
-    let id = Id::new();
-    let content = b"fn predict() {}\n".to_vec();
-    let expected = content.clone();
-    let f = Fixture::new(|_| vec![
-        Reply::json(json!({"id":id,"project_id":Id::new(),"producer_run_id":null,"producer_attempt_id":null,
-            "kind":"CODE","media_type":"text/x-rust","schema_name":"qz.rust_source","schema_version":"1","byte_count":content.len().to_string(),
-            "access_class":"RESEARCH","origin":"SYNTHETIC","created_by":"OPERATOR","created_at":"2026-09-10T00:00:00Z"})),
-        Reply {status:StatusCode::OK,media:"text/x-rust",bytes:content,headers:vec![],chunk_bytes:Some(3)},
-    ]).await;
-    let output = f
-        .execute(&args(&["artifact", "export", &id.to_string()]), b"")
-        .await;
-    assert!(output.status.success());
-    assert_eq!(output.stdout, expected);
-    assert!(output.stderr.is_empty());
-    let seen = f.seen.lock().unwrap();
-    assert_eq!(seen.len(), 2);
-    assert_eq!(seen[0].uri, format!("/api/v2/artifacts/{id}"));
-    assert_eq!(seen[1].uri, format!("/api/v2/artifacts/{id}/content"));
+async fn native_cli_artifact_export_uses_attachment_media_and_exact_immutable_bytes() {
+    for (kind, media, schema, content) in [
+        (
+            "CODE",
+            "text/x-rust",
+            "qz.rust_source",
+            b"fn predict() {}\n".as_slice(),
+        ),
+        (
+            "DATA_QUALITY",
+            "application/json",
+            "qz.data_quality",
+            br#"{"schema_version":1}"#.as_slice(),
+        ),
+        (
+            "MODEL",
+            "application/wasm",
+            "qz.wasm_model",
+            b"\0asm\x01\0\0\0".as_slice(),
+        ),
+    ] {
+        let id = Id::new();
+        let expected = content.to_vec();
+        let f = Fixture::new(|_| vec![
+            Reply::json(json!({"id":id,"project_id":Id::new(),"producer_run_id":null,"producer_attempt_id":null,
+                "kind":kind,"media_type":media,"schema_name":schema,"schema_version":"1","byte_count":content.len().to_string(),
+                "access_class":"RESEARCH","origin":"FIXTURE","created_by":"OPERATOR","created_at":"2026-09-10T00:00:00Z"})),
+            Reply {status:StatusCode::OK,media:"application/octet-stream",bytes:content.to_vec(),headers:vec![],chunk_bytes:Some(3)},
+        ]).await;
+        let output = f
+            .execute(&args(&["artifact", "export", &id.to_string()]), b"")
+            .await;
+        assert!(output.status.success());
+        assert_eq!(output.stdout, expected);
+        assert!(output.stderr.is_empty());
+        let seen = f.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].uri, format!("/api/v2/artifacts/{id}"));
+        assert_eq!(seen[1].uri, format!("/api/v2/artifacts/{id}/content"));
+    }
+}
+
+#[tokio::test]
+async fn native_cli_artifact_export_rejects_wrong_attachment_media_and_size() {
+    let content = br#"{"schema_version":1}"#;
+    for (media, byte_count, code) in [
+        (
+            "application/json",
+            content.len(),
+            "CLI_RESPONSE_CONTRACT_INVALID",
+        ),
+        (
+            "application/octet-stream",
+            content.len() - 1,
+            "CLI_RESPONSE_LIMIT",
+        ),
+        (
+            "application/octet-stream",
+            content.len() + 1,
+            "CLI_RESPONSE_CONTRACT_INVALID",
+        ),
+    ] {
+        let id = Id::new();
+        let f = Fixture::new(|_| vec![
+            Reply::json(json!({"id":id,"project_id":Id::new(),"producer_run_id":null,"producer_attempt_id":null,
+                "kind":"DATA_QUALITY","media_type":"application/json","schema_name":"qz.data_quality","schema_version":"1","byte_count":byte_count.to_string(),
+                "access_class":"RESEARCH","origin":"FIXTURE","created_by":"RUNTIME","created_at":"2026-09-10T00:00:00Z"})),
+            Reply {status:StatusCode::OK,media,bytes:content.to_vec(),headers:vec![],chunk_bytes:Some(3)},
+        ]).await;
+        let output = f
+            .execute(&args(&["artifact", "export", &id.to_string()]), b"")
+            .await;
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["code"], code);
+        let seen = f.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].uri, format!("/api/v2/artifacts/{id}"));
+        assert_eq!(seen[1].uri, format!("/api/v2/artifacts/{id}/content"));
+    }
 }
 
 fn event(run: Id, seq: u64) -> Value {
