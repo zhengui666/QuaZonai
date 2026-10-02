@@ -259,7 +259,10 @@ async ({ page, context }) => {
             const { root } = await cdp.send('DOM.getDocument');
             const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '.research-heading h1' });
             const { fonts } = await cdp.send('CSS.getPlatformFontsForNode', { nodeId });
-            expect(fonts.some(font => font.glyphCount >= 2 && /Noto Sans CJK SC|PingFang SC|Microsoft YaHei/.test(font.familyName))).toBe(true);
+            const cjkSansFamilies = process.platform === 'linux'
+              ? ['WenQuanYi Zen Hei']
+              : ['PingFang SC', 'Microsoft YaHei', 'WenQuanYi Zen Hei', 'Noto Sans CJK SC'];
+            expect(fonts.some(font => font.glyphCount >= 2 && cjkSansFamilies.includes(font.familyName))).toBe(true);
             writeFileSync(resolve(dirname(config.redactionsFile), 'cjk-fonts.json'), JSON.stringify({ platform: process.platform, fonts }, null, 2));
           } finally { await cdp.detach(); }
         }

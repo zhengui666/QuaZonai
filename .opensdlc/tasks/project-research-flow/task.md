@@ -14,7 +14,7 @@ Continue the research workbench redesign from PR #160 without changing Rust or s
 
 ## Font and acceptance
 
-The web bundle uses existing system CJK sans-serif fonts with an explicit Noto Sans CJK SC fallback. No remote font request or large font file is added to the PWA. Linux browser acceptance installs the official `fonts-noto-cjk` distribution package through a bounded shared script; it uses SIL Open Font License 1.1. The existing local TTC regular/bold files are about 19.5/20.1 MB and are not copied into the product.
+The web bundle uses existing system CJK sans-serif fonts, preferring WenQuanYi Zen Hei after the native Apple/Windows families and retaining Noto Sans CJK SC as a fallback. No remote font request or large font file is added to the PWA. Linux acceptance verifies the official `fonts-wqy-zenhei` package already installed by the pinned Playwright dependency recipe; it downloads no second font package. Other systems retain their available sans family, without a claim of identical glyph metrics across operating systems.
 
 The real browser records `CSS.getPlatformFontsForNode` results for a Chinese heading, rather than claiming a CSS family list proves the selected glyph font. Native screenshots include overview, Brief, project inputs and cycle pages in both themes and three viewports. Synthetic cases cover reference identity, archive gating, server action availability and preventing project/tab changes while input authoring is active.
 

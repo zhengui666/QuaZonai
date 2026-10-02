@@ -122,7 +122,7 @@ export default function App() {
       colorTextPlaceholder: dark ? '#c1c7d0' : '#596273',
       colorBgLayout: dark ? '#111a18' : '#f6f7f3',
       colorBgContainer: dark ? '#192520' : '#ffffff',
-      fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif',
+      fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "WenQuanYi Zen Hei", "Noto Sans CJK SC", sans-serif',
       borderRadius: 10, controlHeight: 44, fontSize: 15, motion: motionProviderReady && !reducedMotion,
     },
   }}>

@@ -1,4 +1,4 @@
-:root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; color: var(--page-text); background: var(--page-bg); --page-text: #1d2535; --page-bg: #f6f7fa; font-synthesis: none; text-rendering: optimizeLegibility; }
+:root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "WenQuanYi Zen Hei", "Noto Sans CJK SC", sans-serif; color: var(--page-text); background: var(--page-bg); --page-text: #1d2535; --page-bg: #f6f7fa; font-synthesis: none; text-rendering: optimizeLegibility; }
 :root[data-theme="dark"] { --page-text: #f0f0f0; --page-bg: #141414; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
@@ -45,7 +45,7 @@ body { margin: 0; min-width: 320px; }
 /* Research workbench: an editorial hierarchy around actual project state. */
 :root { --page-bg: #f6f7f3; --page-text: #20362e; --work-muted: #596b60; --work-border: #e1e7df; --work-surface: #fff; --work-soft: #edf2ec; --work-accent: #216653; }
 :root[data-theme="dark"] { --page-bg: #111a18; --page-text: #e8eee8; --work-muted: #a7b8ae; --work-border: #35473c; --work-surface: #192520; --work-soft: #22382b; --work-accent: #91cdb1; }
-body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "WenQuanYi Zen Hei", "Noto Sans CJK SC", sans-serif; }
 .console-sidebar { background: var(--work-surface) !important; border-color: var(--work-border); }
 .console-sidebar .ant-layout-sider-children { display: flex; flex-direction: column; position: sticky; top: 0; height: 100dvh; }
 .brand { display: flex; align-items: center; gap: 10px; margin: 0; padding: 27px 22px 34px; color: var(--page-text); font-size: 21px; font-weight: 720; letter-spacing: -.65px; }

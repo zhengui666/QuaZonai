@@ -35,11 +35,11 @@ browser job installs Chromium and native dependencies. Every executing checkout
 must remain clean. No assertions, timeouts, worker counts or retry policies are
 weakened; no other workflow is removed or made optional.
 
-Native additionally verifies the official `fonts-noto-cjk` package and
-`Noto Sans CJK SC` fontconfig selection for the companion UI font assertions.
-Its shared installer reuses Playwright's refreshed package indexes, performs no
-second `apt-get update`, and bounds a missing-package install at 60 seconds plus
-5 seconds to kill, with zero retries, 10-second network and 15-second lock limits.
+Native verifies the official `fonts-wqy-zenhei` package already installed by
+the pinned Playwright Ubuntu dependency recipe. The shared check makes no
+additional package or network request and fails if that prerequisite is absent.
+It also verifies fontconfig selects the exact `WenQuanYi Zen Hei` sans family;
+the Linux native browser asserts that actual family rendered the Chinese heading.
 No font is added to frontend/PWA assets. Actual glyph rendering remains the
 companion UI patch's native Chromium CDP assertion, not a CSS-only claim.
 
