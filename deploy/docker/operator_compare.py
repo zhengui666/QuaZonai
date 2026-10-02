@@ -19,6 +19,10 @@ import operator_cost as cost
 OLD_REVISION = 'b58ec6d153d5b211b2941bf0d603ea3a3108a68b'
 PRIOR_PACKAGING_REVISION = '56aad24e0c73b31a9255e37adaa0abcd812a7c42'
 REPORT_SCHEMA = 3
+DIAGNOSTIC_SCHEMA = 1
+DIAGNOSTIC_KIND = 'application-elf-diagnostic'
+DIAGNOSTIC_SECONDS = 35 * 60
+DIAGNOSTIC_CLEANUP_SECONDS = 180
 MIN_FREE_BYTES = 40_000_000_000
 LOCKED_INPUTS = ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'apps/web/package-lock.json')
 HARNESS_FILES = ('deploy/docker/operator_compare.py', 'deploy/docker/operator_cost.py',
@@ -190,7 +194,7 @@ def environment_identity(builder, builder_image):
             'run_id': os.environ.get('GITHUB_RUN_ID'), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT')}
 
 
-def extract_application(directory, image, owner, resources):
+def extract_application(directory, image, owner, resources, *, server_stage=False):
     """Retain original ELFs and GNU binutils diagnostics, without rewriting them."""
     directory.mkdir(parents=True, exist_ok=True)
     name = owner + '-extract-' + directory.name
@@ -204,7 +208,8 @@ def extract_application(directory, image, owner, resources):
         (directory / (tool + '-version.txt')).write_text(cost.run([tool, '--version']) + '\n')
     for binary in ('server', 'runtime'):
         destination = directory / binary
-        cost.run(['docker', 'cp', identity + ':/opt/quazonai/bin/' + binary, str(destination)])
+        prefix = '/out/' if server_stage else '/opt/quazonai/bin/'
+        cost.run(['docker', 'cp', identity + ':' + prefix + binary, str(destination)])
         with destination.open('rb') as stream:
             if stream.read(4) != b'\x7fELF':
                 raise ValueError('Extracted application binary is not an ELF: ' + binary)
@@ -235,7 +240,25 @@ def extract_application(directory, image, owner, resources):
             raise ValueError('No ELF section contents were diagnosed: ' + binary)
         result[binary] = {'size_bytes': destination.stat().st_size, 'sha256': digest, 'sections': hashes}
     write_json(directory / 'diagnostics.json', result)
+    if server_stage:
+        native = {'platform': 'linux/amd64'}
+        for field, name in (('input_sha256', '.native-input.sha256'), ('recipe_sha256', '.native-recipe.sha256')):
+            path = directory / name.removeprefix('.')
+            cost.run(['docker', 'cp', identity + ':/build/' + name, str(path)])
+            native[field] = path.read_text().strip()
+            if not re.fullmatch(r'[0-9a-f]{64}', native[field]):
+                raise ValueError('Server-stage native source identity is malformed: ' + field)
+        write_json(directory / 'native-identity.json', native)
     return result
+
+
+def server_image_identity(image):
+    """The production server stage precedes final-image revision labels."""
+    value = json.loads(cost.run(['docker', 'image', 'inspect', image]))[0]
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', value['Id']) or \
+            (value.get('Os'), value.get('Architecture')) != ('linux', 'amd64'):
+        raise ValueError('Server-stage image identity or platform is invalid.')
+    return value['Id']
 
 
 def cleanup_owned(directory, resources, archive_evidence=None):
@@ -336,7 +359,7 @@ def pair_archive_evidence(directory):
     return shared
 
 
-def measure(old, candidate, revision, variant, directory, version, builder_image, deadline=None):
+def measure(old, candidate, revision, variant, directory, version, builder_image, deadline=None, *, application_only=False):
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise ValueError('Run this expensive comparison only in its GitHub-hosted workflow.')
     if not re.fullmatch(r'moby/buildkit@sha256:[0-9a-f]{64}', builder_image):
@@ -348,6 +371,8 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
     # The workflow fixes this absolute deadline before setup, leaving ten
     # minutes of its 95-minute job for comparison and artifact upload.
     deadline = deadline if deadline is not None else time.time() + 80 * 60
+    if application_only and math.isfinite(deadline):
+        deadline = min(deadline, time.time() + DIAGNOSTIC_SECONDS)
     previous_deadline, previous_cleanup_deadline = cost.COMMAND_DEADLINE, cost.CLEANUP_DEADLINE
     cost.CLEANUP_DEADLINE = deadline
     cost.COMMAND_DEADLINE = deadline - 180  # Reserve cleanup even after a build timeout.
@@ -358,6 +383,11 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
     detail = {'variant': variant, 'old_revision': OLD_REVISION, 'candidate_revision': revision}
     result = {'schema_version': REPORT_SCHEMA, 'revision': OLD_REVISION if variant == 'old' else revision,
               'version': version, 'measurement_status': 'running', 'hosted_comparison': detail}
+    status_field = 'diagnostic_status' if application_only else 'measurement_status'
+    if application_only:
+        result.update(schema_version=DIAGNOSTIC_SCHEMA, report_kind=DIAGNOSTIC_KIND,
+                      qualification='DIAGNOSTIC_ONLY', admissible=False,
+                      measurement_status='not-performed', diagnostic_status='running')
     write_json(directory / 'report.json', result)
     write_json(directory / 'owned-resources.json', resources)
     try:
@@ -380,20 +410,28 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
         write_json(directory / 'recipes.json', recipes)
         selected_revision = recipe['revision']
         source = old if variant == 'old' else candidate
+        if application_only:
+            detail['source_path'] = str(source.resolve())
         layout = 'standalone' if variant == 'old' else 'shared'
         environment = detail['environment'] = environment_identity(owner, builder_image)
         write_json(directory / 'environment.json', environment)
-        for image in recipe['base_images']:
+        prerequisite_images = recipe['base_images']
+        if application_only:
+            prerequisite_images = [image for image in prerequisite_images if image.startswith(('node:', 'rust:'))]
+            if len(prerequisite_images) != 2:
+                raise ValueError('Server-stage diagnostic requires the exact production Node and Rust prerequisites.')
+        for image in prerequisite_images:
             cost.run(['docker', 'pull', '--platform', 'linux/amd64', image])
         environment['rustc'] = cost.run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint',
                                         '/bin/sh', recipe['rust_image'], '-c', 'rustc -Vv && cargo -V'])
         # UUID names plus verified absence establish ownership before mutation.
         if owner in cost.run(['docker', 'buildx', 'ls', '--format', '{{.Name}}']).splitlines():
             raise ValueError('Disposable builder name already exists; preserved.')
-        for image in (full_image, base_image):
+        planned_images = [full_image] if application_only else [full_image, base_image]
+        for image in planned_images:
             if cost.run(['docker', 'image', 'ls', '--quiet', image]):
                 raise ValueError('Disposable image tag already exists; preserved.')
-        resources['planned_images'] = [full_image, base_image]
+        resources['planned_images'] = planned_images
         resources['builder_created'] = True
         write_json(directory / 'owned-resources.json', resources)
         cost.run(['docker', 'buildx', 'create', '--name', owner, '--driver', 'docker-container',
@@ -409,6 +447,22 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
         write_json(directory / 'environment.json', environment)
         if environment['initial_cache_empty'] is not True:
             raise ValueError('Fresh builder did not prove an empty cache; blocked before building.')
+        if application_only:
+            command = build_command(source, owner, full_image, selected_revision, version, 'server')
+            write_json(directory / 'build-command.json', command)
+            measured_build(directory, 'application', command)
+            image_id = server_image_identity(full_image)
+            resources['images'][full_image] = image_id
+            write_json(directory / 'owned-resources.json', resources)
+            detail['application_diagnostics'] = extract_application(
+                directory / 'application-elf', image_id, owner, resources, server_stage=True)
+            resources['diagnosed_images'].append(full_image)
+            write_json(directory / 'owned-resources.json', resources)
+            result['source_native_identity'] = json.loads((directory / 'application-elf/native-identity.json').read_text())
+            if result['source_native_identity'] != recipe['native_identity']:
+                raise ValueError('Extracted server-stage native identity differs from the verified source closure.')
+            result['diagnostic_status'] = 'complete'
+            return result
         command = build_command(source, owner, full_image, selected_revision, version)
         write_json(directory / 'build-command.json', command)
         measured_build(directory, 'candidate', command)
@@ -454,9 +508,11 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
             'Disk observations are endpoint samples; disk and memory peaks are unknown. No speed claim.']
         result['measurement_status'] = 'blocked' if result['validation_errors'] else 'complete'
     except Exception as error:
-        result['measurement_status'] = 'blocked'
+        result[status_field] = 'blocked'
         result['error'] = type(error).__name__ + ': ' + str(error)
     finally:
+        if application_only and all((directory / ('application-' + suffix + '.json')).exists() for suffix in ('start', 'end')):
+            detail['application_build_seconds'] = elapsed(directory, 'application')
         for phase, field in (('candidate', 'independent_cold_full_build_seconds'), ('warm', 'same_builder_warm_full_build_seconds')):
             if all((directory / (phase + suffix + '.json')).exists() for suffix in ('-start', '-end')):
                 detail[field] = elapsed(directory, phase)
@@ -467,9 +523,109 @@ def measure(old, candidate, revision, variant, directory, version, builder_image
         cost.COMMAND_DEADLINE = deadline
         result['cleanup'] = cleanup_owned(directory, resources, archive_evidence)
         if result['cleanup']['status'] != 'complete':
-            result['measurement_status'] = 'blocked'
+            result[status_field] = 'blocked'
         write_json(directory / 'report.json', result)
         cost.COMMAND_DEADLINE, cost.CLEANUP_DEADLINE = previous_deadline, previous_cleanup_deadline
+    return result
+
+
+def diagnostic_pair(left, right, relation):
+    """Observe original whole-ELF equality; this can never qualify packaging."""
+    reasons, binaries = [], {}
+    try:
+        for report in (left, right):
+            if report['report_kind'] != DIAGNOSTIC_KIND or report['schema_version'] != DIAGNOSTIC_SCHEMA or \
+                    report['diagnostic_status'] != 'complete' or report['cleanup']['status'] != 'complete' or \
+                    report['qualification'] != 'DIAGNOSTIC_ONLY' or report['admissible'] is not False:
+                reasons.append('incomplete or non-diagnostic input')
+            detail = report['hosted_comparison']
+            if detail['environment']['initial_cache_empty'] is not True or not cache_is_empty(detail['environment']['initial_cache']):
+                reasons.append('initial cache not verified empty')
+            if report['source_native_identity'] != detail['recipe']['native_identity']:
+                reasons.append('producer/source identity mismatch')
+        a, b = (report['hosted_comparison'] for report in (left, right))
+        if a['harness'] != b['harness']:
+            reasons.append('measurement harness changed')
+        if a['environment']['builder_name'] == b['environment']['builder_name']:
+            reasons.append('shared builder')
+        for key in ('builder_image', 'rustc', 'cpu_count', 'memory', 'cpu_models', 'docker_version',
+                    'containerd', 'buildx_version', 'runner_os', 'runner_arch', 'runner_image',
+                    'runner_image_version', 'runner_name', 'runner_boot_id', 'run_id', 'run_attempt'):
+            if not a['environment'][key] or a['environment'][key] != b['environment'][key]:
+                reasons.append('environment mismatch: ' + key)
+        if relation == 'AA' and (a['recipe'] != b['recipe'] or a['source_path'] != b['source_path']):
+            reasons.append('A/A requires the identical source revision, closure and checkout path')
+        for binary in ('server', 'runtime'):
+            observations = []
+            for detail in (a, b):
+                original = detail['application_diagnostics'][binary]
+                if not isinstance(original['sha256'], str) or not re.fullmatch(r'[0-9a-f]{64}', original['sha256']) or \
+                        type(original['size_bytes']) is not int or original['size_bytes'] <= 0:
+                    raise ValueError('Malformed original ELF identity: ' + binary)
+                observations.append({key: original[key] for key in ('sha256', 'size_bytes')})
+            binaries[binary] = {'left': observations[0], 'right': observations[1],
+                                'identical': observations[0] == observations[1]}
+    except (KeyError, TypeError, ValueError) as error:
+        reasons.append('unavailable diagnostic controls: ' + str(error))
+    return {'relation': relation, 'qualification': 'DIAGNOSTIC_ONLY',
+            'status': 'blocked' if reasons else 'observed', 'reasons': reasons,
+            'original_elf_equal': not reasons and len(binaries) == 2 and all(item['identical'] for item in binaries.values()),
+            'binaries': binaries}
+
+
+def diagnose_application(old, candidate, revision, directory, version, builder_image, deadline):
+    """Sequential A1/A2, then C only after exact A/A equality and spare budget."""
+    if not math.isfinite(deadline):
+        raise ValueError('Diagnostic deadline must be a finite absolute time.')
+    deadline = min(deadline, time.time() + DIAGNOSTIC_SECONDS)
+    directory.mkdir(parents=True, exist_ok=True)
+    # Never overwrite or reuse prior repetitions, even after an interrupted run.
+    if any((directory / name).exists() for name in ('diagnostic.json', 'old-a1', 'old-a2', 'candidate')):
+        raise ValueError('Diagnostic repetitions require fresh evidence directories.')
+    result = {'schema_version': DIAGNOSTIC_SCHEMA, 'report_kind': DIAGNOSTIC_KIND,
+              'qualification': 'DIAGNOSTIC_ONLY', 'admissible': False, 'measurement_status': 'not-performed',
+              'diagnostic_status': 'running', 'old_revision': OLD_REVISION, 'candidate_revision': revision,
+              'deadline': deadline, 'cleanup_reserve_seconds': DIAGNOSTIC_CLEANUP_SECONDS,
+              'scope': 'Production server stage only; no operator, web, installed-image, size or performance qualification.',
+              'repetitions': {}, 'observations': {}, 'candidate_status': 'not-started'}
+    output = directory / 'diagnostic.json'
+    write_json(output, result)
+    durations = []
+    try:
+        for name, variant in (('old-a1', 'old'), ('old-a2', 'old'), ('candidate', 'candidate')):
+            # Observed complete repetition duration includes setup/extraction/
+            # cleanup. Keep cleanup time and a minute of margin on top of it.
+            needed = (max(durations) if durations else 0) + DIAGNOSTIC_CLEANUP_SECONDS + 60
+            if deadline - time.time() <= needed:
+                result['stop_reason'] = 'insufficient remaining diagnostic budget for ' + name
+                result['diagnostic_status'] = 'blocked' if name != 'candidate' else 'complete'
+                break
+            started = time.monotonic()
+            report = measure(old, candidate, revision, variant, directory / name, version, builder_image,
+                             deadline, application_only=True)
+            durations.append(time.monotonic() - started)
+            result['repetitions'][name] = report
+            write_json(output, result)
+            if report['diagnostic_status'] != 'complete' or report['cleanup']['status'] != 'complete':
+                result['stop_reason'] = name + ' controls, build, extraction or owned cleanup failed'
+                result['diagnostic_status'] = 'blocked'
+                break
+            if name == 'old-a2':
+                aa = result['observations']['AA'] = diagnostic_pair(result['repetitions']['old-a1'], report, 'AA')
+                if not aa['original_elf_equal']:
+                    result['stop_reason'] = 'A/A original ELF mismatch' if aa['status'] == 'observed' else 'A/A controls failed'
+                    result['diagnostic_status'] = 'complete' if aa['status'] == 'observed' else 'blocked'
+                    break
+            if name == 'candidate':
+                result['candidate_status'] = 'observed'
+                bc = result['observations']['BC'] = diagnostic_pair(result['repetitions']['old-a1'], report, 'BC')
+                result['diagnostic_status'] = 'complete' if bc['status'] == 'observed' else 'blocked'
+                result['stop_reason'] = 'bounded diagnostic observations retained'
+    except Exception as error:
+        result['diagnostic_status'] = 'blocked'
+        result['error'] = type(error).__name__ + ': ' + str(error)
+    finally:
+        write_json(output, result)
     return result
 
 
@@ -479,6 +635,10 @@ def compare(old, candidate, revision):
     valid = {}
     reports = {'old': old, 'candidate': candidate}
     for side, report in reports.items():
+        if isinstance(report, dict) and (report.get('report_kind') == DIAGNOSTIC_KIND or
+                                        report.get('qualification') == 'DIAGNOSTIC_ONLY'):
+            reasons.append({'kind': 'diagnostic-only', 'field': side,
+                            'detail': 'Application-only diagnostics can never qualify a full packaging comparison.'})
         if isinstance(report, dict) and 'input_error' in report:
             reasons.append({'kind': 'input-error', 'field': side, 'detail': report['input_error'], 'path': report.get('path')})
     def value(side, path, predicate):
@@ -677,6 +837,14 @@ def main():
     measurement.add_argument('--version', required=True)
     measurement.add_argument('--builder-image', required=True)
     measurement.add_argument('--deadline', type=float, required=True)
+    diagnostic = subcommands.add_parser('diagnose-application')
+    diagnostic.add_argument('--old-source', type=Path, required=True)
+    diagnostic.add_argument('--candidate-source', type=Path, required=True)
+    diagnostic.add_argument('--revision', required=True)
+    diagnostic.add_argument('--directory', type=Path, required=True)
+    diagnostic.add_argument('--version', required=True)
+    diagnostic.add_argument('--builder-image', required=True)
+    diagnostic.add_argument('--deadline', type=float, required=True)
     verification = subcommands.add_parser('verify-sources')
     verification.add_argument('--old-source', type=Path, required=True)
     verification.add_argument('--candidate-source', type=Path, required=True)
@@ -706,6 +874,12 @@ def main():
                          args.directory.resolve(), args.version, args.builder_image, args.deadline)
         if result['measurement_status'] != 'complete':
             parser.exit(1, 'Measurement blocked; see retained report, original binaries, logs and cleanup evidence.\n')
+    elif args.command == 'diagnose-application':
+        result = diagnose_application(args.old_source.resolve(), args.candidate_source.resolve(), args.revision,
+                                      args.directory.resolve(), args.version, args.builder_image, args.deadline)
+        print('DIAGNOSTIC_ONLY: ' + result['diagnostic_status'] + '; packaging qualification remains unperformed.')
+        if result['diagnostic_status'] != 'complete':
+            parser.exit(1, 'Application diagnostic blocked; see retained evidence.\n')
     else:
         result = compare(read_report(args.old), read_report(args.candidate), args.revision)
         write_json(args.output, result)

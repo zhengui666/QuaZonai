@@ -140,7 +140,7 @@ fail after retaining the observations, original binaries and diagnostics.
 Historical run `36860149322` compared the pre-archive/pre-input-isolation pair
 and passed its controlled size gates: about 112.7 MB full-image and 40.7 MB actual
 gzip reduction. It did not establish a cold speedup. That evidence remains
-historical; it is not acceptance for B/C. The final B/C pair is UNRUN and retains
+historical; it is not acceptance for B/C. At that preparation point the final B/C pair was UNRUN and retained
 one runner, sequential variants, independent empty owned builders, 40 GB
 admission per variant, 85-minute measurement/95-minute job limits and owned
 cleanup. No cache, hash, size, gzip, provenance or ordinary CI gate is removed.
@@ -152,3 +152,90 @@ staged-tree/patch identities and executed checks accompany review. Final C needs
 independent native review, all applicable final-head CI, the actual three-path
 Container smoke and one final controlled B/C comparison before dev merge. A
 changed C or harness invalidates that final-head qualification.
+
+## Common-ELF failure and bounded diagnostic retention
+
+The subsequent exact B/C run `36925840314` at candidate
+`d4853685809ab948a376eaf7078a8f15c96b925f` failed admission. Its only equality
+failures were the common server/runtime ELF hashes; their sizes matched. It
+observed 112,954,992 fewer full-image bytes and 40,832,372 fewer actual gzip
+bytes, but those observations do not establish an admissible packaging result.
+The original binaries and section diagnostics remain in its 105,328,725-byte
+artifact. Available file materialization could not retrieve that artifact, so
+no section-level cause was established from the historical run.
+
+Keep the original full artifact unchanged. A separate diagnostic collector
+copies an exact allowlist of original reports and GNU section/header/size
+observations into a new directory. Each file is bounded at 4 MiB and the total
+including its manifest at 16 MiB. The manifest records missing files, byte
+lengths and SHA-256, and explicitly makes no admission or root-cause claim.
+It rejects symlinks, non-regular files, existing output and budget overflow.
+ELFs, arbitrary logs and unrelated files are excluded only from this additional
+small artifact. The original archive still retains them without truncation.
+
+Comparison failure cannot be hidden: successful collection preserves its exit
+status, and collection failure also fails the job. A malformed or absent
+section report is explicitly unavailable, not invented as equal.
+Section differences are also printed to the job log so a future file transfer
+problem does not conceal which original sections differ. No byte normalization,
+build-ID removal, dependency patch, hash waiver or scientific test change is
+part of this retention fix. Its local tests do not establish hosted equality.
+
+Current dev has subsequently advanced to
+`183fe2c4bfec6a04bece3a550cc705217ab391d3`. This diagnostic preparation still
+addresses the historical b58/d485 production inputs. Final delivery must
+integrate the actual dev baseline and perform a new complete qualification;
+neither a local mechanism probe nor a diagnostic-only run qualifies that merge.
+
+## Bounded application-ELF diagnosis (not mergeable)
+
+The current investigative workflow deliberately selects
+`application-elf-diagnostic`. Its reports have a separate schema and kind,
+permanent `DIAGNOSTIC_ONLY` qualification, `admissible: false`, and a distinct
+diagnostic completion status. The full comparator explicitly rejects these
+reports, and the workflow comparison step fails even when diagnosis completes.
+This investigative head must not merge. Final delivery must restore full mode,
+integrate the actual current dev baseline, and obtain a new complete B/C
+qualification, installed tests, applicable final-head CI and independent review.
+
+Diagnosis uses the unchanged production Dockerfile with `--target server`, its
+original `native-build.sh server` invocation, compiler, flags and native source
+closure. It builds no operator, web or full application image. Each sequential
+repetition has a distinct, verified-empty owned BuildKit builder, no cache
+imports, and a 40 GB precheck. Identity-checked cleanup must complete before
+another repetition starts; no global cleanup is permitted.
+
+The smallest initial repetition control is A1/A2 at the same immutable historical
+baseline revision and resolved checkout path. Both retain their source path,
+revision, tree, native closure, harness and runner identities. Original
+`/out/server` and `/out/runtime` bytes are extracted directly from the server
+stage, alongside the producer's `/build/.native-*` source digests and GNU ELF
+diagnostics. The producer digests must equal the independently verified source
+closure. Docker's compilation path remains `/build` for every repetition.
+
+A1/A2 compare both complete original ELF SHA-256 and byte lengths. Any mismatch
+ends expensive work immediately with the evidence retained; failed controls or
+cleanup also block further builds. Candidate C runs only after exact A/A
+equality and enough remaining budget based on observed repetition durations.
+The summary and small artifact distinguish AA from BC observations. All
+original ELFs stay in the original archive without normalization or truncation.
+Missing or malformed observations remain unavailable. No size, speed,
+installation or admissible packaging claim follows from diagnostic completion.
+
+One absolute 35-minute deadline starts before workflow setup and covers all
+diagnostic repetitions, reserving its last 3 minutes for owned cleanup. The
+local comparison/collection step is bounded at 1 minute, the additional small
+artifact upload at 1 minute and the original full archive upload at 8 minutes.
+The existing full mode retains its 85-minute measurement and 95-minute job
+limits, with those evidence steps fitting its 10-minute reserve. The workflow
+keeps the same 95-minute outer job bound in either mode.
+
+A separate bounded local leaf probe found that changing `iso_currency` data
+ordering changed the dependency rlib hash, while repeated A/A builds and the
+dynamic `from_code` caller's original and stripped ELFs, all sections and GNU
+build IDs remained identical. This excludes only that local release-style
+closure; its linker/system libraries differ from the pinned production Docker
+environment. It is neither a production repeatability result nor evidence of
+the hosted failure's cause, and no dependency change follows from it. Local
+Python checks validate orchestration and evidence handling only; production
+application-only repetitions remain UNRUN at this preparation stage.

@@ -539,9 +539,14 @@ class ComparisonTests(unittest.TestCase):
                 docker.assert_not_called()
                 save.assert_not_called()
 
-    def measure_fixture(self, directory, variant='candidate', build_failure=False, cache=EMPTY_CACHE, free=50_000_000_000, extraction_failure=False, report_cleanup_paths=None):
+    def measure_fixture(self, directory, variant='candidate', build_failure=False, cache=EMPTY_CACHE, free=50_000_000_000, extraction_failure=False, report_cleanup_paths=None, application_only=False, source_mismatch=False):
         old, candidate = self.reports()
         reports = {'old': old, 'candidate': candidate}
+        if application_only:
+            for report in reports.values():
+                report['hosted_comparison']['recipe']['base_images'] = [
+                    'node:22-bookworm-slim@sha256:' + SHA, 'rust:1.98.1-bookworm@sha256:' + SHA,
+                    'debian:bookworm-slim@sha256:' + SHA]
         environment = copy.deepcopy(reports[variant]['hosted_comparison']['environment'])
         calls, builds = [], []
         def run(args):
@@ -557,6 +562,8 @@ class ComparisonTests(unittest.TestCase):
             if args[:3] == ['docker', 'buildx', 'du']:
                 return cache
             if args[:3] == ['docker', 'image', 'inspect']:
+                if '--format' not in args:
+                    return json.dumps([{'Id': 'sha256:' + SHA, 'Os': 'linux', 'Architecture': 'amd64'}])
                 return 'sha256:' + SHA
             return 'observed fixture'
         def build(args, **kwargs):
@@ -567,6 +574,16 @@ class ComparisonTests(unittest.TestCase):
             environment['builder_name'] = builder
             return environment
         diagnostics = {name: {'sha256': SHA, 'size_bytes': size} for name, size in (('server', 100), ('runtime', 200))}
+        def extract(path, image, owner, resources, **kwargs):
+            if extraction_failure:
+                raise ValueError('Incomplete extraction')
+            if application_only:
+                self.assertTrue(kwargs['server_stage'])
+                identity = dict(reports[variant]['hosted_comparison']['recipe']['native_identity'])
+                if source_mismatch:
+                    identity['input_sha256'] = 'f' * 64
+                comparison.write_json(path / 'native-identity.json', identity)
+            return diagnostics
         with patch.dict('os.environ', {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted'}), \
                 patch.object(comparison.cost.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(100_000_000_000, 0, free)), \
                 patch.object(comparison, 'harness_identity', return_value=candidate['hosted_comparison']['harness']), \
@@ -574,11 +591,13 @@ class ComparisonTests(unittest.TestCase):
                 patch.object(comparison, 'environment_identity', side_effect=environment_identity), \
                 patch.object(comparison.cost, 'run', side_effect=run), \
                 patch.object(comparison.subprocess, 'run', side_effect=build), \
-                patch.object(comparison, 'extract_application', return_value=diagnostics,
-                             side_effect=ValueError('Incomplete extraction') if extraction_failure else None), \
+                patch.object(comparison, 'extract_application', side_effect=extract), \
                 patch.object(comparison.cost, 'image_identity', return_value={'id': 'sha256:' + SHA}), \
                 patch.object(comparison.cost, 'report', return_value=copy.deepcopy(reports[variant])) as report:
-            result = comparison.measure(Path('old'), Path('candidate'), COMMIT, variant, directory, 'ci', BUILDKIT, time.time() + 600)
+            result = comparison.measure(Path('old'), Path('candidate'), COMMIT, variant, directory, 'ci', BUILDKIT,
+                                        time.time() + 600, application_only=application_only)
+            if application_only:
+                report.assert_not_called()
             if report_cleanup_paths is not None:
                 report_cleanup_paths.append(report.call_args.kwargs['cleanup_evidence'])
         return result, calls, builds
@@ -637,7 +656,8 @@ class ComparisonTests(unittest.TestCase):
         body = workflow.read_text()
         paths = body.split('    paths:\n')[1].split('  workflow_dispatch:')[0]
         self.assertEqual([line.strip() for line in paths.splitlines() if line.strip()], [
-            "- '.github/workflows/operator-cost-comparison.yml'", "- 'deploy/docker/operator_cost*'", "- 'deploy/docker/operator_compare*'"])
+            "- '.github/workflows/operator-cost-comparison.yml'", "- 'deploy/docker/operator_cost*'",
+            "- 'deploy/docker/operator_compare*'", "- 'deploy/docker/operator_diagnostics*'"])
         self.assertIn('timeout-minutes: 95', body)
         self.assertIn('for variant in old candidate', body)
         self.assertIn('85 * 60', body)
@@ -650,6 +670,201 @@ class ComparisonTests(unittest.TestCase):
         self.assertIn('HARNESS_REVISION: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}', body)
         self.assertIn('fetch-depth: 0', body)
         self.assertLess(body.index('operator_compare.py verify-sources'), body.index('docker/setup-buildx-action'))
+
+    def diagnostic_report(self, name, variant='old'):
+        full = self.reports()[0 if variant == 'old' else 1]
+        detail = full['hosted_comparison']
+        detail['environment']['builder_name'] = name
+        detail['source_path'] = '/fixed/' + variant
+        detail['application_diagnostics'] = {binary: {'sha256': SHA, 'size_bytes': 100,
+            'sections': {'.text': {'sha256': SHA, 'size_bytes': 80}}} for binary in ('server', 'runtime')}
+        return {'schema_version': comparison.DIAGNOSTIC_SCHEMA, 'report_kind': comparison.DIAGNOSTIC_KIND,
+                'qualification': 'DIAGNOSTIC_ONLY', 'admissible': False, 'measurement_status': 'not-performed',
+                'diagnostic_status': 'complete', 'cleanup': {'status': 'complete'},
+                'source_native_identity': full['source_native_identity'], 'hosted_comparison': detail}
+
+    def test_application_mode_builds_only_original_server_stage_and_keeps_full_mode_unmeasured(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, calls, builds = self.measure_fixture(Path(temporary), application_only=True)
+            self.assertEqual(result['diagnostic_status'], 'complete', result)
+            self.assertEqual(result['measurement_status'], 'not-performed')
+            self.assertEqual(result['qualification'], 'DIAGNOSTIC_ONLY')
+            self.assertFalse(result['admissible'])
+            self.assertEqual(result['report_kind'], comparison.DIAGNOSTIC_KIND)
+            self.assertEqual(len(builds), 1)
+            self.assertEqual(builds[0][builds[0].index('--target') + 1], 'server')
+            self.assertEqual(builds[0][builds[0].index('--file') + 1], 'candidate/deploy/docker/Dockerfile')
+            self.assertEqual(builds[0][-1], 'candidate')
+            self.assertFalse(any(arg.startswith('--cache') or arg == '--no-cache' for arg in builds[0]))
+            self.assertEqual(result['hosted_comparison']['source_path'], str(Path('candidate').resolve()))
+            self.assertEqual(result['source_native_identity'], result['hosted_comparison']['recipe']['native_identity'])
+            self.assertEqual(result['cleanup']['status'], 'complete')
+            self.assertTrue(any(args[:3] == ['docker', 'buildx', 'rm'] for args in calls))
+            self.assertFalse(any('debian:' in ' '.join(args) or 'save' in args or 'prune' in args for args in calls))
+
+    def test_application_mode_stops_on_disk_cache_extraction_or_source_identity_failure(self):
+        for values in ({'free': comparison.MIN_FREE_BYTES - 1}, {'cache': 'not-empty'},
+                       {'extraction_failure': True}, {'source_mismatch': True}, {'build_failure': True}):
+            with self.subTest(values=values), tempfile.TemporaryDirectory() as temporary:
+                result, calls, builds = self.measure_fixture(Path(temporary), application_only=True, **values)
+                self.assertEqual(result['diagnostic_status'], 'blocked')
+                self.assertEqual(result['measurement_status'], 'not-performed')
+                self.assertFalse(result['admissible'])
+                self.assertFalse(any('prune' in args for args in calls))
+                if 'cache' in values or 'free' in values:
+                    self.assertEqual(builds, [])
+                if 'source_mismatch' in values:
+                    self.assertIn('differs from the verified source closure', result['error'])
+
+    def test_server_stage_extracts_original_out_elfs_and_build_source_identity(self):
+        original_run = comparison.cost.run
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / 'application-elf'
+            resources = {'containers': {}}
+            def run(args):
+                calls.append(args)
+                if args[:2] == ['docker', 'create']:
+                    return SHA
+                if args[:2] == ['docker', 'cp']:
+                    if ':/out/' in args[-2]:
+                        shutil.copyfile('/usr/bin/true', args[-1])
+                    elif ':/build/.native-' in args[-2]:
+                        Path(args[-1]).write_text(SHA + '\n')
+                    else:
+                        self.fail('Unexpected extraction path: ' + args[-2])
+                    return ''
+                return original_run(args)
+            with patch.object(comparison.cost, 'run', side_effect=run):
+                result = comparison.extract_application(directory, 'sha256:' + SHA, 'owned', resources, server_stage=True)
+            self.assertEqual(json.loads((directory / 'native-identity.json').read_text()),
+                             {'input_sha256': SHA, 'recipe_sha256': SHA, 'platform': 'linux/amd64'})
+            for binary in ('server', 'runtime'):
+                self.assertEqual((directory / binary).read_bytes(), Path('/usr/bin/true').read_bytes())
+                self.assertEqual(result[binary]['sha256'], hashlib.sha256(Path('/usr/bin/true').read_bytes()).hexdigest())
+                self.assertIn('.text', result[binary]['sections'])
+            self.assertEqual(len(resources['containers']), 1)
+            self.assertFalse(any(':/opt/' in ' '.join(args) for args in calls))
+
+    def test_diagnostic_repetition_stops_before_candidate_on_whole_elf_hash_or_size_mismatch(self):
+        for field, value in (('sha256', 'f' * 64), ('size_bytes', 101)):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
+                a1, a2 = (self.diagnostic_report(name) for name in ('a1', 'a2'))
+                a2['hosted_comparison']['application_diagnostics']['server'][field] = value
+                with patch.object(comparison, 'measure', side_effect=[a1, a2]) as measure:
+                    result = comparison.diagnose_application(Path('same-old'), Path('candidate'), COMMIT,
+                        Path(temporary), 'ci', BUILDKIT, time.time() + 1000)
+                self.assertEqual(measure.call_count, 2)
+                self.assertEqual([call.args[0] for call in measure.call_args_list], [Path('same-old')] * 2)
+                self.assertTrue(all(call.kwargs['application_only'] for call in measure.call_args_list))
+                self.assertEqual(result['diagnostic_status'], 'complete')
+                self.assertFalse(result['observations']['AA']['original_elf_equal'])
+                self.assertEqual(result['candidate_status'], 'not-started')
+                self.assertFalse(result['admissible'])
+                self.assertIn('A/A original ELF mismatch', result['stop_reason'])
+                self.assertTrue((Path(temporary) / 'diagnostic.json').exists())
+
+    def test_diagnostic_repetition_blocks_candidate_on_failed_controls(self):
+        for mutation in ('cleanup', 'status', 'cache', 'builder', 'source-path', 'source-closure', 'harness', 'environment'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                a1, a2 = (self.diagnostic_report(name) for name in ('a1', 'a2'))
+                detail = a2['hosted_comparison']
+                if mutation == 'cleanup':
+                    a2['cleanup']['status'] = 'blocked'
+                elif mutation == 'status':
+                    a2['diagnostic_status'] = 'blocked'
+                elif mutation == 'cache':
+                    detail['environment']['initial_cache_empty'] = False
+                elif mutation == 'builder':
+                    detail['environment']['builder_name'] = 'a1'
+                elif mutation == 'source-path':
+                    detail['source_path'] = '/different/old'
+                elif mutation == 'source-closure':
+                    detail['recipe']['native_identity']['input_sha256'] = 'e' * 64
+                elif mutation == 'harness':
+                    detail['harness']['tree'] = 'e' * 40
+                else:
+                    detail['environment']['runner_boot_id'] = 'different'
+                with patch.object(comparison, 'measure', side_effect=[a1, a2]) as measure:
+                    result = comparison.diagnose_application(Path('same-old'), Path('candidate'), COMMIT,
+                        Path(temporary), 'ci', BUILDKIT, time.time() + 1000)
+                self.assertEqual(measure.call_count, 2)
+                self.assertEqual(result['diagnostic_status'], 'blocked')
+                self.assertEqual(result['candidate_status'], 'not-started')
+
+    def test_diagnostic_candidate_requires_aa_equality_and_keeps_distinct_bc_observation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            reports = [self.diagnostic_report('a1'), self.diagnostic_report('a2'), self.diagnostic_report('c', 'candidate')]
+            reports[2]['hosted_comparison']['application_diagnostics']['runtime']['sha256'] = 'f' * 64
+            with patch.object(comparison, 'measure', side_effect=reports) as measure:
+                result = comparison.diagnose_application(Path('same-old'), Path('candidate'), COMMIT,
+                    Path(temporary), 'ci', BUILDKIT, time.time() + 1000)
+            self.assertEqual(measure.call_count, 3)
+            self.assertEqual([call.args[3] for call in measure.call_args_list], ['old', 'old', 'candidate'])
+            self.assertEqual([call.args[4].name for call in measure.call_args_list], ['old-a1', 'old-a2', 'candidate'])
+            self.assertEqual(len({call.args[7] for call in measure.call_args_list}), 1)
+            self.assertTrue(result['observations']['AA']['original_elf_equal'])
+            self.assertFalse(result['observations']['BC']['original_elf_equal'])
+            self.assertEqual(result['diagnostic_status'], 'complete')
+            self.assertFalse(result['admissible'])
+
+    def test_diagnostic_budget_clamps_deadline_and_skips_candidate_without_room(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            reports = [self.diagnostic_report('a1'), self.diagnostic_report('a2')]
+            with patch.object(comparison, 'measure', side_effect=reports) as measure, \
+                    patch.object(comparison.time, 'time', side_effect=[1000, 1000, 1200, 3000]), \
+                    patch.object(comparison.time, 'monotonic', side_effect=[10, 200, 210, 400]):
+                result = comparison.diagnose_application(Path('same-old'), Path('candidate'), COMMIT,
+                    Path(temporary), 'ci', BUILDKIT, 999999)
+            self.assertEqual(result['deadline'], 1000 + 35 * 60)
+            self.assertEqual(measure.call_count, 2)
+            self.assertTrue(result['observations']['AA']['original_elf_equal'])
+            self.assertEqual(result['candidate_status'], 'not-started')
+            self.assertIn('insufficient remaining diagnostic budget', result['stop_reason'])
+            self.assertEqual(result['diagnostic_status'], 'complete')
+
+    def test_diagnostic_does_not_overwrite_previous_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(comparison, 'measure') as measure:
+            directory = Path(temporary)
+            (directory / 'old-a1').mkdir()
+            with self.assertRaisesRegex(ValueError, 'fresh evidence'):
+                comparison.diagnose_application(Path('old'), Path('candidate'), COMMIT,
+                    directory, 'ci', BUILDKIT, time.time() + 1000)
+            measure.assert_not_called()
+
+    def test_full_qualification_explicitly_rejects_diagnostic_markers_even_with_all_full_fields(self):
+        for field, value in (('qualification', 'DIAGNOSTIC_ONLY'), ('report_kind', comparison.DIAGNOSTIC_KIND)):
+            old, candidate = self.reports()
+            candidate[field] = value
+            result = comparison.compare(old, candidate, COMMIT)
+            self.assertFalse(result['admissible'])
+            self.assertTrue(any(reason['kind'] == 'diagnostic-only' for reason in result['reasons']))
+
+    def test_cli_diagnostic_completion_is_separate_from_full_comparison_exit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            old, candidate = self.reports()
+            comparison.write_json(root / 'old.json', old)
+            command = [sys.executable, '-B', comparison.__file__, 'compare', '--old', str(root / 'old.json'),
+                       '--candidate', str(root / 'candidate.json'), '--revision', COMMIT, '--output', str(root / 'comparison.json')]
+            for diagnostic, expected in ((False, 0), (True, 1)):
+                if diagnostic:
+                    candidate.update(qualification='DIAGNOSTIC_ONLY', report_kind=comparison.DIAGNOSTIC_KIND)
+                comparison.write_json(root / 'candidate.json', candidate)
+                completed = subprocess.run(command, capture_output=True, text=True, timeout=10)
+                self.assertEqual(completed.returncode, expected, completed.stderr)
+                self.assertEqual(json.loads((root / 'comparison.json').read_text())['admissible'], not diagnostic)
+            args = ['operator_compare.py', 'diagnose-application', '--old-source', str(root / 'old'),
+                    '--candidate-source', str(root / 'candidate'), '--revision', COMMIT,
+                    '--directory', str(root / 'results'), '--version', 'ci', '--builder-image', BUILDKIT, '--deadline', '2100']
+            with patch.object(sys, 'argv', args), patch.object(comparison, 'diagnose_application',
+                    return_value={'diagnostic_status': 'complete'}), patch('builtins.print') as printed:
+                comparison.main()
+                self.assertIn('DIAGNOSTIC_ONLY: complete', printed.call_args.args[0])
+            with patch.object(sys, 'argv', args), patch.object(comparison, 'diagnose_application',
+                    return_value={'diagnostic_status': 'blocked'}), patch('builtins.print'), self.assertRaises(SystemExit) as stopped:
+                comparison.main()
+            self.assertEqual(stopped.exception.code, 1)
 
 
 if __name__ == '__main__':
