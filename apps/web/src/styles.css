@@ -1,4 +1,4 @@
-:root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--page-text); background: var(--page-bg); --page-text: #1d2535; --page-bg: #f6f7fa; font-synthesis: none; text-rendering: optimizeLegibility; }
+:root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "WenQuanYi Zen Hei", "Noto Sans CJK SC", sans-serif; color: var(--page-text); background: var(--page-bg); --page-text: #1d2535; --page-bg: #f6f7fa; font-synthesis: none; text-rendering: optimizeLegibility; }
 :root[data-theme="dark"] { --page-text: #f0f0f0; --page-bg: #141414; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
@@ -21,8 +21,6 @@ body { margin: 0; min-width: 320px; }
 .update-bar:empty { display: none; }
 .update-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; padding-inline: 16px; background: var(--ant-color-bg-container); }
 .table-title { white-space: normal; height: auto; min-height: 44px; text-align: left; }
-.project-summary { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
-.project-summary .table-title { width: 100%; padding-inline: 0; justify-content: flex-start; overflow-wrap: anywhere; }
 .state-select { width: 220px; max-width: 100%; }
 .skip-link { position: absolute; left: -10000px; z-index: 2000; background: var(--ant-color-bg-container); padding: 12px; }
 .skip-link:focus { left: 16px; top: 16px; }
@@ -47,7 +45,7 @@ body { margin: 0; min-width: 320px; }
 /* Research workbench: an editorial hierarchy around actual project state. */
 :root { --page-bg: #f6f7f3; --page-text: #20362e; --work-muted: #596b60; --work-border: #e1e7df; --work-surface: #fff; --work-soft: #edf2ec; --work-accent: #216653; }
 :root[data-theme="dark"] { --page-bg: #111a18; --page-text: #e8eee8; --work-muted: #a7b8ae; --work-border: #35473c; --work-surface: #192520; --work-soft: #22382b; --work-accent: #91cdb1; }
-body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "WenQuanYi Zen Hei", "Noto Sans CJK SC", sans-serif; }
 .console-sidebar { background: var(--work-surface) !important; border-color: var(--work-border); }
 .console-sidebar .ant-layout-sider-children { display: flex; flex-direction: column; position: sticky; top: 0; height: 100dvh; }
 .brand { display: flex; align-items: center; gap: 10px; margin: 0; padding: 27px 22px 34px; color: var(--page-text); font-size: 21px; font-weight: 720; letter-spacing: -.65px; }
@@ -83,7 +81,8 @@ body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingF
 .research-pipeline h3 { margin: 5px 0; font-size: 13px; font-weight: 600; }
 .research-pipeline p { margin: 0; font-size: 11px; line-height: 1.7; color: var(--work-muted); }
 .research-pipeline li > .anticon { position: absolute; right: 0; top: 17px; color: var(--work-muted); font-size: 14px; }
-.workspace-columns { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 26px; align-items: start; }
+.workspace-columns { display: flex; flex-direction: column; gap: 26px; }
+.workspace-columns > * { width: 100%; }
 .project-collection { min-width: 0; }
 .collection-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 20px; }
 .collection-heading h2 { font-size: 17px; margin: 0 0 6px; font-weight: 650; }
@@ -91,7 +90,7 @@ body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingF
 .project-tools { display: flex; align-items: center; gap: 14px; margin-bottom: 2px; }
 .project-tools .ant-input-affix-wrapper { flex: 1; max-width: 290px; background: var(--work-surface); }
 .project-tools > span:not(.ant-input-affix-wrapper) { color: var(--work-muted); font-size: 11px; white-space: nowrap; margin-left: auto; }
-.project-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+.project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 15px; }
 .research-project { background: var(--work-surface); border: 1px solid var(--work-border); border-radius: 13px; padding: 20px; min-width: 0; display: flex; flex-direction: column; }
 .project-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .project-symbol { background: var(--work-soft); color: var(--work-accent); display: grid; place-items: center; width: 35px; height: 35px; border-radius: 10px; }
@@ -108,12 +107,8 @@ body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingF
 .project-card-bottom .ant-btn { font-size: 11px; padding-inline: 8px; }
 .project-open.ant-btn { width: 100%; justify-content: space-between; margin-top: 8px; background: var(--work-soft); border-color: transparent; color: var(--work-accent); font-size: 12px; }
 .research-side { padding-top: 2px; }
-.workspace-note { padding: 24px 22px; background: var(--work-soft); border-radius: 13px; }
-.workspace-note h2 { font-size: 22px; letter-spacing: -.5px; font-weight: 550; line-height: 1.7; margin: 12px 0; }
-.workspace-note p { font-size: 12px; line-height: 1.95; color: var(--work-muted); margin: 0; }
-.note-footer { display: flex; gap: 7px; align-items: flex-start; padding-top: 22px; font-size: 10px; line-height: 1.8; color: var(--work-muted); }
-.note-footer .brief-dot { margin-top: 6px; }
-.workspace-shortcuts { margin-top: 25px; }
+.workspace-shortcuts { margin-top: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.workspace-shortcuts h3 { grid-column: 1 / -1; }
 .workspace-shortcuts h3 { font-size: 11px; color: var(--work-muted); font-weight: 600; margin: 0 0 8px 3px; }
 .workspace-shortcuts button { background: none; border: 0; border-bottom: 1px solid var(--work-border); width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: left; padding: 15px 3px; color: var(--page-text); cursor: pointer; }
 .workspace-shortcuts button:hover { color: var(--work-accent); background: var(--work-soft); }
@@ -124,7 +119,7 @@ body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingF
 .empty-symbol { color: var(--work-accent); font-size: 25px; margin-bottom: 6px; }
 .research-empty h3 { font-size: 18px; font-weight: 550; margin: 10px 0; }
 .research-empty p { max-width: 370px; color: var(--work-muted); font-size: 12px; line-height: 1.9; margin: 0 0 20px; }
-@media (max-width: 1199px) { .workspace-columns { grid-template-columns: minmax(0,1fr) 215px; gap: 20px; } .project-grid { grid-template-columns: minmax(0,1fr); } .research-intro { grid-template-columns: 145px minmax(0,1fr); } .intro-copy { padding-inline: 16px; } .research-pipeline { padding-inline: 16px; gap: 12px; } }
+@media (max-width: 1199px) { .research-intro { grid-template-columns: 145px minmax(0,1fr); } .intro-copy { padding-inline: 16px; } .research-pipeline { padding-inline: 16px; gap: 12px; } }
 @media (max-width: 767px) {
   .console-header { min-height: 65px; padding-inline: 16px; }
   .header-location { font-size: 11px; } .header-location > span { padding-inline: 5px; }
@@ -141,6 +136,87 @@ body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingF
   .workspace-columns { grid-template-columns: minmax(0,1fr); gap: 28px; }
   .project-grid { grid-template-columns: minmax(0,1fr); }
   .project-tools { gap: 8px; } .project-tools > span:not(.ant-input-affix-wrapper) { font-size: 10px; }
-  .workspace-note { display: none; } .workspace-shortcuts { margin-top: 0; }
+  .workspace-shortcuts { margin-top: 0; }
   .research-empty { padding: 25px; } .research-empty h3 { font-size: 16px; }
 }
+/* Project workspace: actions and evidence share the research context. */
+.project-workspace { width: 100%; min-width: 0; color: var(--page-text); }
+.project-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.project-detail-heading > div { min-width: 0; }
+.project-detail-heading h1.ant-typography { margin: 9px 0 12px; font-size: 28px; line-height: 1.4; font-weight: 650; }
+.project-detail-heading > .ant-btn { flex-shrink: 0; }
+.project-detail-status { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; color: var(--work-muted); }
+.project-detail-description { color: var(--work-muted); font-size: 13px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; margin: 16px 0 0; }
+.record-details { font-size: 12px; color: var(--work-muted); margin: 14px 0; }
+.record-details summary { cursor: pointer; min-height: 44px; display: list-item; align-content: center; }
+.record-details[open] > :not(summary) { margin-top: 10px; }
+.research-tabs > .ant-tabs-nav { margin: 8px 0 24px; }
+.research-tabs .ant-tabs-tab { min-height: 48px; }
+.section-toolbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; margin-bottom: 20px; }
+.section-toolbar h2 { font-size: 18px; font-weight: 650; margin: 4px 0 8px; }
+.section-toolbar p { color: var(--work-muted); font-size: 12px; line-height: 1.8; margin: 0; }
+.section-toolbar > .ant-btn { flex-shrink: 0; }
+.research-overview { display: grid; gap: 24px; }
+.current-hypothesis { border: 1px solid var(--work-border); border-radius: 13px; padding: 24px; background: var(--work-surface); }
+.current-hypothesis .section-toolbar { margin-bottom: 12px; }
+.overview-empty { padding: 10px 0 4px; }
+.overview-empty h3 { font-size: 17px; font-weight: 550; margin: 0 0 10px; }
+.overview-empty p { color: var(--work-muted); font-size: 13px; line-height: 1.9; margin: 0 0 15px; max-width: 800px; }
+.hypothesis-text { font-size: 20px; font-weight: 600; line-height: 1.7; margin: 10px 0 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.brief-rationale { color: var(--work-muted); font-size: 13px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 18px; }
+.record-label { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; color: var(--work-muted); }
+.record-label .ant-tag { margin-inline-end: 0; }
+.current-record { color: var(--work-accent); background: var(--work-soft); border-radius: 5px; padding: 3px 7px; }
+.record-meta { display: flex; flex-wrap: wrap; gap: 12px 24px; font-size: 12px; line-height: 1.8; color: var(--work-muted); }
+.research-stages { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 16px; }
+.research-stages button { position: relative; border: 1px solid var(--work-border); border-radius: 11px; background: var(--work-surface); color: var(--page-text); text-align: left; padding: 20px; cursor: pointer; min-width: 0; }
+.research-stages button:hover { border-color: var(--work-accent); }
+.research-stages strong { display: block; font-size: 15px; font-weight: 600; margin: 9px 0; }
+.research-stages button > span:not(.step-number):not(.anticon) { color: var(--work-muted); font-size: 12px; line-height: 1.9; display: block; padding-right: 12px; }
+.research-stages .anticon { position: absolute; right: 20px; top: 23px; color: var(--work-accent); }
+.overview-cycles { padding: 6px 0; }
+.overview-cycle-list { display: grid; gap: 12px; }
+.overview-cycle-list article { border-left: 3px solid var(--work-border); padding: 12px 18px; background: var(--work-surface); border-radius: 0 8px 8px 0; min-width: 0; }
+.overview-cycle-list article > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--work-muted); }
+.overview-cycle-list p, .overview-cycle-list strong { font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.overview-cycle-list p { margin: 10px 0 4px; }
+.overview-cycle-list strong { font-weight: 550; }
+.section-caption { color: var(--work-muted); font-size: 12px; line-height: 1.8; }
+.brief-list, .cycle-list { display: grid; gap: 16px; }
+.brief-record { display: grid; grid-template-columns: minmax(0,1fr) 220px; gap: 28px; padding: 24px; background: var(--work-surface); border: 1px solid var(--work-border); border-radius: 13px; }
+.brief-record-main { min-width: 0; }
+.brief-record h3 { font-size: 17px; line-height: 1.8; font-weight: 600; margin: 15px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.brief-record .record-details { margin-bottom: 0; }
+.record-actions { border-left: 1px solid var(--work-border); padding-left: 24px; display: flex; flex-direction: column; justify-content: flex-start; gap: 10px; }
+.record-actions p { font-size: 12px; color: var(--work-muted); line-height: 1.8; margin: 0 0 8px; }
+.cycle-record { padding: 22px; background: var(--work-surface); border: 1px solid var(--work-border); border-radius: 13px; }
+.cycle-record-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+.cycle-record-heading > .ant-typography { font-size: 11px; color: var(--work-muted); }
+.cycle-outcome { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 20px 0; }
+.cycle-outcome > div > span { font-size: 11px; color: var(--work-muted); }
+.cycle-outcome p { font-size: 14px; line-height: 1.8; margin: 8px 0 0; overflow-wrap: anywhere; }
+.cycle-record footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--work-border); padding-top: 15px; }
+.cycle-budget { color: var(--work-muted); font-size: 12px; white-space: nowrap; }
+@media (max-width: 767px) {
+  .workspace-shortcuts { grid-template-columns: minmax(0,1fr); gap: 0; }
+  .project-detail-heading { flex-direction: column; gap: 14px; }
+  .project-detail-heading h1.ant-typography { font-size: 23px; }
+  .project-detail-description { font-size: 12px; }
+  .research-tabs .ant-tabs-tab { padding-inline: 0; font-size: 13px; }
+  .section-toolbar { flex-wrap: wrap; gap: 10px; }
+  .section-toolbar h2 { font-size: 17px; }
+  .current-hypothesis { padding: 19px; }
+  .hypothesis-text { font-size: 18px; }
+  .research-stages { grid-template-columns: minmax(0,1fr); gap: 10px; }
+  .research-stages button { padding: 15px 18px; }
+  .research-stages strong { margin: 5px 0; }
+  .brief-record { grid-template-columns: minmax(0,1fr); gap: 15px; padding: 19px; }
+  .record-actions { border-left: 0; border-top: 1px solid var(--work-border); padding: 16px 0 0; }
+  .record-actions .ant-btn { width: 100%; }
+  .cycle-record { padding: 18px; }
+  .cycle-outcome { grid-template-columns: minmax(0,1fr); gap: 16px; }
+  .cycle-record footer { align-items: flex-start; flex-direction: column; }
+}
+
+.research-section-select { margin: 8px 0 22px; }
+@media (max-width: 767px) { .research-tabs > .ant-tabs-nav { display: none; } }

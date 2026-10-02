@@ -168,18 +168,17 @@ export function Cycles({ projectId }: { projectId: string }) {
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}/cycles', { params: { path: { id: projectId }, query: { cursor, limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="middle">
     
-    <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新研究周期</Button>
+    <div className="section-toolbar"><div><h2>研究周期</h2><p>从实际执行状态，定位下一步与可审阅的证据。</p></div><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新研究周期</Button></div>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['CycleViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="暂无研究周期" /> }} columns={[
-        { title: '周期', key: 'id', render: (_, cycle) => <Typography.Text className="break-word" copyable>{cycle.id}</Typography.Text> },
-        { title: '状态', key: 'state', render: (_, cycle) => <StateTag value={cycle.state} /> },
-        { title: '实际结果 / 下一步', key: 'outcome', render: (_, cycle) => <>{cycle.outcome ?? '尚无周期结论'}<br />{cycle.next_action ?? '尚无下一步记录'}</> },
-        { title: '实验 已用 / 预约', key: 'budget', render: (_, cycle) => `${cycle.used_experiments} / ${cycle.reserved_experiments}` },
-        { title: '开始时间', key: 'started', render: (_, cycle) => displayTime(cycle.started_at) },
-        { title: '准备运行', key: 'run', render: (_, cycle) => cycle.initial_run_id && cycle.available_actions.includes('VIEW_RUNS') ? <Button onClick={() => setRun(cycle.initial_run_id!)}>查看准备运行</Button> : '无可查看的准备运行' },
-        { title: '冻结比较', key: 'selection', render: (_, cycle) => cycle.available_actions.includes('VIEW_SELECTION') ? <Button onClick={() => setSelection(cycle.id)}>查看试验选择</Button> : '尚未形成选择快照' },
-      ]} />
-      <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
+      {query.data?.items.length === 0 ? <NoData text="暂无研究周期" /> : <div className="cycle-list">{query.data?.items.map(cycle => <article className="cycle-record" key={cycle.id}>
+        <div className="cycle-record-heading"><div className="record-label"><StateTag value={cycle.state} /><time dateTime={cycle.started_at ?? undefined}>开始于 {displayTime(cycle.started_at)}</time></div><Typography.Text className="break-word" copyable>{cycle.id}</Typography.Text></div>
+        <div className="cycle-outcome"><div><span>实际结果</span><p>{cycle.outcome ?? '尚无周期结论'}</p></div><div><span>下一步</span><p>{cycle.next_action ?? '尚无下一步记录'}</p></div></div>
+        <footer><span className="cycle-budget">实验 已用 / 预约：{cycle.used_experiments} / {cycle.reserved_experiments}</span><Space wrap>
+          {cycle.initial_run_id && cycle.available_actions.includes('VIEW_RUNS') ? <Button onClick={() => setRun(cycle.initial_run_id!)}>查看准备运行</Button> : <span className="section-caption">无可查看的准备运行</span>}
+          {cycle.available_actions.includes('VIEW_SELECTION') ? <Button onClick={() => setSelection(cycle.id)}>查看试验选择</Button> : <span className="section-caption">尚未形成选择快照</span>}
+        </Space></footer>
+      </article>)}</div>}
+      {(history.length > 1 || query.data?.next_cursor) && <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />}
     </QueryPanel>
     {run && <RunDetail id={run} close={() => setRun(undefined)} />}
     {selection && <CycleSelection key={selection} id={selection} close={() => setSelection(undefined)} />}
