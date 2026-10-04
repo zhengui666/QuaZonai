@@ -25,6 +25,7 @@ CI_PATHS = {
     ".github/workflows/ci.yml",
     ".github/workflows/web.yml",
     ".github/workflows/native-runtime.yml",
+    ".github/workflows/native-data-browser.yml",
     ".github/workflows/polymarket-history.yml",
     ".github/workflows/container.yml",
     ".github/workflows/cli.yml",

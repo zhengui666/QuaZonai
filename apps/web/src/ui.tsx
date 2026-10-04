@@ -2,26 +2,38 @@ import { Alert, Button, Descriptions, Empty, Skeleton, Space, Tag, Typography } 
 import { createContext, useCallback, useContext, useEffect, useId, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { ApiFailure, displayTime } from './api';
+import { settingsWorkActive, useSettingsWork } from './settings-work';
 
 export const GuardContext = createContext({
   blocked: false,
   setGuard: (_id: string, _active: boolean) => {},
 });
+const protectedWorkIds = new Set<string>();
+export const protectedWorkActive = () => protectedWorkIds.size > 0;
 export function GuardProvider({ children }: { children: ReactNode }) {
   const [guards, setGuards] = useState<Set<string>>(new Set());
   const blocked = guards.size > 0;
+  const settingsWork = useSettingsWork();
+  // Detached Settings work permits in-app navigation but still belongs to this document.
+  const unloadBlocked = blocked || settingsWork;
   useEffect(() => {
-    if (!blocked) return;
-    const stop = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    if (!unloadBlocked) return;
+    const stop = (event: BeforeUnloadEvent) => {
+      if (!protectedWorkActive() && !settingsWorkActive()) return;
+      event.preventDefault(); event.returnValue = '';
+    };
     window.addEventListener('beforeunload', stop);
     return () => window.removeEventListener('beforeunload', stop);
-  }, [blocked]);
-  const setGuard = useCallback((id: string, active: boolean) => setGuards(previous => {
-    if (previous.has(id) === active) return previous;
-    const next = new Set(previous);
-    if (active) next.add(id); else next.delete(id);
-    return next;
-  }), []);
+  }, [unloadBlocked]);
+  const setGuard = useCallback((id: string, active: boolean) => {
+    if (active) protectedWorkIds.add(id); else protectedWorkIds.delete(id);
+    setGuards(previous => {
+      if (previous.has(id) === active) return previous;
+      const next = new Set(previous);
+      if (active) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
   return <GuardContext.Provider value={{ blocked, setGuard }}>{children}</GuardContext.Provider>;
 }
 export function useGuard(active: boolean) {
@@ -55,10 +67,25 @@ export function useClock() {
   return now;
 }
 export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
-  const now = useClock();
   if (error === null || error === undefined) return null;
+  return <FailureNotice error={error} retry={retry} />;
+}
+function FailureNotice({ error, retry }: { error: unknown; retry?: () => void }) {
   const failure = error instanceof ApiFailure ? error : undefined;
-  const wait = failure ? Math.max(0, Math.ceil((failure.retryAt - now) / 1000)) : 0;
+  const deadline = failure?.retryAt ?? 0;
+  const [, update] = useState(0);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      const remaining = deadline - Date.now();
+      if (Number.isFinite(remaining) && remaining > 0) {
+        timer = setTimeout(() => { update(value => value + 1); schedule(); }, Math.min(1000, remaining));
+      }
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, [deadline]);
+  const wait = Number.isFinite(deadline) ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 0;
   return <Alert type="error" showIcon title={failure?.message ?? '请求失败，请重试'}
     description={<Space orientation="vertical" size="small">
       {failure?.problem && <>

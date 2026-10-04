@@ -142,6 +142,15 @@ Nautilus 在一个共享资金账户内执行目标序列，保留原生成交�
 
 Web/API/Caddy 同镜像，PostgreSQL/PGMQ 独立 Compose 服务，Worker 从同镜像提取 server 并由宿主 systemd user manager 运行。应用镜像同时提供匹配的 Runtime 网关二进制；科学 job 与 Codex 由 CI 制作独立 GHCR 镜像。安装器按 manifest 拉取已有镜像。原生资源、数据目录、journal 与登录目录分别保持原身份。
 
+应用镜像在独立目录中携带版本匹配的公开数据 Operator 工具，由已安装的
+`manage.py source` 一次性运行；不进入宿主提取的 `bin`、离线科学 job 或其缓存。
+原有 source registry 声明各操作网络需求，管理器用只读输入和独立输出父目录映射
+同名绝对路径，禁止覆盖镜像工具路径或暴露安装状态。准备仍调用原生
+`catalog-prepare`，只返回原始元数据字节摘要、Runtime 路径和登记身份提示；
+Runtime 与服务端重新读取原始文档的权威边界不变。能力及证据限制见
+[source guide](../runtimes/data/source-plugins.md)，安装命令见
+[deployment guide](../deploy/docker/README.md#installed-free-source-tools)。
+
 | 文件 | 关键字段与不变量 |
 | --- | --- |
 | `release.json` | `schema_version=2`、完整 `version` tag、40 位 `revision`、固定 GHCR digest 的 `image/database_image/runtime_image/codex_image`、精确 `codex_version`；不包含私有配置 |

@@ -1,4 +1,5 @@
 **
+!.dockerignore
 !Cargo.toml
 !Cargo.lock
 !rust-toolchain.toml
@@ -24,9 +25,17 @@
 !runtimes/codex/
 !runtimes/codex/package.json
 !runtimes/codex/package-lock.json
+!runtimes/data/
+!runtimes/data/source_plugins.py
+!runtimes/data/acquire.py
+!runtimes/data/providers.py
+!runtimes/data/snapshot.py
 !deploy/
 !deploy/docker/
 !deploy/docker/Dockerfile
+!deploy/docker/Dockerfile.dockerignore
+!deploy/docker/native-inputs.mjs
+!deploy/docker/native-build.sh
 !deploy/docker/Caddyfile
 !deploy/docker/entrypoint.sh
 **/node_modules

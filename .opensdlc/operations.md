@@ -17,17 +17,42 @@ The password-auth migration invalidates pre-password browser sessions. The first
 
 [release.yml](../.github/workflows/release.yml) observes main/tag pushes and check completion. A release tag is `vMAJOR.MINOR.PATCH[-prerelease]`, without leading zeros, build metadata or a floating alias. Its dereferenced commit must be an ancestor of current main; squash/rebase does not move an old tag.
 
-Release requires successful current-source CI, Web console, Native Runtime, Polymarket history, Container and portable CLI workflows. The [version workflow](../.github/workflows/release-version.yml) builds and validates the application, scientific job and Codex images, pushes those same images to GHCR, then runs installation/update/recovery on a fresh runner with no checkout or cached product images and with host build commands denied. The release also builds and executes native Linux x86_64, Windows x86_64 and macOS Intel/Apple Silicon CLIs, archives and reloads all four Docker images, and checks the one-line installer on a fresh Linux runner. Only after every platform and installation check succeeds does it upload all archives, installers, tag-rendered README and SHA256SUMS, verify the uploaded asset sizes/digests, and complete the draft Release. It does not rebuild a different image after testing, overwrite a complete version or publish an application `latest` tag. A main push without a version tag is not a release.
+Release requires successful current-source CI, Web console, Native Runtime, [Native data browser](../.github/workflows/native-data-browser.yml), Polymarket history, Container and portable CLI workflows. The [version workflow](../.github/workflows/release-version.yml) builds and validates the application, scientific job and Codex images, pushes those same images to GHCR, then runs installation/update/recovery on a fresh runner with no checkout or cached product images and with host build commands denied. The release also builds and executes native Linux x86_64, Windows x86_64 and macOS Intel/Apple Silicon CLIs, archives and reloads all four Docker images, and checks the one-line installer on a fresh Linux runner. Only after every platform and installation check succeeds does it upload all archives, installers, tag-rendered README and SHA256SUMS, verify the uploaded asset sizes/digests, and complete the draft Release. It does not rebuild a different image after testing, overwrite a complete version or publish an application `latest` tag. A main push without a version tag is not a release.
 
 Push the chosen immutable tag only within release authorization. Reconcile an existing tag/draft before retrying. Verify the published revision, image digest, package visibility and `quazonai-deploy.tar.gz`; repository visibility alone does not set GHCR visibility. Deployment uses the [versioned bundle](../deploy/docker/README.md), not a developer checkout.
+
+Installed source preparation uses the same application image digest through
+`manage.py source`; it adds no service, fifth image or deployment archive member.
+The source tools stay outside `/opt/quazonai/bin`, which the installer extracts
+onto the host. The existing no-checkout smoke executes real packaged candle
+conversion/preparation and preserves explicit fixture/unverified status before
+and after update. This does not qualify live or historical data.
+
+Container CI publishes `operator-cost-<revision>-<run>-<attempt>` with actual
+stripped executable sizes, same-source baseline/candidate image and compressed
+archive bytes, native operator build time, normal candidate elapsed time and disk
+observations. The normal candidate builds first with configured caches; the
+`application-base` comparison is built afterward and can reuse those layers.
+Neither timing is an independent cold-build comparison. Native-stage timing is
+recorded in the producer image and may be reused with a cached stage. Before
+merging packaging changes, review these measured costs and the existing archive
+limit; missing measurements or failed installed acceptance are not a pass. Debug
+binary sizes are not release-size estimates.
+
+Failed source acceptance retains a `source-invocations-*` CI artifact containing
+only bounded invocation identities, state, exit and cleanup facts. Raw source
+payloads, declarations and stdout/stderr are excluded. When container ownership
+or terminal state cannot be confirmed, the smoke keeps its mount roots outside
+the installation's temporary cleanup; a local CLI exit is not cancellation proof.
 
 <a id="dev-release"></a>
 ### Automatic development releases
 
 Every push to remote `dev` runs [Dev release](../.github/workflows/dev-release.yml).
 It creates `v<workspace core>-dev.<UTC YYYYMMDDHHMMSS>.<Actions run ID>` at the
-exact push SHA, then waits for all six source workflows and calls the same
+exact push SHA, then waits for all seven source workflows and calls the same
 [version publisher](../.github/workflows/release-version.yml) with `branch=dev`.
+The native data browser check is mandatory on that exact SHA: absent, pending, skipped, cancelled or failed execution cannot authorize publication. Its fixture success does not grant source permission or PIT qualification.
 The run creation timestamp and ID make retries reuse the existing tag; a tag
 pointing elsewhere is rejected. Successive dev pushes keep their own source CI.
 Main release selection excludes these automatic timestamped tags even after their source is merged into main; the original dev run owns retries. The source must remain contained in dev. Force-pushing it away prevents release.

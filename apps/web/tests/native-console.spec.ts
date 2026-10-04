@@ -54,7 +54,7 @@ async ({ page, context }) => {
       const items: { items: Schema['ProjectView'][] } = await listing.json();
       expect(items.items).toHaveLength(1);
       expect(items.items[0]).toEqual(saved.receipt.resource);
-      await expect(page.getByRole('row').filter({ hasText: saved.receipt.resource.name })).toHaveCount(1);
+      await expect(page.getByRole('article').filter({ hasText: saved.receipt.resource.name })).toHaveCount(1);
     });
 
     await test.step('retain the theme and expose no legacy login operations', async () => {
@@ -68,7 +68,8 @@ async ({ page, context }) => {
     return;
   }
 
-  const name = `Native browser ${randomUUID()}`;
+  // Exercise the 120-character limit, including an unbroken segment on mobile.
+  const name = `Native browser ${randomUUID()} ${'x'.repeat(68)}`;
   let projectId: string;
   let initialKey: string | undefined;
   let initialRequest: Schema['ProjectCreate'] | undefined;
@@ -134,7 +135,7 @@ async ({ page, context }) => {
     expect(receipt.schema_version).toBe(1);
     expect(receipt).toEqual({ ...originalReceipt, replayed: true });
     expect(retried.request().postDataJSON()).toEqual(initialRequest);
-    await expect(page.getByRole('row').filter({ hasText: name })).toHaveCount(1);
+    await expect(page.getByRole('article').filter({ hasText: name })).toHaveCount(1);
     const response = await page.request.get('/api/v2/projects?limit=100');
     expect(response.status()).toBe(200);
     const listing: { items: { id: string; name: string; revision: unknown; state: string }[] } = await response.json();
@@ -162,6 +163,8 @@ async ({ page, context }) => {
   });
 
   await test.step('keep both themes and the local editor inside three viewports', async () => {
+    if (!checkpoint) throw new Error('The original project is required for responsive editing checks');
+    const originalProject = checkpoint.receipt.resource;
     for (const mode of ['light', 'dark']) {
       if (await page.locator('html').getAttribute('data-theme') !== mode) {
         await page.getByRole('button', { name: mode === 'dark' ? '切换为深色主题' : '切换为浅色主题' }).click();
@@ -175,6 +178,73 @@ async ({ page, context }) => {
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
         await page.getByRole('button', { name: '取消', exact: true }).click();
         await expect(page.getByLabel('研究名称')).toHaveCount(0);
+        await expect(page.getByRole('heading', { name: '研究项目', exact: true })).toBeVisible();
+        await expect(page.getByRole('article')).toHaveCount(1);
+        if (viewport.width < 768) {
+          const row = page.getByRole('article').filter({ has: page.getByRole('button', { name, exact: true }) });
+          await expect(row).toHaveCount(1);
+          // The workbench permits normal vertical scrolling; the complete card
+          // must fit once brought into view, without horizontal clipping.
+          await row.scrollIntoViewIfNeeded();
+          // Assert every complete value/action before click() can auto-scroll
+          // a clipped control. Page overflow alone misses an inner table scroll.
+          for (const control of [
+            row.getByRole('button', { name, exact: true }),
+            row.getByText('草稿', { exact: true }),
+            row.getByText('下一步：建立研究 Brief', { exact: true }),
+            row.locator('time'),
+            row.getByRole('button', { name: '编辑', exact: true }),
+          ]) await expect(control).toBeInViewport({ ratio: 1 });
+          await expect(row.locator('time')).toHaveAttribute('datetime', originalProject.updated_at);
+          await expect(row.locator('time')).toHaveText(/\d/);
+          await expect.poll(() => row.evaluate(element =>
+            element.scrollWidth <= element.clientWidth + 1 && element.scrollLeft === 0)).toBe(true);
+
+          await row.getByRole('button', { name: '编辑', exact: true }).click();
+          const editor = page.getByRole('dialog', { name: '编辑研究项目', exact: true });
+          const draftName = `Unsaved ${name.slice(0, 112)}`;
+          const draftDescription = 'Unsaved mobile editor text; no research qualification claims.';
+          await editor.getByLabel('研究名称').fill(draftName);
+          await editor.getByLabel('研究说明', { exact: true }).fill(draftDescription);
+          for (const width of [768, 1440, 390]) {
+            await page.setViewportSize({ width, height: viewport.height });
+            await expect(editor).toHaveCount(1);
+            await expect(editor.getByLabel('研究名称')).toHaveValue(draftName);
+            await expect(editor.getByLabel('研究说明', { exact: true })).toHaveValue(draftDescription);
+          }
+
+          // The real second tab changes the stored theme while the first tab's
+          // modal editor remains open; no forced click through its mask.
+          const themePage = await context.newPage();
+          try {
+            await themePage.goto('/');
+            await themePage.getByRole('button', { name: mode === 'light' ? '切换为深色主题' : '切换为浅色主题' }).click();
+            await expect(page.locator('html')).toHaveAttribute('data-theme', mode === 'light' ? 'dark' : 'light');
+            await expect(editor.getByLabel('研究名称')).toHaveValue(draftName);
+            await expect(editor.getByLabel('研究说明', { exact: true })).toHaveValue(draftDescription);
+            await themePage.getByRole('button', { name: mode === 'light' ? '切换为浅色主题' : '切换为深色主题' }).click();
+            await expect(page.locator('html')).toHaveAttribute('data-theme', mode);
+          } finally {
+            await themePage.close();
+          }
+
+          await editor.getByRole('button', { name: '取消', exact: true }).click();
+          const discard = page.getByRole('dialog', { name: '放弃尚未保存的修改？', exact: true });
+          await discard.getByRole('button', { name: '继续编辑', exact: true }).click();
+          await expect(editor.getByLabel('研究名称')).toHaveValue(draftName);
+          await editor.getByRole('button', { name: '取消', exact: true }).click();
+          await discard.getByRole('button', { name: '放弃修改', exact: true }).click();
+          await expect(editor).toHaveCount(0);
+          const unchanged = await page.request.get(`/api/v2/projects/${projectId}`);
+          expect(unchanged.status()).toBe(200);
+          expect(await unchanged.json()).toEqual(originalProject);
+          await row.getByRole('button', { name, exact: true }).click();
+          await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+          await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+          await row.scrollIntoViewIfNeeded();
+          await expect(row.getByRole('button', { name: '编辑', exact: true })).toBeInViewport({ ratio: 1 });
+        }
+        await page.evaluate(() => window.scrollTo(0, 0));
         // Capture only the project surface, never browser session material.
         await expect(page.getByLabel('动态验证码')).toHaveCount(0);
         await expect(page.getByLabel('一次性初始化凭据')).toHaveCount(0);
@@ -182,8 +252,102 @@ async ({ page, context }) => {
           path: resolve(dirname(config.redactionsFile), `projects-${mode}-${viewport.width}.png`),
           animations: 'disabled',
         });
+        if (mode === 'light' && viewport.width === 1440) {
+          const cdp = await context.newCDPSession(page);
+          try {
+            await cdp.send('DOM.enable'); await cdp.send('CSS.enable');
+            const { root } = await cdp.send('DOM.getDocument');
+            const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '.research-heading h1' });
+            const { fonts } = await cdp.send('CSS.getPlatformFontsForNode', { nodeId });
+            const cjkSansFamilies = process.platform === 'linux'
+              ? ['WenQuanYi Zen Hei']
+              : ['PingFang SC', 'Microsoft YaHei', 'WenQuanYi Zen Hei', 'Noto Sans CJK SC'];
+            expect(fonts.some(font => font.glyphCount >= 2 && cjkSansFamilies.includes(font.familyName))).toBe(true);
+            writeFileSync(resolve(dirname(config.redactionsFile), 'cjk-fonts.json'), JSON.stringify({ platform: process.platform, fonts }, null, 2));
+          } finally { await cdp.detach(); }
+        }
+        await page.getByRole('button', { name, exact: true }).click();
+        await expect(page.getByRole('heading', { name: '当前 Brief', exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { name: '尚无研究周期', exact: true })).toBeVisible();
+        for (const [tab, surface] of [['工作概览', 'project-workspace'], ['研究 Brief', 'project-briefs'], ['冻结输入', 'project-inputs'], ['研究周期', 'project-cycles']] as const) {
+          if (viewport.width >= 768) await page.getByRole('tab', { name: tab, exact: true }).click();
+          else {
+            await page.getByLabel('研究项目章节', { exact: true }).click();
+            await page.getByTitle(tab, { exact: true }).last().click();
+          }
+          await expect(page.locator('.ant-skeleton:visible')).toHaveCount(0);
+          await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
+          if (tab === '冻结输入') {
+            await expect(page.getByLabel('冻结输入所属研究项目', { exact: true })).toHaveCount(0);
+            await expect(page.getByRole('button', { name: '新建冻结输入', exact: true })).toBeVisible();
+          }
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await page.locator('.console-layout').screenshot({ path: resolve(dirname(config.redactionsFile), `${surface}-${mode}-${viewport.width}.png`), animations: 'disabled' });
+        }
+        await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
       }
     }
+  });
+
+  await test.step('upload a protocol-only Agent report with a lost ACK and inspect exact stored evidence', async () => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole('button', { name, exact: true }).click();
+    await page.getByRole('tab', { name: 'Agent 评估', exact: true }).click();
+    await page.getByRole('button', { name: '上传报告', exact: true }).click();
+    await page.locator('input[type=file]').setInputFiles(resolve('..', '..', 'tests', 'fixtures', 'agent-evaluation', 'unrun-v1.json'));
+    await expect(page.getByText(/unrun-v1.json/)).toBeVisible();
+    await page.getByRole('button', { name: '取消', exact: true }).click();
+    const discardUnsent = page.getByRole('dialog', { name: '放弃未上传的报告？', exact: true });
+    await expect(discardUnsent).toBeVisible();
+    await discardUnsent.getByRole('button', { name: '继续编辑', exact: true }).click();
+    await expect(discardUnsent).toHaveCount(0);
+    let key: string | undefined;
+    let original: unknown;
+    let artifactId: string | undefined;
+    await page.route('**/api/v2/artifacts', async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      key = route.request().headers()['idempotency-key'];
+      original = route.request().postDataJSON();
+      const response = await route.fetch({ maxRetries: 0 });
+      expect(response.status()).toBe(201);
+      const receipt = await response.json();
+      artifactId = receipt.resource.id;
+      await response.dispose();
+      await route.abort('failed');
+    });
+    const editor = page.getByRole('dialog', { name: '上传 Agent 评估报告' });
+    await editor.getByRole('button', { name: '上传报告', exact: true }).click();
+    await expect(page.getByText(/连接中断，提交结果未知/)).toBeVisible();
+    await expect(editor.getByRole('button', { name: '选择 JSON 报告', exact: true })).toBeDisabled();
+    await expect(editor.locator('input[type=file]')).toBeDisabled();
+    await expect(editor.getByText(/原报告内容与幂等键已锁定/)).toBeVisible();
+    await editor.getByRole('button', { name: '取消', exact: true }).click();
+    const discardSent = page.getByRole('dialog', { name: '关闭报告上传？', exact: true });
+    await expect(discardSent).toBeVisible();
+    await expect(discardSent.getByText(/关闭不会撤回已保存的报告/)).toBeVisible();
+    await discardSent.getByRole('button', { name: '继续编辑', exact: true }).click();
+    await expect(discardSent).toHaveCount(0);
+    await page.unroute('**/api/v2/artifacts');
+    const retry = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/artifacts' && response.request().method() === 'POST');
+    const retryButton = editor.locator('button').filter({ hasText: '原样重试上传请求' });
+    await expect(retryButton).toHaveCount(1);
+    await expect(retryButton).toHaveAccessibleName('原样重试上传请求');
+    await editor.getByRole('button', { name: '原样重试上传请求', exact: true }).click();
+    const response = await retry;
+    expect(response.status()).toBe(201);
+    expect(response.request().headers()['idempotency-key']).toBe(key);
+    expect(response.request().postDataJSON()).toEqual(original);
+    expect((await response.json()).resource.id).toBe(artifactId);
+    const detail = page.getByRole('dialog', { name: 'Agent 评估详情' });
+    await expect(detail.getByText('PROTOCOL_ONLY：协议测试，不是实际模型评估')).toBeVisible();
+    await expect(detail.getByText('UNRUN: 2', { exact: true })).toBeVisible();
+    await expect(detail.getByText('gpt-6-luna / max', { exact: true })).toBeVisible();
+    await expect(detail.getByText('未知（未观察到）', { exact: true })).toHaveCount(2);
+    const stored = await page.request.get(`/api/v2/artifacts/${artifactId}/agent-evaluation`);
+    expect(stored.status()).toBe(200);
+    expect(await stored.json()).toEqual(JSON.parse(readFileSync(resolve('..', '..', 'tests', 'fixtures', 'agent-evaluation', 'unrun-v1.json'), 'utf8')));
+    await detail.locator('.ant-drawer-close').click();
+    await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
   });
 
   await test.step('retain the original browser state and command only in private test storage', async () => {

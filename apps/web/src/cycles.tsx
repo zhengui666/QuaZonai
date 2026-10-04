@@ -1,9 +1,11 @@
 import { App, Alert, Button, Descriptions, Drawer, Form, Modal, Space, Table, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
 import type { Schema } from './api';
 import { ResourceSelect } from './resource-select';
+import { activeAccountOperation, settleAccountSessions } from './chatgpt-auth';
+import { useSettingsWorkKey, useSettingsWorkPrefix, useSettingsWorkVersion } from './settings-work';
 import { RunDetail } from './runs';
 import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';
 
@@ -12,9 +14,14 @@ type Fields = { runtime_id?: string; discovery_input_set_id: string; validation_
 type Submitted = { kind: 'freeze'; body: Schema['BriefFreezeV1'] } | { kind: 'start'; body: Schema['CycleStartV1'] };
 const required = [{ required: true, message: '请明确选择已有记录。' }];
 
-function useProfile(id?: string) {
-  return useQuery({ queryKey: ['codex', 'profile', id], enabled: !!id, staleTime: 0,
+function useProfile(id: string | undefined, settled: boolean, version: number) {
+  return useQuery({ queryKey: ['codex', 'profile', id, version], enabled: !!id && settled, staleTime: 0,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/settings/codex/{id}', { params: { path: { id: id! } }, signal })) });
+}
+function useAccountOperation(id: string | undefined, enabled: boolean, localWork: boolean) {
+  return useQuery<Schema['CodexAccountOperationV1'] | null>({ queryKey: ['cycle-account-operation', id, localWork], enabled: !!id && enabled, staleTime: 0,
+    refetchInterval: query => localWork || activeAccountOperation(query.state.data) ? 2_000 : 15_000,
+    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/codex/login', { params: { query: { profile_id: id! } }, signal })) });
 }
 
 export function BriefExecution({ brief, close }: { brief: Brief; close: () => void }) {
@@ -27,8 +34,22 @@ export function BriefExecution({ brief, close }: { brief: Brief; close: () => vo
   const runtimeId: string | undefined = Form.useWatch('runtime_id', form);
   const researcherId: string | undefined = Form.useWatch('researcher_id', form);
   const reviewerId: string | undefined = Form.useWatch('reviewer_id', form);
-  const researcher = useProfile(researcherId); const reviewer = useProfile(reviewerId);
-  const runtime = useQuery({ queryKey: ['integrations', 'runtime', runtimeId], enabled: freeze && !!runtimeId,
+  const runtimeKey = `autosave:runtime:${runtimeId ?? ''}`;
+  const researcherKey = `codex-model:${researcherId ?? ''}`;
+  const reviewerKey = `codex-model:${reviewerId ?? ''}`;
+  const runtimeSaving = useSettingsWorkKey(runtimeKey); const runtimeVersion = useSettingsWorkVersion(runtimeKey);
+  const researcherSaving = useSettingsWorkKey(researcherKey); const researcherVersion = useSettingsWorkVersion(researcherKey);
+  const reviewerSaving = useSettingsWorkKey(reviewerKey); const reviewerVersion = useSettingsWorkVersion(reviewerKey);
+  const accountWork = useSettingsWorkPrefix('chatgpt-auth:');
+  const researcher = useProfile(researcherId, !researcherSaving, researcherVersion);
+  const reviewer = useProfile(reviewerId, !reviewerSaving, reviewerVersion);
+  const researcherAccount = useAccountOperation(researcherId, !freeze, accountWork);
+  const reviewerAccount = useAccountOperation(reviewerId, !freeze, accountWork);
+  useEffect(() => {
+    settleAccountSessions(researcherAccount.data, client);
+    settleAccountSessions(reviewerAccount.data, client);
+  }, [researcherAccount.data, reviewerAccount.data, researcherAccount.dataUpdatedAt, reviewerAccount.dataUpdatedAt, client]);
+  const runtime = useQuery({ queryKey: ['integrations', 'runtime', runtimeId, runtimeVersion], enabled: freeze && !!runtimeId && !runtimeSaving,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId! } }, signal })) });
   const project = useQuery({ queryKey: ['project', brief.project_id], staleTime: 0,
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}', { params: { path: { id: brief.project_id } }, signal })) });
@@ -59,9 +80,10 @@ export function BriefExecution({ brief, close }: { brief: Brief; close: () => vo
   useGuard(true);
   const conflict = submitted === undefined && mutation.error instanceof ApiFailure && mutation.error.code === 'REVISION_CONFLICT';
   const unavailable = !project.data || project.isError || project.isFetching || (freeze ? project.data.state === 'ARCHIVED' : project.data.state !== 'ACTIVE');
-  const ready = freeze ? !!runtime.data?.configuration.enabled && !runtime.isError && !runtime.isFetching
+  const ready = freeze ? !runtimeSaving && !!runtime.data?.configuration.enabled && !runtime.isError && !runtime.isFetching
     : !!frozen.data && !frozen.isError && !frozen.isFetching && !!researcher.data?.home_binding && !!reviewer.data?.home_binding
-      && !researcher.isError && !reviewer.isError && !researcher.isFetching && !reviewer.isFetching;
+      && !researcherSaving && !reviewerSaving && !accountWork && !researcher.isError && !reviewer.isError && !researcher.isFetching && !reviewer.isFetching
+      && [researcherAccount, reviewerAccount].every(query => query.data !== undefined && !activeAccountOperation(query.data) && !query.isError && !query.isFetching);
   const retry = submitted !== undefined && mutation.isError;
   function submit(value: Fields) {
     if (!online || mutation.isPending || unavailable || !ready || submitted || conflict) return;
@@ -122,6 +144,7 @@ export function BriefExecution({ brief, close }: { brief: Brief; close: () => vo
               { key: 'runtime', label: '冻结 Runtime / 修订', children: `${frozen.data.execution_context.runtime_id} / ${frozen.data.execution_context.runtime_revision}` },
               ...(['discovery', 'validation', 'sealed'] as const).map(role => ({ key: role, label: `${role.toUpperCase()} 输入`, children: frozen.data!.execution_context[`${role}_input_set_id`] })),
             ]} />}
+            <ErrorNotice error={researcherAccount.error ?? reviewerAccount.error} />
             {([['researcher_id', '研究者', researcher], ['reviewer_id', '独立 Reviewer', reviewer]] as const).map(([field, role, profile]) => <div key={field}>
               <Form.Item name={field} label={`${role} Codex 配置`} rules={required}><ResourceSelect label={`选择${role} Codex 配置`} queryKey={['startup', 'profiles']} load={async (cursor, signal) => {
                 const page = dataOf(await api.GET('/api/v2/settings/codex', { params: { query: { cursor, limit: 50 } }, signal }));
@@ -145,18 +168,17 @@ export function Cycles({ projectId }: { projectId: string }) {
     queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}/cycles', { params: { path: { id: projectId }, query: { cursor, limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="middle">
     
-    <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新研究周期</Button>
+    <div className="section-toolbar"><div><h2>研究周期</h2><p>从实际执行状态，定位下一步与可审阅的证据。</p></div><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新研究周期</Button></div>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['CycleViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="暂无研究周期" /> }} columns={[
-        { title: '周期', key: 'id', render: (_, cycle) => <Typography.Text className="break-word" copyable>{cycle.id}</Typography.Text> },
-        { title: '状态', key: 'state', render: (_, cycle) => <StateTag value={cycle.state} /> },
-        { title: '实际结果 / 下一步', key: 'outcome', render: (_, cycle) => <>{cycle.outcome ?? '尚无周期结论'}<br />{cycle.next_action ?? '尚无下一步记录'}</> },
-        { title: '实验 已用 / 预约', key: 'budget', render: (_, cycle) => `${cycle.used_experiments} / ${cycle.reserved_experiments}` },
-        { title: '开始时间', key: 'started', render: (_, cycle) => displayTime(cycle.started_at) },
-        { title: '准备运行', key: 'run', render: (_, cycle) => cycle.initial_run_id && cycle.available_actions.includes('VIEW_RUNS') ? <Button onClick={() => setRun(cycle.initial_run_id!)}>查看准备运行</Button> : '无可查看的准备运行' },
-        { title: '冻结比较', key: 'selection', render: (_, cycle) => cycle.available_actions.includes('VIEW_SELECTION') ? <Button onClick={() => setSelection(cycle.id)}>查看试验选择</Button> : '尚未形成选择快照' },
-      ]} />
-      <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
+      {query.data?.items.length === 0 ? <NoData text="暂无研究周期" /> : <div className="cycle-list">{query.data?.items.map(cycle => <article className="cycle-record" key={cycle.id}>
+        <div className="cycle-record-heading"><div className="record-label"><StateTag value={cycle.state} /><time dateTime={cycle.started_at ?? undefined}>开始于 {displayTime(cycle.started_at)}</time></div><Typography.Text className="break-word" copyable>{cycle.id}</Typography.Text></div>
+        <div className="cycle-outcome"><div><span>实际结果</span><p>{cycle.outcome ?? '尚无周期结论'}</p></div><div><span>下一步</span><p>{cycle.next_action ?? '尚无下一步记录'}</p></div></div>
+        <footer><span className="cycle-budget">实验 已用 / 预约：{cycle.used_experiments} / {cycle.reserved_experiments}</span><Space wrap>
+          {cycle.initial_run_id && cycle.available_actions.includes('VIEW_RUNS') ? <Button onClick={() => setRun(cycle.initial_run_id!)}>查看准备运行</Button> : <span className="section-caption">无可查看的准备运行</span>}
+          {cycle.available_actions.includes('VIEW_SELECTION') ? <Button onClick={() => setSelection(cycle.id)}>查看试验选择</Button> : <span className="section-caption">尚未形成选择快照</span>}
+        </Space></footer>
+      </article>)}</div>}
+      {(history.length > 1 || query.data?.next_cursor) && <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />}
     </QueryPanel>
     {run && <RunDetail id={run} close={() => setRun(undefined)} />}
     {selection && <CycleSelection key={selection} id={selection} close={() => setSelection(undefined)} />}

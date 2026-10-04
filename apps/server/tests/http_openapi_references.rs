@@ -1,6 +1,17 @@
 //! Check the real route-derived document, independently of DomainContracts.
 use serde_json::Value;
 
+#[test]
+fn native_http_export_is_compact_deterministic_and_matches_the_committed_values() {
+    let generated = server::openapi_json().unwrap();
+    let document: Value = serde_json::from_str(&generated).unwrap();
+    let committed = include_str!("../../../contracts/generated/api-v2.openapi.json");
+    assert_eq!(document, serde_json::from_str::<Value>(committed).unwrap());
+    assert_eq!(generated, serde_json::to_string(&document).unwrap() + "\n");
+    assert_eq!(generated, server::openapi_json().unwrap());
+    assert_eq!(generated, committed, "regenerate the native HTTP artifact");
+}
+
 fn assert_local_references(document: &Value) -> usize {
     // Native JSON Pointer lookup; this is not a second JSON Schema validator.
     let mut pending = vec![document];

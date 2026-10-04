@@ -309,6 +309,10 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/artifacts/{id}", get(artifacts::get))
         .route("/api/v2/artifacts/{id}/content", get(artifacts::content))
         .route(
+            "/api/v2/artifacts/{id}/agent-evaluation",
+            get(artifacts::agent_evaluation),
+        )
+        .route(
             "/api/v2/experiments",
             get(experiments::list)
                 .post(experiments::propose)
@@ -746,7 +750,7 @@ codex_profiles::account::login_operation,codex_profiles::account::latest_operati
 data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
 data::revisions,data::revision,data::register,data::universes,data::universe,data::validate,
-artifacts::list,artifacts::get,artifacts::create,artifacts::content),components(schemas(error::Problem)),tags((name="Authentication",description="Password browser sessions and revocable CLI devices")))]
+artifacts::list,artifacts::get,artifacts::create,artifacts::content,artifacts::agent_evaluation),components(schemas(error::Problem)),tags((name="Authentication",description="Password browser sessions and revocable CLI devices")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
     let mut document = HttpContracts::openapi();
@@ -754,7 +758,8 @@ pub fn openapi_json() -> Result<String, serde_json::Error> {
     describe_authority(&mut document);
     let mut value = serde_json::to_value(document)?;
     value.sort_all_objects();
-    Ok(serde_json::to_string_pretty(&value)? + "\n")
+    // The CLI and generated clients consume JSON values, not pretty-printing.
+    Ok(serde_json::to_string(&value)? + "\n")
 }
 
 /// Security metadata uses utoipa's native OpenAPI types, derived alongside real

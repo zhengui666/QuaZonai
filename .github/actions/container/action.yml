@@ -13,6 +13,15 @@ inputs:
   version:
     description: OCI version label.
     required: true
+  cache-native-dependencies:
+    description: Opt in to the bounded dependency-only native Job cache for dev CI.
+    default: 'false'
+  verify-native-input-cache:
+    description: Run one bounded same-builder native input isolation probe after real acceptance.
+    default: 'false'
+  native-probe-deadline:
+    description: Probe-only epoch deadline with reserve inside the caller's unchanged job timeout.
+    default: '0'
 outputs:
   runtime-image:
     description: Already-tested native scientific image ID.
@@ -42,16 +51,69 @@ runs:
         python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
         RELEASE_BRANCH=dev python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
         sudo apparmor_parser -r deploy/docker/codex.apparmor
-        if ! command -v rg >/dev/null; then
-          sudo apt-get update
-          sudo apt-get install -y ripgrep
-        fi
+        python3 -B deploy/docker/setup_ripgrep.py
         uid=$(id -u)
         sudo loginctl enable-linger "$uid"
         sudo systemctl start "user@$uid.service"
         export XDG_RUNTIME_DIR="/run/user/$uid"
         systemctl --user show --property=Version
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+    - id: native-builder
+      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+    - name: Verify the real filtered native input context before compiling
+      id: native-input-preflight
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        NATIVE_BUILDER: ${{ steps.native-builder.outputs.name }}
+      run: |
+        set -euo pipefail
+        timeout --signal=INT --kill-after=10s 180s docker buildx build \
+          --builder "$NATIVE_BUILDER" --platform linux/amd64 --progress plain \
+          --file deploy/docker/Dockerfile --target native-inputs \
+          --output type=cacheonly . 2>&1 | tee "$RUNNER_TEMP/native-input-preflight.log"
+    - name: Retain native input context preflight evidence
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: native-input-preflight-${{ inputs.revision }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/native-input-preflight.log
+        retention-days: 7
+        if-no-files-found: ignore
+    - name: Install the pinned scientific Rust toolchain
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      run: rustup toolchain install 1.98.1 --profile minimal --target wasm32-unknown-unknown
+    - name: Prepare the bounded native dependency cache
+      id: native-cache
+      if: inputs.cache-native-dependencies == 'true'
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        CONTAINER_ACTION_PATH: ${{ github.action_path }}
+        CACHE_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_RELEASE_DEBUG: '0'
+      run: python3 -B "$CONTAINER_ACTION_PATH/native-cache.py" prepare
+    - name: Restore only native release dependencies
+      id: native-cache-restore
+      if: steps.native-cache.outputs.enabled == 'true'
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.native-cache.outputs.path }}
+        key: ${{ steps.native-cache.outputs.key }}
+    - name: Remove all restored workspace outputs
+      if: steps.native-cache.outputs.enabled == 'true'
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        CONTAINER_ACTION_PATH: ${{ github.action_path }}
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_RELEASE_DEBUG: '0'
+        CACHE_EXPECTED_KEY: ${{ steps.native-cache.outputs.key }}
+        CACHE_MATCHED_KEY: ${{ steps.native-cache-restore.outputs.cache-matched-key }}
+      run: python3 -B "$CONTAINER_ACTION_PATH/native-cache.py" prune
     - name: Build the scientific image from the same source
       id: native
       shell: bash
@@ -62,13 +124,33 @@ runs:
         CARGO_PROFILE_RELEASE_DEBUG: '0'
       run: |
         set -euo pipefail
-        rustup toolchain install 1.98.1 --profile minimal --target wasm32-unknown-unknown
         rustup run 1.98.1 cargo build --locked --release -p job
         assembly=$(mktemp -d "$RUNNER_TEMP/native-image.XXXXXX")
         node runtimes/native/build-native-image.mjs --profile release --output-dir "$assembly/image" --image-version "$IMAGE_VERSION"
         echo "image=$(cat "$assembly/image/image-id.txt")" >> "$GITHUB_OUTPUT"
-        # The image now owns its executable/toolchain. Free only this job's
-        # disposable Rust build output before the independent application build.
+    - name: Prune workspace outputs and bound the dependency archive
+      id: native-cache-save-check
+      if: steps.native-cache.outputs.enabled == 'true'
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        CONTAINER_ACTION_PATH: ${{ github.action_path }}
+        CARGO_BUILD_JOBS: '2'
+        CARGO_PROFILE_RELEASE_DEBUG: '0'
+      run: python3 -B "$CONTAINER_ACTION_PATH/native-cache.py" save-check
+    - name: Save only bounded native release dependencies
+      if: steps.native-cache.outputs.can-save == 'true' && steps.native-cache-save-check.outputs.save == 'true' && steps.native-cache-restore.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.native-cache.outputs.path }}
+        key: ${{ steps.native-cache.outputs.key }}
+    - name: Free the disposable native release build tree
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      run: |
+        # The image now owns its executable/toolchain. Save dependencies before
+        # freeing this job's output for the independent application build.
         rm -rf target/release
     - name: Build independent Codex images before installation
       id: codex
@@ -83,9 +165,13 @@ runs:
         python3 -B deploy/docker/release.py build-codex --codex-version 0.156.1 --image quazonai-codex-previous
         echo "image=$(docker image inspect quazonai-codex-candidate --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
         echo "version=$version" >> "$GITHUB_OUTPUT"
-    - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+    - name: Start normal candidate build measurement
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      run: python3 -B deploy/docker/operator_cost.py mark --directory "$RUNNER_TEMP/operator-cost" --phase candidate-start
     - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
       with:
+        builder: ${{ steps.native-builder.outputs.name }}
         context: ${{ inputs.source }}
         file: ${{ inputs.source }}/deploy/docker/Dockerfile
         platforms: linux/amd64
@@ -97,6 +183,44 @@ runs:
           REVISION=${{ inputs.revision }}
         cache-from: type=gha,scope=quazonai-container
         cache-to: type=gha,mode=max,scope=quazonai-container
+    - name: Finish candidate measurement and start warm same-source baseline
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      run: |
+        python3 -B deploy/docker/operator_cost.py mark --directory "$RUNNER_TEMP/operator-cost" --phase candidate-end
+        python3 -B deploy/docker/operator_cost.py mark --directory "$RUNNER_TEMP/operator-cost" --phase baseline-start
+    - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+      with:
+        builder: ${{ steps.native-builder.outputs.name }}
+        context: ${{ inputs.source }}
+        file: ${{ inputs.source }}/deploy/docker/Dockerfile
+        target: application-base
+        platforms: linux/amd64
+        load: true
+        push: false
+        tags: ${{ inputs.image }}-operator-baseline
+        build-args: |
+          VERSION=${{ inputs.version }}
+          REVISION=${{ inputs.revision }}
+        cache-from: type=gha,scope=quazonai-container
+    - name: Measure original image archives and stripped operator payload
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        IMAGE: ${{ inputs.image }}
+        REVISION: ${{ inputs.revision }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        python3 -B deploy/docker/operator_cost.py mark --directory "$RUNNER_TEMP/operator-cost" --phase baseline-end
+        python3 -B deploy/docker/operator_cost.py report --directory "$RUNNER_TEMP/operator-cost" \
+          --baseline "$IMAGE-operator-baseline" --candidate "$IMAGE" --revision "$REVISION" --version "$VERSION"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: operator-cost-${{ inputs.revision }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/operator-cost
+        retention-days: 7
+        if-no-files-found: error
     - name: Verify real installation, upgrade, failure retry and database restore
       shell: bash
       working-directory: ${{ inputs.source }}
@@ -115,6 +239,40 @@ runs:
         python3 -B deploy/docker/smoke.py --image "$IMAGE" --revision "$REVISION" \
           --runtime-image "$RUNTIME_IMAGE" --codex-image "$CODEX_IMAGE" --codex-version "$CODEX_VERSION" \
           --previous-codex-image quazonai-codex-previous --previous-codex-version 0.156.1
+    - name: Verify one bounded same-builder native cache reuse
+      id: native-input-cache
+      if: inputs.verify-native-input-cache == 'true'
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      env:
+        IMAGE: ${{ inputs.image }}
+        REVISION: ${{ inputs.revision }}
+        VERSION: ${{ inputs.version }}
+        BUILDER: ${{ steps.native-builder.outputs.name }}
+        BUILDER_DRIVER: ${{ steps.native-builder.outputs.driver }}
+        BUILDER_NODES: ${{ steps.native-builder.outputs.nodes }}
+        PROBE_DEADLINE: ${{ inputs.native-probe-deadline }}
+      run: |
+        python3 -B deploy/docker/native_cache_probe.py --candidate "$IMAGE" \
+          --revision "$REVISION" --version "$VERSION" --builder "$BUILDER" \
+          --builder-driver "$BUILDER_DRIVER" --builder-nodes "$BUILDER_NODES" \
+          --deadline "$PROBE_DEADLINE" --directory "$RUNNER_TEMP/native-cache-probe"
+    - name: Retain native cache probe execution and cleanup evidence
+      if: always() && inputs.verify-native-input-cache == 'true' && steps.native-input-cache.outcome != 'skipped' && steps.native-input-cache.outcome != ''
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: native-cache-probe-${{ inputs.revision }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/native-cache-probe
+        retention-days: 7
+        if-no-files-found: error
+    - name: Retain bounded failed source invocation facts
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: failure()
+      with:
+        name: source-invocations-container-${{ inputs.revision }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/quazonai-source*/diagnostics/*.json
+        retention-days: 7
+        if-no-files-found: ignore
     - name: Remove the test host's Codex user namespace profile
       if: always()
       shell: bash

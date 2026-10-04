@@ -51,6 +51,7 @@ jobs:
           image: ${{ env.LOCAL_IMAGE }}
           revision: ${{ inputs.revision }}
           version: ${{ inputs.version }}
+          cache-native-dependencies: ${{ inputs.branch == 'dev' && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
@@ -154,6 +155,14 @@ jobs:
           sudo systemctl start "user@$uid.service"
           export XDG_RUNTIME_DIR="/run/user/$uid"
           python3 -B smoke.py --manifest release.json --assert-cold --installer-assets "$RUNNER_TEMP/release-assets" --report "$RUNNER_TEMP/ghcr-install.json"
+      - name: Retain bounded failed source invocation facts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: failure()
+        with:
+          name: source-invocations-cold-install-${{ inputs.revision }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/quazonai-source*/diagnostics/*.json
+          retention-days: 7
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ghcr-install-${{ inputs.version }}-${{ inputs.revision }}

@@ -180,6 +180,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/artifacts/{id}/agent-evaluation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A typed view of the same immutable, scoped upload. Never an evaluation gate. */
+        get: operations["agent_evaluation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/artifacts/{id}/content": {
         parameters: {
             query?: never;
@@ -2040,6 +2057,80 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AgentEvaluationAssertionV1: {
+            /** @description Hash of the externally retained, auditable observation; not its raw content. */
+            evidence_sha256: components["schemas"]["EvaluationSha256"];
+            id: string;
+            passed: boolean;
+        };
+        AgentEvaluationCaseV1: {
+            assertions: components["schemas"]["AgentEvaluationAssertionV1"][];
+            id: string;
+            measurements: components["schemas"]["AgentEvaluationMeasurementsV1"];
+            observed?: null | components["schemas"]["AgentEvaluationObservedV1"];
+            reason: string;
+            /** @description IDs fixed by the suite before execution; PASS requires every one with evidence. */
+            required_assertions: string[];
+            scenario_sha256: components["schemas"]["EvaluationSha256"];
+            split: components["schemas"]["AgentEvaluationSplit"];
+            status: components["schemas"]["AgentEvaluationStatus"];
+        };
+        AgentEvaluationCostV1: {
+            amount: components["schemas"]["DecimalValue"];
+            /** @enum {string} */
+            currency: "AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL";
+        };
+        AgentEvaluationDatasetV1: {
+            case_ids: string[];
+            id: string;
+            sha256: components["schemas"]["EvaluationSha256"];
+        };
+        AgentEvaluationIdentityV1: {
+            name: string;
+            version: string;
+        };
+        AgentEvaluationMeasurementsV1: {
+            cost?: null | components["schemas"]["AgentEvaluationCostV1"];
+            elapsed_ms?: null | components["schemas"]["DbCounter"];
+            input_tokens?: null | components["schemas"]["DbCounter"];
+            output_tokens?: null | components["schemas"]["DbCounter"];
+            tool_calls?: null | components["schemas"]["DbCounter"];
+        };
+        /** @enum {string} */
+        AgentEvaluationMode: "LIVE" | "PROTOCOL_ONLY";
+        AgentEvaluationObservedV1: {
+            /** @description Public native invocation identity, never hidden reasoning or credentials. */
+            invocation_id: string;
+            settings: components["schemas"]["AgentEvaluationPolicyV1"];
+        };
+        AgentEvaluationPolicyV1: {
+            model: string;
+            reasoning_effort: string;
+        };
+        /** @enum {string} */
+        AgentEvaluationReportKind: "AGENT_EVALUATION";
+        AgentEvaluationReportV1: {
+            cases: components["schemas"]["AgentEvaluationCaseV1"][];
+            held_out: components["schemas"]["AgentEvaluationDatasetV1"];
+            mode: components["schemas"]["AgentEvaluationMode"];
+            /** Format: date-time */
+            recorded_at: string;
+            report_kind: components["schemas"]["AgentEvaluationReportKind"];
+            requested: components["schemas"]["AgentEvaluationPolicyV1"];
+            runner: components["schemas"]["AgentEvaluationIdentityV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_revision: string;
+            source_sha256: components["schemas"]["EvaluationSha256"];
+            status: components["schemas"]["AgentEvaluationStatus"];
+            subject: components["schemas"]["AgentEvaluationIdentityV1"];
+            suite_id: string;
+            suite_sha256: components["schemas"]["EvaluationSha256"];
+            tuning: components["schemas"]["AgentEvaluationDatasetV1"];
+        };
+        /** @enum {string} */
+        AgentEvaluationSplit: "TUNING" | "HELD_OUT";
+        /** @enum {string} */
+        AgentEvaluationStatus: "PASS" | "FAIL" | "BLOCKED" | "UNRUN";
         /** @enum {string} */
         AllocationObjective: "MIN_RISK" | "MAX_UTILITY" | "RISK_BUDGETING";
         /** @enum {string} */
@@ -4037,6 +4128,7 @@ export interface components {
             /** Format: int32 */
             version: number;
         };
+        EvaluationSha256: string;
         EvaluationView: {
             /** Format: date-time */
             checked_at: string;
@@ -7563,6 +7655,77 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    agent_evaluation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentEvaluationReportV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {

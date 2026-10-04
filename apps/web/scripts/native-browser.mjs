@@ -7,6 +7,7 @@
  * Never reads .env, reuses an existing application database, or seeds domain rows.
  */
 import { spawn } from 'node:child_process';
+import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -14,11 +15,17 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NativeUserServices } from './native-user-services.mjs';
+import { NativeDataExecution } from './native-data-execution.mjs';
+import { reconcileExecution } from './web-ci.mjs';
 
+const dataMode = process.env.QUAZONAI_WEB_DATA_MODE ?? 'admission';
+if (!['admission', 'native-execution'].includes(dataMode)) throw new Error('Unknown explicit native data mode');
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(web, '../..');
 const report = resolve(process.env.QUAZONAI_WEB_TEST_REPORT_DIR ?? resolve(web, 'test-results/native-summary'));
 const binary = resolve(process.env.QUAZONAI_WEB_TEST_BIN ?? resolve(repo, 'target/debug/server'));
+const dataFixtureBinary = resolve(process.env.QUAZONAI_WEB_DATA_FIXTURE_BIN
+  ?? resolve(repo, 'target/debug/examples/browser_data_fixture'));
 const psql = process.env.QUAZONAI_WEB_TEST_PSQL ?? 'psql';
 const caddy = process.env.CADDY_BIN ? resolve(process.env.CADDY_BIN) : 'caddy';
 // Child processes receive only tooling essentials, never the administrator URL,
@@ -33,6 +40,8 @@ const stages = [];
 const services = [];
 const commands = new Set();
 const screenshots = [];
+let cjkFonts;
+const browserInstances = [];
 let diagnosticsSafe = true;
 let interruptedExitCode;
 let privateDir;
@@ -46,6 +55,7 @@ let roleCreationAttempted = false;
 let cleanupPromise;
 let stopping = false;
 let userServices;
+let nativeData;
 let privateArtifactsRetained = false;
 
 function redact(value) {
@@ -191,8 +201,13 @@ function cleanup(graceful) {
       try {
         terminate(service, 'SIGTERM');
         const force = setTimeout(() => terminate(service, 'SIGKILL'), 5_000);
-        await service.done;
+        const stopped = await service.done;
         clearTimeout(force);
+        if (graceful && service.expectedStopExitCode !== undefined && stopped.code !== service.expectedStopExitCode) {
+          // The process is confirmed dead: fail acceptance but still remove
+          // its owned database/role under the existing failure-retention policy.
+          failure ??= new Error('Test peer did not complete graceful native cleanup');
+        }
         await writeFile(resolve(report, `${service.name}.log`), diagnosticsSafe
           ? redact(service.stdout + service.stderr)
           : 'Diagnostics withheld: private redaction manifest unavailable.\n', { mode: 0o600 });
@@ -201,6 +216,15 @@ function cleanup(graceful) {
     if (!processesStopped) {
       privateArtifactsRetained = Boolean(privateDir);
       throw failure ?? new Error('Test service stop could not be verified; private state retained');
+    }
+    if (nativeData) {
+      try {
+        await nativeData.cleanupContainers();
+        await writeFile(resolve(report, 'native-data-execution.json'), JSON.stringify(nativeData.evidence, null, 2), { mode: 0o600 });
+      } catch (error) {
+        privateArtifactsRetained = Boolean(privateDir);
+        throw error; // Ownership uncertain: keep journal, catalog and database for recovery.
+      }
     }
     if (databaseCreationAttempted) {
       try { await sql('drop-owned-database', `DROP DATABASE IF EXISTS "${database}" WITH (FORCE);\n`, adminEnv, true); }
@@ -296,6 +320,39 @@ async function main() {
   await run('caddy-version', caddy, ['version'], { env: gatewayEnv, timeout: 10_000 });
   await run('caddy-validate', caddy, ['validate', '--config', gatewayConfig, '--adapter', 'caddyfile'],
     { env: gatewayEnv, timeout: 10_000 });
+  // Explicit modes preserve the ordinary TLS admission fixture and require a
+  // production Runtime for execution. Both create domain resources through HTTP.
+  const dataFixturePath = resolve(privateDir, 'native-data-peer.json');
+  let dataFixture;
+  if (dataMode === 'native-execution') {
+    nativeData = new NativeDataExecution({ root: privateDir, repo, env: childEnv, run, launch, services,
+      freePort, stopping: () => stopping, privateValues });
+    dataFixture = await nativeData.prepare();
+  } else {
+    // Reused native fixture TLS keys stay within this harness's verified cleanup
+    // root even if startup is interrupted before signal handlers are installed.
+    const dataPeer = launch(dataFixtureBinary, [dataFixturePath], { env: { ...childEnv, TMPDIR: privateDir } });
+    dataPeer.name = 'native-data-peer'; dataPeer.expectedStopExitCode = 0; services.push(dataPeer);
+    const dataPeerDeadline = Date.now() + 30_000;
+    while (Date.now() < dataPeerDeadline && !stopping) {
+      if (dataPeer.exited) throw new Error('Controlled data peer exited before publication');
+      try {
+        const bytes = await readFile(dataFixturePath);
+        if (bytes.length > 1024 * 1024) throw new Error('Controlled data peer publication too large');
+        dataFixture = JSON.parse(bytes.toString('utf8'));
+        break;
+      } catch (error) {
+        if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+        await new Promise((fulfil) => setTimeout(fulfil, 50));
+      }
+    }
+  }
+  if (dataFixture?.schema_version !== 1 || !Array.isArray(dataFixture.runtime_targets)
+    || dataFixture.runtime_targets.length !== 1 || typeof dataFixture.credential !== 'string'
+    || dataFixture.metadata?.origin !== 'FIXTURE' || dataFixture.metadata?.pit_status !== 'UNVERIFIED') {
+    throw new Error('Controlled data peer did not publish its explicit fixture contract');
+  }
+  privateValues.add(dataFixture.credential);
   userServices = new NativeUserServices({
     repo, root: privateDir, release, binary: installedBinary, run, env: childEnv,
     interrupted: () => stopping,
@@ -306,7 +363,7 @@ async function main() {
     // An explicit unavailable deployment prevents discovery of the host owner's
     // native Codex account during browser login fault-injection tests.
     CODEX_IMAGE: 'quazonai-web-test-unavailable:missing',
-    RUNTIME_TARGETS: '[]', DOWNSTREAM_TARGETS: '[]', RUST_LOG: 'warn',
+    RUNTIME_TARGETS: JSON.stringify(dataFixture.runtime_targets), DOWNSTREAM_TARGETS: '[]', RUST_LOG: 'warn',
   });
   const first = await userServices.start('api');
   const firstWorker = await userServices.start('worker');
@@ -318,13 +375,23 @@ async function main() {
   const fixture = resolve(privateDir, 'fixture.json');
   const browserPassword = randomBytes(24).toString('hex');
   privateValues.add(browserPassword);
-  const browser = async (phase) => {
-    await writeFile(fixture, JSON.stringify({ baseUrl, phase, redactionsFile, password: browserPassword }), { mode: 0o600 });
+  const browser = async (phase, config = 'playwright.config.ts') => {
+    await writeFile(fixture, JSON.stringify({ baseUrl, phase, redactionsFile, password: browserPassword, dataFixturePath }), { mode: 0o600 });
+    const browserEnv = { ...childEnv, QUAZONAI_WEB_E2E_FIXTURE: fixture, QUAZONAI_WEB_E2E_ORIGIN: baseUrl };
+    // List the full current phase immediately before executing it. Raw JSON
+    // diagnostics remain private alongside the fixture and are never uploaded.
+    const discovered = JSON.parse(await run(`browser-${phase}-inventory`, process.execPath,
+      [resolve(web, 'node_modules/@playwright/test/cli.js'), 'test', '--config', config, '--list', '--reporter=json'],
+      { cwd: web, env: browserEnv, privateOutput: true, recordStage: false }));
+    const executionPath = resolve(privateDir, `browser-${phase}.json`);
     await run(`browser-${phase}`, process.execPath, [resolve(web, 'node_modules/@playwright/test/cli.js'),
-      'test', '--config', 'playwright.config.ts'], {
+      'test', '--config', config, '--reporter=list,json'], {
       cwd: web, timeout: 600_000,
-      env: { ...childEnv, QUAZONAI_WEB_E2E_FIXTURE: fixture, QUAZONAI_WEB_E2E_ORIGIN: baseUrl },
+      env: { ...browserEnv, PLAYWRIGHT_JSON_OUTPUT_FILE: executionPath },
     });
+    const instances = reconcileExecution(discovered, JSON.parse(await readFile(executionPath, 'utf8')))
+      .map(({ id: [project, file, titles], ...result }) => ({ ...result, id: [redact(project), redact(file), titles.map(redact)] }));
+    browserInstances.push({ phase, instances });
   };
   await browser('before-restart');
 
@@ -355,14 +422,91 @@ async function main() {
   await browser('after-restart');
   await userServices.assertRunning('api', restarted);
   await userServices.assertRunning('worker', restartedWorker);
+  // Preserve both original auth/restart phases and the genuinely idle Worker
+  // checks. Every data mode freezes/admit/replays while this same Worker is stopped.
+  await userServices.stop('worker');
+  await browser('data-admission', 'playwright.data.config.ts');
+  await sql('require-one-real-data-admission', `DO $data$ BEGIN
+    IF (SELECT count(*) FROM app.input_sets) <> 1
+       OR (SELECT count(*) FROM app.runs WHERE kind='DATA_VALIDATE' AND state='QUEUED') <> 1
+       OR (SELECT count(*) FROM app.runs) <> 1
+       OR (SELECT count(*) FROM app.run_native_tasks) <> 1
+       OR (SELECT count(*) FROM app.run_attempts) <> 0
+       OR (SELECT count(*) FROM pgmq.q_runs) <> 1
+       OR EXISTS(SELECT 1 FROM app.qualifications) THEN
+      RAISE EXCEPTION 'Expected exactly one real queued data validation without qualification';
+    END IF;
+  END $data$;\n`, { ...adminEnv, PGDATABASE: database });
+
+  if (nativeData) {
+    const admitted = JSON.parse(await readFile(resolve(privateDir, 'native-data-admission.json'), 'utf8'));
+    const successId = admitted.admitted.resource.id;
+    const assertCounts = async (negative = false) => {
+      const total = negative ? 2 : 1;
+      await sql(`require-native-data-${negative ? 'negative' : 'success'}-cardinality`, `DO $data$ BEGIN
+        IF (SELECT count(*) FROM app.input_sets) <> 1
+          OR (SELECT count(*) FROM app.runs) <> ${total}
+          OR (SELECT count(*) FROM app.runs WHERE kind='DATA_VALIDATE' AND state='SUCCEEDED') <> 1
+          OR (SELECT count(*) FROM app.runs WHERE state='FAILED') <> ${negative ? 1 : 0}
+          OR (SELECT count(*) FROM app.run_native_tasks) <> ${total}
+          OR (SELECT count(*) FROM app.run_attempts) <> ${total}
+          OR (SELECT count(*) FROM app.run_native_attempts) <> ${total}
+          OR (SELECT count(*) FROM app.run_terminal_receipts) <> ${total}
+          OR (SELECT count(*) FROM app.run_native_outputs) <> 1
+          OR (SELECT count(*) FROM app.artifacts WHERE producer_run_id IS NOT NULL AND schema_name='qz.data_quality') <> 1
+          OR (SELECT count(*) FROM app.artifacts WHERE producer_run_id IS NOT NULL AND schema_name='qz.job_result') <> ${total}
+          OR EXISTS(SELECT 1 FROM pgmq.q_runs)
+          OR (SELECT count(*) FROM pgmq.a_runs) <> ${total}
+          OR EXISTS(SELECT 1 FROM app.qualifications) THEN
+          RAISE EXCEPTION 'Native data execution cardinality or publication mismatch';
+        END IF;
+      END $data$;\n`, { ...adminEnv, PGDATABASE: database });
+    };
+    await userServices.start('worker');
+    await browser('data-complete', 'playwright.data-completion.config.ts');
+    await userServices.stop('worker'); // Drain the original ACK before exact queue counts.
+    await assertCounts();
+    const original = await nativeData.inspect({ expectedJobs: 1, successfulRun: successId });
+    const spec = original.containers[0].spec;
+    assert.equal(spec.input_set_id, admitted.frozen.resource.header.id);
+    assert.equal(spec.image_ref, dataFixture.image);
+    assert.deepEqual(spec.inputs.filter(input => input.kind === 'DATASET'), [{ kind: 'DATASET',
+      revision_id: admitted.dataset.id, registered_ref: dataFixture.metadata.registered_ref,
+      storage_version: dataFixture.metadata.storage_version, role: 'DISCOVERY' }]);
+    await userServices.stop('api');
+    terminate(nativeData.current, 'SIGTERM');
+    const stopDeadline = setTimeout(() => terminate(nativeData.current, 'SIGKILL'), 10_000);
+    const runtimeStopped = await nativeData.current.done; clearTimeout(stopDeadline);
+    assert.equal(runtimeStopped.code, 0);
+    nativeData.current.retired = true;
+    await nativeData.start();
+    await userServices.start('api'); await waitReady(baseUrl);
+    await userServices.start('worker');
+    await browser('data-restored', 'playwright.data-completion.config.ts');
+    await userServices.stop('worker');
+    await assertCounts();
+    assert.deepEqual(await nativeData.inspect({ expectedJobs: 1, successfulRun: successId }), original);
+    await nativeData.corrupt();
+    await browser('data-corrupt-admission', 'playwright.data-completion.config.ts');
+    await userServices.start('worker');
+    await browser('data-corrupt-complete', 'playwright.data-completion.config.ts');
+    await userServices.stop('worker');
+    await assertCounts(true);
+    const negative = JSON.parse(await readFile(resolve(privateDir, 'native-data-negative.json'), 'utf8'));
+    await nativeData.inspect({ expectedJobs: 2, successfulRun: successId, failedRun: negative.resource.id });
+    nativeData.evidence.restart_preserved_identity_and_bytes = true;
+    nativeData.evidence.quality = JSON.parse(await readFile(resolve(privateDir, 'native-data-quality.json'), 'utf8'));
+  }
+
   for (const mode of ['light', 'dark']) {
     for (const width of [1440, 768, 390]) {
-      for (const surface of ['projects', 'codex']) {
+      for (const surface of ['projects', 'codex', 'project-workspace', 'project-briefs', 'project-inputs', 'project-cycles']) {
         const name = `${surface}-${mode}-${width}.png`;
         screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
       }
     }
   }
+  cjkFonts = await readFile(resolve(privateDir, 'cjk-fonts.json'));
   for (const surface of ['auth-setup', 'auth-settings']) {
     for (const width of [1440, 390]) {
       const name = `${surface}-${width}.png`;
@@ -393,11 +537,12 @@ try { await cleanup(!failure && !stopping); }
 catch (error) { failure ??= error; }
 if (adminEnv) {
   // Failed tests or cleanup never publish images from the private runtime.
+  if (!failure && cjkFonts) await writeFile(resolve(report, 'cjk-fonts.json'), cjkFonts, { mode: 0o600 });
   if (!failure) for (const { name, bytes } of screenshots) {
     await writeFile(resolve(report, name), bytes, { mode: 0o600 });
   }
   await writeFile(resolve(report, 'result.json'), JSON.stringify({ schema_version: 1,
-    status: failure ? 'FAILED' : 'PASSED', stages,
+    status: failure ? 'FAILED' : 'PASSED', data_mode: dataMode, stages, browser_instances: browserInstances,
     error: failure ? redact(failure.message) : null,
     acceptance_scope: 'shipped systemd user units with real packaged API/Worker and production Caddy routes; password setup and login, session-only and 30-day browser cookies, logout, password changes and browser session invalidation, persistent CLI device registration and revocation; idle Worker native automatic restart, retained session/project/receipt/theme after normal API stop/start, CSRF, both themes in three viewports navigation/accessibility, blank authentication surfaces at desktop/mobile sizes, actual service-worker updates, offline mutation prevention, and absent legacy bootstrap/verification routes',
     private_artifacts_retained: privateArtifactsRetained,

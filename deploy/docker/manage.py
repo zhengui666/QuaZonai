@@ -721,6 +721,140 @@ def download_update(root: Path, target: str) -> None:
         run([sys.executable, str(bundle / "manage.py"), "apply-update", "--directory", str(root)])
 
 
+def source_path(value: Path, config: dict, *, output: bool = False) -> Path:
+    """Identity mounts cannot replace the pinned tools or expose deployment state."""
+    if not value.is_absolute() or any(ord(character) < 32 or ord(character) == 127 or character in ':,"\\' for character in str(value)):
+        raise ValueError('Source mounts require absolute paths without control characters, colons, commas, double quotes or backslashes.')
+    if '..' in value.parts:
+        raise ValueError('Source mount paths cannot contain parent traversal.')
+    path = Path(os.path.abspath(value))
+    for component in (path, *path.parents):
+        if component.is_symlink():
+            raise ValueError('Source mount paths cannot contain symlinks.')
+    path = path.resolve(strict=True)
+    reserved = [Path(name) for name in ('/opt/quazonai', '/usr', '/proc', '/sys', '/dev',
+                                       '/etc', '/bin', '/sbin', '/lib', '/lib64', '/root', '/run')]
+    reserved += [Path(config[name]).resolve() for name in ('root', 'codex_home', 'unit_directory', 'docker_socket')
+                 if config.get(name)]
+    if path in (Path('/'), Path('/tmp')) or any(
+            path == forbidden or path in forbidden.parents or forbidden in path.parents
+            for forbidden in reserved):
+        raise ValueError('Source mounts cannot overlap container tools, system paths or installation state.')
+    metadata = path.stat()
+    if metadata.st_uid != config['uid'] or not (stat.S_ISDIR(metadata.st_mode) or (not output and stat.S_ISREG(metadata.st_mode))):
+        raise ValueError('Source mounts must be owner-managed directories or regular input files.')
+    if output and not os.access(path, os.W_OK | os.X_OK):
+        raise ValueError('The source output parent must be writable by its owner.')
+    return path
+
+
+def source_container(config: dict, release: dict, network: str, invocation: str, *, inventory: bool = False) -> list[str]:
+    return ['docker', 'run', '--rm', '--init', '--no-healthcheck', '--read-only',
+            '--name', 'quazonai-source-' + invocation + ('-inventory' if inventory else ''),
+            '--label', 'io.quazonai.source.invocation=' + invocation,
+            '--label', 'io.quazonai.source.installation=' + config['project'],
+            '--label', 'io.quazonai.source.owner=' + str(config['uid']),
+            '--network', network, '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
+            '--user', f'{config["uid"]}:{config["gid"]}', '--workdir', '/tmp',
+            '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=268435456,mode=1777',
+            '--cpus', '2', '--memory', '4g', '--memory-swap', '4g', '--pids-limit', '256',
+            '--env', 'QZ_OPERATOR_INSTALLED=1',
+            '--env', 'QZ_OPERATOR_VERSION=' + release['version'],
+            '--env', 'QZ_OPERATOR_REVISION=' + release['revision'],
+            '--env', 'QZ_OPERATOR_IMAGE=' + release['image'],
+            '--entrypoint', '/usr/bin/python3']
+
+
+def source_command(root: Path, inputs: list[Path], output: Path | None, arguments: list[str], invocation: str | None = None) -> list[str]:
+    invocation = secrets.token_hex(16) if invocation is None else invocation
+    if not re.fullmatch(r'[0-9a-f]{32}', invocation):
+        raise ValueError('Source invocation identity must be 32 lowercase hexadecimal characters.')
+    config = configuration(root)
+    if (root / 'pending.json').exists():
+        raise ValueError('Complete the recorded application update before selecting its source tools.')
+    release = manifest(Path(config['bundle']))
+    if not arguments or any(arg == '--native-bin' or arg.startswith('--native-bin=') for arg in arguments):
+        raise ValueError('Provide a source operation; installed tools always use the matching packaged native binary.')
+    mounts = [(source_path(path, config), 'ro') for path in inputs]
+    target = source_path(output, config, output=True) if output else None
+    if target:
+        mounts.append((target, 'rw'))
+    for index, (path, _) in enumerate(mounts):
+        if any(path == other or path in other.parents or other in path.parents for other, _ in mounts[:index]):
+            raise ValueError('Source input mounts and the output parent must not overlap.')
+    help_only = arguments[-1] in ('-h', '--help')
+    if arguments[0] in ('download', 'freeze', 'convert', 'prepare') and not help_only:
+        destinations = [arg.split('=', 1)[1] for arg in arguments if arg.startswith('--output=')]
+        for index, arg in enumerate(arguments):
+            if arg == '--output' and index + 1 < len(arguments):
+                destinations.append(arguments[index + 1])
+        if target is None or len(destinations) != 1:
+            raise ValueError('A writing operation needs one --output within an explicit --output-parent mount.')
+        destination = Path(destinations[0])
+        if not destination.is_absolute() or target not in destination.parents or destination != Path(os.path.abspath(destination)):
+            raise ValueError('Source output must be a new absolute child of its mounted output parent.')
+        if destination.exists() or destination.is_symlink():
+            raise ValueError('Source output must be new; original and failed artifacts are retained.')
+        for parent in destination.parents:
+            if parent == target:
+                break
+            if parent.is_symlink():
+                raise ValueError('Source output paths cannot contain symlinks.')
+    endpoint = os.environ.get('DOCKER_HOST') or run(
+        ['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'], capture=True)
+    if not endpoint.startswith('unix://') or Path(endpoint.removeprefix('unix://')).resolve() != Path(config['docker_socket']).resolve():
+        raise ValueError('Source tools require this installation\'s original local Docker socket.')
+    validate_docker_mapping(json.loads(run(['docker', 'info', '--format', '{{json .SecurityOptions}}'], capture=True)))
+    labels = json.loads(run(['docker', 'image', 'inspect', '--format', '{{json .Config.Labels}}', release['image']], capture=True))
+    if not isinstance(labels, dict) or labels.get('org.opencontainers.image.revision') != release['revision']:
+        raise ValueError('Source tools image revision does not match this installed release.')
+    prefix = ['-E', '-s', '-B', '/opt/quazonai/operator/source_plugins.py']
+    # The pinned registry owns network requirements; no provider list is copied
+    # into the installed manager. This inventory request itself is offline.
+    network = 'none'
+    if arguments[0] != 'plugins' and not help_only:
+        inventory = json.loads(run(source_container(config, release, 'none', invocation, inventory=True) + [release['image'], *prefix, 'plugins'], capture=True))
+        if not isinstance(inventory, list) or not 1 <= len(inventory) <= 256 or len(arguments) < 2:
+            raise ValueError('Installed source operation or capability inventory is invalid.')
+        selected = [item for item in inventory if isinstance(item, dict) and item.get('id') == arguments[1]]
+        if len(selected) != 1 or arguments[0] not in selected[0].get('capabilities', []):
+            raise ValueError('This installed plugin does not support the requested operation.')
+        public = selected[0].get('public_network_operations')
+        if not isinstance(public, list) or any(not isinstance(item, str) or item not in selected[0]['capabilities'] for item in public):
+            raise ValueError('Installed source network capability declaration is invalid.')
+        if arguments[0] in public:
+            if arguments[0] in ('inspect', 'freeze', 'verify', 'convert', 'prepare'):
+                raise ValueError('Installed inspection, freezing, verification, conversion and preparation must remain offline.')
+            network = 'bridge'
+    command = source_container(config, release, network, invocation)
+    for path, mode in mounts:
+        command += ['--mount', f'type=bind,source={path},target={path},readonly' if mode == 'ro'
+                    else f'type=bind,source={path},target={path}']
+    return command + [release['image'], *prefix, *arguments]
+
+
+def run_source(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(description='Run version-bound installed source tools without registering research data.', allow_abbrev=False)
+    parser.add_argument('--directory', type=Path, default=Path.home() / '.local/share/quazonai')
+    parser.add_argument('--read-only', action='append', type=Path, default=[], help='owner-managed input directory or file; repeatable')
+    parser.add_argument('--output-parent', type=Path, help='existing owner-managed output parent, separate from every input')
+    parser.add_argument('--invocation-id', help='new 32-character lowercase hexadecimal identity for container recovery; generated when omitted')
+    parser.add_argument('arguments', nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv)
+    arguments = args.arguments[1:] if args.arguments[:1] == ['--'] else args.arguments
+    invocation = secrets.token_hex(16) if args.invocation_id is None else args.invocation_id
+    if not re.fullmatch(r'[0-9a-f]{32}', invocation):
+        parser.error('--invocation-id must be 32 lowercase hexadecimal characters')
+    print('Source invocation: ' + invocation, file=sys.stderr, flush=True)
+    try:
+        command = source_command(args.directory.expanduser().resolve(), args.read_only, args.output_parent, arguments, invocation)
+    except OSError:
+        raise ValueError('Installed source setup or local filesystem access failed; original artifacts were retained.') from None
+    # Docker owns signal forwarding and the actual exit status; no local success
+    # is inferred while an operator container still runs.
+    os.execvp(command[0], command)
+
+
 def run_runtime(root: Path, operation: str, config_path: Path) -> None:
     config = configuration(root)
     if (root / "pending.json").exists():
@@ -743,8 +877,11 @@ def run_runtime(root: Path, operation: str, config_path: Path) -> None:
 
 def main() -> None:
     os.umask(0o077)
+    if sys.argv[1:2] == ['source']:
+        run_source(sys.argv[2:])
+        return
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["deploy", "update", "apply-update", "status", "runtime"])
+    parser.add_argument("command", choices=["deploy", "update", "apply-update", "status", "runtime", "source"])
     parser.add_argument("version", nargs="?")
     parser.add_argument("--directory", type=Path, default=Path.home() / ".local/share/quazonai")
     parser.add_argument("--port", type=int, default=8081)

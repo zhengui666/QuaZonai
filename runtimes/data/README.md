@@ -1,6 +1,8 @@
 # Public historical data
 
-Operator tools acquire immutable source files, then convert supported records into the existing Nautilus catalog. The downloader is venue independent. Source-specific interpretation stays in the optional `polymarket-history` binary; scientific jobs remain offline and the generic research/API/database contracts are unchanged.
+Operator tools acquire immutable source files and bounded API observations, then convert supported records into the existing Nautilus catalog. Acquisition is separate from source-specific interpretation in the native importers; scientific jobs remain offline and existing research-admission checks still apply.
+
+Start with the [source-plugin registry](source-plugins.md) for acquisition, native Coinbase BAR conversion, supported Polymarket conversion and explicit BAR partition preparation. The [HTTP acquisition guide](providers.md) describes the underlying acquisition-only manifests, including Polymarket sampled marks that have no native conversion. This guide covers Polymarket historical sources and the native partition contract. Conversion and preparation do not register a source, grant permission or qualify research data. Coinbase's intended live research acceptance is currently [blocked on source-use permission](source-plugins.md#source-rights-and-acceptance).
 
 A downloaded archive is not automatically a qualified research dataset. Public Polymarket sources collectively cover much of its history, but no verified, free source currently establishes gap-free trades, continuous depth, historical instrument/fee changes and timestamped settlements for every market from launch through today.
 

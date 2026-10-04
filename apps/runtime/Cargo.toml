@@ -12,6 +12,11 @@ publish = false
 # fail that explicit target; ordinary unit tests never masquerade as OCI evidence.
 native-oci = []
 
+# Cargo clean matches target names: keep this test distinct from registry http.
+[[test]]
+name = "runtime_http"
+path = "tests/http.rs"
+
 [[test]]
 name = "native_oci"
 path = "tests/native_oci.rs"

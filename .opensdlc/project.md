@@ -28,12 +28,23 @@ npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 | Full Rust suite | `make check` | Real disposable dependencies; no production database |
 | Web and generated client | `make check-web` | No generated drift; types, tests and production build pass |
 | Browser/PWA | `CADDY_BIN=/path/to/caddy npm --prefix apps/web run test:e2e` | Real API, Worker, PostgreSQL, Caddy and systemd user manager; use the Web workflow setup |
+| Data acquisition/Worker/browser closure | [Native data browser workflow](../.github/workflows/native-data-browser.yml) | Original synthetic candle clocks, real preparation/registration/Worker/OCI, exact artifact downloads and restart identity; mandatory exact-source release gate |
 | Scientific/OCI boundaries | [Native Runtime workflow](../.github/workflows/native-runtime.yml) | Built native image, Docker/cgroup prerequisites, actual execution/cancellation/restore tests |
 | Container installer | [Container action](../.github/actions/container/action.yml) | Real installation, upgrade and recovery against disposable resources |
 
 Store/HTTP tests use PostgreSQL 18 with PGMQ 1.10.0. [CI](../.github/workflows/ci.yml) defines the native binaries, environment and schema export commands. [Web console](../.github/workflows/web.yml) defines browser setup, including Chromium. Cold-archive tests may elevate only their disposable ownership/archive operations, never Cargo or the application.
 
 For a contract change, edit Rust DTOs/handlers, run the relevant native schema export from CI, then `npm --prefix apps/web run generate`. Commit the source and generated diff together. `quazonai openapi --list-schemas` and `quazonai openapi --schema ArtifactCreate` inspect an installed binary offline; they do not query a running server's version.
+
+Domain and HTTP exports are sorted compact JSON snapshots with a final newline;
+their native values and byte-for-byte drift checks remain authoritative. Response
+validators use the modular native Ajv graph and pinned Vite/esbuild transformer,
+with exports, aliases and validation errors preserved. Production consumers use
+selective scalar facades and asynchronous response validation; the eager facade
+is for compatibility. Edit the Rust source or generator rather than generated
+artifacts. Generator tests check independent output directories, native CJS/ESM
+loading and equivalence to the original response schemas; the production PWA
+retains its 2 MiB chunk gate.
 
 `npm --prefix apps/web run dev` is a development UI proxy for a real local API. Browser behavior is verified by the native harness, not a substitute backend. Scientific samples belong to tests, not product entrypoints.
 
