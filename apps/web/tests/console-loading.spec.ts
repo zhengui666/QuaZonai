@@ -89,7 +89,7 @@ test('an idle Settings editor has no error-clock interval and keeps its fields o
   await page.getByRole('tab', { name: '集成', exact: true }).click();
   await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
   const editor = page.getByRole('dialog', { name: '登记 Runtime', exact: true });
-  const name = editor.getByRole('textbox', { name: '名称', exact: true });
+  const name = editor.getByRole('textbox', { name: /^\*?\s*名称$/ });
   await name.fill('保留未提交的 Runtime');
   expect(await page.evaluate(() => (window as unknown as {
     __testOneSecondIntervals: Set<number>;
