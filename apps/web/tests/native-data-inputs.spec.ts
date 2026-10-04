@@ -14,7 +14,7 @@ const peer: { credential: string; ca_pem?: string; endpoint: string; mode?: 'nat
 // This is the original browser session, retained by the real API restart phase.
 test.use({ storageState: resolve(root, 'restart-browser.json') });
 
-test('registered fixture data freezes once and admits one original validation Run through the real API', async ({ page, context }) => {
+test('native API commands freeze and admit once while the data observation page stays read-only', async ({ page, context }) => {
   expect(config.phase).toBe('data-admission');
   expect(peer.metadata.origin).toBe('FIXTURE');
   expect(peer.metadata.pit_status).toBe('UNVERIFIED');
@@ -64,102 +64,75 @@ test('registered fixture data freezes once and admits one original validation Ru
   }, 200);
   expect(probe.resource.outcome.status).toBe('AVAILABLE');
 
+  // Business commands remain real authenticated API operations, owned by the
+  // external caller. Replay the same body/key and retain the original receipts
+  // for the Worker/restart phase; the observation page never submits them.
+  const creation = { key: randomUUID(), body: {
+    schema_version: 1, project_id: project.id, purpose: 'DISCOVERY', decision_cutoff: peer.metadata.available_through,
+    items: [{ kind: 'DATASET', dataset_revision_id: dataset.resource.id, role: 'DISCOVERY' }],
+  } satisfies Schema['InputSetCreate'] };
+  async function command<T>(path: string, intent: { key: string; body: unknown }, status: number) {
+    const response = await page.request.post(path, { headers: { Origin: config.baseUrl, 'Idempotency-Key': intent.key }, data: intent.body });
+    expect(response.status(), path).toBe(status);
+    return await response.json() as T;
+  }
+  const frozen = await command<Schema['CommandResult_InputSetView']>('/api/v2/input-sets', creation, 201);
+  expect(frozen.replayed).toBe(false);
+  expect(await command('/api/v2/input-sets', creation, 201)).toEqual({ ...frozen, replayed: true });
+  expect(frozen.resource.header).toMatchObject({ project_id: project.id, purpose: 'DISCOVERY', decision_cutoff: peer.metadata.available_through });
+  expect(frozen.resource.header.frozen_at).toBeTruthy();
+  expect(frozen.resource.items).toHaveLength(1);
+  expect(frozen.resource.items[0]!.item).toEqual(creation.body.items[0]);
+  const inputId = frozen.resource.header.id;
+  const validation = { key: randomUUID(), body: {
+    schema_version: 1, project_id: project.id, input_set_id: inputId,
+    runtime_id: runtime.resource.id, expected_runtime_revision: runtime.resource.revision,
+    limits: { schema_version: 1, experiments: 0, cpu_seconds: peer.mode === 'native-execution' ? '60' : '10',
+      output_bytes: '65536', memory_mib: peer.mode === 'native-execution' ? 1024 : 512,
+      wall_seconds: peer.mode === 'native-execution' ? 120 : 60 },
+  } satisfies Schema['DataValidateRequest'] };
+  const admitted = await command<Schema['CommandResult_RunSnapshotV1']>('/api/v2/data/validate', validation, 202);
+  expect(admitted.replayed).toBe(false);
+  expect(await command('/api/v2/data/validate', validation, 202)).toEqual({ ...admitted, replayed: true });
+  expect(admitted.resource).toMatchObject({ kind: 'DATA_VALIDATE', state: 'QUEUED', input_set_id: inputId, project_id: project.id });
+  if (peer.mode === 'native-execution') writeFileSync(resolve(root, 'native-data-admission.json'), JSON.stringify({
+    project, runtime: runtime.resource, dataset: dataset.resource, frozen, admitted, creation, validation,
+  }), { mode: 0o600 });
+
+  const writes: string[] = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.startsWith('/api/') && !['GET', 'HEAD'].includes(request.method())) {
+      writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    }
+  });
   async function openInputs() {
     await page.goto('/');
-    await page.getByRole('menuitem', { name: '设置', exact: true }).click();
-    await page.getByRole('tab', { name: '数据', exact: true }).click();
+    await page.getByRole('button', { name: project.name, exact: true }).click();
     await page.getByRole('tab', { name: '冻结输入', exact: true }).click();
-    await page.getByRole('combobox', { name: '冻结输入所属研究项目', exact: true }).click();
-    await page.getByTitle(`${project.name} · ${project.id}`, { exact: true }).click();
+    await page.getByRole('button', { name: inputId, exact: true }).click();
+    await expect(page.getByText(/未构成合格真实 PIT 证据/)).toBeVisible();
+    await expect(page.getByRole('button', { name: /新建冻结输入|请求数据质量验证/ })).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   }
   await openInputs();
-  const creation: { key: string | undefined; body: Schema['InputSetCreate'] }[] = [];
-  let frozen: Schema['CommandResult_InputSetView'] | undefined;
-  await page.route('**/api/v2/input-sets', async route => {
-    if (route.request().method() !== 'POST') return route.continue();
-    creation.push({ key: route.request().headers()['idempotency-key'], body: route.request().postDataJSON() });
-    const response = await route.fetch();
-    expect(response.status()).toBe(201);
-    const receipt = await response.json() as Schema['CommandResult_InputSetView'];
-    if (creation.length === 1) { frozen = receipt; return route.abort('failed'); }
-    expect(receipt).toEqual({ ...frozen, replayed: true });
-    return route.fulfill({ response });
-  });
-  await page.getByRole('button', { name: '新建冻结输入', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: '创建并冻结项目输入', exact: true });
-  await editor.getByRole('combobox', { name: '选择冻结输入的 Runtime', exact: true }).click();
-  await page.getByTitle(`${runtimeName} · ${runtime.resource.id}`, { exact: true }).click();
-  const row = editor.getByRole('row').filter({ hasText: dataset.resource.id });
-  await expect(row.getByRole('checkbox')).toBeEnabled();
-  await row.getByRole('checkbox').check();
-  await editor.getByLabel('决策截止（精确 UTC）', { exact: true }).fill(peer.metadata.available_through);
-  await expect(editor.getByText(/未构成合格真实 PIT 证据/)).toBeVisible();
-  await editor.getByRole('button', { name: '确认创建并冻结', exact: true }).click();
-  await expect(editor.getByText(/提交结果未知：原请求与幂等键已保留/)).toBeVisible();
-  await expect(editor.getByLabel('决策截止（精确 UTC）', { exact: true })).toBeDisabled();
-  await editor.getByRole('button', { name: '原样重试创建请求', exact: true }).click();
-  await expect(editor).toHaveCount(0);
-  expect(creation).toHaveLength(2);
-  expect(creation[0]!.key).toBeTruthy();
-  expect(creation[1]).toEqual(creation[0]);
-  expect(frozen?.resource.header.frozen_at).toBeTruthy();
-  const inputId = frozen!.resource.header.id;
-  await expect(page.getByText(/未构成合格真实 PIT 证据/)).toBeVisible();
-
-  const validation: { key: string | undefined; body: Schema['DataValidateRequest'] }[] = [];
-  let admitted: Schema['CommandResult_RunSnapshotV1'] | undefined;
-  await page.route('**/api/v2/data/validate', async route => {
-    validation.push({ key: route.request().headers()['idempotency-key'], body: route.request().postDataJSON() });
-    const response = await route.fetch();
-    expect(response.status()).toBe(202);
-    const receipt = await response.json() as Schema['CommandResult_RunSnapshotV1'];
-    if (validation.length === 1) { admitted = receipt; return route.abort('failed'); }
-    expect(receipt).toEqual({ ...admitted, replayed: true });
-    return route.fulfill({ response });
-  });
-  await page.getByRole('button', { name: '请求数据质量验证', exact: true }).click();
-  const validationEditor = page.getByRole('dialog', { name: '单独请求 DATA_VALIDATE', exact: true });
-  await validationEditor.getByRole('combobox', { name: '确认实际数据 Runtime', exact: true }).click();
-  await page.getByTitle(runtime.resource.id, { exact: true }).last().click();
-  await validationEditor.getByLabel('CPU 总秒数（精确整数）', { exact: true }).fill(peer.mode === 'native-execution' ? '60' : '10');
-  await validationEditor.getByLabel('输出上限（精确字节数，最多 64 MiB）', { exact: true }).fill('65536');
-  if (peer.mode === 'native-execution') {
-    await validationEditor.getByLabel('内存上限（MiB）', { exact: true }).fill('1024');
-    await validationEditor.getByLabel('墙钟时间上限（秒）', { exact: true }).fill('120');
-  }
-  await expect(validationEditor.getByRole('button', { name: '确认排队数据验证', exact: true })).toBeEnabled();
-  await validationEditor.getByRole('button', { name: '确认排队数据验证', exact: true }).click();
-  await expect(validationEditor.getByText(/提交结果未知：原请求和幂等键已锁定/)).toBeVisible();
-  await validationEditor.getByRole('button', { name: '原样重试验证请求', exact: true }).click();
-  await expect(validationEditor).toHaveCount(0);
-  expect(validation).toHaveLength(2);
-  expect(validation[0]!.key).toBeTruthy();
-  expect(validation[1]).toEqual(validation[0]);
-  expect(admitted!.resource.kind).toBe('DATA_VALIDATE');
-  expect(admitted!.resource.state).toBe('QUEUED');
-  expect(admitted!.resource.input_set_id).toBe(inputId);
+  const runRow = page.getByRole('row').filter({ hasText: admitted.resource.id });
+  await runRow.getByRole('button', { name: '查看产物', exact: true }).click();
   // Explicit refresh while pending is a read, never a second validation command.
   await page.getByRole('button', { name: '刷新所选运行产物', exact: true }).click();
   await expect(page.getByText('当前运行尚未成功；这里的产物不作为已通过的数据质量结论。', { exact: true })).toBeVisible();
-  expect(validation).toHaveLength(2);
-  if (peer.mode === 'native-execution') writeFileSync(resolve(root, 'native-data-admission.json'), JSON.stringify({
-    project, runtime: runtime.resource, dataset: dataset.resource, frozen, admitted,
-    creation: creation[0], validation: validation[0],
-  }), { mode: 0o600 });
-  await page.getByRole('button', { name: '打开所选运行详情与取消', exact: true }).click();
-  await expect(page.getByRole('dialog')).toContainText(admitted!.resource.id);
+  await page.getByRole('button', { name: '打开所选运行详情', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText(admitted.resource.id);
+  await expect(page.getByRole('button', { name: /请求取消|确认取消运行/ })).toHaveCount(0);
   // A fresh page recovers the same immutable input from the service, not a
   // browser-persisted draft. No completed validation or qualification is claimed.
   await openInputs();
-  await page.getByRole('button', { name: inputId, exact: true }).click();
-  await expect(page.getByText(/未构成合格真实 PIT 证据/)).toBeVisible();
   const original = await page.request.get(`/api/v2/input-sets/${inputId}`);
   expect(original.status()).toBe(200);
-  expect(await original.json()).toEqual(frozen!.resource);
+  expect(await original.json()).toEqual(frozen.resource);
   const registered = await page.request.get(`/api/v2/data/revisions/${dataset.resource.id}`);
   expect(registered.status()).toBe(200);
   const unchanged: Schema['DatasetView'] = await registered.json();
   expect(unchanged.origin).toBe('FIXTURE');
   expect(unchanged.pit_status).toBe('UNVERIFIED');
-  expect(validation).toHaveLength(2);
+  expect(writes).toEqual([]);
 });

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import type { Schema } from '../src/api';
 
 // UI-only contract fixtures: no native account, OAuth traffic or backend success.
@@ -525,43 +526,58 @@ test('terminal login clears a cancellation started from another role', async ({ 
 });
 
 for (const lostStart of [false, true]) {
-test(`Cycle start waits for a shared account action${lostStart ? ' after a lost login response' : ''}`, async ({ page }) => {
-  const { state, profiles } = await setup(page, true);
+test(`frozen Brief context remains read-only during a shared account action${lostStart ? ' after a lost login response' : ''}`, async ({ page }) => {
+  const { state } = await setup(page, true);
   state.dropStart = lostStart;
   const now = new Date().toISOString();
-  const projectId = '01990000-0000-7000-8000-000000000071';
-  const brief: Schema['BriefView'] = { id: '01990000-0000-7000-8000-000000000072', project_id: projectId,
-    version: 1, revision: '1', state: 'FROZEN', content: {} as Schema['BriefContentV1'], bindings: [],
-    created_at: now, updated_at: now, frozen_at: now };
-  const project: Schema['ProjectView'] = { id: projectId, root_lineage_id: projectId, name: 'Cycle fixture',
-    description: '', state: 'ACTIVE', revision: '1', created_by: 'OPERATOR', created_at: now, updated_at: now };
-  await page.route(`**/api/v2/projects/${projectId}`, route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(project) }));
+  const original: Schema['BriefCreate'] = JSON.parse(readFileSync(new URL('../../../tests/contracts/research-brief.json', import.meta.url), 'utf8'));
+  const brief: Schema['BriefView'] = { content: original.content, bindings: original.bindings, supersedes_id: original.supersedes_id,
+    id: '01990000-0000-7000-8000-000000000072', project_id: '01990000-0000-7000-8000-000000000071',
+    version: 1, revision: '1', state: 'FROZEN', created_at: now, updated_at: now, frozen_at: now };
+  const frozen: Schema['FrozenBriefV1'] = { schema_version: 1, brief, execution_context: {
+    schema_version: 1, runtime_id: '01990000-0000-7000-8000-000000000073', runtime_revision: '7',
+    discovery_input_set_id: '01990000-0000-7000-8000-000000000074',
+    validation_input_set_id: '01990000-0000-7000-8000-000000000075',
+    sealed_input_set_id: '01990000-0000-7000-8000-000000000076',
+  } };
+  const businessWrites: string[] = [];
+  page.on('request', request => {
+    if (!['GET', 'HEAD'].includes(request.method()) && /\/api\/v2\/(?:briefs(?:\/|$)|projects\/[^/]+\/(?:briefs|cycles)(?:\/|$)|runs\/[^/]+\/cancel$)/.test(new URL(request.url()).pathname)) businessWrites.push(request.url());
+  });
   await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
   if (lostStart) await expect(page.getByText('连接中断，提交结果未知；请重试当前操作')).toBeVisible();
   else await expect(page.getByLabel('ChatGPT 授权码')).toBeVisible();
   await page.getByRole('menuitem', { name: '研究', exact: true }).click();
-  await page.evaluate(async brief => {
+  await page.evaluate(async value => {
     const fixturePath = '/tests/brief-execution-fixture.tsx';
-    (await import(fixturePath)).mountBriefExecution(brief);
-  }, brief);
+    (await import(fixturePath)).mountBriefExecutionContext(value);
+  }, frozen);
+  const detail = page.getByRole('dialog', { name: 'Brief · 版本 1', exact: true });
+  await expect(detail).toBeVisible();
+  await expect(page.locator('#brief-context-fixture')).not.toHaveAttribute('data-error', /./);
+  await expect(detail.getByLabel('原完整 Brief')).toContainText(original.content.hypothesis);
+  await expect(detail.getByLabel('原冻结执行上下文')).toContainText(`${frozen.execution_context.runtime_id} / 7`);
+  for (const key of ['discovery_input_set_id', 'validation_input_set_id', 'sealed_input_set_id'] as const) {
+    await expect(detail.getByLabel('原冻结执行上下文')).toContainText(frozen.execution_context[key]);
+  }
+  await expect(detail.locator('form, input, textarea, button[type="submit"]')).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: /确认启动 Cycle|确认冻结 Brief|以此创建新版本|保存 Brief 草稿/ })).toHaveCount(0);
+  expect(state.starts).toHaveLength(1);
+  await page.keyboard.press('Escape');
+  await expect(detail).toHaveCount(0);
+  await expect(page.locator('#brief-context-fixture')).toHaveCount(0);
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
   if (lostStart) {
+    await page.getByRole('button', { name: '重试当前操作', exact: true }).click();
     await expect.poll(() => state.starts.length).toBe(2);
     expect(state.starts[1]).toEqual(state.starts[0]);
   }
-  await expect.poll(async () => {
-    const error = await page.locator('#brief-cycle-fixture').getAttribute('data-error');
-    if (error) throw new Error(error);
-    return page.getByRole('dialog', { name: '确认启动研究 Cycle' }).count();
-  }).toBe(1);
-  await page.getByRole('combobox', { name: '选择研究者 Codex 配置' }).click();
-  await page.getByText(`${profiles[0]!.name} · ${profiles[0]!.id}`, { exact: true }).last().click();
-  await page.getByRole('combobox', { name: '选择独立 Reviewer Codex 配置' }).click();
-  await page.getByText(`${profiles[1]!.name} · ${profiles[1]!.id}`, { exact: true }).last().click();
-  const submit = page.getByRole('button', { name: '确认启动 Cycle' });
-  await expect(submit).toBeDisabled();
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeDisabled();
   state.operation = { ...state.operation!, state: 'SUCCEEDED', reason: 'NATIVE_LOGIN_COMPLETED',
     revision: '9007199254740996', finished_at: new Date().toISOString() };
-  await expect(submit).toBeEnabled({ timeout: 12_000 });
+  await expect(page.getByText('ChatGPT 登录成功', { exact: true })).toBeVisible({ timeout: 12_000 });
+  await expect(page.getByRole('button', { name: '登录 ChatGPT', exact: true })).toBeEnabled();
+  expect(businessWrites).toEqual([]);
 });
 }
 

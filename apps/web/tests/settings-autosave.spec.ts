@@ -744,29 +744,35 @@ test('detached pending autosaves protect browser reload until every write settle
   } finally { releaseRuntime(); releaseSource(); }
 });
 
-test('a local dirty project keeps its existing browser and in-app leave warnings', async ({ page }) => {
-  await setup(page);
+test('browsing and filtering original projects never creates pending Settings work or leave warnings', async ({ page }) => {
+  const { writes } = await setup(page);
+  const now = '2026-10-01T00:00:00Z';
+  const id = '01990000-0000-7000-8000-000000000091';
+  const project: Schema['ProjectView'] = { id, root_lineage_id: id, name: '只读研究记录', description: 'Original server record',
+    state: 'ACTIVE', revision: '4', created_by: 'OPERATOR', created_at: now, updated_at: now, current_brief_id: null };
   const mutations: string[] = [];
   page.on('request', request => { if (!['GET', 'HEAD'].includes(request.method())) mutations.push(request.url()); });
+  await page.route(/\/api\/v2\/projects(?:\?|$)/, route => route.request().method() === 'GET'
+    ? route.fulfill({ json: { schema_version: 1, items: [project], next_cursor: null } }) : route.fallback());
+  await page.reload();
+  const search = page.getByRole('textbox', { name: '搜索本页研究项目', exact: true });
+  await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
+  await search.fill('只读');
+  await expect(page.getByRole('article')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /新建研究|创建第一个研究|编辑项目|修改项目状态/ })).toHaveCount(0);
+  expect(await page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: /放弃|丢失/ })).toHaveCount(0);
   await page.getByRole('menuitem', { name: '研究', exact: true }).click();
-  await page.getByRole('button', { name: '新建研究', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: '新建研究项目', exact: true });
-  const name = editor.getByLabel('研究名称');
-  await expect(name).toHaveRole('textbox');
-  await name.fill('Unsaved research');
-  await browserReload(page, 'stay');
-  await expect(name).toHaveValue('Unsaved research');
-  await editor.getByRole('button', { name: '取消', exact: true }).click();
-  const confirmation = page.getByRole('dialog', { name: '放弃尚未保存的修改？', exact: true });
-  await expect(confirmation).toBeVisible();
-  await confirmation.getByRole('button', { name: '继续编辑', exact: true }).click();
-  await expect(name).toHaveValue('Unsaved research');
-  await editor.getByRole('button', { name: '取消', exact: true }).click();
-  await confirmation.getByRole('button', { name: '放弃修改', exact: true }).click();
-  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
   await browserReload(page, 'clean');
-  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
   expect(mutations).toHaveLength(0);
+  expect(writes).toHaveLength(0);
 });
 
 test('a detached data source command protects browser reload through retry and receipt acknowledgement', async ({ page }) => {
