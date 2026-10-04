@@ -28,7 +28,7 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         let locked = lock_run(&mut tx, run).await?;
         if locked.run.kind == RunKind::PortfolioBuild {
-            return super::portfolio::publish(tx, locked, read, publish).await;
+            return Box::pin(super::portfolio::publish(tx, locked, read, publish)).await;
         }
         if locked.run.kind == RunKind::PortfolioSimulate {
             // Keep the scientific continuation off the Worker/caller future's stack.
