@@ -1,0 +1,314 @@
+//! Disposable PostgreSQL fixtures only; no exchange or order connection.
+#[path = "../../../tests/support/research.rs"]
+mod research;
+use contracts::{
+    account_observation::*, control::*, forward::ForwardEnvironmentV1, settings::*, DbCounter, Id,
+    SchemaV1,
+};
+use sqlx::PgPool;
+use store::{authority::Actor, Store, StoreError};
+
+async fn setup(pool: &PgPool) -> (Store, Actor, Actor, AccountObservationSubmitV1) {
+    let (store, operator) = research::operator(pool).await;
+    let project = store
+        .create_project(
+            &operator,
+            "project",
+            &ProjectCreate {
+                schema_version: SchemaV1,
+                name: "Paper downstream weights".into(),
+                description: "Controlled observations, not qualification".into(),
+                fork_from_project_id: None,
+            },
+        )
+        .await
+        .unwrap()
+        .resource
+        .id;
+    let downstream = store
+        .create_downstream(
+            &operator,
+            "downstream",
+            &DownstreamCreate {
+                schema_version: SchemaV1,
+                credential_ref: Id::new(),
+                configuration: DownstreamConfigurationV1 {
+                    name: "Paper fixture".into(),
+                    endpoint: "https://downstream.example".into(),
+                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    environments: DownstreamEnvironments::Paper,
+                    enabled: true,
+                    development_http: false,
+                },
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap()
+        .resource
+        .id;
+    let principal = store
+        .create_principal(
+            &operator,
+            "principal",
+            &PrincipalCreate {
+                schema_version: SchemaV1,
+                name: "Bound downstream".into(),
+                kind: AssignablePrincipalKind::Downstream,
+                project_id: Some(project),
+                downstream_id: Some(downstream),
+                enabled: true,
+            },
+        )
+        .await
+        .unwrap()
+        .resource
+        .id;
+    let verifier = Id::new();
+    let store::control::CredentialPreparation::New(prepared) = store
+        .prepare_credential_issuance(
+            &operator,
+            "credential",
+            principal,
+            &CredentialIssue {
+                schema_version: SchemaV1,
+                scope_codes: vec![MachineScope::ForwardSubmit],
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            },
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("new fixture credential");
+    };
+    let credential = prepared
+        .publish(Id::new(), verifier)
+        .await
+        .unwrap()
+        .resource
+        .id;
+    let actor = Actor::Machine {
+        credential_id: credential,
+        verifier_ref: verifier,
+        operator_grant: None,
+    };
+    let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let nanos = now.timestamp_nanos_opt().unwrap() as u64;
+    let mut request: AccountObservationSubmitV1 = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/account-observations/paper-snapshot.json"
+    ))
+    .unwrap();
+    request.binding.project_id = project;
+    request.observed_at_ns = DbCounter::new(nanos - 10).unwrap();
+    let snapshot = request.snapshot.as_mut().unwrap();
+    snapshot.ts_event = DbCounter::new(nanos - 30).unwrap();
+    snapshot.ts_init = DbCounter::new(nanos - 20).unwrap();
+    (store, operator, actor, request)
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn native_account_cursor_append_replay_and_heartbeat_are_atomic(pool: PgPool) {
+    let (store, owner, actor, request) = setup(&pool).await;
+    assert!(matches!(
+        store.submit_account_observation(&owner, &request).await,
+        Err(StoreError::Forbidden)
+    ));
+    let (a, b) = tokio::join!(
+        store.submit_account_observation(&actor, &request),
+        store.submit_account_observation(&actor, &request)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.resource.id, b.resource.id);
+    assert_ne!(a.replayed, b.replayed);
+    let source = a.resource.source_id;
+    let current = store
+        .account_current(&owner, request.binding.project_id, source)
+        .await
+        .unwrap();
+    assert_eq!(
+        current.source.connection,
+        AccountConnectionFreshnessV1::Connected
+    );
+    assert_eq!(current.valuation, AccountValuationV1::Priced);
+    assert!(!current.source.has_gap);
+    assert_eq!(
+        current.latest_snapshot.as_ref().unwrap().observation,
+        request
+    );
+    let mut heartbeat = request.clone();
+    heartbeat.sequence = DbCounter::new(3).unwrap();
+    heartbeat.dropped_events = DbCounter::new(1).unwrap();
+    heartbeat.snapshot = None;
+    heartbeat.connection = AccountConnectionV1::Disconnected;
+    let h = store
+        .submit_account_observation(&actor, &heartbeat)
+        .await
+        .unwrap();
+    assert!(h.resource.gap_before);
+    let current = store
+        .account_current(&owner, request.binding.project_id, source)
+        .await
+        .unwrap();
+    assert_eq!(current.source.last_sequence, heartbeat.sequence);
+    assert_eq!(
+        current.source.connection,
+        AccountConnectionFreshnessV1::Disconnected
+    );
+    assert_eq!(current.latest_snapshot.as_ref().unwrap().id, a.resource.id);
+    assert!(current.source.has_gap);
+    let replay = store
+        .submit_account_observation(&actor, &request)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource.received_at, a.resource.received_at);
+    assert_eq!(
+        store
+            .account_current(&owner, request.binding.project_id, source)
+            .await
+            .unwrap()
+            .source
+            .last_observation_id,
+        h.resource.id
+    );
+    let page = store
+        .account_observations(
+            &owner,
+            request.binding.project_id,
+            source,
+            &ListQuery {
+                cursor: None,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.items[0].id, h.resource.id);
+    assert_eq!(page.next_cursor, Some(h.resource.id));
+    let tail = store
+        .account_observations(
+            &owner,
+            request.binding.project_id,
+            source,
+            &ListQuery {
+                cursor: page.next_cursor,
+                limit: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(tail.items[0].id, a.resource.id);
+    assert_eq!(tail.next_cursor, None);
+    let mut conflict = request.clone();
+    conflict.snapshot.as_mut().unwrap().total_equity[0].amount = "999999".parse().unwrap();
+    assert!(matches!(
+        store.submit_account_observation(&actor, &conflict).await,
+        Err(StoreError::NativeIdentityConflict)
+    ));
+    let mut relabelled = request.clone();
+    relabelled.binding.environment = ForwardEnvironmentV1::Live;
+    assert!(matches!(
+        store.submit_account_observation(&actor, &relabelled).await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(matches!(
+        store
+            .account_current(&actor, request.binding.project_id, source)
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(matches!(
+        store.account_current(&owner, Id::new(), source).await,
+        Err(StoreError::NotFound)
+    ));
+    assert!(matches!(
+        store
+            .account_observations(
+                &owner,
+                request.binding.project_id,
+                source,
+                &ListQuery {
+                    cursor: Some(Id::new()),
+                    limit: 10
+                }
+            )
+            .await,
+        Err(StoreError::EventCursorExpired)
+    ));
+    let counts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.native_account_sources),(SELECT count(*) FROM app.native_account_observations),(SELECT count(*) FROM app.native_account_cursors)").fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (1, 2, 1));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn heartbeat_only_and_session_restart_never_invent_valuation_history(pool: PgPool) {
+    let (store, owner, actor, mut request) = setup(&pool).await;
+    let original = request.snapshot.take().unwrap();
+    let receipt = store
+        .submit_account_observation(&actor, &request)
+        .await
+        .unwrap();
+    let source = receipt.resource.source_id;
+    let current = store
+        .account_current(&owner, request.binding.project_id, source)
+        .await
+        .unwrap();
+    assert_eq!(current.valuation, AccountValuationV1::Unavailable);
+    assert!(current.latest_snapshot.is_none());
+    request.sequence = DbCounter::new(2).unwrap();
+    request.snapshot = Some(original.clone());
+    let snapshot = store
+        .submit_account_observation(&actor, &request)
+        .await
+        .unwrap();
+    let mut older = request.clone();
+    older.sequence = DbCounter::new(3).unwrap();
+    let older_snapshot = older.snapshot.as_mut().unwrap();
+    older_snapshot.event_id = "60a29b32-9e54-4f36-9304-0f0a8b16ce92".into();
+    older_snapshot.ts_init = DbCounter::new(older_snapshot.ts_init.get() - 1).unwrap();
+    store
+        .submit_account_observation(&actor, &older)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .account_current(&owner, request.binding.project_id, source)
+            .await
+            .unwrap()
+            .source
+            .latest_snapshot_id,
+        Some(snapshot.resource.id)
+    );
+    request.binding.native_session_id = "new-native-session".into();
+    request.sequence = DbCounter::new(1).unwrap();
+    let restarted = store
+        .submit_account_observation(&actor, &request)
+        .await
+        .unwrap();
+    assert_ne!(restarted.resource.source_id, source);
+    assert!(!restarted.resource.gap_before);
+    let mut late = older;
+    late.sequence = DbCounter::new(2).unwrap();
+    late.snapshot = None;
+    assert!(store
+        .submit_account_observation(&actor, &late)
+        .await
+        .is_err());
+    let mut future = request;
+    future.binding.native_session_id = "must-rollback".into();
+    future.observed_at_ns = DbCounter::new(i64::MAX as u64).unwrap();
+    assert!(store
+        .submit_account_observation(&actor, &future)
+        .await
+        .is_err());
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.native_account_sources")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 2,
+        "failed admission must not leave a source or cursor"
+    );
+}

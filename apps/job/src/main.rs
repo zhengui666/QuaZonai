@@ -23,6 +23,8 @@ struct Arguments {
 enum Operation {
     /// Apply the immutable native wall deadline before executing the fixed job entrypoint.
     RunBounded,
+    /// Project official native snapshots into downstream account observation envelopes.
+    NativeAccountObservation(job::account_observation_cli::Args),
     /// Execute one typed native operation. Root overrides are trusted local CLI only.
     Execute {
         #[arg(long, default_value = "/input")]
@@ -123,6 +125,10 @@ fn model_bytes(path: &Path, maximum_bytes: usize) -> Result<Vec<u8>> {
 
 fn run(operation: Operation) -> Result<()> {
     match operation {
+        Operation::NativeAccountObservation(args) => {
+            job::account_observation_cli::run(args)?;
+            Ok(())
+        }
         Operation::RunBounded => {
             job::bounded::run()?;
             Ok(())

@@ -5,6 +5,7 @@
 //! for authentication, cross-project FKs, leases, native isolation or acceptance.
 #![forbid(unsafe_code)]
 
+pub mod account_observation;
 pub mod admission;
 pub mod agent_evaluation;
 pub mod artifacts;

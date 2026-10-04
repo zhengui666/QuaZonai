@@ -7,6 +7,7 @@
 #[cfg(test)]
 extern crate self as store;
 
+mod account_observation;
 pub mod artifacts;
 pub mod auth;
 pub mod authority;

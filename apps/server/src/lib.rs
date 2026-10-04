@@ -2,6 +2,7 @@
 //! reference; PostgreSQL independently owns initialization, expiry and revocation.
 #![forbid(unsafe_code)]
 mod access;
+pub mod account_observation;
 pub mod artifacts;
 pub mod auth;
 mod automation;
@@ -552,6 +553,22 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/forward/messages",
             post(forward::message).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
         )
+        .route(
+            "/api/v2/forward/account-observations",
+            post(account_observation::submit).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/account-sources",
+            get(account_observation::sources),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/account-sources/{source_id}/current",
+            get(account_observation::current),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/account-sources/{source_id}/observations",
+            get(account_observation::observations),
+        )
         .route("/api/v2/projects/{id}/forward", get(forward::list))
         .route(
             "/api/v2/projects/{id}/forward-observations",
@@ -736,6 +753,7 @@ research::evaluation_policies,research::evaluation_policy,research::create_evalu
 brief::list,brief::get,brief::create,brief::update,
 automation::authorize_automation,automation::revoke_automation,automation::automation_policy,automation::automation_policies,automation::automation_revocations,release::ack,release::revoke_approval,release::revocations,release::claim,release::offer,release::handoff,release::handoffs,release::create,release::get,release::list,release::approvals,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,
 execution_assumptions::list,execution_assumptions::get,execution_assumptions::create,
+account_observation::submit,account_observation::sources,account_observation::current,account_observation::observations,
 forward::weight_snapshots,forward::weights,forward::message,forward::list,forward::window,forward::observations,forward::wakes,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
 experiments::propose,experiments::list,experiments::get,

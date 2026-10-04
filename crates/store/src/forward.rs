@@ -20,18 +20,19 @@ mod observations;
 mod schedule;
 mod window;
 
-async fn authority(
+pub(crate) async fn source_authority(
     tx: &mut Transaction<'_, Postgres>,
     actor: &Actor,
-    request: &DownstreamWeightsSubmitV1,
+    project: Id,
+    environment: ForwardEnvironmentV1,
 ) -> Result<Id, StoreError> {
     let machine = authority::machine(tx, actor, true).await?;
     if machine.kind != PrincipalKind::Downstream {
         return Err(StoreError::Forbidden);
     }
     machine.requires(MachineScope::ForwardSubmit)?;
-    machine.project(request.project_id)?;
-    crate::research::project_for_write(tx, request.project_id).await?;
+    machine.project(project)?;
+    crate::research::project_for_write(tx, project).await?;
     let downstream = machine.downstream_id.ok_or(StoreError::Forbidden)?;
     let row = sqlx::query(
         "SELECT enabled,environments FROM app.downstream_integrations WHERE id=$1 FOR SHARE",
@@ -41,7 +42,7 @@ async fn authority(
     .await?;
     let environments: String = row.try_get("environments")?;
     if !row.try_get::<bool, _>("enabled")?
-        || (environments != "BOTH" && environments != db::code(&request.environment)?)
+        || (environments != "BOTH" && environments != db::code(&environment)?)
     {
         return Err(StoreError::Forbidden);
     }
@@ -128,7 +129,8 @@ impl Store {
     {
         domain::forward::weights(request)?;
         let mut tx = self.pool.begin().await?;
-        let downstream = authority(&mut tx, actor, request).await?;
+        let downstream =
+            source_authority(&mut tx, actor, request.project_id, request.environment).await?;
         let environment = db::code(&request.environment)?;
         let scope = format!(
             "DOWNSTREAM:{downstream}:PROJECT:{}:{environment}",
@@ -183,7 +185,9 @@ impl Store {
             .bind(artifact.as_uuid()).bind(request.project_id.as_uuid()).bind(artifact.to_string()).bind(size).bind(origin).execute(&mut *tx).await?;
         let received = sqlx::query_scalar("INSERT INTO app.forward_weight_snapshots(id,project_id,downstream_id,environment,external_message_id,report_artifact_id,content) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING received_at")
             .bind(prepared.target.as_uuid()).bind(request.project_id.as_uuid()).bind(downstream.as_uuid()).bind(environment).bind(&request.external_message_id).bind(artifact.as_uuid()).bind(db::json(&content)?).fetch_one(&mut *tx).await?;
-        if authority(&mut tx, actor, request).await? != downstream {
+        if source_authority(&mut tx, actor, request.project_id, request.environment).await?
+            != downstream
+        {
             return Err(StoreError::Forbidden);
         }
         let checked_at: chrono::DateTime<chrono::Utc> =

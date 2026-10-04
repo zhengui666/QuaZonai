@@ -1,4 +1,6 @@
 //! Native research computations over registered inputs.
+pub mod account_observation_cli;
+pub mod account_observer;
 pub mod bounded;
 pub mod catalog;
 pub mod forecast;
