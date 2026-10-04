@@ -1,17 +1,13 @@
-import { Alert, App, Button, Card, Descriptions, Drawer, Space, Table, Tag, Typography, Upload } from 'antd';
-import { UploadOutlined } from '@ant-design/icons';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
-import { ResponseValidatorLoadError, validateResponseAsync } from '@quazonai/web/response-contract/lazy';
-import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
+import { Alert, Button, Card, Descriptions, Drawer, Space, Table, Tag, Typography } from 'antd';
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { api, dataOf, displayTime } from './api';
 import type { Schema } from './api';
 import { caseCounts, measured, observedIdentity } from './agent-evaluation-data';
 import type { AgentCase, AgentReport } from './agent-evaluation-data';
-import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
+import { NoData, Pager, QueryPanel } from './ui';
 
 const reportPath = '/api/v2/artifacts/{id}/agent-evaluation';
-const maxBytes = 2 * 1024 * 1024;
-type ReportSubmission = { body: Schema['ArtifactCreate']; headers: { 'Idempotency-Key': string } };
 const colors = { PASS: 'success', FAIL: 'error', BLOCKED: 'warning', UNRUN: 'default' } as const;
 function Outcome({ status }: { status: AgentReport['status'] }) { return <Tag color={colors[status]}>{status}</Tag>; }
 function Hash({ value }: { value: string }) { return <Typography.Text className="break-word" copyable>{value}</Typography.Text>; }
@@ -19,18 +15,16 @@ function Hash({ value }: { value: string }) { return <Typography.Text className=
 export function AgentEvaluations({ projectId }: { projectId: string }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const [selected, setSelected] = useState<string>();
-  const [uploading, setUploading] = useState(false);
-  const online = useOnline();
   const query = useQuery({ queryKey: ['agent-evaluation-artifacts', projectId, history.at(-1)], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/artifacts', {
     params: { query: { project_id: projectId, cursor: history.at(-1), limit: 25 } }, signal,
   })) });
   return <Space orientation="vertical" size="middle" className="full-width">
     <Alert type="info" showIcon title="Agent 评估报告" description="查看上传的运行器证据。PASS 表示报告内断言通过；上传、合同校验和模型执行成功都不授予独立科学资格。" />
-    <Space wrap><Button onClick={() => setUploading(true)} disabled={!online}>上传报告</Button><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新</Button></Space>
+    <Space wrap><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新</Button></Space>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['ArtifactView']> rowKey="id" pagination={false} scroll={{ x: 680 }}
         dataSource={query.data?.items.filter(item => item.kind === 'REPORT')}
-        locale={{ emptyText: <NoData text="本页暂无 REPORT 产物；可继续翻页，或上传真实报告" /> }}
+        locale={{ emptyText: <NoData text="本页暂无 REPORT 产物；可继续翻页，报告由外部 Agent 通过 CLI/Skill 登记" /> }}
         columns={[
           { title: '报告产物', key: 'id', render: (_, row) => <Button type="link" className="table-title" onClick={() => setSelected(row.id)}>{row.id}</Button> },
           { title: '上传于', key: 'created', render: (_, row) => displayTime(row.created_at) },
@@ -42,10 +36,9 @@ export function AgentEvaluations({ projectId }: { projectId: string }) {
     <Drawer open={!!selected} size="large" title="Agent 评估详情" onClose={() => setSelected(undefined)} destroyOnHidden>
       {selected && <ReportDetail key={selected} id={selected} />}
     </Drawer>
-    {uploading && <ReportUpload projectId={projectId} close={() => setUploading(false)} uploaded={id => { setUploading(false); setHistory([undefined]); setSelected(id); }} />}
   </Space>;
 }
-function ReportDetail({ id }: { id: string }) {
+export function ReportDetail({ id }: { id: string }) {
   const query = useQuery({ queryKey: ['agent-evaluation', id], queryFn: async ({ signal }) => dataOf(await api.GET(reportPath, { params: { path: { id } }, signal })) });
   return <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
     {query.data && <ReportView report={query.data} />}
@@ -92,64 +85,4 @@ export function ReportView({ report }: { report: AgentReport }) {
         {item.assertions.length === 0 ? <Typography.Text>尚无断言证据</Typography.Text> : item.assertions.map(assertion => <Space key={assertion.id} orientation="vertical"><Typography.Text>{assertion.id}: {assertion.passed ? 'PASS' : 'FAIL'}</Typography.Text><Hash value={assertion.evidence_sha256} /></Space>)}
       </Space> }} />
   </Space>;
-}
-function ReportUpload({ projectId, close, uploaded }: { projectId: string; close: () => void; uploaded: (id: string) => void }) {
-  const [file, setFile] = useState<{ name: string; content: string }>();
-  const [reading, setReading] = useState(false);
-  const [error, setError] = useState<unknown>();
-  const [request, setRequest] = useState<ReportSubmission>();
-  const sequence = useRef(0); const intent = useRef(new Intent()); const submitting = useRef(false);
-  const online = useOnline(); const client = useQueryClient(); const { modal } = App.useApp();
-  const mutation = useMutation({ mutationFn: async (submission: ReportSubmission) => {
-    const result = dataOf(await api.POST('/api/v2/artifacts', { body: submission.body, params: { header: submission.headers } }));
-    if (result.resource.project_id !== projectId || result.resource.kind !== 'REPORT') {
-      throw new ApiFailure('HTTP_CONTRACT_ERROR', '报告回执与原项目或种类不匹配；保留原请求后重试');
-    }
-    return result;
-  }, onSuccess: result => { void client.invalidateQueries({ queryKey: ['agent-evaluation-artifacts', projectId] }); uploaded(result.resource.id); },
-  onSettled: () => { submitting.current = false; } });
-  function submit() {
-    if (!file || reading || !online || submitting.current || mutation.isPending) return;
-    const body: Schema['ArtifactCreate'] = { schema_version: 1, project_id: projectId, kind: 'REPORT', content: file.content };
-    const original = request ?? { body, headers: intent.current.headers('POST', '/api/v2/artifacts', body) };
-    // Once any write starts, replacement requires the existing explicit close
-    // confirmation. Keep the exact body/key even if a committed receipt is lost
-    // or its asynchronous validator cannot load; never automatically replay.
-    submitting.current = true; setRequest(original); mutation.mutate(original);
-  }
-  useGuard(!!file || reading || mutation.isPending || !!request);
-  function dismiss() {
-    if (submitting.current || mutation.isPending) return;
-    const discard = () => { sequence.current++; close(); };
-    if (file || reading || request) modal.confirm({ title: request ? '关闭报告上传？' : '放弃未上传的报告？', content: request ? '请求可能已保存。关闭不会撤回已保存的报告；继续编辑可使用同一请求和幂等键重试。' : undefined, okText: '关闭', cancelText: '继续编辑', onOk: discard }); else discard();
-  }
-  return <Drawer open title="上传 Agent 评估报告" onClose={dismiss} closable={!mutation.isPending} maskClosable={!mutation.isPending} keyboard={!mutation.isPending}>
-    <Space orientation="vertical" className="full-width">
-      <Alert type="info" showIcon title="不可变报告产物" description="选择符合 AgentEvaluationReportV1 的 JSON（最多 2 MiB）。服务端检查断言、模型身份和分区；上传不会运行模型或授予资格。" />
-      <Upload accept=".json,application/json" showUploadList={false} disabled={mutation.isPending || reading || !!request} beforeUpload={async selected => {
-        if (submitting.current || request) return Upload.LIST_IGNORE;
-        const current = ++sequence.current; setReading(true); setError(undefined); setFile(undefined); mutation.reset();
-        try {
-          if (selected.size > maxBytes || selected.size === 0) throw new ApiFailure('REPORT_SIZE', '报告必须为 1 byte 至 2 MiB');
-          const content = await selected.text();
-          if (current !== sequence.current) return Upload.LIST_IGNORE;
-          if (new TextEncoder().encode(content).length > maxBytes) throw new ApiFailure('REPORT_SIZE', '报告必须为 1 byte 至 2 MiB');
-          const valid = await validateResponseAsync(reportPath, 'GET', 200, JSON.parse(content), 'application/json');
-          if (current !== sequence.current) return Upload.LIST_IGNORE;
-          if (!valid) throw new ApiFailure('REPORT_CONTRACT', '报告格式不符合原生合同');
-          setFile({ name: selected.name, content });
-        } catch (failure) {
-          if (current === sequence.current) setError(failure instanceof ResponseValidatorLoadError
-            ? new ApiFailure('REPORT_VALIDATOR_UNAVAILABLE', '本地报告校验组件加载失败；报告尚未上传。请刷新后重新选择报告。')
-            : failure instanceof ApiFailure ? failure : new ApiFailure('REPORT_JSON', '无法读取有效 JSON 报告'));
-        }
-        finally { if (current === sequence.current) setReading(false); }
-        return Upload.LIST_IGNORE;
-      }}><Button icon={<UploadOutlined aria-hidden />} loading={reading} aria-busy={reading} disabled={mutation.isPending || reading || !!request}>选择 JSON 报告</Button></Upload>
-      {file && <Typography.Text>{file.name} · {new TextEncoder().encode(file.content).length} bytes</Typography.Text>}
-      <ErrorNotice error={error ?? mutation.error} />
-      {request && mutation.isError && <Alert type="warning" showIcon title="原报告内容与幂等键已锁定；只能原样重试。选择其他报告前须明确关闭本次上传。" />}
-      <Space wrap><Button type="primary" loading={mutation.isPending} aria-busy={mutation.isPending} disabled={!file || reading || !online || mutation.isPending} onClick={submit}>{request ? '原样重试上传请求' : '上传报告'}</Button><Button onClick={dismiss} disabled={mutation.isPending}>取消</Button></Space>
-    </Space>
-  </Drawer>;
 }

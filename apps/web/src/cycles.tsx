@@ -1,163 +1,27 @@
-import { App, Alert, Button, Descriptions, Drawer, Form, Modal, Space, Table, Typography } from 'antd';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
-import { api, ApiFailure, dataOf, displayTime, Intent } from './api';
+import { Button, Descriptions, Drawer, Space, Table, Typography } from 'antd';
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { api, dataOf, displayTime } from './api';
 import type { Schema } from './api';
-import { ResourceSelect } from './resource-select';
-import { activeAccountOperation, settleAccountSessions } from './chatgpt-auth';
-import { useSettingsWorkKey, useSettingsWorkPrefix, useSettingsWorkVersion } from './settings-work';
 import { RunDetail } from './runs';
-import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';
+import { NoData, Pager, QueryPanel, StateTag } from './ui';
 
-type Brief = Schema['BriefView'];
-type Fields = { runtime_id?: string; discovery_input_set_id: string; validation_input_set_id: string; sealed_input_set_id: string; researcher_id?: string; reviewer_id?: string };
-type Submitted = { kind: 'freeze'; body: Schema['BriefFreezeV1'] } | { kind: 'start'; body: Schema['CycleStartV1'] };
-const required = [{ required: true, message: '请明确选择已有记录。' }];
-
-function useProfile(id: string | undefined, settled: boolean, version: number) {
-  return useQuery({ queryKey: ['codex', 'profile', id, version], enabled: !!id && settled, staleTime: 0,
-    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/settings/codex/{id}', { params: { path: { id: id! } }, signal })) });
-}
-function useAccountOperation(id: string | undefined, enabled: boolean, localWork: boolean) {
-  return useQuery<Schema['CodexAccountOperationV1'] | null>({ queryKey: ['cycle-account-operation', id, localWork], enabled: !!id && enabled, staleTime: 0,
-    refetchInterval: query => localWork || activeAccountOperation(query.state.data) ? 2_000 : 15_000,
-    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/codex/login', { params: { query: { profile_id: id! } }, signal })) });
-}
-
-export function BriefExecution({ brief, close }: { brief: Brief; close: () => void }) {
-  const freeze = brief.state === 'DRAFT';
-  const [form] = Form.useForm<Fields>();
-  const online = useOnline(); const client = useQueryClient(); const { modal } = App.useApp();
-  const intent = useRef(new Intent()); const hadUnknown = useRef(false);
-  const [submitted, setSubmitted] = useState<Submitted>();
-  const [receipt, setReceipt] = useState<Schema['FrozenBriefV1'] | Schema['CycleStartedV1']>();
-  const runtimeId: string | undefined = Form.useWatch('runtime_id', form);
-  const researcherId: string | undefined = Form.useWatch('researcher_id', form);
-  const reviewerId: string | undefined = Form.useWatch('reviewer_id', form);
-  const runtimeKey = `autosave:runtime:${runtimeId ?? ''}`;
-  const researcherKey = `codex-model:${researcherId ?? ''}`;
-  const reviewerKey = `codex-model:${reviewerId ?? ''}`;
-  const runtimeSaving = useSettingsWorkKey(runtimeKey); const runtimeVersion = useSettingsWorkVersion(runtimeKey);
-  const researcherSaving = useSettingsWorkKey(researcherKey); const researcherVersion = useSettingsWorkVersion(researcherKey);
-  const reviewerSaving = useSettingsWorkKey(reviewerKey); const reviewerVersion = useSettingsWorkVersion(reviewerKey);
-  const accountWork = useSettingsWorkPrefix('chatgpt-auth:');
-  const researcher = useProfile(researcherId, !researcherSaving, researcherVersion);
-  const reviewer = useProfile(reviewerId, !reviewerSaving, reviewerVersion);
-  const researcherAccount = useAccountOperation(researcherId, !freeze, accountWork);
-  const reviewerAccount = useAccountOperation(reviewerId, !freeze, accountWork);
-  useEffect(() => {
-    settleAccountSessions(researcherAccount.data, client);
-    settleAccountSessions(reviewerAccount.data, client);
-  }, [researcherAccount.data, reviewerAccount.data, researcherAccount.dataUpdatedAt, reviewerAccount.dataUpdatedAt, client]);
-  const runtime = useQuery({ queryKey: ['integrations', 'runtime', runtimeId, runtimeVersion], enabled: freeze && !!runtimeId && !runtimeSaving,
-    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/integrations/runtimes/{id}', { params: { path: { id: runtimeId! } }, signal })) });
-  const project = useQuery({ queryKey: ['project', brief.project_id], staleTime: 0,
-    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}', { params: { path: { id: brief.project_id } }, signal })) });
-  const frozen = useQuery({ queryKey: ['frozen-brief', brief.id], enabled: !freeze,
-    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/briefs/{id}/execution-context', { params: { path: { id: brief.id } }, signal })) });
-  const mutation = useMutation({ mutationFn: async (request: Submitted) => {
-    if (request.kind === 'freeze') return dataOf(await api.POST('/api/v2/briefs/{id}/freeze', {
-      params: { path: { id: brief.id }, header: intent.current.headers('POST', `/api/v2/briefs/${brief.id}/freeze`, request.body) }, body: request.body,
-    }));
-    return dataOf(await api.POST('/api/v2/projects/{id}/cycles', {
-      params: { path: { id: brief.project_id }, header: intent.current.headers('POST', `/api/v2/projects/${brief.project_id}/cycles`, request.body) }, body: request.body,
-    }));
-  }, onSuccess: async result => {
-    setReceipt(result.resource); intent.current.clear();
-    await Promise.all([
-      client.invalidateQueries({ queryKey: ['briefs', brief.project_id] }),
-      client.invalidateQueries({ queryKey: ['project', brief.project_id] }),
-      client.invalidateQueries({ queryKey: ['projects'] }),
-      client.invalidateQueries({ queryKey: ['cycles', brief.project_id] }),
-      client.invalidateQueries({ queryKey: ['runs'] }),
-    ]);
-  }, onError: error => {
-    const rejected = error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE');
-    if (!rejected) hadUnknown.current = true;
-    // A later 4xx cannot disprove an earlier lost acknowledgement.
-    if (rejected && !hadUnknown.current) setSubmitted(undefined);
-  } });
-  useGuard(true);
-  const conflict = submitted === undefined && mutation.error instanceof ApiFailure && mutation.error.code === 'REVISION_CONFLICT';
-  const unavailable = !project.data || project.isError || project.isFetching || (freeze ? project.data.state === 'ARCHIVED' : project.data.state !== 'ACTIVE');
-  const ready = freeze ? !runtimeSaving && !!runtime.data?.configuration.enabled && !runtime.isError && !runtime.isFetching
-    : !!frozen.data && !frozen.isError && !frozen.isFetching && !!researcher.data?.home_binding && !!reviewer.data?.home_binding
-      && !researcherSaving && !reviewerSaving && !accountWork && !researcher.isError && !reviewer.isError && !researcher.isFetching && !reviewer.isFetching
-      && [researcherAccount, reviewerAccount].every(query => query.data !== undefined && !activeAccountOperation(query.data) && !query.isError && !query.isFetching);
-  const retry = submitted !== undefined && mutation.isError;
-  function submit(value: Fields) {
-    if (!online || mutation.isPending || unavailable || !ready || submitted || conflict) return;
-    const request: Submitted = freeze ? { kind: 'freeze', body: { schema_version: 1, expected_revision: brief.revision,
-      execution_context: { schema_version: 1, runtime_id: runtime.data!.id, runtime_revision: runtime.data!.revision,
-        discovery_input_set_id: value.discovery_input_set_id, validation_input_set_id: value.validation_input_set_id, sealed_input_set_id: value.sealed_input_set_id } } }
-      : { kind: 'start', body: { schema_version: 1, brief_id: brief.id, expected_revision: project.data!.revision,
-        researcher_profile: { profile_id: researcher.data!.id, expected_revision: researcher.data!.revision },
-        reviewer_profile: { profile_id: reviewer.data!.id, expected_revision: reviewer.data!.revision } } };
-    setSubmitted(request); mutation.mutate(request);
-  }
-  function dismiss() {
-    if (mutation.isPending) return;
-    if (retry) modal.confirm({ title: '关闭未确认的请求？', content: '关闭不会撤销可能已完成的冻结或启动。请先核对 Brief 和研究周期，不要立即重复启动。', okText: '关闭并核对', cancelText: '保留原请求', onOk: close });
-    else close();
-  }
-  return <Modal open title={freeze ? '冻结 Brief 执行上下文' : '确认启动研究 Cycle'} width={760} maskClosable={false}
-    onCancel={dismiss} closable={!mutation.isPending} footer={receipt ? <Button onClick={close}>返回查看记录</Button> : undefined}
-    onOk={() => { if (!online || mutation.isPending || receipt) return; if (retry && submitted) mutation.mutate(submitted); else form.submit(); }}
-    okText={retry ? '重试同一请求' : freeze ? '确认冻结 Brief' : '确认启动 Cycle'} cancelText="返回"
-    confirmLoading={mutation.isPending} okButtonProps={{ disabled: !online || conflict || (!retry && (unavailable || !ready)) }}>
-    <Space orientation="vertical" className="full-width" size="middle">
-      <Typography.Paragraph className="break-word">Brief {brief.id} · 版本 {brief.version} · 修订 {brief.revision}</Typography.Paragraph>
-      <ErrorNotice error={mutation.error} />
-      {mutation.isError && !submitted && <Button onClick={() => { void Promise.all([
-        client.invalidateQueries({ queryKey: ['briefs', brief.project_id] }), client.invalidateQueries({ queryKey: ['project', brief.project_id] }),
-        client.invalidateQueries({ queryKey: ['codex'] }), client.invalidateQueries({ queryKey: ['integrations'] }),
-      ]).then(close); }}>关闭并重载最新记录</Button>}
-      {retry && <Alert type="warning" showIcon title="提交结果未知，请重试当前操作" />}
-      {receipt ? 'cycle' in receipt ? <>
-        <Alert type="success" showIcon title="研究周期已创建" />
-        <Descriptions column={1} items={[
-          { key: 'cycle', label: 'Cycle', children: receipt.cycle.id },
-          { key: 'run', label: '准备运行', children: receipt.run.id },
-          { key: 'state', label: '当前回执状态', children: <StateTag value={receipt.run.state} /> },
-        ]} />
-      </> : <Alert type="success" showIcon title="Brief 已冻结" /> : <>
-        
-        <ErrorNotice error={project.error} /><ErrorNotice error={frozen.error} />
-        {!freeze && project.data && project.data.state !== 'ACTIVE' && <Alert type="warning" showIcon title="请先启用项目" />}
-        {project.data && <Typography.Text>项目修订 {submitted?.kind === 'start' ? submitted.body.expected_revision : project.data.revision} · <StateTag value={project.data.state} /></Typography.Text>}
-        <Form form={form} layout="vertical" disabled={!online || mutation.isPending || submitted !== undefined || unavailable || conflict} onFinish={submit}>
-          {freeze ? <>
-            <Form.Item name="runtime_id" label="执行 Runtime" rules={required}><ResourceSelect label="选择执行 Runtime" queryKey={['startup', 'runtimes']} load={async (cursor, signal) => {
-              const page = dataOf(await api.GET('/api/v2/integrations/runtimes', { params: { query: { cursor, limit: 50 } }, signal }));
-              return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.configuration.name} · ${item.id}`, disabled: !item.configuration.enabled })) };
-            }} /></Form.Item>
-            <ErrorNotice error={runtime.error} />
-            {runtime.data && <Typography.Paragraph>Runtime 修订 {submitted?.kind === 'freeze' ? submitted.body.execution_context.runtime_revision : runtime.data.revision}</Typography.Paragraph>}
-            {(['DISCOVERY', 'VALIDATION', 'SEALED'] as const).map(purpose => <Form.Item key={purpose} name={`${purpose.toLowerCase()}_input_set_id`} label={`${purpose} 输入集`} rules={required}>
-              <ResourceSelect label={`选择 ${purpose} 输入集`} queryKey={['startup', 'inputs', brief.project_id, purpose]} load={async (cursor, signal) => {
-                const page = dataOf(await api.GET('/api/v2/input-sets', { params: { query: { project_id: brief.project_id, cursor, limit: 50 } }, signal }));
-                return { next_cursor: page.next_cursor, items: page.items.filter(item => item.project_id === brief.project_id && item.purpose === purpose).map(item => ({ value: item.id, label: `${item.id} · 截止 ${displayTime(item.decision_cutoff)}` })) };
-              }} />
-            </Form.Item>)}
-          </> : <>
-            {frozen.data && <Descriptions column={1} size="small" items={[
-              { key: 'runtime', label: '冻结 Runtime / 修订', children: `${frozen.data.execution_context.runtime_id} / ${frozen.data.execution_context.runtime_revision}` },
-              ...(['discovery', 'validation', 'sealed'] as const).map(role => ({ key: role, label: `${role.toUpperCase()} 输入`, children: frozen.data!.execution_context[`${role}_input_set_id`] })),
-            ]} />}
-            <ErrorNotice error={researcherAccount.error ?? reviewerAccount.error} />
-            {([['researcher_id', '研究者', researcher], ['reviewer_id', '独立 Reviewer', reviewer]] as const).map(([field, role, profile]) => <div key={field}>
-              <Form.Item name={field} label={`${role} Codex 配置`} rules={required}><ResourceSelect label={`选择${role} Codex 配置`} queryKey={['startup', 'profiles']} load={async (cursor, signal) => {
-                const page = dataOf(await api.GET('/api/v2/settings/codex', { params: { query: { cursor, limit: 50 } }, signal }));
-                return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}`, disabled: !item.home_binding })) };
-              }} /></Form.Item>
-              <ErrorNotice error={profile.error} />
-              {profile.data && <Typography.Paragraph>{role}：{profile.data.name} · 配置修订 {submitted?.kind === 'start' ? submitted.body[field === 'researcher_id' ? 'researcher_profile' : 'reviewer_profile'].expected_revision : profile.data.revision} · {profile.data.model_settings.use_default_model_settings ? '本机默认' : '自定义模型'}</Typography.Paragraph>}
-            </div>)}
-          </>}
-        </Form>
-      </>}
-    </Space>
-  </Modal>;
+export function BriefExecutionContext({ briefId }: { briefId: string }) {
+  const query = useQuery({ queryKey: ['frozen-brief', briefId],
+    queryFn: async ({ signal }) => {
+      const value = dataOf(await api.GET('/api/v2/briefs/{id}/execution-context', { params: { path: { id: briefId } }, signal }));
+      if (value.brief.id !== briefId) throw new Error('执行上下文不属于原 Brief。');
+      return value;
+    } });
+  return <section aria-label="原冻结执行上下文">
+    <Typography.Title level={3}>原冻结执行上下文</Typography.Title>
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+      {query.data && <Descriptions column={1} items={[
+        { key: 'runtime', label: '冻结 Runtime / 修订', children: `${query.data.execution_context.runtime_id} / ${query.data.execution_context.runtime_revision}` },
+        ...(['discovery', 'validation', 'sealed'] as const).map(role => ({ key: role, label: `${role.toUpperCase()} 输入`, children: query.data!.execution_context[`${role}_input_set_id`] })),
+      ]} />}
+    </QueryPanel>
+  </section>;
 }
 
 export function Cycles({ projectId }: { projectId: string }) {
@@ -185,7 +49,7 @@ export function Cycles({ projectId }: { projectId: string }) {
   </Space>;
 }
 
-function CycleSelection({ id, close }: { id: string; close: () => void }) {
+export function CycleSelection({ id, close }: { id: string; close: () => void }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]); const cursor = history.at(-1);
   const query = useQuery({ queryKey: ['cycle-selection', id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/cycles/{id}/selection', { params: { path: { id } }, signal })) });
   const trials = useQuery({ queryKey: ['cycle-selection-trials', id, cursor], enabled: !!query.data && !query.isError,

@@ -49,7 +49,7 @@ if (config.phase === 'before-restart') {
     await page.getByLabel('设置密码', { exact: true }).fill(config.password);
     await page.getByLabel('确认密码', { exact: true }).fill(config.password);
     await page.getByRole('button', { name: '设置密码并登录', exact: true }).click();
-    await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
     const shortSession = await (await page.request.get('/api/v2/auth/session')).json();
     expect(Date.parse(shortSession.expires_at) - Date.parse(shortSession.authenticated_at)).toBe(12 * 60 * 60 * 1000);
     const shortCookies = await context.cookies();
@@ -69,7 +69,7 @@ if (config.phase === 'before-restart') {
     await page.getByRole('button', { name: '登录', exact: true }).click();
     expect((await denied).status()).toBe(401);
     await expect(page.getByLabel('登录密码', { exact: true })).toHaveValue('');
-    await expect(page.getByRole('button', { name: '新建研究', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toHaveCount(0);
     await loginNative(page, config);
     const remembered = await (await page.request.get('/api/v2/auth/session')).json();
     expect(Date.parse(remembered.expires_at) - Date.parse(remembered.authenticated_at)).toBe(30 * 24 * 60 * 60 * 1000);
@@ -82,7 +82,7 @@ if (config.phase === 'before-restart') {
     try {
       const secondPage = await secondBrowser.newPage();
       await secondPage.goto('/');
-      await expect(secondPage.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+      await expect(secondPage.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
       const connected = await cli.request.post('/api/v2/auth/cli/login', {
         headers: { Origin: config.baseUrl },
         data: { schema_version: 1, password: config.password, name: 'Native acceptance machine' },
@@ -105,7 +105,7 @@ if (config.phase === 'before-restart') {
       await changePassword(page, config.password, newPassword);
       await secondPage.getByRole('button', { name: '刷新', exact: true }).click();
       await expect(secondPage.getByRole('heading', { name: '登录 QuaZonai', exact: true })).toBeVisible();
-      await expect(secondPage.getByRole('button', { name: '新建研究', exact: true })).toHaveCount(0);
+      await expect(secondPage.getByRole('heading', { level: 1, name: '研究', exact: true })).toHaveCount(0);
       expect((await cli.request.get('/api/v2/auth/cli/session', { headers })).status()).toBe(200);
       await loginNative(page, config, true, newPassword);
       await openAuthSettings(page);
