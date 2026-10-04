@@ -453,6 +453,7 @@ async fn native_archive_restores_original_receipt_and_native_encryption(pool: Pg
     )
     .unwrap();
     let restored = support::Fixture {
+        owner_token: tokio::sync::OnceCell::new(),
         app: server::router(
             server::AppState::new(
                 store.clone(),
