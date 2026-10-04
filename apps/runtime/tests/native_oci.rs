@@ -1985,8 +1985,25 @@ async fn real_native_compile_oom_is_reported_as_a_safe_resource_failure() {
         error.safe_message,
         "The native job exceeded its memory limit."
     );
-    let state = f.native_container(&spec).await.state.unwrap();
-    assert_eq!(state.oom_killed, Some(true));
+    let native = f.native_container(&spec).await;
+    let limits = native.host_config.unwrap();
+    assert_eq!(
+        limits.cgroupns_mode,
+        Some(bollard::models::HostConfigCgroupnsModeEnum::PRIVATE)
+    );
+    assert_eq!(limits.memory, Some(64 * 1024 * 1024));
+    assert_eq!(limits.memory_swap, limits.memory);
+    let state = native.state.unwrap();
+    // Keep Docker's raw observation above. Its asynchronous OOM flag can be lost
+    // when rustc dies before the job; the reserved exit instead requires fresh
+    // local max/oom/oom_kill evidence in the original job's own cgroup.
+    assert!(
+        state.oom_killed == Some(true)
+            || state.exit_code
+                == Some(i64::from(
+                    domain::runtime_jobs::NATIVE_MEMORY_LIMIT_EXIT_CODE
+                ))
+    );
     assert_ne!(state.exit_code, Some(0));
     assert_eq!(f.submit(&spec).await, terminal);
     f.assert_private_logs();

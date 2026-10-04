@@ -4,6 +4,11 @@ use chrono::{DateTime, Duration, Utc};
 use contracts::{research::ArtifactInputRole, runtime::RuntimeCapabilitiesV1, runtime_jobs::*, Id};
 use std::collections::BTreeSet;
 
+/// The fixed native job reports fresh, local compiler cgroup OOM evidence with
+/// this exit status. It is not a compiler or signal exit code; GNU timeout
+/// preserves it when the job finishes before its deadline.
+pub const NATIVE_MEMORY_LIMIT_EXIT_CODE: i32 = 70;
+
 pub const MAX_JOB_REQUEST_BYTES: usize = 1024 * 1024;
 pub const MAX_RESULT_MANIFEST_BYTES: usize = 1024 * 1024;
 pub use contracts::runtime_jobs::MAX_INPUT_OBJECT_BYTES;

@@ -15,6 +15,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod compiler_memory;
+use compiler_memory::CompilerMemory;
+pub use compiler_memory::CompilerMemoryLimit;
+
 const PARAMETERS_LIMIT: usize = 8 * 1024 * 1024;
 const SPEC_LIMIT: usize = 1024 * 1024;
 const COMPILER: &str = "/opt/rust/bin/rustc";
@@ -210,6 +214,7 @@ fn compile(spec: &JobSpecV1, input: &Path, code: Id, outputs: &mut Outputs) -> R
     let source = input.join("objects").join(code.to_string());
     let bytes = read(&source, crate::signals::MAX_SIGNAL_MODULE_BYTES)?;
     std::str::from_utf8(&bytes)?;
+    let memory = CompilerMemory::capture();
     let version = Command::new(COMPILER)
         .arg("--version")
         .env_clear()
@@ -218,10 +223,8 @@ fn compile(spec: &JobSpecV1, input: &Path, code: Id, outputs: &mut Outputs) -> R
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()?;
-    ensure!(
-        version.status.success() && version.stdout.len() <= 512,
-        "NATIVE_COMPILER_VERSION"
-    );
+    CompilerMemory::check(version.status, memory, "NATIVE_COMPILER_VERSION")?;
+    ensure!(version.stdout.len() <= 512, "NATIVE_COMPILER_VERSION");
     let version = std::str::from_utf8(&version.stdout)?.trim();
     ensure!(
         version.starts_with("rustc 1.98.1 "),
@@ -230,6 +233,7 @@ fn compile(spec: &JobSpecV1, input: &Path, code: Id, outputs: &mut Outputs) -> R
     let model = Id::new();
     let target = outputs.root.join(model.to_string());
     ensure!(!target.exists(), "NATIVE_OUTPUT_EXISTS");
+    let memory = CompilerMemory::capture();
     let child = Command::new(COMPILER)
         .args([
             "--edition=2021",
@@ -259,7 +263,7 @@ fn compile(spec: &JobSpecV1, input: &Path, code: Id, outputs: &mut Outputs) -> R
     let began = Instant::now();
     loop {
         if let Some(status) = child.0.try_wait()? {
-            ensure!(status.success(), "NATIVE_COMPILATION_FAILED");
+            CompilerMemory::check(status, memory, "NATIVE_COMPILATION_FAILED")?;
             break;
         }
         ensure!(

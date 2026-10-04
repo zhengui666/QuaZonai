@@ -19,6 +19,12 @@ fn exited(started: chrono::DateTime<chrono::Utc>, code: i64, oom: bool) -> Conta
 async fn failure_before_cancel_survives_gateway_reopen_and_native_container_removal() {
     for (exit_code, oom, expected) in [
         (1, false, RuntimeFailureCode::NativeJobFailed),
+        (137, false, RuntimeFailureCode::NativeJobFailed),
+        (
+            i64::from(domain::runtime_jobs::NATIVE_MEMORY_LIMIT_EXIT_CODE),
+            false,
+            RuntimeFailureCode::MemoryLimit,
+        ),
         (137, true, RuntimeFailureCode::MemoryLimit),
         (124, false, RuntimeFailureCode::DeadlineExceeded),
     ] {
