@@ -158,6 +158,8 @@ pub async fn register(
     .await;
 }
 
+// Keep fixture dependencies and the grant lifetime explicit at each call site.
+#[allow(clippy::too_many_arguments)]
 pub async fn register_with_grant_lifetime(
     pool: &PgPool,
     store: &Store,
@@ -186,6 +188,8 @@ pub async fn register_with_grant_lifetime(
     .await;
 }
 
+// Keep fixture dependencies and paired feature declarations explicit at each call site.
+#[allow(clippy::too_many_arguments)]
 pub async fn register_with_features(
     pool: &PgPool,
     store: &Store,

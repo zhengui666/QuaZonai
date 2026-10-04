@@ -299,6 +299,8 @@ fn compose<'a>(
     })
 }
 
+// Keep test-stage inputs explicit without changing the boxed continuation boundary.
+#[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub(super) fn research_to_claim<'a>(
     pool: &'a PgPool,

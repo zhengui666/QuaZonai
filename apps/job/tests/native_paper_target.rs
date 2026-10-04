@@ -102,6 +102,8 @@ fn production_loopback_control_ignores_ambient_proxy() {
                 Err(error) => panic!("local acceptance listener: {error}"),
             }
         };
+        // Accepted sockets can inherit the listener's nonblocking mode.
+        connection.set_nonblocking(false).unwrap();
         connection
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();

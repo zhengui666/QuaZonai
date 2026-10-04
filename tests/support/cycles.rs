@@ -182,6 +182,8 @@ pub async fn setup_external_with_grant(
 }
 
 /// Explicit controlled paired-attachment declaration for Store consumer tests.
+// Keep the grant and paired feature scenario inputs explicit at each call site.
+#[allow(clippy::too_many_arguments)]
 pub async fn setup_external_with_features(
     pool: &PgPool,
     store: &Store,
@@ -205,6 +207,8 @@ pub async fn setup_external_with_features(
     .await
 }
 
+// Keep shared fixture dependencies and scenario customization explicit.
+#[allow(clippy::too_many_arguments)]
 async fn setup_plan(
     pool: &PgPool,
     store: &Store,

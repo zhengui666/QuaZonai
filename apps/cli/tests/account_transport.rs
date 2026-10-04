@@ -189,6 +189,8 @@ fn permanent_intake_rejection_emits_no_receipt_and_keeps_both_records() {
                 Err(error) => panic!("account listener failed: {error}"),
             }
         };
+        // Accepted sockets can inherit the listener's nonblocking mode.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();

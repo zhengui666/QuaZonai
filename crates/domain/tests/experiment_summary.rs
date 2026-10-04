@@ -112,9 +112,10 @@ fn bounded_preview_preserves_original_fold_identity_endpoints_and_absence() {
             snapshots.len() as u64
         );
         for point in &fold.equity_preview.points {
+            let timestamp = point.timestamp_ns.get().to_string();
             assert!(snapshots
                 .iter()
-                .any(|s| s["ts_event"] == point.timestamp_ns.get().to_string()));
+                .any(|s| s["ts_event"].as_str() == Some(timestamp.as_str())));
             assert_eq!(point.value, Some("1000".parse().unwrap()));
         }
         assert_eq!(
