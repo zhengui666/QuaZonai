@@ -1,7 +1,7 @@
 //! Offline, exact conversion of frozen public OHLCV observations into native BARs.
 //! Acquisition and serialization do not certify historical availability or permission.
 use super::bars::{
-    bar_type, candle, definitions, digest, exact, no_symlinks, publish, read, write_catalog,
+    bar_type, candle, definitions, exact, no_symlinks, publish, read, write_catalog,
 };
 use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -99,7 +99,9 @@ struct Terms {
 struct File {
     path: String,
     size: u64,
-    sha256: String,
+    // Historical manifests remain readable; this field is not verified or used.
+    #[serde(default, rename = "sha256")]
+    _legacy_sha256: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -147,6 +149,7 @@ struct Row {
     source_row_index: usize,
 }
 
+#[derive(PartialEq)]
 struct Original {
     values: [Decimal; 5], // open, high, low, close, volume
     received: u64,
@@ -154,16 +157,13 @@ struct Original {
     index: usize,
 }
 
-fn verified_file(root: &Path, file: &File, expected: &str, limit: u64) -> Result<Vec<u8>> {
+fn source_file(root: &Path, file: &File, expected: &str, limit: u64) -> Result<Vec<u8>> {
     ensure!(
         file.path == expected && file.size <= limit,
         "SOURCE_FILE_IDENTITY"
     );
     let bytes = read(&root.join(expected), limit)?;
-    ensure!(
-        bytes.len() as u64 == file.size && digest(&bytes) == file.sha256,
-        "SOURCE_CHECKSUM_MISMATCH"
-    );
+    ensure!(bytes.len() as u64 == file.size, "SOURCE_SIZE_MISMATCH");
     Ok(bytes)
 }
 
@@ -293,7 +293,7 @@ fn original_rows(manifest: &Manifest, root: &Path) -> Result<BTreeMap<u64, Origi
                 == "OPERATOR_SUPPLIED_NOT_INDEPENDENTLY_VERIFIED",
         "SOURCE_TERMS_REQUIRED"
     );
-    let terms = verified_file(root, &manifest.source_terms.file, "source-terms.bin", MIB)?;
+    let terms = source_file(root, &manifest.source_terms.file, "source-terms.bin", MIB)?;
     ensure!(
         !terms.is_empty() && terms.iter().any(|byte| !byte.is_ascii_whitespace()),
         "SOURCE_TERMS_REQUIRED"
@@ -359,7 +359,7 @@ fn original_rows(manifest: &Manifest, root: &Path) -> Result<BTreeMap<u64, Origi
             "SOURCE_RESPONSE_TYPE"
         );
         let path = format!("raw/{index:04}.json");
-        let bytes = verified_file(root, &response.file, &path, 4 * MIB)?;
+        let bytes = source_file(root, &response.file, &path, 4 * MIB)?;
         bytes_read += bytes.len() as u64;
         ensure!(
             bytes_read <= limits.max_response_total_bytes,
@@ -508,7 +508,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
         base,
         quote,
     )?;
-    let records = verified_file(source, &manifest.records, "records.jsonl", 128 * MIB)?;
+    let records = source_file(source, &manifest.records, "records.jsonl", 128 * MIB)?;
     let bars = native_bars(&records, &manifest, &originals, &instruments)?;
     let cutoff = bars.last().context("SOURCE_EMPTY")?.ts_init;
     ensure!(
@@ -539,8 +539,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
     );
     fs::create_dir(&output).context("OUTPUT_MUST_BE_NEW")?;
     let evidence = json!({"schema_version":1, "source_acquisition_path":args.acquisition.canonicalize()?,
-        "acquisition_sha256":digest(&source_bytes), "acquisition":serde_json::from_slice::<Value>(&source_bytes)?,
-        "instrument_definitions_sha256":digest(&definition_bytes),
+        "acquisition":serde_json::from_slice::<Value>(&source_bytes)?,
         "instrument_definitions":serde_json::from_slice::<Value>(&definition_bytes)?});
     publish(
         &output.join("source-evidence.json"),
@@ -556,21 +555,11 @@ pub fn run(args: &Arguments) -> Result<Value> {
             && read(&args.instruments, MIB)? == definition_bytes,
         "SOURCE_INPUT_CHANGED_DURING_IMPORT"
     );
-    verified_file(
-        &source,
-        &manifest.source_terms.file,
-        "source-terms.bin",
-        MIB,
-    )?;
-    verified_file(&source, &manifest.records, "records.jsonl", 128 * MIB)?;
-    for (index, response) in manifest.responses.iter().enumerate() {
-        verified_file(
-            &source,
-            &response.file,
-            &format!("raw/{index:04}.json"),
-            4 * MIB,
-        )?;
-    }
+    ensure!(
+        original_rows(&manifest, &source)? == originals
+            && source_file(&source, &manifest.records, "records.jsonl", 128 * MIB)? == records,
+        "SOURCE_INPUT_CHANGED_DURING_IMPORT"
+    );
     let counter = |value| contracts::DbCounter::new(value).map_err(anyhow::Error::msg);
     let native_selection = contracts::science::NativeBarSelectionV1 {
         schema_version: contracts::SchemaV1,
@@ -588,8 +577,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
         maximum_rows: u32::try_from(bars.len())?,
     };
     let report = json!({"schema_version":1, "native_version":"0.63.0", "source_provider":PROVIDER,
-    "source_record_kind":"OHLCV_CANDLE", "native_selection":native_selection, "acquisition_sha256":digest(&source_bytes),
-    "instrument_definitions_sha256":digest(&definition_bytes), "instruments":1,
+    "source_record_kind":"OHLCV_CANDLE", "native_selection":native_selection, "instruments":1,
     "instrument_versions":instruments.len(), "bars":bars.len(), "catalog_relative_path":"catalog",
     "source_evidence_relative_path":"source-evidence.json", "native_readback_verified":true,
     "coverage":"UNPROVEN", "historical_availability":"UNVERIFIED", "registered_in_quazonai":false,

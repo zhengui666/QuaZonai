@@ -49,6 +49,7 @@ def json_bytes(value):
 
 
 def file_record(path, body):
+    # Retained for the separate immutable-archive adapter.
     return {"path": path, "size": len(body), "sha256": hashlib.sha256(body).hexdigest()}
 
 
@@ -192,7 +193,7 @@ def acquire(provider_id, selection, output, terms_file, max_bytes=DEFAULT_MAX_BY
     safe_local(root, "acquisition.json")
     root.mkdir(parents=True, exist_ok=False)  # Never reuse a mutable API observation directory.
     provider = provider_by_id(provider_id)
-    terms_record = file_record("source-terms.bin", terms)
+    terms_record = {"path": "source-terms.bin", "size": len(terms)}
     publish_bytes(safe_local(root, terms_record["path"]), terms)
     (root / "raw").mkdir()
     responses, accumulated = [], {}
@@ -216,9 +217,9 @@ def acquire(provider_id, selection, output, terms_file, max_bytes=DEFAULT_MAX_BY
         rows, counts = decoded_page(provider, body, selection, request, observation, path)
         collect_rows(accumulated, rows)
         responses.append({"request": request, "observation": observation,
-                          "file": file_record(path, body), "counts": counts})
+                          "file": {"path": path, "size": len(body)}, "counts": counts})
     records = record_bytes(accumulated)
-    records_record = file_record("records.jsonl", records)
+    records_record = {"path": "records.jsonl", "size": len(records)}
     output_size += len(records)
     manifest = {**selection_plan, "created_at": now(),
                 "source_terms": {"file": terms_record, "reference": provider.descriptor["terms_reference"],
@@ -238,16 +239,19 @@ def acquire(provider_id, selection, output, terms_file, max_bytes=DEFAULT_MAX_BY
 
 
 def checked_file(root, item, expected_path, limit):
-    if not isinstance(item, dict) or item.get("path") != expected_path:
+    # Older acquisitions may carry a checksum; it is retained as source metadata,
+    # never calculated or treated as evidence of source authenticity.
+    if (not isinstance(item, dict) or item.get("path") != expected_path
+            or set(item) - {"path", "size", "sha256"}):
         raise ValueError("unexpected acquisition file path")
     body = local_bytes(safe_local(root, expected_path), limit)
-    if json_bytes(item) != json_bytes(file_record(expected_path, body)):
-        raise ValueError("acquisition file size or checksum mismatch")
+    if type(item.get("size")) is not int or item["size"] != len(body):
+        raise ValueError("acquisition file size mismatch")
     return body
 
 
 def verify(output):
-    """Offline integrity and reproducibility, never source authenticity or permission."""
+    """Reconstruct source records and clocks; never certify checksums or permission."""
     root = Path(os.path.abspath(output))
     manifest = read_json(local_bytes(safe_local(root, "acquisition.json"), MAX_MANIFEST_BYTES))
     if not isinstance(manifest, dict) or manifest.get("schema") != SCHEMA:
@@ -299,7 +303,7 @@ def verify(output):
             raise ValueError("output byte budget exhausted")
     except (KeyError, TypeError, AttributeError, OverflowError):
         raise ValueError("malformed acquisition manifest") from None
-    return {"schema": SCHEMA, "integrity": "VERIFIED", "provider": provider.descriptor["id"],
+    return {"schema": SCHEMA, "integrity": "SOURCE_RECORDS_VALIDATED", "provider": provider.descriptor["id"],
             "record_count": len(accumulated), "admission": dict(ADMISSION)}
 
 
@@ -307,7 +311,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("providers", help="list capabilities and unsupported native handoffs")
-    checking = commands.add_parser("verify", help="offline checksums and reproduction; not research admission")
+    checking = commands.add_parser("verify", help="offline source-record and clock reconstruction; not research admission")
     checking.add_argument("--output", type=Path, required=True)
     for command in ("plan", "download"):
         sub = commands.add_parser(command)

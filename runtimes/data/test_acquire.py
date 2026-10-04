@@ -147,9 +147,29 @@ class AcquisitionTest(unittest.TestCase):
         self.assertEqual(rows[0]["observed_at"], OBSERVATION["retrieved_at"])
         self.assertIsNone(rows[0]["historical_available_at"])
         self.fetch.reset_mock()
-        self.assertEqual(acquire.verify(self.output)["integrity"], "VERIFIED")
+        self.assertEqual(acquire.verify(self.output)["integrity"], "SOURCE_RECORDS_VALIDATED")
+        self.assertEqual(set(manifest["records"]), {"path", "size"})
         self.fetch.assert_not_called()
         self.assertFalse(manifest["admission"]["research_qualified"])
+
+    def test_source_records_are_checked_without_calculating_legacy_checksums(self):
+        with patch("hashlib.sha256", side_effect=AssertionError("No source checksum calculation")), \
+                patch("hashlib.sha1", side_effect=AssertionError("No substitute checksum")):
+            manifest = self.download()
+            for record in [manifest["records"], manifest["source_terms"]["file"],
+                           *(response["file"] for response in manifest["responses"])]:
+                self.assertEqual(set(record), {"path", "size"})
+                record["sha256"] = "legacy metadata is not verified"
+            self.rewrite_manifest(manifest)
+            self.assertEqual(acquire.verify(self.output)["integrity"], "SOURCE_RECORDS_VALIDATED")
+            target = self.output / "raw/0000.json"
+            original = target.read_bytes()
+            changed = original.replace(b"[120,1,3,2,2,1]", b"[120,1,3,2,2,2]")
+            self.assertEqual(len(changed), len(original))
+            self.assertNotEqual(changed, original)
+            target.write_bytes(changed)
+            with self.assertRaisesRegex(ValueError, "derived records"):
+                acquire.verify(self.output)
 
     def test_no_overwrite_or_resume_even_when_previous_output_is_incomplete(self):
         self.output.mkdir()
@@ -207,7 +227,7 @@ class AcquisitionTest(unittest.TestCase):
         self.assertEqual(manifest["record_count"], 1)
         self.assertEqual(acquire.verify(self.output)["record_count"], 1)
 
-    def test_tampered_files_and_rehashed_derivatives_are_rejected(self):
+    def test_wrong_sizes_and_rewritten_derivatives_are_rejected(self):
         manifest = self.download()
         for path in ("raw/0000.json", "source-terms.bin", "records.jsonl"):
             target = self.output / path
@@ -220,7 +240,7 @@ class AcquisitionTest(unittest.TestCase):
         target = self.output / "records.jsonl"
         fake = target.read_bytes().replace(b'2.0000000000000000000001', b'2.5')
         target.write_bytes(fake)
-        changed["records"] = acquire.file_record("records.jsonl", fake)
+        changed["records"] = {"path": "records.jsonl", "size": len(fake)}
         self.rewrite_manifest(changed)
         with self.assertRaisesRegex(ValueError, "derived records"):
             acquire.verify(self.output)
@@ -256,7 +276,7 @@ class AcquisitionTest(unittest.TestCase):
                     acquire.verify(self.output)
         # Equality is allowed at the clock's recorded resolution.
         self.rewrite_manifest({**manifest, "created_at": OBSERVATION["retrieved_at"]})
-        self.assertEqual(acquire.verify(self.output)["integrity"], "VERIFIED")
+        self.assertEqual(acquire.verify(self.output)["integrity"], "SOURCE_RECORDS_VALIDATED")
 
     def test_sequential_response_clocks_cannot_overlap_or_move_backwards(self):
         self.selection = Selection("BTC-USD", 0, 300 * 60, 60)
@@ -264,7 +284,7 @@ class AcquisitionTest(unittest.TestCase):
                  "retrieved_at": "2026-09-30T00:00:03Z"}
         self.fetch.side_effect = [(b'[]', deepcopy(OBSERVATION)), (b'[]', later)]
         manifest = self.download()
-        self.assertEqual(acquire.verify(self.output)["integrity"], "VERIFIED")
+        self.assertEqual(acquire.verify(self.output)["integrity"], "SOURCE_RECORDS_VALIDATED")
         for value in ("2026-09-30T00:00:00Z", "2026-09-29T23:59:58Z"):
             changed = deepcopy(manifest)
             changed["responses"][1]["observation"]["request_started_at"] = value

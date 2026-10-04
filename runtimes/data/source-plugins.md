@@ -79,11 +79,13 @@ invalidating previously frozen acquisition manifests. No claim of native support
 should be inferred from an HTTP provider descriptor alone.
 
 HTTP planning is offline; Hugging Face planning reads public repository metadata
-and resolves a fixed commit. Downloads retain each helper's existing bounded
-selection, original terms, checksum, and publication behavior. Snapshot downloads
-can resume the same verified selection; mutable HTTP acquisitions require a new
-directory. Snapshot verification is offline file-integrity checking, not source
-authenticity, completeness, permission, or point-in-time attestation.
+and resolves a fixed commit. HTTP downloads retain bounded selections, original
+terms, path/size records and publication behavior; verification reconstructs their
+source records and clocks. Snapshot and archive helpers retain their separate
+existing verification behavior. Snapshot downloads can resume the same verified
+selection; mutable HTTP acquisitions require a new directory. Snapshot verification
+is offline file-integrity checking, not source authenticity, completeness,
+permission, or point-in-time attestation.
 
 ## Native executables
 
@@ -144,10 +146,13 @@ python3 -B runtimes/data/source_plugins.py convert coinbase-candles \
   --output /absolute/native/coinbase-selection
 ```
 
-Conversion verifies the original acquisition before calling the native converter
-and rechecks it afterward. The final report must bind the SHA-256 of both original
-input files, report the exact selected BAR count, retain conservative admission
-flags, and attest native readback. Actual catalog Parquet and detached source
+Conversion reconstructs the original source records before calling the native
+converter and rechecks them afterward. Original acquisition and instrument-definition
+bytes must remain unchanged, and detached evidence retains their parsed contents.
+The final report records the exact selected BAR count, conservative admission
+flags and native readback. Older acquisition checksum fields remain readable but
+are not verified; `verify` reports `SOURCE_RECORDS_VALIDATED`, not checksum or
+source-authenticity certification. Actual catalog Parquet and detached source
 evidence must exist. The native report and its limitations are returned unchanged
 inside the conversion result. The importer handles one explicitly selected product
 per acquisition, with original native definitions and supported tick-only versions.
