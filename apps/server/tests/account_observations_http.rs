@@ -169,7 +169,7 @@ async fn owner_cli_session(a: &AccountFixture) -> String {
 
 fn observation(project: Id) -> Value {
     let mut value: Value = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/account-observations/paper-snapshot.json"
+        "../../../tests/contracts/native-account-paper-snapshot.json"
     ))
     .unwrap();
     value["binding"]["project_id"] = json!(project);

@@ -151,7 +151,7 @@ mod tests {
 
     fn observer() -> NativeAccountObserver {
         let fixture: AccountObservationSubmitV1 = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/account-observations/paper-snapshot.json"
+            "../../../tests/contracts/native-account-paper-snapshot.json"
         ))
         .unwrap();
         NativeAccountObserver::new(fixture.binding, DbCounter::ZERO, DbCounter::ZERO).unwrap()

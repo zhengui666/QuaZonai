@@ -10,7 +10,7 @@ use std::sync::mpsc::sync_channel;
 #[test]
 fn native_portfolio_snapshot_retains_exact_money_and_reports_queue_gaps() {
     let fixture: AccountObservationSubmitV1 = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/account-observations/paper-snapshot.json"
+        "../../../tests/contracts/native-account-paper-snapshot.json"
     ))
     .unwrap();
     let mut native = native_portfolio::CashPortfolio::new();
@@ -113,7 +113,7 @@ fn native_valuation_metadata_is_preserved_without_promoting_partial_equity() {
 #[test]
 fn invalid_native_host_clock_consumes_a_drop_without_fabricating_a_timestamp() {
     let fixture: AccountObservationSubmitV1 = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/account-observations/paper-snapshot.json"
+        "../../../tests/contracts/native-account-paper-snapshot.json"
     ))
     .unwrap();
     let observer =

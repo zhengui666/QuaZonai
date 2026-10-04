@@ -98,7 +98,7 @@ async fn setup(pool: &PgPool) -> (Store, Actor, Actor, AccountObservationSubmitV
         .unwrap();
     let nanos = now.timestamp_nanos_opt().unwrap() as u64;
     let mut request: AccountObservationSubmitV1 = serde_json::from_str(include_str!(
-        "../../../tests/fixtures/account-observations/paper-snapshot.json"
+        "../../../tests/contracts/native-account-paper-snapshot.json"
     ))
     .unwrap();
     request.binding.project_id = project;
