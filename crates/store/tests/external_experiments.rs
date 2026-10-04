@@ -464,7 +464,13 @@ async fn a_changed_runtime_revision_settles_original_trial_without_rebinding_or_
     runtime.configuration.name.push_str(" changed");
     // The relational setup has a legacy literal reference. Exercise the real
     // update with a native credential, not an unavailable or empty binding.
-    let secrets = tempfile::tempdir().unwrap();
+    let mut secrets_builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        secrets_builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    let secrets = secrets_builder.tempdir().unwrap();
     let key_path = secrets.path().join("master.key");
     integrations::secrets::SecretVault::initialize_key(&key_path).unwrap();
     let vault = integrations::secrets::SecretVault::open(secrets.path(), &key_path).unwrap();
