@@ -180,7 +180,7 @@ async function researchWorkspace(page: Page, options: { archived?: boolean; curr
   expect(validateResponse('/api/v2/projects/{id}/cycles', 'GET', 200, { schema_version: 1, items: [cycle], next_cursor: null }, 'application/json')).toBe(true);
   const input: Schema['InputSetSummary'] = { id: id(10), project_id: project.id, purpose: 'DISCOVERY', revision: '1',
     created_at: now, decision_cutoff: '2026-09-30T00:00:00.000001Z', frozen_at: now };
-  const frozen: Schema['FrozenBriefV1'] = { brief, execution_context: { schema_version: 1, runtime_id: id(11), runtime_revision: '3',
+  const frozen: Schema['FrozenBriefV1'] = { schema_version: 1, brief, execution_context: { schema_version: 1, runtime_id: id(11), runtime_revision: '3',
     discovery_input_set_id: input.id, validation_input_set_id: id(12), sealed_input_set_id: id(13) } };
   expect(validateResponse('/api/v2/input-sets', 'GET', 200, { schema_version: 1, items: [input], next_cursor: null }, 'application/json')).toBe(true);
   expect(validateResponse('/api/v2/briefs/{id}/execution-context', 'GET', 200, frozen, 'application/json')).toBe(true);

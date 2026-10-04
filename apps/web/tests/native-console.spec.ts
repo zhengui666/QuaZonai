@@ -506,7 +506,7 @@ if (config.phase === 'before-restart') {
         const names = await window.caches.keys(); const urls: string[] = [];
         for (const name of names) {
           const cache = await window.caches.open(name);
-          urls.push(...(await cache.keys()).map(request => new URL(request.url()).pathname));
+          urls.push(...(await cache.keys()).map(request => new URL(request.url).pathname));
         }
         return { names, urls };
       });
