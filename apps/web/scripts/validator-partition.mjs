@@ -1,9 +1,7 @@
 // QuaZonai adapter around official AJV standalone output. This does not implement
 // validation: the pinned TypeScript binder only relocates native declarations.
 import ts from 'typescript';
-import { createHash } from 'node:crypto';
 
-const digest = value => createHash('sha256').update(value).digest('hex').slice(0, 20);
 const fail = message => { throw new Error(`Unsupported AJV standalone program: ${message}`); };
 const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed, removeComments: true });
 
@@ -155,9 +153,11 @@ export function partitionStandalone(source, provenance) {
   }
   const roots = new Set(nativeExports.values());
   const stable = new Map();
-  for (const [pointer, group] of byPointer) {
+  let schemaSequence = 0;
+  for (const group of byPointer.values()) {
     group.sort((a, b) => Number(roots.has(b)) - Number(roots.has(a)) || a.id - b.id);
-    group.forEach((unit, index) => stable.set(unit.id, `validate_${digest(pointer)}_${index}`));
+    group.forEach((unit, index) => stable.set(unit.id, `validate_${schemaSequence}_${index}`));
+    schemaSequence++;
   }
   function transformed(node, namesById) {
     const result = ts.transform(node, [context => root => {
@@ -184,14 +184,10 @@ export function partitionStandalone(source, provenance) {
     const text = printer.printNode(ts.EmitHint.Unspecified, result.transformed[0], ast);
     result.dispose(); return text;
   }
-  const constantGroups = new Map();
+  let constantSequence = 0;
   for (const unit of units) if (reachable.has(unit.id) && unit.kind === 'constant') {
-    const initializer = unit.statements[0].declarationList.declarations[0].initializer;
-    const key = transformed(initializer, stable);
-    const group = constantGroups.get(key) ?? []; group.push(unit); constantGroups.set(key, group);
+    stable.set(unit.id, `value_${constantSequence++}`);
   }
-  for (const [key, group] of constantGroups) group.forEach((unit, index) => stable.set(unit.id, `value_${digest(key)}_${index}`));
-  if (new Set(stable.values()).size !== stable.size) fail('stable symbol hash collision');
   // Symbol-aware replacement alone is insufficient: introducing a stable name
   // can capture an existing local/parameter/catch binding at a reference site.
   // Native AJV uses counter names; reject any future emitter shape that would
@@ -240,9 +236,7 @@ export function partitionStandalone(source, provenance) {
   components.forEach((group, index) => {
     if (!group.length) return;
     const pointers = [...new Set(group.filter(unit => unit.pointer).map(unit => unit.pointer))].sort();
-    const key = pointers.length ? pointers.join('\n') : group.map(unit => stable.get(unit.id)).sort().join('\n');
-    const path = `modules/${pointers.length ? 'schema' : 'shared'}-${digest(key)}.cjs`;
-    if ([...paths.values()].includes(path)) fail('module path collision');
+    const path = `modules/${pointers.length ? 'schema' : 'shared'}-${index}.cjs`;
     paths.set(index, path); records.set(path, { schemas: pointers, bindings: group.map(unit => ({ name: stable.get(unit.id), kind: unit.kind, ...(unit.pointer ? { schema: unit.pointer } : {}) })).sort((a, b) => a.name.localeCompare(b.name)) });
   });
   const modules = new Map();

@@ -17,6 +17,10 @@ function moduleFor(path: string, method: string, status: number) {
   if (!file) throw new Error(`Missing original schema provenance: ${pointer}`);
   return file.path.split('/').at(-1)!.replace(/\.cjs$/, '');
 }
+function isModuleRequest(url: URL | string, module: string) {
+  const pathname = typeof url === 'string' ? new URL(url).pathname : url.pathname;
+  return new RegExp(`(?:^|[/_])${module}(?=[.-])`).test(pathname);
+}
 const listModule = moduleFor('/api/v2/projects', 'get', 200);
 const receiptModule = moduleFor('/api/v2/data/sources', 'post', 201);
 const reportModule = moduleFor('/api/v2/artifacts/{id}/agent-evaluation', 'get', 200);
@@ -66,17 +70,28 @@ async function openReports(page: Page) {
   await expect(page.locator('input[type=file]')).toHaveCount(0);
 }
 
+test('validator request matching distinguishes sequence prefixes in dev and production', () => {
+  for (const pathname of ['/src/generated/response-contract/modules/schema-1.cjs',
+    '/node_modules/.vite/deps/@quazonai_web_response-contract_modules_schema-1.js',
+    '/assets/schema-1-build.js']) {
+    const url = new URL(pathname, 'http://127.0.0.1');
+    expect(isModuleRequest(url, 'schema-1')).toBe(true);
+    expect(isModuleRequest(url.href, 'schema-1')).toBe(true);
+    expect(isModuleRequest(new URL(pathname.replace('schema-1', 'schema-10'), url), 'schema-1')).toBe(false);
+  }
+});
+
 test('normal browser loading uses selective CJS interop without reaching the eager facade', async ({ page }) => {
   const state = await session(page); const requests: string[] = []; page.on('request', request => requests.push(request.url()));
   await page.goto('/'); await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
-  expect(requests.some(url => url.includes(listModule))).toBe(true);
+  expect(requests.some(url => isModuleRequest(url, listModule))).toBe(true);
   expect(requests.some(url => /\/generated\/responses\.cjs|response-contract\.js(?:\?|$)/.test(url))).toBe(false);
   expect(state.writes).toEqual([]);
 });
 
 test('a delayed response validator cannot replace a newer navigation choice', async ({ page }) => {
   const state = await session(page); let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); let pending = 0;
-  await page.route(url => url.pathname.includes(listModule), async route => { pending++; await held; await route.continue(); });
+  await page.route(url => isModuleRequest(url, listModule), async route => { pending++; await held; await route.continue(); });
   try {
     await page.goto('/'); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
     await expect.poll(() => pending).toBeGreaterThan(0);
@@ -114,20 +129,20 @@ test('a failed Settings receipt validator retains the original command without a
     return route.fulfill({ status: 201, json: { schema_version: 1, replayed: writes.length > 1, resource: source } });
   });
   let fail = true;
-  await page.route(url => url.pathname.includes(receiptModule), route => fail ? route.abort('failed') : route.continue());
+  await page.route(url => isModuleRequest(url, receiptModule), route => fail ? route.abort('failed') : route.continue());
   await page.goto('/');
   await page.getByRole('menuitem', { name: '设置', exact: true }).click();
   await page.getByRole('tab', { name: '数据', exact: true }).click();
   await page.getByRole('button', { name: '登记数据源', exact: true }).click();
   const editor = page.getByRole('dialog', { name: '登记数据源', exact: true });
-  await editor.getByRole('textbox', { name: '数据源名称', exact: true }).fill(source.name);
+  await editor.getByRole('textbox', { name: /^\*?\s*数据源名称$/ }).fill(source.name);
   await editor.getByRole('combobox', { name: '选择已登记的 Runtime', exact: true }).click();
   await page.getByText(runtime.configuration.name, { exact: true }).last().click();
-  await editor.getByRole('textbox', { name: 'Runtime 原生目录登记键', exact: true }).fill(source.native_catalog_ref);
+  await editor.getByRole('textbox', { name: /^\*?\s*Runtime 原生目录登记键$/ }).fill(source.native_catalog_ref);
   await editor.getByRole('button', { name: '登记', exact: true }).click();
   await expect(editor.getByText(/响应校验组件加载失败/)).toBeVisible();
-  await expect(editor.getByRole('textbox', { name: '数据源名称', exact: true })).toHaveValue(source.name);
-  await expect(editor.getByRole('textbox', { name: '数据源名称', exact: true })).toBeDisabled();
+  await expect(editor.getByRole('textbox', { name: /^\*?\s*数据源名称$/ })).toHaveValue(source.name);
+  await expect(editor.getByRole('textbox', { name: /^\*?\s*数据源名称$/ })).toBeDisabled();
   const retry = editor.getByRole('button', { name: '重试当前操作', exact: true });
   await expect(retry).toHaveAccessibleName('重试当前操作');
   await expect(retry).toHaveAttribute('aria-busy', 'false');
@@ -151,7 +166,7 @@ test('a failed Settings receipt validator retains the original command without a
 
 test('a failed report validator cannot display unvalidated evidence and reload recovers the original report', async ({ page }) => {
   const state = await session(page); let fail = true;
-  await page.route(url => url.pathname.includes(reportModule), route => fail ? route.abort('failed') : route.continue());
+  await page.route(url => isModuleRequest(url, reportModule), route => fail ? route.abort('failed') : route.continue());
   await openReports(page);
   await page.getByRole('button', { name: firstReportId, exact: true }).click();
   const detail = page.getByRole('dialog', { name: 'Agent 评估详情', exact: true });
@@ -175,7 +190,7 @@ test('a failed report validator cannot display unvalidated evidence and reload r
 test('a dismissed delayed report validation cannot populate a later report drawer', async ({ page }) => {
   const state = await session(page);
   let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); let pending = 0;
-  await page.route(url => url.pathname.includes(reportModule), async route => { pending++; await held; await route.continue(); });
+  await page.route(url => isModuleRequest(url, reportModule), async route => { pending++; await held; await route.continue(); });
   await openReports(page);
   const detail = page.getByRole('dialog', { name: 'Agent 评估详情', exact: true });
   try {
@@ -239,7 +254,7 @@ test.describe('production PWA validator precache', () => {
     await session(page);
     const deferredModule = moduleFor('/api/v2/artifacts/{id}', 'get', 200);
     let blocked = 0;
-    await context.route(url => url.pathname.includes(deferredModule), route => { blocked++; return route.abort('failed'); });
+    await context.route(url => isModuleRequest(url, deferredModule), route => { blocked++; return route.abort('failed'); });
     await page.goto('/'); await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
     await expect.poll(() => blocked).toBeGreaterThan(0);
     await expect.poll(() => page.evaluate(async () => {
@@ -254,7 +269,7 @@ test.describe('production PWA validator precache', () => {
     await session(page);
     const deferredModule = moduleFor('/api/v2/artifacts/{id}', 'get', 200);
     let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); let pending = 0;
-    await context.route(url => url.pathname.includes(deferredModule), async route => { pending++; await held; await route.continue(); });
+    await context.route(url => isModuleRequest(url, deferredModule), async route => { pending++; await held; await route.continue(); });
     await page.goto('/'); await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
     await expect.poll(() => pending).toBeGreaterThan(0);
     expect(await page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(false);

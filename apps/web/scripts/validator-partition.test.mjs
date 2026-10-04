@@ -85,7 +85,14 @@ test('public AJV self/mutual recursion, wrappers and full errors match', () => {
     }
     const earlier = { $defs: { Earlier: { type: 'string' }, ...document.$defs } };
     const other = emit(earlier, { earlier: '#/$defs/Earlier', a: '#/$defs/A', b: '#/$defs/B' }).partition;
-    for (const [file, code] of partition.modules) assert.equal(other.modules.get(file), code);
+    const otherRun = runtime(other);
+    try {
+      assert.equal(otherRun.exports.earlier('value'), true); assert.equal(otherRun.exports.earlier(1), false);
+      for (const name of ['a', 'b']) for (const value of [null, {}, { child: {} }, { peer: { value: 3 } }, { peer: { value: 'bad' } }, { value: 4, next: { child: {} } }, { extra: true }]) {
+        assert.equal(otherRun.exports[name](value), run.exports[name](value));
+        assert.deepEqual(otherRun.exports[name].errors, run.exports[name].errors);
+      }
+    } finally { otherRun.dispose(); }
   } finally { run.dispose(); }
 });
 
@@ -96,6 +103,18 @@ test('stable schema filenames localize a native constraint edit', () => {
   const second = emit(changed, { a: '#/$defs/A', b: '#/$defs/B' }).partition;
   assert.deepEqual([...first.modules.keys()].sort(), [...second.modules.keys()].sort());
   assert.equal([...first.modules].filter(([file, code]) => second.modules.get(file) !== code).length, 1);
+});
+
+test('schema groups, native instances and module sequences are deterministic', () => {
+  const source = 'exports.a=validate0;exports.b=validate1;exports.other=validate2;const schema0={answer:42};function validate0(data){return schema0.answer===data;}function validate1(data){return data===true;}function validate2(data){return data===false;}';
+  const first = partitionStandalone(source, mappings);
+  assert.deepEqual(partitionStandalone(source, mappings), first);
+  assert.equal(first.exports.get('a').name, 'validate_0_0');
+  assert.equal(first.exports.get('other').name, 'validate_0_1');
+  assert.equal(first.exports.get('b').name, 'validate_1_0');
+  for (const file of first.modules.keys()) assert.match(file, /^modules\/(?:schema|shared)-[0-9]+\.cjs$/);
+  const constants = [...first.provenance.values()].flatMap(record => record.bindings).filter(binding => binding.kind === 'constant');
+  assert.deepEqual(constants.map(binding => binding.name), ['value_0']);
 });
 
 for (const [name, source] of [
@@ -123,8 +142,8 @@ test('native ESM and CommonJS load exactly the same generated graph', async () =
 });
 
 test('stable symbol names cannot capture parameters, catch, block or destructuring locals', () => {
-  const probe = partitionStandalone('exports.a=validate1;function validate1(data){return true;}', mappings);
-  const stable = probe.exports.get('a').name;
+  const probe = partitionStandalone('exports.a=validate0;exports.b=validate1;function validate0(data){return validate1(data);}function validate1(data){return true;}', mappings);
+  const stable = probe.exports.get('b').name;
   const bodies = [
     `const ${stable}=()=>false;return validate1(data);`,
     `try{throw ()=>false;}catch(${stable}){return validate1(data);}`,

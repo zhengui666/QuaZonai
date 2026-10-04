@@ -55,7 +55,7 @@ test('browser application imports use selective validators instead of the eager 
   assert.deepEqual(violations, [], 'Browser imports must use a selective validator or the lazy response loader');
 });
 
-test('fresh complete repeated generation is byte-identical, schema-local, and checkable', { timeout: 120_000 }, async () => {
+test('fresh complete repeated generation is deterministic and preserves added or edited constraints', { timeout: 120_000 }, async () => {
   const started = performance.now(); outputs = await generateOutputs(document); const firstMs = performance.now() - started;
   const second = await generateOutputs(structuredClone(document)); assert.deepEqual([...second], [...outputs]);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qz-complete-'));
@@ -65,17 +65,32 @@ test('fresh complete repeated generation is byte-identical, schema-local, and ch
     publishOutputs(root, second);
     for (const [file, mtime] of before) assert.equal(fs.statSync(path.join(root, file)).mtimeMs, mtime);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  function verify(generated, inspect) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'qz-changed-'));
+    try {
+      publishOutputs(directory, generated);
+      fs.symlinkSync(new URL('../node_modules', import.meta.url), path.join(directory, 'node_modules'));
+      inspect(require(path.join(directory, 'responses.cjs')));
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  }
   const added = structuredClone(document);
   added.paths = { '/__validator_fixture': { get: { responses: { 200: { content: { 'application/json': { schema: { type: 'string', minLength: 7 } } } } } } }, ...added.paths };
   const addition = await generateOutputs(added);
   const modules = [...outputs].filter(([file]) => file.startsWith('response-contract/modules/'));
-  for (const [file, code] of modules) assert.equal(addition.get(file), code, file);
   assert.equal([...addition.keys()].filter(file => file.startsWith('response-contract/modules/')).length, modules.length + 1);
+  verify(addition, generated => {
+    assert.equal(generated.validateResponse('/__validator_fixture', 'get', 200, '1234567'), true);
+    assert.equal(generated.validateResponse('/__validator_fixture', 'get', 200, 'short'), false);
+    assert.equal(generated.validateDecimal('0'.repeat(100)), false);
+  });
   const edited = structuredClone(document); edited.components.schemas.DecimalValue.maxLength = 127;
   const edit = await generateOutputs(edited);
-  assert.deepEqual([...edit.keys()].sort(), [...outputs.keys()].sort());
-  assert.equal(modules.filter(([file, code]) => edit.get(file) !== code).length, 1);
-  console.log(JSON.stringify({ generatedFiles: outputs.size, modules: modules.length, moduleBytes: modules.reduce((sum, [, code]) => sum + Buffer.byteLength(code), 0), fullGenerationMs: Math.round(firstMs), localizedModulesChanged: 1 }));
+  verify(edit, generated => {
+    assert.equal(generated.validateDecimal('0'.repeat(100)), true);
+    assert.equal(generated.validateDecimal('0'.repeat(128)), false);
+    assert.equal(generated.validateDecimal('not-a-decimal'), false);
+  });
+  console.log(JSON.stringify({ generatedFiles: outputs.size, modules: modules.length, moduleBytes: modules.reduce((sum, [, code]) => sum + Buffer.byteLength(code), 0), fullGenerationMs: Math.round(firstMs) }));
 });
 
 test('all native results/errors, exported aliases, CJS/ESM/selective identities and lazy decisions match', { timeout: 120_000 }, async () => {

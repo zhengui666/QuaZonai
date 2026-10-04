@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { completeOutputs, publishOutputs, checkOutputs, marker } from './validator-output.mjs';
-const moduleA = 'response-contract/modules/schema-aaaaaaaaaaaaaaaaaaaa.cjs';
-const moduleB = 'response-contract/modules/schema-bbbbbbbbbbbbbbbbbbbb.cjs';
+const moduleA = 'response-contract/modules/schema-0.cjs';
+const moduleB = 'response-contract/modules/schema-1.cjs';
 const files = (...modules) => completeOutputs(new Map([['responses.cjs', marker + 'exports.x = 1;\n'], ['responses.d.cts', marker + 'export declare const x: number;\n'], ...modules.map(file => [file, marker + 'exports.test = true;\n'])]));
 function fixture(run) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qz-owned-'));
@@ -76,10 +76,24 @@ test('invalid expected set rejects before publishing any bytes', () => fixture(r
   assert.deepEqual(bytes(root), before);
 }));
 
-test('previously owned stale output with modified marked bytes is preserved', () => fixture(root => {
+test('stale generated output is removed by marker and ownership, without content comparison', () => fixture(root => {
   publishOutputs(root, files(moduleA));
-  fs.appendFileSync(path.join(root, moduleA), '// manual modification that must not be deleted\n');
-  const before = bytes(root);
-  assert.throws(() => publishOutputs(root, files(moduleB)), /modified stale file/);
-  assert.deepEqual(bytes(root), before);
+  fs.appendFileSync(path.join(root, moduleA), '// obsolete generated content\n');
+  publishOutputs(root, files(moduleB));
+  assert.equal(fs.existsSync(path.join(root, moduleA)), false);
+  checkOutputs(root, files(moduleB));
+}));
+
+test('legacy generated filenames and manifest metadata migrate without digest checks', () => fixture(root => {
+  const legacy = 'response-contract/modules/schema-aaaaaaaaaaaaaaaaaaaa.cjs';
+  publishOutputs(root, files(legacy));
+  const filename = path.join(root, 'response-contract/manifest.json');
+  const manifest = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  for (const entry of manifest.files) entry.sha256 = 'unused legacy metadata';
+  fs.writeFileSync(filename, JSON.stringify(manifest));
+  publishOutputs(root, files(moduleA));
+  assert.equal(fs.existsSync(path.join(root, legacy)), false);
+  const current = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  for (const entry of current.files) assert.equal(Object.hasOwn(entry, 'sha256'), false);
+  checkOutputs(root, files(moduleA));
 }));

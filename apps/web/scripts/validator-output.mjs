@@ -1,14 +1,12 @@
 // Exclusive generated ownership; all analysis/compaction finishes before writes.
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
 export const marker = '// Generated from Rust OpenAPI. Do not edit.\n';
 export const manifestPath = 'response-contract/manifest.json';
 const ownedPath = value => value === 'responses.cjs' || value === 'responses.d.cts'
-  || /^response-contract\/(?:modules\/(?:schema|shared)-[a-f0-9]{20}\.cjs|[a-z][a-z0-9-]*\.(?:cjs|mjs|d\.cts|d\.mts|json))$/.test(value);
-const hash = value => createHash('sha256').update(value).digest('hex');
+  || /^response-contract\/(?:modules\/(?:schema|shared)-[a-z0-9]+\.cjs|[a-z][a-z0-9-]*\.(?:cjs|mjs|d\.cts|d\.mts|json))$/.test(value);
 const error = message => { throw new Error(`Generated response ownership: ${message}`); };
 
 export function completeOutputs(payload, provenance = new Map(), imports = new Map()) {
@@ -17,7 +15,7 @@ export function completeOutputs(payload, provenance = new Map(), imports = new M
     if (!ownedPath(file)) error(`out-of-scope path ${file}`);
     if (!content.startsWith(marker) && !file.endsWith('.json')) error(`missing marker ${file}`);
     if (file.endsWith('.json') && JSON.parse(content).generated !== marker.trim()) error(`missing JSON marker ${file}`);
-    return { path: file, sha256: hash(content), bytes: Buffer.byteLength(content), importIds: imports.get(file) ?? [], provenance: provenance.get(file) ?? {} };
+    return { path: file, bytes: Buffer.byteLength(content), importIds: imports.get(file) ?? [], provenance: provenance.get(file) ?? {} };
   });
   const manifest = { generated: marker.trim(), version: 1, ownedRoot: 'response-contract', manifestPath, files };
   return new Map([...payload, [manifestPath, JSON.stringify(manifest, null, 2) + '\n']]);
@@ -59,16 +57,14 @@ function inventory(root) {
 }
 function previousManifest(root) {
   const filename = path.join(root, manifestPath);
-  if (!regularOrAbsent(filename)) return new Map();
+  if (!regularOrAbsent(filename)) return new Set();
   let manifest; try { manifest = JSON.parse(fs.readFileSync(filename, 'utf8')); } catch { error('invalid previous manifest JSON'); }
   if (manifest.generated !== marker.trim() || manifest.version !== 1 || manifest.ownedRoot !== 'response-contract'
     || manifest.manifestPath !== manifestPath || !Array.isArray(manifest.files)) error('invalid previous manifest ownership');
-  const previous = new Map([[manifestPath, null]]);
+  const previous = new Set([manifestPath]);
   for (const entry of manifest.files) {
-    if (!entry || !ownedPath(entry.path) || entry.path === manifestPath || previous.has(entry.path)
-      || !/^[a-f0-9]{64}$/.test(entry.sha256) || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0
-      || !Array.isArray(entry.importIds) || typeof entry.provenance !== 'object') error('invalid previous manifest entry');
-    previous.set(entry.path, entry);
+    if (!entry || !ownedPath(entry.path) || entry.path === manifestPath) error('invalid previous manifest entry');
+    previous.add(entry.path);
   }
   return previous;
 }
@@ -92,7 +88,7 @@ export function publishOutputs(root, expected) {
   if (fs.existsSync(root) && fs.lstatSync(root).isSymbolicLink()) error('output directory is a symlink');
   const exists = fs.existsSync(root);
   const actual = exists ? inventory(root) : [];
-  const previous = exists ? previousManifest(root) : new Map();
+  const previous = exists ? previousManifest(root) : new Set();
   const stale = actual.filter(file => !expected.has(file));
   // Audit ALL destinations and stale paths before the first mkdir/write/unlink.
   // Unknown data is never deleted, including a file absent from an old manifest.
@@ -100,10 +96,6 @@ export function publishOutputs(root, expected) {
     if (!expected.has(file) && !previous.has(file)) error(`unknown file ${file}`);
     if (!marked(path.join(root, file))) error(`unmarked file ${file}`);
     if (stale.includes(file) && (!file.startsWith('response-contract/') || !previous.has(file))) error(`unsafe stale path ${file}`);
-    if (stale.includes(file)) {
-      const recorded = previous.get(file); const content = fs.readFileSync(path.join(root, file));
-      if (!recorded || content.length !== recorded.bytes || hash(content) !== recorded.sha256) error(`modified stale file ${file}`);
-    }
   }
   for (const [file] of expected) if (!ownedPath(file)) error(`invalid expected path ${file}`);
   fs.mkdirSync(path.join(root, 'response-contract/modules'), { recursive: true });
