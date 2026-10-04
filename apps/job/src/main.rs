@@ -233,6 +233,9 @@ fn run(operation: Operation) -> Result<()> {
 }
 
 fn public_error_code(error: &anyhow::Error) -> &'static str {
+    if error.is::<job::managed::CompilerMemoryLimit>() {
+        return "QZ_NATIVE_JOB_MEMORY_LIMIT";
+    }
     match error.to_string().as_str() {
         "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED" => {
             "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
@@ -267,13 +270,21 @@ fn public_failure(error: &anyhow::Error) -> String {
     format!("{}\n{detail}", public_error_code(error))
 }
 
+fn failure_exit_code(error: &anyhow::Error) -> i32 {
+    if error.is::<job::managed::CompilerMemoryLimit>() {
+        domain::runtime_jobs::NATIVE_MEMORY_LIMIT_EXIT_CODE
+    } else {
+        1
+    }
+}
+
 fn main() {
     let args = Arguments::parse();
     if let Err(error) = run(args.command) {
         // Keep stdout reserved for typed evidence. Local stderr retains bounded
         // causes without reading or dumping model, catalog or request contents.
         eprintln!("{}", public_failure(&error));
-        std::process::exit(1);
+        std::process::exit(failure_exit_code(&error));
     }
 }
 
@@ -281,6 +292,25 @@ fn main() {
 mod tests {
     use super::{public_error_code, public_failure, Arguments, Operation};
     use clap::Parser;
+
+    #[test]
+    fn only_typed_compiler_memory_evidence_selects_the_resource_exit() {
+        for error in [
+            anyhow::Error::new(job::managed::CompilerMemoryLimit),
+            anyhow::Error::new(job::managed::CompilerMemoryLimit).context("native compiler"),
+        ] {
+            assert_eq!(public_error_code(&error), "QZ_NATIVE_JOB_MEMORY_LIMIT");
+            assert_eq!(
+                super::failure_exit_code(&error),
+                domain::runtime_jobs::NATIVE_MEMORY_LIMIT_EXIT_CODE
+            );
+        }
+        for message in ["NATIVE_COMPILER_MEMORY_LIMIT", "NATIVE_COMPILATION_FAILED"] {
+            let error = anyhow::anyhow!(message);
+            assert_eq!(public_error_code(&error), "QZ_NATIVE_JOB_FAILED");
+            assert_eq!(super::failure_exit_code(&error), 1);
+        }
+    }
 
     #[test]
     fn market_capability_error_has_a_stable_public_code() {

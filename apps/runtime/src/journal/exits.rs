@@ -35,7 +35,12 @@ impl Journal {
         {
             return Err(Failure::Integrity);
         }
-        let reason = if observed.oom_killed {
+        // Docker can miss an asynchronous OOM event when a compiler child dies
+        // and the job exits promptly. The fixed job's reserved status carries
+        // fresh local cgroup evidence; preserve Docker's raw flag independently.
+        let reason = if observed.oom_killed
+            || exit_code == i64::from(boundary::NATIVE_MEMORY_LIMIT_EXIT_CODE)
+        {
             Some(RuntimeFailureCode::MemoryLimit)
         } else if exit_code == 124
             || finished > spec.deadline_at
