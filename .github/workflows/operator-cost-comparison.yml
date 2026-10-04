@@ -1,8 +1,8 @@
 name: Operator packaging cost comparison
 on:
   pull_request:
-    # Investigative head: DIAGNOSTIC_ONLY, never merge on this result. Restore
-    # full mode and qualify the actual current-base integration before merging.
+    # Fixed equivalent-capability qualification against the merged producer.
+    # Changes to this harness must qualify the exact final integration head.
     paths:
       - '.github/workflows/operator-cost-comparison.yml'
       - 'deploy/docker/operator_cost*'
@@ -12,13 +12,13 @@ on:
   workflow_dispatch:
     inputs:
       candidate_revision:
-        description: Exact reviewed candidate commit SHA to diagnose against producer candidate dc9c8cf (not a dev merge).
+        description: Exact reviewed candidate commit SHA to compare with merged producer 544ee6e (no publication).
         required: true
         type: string
 permissions:
   contents: read
 env:
-  COMPARISON_MODE: application-elf-diagnostic
+  COMPARISON_MODE: full
   CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
   HARNESS_REVISION: ${{ github.event.pull_request.head.sha || inputs.candidate_revision }}
 concurrency:
@@ -43,7 +43,7 @@ jobs:
           esac
           echo "MEASUREMENT_DEADLINE=$(( $(date +%s) + seconds ))" >> "$GITHUB_ENV"
           [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
-          test "$CANDIDATE_REVISION" != dc9c8cf30704781615ba6524f50368d0c148d9b3
+          test "$CANDIDATE_REVISION" != 544ee6e042b297c0943decb06aa4ea2ce0b92089
       - name: Check out the measurement harness
         timeout-minutes: 5
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -56,7 +56,7 @@ jobs:
         timeout-minutes: 5
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: dc9c8cf30704781615ba6524f50368d0c148d9b3
+          ref: 544ee6e042b297c0943decb06aa4ea2ce0b92089
           path: old-source
           persist-credentials: false
       - name: Check out the exact candidate source
@@ -133,7 +133,7 @@ jobs:
             --destination "$RUNNER_TEMP/operator-comparison-diagnostics" \
             --revision "$CANDIDATE_REVISION" "${diagnostic_options[@]}"
           # A completed diagnostic is still non-qualifying, even if a future
-          # comparator change accidentally returns zero. This head must not merge.
+          # comparator change accidentally returns zero. Only full mode qualifies.
           if test "$COMPARISON_MODE" = application-elf-diagnostic; then exit 1; fi
           exit "$status"
       - name: Retain bounded original section diagnostics separately

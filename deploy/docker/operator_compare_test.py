@@ -21,6 +21,18 @@ EMPTY_CACHE = 'ID        RECLAIMABLE   SIZE      LAST ACCESSED\nReclaimable:\t0B
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_final_workflow_uses_full_mode_and_the_actual_merged_producer(self):
+        workflow = (Path(comparison.__file__).resolve().parents[2] /
+                    '.github/workflows/operator-cost-comparison.yml').read_text()
+        self.assertEqual(comparison.OLD_REVISION, '544ee6e042b297c0943decb06aa4ea2ce0b92089')
+        self.assertIn('\n  COMPARISON_MODE: full\n', workflow)
+        self.assertIn('          ref: ' + comparison.OLD_REVISION + '\n', workflow)
+        self.assertIn('test "$CANDIDATE_REVISION" != ' + comparison.OLD_REVISION, workflow)
+        self.assertIn('full) seconds=$(( 85 * 60 )) ;;', workflow)
+        self.assertIn('timeout-minutes: 95', workflow)
+        self.assertIn('for variant in old candidate; do', workflow)
+        self.assertIn('if test "$COMPARISON_MODE" = application-elf-diagnostic; then exit 1; fi', workflow)
+
     def reports(self):
         recipe = {'revision': comparison.OLD_REVISION, 'base_images': ['same@sha256:' + SHA],
                   'locked_inputs_sha256': dict.fromkeys(comparison.LOCKED_INPUTS, SHA),

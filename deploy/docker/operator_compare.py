@@ -18,7 +18,7 @@ import operator_cost as cost
 import operator_elf_forensics as forensics
 
 
-OLD_REVISION = 'dc9c8cf30704781615ba6524f50368d0c148d9b3'
+OLD_REVISION = '544ee6e042b297c0943decb06aa4ea2ce0b92089'
 PRIOR_PACKAGING_REVISION = '56aad24e0c73b31a9255e37adaa0abcd812a7c42'
 REFERENCE_REVISION = '183fe2c4bfec6a04bece3a550cc705217ab391d3'
 REFERENCE_IMAGE = 'ghcr.io/zhengui666/quazonai@sha256:a01c07cc9ce2ce0132d85e8bce28466f8784178b9dbd052119844085d43b76f5'

@@ -2,16 +2,16 @@
 
 ## Scope
 
-The current diagnostic integration uses exact producer PR candidate
-`dc9c8cf30704781615ba6524f50368d0c148d9b3` (P), whose parent is dev
-`183fe2c4bfec6a04bece3a550cc705217ab391d3`. P is not a dev merge and is the
-baseline only for the bounded fixed-producer A/A. Final full qualification must
-replace it with the actual producer merge M. Historical b58 evidence stays
-historical. The original PR 152 head
+The final packaging comparison uses the actual PR 162 dev merge
+`544ee6e042b297c0943decb06aa4ea2ce0b92089` (M) as B. Its tree is identical to
+the producer candidate `dc9c8cf30704781615ba6524f50368d0c148d9b3` (P), whose
+bounded A/A and compatibility evidence passed as recorded below. That diagnostic
+does not qualify packaging. Historical b58 evidence stays historical. The original PR 152 head
 `56aad24e0c73b31a9255e37adaa0abcd812a7c42` and the selected exact baseline must both remain
 ancestors of the integration commit (C). The prepared integration preserves
-both current PR head `cbe9bd11746b2de17f9573d2afb5134fbf44cea3` and P as
-parents, retaining P's current-dev changes and the consolidated operator.
+the existing diagnostic head `a299344e4be376ec4ed8e7d01e45468c4c3c1fd6`, its
+portable-fixture correction, and M as ancestors. M introduces no additional
+source changes beyond P; the consolidated operator and its producer remain intact.
 Preserve the existing installed
 `catalog-prepare` and `polymarket-history` command contracts through regular-file
 launchers. Each launcher executes the fixed packaged `source-tools` path, a
@@ -397,8 +397,33 @@ rejection assertion and the production compatibility and whole-file A/A gates.
 This fixture correction is not native producer or installed-image acceptance.
 
 PR 162 merged into dev as `544ee6e042b297c0943decb06aa4ea2ce0b92089`.
-That identifies M for a subsequent final integration; it does not retroactively
-qualify the candidate-P diagnostic retained here. This correction leaves its
-immutable pins, disabled C and deliberate diagnostic-only failure unchanged.
-Final delivery still needs M integrated into C, the full current-base comparison,
-applicable exact-head CI, installed acceptance and independent review.
+The fixture-only correction preserved the diagnostic's immutable pins and
+disabled C. The final integration below moves the workflow to full M/C comparison
+without relaxing the diagnostic-only rejection or production checks.
+
+## Final merged-producer comparison preparation
+
+[Fixed-producer run 36969878498](https://github.com/zhengui666/QuaZonai/actions/runs/36969878498)
+completed its native diagnostic successfully. The job failed only at the deliberate
+packaging-qualification rejection. The retained diagnostic reports complete
+producer checks with no reasons, exact server/runtime A/A whole-file equality
+before and after stripping, compatible decoded loader semantics, complete
+dynamic/unwind/strip checks and successful owned cleanup for both repetitions.
+Its small artifact SHA-256 is
+`ec4848c602d1087ce530f1066fd6db61dd753332b2307296fe390dcc46ea5ba9`.
+P's applicable PR workflows passed, and M has the same exact source tree
+`4ad08b0fb89322e2e02b2a0e64b10b386ebfc5e6`. This establishes the prerequisite
+to resume the existing full comparison; candidate C was not built by that run.
+
+The workflow now selects its existing `full` branch and pins both source checkout
+and comparator to M. The sequential old/candidate measurement is retained from
+the prior full packaging workflow. Its 85-minute measurement / 95-minute job,
+40 GB admission per variant, independent empty builders, original evidence,
+strict whole-ELF equality and measured payload/image/gzip reduction gates stay
+unchanged. Diagnostic mode remains non-qualifying if selected again.
+
+This preparation has not executed the final M/C comparison or final-head hosted
+CI. Merge remains blocked until the exact integrated C passes the full comparison,
+applicable Web, Worker, Runtime, Container and installed source acceptance, with
+independent integration review. Neither the earlier A/A success nor local Python
+and shell checks establish those final delivery gates or a five-minute CI result.
