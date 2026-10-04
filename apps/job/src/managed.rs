@@ -248,9 +248,14 @@ fn compile_with(
     );
     // rustc creates linker scratch directories next to -o, regardless of
     // TMPDIR. Keep those directories off the flat, live-scanned output mount.
-    let staging = tempfile::Builder::new()
-        .prefix("qz-compile-")
-        .tempdir_in("/tmp")?;
+    let mut staging_builder = tempfile::Builder::new();
+    staging_builder.prefix("qz-compile-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        staging_builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    let staging = staging_builder.tempdir_in("/tmp")?;
     let target = staging.path().join("model.wasm");
     let memory = CompilerMemory::capture();
     let child = Command::new(compiler)
