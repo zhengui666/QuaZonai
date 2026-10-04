@@ -17,6 +17,33 @@ import operator_compare_test as comparison_tests
 import operator_elf_forensics as forensic
 
 
+# These mutation cases require a FUNC import and an unversioned GLOBAL export.
+# Neither is guaranteed by the host's /usr/bin/true. Keep its real GNU output
+# in the integration checks below, and use explicit parser input for mutations.
+LOADER_MUTATION_FIXTURE = """\
+Dynamic section at offset 0x2000 contains 3 entries:
+  Tag        Type                         Name/Value
+ 0x0000000000000001 (NEEDED)               Shared library: [libc.so.6]
+ 0x000000006ffffffb (FLAGS_1)              Flags: PIE
+ 0x0000000000000000 (NULL)                 0x0
+
+Symbol table '.dynsym' contains 3 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND imported_function@GLIBC_2.2.5 (2)
+     2: 0000000000001100    16 FUNC    GLOBAL DEFAULT   14 exported_function
+
+Version symbols section '.gnu.version' contains 3 entries:
+ Addr: 0x0000000000000400  Offset: 0x000400  Link: 6 (.dynsym)
+  000:   0 (*local*)       2 (GLIBC_2.2.5)   1 (*global*)
+
+Version needs section '.gnu.version_r' contains 1 entry:
+ Addr: 0x0000000000000410  Offset: 0x000410  Link: 7 (.dynstr)
+  000000: Version: 1  File: libc.so.6  Cnt: 1
+  0x0010:   Name: GLIBC_2.2.5  Flags: none  Version: 2
+"""
+
+
 class CompatibilityTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -46,27 +73,29 @@ class CompatibilityTests(unittest.TestCase):
         self.assertEqual(forensic.loader_semantics(renamed), original)
 
     def test_loader_required_changes_are_observed_and_missing_or_invalid_tables_block(self):
-        result = forensic.loader_semantics(self.loader)
+        loader = LOADER_MUTATION_FIXTURE
+        result = forensic.loader_semantics(loader)
         needed = result['needed'][0]
-        changed = self.loader.replace(needed, 'changed-library.so')
+        changed = loader.replace(needed, 'changed-library.so')
         self.assertNotEqual(forensic.loader_semantics(changed), result)
-        row = next(line for line in self.loader.splitlines() if re.match(r'\s*1:', line))
-        for invalid in (self.loader.replace(row, ''), self.loader.replace("Version needs section '.gnu.version_r'", 'missing'),
-                        self.loader.replace(row, row.replace('FUNC', 'INVALID')),
-                        self.loader + '\nreadelf: Warning: corrupt version table\n'):
+        row = next(line for line in loader.splitlines() if re.match(r'\s*1:', line))
+        for invalid in (loader.replace(row, ''), loader.replace("Version needs section '.gnu.version_r'", 'missing'),
+                        loader.replace(row, row.replace('FUNC', 'INVALID')),
+                        loader + '\nreadelf: Warning: corrupt version table\n'):
             with self.subTest(invalid=invalid[-60:]), self.assertRaises(ValueError):
                 forensic.loader_semantics(invalid)
         symbol = next(value for value in result['symbols'] if value['binding'] == 'GLOBAL' and value['name'])
-        changed = self.loader.replace(symbol['name'] + '@', 'changed_symbol@')
+        changed = loader.replace(symbol['name'] + '@', 'changed_symbol@')
         self.assertNotEqual(forensic.loader_semantics(changed), result)
 
     def test_localizing_exported_unversioned_symbol_changes_loader_semantics(self):
-        original = forensic.loader_semantics(self.loader)
+        loader = LOADER_MUTATION_FIXTURE
+        original = forensic.loader_semantics(loader)
         symbol = next(value for value in original['symbols'] if value['name'] and value['binding'] == 'GLOBAL'
                       and value['definition'] == 'defined' and value['version_scope'] == 'global')
         number = int(re.search(r'^\s*(\d+):[^\n]+\s' + re.escape(symbol['name']) + r'\s*$',
-                               self.loader, re.MULTILINE)[1])
-        head, table = self.loader.split("Version symbols section '.gnu.version'", 1)
+                               loader, re.MULTILINE)[1])
+        head, table = loader.split("Version symbols section '.gnu.version'", 1)
         for row in re.finditer(r'^[ \t]*([0-9a-f]+):[ \t]+(.*)$', table, re.MULTILINE):
             entries = list(re.finditer(r'([0-9a-f]+)(h?)\s*\(([^)]+)\)', row[2]))
             offset = number - int(row[1], 16)

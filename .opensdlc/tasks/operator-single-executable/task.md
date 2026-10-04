@@ -386,3 +386,19 @@ The existing 35-minute absolute deadline, 3-minute cleanup reserve, 40 GB
 per-build admission and disabled C remain. All successful diagnostics still
 carry `DIAGNOSTIC_ONLY` and fail full packaging qualification; actual fixed-
 producer hosted A/A, final-head CI and independent review remain required.
+
+## Portable GNU mutation fixtures
+
+The two parser-mutation regressions now use explicit, complete GNU-style text
+with the FUNC import and unversioned GLOBAL export that their mutations require.
+Those properties are not guaranteed by a runner's `/usr/bin/true`. The real GNU
+loader, frame decoding and native-structure checks remain, as do every parser
+rejection assertion and the production compatibility and whole-file A/A gates.
+This fixture correction is not native producer or installed-image acceptance.
+
+PR 162 merged into dev as `544ee6e042b297c0943decb06aa4ea2ce0b92089`.
+That identifies M for a subsequent final integration; it does not retroactively
+qualify the candidate-P diagnostic retained here. This correction leaves its
+immutable pins, disabled C and deliberate diagnostic-only failure unchanged.
+Final delivery still needs M integrated into C, the full current-base comparison,
+applicable exact-head CI, installed acceptance and independent review.
