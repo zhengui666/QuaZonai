@@ -359,12 +359,12 @@ pub async fn run(arguments: Arguments) -> Result<()> {
     }
     let connection = Connection::open(&arguments)?;
     let request = arguments.command.request_for(connection.is_device())?;
-    // A download is bound to the same immutable ID and its declared bytes/media,
-    // not an assumed octet-stream response or a caller-chosen secondary URL.
+    // Downloads use the API's octet-stream attachment transport, while metadata
+    // binds the immutable ID and byte count independently of the payload MIME.
     let metadata = match &request.output {
         commands::Output::Binary { id, report: None } => {
             let metadata = connection.artifact_metadata(*id).await?;
-            Some((metadata.media_type, metadata.byte_count))
+            Some(("application/octet-stream".to_owned(), metadata.byte_count))
         }
         commands::Output::Binary {
             id,

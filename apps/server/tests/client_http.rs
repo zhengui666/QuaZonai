@@ -15,6 +15,82 @@ use sqlx::PgPool;
 use std::{fs, os::unix::fs::PermissionsExt};
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn native_cli_artifact_exports_preserve_code_parameters_and_report_bytes(pool: PgPool) {
+    let f = support::fixture_with_runtime_targets(
+        pool,
+        Some(server::runtime_transport::RuntimeTargets::default()),
+    )
+    .await;
+    let confirmed = support::local_session(&f).await;
+    assert_eq!(confirmed.status, StatusCode::OK);
+    let cookie = confirmed.cookie.unwrap();
+    let project = browser(&f, &cookie, "artifact-export-project", "/api/v2/projects", json!({
+        "schema_version":1,"name":"Artifact exports","description":"Original attachment bytes","fork_from_project_id":null
+    })).await;
+    assert_eq!(project.status, StatusCode::CREATED);
+    let project_id = &project.body["resource"]["id"];
+    let principal = browser(&f, &cookie, "artifact-export-reader", "/api/v2/machine-principals", json!({
+        "schema_version":1,"name":"Artifact reader","kind":"CLI","project_id":project_id,"downstream_id":null,"enabled":true
+    })).await;
+    assert_eq!(principal.status, StatusCode::CREATED);
+    let credential = browser(&f, &cookie, "artifact-export-token", &format!("/api/v2/machine-principals/{}/credentials", principal.body["resource"]["id"].as_str().unwrap()), json!({
+        "schema_version":1,"scope_codes":["RESEARCH_READ"],"expires_at":chrono::Utc::now()+chrono::Duration::hours(1)
+    })).await;
+    assert_eq!(credential.status, StatusCode::CREATED);
+    let file = f._state.path().join("artifact-export-reader-token");
+    fs::write(&file, credential.body["token"].as_str().unwrap()).unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    let (origin, _listener) = listen(&f).await;
+    for (kind, media, content) in [
+        (
+            "CODE",
+            "text/x-rust",
+            " // 原始 source\r\nfn predict() {}\n\t",
+        ),
+        (
+            "PARAMETERS",
+            "application/json",
+            " \n{\"schema_version\": 1, \"label\": \"参数\", \"value\": 1.00}\n\t",
+        ),
+        (
+            "REPORT",
+            "application/json",
+            "\t{\"schema_version\":1, \"label\":\"报告 ☃\", \"items\": []}\r\n ",
+        ),
+    ] {
+        let submitted = browser(
+            &f,
+            &cookie,
+            &format!("artifact-export-{kind}"),
+            "/api/v2/artifacts",
+            json!({
+                "schema_version":1,"project_id":project_id,"kind":kind,"content":content
+            }),
+        )
+        .await;
+        assert_eq!(submitted.status, StatusCode::CREATED, "{kind}");
+        let metadata = &submitted.body["resource"];
+        assert_eq!(metadata["kind"], kind);
+        assert_eq!(metadata["media_type"], media);
+        assert_eq!(metadata["byte_count"], content.len().to_string());
+        let exported = invoke(
+            &origin,
+            &file,
+            &["artifact", "export", metadata["id"].as_str().unwrap()],
+            Value::Null,
+        )
+        .await;
+        assert!(
+            exported.status.success(),
+            "{kind}: {}",
+            String::from_utf8_lossy(&exported.stderr)
+        );
+        assert!(exported.stderr.is_empty());
+        assert_eq!(exported.stdout, content.as_bytes(), "{kind}");
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn candidate_cli_reads_original_snapshots_with_project_scope(pool: PgPool) {
     let f = support::fixture(pool.clone()).await;
     let confirmed = support::local_session(&f).await;
