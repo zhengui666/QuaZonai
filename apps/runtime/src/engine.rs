@@ -376,6 +376,7 @@ impl NativeEngine {
         let host_config = HostConfig {
             memory: Some(memory),
             memory_swap: Some(memory),
+            cgroupns_mode: Some(HostConfigCgroupnsModeEnum::PRIVATE),
             nano_cpus: Some(i64::from(spec.limits.cpu) * 1_000_000_000),
             pids_limit: Some(64),
             readonly_rootfs: Some(true),
