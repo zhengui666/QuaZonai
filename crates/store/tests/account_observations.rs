@@ -296,19 +296,87 @@ async fn heartbeat_only_and_session_restart_never_invent_valuation_history(pool:
         .submit_account_observation(&actor, &late)
         .await
         .is_err());
-    let mut future = request;
-    future.binding.native_session_id = "must-rollback".into();
-    future.observed_at_ns = DbCounter::new(i64::MAX as u64).unwrap();
-    assert!(store
-        .submit_account_observation(&actor, &future)
-        .await
-        .is_err());
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.native_account_sources")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
         count, 2,
-        "failed admission must not leave a source or cursor"
+        "rejected old sequence must not create or replace a source"
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn source_wall_clock_skew_and_rollback_preserve_observations_and_replay(pool: PgPool) {
+    let (store, owner, actor, mut request) = setup(&pool).await;
+    let original_clock = request.observed_at_ns.get();
+    request.observed_at_ns = DbCounter::new(original_clock + 60_000_000_000).unwrap();
+    let first = store
+        .submit_account_observation(&actor, &request)
+        .await
+        .unwrap();
+    assert_eq!(first.resource.observation, request);
+    let source = first.resource.source_id;
+    let current = store
+        .account_current(&owner, request.binding.project_id, source)
+        .await
+        .unwrap();
+    assert_eq!(
+        current.source.connection,
+        AccountConnectionFreshnessV1::Stale
+    );
+    assert_eq!(current.source.last_observed_at_ns, request.observed_at_ns);
+    assert_eq!(
+        current.latest_snapshot.as_ref().unwrap().id,
+        first.resource.id
+    );
+
+    let mut heartbeat = request.clone();
+    heartbeat.sequence = DbCounter::new(2).unwrap();
+    heartbeat.snapshot = None;
+    heartbeat.observed_at_ns = DbCounter::new(original_clock - 1_000_000_000).unwrap();
+    let second = store
+        .submit_account_observation(&actor, &heartbeat)
+        .await
+        .unwrap();
+    assert!(!second.resource.gap_before);
+    assert_eq!(second.resource.observation, heartbeat);
+    let current = store
+        .account_current(&owner, request.binding.project_id, source)
+        .await
+        .unwrap();
+    assert_eq!(current.source.last_sequence, heartbeat.sequence);
+    assert_eq!(current.source.last_observed_at_ns, heartbeat.observed_at_ns);
+    assert_eq!(current.source.last_observation_id, second.resource.id);
+    assert_eq!(
+        current.latest_snapshot.as_ref().unwrap().id,
+        first.resource.id
+    );
+    assert_eq!(
+        current.latest_snapshot.as_ref().unwrap().received_at,
+        first.resource.received_at
+    );
+
+    let replay = store
+        .submit_account_observation(&actor, &heartbeat)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource.id, second.resource.id);
+    assert_eq!(replay.resource.received_at, second.resource.received_at);
+    assert_eq!(replay.resource.observation, heartbeat);
+    let after = store
+        .account_current(&owner, request.binding.project_id, source)
+        .await
+        .unwrap();
+    assert_eq!(
+        after.source.last_received_at,
+        current.source.last_received_at
+    );
+    assert_eq!(after.source.last_observed_at_ns, heartbeat.observed_at_ns);
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.native_account_observations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
 }

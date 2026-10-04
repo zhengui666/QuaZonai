@@ -37,3 +37,5 @@ The observer queue is deliberately not a durable producer spool. The downstream 
 This scope uses the existing typed JSON and transaction equality; it adds no SHA verification or package/tree/binary digest gate. Temporary test resources and original-source clock semantics remain explicit. Complete all generated domain/API/client changes from the native generators before publication.
 
 The dev integration removes the historical per-vector 256/4096 ceilings and exact native-version rejection. The normal transport body size and typed monetary/time semantics remain; version text is recorded as declared provenance. A regression preserves larger compatible snapshots without adding a replacement count gate.
+
+Source observed_at wall time is retained as evidence, not used as the delivery cursor. Future source time is marked stale by the current read model; advancing sequence/drop cursors accept wall-clock rollback and preserve unchanged replay receipts. Native valuation time ordering remains independent.

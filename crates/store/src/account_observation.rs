@@ -112,17 +112,8 @@ impl Store {
                 resource,
             });
         }
-        let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
-            .fetch_one(&mut *tx)
-            .await?;
-        if request.observed_at_ns.get()
-            > now
-                .timestamp_nanos_opt()
-                .and_then(|n| u64::try_from(n).ok())
-                .ok_or(StoreError::Integrity)?
-        {
-            return Err(StoreError::Invalid("native_account_future_time"));
-        }
+        // Source wall time is evidence, not a delivery cursor. A source clock
+        // ahead of this database is represented as stale on read, not rejected.
         let previous =
             sqlx::query("SELECT * FROM app.native_account_cursors WHERE source_id=$1 FOR UPDATE")
                 .bind(source_id.as_uuid())
@@ -133,8 +124,6 @@ impl Store {
             let dropped: i64 = row.try_get("dropped_events")?;
             if request.sequence.get() <= last as u64
                 || request.dropped_events.get() < dropped as u64
-                || request.observed_at_ns.get()
-                    < row.try_get::<i64, _>("last_observed_at_ns")? as u64
             {
                 return Err(StoreError::Invalid("native_account_cursor_regression"));
             }
