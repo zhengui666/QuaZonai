@@ -118,6 +118,9 @@ class PreparationTest(unittest.TestCase):
                             self.acquisition, self.terms)
         self.candles = SimpleNamespace(acquisition=self.acquisition / "acquisition.json",
             instruments=self.instruments, native_bin=self.binary, output=self.output)
+
+    def snapshot_fixture(self):
+        # Candle-only tests do not read or hash unrelated archival snapshots.
         self.snapshot_dir = self.root / "snapshot"
         self.snapshot_dir.mkdir()
         source = self.snapshot_dir / "original.parquet"
@@ -141,15 +144,12 @@ class PreparationTest(unittest.TestCase):
 
     def candle_report(self):
         return {**self.base_report(), "source_provider": "coinbase-candles",
-            "source_record_kind": "OHLCV_CANDLE", "acquisition_sha256": plugins.sha256(self.candles.acquisition),
-            "instrument_definitions_sha256": plugins.sha256(self.instruments),
+            "source_record_kind": "OHLCV_CANDLE",
             "source_evidence_relative_path": "source-evidence.json", "native_readback_verified": True,
             "research_qualified": False}
 
     def candle_evidence(self):
         return {"schema_version": 1, "source_acquisition_path": str(self.candles.acquisition),
-            "acquisition_sha256": plugins.sha256(self.candles.acquisition),
-            "instrument_definitions_sha256": plugins.sha256(self.instruments),
             "acquisition": json.loads(self.candles.acquisition.read_text()),
             "instrument_definitions": json.loads(self.instruments.read_text())}
 
@@ -194,6 +194,7 @@ class PreparationTest(unittest.TestCase):
     def test_coinbase_requires_verify_then_exact_safe_native_argv_and_report(self):
         report = self.candle_report()
         with patch.object(acquire, "verify", wraps=acquire.verify) as verify, \
+                patch.object(snapshot, "file_hash", side_effect=AssertionError("No candle checksum calculation")), \
                 patch.object(plugins.subprocess, "run", side_effect=self.runner(report)) as run:
             result = plugins.candle_convert(self.candles)
         self.assertEqual(verify.call_count, 2)
@@ -204,6 +205,7 @@ class PreparationTest(unittest.TestCase):
         self.assertEqual(result["native_report"], report)
 
     def test_packaged_converters_resolve_per_operation_without_path_lookup(self):
+        self.snapshot_fixture()
         module = self.root / "operator/source_plugins.py"
         (module.parent / "bin").mkdir(parents=True)
         for name in ("catalog-prepare", "polymarket-history"):
@@ -231,6 +233,7 @@ class PreparationTest(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_snapshot_hash_budget_and_symlinks_fail_before_native(self):
+        self.snapshot_fixture()
         original = (self.snapshot_dir / "original.parquet").read_bytes()
         for mode in ("tampered", "budget", "symlink"):
             with self.subTest(mode=mode):
@@ -251,6 +254,7 @@ class PreparationTest(unittest.TestCase):
                 self.capture.max_bytes = 1024
 
     def test_capture_uses_native_adapter_and_preserves_original_selection(self):
+        self.snapshot_fixture()
         report, evidence = self.history_artifacts()
         with patch.object(plugins.subprocess, "run", side_effect=self.runner(report, evidence)) as run:
             result = plugins.history_convert(self.capture, capture=True)
@@ -261,6 +265,7 @@ class PreparationTest(unittest.TestCase):
         self.assertFalse(result["admission"]["registered_in_quazonai"])
 
     def test_existing_archive_formats_share_native_dispatch(self):
+        self.snapshot_fixture()
         for format_name in plugins.ARCHIVE_FORMATS:
             self.output = self.root / format_name
             self.archive = SimpleNamespace(**vars(self.capture))
@@ -283,7 +288,41 @@ class PreparationTest(unittest.TestCase):
             plugins.candle_convert(self.candles)
         self.assertTrue((self.output / "import-report.json").exists())
 
+    def test_coherent_same_size_record_changes_during_native_conversion_are_rejected(self):
+        raw_path = self.acquisition / "raw/0000.json"
+        records_path = self.acquisition / "records.jsonl"
+        original_raw = raw_path.read_bytes()
+        original_records = records_path.read_bytes()
+        original_manifest = self.candles.acquisition.read_bytes()
+        original_summary = acquire.verify(self.acquisition)
+
+        def change_records():
+            raw = original_raw.replace(b",2,2,1]", b",2,1,1]")
+            records = original_records.replace(b'"close":"2"', b'"close":"1"')
+            self.assertNotEqual(raw, original_raw)
+            self.assertNotEqual(records, original_records)
+            self.assertEqual(len(raw), len(original_raw))
+            self.assertEqual(len(records), len(original_records))
+            raw_path.write_bytes(raw)
+            records_path.write_bytes(records)
+            # Counts, admission, clocks, manifest and derived-record agreement
+            # all still match; only the original selected values have changed.
+            self.assertEqual(acquire.verify(self.acquisition), original_summary)
+            self.assertEqual(self.candles.acquisition.read_bytes(), original_manifest)
+
+        for changed in (False, True):
+            self.output = self.root / ("changed-records" if changed else "unchanged-records")
+            self.candles.output = self.output
+            with self.subTest(changed=changed), patch.object(plugins.subprocess, "run",
+                    side_effect=self.runner(self.candle_report(), change=change_records if changed else None)):
+                if changed:
+                    with self.assertRaisesRegex(ValueError, "inputs changed during preparation"):
+                        plugins.candle_convert(self.candles)
+                else:
+                    self.assertEqual(plugins.candle_convert(self.candles)["status"], "NATIVE_ARTIFACTS_VALIDATED")
+
     def test_snapshot_files_are_rechecked_after_native(self):
+        self.snapshot_fixture()
         report, evidence = self.history_artifacts()
         with patch.object(plugins.subprocess, "run", side_effect=self.runner(report, evidence,
                 change=lambda: (self.snapshot_dir / "original.parquet").write_bytes(b"changed"))), \
@@ -326,9 +365,8 @@ class PreparationTest(unittest.TestCase):
             plugins.candle_convert(self.candles)
         run.assert_not_called()
 
-    def test_native_report_must_match_hashes_counts_and_admission(self):
-        mutations = [{"acquisition_sha256": "0" * 64}, {"instrument_definitions_sha256": "0" * 64},
-            {"bars": 3}, {"bars": True}, {"native_readback_verified": False}, {"research_qualified": True},
+    def test_native_report_must_match_counts_and_admission(self):
+        mutations = [{"bars": 3}, {"bars": True}, {"native_readback_verified": False}, {"research_qualified": True},
             {"source_provider": "polymarket-prices"}, {"source_record_kind": "PRICE_MARK"},
             {"coverage": "COMPLETE"}, {"registered_in_quazonai": True}, {"schema_version": True},
             {"historical_availability": "VERIFIED"}, {"catalog_relative_path": "../outside"},
@@ -340,10 +378,8 @@ class PreparationTest(unittest.TestCase):
                     side_effect=self.runner(self.candle_report() | changes)), self.assertRaises(ValueError):
                 plugins.candle_convert(self.candles)
 
-    def test_candle_evidence_must_retain_original_inputs_and_hashes(self):
-        mutations = [lambda e: e.update(acquisition_sha256="0" * 64),
-            lambda e: e.update(instrument_definitions_sha256="0" * 64),
-            lambda e: e.update(source_acquisition_path="other"),
+    def test_candle_evidence_must_retain_original_inputs(self):
+        mutations = [lambda e: e.update(source_acquisition_path="other"),
             lambda e: e["acquisition"].update(created_at="2000-01-01T00:00:00Z"),
             lambda e: e.update(instrument_definitions=[])]
         for index, change in enumerate(mutations):
@@ -356,6 +392,7 @@ class PreparationTest(unittest.TestCase):
                 plugins.candle_convert(self.candles)
 
     def test_history_report_must_match_original_format_market_selection_and_counts(self):
+        self.snapshot_fixture()
         mutations = [lambda r, e: r.update(source_reference="other"),
             lambda r, e: e["source_metadata"].update(format="invented"),
             lambda r, e: e["source_metadata"]["selection"].update(start_seconds=0),
@@ -385,6 +422,7 @@ class PreparationTest(unittest.TestCase):
                 plugins.candle_convert(self.candles)
 
     def test_duplicate_json_fields_and_unsafe_snapshot_identities_are_rejected(self):
+        self.snapshot_fixture()
         for changes in ({"schema_version": True}, {"repository": "../source"}, {"revision": "main"},
                         {"license": ""}, {"retrieved_at": "9999-01-01T00:00:00Z"}):
             self.snapshot_path.write_text(json.dumps(self.manifest | changes))
@@ -396,6 +434,7 @@ class PreparationTest(unittest.TestCase):
             plugins.verified_snapshot(self.snapshot_path, 1024)
 
     def test_snapshot_verify_does_not_fetch_or_claim_source_authenticity(self):
+        self.snapshot_fixture()
         with patch.object(snapshot.urllib.request, "urlopen") as network:
             result = plugins.snapshot_verify(self.capture)
         network.assert_not_called()

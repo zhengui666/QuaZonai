@@ -7,7 +7,6 @@ use nautilus_model::{
 };
 use rust_decimal::Decimal;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -20,11 +19,8 @@ pub const RECEIVED: u64 = 1_704_153_601_000_000_000;
 pub const VALUES: [&str; 5] = ["42000.01", "42001.02", "41999.00", "42000.99", "0.10000001"];
 const URL: &str = "https://api.exchange.coinbase.com/products/BTC-USD/candles?start=1970-01-01T00%3A00%3A00Z&end=1970-01-01T00%3A03%3A00Z&granularity=60";
 
-pub fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
 pub fn file(path: &str, bytes: &[u8]) -> Value {
-    json!({"path":path,"size":bytes.len(),"sha256":hash(bytes)})
+    json!({"path":path,"size":bytes.len()})
 }
 pub fn write_json(path: &Path, value: &Value) {
     fs::write(path, serde_json::to_vec(value).unwrap()).unwrap();

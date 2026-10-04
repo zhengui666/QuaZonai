@@ -1,6 +1,6 @@
 /** Test-only production Runtime orchestration. No domain rows are written here. */
 import assert from 'node:assert/strict';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readFile, realpath, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
@@ -73,7 +73,6 @@ export class NativeDataExecution {
     assert.equal(this.prepared.metadata_file, resolve(source, 'prepared/catalog-metadata.json'));
     const metadataBytes = await readFile(this.prepared.metadata_file);
     const metadata = JSON.parse(metadataBytes.toString('utf8'));
-    assert.equal(createHash('sha256').update(metadataBytes).digest('hex'), this.prepared.metadata_sha256);
     assert.deepEqual(this.prepared.native_readback.map(row => row.event_ns), ['60000000000', '120000000000', '180000000000']);
     assert.ok(this.prepared.native_readback.every(row => row.available_ns === '1704153601000000000'));
     assert.deepEqual(this.prepared.metadata, metadata);
@@ -161,7 +160,7 @@ export class NativeDataExecution {
         state: row.terminal_state, spec: JSON.parse(row.spec_json) });
     }
     this.evidence.source = { origin: this.prepared.metadata.origin, pit_status: this.prepared.metadata.pit_status,
-      original_receipt_ns: this.prepared.original_receipt_ns, metadata_sha256: this.prepared.metadata_sha256,
+      original_receipt_ns: this.prepared.original_receipt_ns,
       native_readback: this.prepared.native_readback };
     this.evidence.instance_id = journal.instance_id;
     this.evidence.containers = observations;
@@ -189,7 +188,6 @@ export class NativeDataExecution {
     assert.equal(await realpath(path), path, 'Native partition must not traverse symlinks');
     assert.ok((await lstat(path)).isFile(), 'Native partition must be a regular file');
     assert.ok(Number.isSafeInteger(partition.size_bytes) && partition.size_bytes > 0, 'Native partition byte count required');
-    assert.match(partition.sha256, /^[0-9a-f]{64}$/, 'Native partition SHA256 required');
     const file = await open(path, constants.O_RDWR | constants.O_NOFOLLOW);
     try {
       const stat = await file.stat();
@@ -197,18 +195,14 @@ export class NativeDataExecution {
       assert.equal(stat.size, partition.size_bytes, 'Native partition byte count changed');
       const before = await file.readFile();
       assert.equal(before.length, partition.size_bytes, 'Native partition byte count changed');
-      const beforeHash = createHash('sha256').update(before).digest('hex');
-      assert.equal(beforeHash, partition.sha256, 'Native partition SHA256 changed');
       const corrupt = Buffer.from('explicit test-owned corrupt native parquet');
-      const afterHash = createHash('sha256').update(corrupt).digest('hex');
-      assert.notEqual(beforeHash, afterHash, 'Corruption must change the native partition bytes');
+      assert.notDeepEqual(before, corrupt, 'Corruption must change the native partition bytes');
       const { bytesWritten } = await file.write(corrupt, 0, corrupt.length, 0);
       assert.equal(bytesWritten, corrupt.length);
       await file.truncate(corrupt.length);
       const after = await readFile(path);
       assert.deepEqual(after, corrupt);
-      assert.equal(createHash('sha256').update(after).digest('hex'), afterHash);
-      this.evidence.corruption = { ...partition, before_sha256: beforeHash, after_sha256: afterHash,
+      this.evidence.corruption = { ...partition,
         before_size_bytes: before.length, after_size_bytes: after.length };
     } finally { await file.close(); }
   }
