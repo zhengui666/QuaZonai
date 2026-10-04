@@ -462,7 +462,22 @@ async fn a_changed_runtime_revision_settles_original_trial_without_rebinding_or_
     experiment_support::complete_compilation(&pool, &store, &f, compiled).await;
     let mut runtime = store.runtime(&actor, f.data.runtime).await.unwrap();
     runtime.configuration.name.push_str(" changed");
-    store
+    // The relational setup has a legacy literal reference. Exercise the real
+    // update with a native credential, not an unavailable or empty binding.
+    let secrets = tempfile::tempdir().unwrap();
+    let key_path = secrets.path().join("master.key");
+    integrations::secrets::SecretVault::initialize_key(&key_path).unwrap();
+    let vault = integrations::secrets::SecretVault::open(secrets.path(), &key_path).unwrap();
+    let secret: &[u8] = b"external-runtime-revision-fixture";
+    let credential = vault.put("RUNTIME", secret).unwrap();
+    let original_admission: (i64, serde_json::Value) = sqlx::query_as(
+        "SELECT runtime_revision,runtime_snapshot FROM app.run_admissions WHERE run_id=$1",
+    )
+    .bind(compiled.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let changed = store
         .update_runtime(
             &actor,
             "change-external-runtime",
@@ -471,13 +486,27 @@ async fn a_changed_runtime_revision_settles_original_trial_without_rebinding_or_
                 schema_version: SchemaV1,
                 expected_revision: runtime.revision,
                 configuration: runtime.configuration,
-                credential_ref: None,
+                credential_ref: Some(credential),
                 ca_certificate_ref: None,
             },
-            |_| async { Ok(()) },
+            |refs| async move {
+                assert_eq!(refs.len(), 1);
+                assert_eq!(refs[0].id, credential);
+                assert_eq!(
+                    refs[0].purpose,
+                    contracts::settings::IntegrationSecretPurpose::Runtime
+                );
+                assert_eq!(
+                    vault.read(refs[0].id, refs[0].purpose.code()).unwrap(),
+                    secret
+                );
+                Ok(())
+            },
         )
         .await
-        .unwrap();
+        .unwrap()
+        .resource;
+    assert_ne!(changed.revision, runtime.revision);
     assert_closed_continuation(
         &pool,
         &store,
@@ -488,6 +517,14 @@ async fn a_changed_runtime_revision_settles_original_trial_without_rebinding_or_
         "EXTERNAL_CONTINUATION_RUNTIME_CHANGED",
     )
     .await;
+    let retained_admission: (i64, serde_json::Value) = sqlx::query_as(
+        "SELECT runtime_revision,runtime_snapshot FROM app.run_admissions WHERE run_id=$1",
+    )
+    .bind(compiled.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(retained_admission, original_admission);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
