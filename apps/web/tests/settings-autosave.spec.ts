@@ -35,7 +35,7 @@ async function browserReload(page: Page, decision: 'stay' | 'leave' | 'clean') {
   }
 }
 
-async function setup(page: Page) {
+async function setup(page: Page, acceptedPackageVersions: Schema['PackageSchemaVersion'][] = ['1']) {
   const now = new Date().toISOString();
   const runtime: Schema['RuntimeView'] = {
     id: '01990000-0000-7000-8000-000000000011', revision: '1', protocol_version: 1, created_at: now, updated_at: now,
@@ -47,7 +47,7 @@ async function setup(page: Page) {
     id: '01990000-0000-7000-8000-000000000012', revision: '1', created_at: now, updated_at: now,
     credential_configured: true,
     configuration: { name: 'Downstream A', endpoint: 'https://downstream.example', environments: 'PAPER',
-      accepted_package_versions: ['1'], development_http: false, enabled: true },
+      accepted_package_versions: [...acceptedPackageVersions], development_http: false, enabled: true },
   };
   const source: Schema['DataSourceView'] = {
     id: '01990000-0000-7000-8000-000000000013', revision: '1', created_at: now, updated_at: now,
@@ -117,6 +117,7 @@ async function setup(page: Page) {
     }
     if (path === '/api/v2/integrations/downstreams') return reply({ schema_version: 1, items: [downstream], next_cursor: null });
     if (path === `/api/v2/integrations/downstreams/${downstream.id}`) {
+      if (request.method() === 'GET') return reply(downstream);
       const body: Schema['DownstreamUpdate'] = request.postDataJSON();
       writes.push({ kind: 'downstream', key: request.headers()['idempotency-key'], body });
       expect(body.expected_revision).toBe(downstream.revision);
@@ -295,7 +296,37 @@ test('an uncertain Runtime credential binding cannot be abandoned before reconci
   await expect(dialog.getByRole('button', { name: '放弃本次绑定' })).toHaveCount(0);
 });
 
-test('uncertain Downstream creation keeps its command and credential across Settings navigation', async ({ page }) => {
+for (const versions of [['1'], ['2'], ['2', '1']] satisfies Schema['PackageSchemaVersion'][][]) {
+  test(`Downstream package versions ${versions.join(',')} survive unrelated edits and reopening`, async ({ page }) => {
+    const { downstream, writes } = await setup(page, versions);
+    await page.getByRole('tab', { name: '集成', exact: true }).click();
+    await page.getByRole('tab', { name: '目标交付下游', exact: true }).click();
+    await page.getByRole('button', { name: '修改下游', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '修改目标交付下游' });
+    const versionsField = dialog.getByRole('combobox', { name: /^(?:\*\s*)?接受的目标包版本$/ });
+    await expect(versionsField).toBeVisible();
+    await dialog.getByRole('textbox', { name: /^(?:\*\s*)?下游名称$/ }).fill('Paper renamed');
+    await expect.poll(() => downstream.configuration.name).toBe('Paper renamed');
+    expect(downstream.configuration.accepted_package_versions).toEqual(versions);
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole('button', { name: '修改下游', exact: true }).click();
+    await expect(dialog.getByRole('textbox', { name: /^(?:\*\s*)?下游名称$/ })).toHaveValue('Paper renamed');
+    await dialog.getByRole('switch', { name: '允许未来目标交付' }).click();
+    await expect.poll(() => downstream.configuration.enabled).toBe(false);
+    expect(writes.filter(write => write.kind === 'downstream').map(write =>
+      (write.body as Schema['DownstreamUpdate']).configuration.accepted_package_versions)).toEqual([versions, versions]);
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+    await expect.poll(() => page.evaluate(async () => {
+      const modulePath = '/src/settings-work.ts';
+      return (await import(modulePath)).settingsWorkActive();
+    })).toBe(false);
+    await browserReload(page, 'clean');
+  });
+}
+
+for (const version of ['1', '2'] satisfies Schema['PackageSchemaVersion'][]) {
+test(`uncertain Downstream creation keeps package version ${version}, command and credential across Settings navigation`, async ({ page }) => {
   const { downstream, secretId } = await setup(page);
   const requests: { key: string | undefined; body: Schema['DownstreamCreate'] }[] = [];
   await page.route(/\/api\/v2\/integrations\/downstreams(?:\?|$)/, async route => {
@@ -312,13 +343,24 @@ test('uncertain Downstream creation keeps its command and credential across Sett
   await page.getByRole('tab', { name: '目标交付下游' }).click();
   await page.getByRole('button', { name: '登记目标交付下游' }).click();
   const dialog = page.getByRole('dialog', { name: '登记目标交付下游' });
-  await dialog.getByRole('textbox', { name: '下游名称' }).fill('Downstream B');
-  await dialog.getByRole('textbox', { name: '下游 HTTPS origin' }).fill('https://downstream-b.example');
+  await dialog.getByRole('textbox', { name: /^(?:\*\s*)?下游名称$/ }).fill('Downstream B');
+  await dialog.getByRole('textbox', { name: /^(?:\*\s*)?下游 HTTPS origin$/ }).fill('https://downstream-b.example');
+  if (version === '2') {
+    const versionsField = dialog.getByRole('combobox', { name: /^(?:\*\s*)?接受的目标包版本$/ });
+    await versionsField.focus();
+    await versionsField.press('Backspace'); // Remove the backward-compatible V1 default explicitly.
+    await versionsField.fill('2');
+    await versionsField.press('Enter');
+    await versionsField.press('Escape');
+  }
   await dialog.getByRole('textbox', { name: '新的 DOWNSTREAM 凭据' }).fill('test-credential');
   await dialog.getByRole('button', { name: '登记凭据' }).click();
   await expect(dialog.getByText(secretId)).toBeVisible();
   await dialog.getByRole('button', { name: '保存下游配置' }).click();
   await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0]?.body.configuration.accepted_package_versions).toEqual([version]);
+  expect(requests[0]?.body.credential_ref).toBe(secretId);
+  expect(requests[0]?.key).toBeTruthy();
   await expect(dialog.getByRole('button', { name: '重试当前操作' })).toBeVisible();
   await dialog.getByRole('button', { name: '返回' }).click();
   await page.getByRole('tab', { name: '数据', exact: true }).click();
@@ -334,6 +376,7 @@ test('uncertain Downstream creation keeps its command and credential across Sett
     return (await import(modulePath)).settingsWorkActive();
   })).toBe(false);
 });
+}
 
 test('closing and reopening an editor keeps writes ordered and uncertain retries identical', async ({ page }) => {
   const { runtime, writes, holdNextRuntime, failNextRuntime } = await setup(page);

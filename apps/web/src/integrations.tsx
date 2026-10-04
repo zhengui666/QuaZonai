@@ -282,7 +282,7 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
     original?.revision, original?.updated_at, online && !!original, async (values, revision, writeIntent) => {
       if (!original) throw new Error('下游不存在');
       const configuration: Schema['DownstreamConfigurationV1'] = { name: values.name, endpoint: values.endpoint,
-        accepted_package_versions: ['1'], environments: values.environments, enabled: values.enabled, development_http: values.development_http };
+        accepted_package_versions: values.accepted_package_versions, environments: values.environments, enabled: values.enabled, development_http: values.development_http };
       const body: Schema['DownstreamUpdate'] = { schema_version: 1, expected_revision: revision, configuration, credential_ref: values.credential_ref ?? null };
       const result = dataOf(await api.PATCH('/api/v2/integrations/downstreams/{id}', { body, params: { path: { id: original.id },
         header: writeIntent.headers('PATCH', `/api/v2/integrations/downstreams/${original.id}`, body) } }));
@@ -308,10 +308,10 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
     okText={state.unknown && !original ? '重试当前操作' : '保存下游配置'} cancelText="返回" okButtonProps={{ disabled: !online || secretBusy }}>
     
     {original && <ResourceFacts id={original.id} revision={autosave.revision} updated={autosave.updated_at} />}
-    <Form form={form} layout="vertical" disabled={!online || secretBusy || (!original && (pending || state.unknown))} initialValues={original?.configuration ?? { environments: 'PAPER', enabled: true, development_http: false }}
+    <Form form={form} layout="vertical" disabled={!online || secretBusy || (!original && (pending || state.unknown))} initialValues={original?.configuration ?? { accepted_package_versions: ['1'], environments: 'PAPER', enabled: true, development_http: false }}
       onValuesChange={original ? autosave.change : undefined} onFinish={original ? undefined : values => {
         const configuration: Schema['DownstreamConfigurationV1'] = { name: values.name, endpoint: values.endpoint,
-          accepted_package_versions: ['1'], environments: values.environments, enabled: values.enabled, development_http: values.development_http };
+          accepted_package_versions: values.accepted_package_versions, environments: values.environments, enabled: values.enabled, development_http: values.development_http };
         const body: Schema['DownstreamCreate'] = { schema_version: 1, configuration, credential_ref: values.credential_ref! };
         void command.submit(async () => {
           if (!values.credential_ref) throw new ApiFailure('LOCAL_VALIDATION_ERROR', '请先登记下游服务凭据。');
@@ -323,6 +323,9 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
       }}>
       <Form.Item name="name" label="下游名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
       <Form.Item name="endpoint" label="下游 HTTPS origin" rules={[required, { max: 2048 }]}><Input maxLength={2048} placeholder="https://downstream.example" /></Form.Item>
+      <Form.Item name="accepted_package_versions" label="接受的目标包版本" rules={[required]}><Select<Schema['PackageSchemaVersion'][]> mode="multiple" options={[
+        { value: '1', label: '1' }, { value: '2', label: '2' },
+      ]} /></Form.Item>
       <Form.Item name="environments" label="允许环境" rules={[required]}><Select options={[
         { value: 'PAPER', label: '仅 Paper' }, { value: 'LIVE', label: '仅 Live' }, { value: 'BOTH', label: 'Paper 与 Live（仍须分别审批）' },
       ]} /></Form.Item>
