@@ -494,7 +494,7 @@ if (config.phase === 'before-restart') {
     });
     let releaseAck!: () => void;
     const heldAck = new Promise<void>(resolve => { releaseAck = resolve; });
-    const committed: { body: unknown; key: string | undefined; result: Schema['CodexAccountStartV1'] }[] = [];
+    const committed: { body: Schema['CodexAccountRequestV1']; key: string | undefined; result: Schema['CodexAccountStartV1'] }[] = [];
     try {
       await page.goto('/');
       await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
@@ -529,6 +529,9 @@ if (config.phase === 'before-restart') {
         expect(result.current.state).toBe('FAILED'); expect(result.current.reason).toBe('DEPLOYMENT_UNAVAILABLE');
         expect(result.device_code == null).toBe(true);
         committed.push({ body: route.request().postDataJSON(), key: route.request().headers()['idempotency-key'], result });
+        expect(committed[0]!.key).toBeTruthy();
+        expect(committed[0]!.body).toEqual({ schema_version: 1, profile_id: result.current.operation.profile_id,
+          expected_revision: result.current.operation.profile_revision });
         await response.dispose(); await heldAck; await route.abort('failed');
       });
       await login.click();
@@ -542,13 +545,17 @@ if (config.phase === 'before-restart') {
       await expect(page.getByText('请先保存或取消当前编辑', { exact: true })).toBeVisible();
       await page.getByRole('button', { name: '稍后', exact: true }).click();
       await expect(login).toBeDisabled();
+      expect(writes).toEqual(['POST /api/v2/codex/login/start']);
       releaseAck();
       await expect(page.getByRole('button', { name: '重试当前操作', exact: true })).toBeVisible();
       await page.getByRole('button', { name: '有新版本', exact: true }).click();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeDisabled();
       await page.getByRole('button', { name: '稍后', exact: true }).click();
+      expect(writes).toEqual(['POST /api/v2/codex/login/start']);
       await context.unroute('**/api/v2/codex/login/start');
       const retried = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/codex/login/start');
+      const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/codex/probe'
+        && response.request().method() === 'POST');
       await page.getByRole('button', { name: '重试当前操作', exact: true }).click();
       const response = await retried;
       expect(response.status()).toBe(202);
@@ -556,7 +563,30 @@ if (config.phase === 'before-restart') {
       expect(response.request().postDataJSON()).toEqual(committed[0]!.body);
       const replay: Schema['CodexAccountStartV1'] = await response.json();
       expect(replay.acceptance).toEqual({ ...committed[0]!.result.acceptance, replayed: true });
+      expect(replay.current).toEqual(committed[0]!.result.current);
+      expect(replay.device_code == null).toBe(true);
+      // The terminal account receipt invalidates this profile's old catalog.
+      // Its one Settings refresh is a real unavailable-deployment probe, never
+      // a model run or a business write initiated by the Research page.
+      const probeResponse = await refreshed;
+      await expect(page.getByRole('heading', { level: 1, name: '设置', exact: true })).toBeVisible();
+      expect(probeResponse.status()).toBe(200);
+      expect(probeResponse.request().postDataJSON()).toEqual(committed[0]!.body);
+      const probeKey = probeResponse.request().headers()['idempotency-key'];
+      expect(probeKey).toBeTruthy(); expect(probeKey).not.toBe(committed[0]!.key);
+      const probe: Schema['CommandResult_CodexProbeViewV1'] = await probeResponse.json();
+      expect(probe.schema_version).toBe(1); expect(probe.replayed).toBe(false);
+      expect(probe.resource.schema_version).toBe(1);
+      expect(probe.resource.profile_id).toBe(committed[0]!.body.profile_id);
+      expect(probe.resource.profile_revision).toBe(committed[0]!.body.expected_revision);
+      expect(probe.resource.outcome).toEqual({ status: 'UNAVAILABLE', reason: 'DEPLOYMENT_UNAVAILABLE' });
+      const modelsResponse = await page.request.get('/api/v2/codex/models', { params: { profile_id: probe.resource.profile_id } });
+      expect(modelsResponse.status()).toBe(200);
+      const models: Schema['CodexObservationV1'] = await modelsResponse.json();
+      expect(models.state).toBe('UNAVAILABLE'); expect(models.observation).toEqual(probe.resource);
       await expect(login).toBeEnabled();
+      const settingsWrites = ['POST /api/v2/codex/login/start', 'POST /api/v2/codex/login/start', 'POST /api/v2/codex/probe'];
+      expect(writes).toEqual(settingsWrites);
       await page.getByRole('button', { name: '有新版本', exact: true }).click();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeEnabled();
       const reloaded = page.waitForEvent('load');
@@ -567,7 +597,7 @@ if (config.phase === 'before-restart') {
       expect(listing.status()).toBe(200);
       const body: { items: Schema['ProjectView'][] } = await listing.json();
       expect(body.items).toEqual([saved.receipt.resource]);
-      expect(writes).toEqual(['POST /api/v2/codex/login/start', 'POST /api/v2/codex/login/start']);
+      expect(writes).toEqual(settingsWrites);
     } finally {
       releaseAck(); await context.setOffline(false);
       await context.unroute('**/api/v2/codex/login/start');
