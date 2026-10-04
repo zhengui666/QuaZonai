@@ -1,6 +1,8 @@
 //! Original Release authority, source eligibility and exact human admission.
 use super::*;
+use contracts::strategy_portfolio::TargetPackageEnvelopeV2;
 use contracts::{delivery::*, forward::ForwardEnvironmentV1};
+use domain::delivery::package_delivery;
 use sqlx::postgres::PgRow;
 
 fn view(row: &PgRow) -> Result<ApprovalViewV1, StoreError> {
@@ -36,6 +38,52 @@ pub(super) async fn downstream(
     environment: ForwardEnvironmentV1,
     package: &TargetPackageV1,
 ) -> Result<DownstreamProbeViewV1, StoreError> {
+    downstream_version(
+        tx,
+        downstream_id,
+        revision,
+        environment,
+        package.package_schema_version,
+        &package.compatible_market_capabilities,
+    )
+    .await
+}
+
+pub(super) async fn downstream_envelope(
+    tx: &mut Tx<'_>,
+    downstream_id: Id,
+    revision: contracts::Revision,
+    environment: ForwardEnvironmentV1,
+    package: &TargetPackageEnvelopeV2,
+) -> Result<DownstreamProbeViewV1, StoreError> {
+    if let TargetPackageEnvelopeV2::TargetDecision(p) = package {
+        if environment != ForwardEnvironmentV1::Paper
+            || p.execution_environment != environment
+            || p.account_start.downstream_id != downstream_id
+        {
+            return Err(StoreError::Invalid("strategy_paper_account_binding"));
+        }
+    }
+    let package = package_delivery(package);
+    downstream_version(
+        tx,
+        downstream_id,
+        revision,
+        environment,
+        package.package_schema_version,
+        package.compatible_market_capabilities,
+    )
+    .await
+}
+
+async fn downstream_version(
+    tx: &mut Tx<'_>,
+    downstream_id: Id,
+    revision: contracts::Revision,
+    environment: ForwardEnvironmentV1,
+    version: contracts::settings::PackageSchemaVersion,
+    market_capabilities: &[String],
+) -> Result<DownstreamProbeViewV1, StoreError> {
     let readiness = crate::downstream::readiness(tx, downstream_id).await?;
     if readiness.integration_revision != revision {
         return Err(StoreError::RevisionConflict {
@@ -44,9 +92,7 @@ pub(super) async fn downstream(
     }
     if readiness.state != DownstreamReadinessState::Available
         || !readiness.available_environments.contains(&environment)
-        || !readiness
-            .available_package_versions
-            .contains(&package.package_schema_version)
+        || !readiness.available_package_versions.contains(&version)
     {
         return Err(
             domain::DomainError::CapabilityUnavailable("downstream_delivery_unavailable").into(),
@@ -56,8 +102,7 @@ pub(super) async fn downstream(
     let DownstreamProbeOutcomeV1::Available { capabilities } = &probe.outcome else {
         return Err(StoreError::Integrity);
     };
-    if !package
-        .compatible_market_capabilities
+    if !market_capabilities
         .iter()
         .all(|v| capabilities.market_capability_versions.contains(v))
     {
@@ -183,6 +228,38 @@ where
     Ok((project, candidate, original, until))
 }
 
+pub(super) async fn source_envelope<R, Read>(
+    tx: &mut Tx<'_>,
+    release_id: Id,
+    environment: ForwardEnvironmentV1,
+    read: &mut R,
+) -> Result<(Id, Id, TargetPackageEnvelopeV2, DateTime<Utc>), StoreError>
+where
+    R: FnMut(Id, DbCounter) -> Read,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+{
+    let version: String =
+        sqlx::query_scalar("SELECT package_schema_version FROM app.releases WHERE id=$1")
+            .bind(release_id.as_uuid())
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+    match version.as_str() {
+        "1" => {
+            let (project, candidate, package, until) =
+                source(tx, release_id, environment, read).await?;
+            Ok((
+                project,
+                candidate,
+                TargetPackageEnvelopeV2::Forecast(Box::new(package)),
+                until,
+            ))
+        }
+        "2" => strategy_release::source(tx, release_id, environment, read).await,
+        _ => Err(domain::DomainError::CapabilityUnavailable("target_package_version").into()),
+    }
+}
+
 impl Store {
     pub async fn release_approvals(
         &self,
@@ -239,7 +316,7 @@ impl Store {
             return Ok(replay);
         }
         let (project, candidate, original, until) =
-            source(&mut tx, release_id, request.environment, &mut read).await?;
+            source_envelope(&mut tx, release_id, request.environment, &mut read).await?;
         let ordinal = decision(
             &mut tx,
             candidate,
@@ -248,7 +325,7 @@ impl Store {
             request.expected_latest_decision_id,
         )
         .await?;
-        downstream(
+        downstream_envelope(
             &mut tx,
             request.downstream_id,
             request.expected_downstream_revision,
@@ -258,14 +335,14 @@ impl Store {
         .await?;
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
         let granted_at = now(&mut tx).await?;
-        if granted_at < original.valid_from
+        if granted_at < package_delivery(&original).valid_from
             || request.valid_until <= granted_at
             || request.valid_until > until
         {
             return Err(StoreError::Invalid("approval_expiry"));
         }
-        let evidence_set_id = freeze_evidence(&mut tx, &original, granted_at).await?;
-        let probe = downstream(
+        let evidence_set_id = freeze_evidence_envelope(&mut tx, &original, granted_at).await?;
+        let probe = downstream_envelope(
             &mut tx,
             request.downstream_id,
             request.expected_downstream_revision,
@@ -426,4 +503,31 @@ pub(super) async fn freeze_evidence(
     };
     crate::research::insert_frozen_input(tx, evidence_set_id, &evidence).await?;
     Ok(evidence_set_id)
+}
+
+pub(super) async fn freeze_evidence_envelope(
+    tx: &mut Tx<'_>,
+    original: &TargetPackageEnvelopeV2,
+    granted_at: DateTime<Utc>,
+) -> Result<Id, StoreError> {
+    match original {
+        TargetPackageEnvelopeV2::Forecast(package) => {
+            freeze_evidence(tx, package, granted_at).await
+        }
+        TargetPackageEnvelopeV2::TargetDecision(package) => {
+            let id = Id::new();
+            let evidence = contracts::research::InputSetCreate {
+                schema_version: SchemaV1,
+                project_id: package.project_id,
+                purpose: contracts::research::InputPurpose::Portfolio,
+                decision_cutoff: granted_at,
+                items: vec![contracts::research::InputItemV1::Artifact {
+                    artifact_id: package.source.report_artifact_id,
+                    role: contracts::research::ArtifactInputRole::Report,
+                }],
+            };
+            crate::research::insert_frozen_input(tx, id, &evidence).await?;
+            Ok(id)
+        }
+    }
 }

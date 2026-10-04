@@ -27,6 +27,7 @@ use std::collections::BTreeSet;
 
 type Tx<'a> = Transaction<'a, Postgres>;
 
+mod external;
 mod wake;
 
 pub(crate) async fn execution_context(

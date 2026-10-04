@@ -107,7 +107,10 @@ pub(crate) async fn frozen_policy(
     policy(&row)
 }
 
-async fn input(tx: &mut Transaction<'_, Postgres>, id: Id) -> Result<InputSetView, StoreError> {
+pub(crate) async fn input(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Id,
+) -> Result<InputSetView, StoreError> {
     let r = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {INPUT} FROM app.input_sets WHERE id=$1 AND frozen_at IS NOT NULL"
     )))
@@ -116,7 +119,7 @@ async fn input(tx: &mut Transaction<'_, Postgres>, id: Id) -> Result<InputSetVie
     .await?
     .ok_or(StoreError::NotFound)?;
     let header = summary(&r)?;
-    let rows=sqlx::query("SELECT i.id,i.ordinal,i.dataset_revision_id,i.artifact_id,i.role,COALESCE(d.origin,a.origin) AS origin,d.pit_status FROM app.input_set_items i LEFT JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id LEFT JOIN app.artifacts a ON a.id=i.artifact_id WHERE i.input_set_id=$1 ORDER BY i.ordinal LIMIT 257")
+    let rows=sqlx::query("SELECT i.id,i.ordinal,i.dataset_revision_id,i.artifact_id,i.role,COALESCE(d.origin,a.origin) AS origin,COALESCE(d.pit_status,fd.pit_status) AS pit_status FROM app.input_set_items i LEFT JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id LEFT JOIN app.artifacts a ON a.id=i.artifact_id LEFT JOIN app.feature_artifact_sources fs ON fs.artifact_id=a.id LEFT JOIN app.dataset_revisions fd ON fd.id=fs.dataset_revision_id WHERE i.input_set_id=$1 ORDER BY i.ordinal LIMIT 257")
         .bind(id.as_uuid()).fetch_all(&mut **tx).await?;
     if !(1..=256).contains(&rows.len()) {
         return Err(StoreError::Integrity);
@@ -176,6 +179,22 @@ pub(crate) async fn validate_inputs(
     extra_sealed: Option<Id>,
     execution_runtime: Option<Id>,
 ) -> Result<(), StoreError> {
+    let datasets = input_dataset_uses(tx, requests, extra_sealed).await?;
+    validate_dataset_uses(tx, &datasets, execution_runtime).await?;
+    let now: Timestamp = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut **tx)
+        .await?;
+    if requests.iter().any(|request| request.decision_cutoff > now) {
+        return Err(invalid("decision_cutoff", "FUTURE_CUTOFF").into());
+    }
+    Ok(())
+}
+
+async fn input_dataset_uses(
+    tx: &mut Transaction<'_, Postgres>,
+    requests: &[InputSetCreate],
+    extra_sealed: Option<Id>,
+) -> Result<Vec<DatasetUse>, StoreError> {
     let mut datasets = Vec::new();
     for request in requests {
         domain::research::input_set(request)?;
@@ -184,16 +203,16 @@ pub(crate) async fn validate_inputs(
                 InputItemV1::Dataset {
                     dataset_revision_id,
                     role,
-                } => datasets.push((
-                    *dataset_revision_id,
-                    *role,
-                    format!("items.{index}.dataset_revision_id"),
-                    Some(request.decision_cutoff),
-                    request.purpose,
-                )),
+                } => datasets.push(DatasetUse {
+                    id: *dataset_revision_id,
+                    role: *role,
+                    field: format!("items.{index}.dataset_revision_id"),
+                    cutoff: Some(request.decision_cutoff),
+                    purpose: request.purpose,
+                }),
                 InputItemV1::Artifact { artifact_id, role } => {
                     let r = sqlx::query(
-                        "SELECT project_id,kind,access_class FROM app.artifacts WHERE id=$1",
+                        "SELECT project_id,kind,access_class,schema_name FROM app.artifacts WHERE id=$1",
                     )
                     .bind(artifact_id.as_uuid())
                     .fetch_optional(&mut **tx)
@@ -215,31 +234,72 @@ pub(crate) async fn validate_inputs(
                         )
                         .into());
                     }
+                    if r.try_get::<String, _>("schema_name")? == "qz.feature_observations" {
+                        let feature = crate::recorded_features::resolve(
+                            tx,
+                            request.project_id,
+                            *artifact_id,
+                            None,
+                        )
+                        .await?;
+                        let binding = feature.binding.ok_or(StoreError::Integrity)?;
+                        if !request.items.iter().any(|item| matches!(item, InputItemV1::Dataset { dataset_revision_id, .. } if *dataset_revision_id == binding.dataset_revision_id)) {
+                            return Err(invalid(format!("items.{index}.artifact_id"), "FEATURE_DATASET_BINDING").into());
+                        }
+                    }
                 }
             }
         }
     }
     if let Some(id) = extra_sealed {
-        datasets.push((
+        datasets.push(DatasetUse {
             id,
-            DataPartition::Sealed,
-            "split_policy.sealed_revision_id".into(),
-            None,
-            InputPurpose::Sealed,
-        ));
+            role: DataPartition::Sealed,
+            field: "split_policy.sealed_revision_id".into(),
+            cutoff: None,
+            purpose: InputPurpose::Sealed,
+        });
     }
+    Ok(datasets)
+}
+
+/// Scientific use may replay a historical feature partition while preparing a
+/// current decision. Keep immutable partition identity separate from actual use.
+#[derive(Clone)]
+pub(crate) struct DatasetUse {
+    pub id: Id,
+    pub role: DataPartition,
+    pub field: String,
+    pub cutoff: Option<Timestamp>,
+    pub purpose: InputPurpose,
+}
+
+/// All sources, then all runtimes, then all grants are locked in stable order.
+/// Call before taking a runtime/grant lock when extra native features are used.
+pub(crate) async fn validate_dataset_uses(
+    tx: &mut Transaction<'_, Postgres>,
+    datasets: &[DatasetUse],
+    execution_runtime: Option<Id>,
+) -> Result<(), StoreError> {
     let mut facts = Vec::with_capacity(datasets.len());
     let mut source_ids = BTreeSet::new();
     let mut grant_ids = BTreeSet::new();
-    for (id, role, field, cutoff, purpose) in datasets {
+    for DatasetUse {
+        id,
+        role,
+        field,
+        cutoff,
+        purpose,
+    } in datasets
+    {
         let r=sqlx::query("SELECT source_id,data_use_grant_id,partition_role,available_through,pit_status FROM app.dataset_revisions WHERE id=$1")
-            .bind(id.as_uuid()).fetch_optional(&mut **tx).await?.ok_or_else(|| invalid(&field,"REFERENCE_UNAVAILABLE"))?;
+            .bind(id.as_uuid()).fetch_optional(&mut **tx).await?.ok_or_else(|| invalid(field,"REFERENCE_UNAVAILABLE"))?;
         let available: Timestamp = r.try_get("available_through")?;
         if r.try_get::<String, _>("partition_role")? != role.code()
             || r.try_get::<String, _>("pit_status")? == "INVALID"
             || cutoff.is_some_and(|cutoff| available > cutoff)
         {
-            return Err(invalid(&field, "DATASET_PARTITION_OR_ASOF").into());
+            return Err(invalid(field, "DATASET_PARTITION_OR_ASOF").into());
         }
         let source: uuid::Uuid = r.try_get("source_id")?;
         let grant: uuid::Uuid = r.try_get("data_use_grant_id")?;
@@ -273,7 +333,10 @@ pub(crate) async fn validate_inputs(
     let now: Timestamp = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut **tx)
         .await?;
-    if requests.iter().any(|request| request.decision_cutoff > now) {
+    if datasets
+        .iter()
+        .any(|request| request.cutoff.is_some_and(|cutoff| cutoff > now))
+    {
         return Err(invalid("decision_cutoff", "FUTURE_CUTOFF").into());
     }
     let revoked:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT DISTINCT grant_id FROM app.data_use_revocations WHERE grant_id=ANY($1) AND effective_at<=$2")
@@ -293,7 +356,7 @@ pub(crate) async fn validate_inputs(
             .find(|r| r.try_get::<uuid::Uuid, _>("id").ok() == Some(grant))
             .ok_or(StoreError::Integrity)?;
         if !s.try_get::<bool, _>("enabled")? || !r.try_get::<bool, _>("enabled")? {
-            return Err(invalid(&field, "SOURCE_DISABLED").into());
+            return Err(invalid(field, "SOURCE_DISABLED").into());
         }
         if g.try_get::<uuid::Uuid, _>("source_id")? != source
             || g.try_get::<Timestamp, _>("valid_from")? > now
@@ -301,11 +364,11 @@ pub(crate) async fn validate_inputs(
                 .is_some_and(|end| end <= now)
             || revoked.contains(&grant)
         {
-            return Err(invalid(&field, "DATA_USE_NOT_AUTHORIZED").into());
+            return Err(invalid(field, "DATA_USE_NOT_AUTHORIZED").into());
         }
         let allowed: DataUse = db::enum_value(g, "allowed_uses")?;
-        if !allowed.permits_preparation(purpose) {
-            return Err(invalid(&field, "DATA_USE_PURPOSE_NOT_AUTHORIZED").into());
+        if !allowed.permits_preparation(*purpose) {
+            return Err(invalid(field, "DATA_USE_PURPOSE_NOT_AUTHORIZED").into());
         }
     }
     Ok(())
@@ -320,12 +383,19 @@ pub(crate) async fn revalidate_frozen_inputs(
     project: Id,
     runtime: Id,
 ) -> Result<(), StoreError> {
-    let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.input_sets WHERE id=$1 AND project_id=$2 AND frozen_at IS NOT NULL)")
-        .bind(id.as_uuid()).bind(project.as_uuid()).fetch_one(&mut **tx).await?;
-    if !valid {
+    let datasets = frozen_dataset_uses(tx, id, project).await?;
+    validate_dataset_uses(tx, &datasets, Some(runtime)).await
+}
+
+pub(crate) async fn frozen_dataset_uses(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Id,
+    project: Id,
+) -> Result<Vec<DatasetUse>, StoreError> {
+    let view = input(tx, id).await?;
+    if view.header.project_id != project {
         return Err(StoreError::Invalid("frozen_inputs_required"));
     }
-    let view = input(tx, id).await?;
     let request = InputSetCreate {
         schema_version: contracts::SchemaV1,
         project_id: view.header.project_id,
@@ -333,7 +403,7 @@ pub(crate) async fn revalidate_frozen_inputs(
         decision_cutoff: view.header.decision_cutoff,
         items: view.items.into_iter().map(|item| item.item).collect(),
     };
-    validate_inputs(tx, std::slice::from_ref(&request), None, Some(runtime)).await
+    input_dataset_uses(tx, std::slice::from_ref(&request), None).await
 }
 
 pub(crate) async fn portfolio_study_input(

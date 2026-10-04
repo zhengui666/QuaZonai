@@ -2,7 +2,7 @@
 //! This module has no WASI, host imports, file, network, clock or credential access.
 use anyhow::{ensure, Result};
 use wasmi::{
-    CompilationMode, Config, EnforcedLimits, Engine, Linker, Module, Store, StoreLimits,
+    CompilationMode, Config, EnforcedLimits, Engine, Instance, Linker, Module, Store, StoreLimits,
     StoreLimitsBuilder, TypedFunc,
 };
 
@@ -67,6 +67,25 @@ impl SignalModule {
     }
 
     pub fn instantiate(&self, max_predictions: u32, total_fuel: u64) -> Result<WasmSignal> {
+        let (store, instance) = self.instantiate_bounded(max_predictions, total_fuel)?;
+        let predict = instance
+            .get_typed_func::<Arguments, f64>(&store, "predict")
+            .map_err(|_| anyhow::anyhow!("SIGNAL_ABI_MISMATCH"))?;
+        let remaining_fuel = store.get_fuel()?;
+        Ok(WasmSignal {
+            store,
+            predict,
+            remaining_predictions: max_predictions,
+            remaining_fuel,
+            failed: false,
+        })
+    }
+
+    pub(crate) fn instantiate_bounded(
+        &self,
+        max_predictions: u32,
+        total_fuel: u64,
+    ) -> Result<(Store<StoreLimits>, Instance)> {
         prediction_budget(max_predictions, total_fuel)?;
         let limits = StoreLimitsBuilder::new()
             .memory_size(MAX_SIGNAL_MEMORY_BYTES)
@@ -83,17 +102,7 @@ impl SignalModule {
         let instance = Linker::<StoreLimits>::new(&self.engine)
             .instantiate_and_start(&mut store, &self.module)
             .map_err(|_| anyhow::anyhow!("SIGNAL_INSTANTIATION_REJECTED"))?;
-        let predict = instance
-            .get_typed_func::<Arguments, f64>(&store, "predict")
-            .map_err(|_| anyhow::anyhow!("SIGNAL_ABI_MISMATCH"))?;
-        let remaining_fuel = store.get_fuel()?;
-        Ok(WasmSignal {
-            store,
-            predict,
-            remaining_predictions: max_predictions,
-            remaining_fuel,
-            failed: false,
-        })
+        Ok((store, instance))
     }
 }
 

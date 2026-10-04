@@ -234,7 +234,7 @@ pub(super) fn shape(value: &NativeSimulationResultV1) -> Result<(), DomainError>
     Ok(())
 }
 
-pub(super) fn binding(
+pub(crate) fn binding(
     request: &NativeSimulationRequestV1,
     value: &NativeSimulationResultV1,
 ) -> Result<(), DomainError> {

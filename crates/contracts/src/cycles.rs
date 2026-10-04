@@ -45,6 +45,40 @@ pub struct CycleStartV1 {
     pub reviewer_profile: CodexProfileChoiceV1,
 }
 
+/// An owner-managed scientific cycle. No embedded researcher/reviewer session.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalCycleStartV1 {
+    pub schema_version: SchemaV1,
+    pub brief_id: Id,
+    pub expected_revision: Revision,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalCycleStartIntent {
+    pub schema_version: SchemaV1,
+    pub project_id: Id,
+    pub request: ExternalCycleStartV1,
+}
+
+/// Close an external cycle only after every admitted scientific stage settles.
+/// Unexecuted proposals remain history; this does not create a review or PASS.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CycleFinishExternalV1 {
+    pub schema_version: SchemaV1,
+    pub expected_revision: Revision,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CycleFinishExternalIntent {
+    pub schema_version: SchemaV1,
+    pub cycle_id: Id,
+    pub request: CycleFinishExternalV1,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodexProfileChoiceV1 {

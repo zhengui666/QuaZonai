@@ -129,6 +129,73 @@ async fn verify_bindings(
     Ok(())
 }
 
+/// A task can consume registered features outside its market InputSet (for
+/// example a policy's historical initialization). Authorize the actual frozen
+/// spec, collecting all source locks before runtime/grant locks are acquired.
+async fn revalidate_inputs(
+    tx: &mut Tx<'_>,
+    run: &RunSnapshotV1,
+    runtime: Id,
+    inputs: &[RuntimeInputV1],
+) -> Result<(), StoreError> {
+    // Forward measurement owns a dedicated frozen REPORT InputSet whose
+    // EVALUATOR_ONLY sources intentionally cannot enter general research inputs.
+    // Its fixed task has no recorded feature inputs; retain its existing guard.
+    if run.kind == RunKind::ForwardEvaluate {
+        return crate::forward::revalidate(tx, run.input_set_id, run.project_id, runtime).await;
+    }
+    let header = crate::research::input(tx, run.input_set_id).await?.header;
+    if header.project_id != run.project_id {
+        return Err(StoreError::Integrity);
+    }
+    let mut uses =
+        crate::research::frozen_dataset_uses(tx, run.input_set_id, run.project_id).await?;
+    for input in inputs {
+        if let RuntimeInputV1::Artifact { artifact_id, .. } = input {
+            let recorded: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND schema_name='qz.feature_observations')")
+                .bind(artifact_id.as_uuid()).fetch_one(&mut **tx).await?;
+            if recorded {
+                let feature =
+                    crate::recorded_features::resolve(tx, run.project_id, *artifact_id, None)
+                        .await?;
+                if db::json(&feature.input)? != db::json(input)? {
+                    return Err(StoreError::Integrity);
+                }
+                let binding = feature.binding.ok_or(StoreError::Integrity)?;
+                uses.push(
+                    crate::recorded_features::dataset_use(
+                        tx,
+                        binding.dataset_revision_id,
+                        header.purpose,
+                        Some(header.decision_cutoff),
+                    )
+                    .await?,
+                );
+            }
+        }
+    }
+    crate::research::validate_dataset_uses(tx, &uses, Some(runtime)).await
+}
+
+/// The final first-send permit also consumes the actual frozen native inputs,
+/// after transfers may have taken time. Non-native drivers keep their own path.
+pub(super) async fn revalidate_dispatch_inputs(
+    tx: &mut Tx<'_>,
+    run: &RunSnapshotV1,
+    runtime: Id,
+    attempt: Id,
+) -> Result<(), StoreError> {
+    let inputs: Option<Value> = sqlx::query_scalar("SELECT COALESCE(a.spec_json->'inputs',t.input_bindings) FROM app.run_native_tasks t LEFT JOIN app.run_native_attempts a ON a.run_id=t.run_id AND a.attempt_id=$2 WHERE t.run_id=$1")
+        .bind(run.id.as_uuid()).bind(attempt.as_uuid()).fetch_optional(&mut **tx).await?;
+    if let Some(inputs) = inputs {
+        let inputs: Vec<RuntimeInputV1> =
+            serde_json::from_value(inputs).map_err(|_| StoreError::Integrity)?;
+        revalidate_inputs(tx, run, runtime, &inputs).await
+    } else {
+        super::revalidate_run_inputs(tx, run.kind, run.input_set_id, run.project_id, runtime).await
+    }
+}
+
 impl Store {
     /// Read or freeze the exact first dispatch body under the existing Attempt fence.
     /// Reconciliation never rebinds inputs, changes an image, or refreshes an old owner epoch.
@@ -195,14 +262,7 @@ impl Store {
         domain::runtime_jobs::spec_shape(&spec)?;
         if unsent && locked.run.state != RunState::CancelRequested {
             let runtime = db::id(locked.admission.try_get("runtime_id")?)?;
-            revalidate_run_inputs(
-                &mut tx,
-                locked.run.kind,
-                locked.run.input_set_id,
-                locked.run.project_id,
-                runtime,
-            )
-            .await?;
+            revalidate_inputs(&mut tx, &locked.run, runtime, &spec.inputs).await?;
             verify_bindings(
                 &mut tx,
                 &locked.run,
@@ -228,6 +288,7 @@ impl Store {
             // A shared lineage lock may wait. Recheck time-sensitive capability
             // and lease after it, before returning any transfer/dispatch permit.
             domain::runtime_jobs::admit_spec(&spec, &capabilities, now(&mut tx).await?)?;
+            revalidate_inputs(&mut tx, &locked.run, runtime, &spec.inputs).await?;
             fence(&mut tx, &locked.run, owner).await?;
         }
         let view = NativeJob {
@@ -373,12 +434,11 @@ impl Store {
                 _ => None,
             })
             .ok_or(StoreError::Forbidden)?;
-        revalidate_run_inputs(
+        revalidate_inputs(
             &mut tx,
-            locked.run.kind,
-            locked.run.input_set_id,
-            locked.run.project_id,
+            &locked.run,
             db::id(locked.admission.try_get("runtime_id")?)?,
+            &spec.inputs,
         )
         .await?;
         fence(&mut tx, &locked.run, owner).await?;

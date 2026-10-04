@@ -392,10 +392,15 @@ pub async fn run(arguments: Arguments) -> Result<()> {
             request.status,
         )
         .await?;
+    let json_maximum = if matches!(&request.output, commands::Output::NativeReport(_)) {
+        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize
+    } else {
+        MAX_JSON_BYTES
+    };
     match request.output {
-        commands::Output::Json(decode) => {
+        commands::Output::Json(decode) | commands::Output::NativeReport(decode) => {
             media(&response, "application/json")?;
-            let bytes = body(response, MAX_JSON_BYTES).await?;
+            let bytes = body(response, json_maximum).await?;
             verify(&bytes, &connection.credential)?;
             write_json(&decode(&bytes)?)
         }

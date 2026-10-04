@@ -182,6 +182,11 @@ impl From<StoreError> for ApiError {
                     .collect();
                 error
             }
+            StoreError::Domain(domain::DomainError::CapabilityUnavailable("strategy_constraint_measurement")) => Self::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "STRATEGY_CONSTRAINT_UNSUPPORTED",
+                "固定目标策略暂不支持事前风险、成交参与率、流动性或分组约束；请使用可直接验证的权重、现金和换手约束。",
+            ),
             StoreError::Domain(domain::DomainError::Invalid(_)) => Self::validation(),
             StoreError::Domain(domain::DomainError::BudgetExhausted(resource)) => {
                 let mut error = Self::new(
@@ -218,5 +223,24 @@ impl From<StoreError> for ApiError {
             ),
             StoreError::Database(_) | StoreError::Migration(_) => Self::internal(),
         }
+    }
+}
+
+#[cfg(test)]
+mod strategy_error_tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_strategy_measurements_have_a_specific_validation_error() {
+        let error = ApiError::from(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable("strategy_constraint_measurement"),
+        ));
+        assert_eq!(error.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(error.code, "STRATEGY_CONSTRAINT_UNSUPPORTED");
+        let existing = ApiError::from(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable("portfolio_native_models"),
+        ));
+        assert_eq!(existing.status, StatusCode::CONFLICT);
+        assert_eq!(existing.code, "DOMAIN_CONFLICT");
     }
 }

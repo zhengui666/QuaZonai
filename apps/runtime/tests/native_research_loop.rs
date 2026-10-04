@@ -14,6 +14,8 @@ mod runtime_support;
 #[path = "support/oci.rs"]
 mod support;
 
+#[path = "support/direct_research.rs"]
+mod direct_research;
 #[path = "../../job/tests/support/market_catalog.rs"]
 mod market;
 #[path = "../../server/tests/support/codex_responses.rs"]

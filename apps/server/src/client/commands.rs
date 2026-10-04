@@ -14,25 +14,29 @@ use contracts::{
         ProjectView,
     },
     cycles::{
-        BriefFreezeV1, CycleSelectionTrialV1, CycleSelectionV1, CycleStartV1, CycleStartedV1,
-        CycleViewV1, FrozenBriefV1,
+        BriefFreezeV1, CycleFinishExternalV1, CycleSelectionTrialV1, CycleSelectionV1,
+        CycleStartV1, CycleStartedV1, CycleViewV1, ExternalCycleStartV1, FrozenBriefV1,
     },
     data::*,
     evidence::{
-        AlphaEvaluateRequestV1, AlphaVersionView, AlphaView, CalibrationView, EvaluationView,
-        MetricValueV1, QualificationView,
+        AlphaEvaluateRequestV1, AlphaView, CalibrationView, EvaluationView, MetricValueV1,
+        QualificationView,
     },
     execution_assumptions::{ExecutionAssumptionsCreateV1, ExecutionAssumptionsViewV1},
-    experiments::{ExperimentProposalV1, ExperimentView},
+    experiments::{ExperimentEvaluateV1, ExperimentProposalV1, ExperimentView},
     forward::{DownstreamWeightsSubmitV1, DownstreamWeightsViewV1},
     lifecycle::{RunCancelV1, RunListQuery},
-    portfolio::{CandidateDetailV1, CandidateViewV1, MandateCreateV1, MandateViewV1},
     research::{
         EvaluationPolicyCreate, EvaluationPolicyView, InputSetCreate, InputSetSummary, InputSetView,
     },
     runs::RunSnapshotV1,
     runtime::{RuntimeProbeRequestV1, RuntimeProbeViewV1, RuntimeReadinessV1},
     settings::*,
+    strategy_portfolio::{
+        AlphaVersionEnvelopeV2, MandateCreateEnvelopeV2, MandateViewEnvelopeV2,
+        PortfolioBuildEnvelopeV2, PortfolioCandidateEnvelopeV2, PortfolioCandidateListEnvelopeV2,
+        StrategyAlphaAdoptV1, StrategyAlphaVersionV1,
+    },
     Id,
 };
 use reqwest::Method;
@@ -121,19 +125,19 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum Alpha {
     List(ProjectList),
-    /// Read qualification history for one AlphaVersionView.id, not the parent Alpha ID.
+    /// Read qualification history for one AlphaVersionEnvelopeV2.id, not the parent Alpha ID.
     Qualifications {
         #[arg(value_name = "ALPHA_VERSION_ID")]
         id: String,
         #[command(flatten)]
         page: List,
     },
-    /// Evaluate one AlphaVersionView.id using the exact authorized native request.
+    /// Evaluate one AlphaVersionEnvelopeV2.id using the exact authorized native request.
     Evaluate {
         #[arg(value_name = "ALPHA_VERSION_ID")]
         id: String,
     },
-    /// Read calibration for one AlphaVersionView.id, not the parent Alpha ID.
+    /// Read calibration for one AlphaVersionEnvelopeV2.id, not the parent Alpha ID.
     Calibration {
         #[arg(value_name = "ALPHA_VERSION_ID")]
         id: String,
@@ -145,13 +149,13 @@ pub enum Alpha {
         #[command(flatten)]
         page: List,
     },
-    /// Resolve an Alpha entity and decimal version number to its AlphaVersionView.
+    /// Resolve an Alpha entity and decimal version number to its AlphaVersionEnvelopeV2.
     Show {
         #[arg(value_name = "ALPHA_ID")]
         id: String,
         version: String,
     },
-    /// Read evaluation history for one AlphaVersionView.id, not the parent Alpha ID.
+    /// Read evaluation history for one AlphaVersionEnvelopeV2.id, not the parent Alpha ID.
     Evaluations {
         #[arg(value_name = "ALPHA_VERSION_ID")]
         id: String,
@@ -358,6 +362,10 @@ pub enum Candidate {
     Show {
         id: String,
     },
+    /// Read the accepted strategy replay preview or current target-only outcome.
+    Summary {
+        id: String,
+    },
     Evaluations {
         id: String,
         #[command(flatten)]
@@ -447,6 +455,14 @@ pub enum Cycle {
     },
     Start {
         project_id: String,
+    },
+    /// Start a frozen research cycle for an external Agent, without internal profiles.
+    StartExternal {
+        project_id: String,
+    },
+    /// Close a settled external research batch; unexecuted proposals stay historical.
+    FinishExternal {
+        id: String,
     },
 }
 #[derive(Subcommand)]
@@ -576,8 +592,26 @@ pub enum Policy {
 #[derive(Subcommand)]
 pub enum Experiment {
     List(ProjectList),
-    Show { id: String },
+    Show {
+        id: String,
+    },
     Propose,
+    /// Queue independent native research execution under the original trial budget.
+    Evaluate {
+        id: String,
+    },
+    /// Freeze one original accepted fold as a reusable research target policy.
+    AdoptAlpha {
+        id: String,
+    },
+    /// Read bounded native statistics and display-only equity for separate fresh-capital folds.
+    Summary {
+        id: String,
+    },
+    /// Read the original adopted independent-fold native trading report.
+    Result {
+        id: String,
+    },
 }
 #[derive(Subcommand)]
 pub enum Artifact {
@@ -619,6 +653,7 @@ pub enum Run {
 
 pub(super) enum Output {
     Json(fn(&[u8]) -> Result<serde_json::Value>),
+    NativeReport(fn(&[u8]) -> Result<serde_json::Value>),
     Binary {
         id: Id,
         report: Option<Id>,
@@ -726,6 +761,11 @@ impl Request {
             operator: false,
             output: Output::Json(decode::<T>),
         }
+    }
+    fn native_report<T: DeserializeOwned + Serialize>(route: impl Into<String>) -> Self {
+        let mut request = Self::get::<T>(route);
+        request.output = Output::NativeReport(decode::<T>);
+        request
     }
     fn write<T: DeserializeOwned + Serialize, R: DeserializeOwned + Serialize>(
         method: Method,
@@ -1077,7 +1117,7 @@ impl Command {
                 Handoff::Claim { id } => {
                     Request::write::<
                         contracts::delivery::HandoffClaimV1,
-                        CommandResult<contracts::delivery::HandoffClaimViewV1>,
+                        CommandResult<contracts::strategy_portfolio::HandoffClaimViewV2>,
                     >(
                         POST, action("/api/v2/handoffs", id, "claim")?, 200, false
                     )?
@@ -1124,11 +1164,9 @@ impl Command {
             }
             Self::Release(command) => match command {
                 Release::List { project_id, page } => {
-                    Request::get::<Page<contracts::delivery::ReleaseViewV1>>(action(
-                        "/api/v2/projects",
-                        project_id,
-                        "releases",
-                    )?)
+                    Request::get::<Page<contracts::strategy_portfolio::ReleaseViewEnvelopeV2>>(
+                        action("/api/v2/projects", project_id, "releases")?,
+                    )
                     .page(page)?
                 }
                 Release::Approve { id } => Request::write::<
@@ -1167,20 +1205,19 @@ impl Command {
                     .page(page)?
                 }
                 Release::Create => Request::write::<
-                    contracts::delivery::ReleaseCreateV1,
-                    CommandResult<contracts::delivery::ReleaseViewV1>,
+                    contracts::strategy_portfolio::ReleaseCreateEnvelopeV2,
+                    CommandResult<contracts::strategy_portfolio::ReleaseViewEnvelopeV2>,
                 >(POST, "/api/v2/releases", 201, true)?,
-                Release::Show { id } => Request::get::<contracts::delivery::ReleaseViewV1>(item(
-                    "/api/v2/releases",
-                    id,
-                )?),
+                Release::Show { id } => Request::get::<
+                    contracts::strategy_portfolio::ReleaseViewEnvelopeV2,
+                >(item("/api/v2/releases", id)?),
             },
-            Self::Portfolio(Portfolio::Build) => {
-                Request::write::<
-                    contracts::portfolio::PortfolioBuildRequestV1,
-                    CommandResult<RunSnapshotV1>,
-                >(POST, "/api/v2/portfolio-builds", 202, true)?
-            }
+            Self::Portfolio(Portfolio::Build) => Request::write::<
+                PortfolioBuildEnvelopeV2,
+                CommandResult<RunSnapshotV1>,
+            >(
+                POST, "/api/v2/portfolio-builds", 202, true
+            )?,
             Self::Portfolio(Portfolio::Simulate) => {
                 Request::write::<
                     contracts::portfolio::CandidateSimulationRequestV1,
@@ -1194,35 +1231,41 @@ impl Command {
                 >(POST, "/api/v2/portfolio-studies", 202, true)?
             }
             Self::Portfolio(Portfolio::Candidate(command)) => match command {
-                Candidate::List { project_id, page } => Request::get::<Page<CandidateViewV1>>(
-                    action("/api/v2/projects", project_id, "portfolio-candidates")?,
-                )
-                .page(page)?,
-                Candidate::Show { id } => {
-                    Request::get::<CandidateDetailV1>(item("/api/v2/portfolio-candidates", id)?)
+                Candidate::List { project_id, page } => {
+                    Request::get::<Page<PortfolioCandidateListEnvelopeV2>>(action(
+                        "/api/v2/projects",
+                        project_id,
+                        "portfolio-candidates",
+                    )?)
+                    .page(page)?
+                }
+                Candidate::Show { id } => Request::get::<PortfolioCandidateEnvelopeV2>(item(
+                    "/api/v2/portfolio-candidates",
+                    id,
+                )?),
+                Candidate::Summary { id } => {
+                    Request::get::<contracts::strategy_portfolio::StrategyPortfolioSummaryV1>(
+                        action("/api/v2/portfolio-candidates", id, "summary")?,
+                    )
                 }
                 Candidate::Evaluations { id, page } => Request::get::<Page<EvaluationView>>(
                     action("/api/v2/portfolio-candidates", id, "evaluations")?,
                 )
                 .page(page)?,
             },
-            Self::Portfolio(Portfolio::Mandate(command)) => {
-                match command {
-                    Mandate::Create => Request::write::<
-                        MandateCreateV1,
-                        CommandResult<MandateViewV1>,
-                    >(
-                        POST, "/api/v2/portfolio-mandates", 201, true
-                    )?,
-                    Mandate::List { project_id, page } => Request::get::<Page<MandateViewV1>>(
-                        action("/api/v2/projects", project_id, "portfolio-mandates")?,
-                    )
-                    .page(page)?,
-                    Mandate::Show { id } => {
-                        Request::get::<MandateViewV1>(item("/api/v2/portfolio-mandates", id)?)
-                    }
+            Self::Portfolio(Portfolio::Mandate(command)) => match command {
+                Mandate::Create => Request::write::<
+                    MandateCreateEnvelopeV2,
+                    CommandResult<MandateViewEnvelopeV2>,
+                >(POST, "/api/v2/portfolio-mandates", 201, true)?,
+                Mandate::List { project_id, page } => Request::get::<Page<MandateViewEnvelopeV2>>(
+                    action("/api/v2/projects", project_id, "portfolio-mandates")?,
+                )
+                .page(page)?,
+                Mandate::Show { id } => {
+                    Request::get::<MandateViewEnvelopeV2>(item("/api/v2/portfolio-mandates", id)?)
                 }
-            }
+            },
             Self::Portfolio(Portfolio::Assumptions(command)) => match command {
                 ExecutionAssumptions::Create => {
                     Request::write::<
@@ -1287,6 +1330,22 @@ impl Command {
                     )?)
                     .page(page)?,
                     Cycle::Show { id } => Request::get::<CycleViewV1>(item("/api/v2/cycles", id)?),
+                    Cycle::FinishExternal { id } => {
+                        Request::write::<CycleFinishExternalV1, CommandResult<CycleViewV1>>(
+                            POST,
+                            action("/api/v2/cycles", id, "finish-external")?,
+                            200,
+                            true,
+                        )?
+                    }
+                    Cycle::StartExternal { project_id } => {
+                        Request::write::<ExternalCycleStartV1, CommandResult<CycleViewV1>>(
+                            POST,
+                            action("/api/v2/projects", project_id, "cycles/external")?,
+                            201,
+                            true,
+                        )?
+                    }
                     Cycle::Start { project_id } => {
                         Request::write::<CycleStartV1, CommandResult<CycleStartedV1>>(
                             POST,
@@ -1573,6 +1632,34 @@ impl Command {
                 Experiment::Show { id } => {
                     Request::get::<ExperimentView>(item("/api/v2/experiments", id)?)
                 }
+                Experiment::Evaluate { id } => {
+                    Request::write::<ExperimentEvaluateV1, CommandResult<RunSnapshotV1>>(
+                        POST,
+                        action("/api/v2/experiments", id, "evaluate")?,
+                        202,
+                        true,
+                    )?
+                }
+                Experiment::AdoptAlpha { id } => {
+                    Request::write::<StrategyAlphaAdoptV1, CommandResult<StrategyAlphaVersionV1>>(
+                        POST,
+                        action("/api/v2/experiments", id, "adopt-alpha")?,
+                        201,
+                        true,
+                    )?
+                }
+                Experiment::Summary { id } => {
+                    Request::get::<contracts::experiment_summary::ExperimentSummaryV1>(action(
+                        "/api/v2/experiments",
+                        id,
+                        "summary",
+                    )?)
+                }
+                Experiment::Result { id } => {
+                    Request::native_report::<contracts::science::NativeExperimentEvaluationResultV1>(
+                        action("/api/v2/experiments", id, "evaluation")?,
+                    )
+                }
                 Experiment::Propose => Request::write::<
                     ExperimentProposalV1,
                     CommandResult<ExperimentView>,
@@ -1600,16 +1687,14 @@ impl Command {
                         action("/api/v2/alpha-versions", id, "qualifications")?,
                     )
                     .page(page)?,
-                    Alpha::Versions { id, page } => Request::get::<Page<AlphaVersionView>>(action(
-                        "/api/v2/alphas",
-                        id,
-                        "versions",
-                    )?)
+                    Alpha::Versions { id, page } => Request::get::<Page<AlphaVersionEnvelopeV2>>(
+                        action("/api/v2/alphas", id, "versions")?,
+                    )
                     .page(page)?,
                     Alpha::Show { id, version } => {
                         let version: contracts::Revision =
                             version.try_into().map_err(|_| Failure::Input)?;
-                        Request::get::<AlphaVersionView>(format!(
+                        Request::get::<AlphaVersionEnvelopeV2>(format!(
                             "{}/{}",
                             action("/api/v2/alphas", id, "versions")?,
                             String::from(version)

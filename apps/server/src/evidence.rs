@@ -16,10 +16,11 @@ use axum::{
 use contracts::{
     control::{CommandResult, ListQuery, Page},
     evidence::{
-        AlphaEvaluateRequestV1, AlphaVersionView, AlphaView, CalibrationView, EvaluationView,
-        MetricValueV1, QualificationView,
+        AlphaEvaluateRequestV1, AlphaView, CalibrationView, EvaluationView, MetricValueV1,
+        QualificationView,
     },
     research::ResearchListQuery,
+    strategy_portfolio::AlphaVersionEnvelopeV2,
     Id, Revision,
 };
 use store::StoreError;
@@ -139,26 +140,30 @@ pub async fn alphas(
     Ok(Json(state.store.alphas(&actor, &query).await?))
 }
 
-#[utoipa::path(get,path="/api/v2/alphas/{id}/versions",operation_id="list_alpha_versions",tag="Evidence",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<AlphaVersionView>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/alphas/{id}/versions",operation_id="list_alpha_versions",tag="Evidence",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<AlphaVersionEnvelopeV2>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
 pub async fn versions(
     State(state): State<AppState>,
     Authority(actor): Authority,
     id: Result<Path<Id>, PathRejection>,
     query: Result<Query<ListQuery>, QueryRejection>,
-) -> Result<Json<Page<AlphaVersionView>>, ApiError> {
+) -> Result<Json<Page<AlphaVersionEnvelopeV2>>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     let Query(query) = query.map_err(|_| ApiError::validation())?;
-    Ok(Json(state.store.alpha_versions(&actor, id, &query).await?))
+    Ok(Json(
+        state.store.alpha_versions_v2(&actor, id, &query).await?,
+    ))
 }
 
-#[utoipa::path(get,path="/api/v2/alphas/{id}/versions/{version}",operation_id="get_alpha_version",tag="Evidence",params(("id"=Id,Path),("version"=Revision,Path)),responses((status=200,body=AlphaVersionView),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/alphas/{id}/versions/{version}",operation_id="get_alpha_version",tag="Evidence",params(("id"=Id,Path),("version"=Revision,Path)),responses((status=200,body=AlphaVersionEnvelopeV2),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
 pub async fn version(
     State(state): State<AppState>,
     Authority(actor): Authority,
     path: Result<Path<(Id, Revision)>, PathRejection>,
-) -> Result<Json<AlphaVersionView>, ApiError> {
+) -> Result<Json<AlphaVersionEnvelopeV2>, ApiError> {
     let Path((id, version)) = path.map_err(|_| ApiError::validation())?;
-    Ok(Json(state.store.alpha_version(&actor, id, version).await?))
+    Ok(Json(
+        state.store.alpha_version_v2(&actor, id, version).await?,
+    ))
 }
 
 #[utoipa::path(get,path="/api/v2/alpha-versions/{id}/calibration",operation_id="get_alpha_calibration",tag="Evidence",params(("id"=Id,Path)),responses((status=200,body=CalibrationView),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]

@@ -17,32 +17,35 @@ use contracts::{
     control::{CommandResult, ListQuery, Page},
     delivery::{
         ApprovalRevocationViewV1, ApprovalRevokeV1, ApprovalViewV1, HandoffAckV1, HandoffClaimV1,
-        HandoffClaimViewV1, HandoffOfferV1, HandoffViewV1, ReleaseApproveV1, ReleaseCreateV1,
-        ReleaseDecisionViewV1, ReleaseRejectV1, ReleaseReopenV1, ReleaseViewV1,
+        HandoffOfferV1, HandoffViewV1, ReleaseApproveV1, ReleaseDecisionViewV1, ReleaseRejectV1,
+        ReleaseReopenV1,
     },
+    strategy_portfolio::{HandoffClaimViewV2, ReleaseCreateEnvelopeV2, ReleaseViewEnvelopeV2},
     Id,
 };
 use store::StoreError;
 
-#[utoipa::path(get,path="/api/v2/projects/{id}/releases",operation_id="list_releases",tag="Release",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<ReleaseViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/projects/{id}/releases",operation_id="list_releases",tag="Release",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<ReleaseViewEnvelopeV2>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
 pub async fn list(
     State(state): State<AppState>,
     Authority(actor): Authority,
     id: Result<Path<Id>, PathRejection>,
     query: Result<Query<ListQuery>, QueryRejection>,
-) -> Result<Json<Page<ReleaseViewV1>>, ApiError> {
+) -> Result<Json<Page<ReleaseViewEnvelopeV2>>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     let Query(query) = query.map_err(|_| ApiError::validation())?;
-    Ok(Json(state.store.releases(&actor, id, &query).await?))
+    Ok(Json(
+        state.store.releases_envelope(&actor, id, &query).await?,
+    ))
 }
 
-#[utoipa::path(post,path="/api/v2/releases",operation_id="create_release",tag="Release",request_body=ReleaseCreateV1,params(("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<ReleaseViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+#[utoipa::path(post,path="/api/v2/releases",operation_id="create_release",tag="Release",request_body=ReleaseCreateEnvelopeV2,params(("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<ReleaseViewEnvelopeV2>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn create(
     State(state): State<AppState>,
     Authority(actor): Authority,
     headers: HeaderMap,
-    body: Result<Json<ReleaseCreateV1>, JsonRejection>,
-) -> Result<(StatusCode, Json<CommandResult<ReleaseViewV1>>), ApiError> {
+    body: Result<Json<ReleaseCreateEnvelopeV2>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<ReleaseViewEnvelopeV2>>), ApiError> {
     let request = json(body)?;
     let key = idempotency_key(&headers)?.to_owned();
     let objects = state
@@ -55,7 +58,7 @@ pub async fn create(
         let publishing = objects.clone();
         let mut allocated = Vec::new();
         let result = store
-            .create_release(
+            .create_release_envelope(
                 &actor,
                 &key,
                 &request,
@@ -101,14 +104,14 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(result)))
 }
 
-#[utoipa::path(get,path="/api/v2/releases/{id}",operation_id="get_release",tag="Release",params(("id"=Id,Path)),responses((status=200,body=ReleaseViewV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/releases/{id}",operation_id="get_release",tag="Release",params(("id"=Id,Path)),responses((status=200,body=ReleaseViewEnvelopeV2),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
 pub async fn get(
     State(state): State<AppState>,
     Authority(actor): Authority,
     id: Result<Path<Id>, PathRejection>,
-) -> Result<Json<ReleaseViewV1>, ApiError> {
+) -> Result<Json<ReleaseViewEnvelopeV2>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
-    Ok(Json(state.store.release(&actor, id).await?))
+    Ok(Json(state.store.release_envelope(&actor, id).await?))
 }
 
 #[utoipa::path(post,path="/api/v2/releases/{id}/rejections",operation_id="reject_release",tag="Release",request_body=ReleaseRejectV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<ReleaseDecisionViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
@@ -273,14 +276,14 @@ pub async fn handoff(
     Ok(Json(state.store.handoff(&actor, id).await?))
 }
 
-#[utoipa::path(post,path="/api/v2/handoffs/{id}/claim",operation_id="claim_handoff",tag="Release",request_body=HandoffClaimV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<HandoffClaimViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+#[utoipa::path(post,path="/api/v2/handoffs/{id}/claim",operation_id="claim_handoff",tag="Release",request_body=HandoffClaimV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<HandoffClaimViewV2>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn claim(
     State(state): State<AppState>,
     Authority(actor): Authority,
     headers: HeaderMap,
     id: Result<Path<Id>, PathRejection>,
     body: Result<Json<HandoffClaimV1>, JsonRejection>,
-) -> Result<(StatusCode, Json<CommandResult<HandoffClaimViewV1>>), ApiError> {
+) -> Result<(StatusCode, Json<CommandResult<HandoffClaimViewV2>>), ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     let request = json(body)?;
     let key = idempotency_key(&headers)?.to_owned();
@@ -291,7 +294,7 @@ pub async fn claim(
     let store = state.store.clone();
     let result = crate::settings::command(&state, async move {
         store
-            .claim_handoff(&actor, &key, id, &request, move |id, size| {
+            .claim_handoff_envelope(&actor, &key, id, &request, move |id, size| {
                 let objects = objects.clone();
                 async move {
                     tokio::task::spawn_blocking(move || objects.read(id, size))

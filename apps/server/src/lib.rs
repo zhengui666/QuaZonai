@@ -320,6 +320,26 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/api/v2/experiments/{id}", get(experiments::get))
+        .route(
+            "/api/v2/experiments/{id}/summary",
+            get(experiments::summary),
+        )
+        .route(
+            "/api/v2/experiments/{id}/evaluate",
+            post(experiments::evaluate),
+        )
+        .route(
+            "/api/v2/experiments/{id}/adopt-alpha",
+            post(experiments::adopt_alpha),
+        )
+        .route(
+            "/api/v2/experiments/{id}/evaluation",
+            get(experiments::evaluation),
+        )
+        .route(
+            "/api/v2/projects/{id}/cycles/external",
+            post(cycles::start_external),
+        )
         .route("/api/v2/alphas", get(evidence::alphas))
         .route("/api/v2/alphas/{id}/versions", get(evidence::versions))
         .route(
@@ -458,6 +478,10 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route(
             "/api/v2/portfolio-candidates/{id}",
             get(portfolio::candidate),
+        )
+        .route(
+            "/api/v2/portfolio-candidates/{id}/summary",
+            get(portfolio::summary),
         )
         .route(
             "/api/v2/portfolio-candidates/{id}/evaluations",
@@ -599,6 +623,10 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             get(cycles::list).post(cycles::start),
         )
         .route("/api/v2/cycles/{id}", get(cycles::get))
+        .route(
+            "/api/v2/cycles/{id}/finish-external",
+            post(cycles::finish_external),
+        )
         .route("/api/v2/cycles/{id}/selection", get(cycles::selection))
         .route("/api/v2/cycles/{id}/selection/trials", get(cycles::trials))
         .route(
@@ -751,12 +779,12 @@ control::machine_session,control::issue_grant,runs::list,runs::get,runs::rebalan
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
-automation::authorize_automation,automation::revoke_automation,automation::automation_policy,automation::automation_policies,automation::automation_revocations,release::ack,release::revoke_approval,release::revocations,release::claim,release::offer,release::handoff,release::handoffs,release::create,release::get,release::list,release::approvals,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,
+automation::authorize_automation,automation::revoke_automation,automation::automation_policy,automation::automation_policies,automation::automation_revocations,release::ack,release::revoke_approval,release::revocations,release::claim,release::offer,release::handoff,release::handoffs,release::create,release::get,release::list,release::approvals,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,portfolio::summary,
 execution_assumptions::list,execution_assumptions::get,execution_assumptions::create,
 account_observation::submit,account_observation::sources,account_observation::current,account_observation::observations,
 forward::weight_snapshots,forward::weights,forward::message,forward::list,forward::window,forward::observations,forward::wakes,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
-experiments::propose,experiments::list,experiments::get,
+experiments::propose,experiments::list,experiments::get,experiments::evaluate,experiments::adopt_alpha,experiments::evaluation,experiments::summary,cycles::start_external,cycles::finish_external,
 evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::qualifications,evidence::evaluations,evidence::candidate_evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,equity_curve::get,
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,

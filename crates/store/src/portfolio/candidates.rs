@@ -10,7 +10,7 @@ fn decimal(value: bigdecimal::BigDecimal) -> Result<contracts::DecimalValue, Sto
         .map_err(|_| StoreError::Integrity)
 }
 
-fn candidate(row: &PgRow) -> Result<CandidateViewV1, StoreError> {
+pub(super) fn candidate(row: &PgRow) -> Result<CandidateViewV1, StoreError> {
     Ok(CandidateViewV1 {
         id: db::id(row.try_get("id")?)?,
         project_id: db::id(row.try_get("project_id")?)?,
@@ -56,7 +56,7 @@ impl Store {
         if !exists {
             return Err(StoreError::NotFound);
         }
-        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{CANDIDATE} WHERE c.project_id=$1 AND ($2::uuid IS NULL OR c.id<$2) ORDER BY c.id DESC LIMIT $3")))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{CANDIDATE} WHERE c.source_kind='FORECAST' AND c.project_id=$1 AND ($2::uuid IS NULL OR c.id<$2) ORDER BY c.id DESC LIMIT $3")))
             .bind(project.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let items = rows.iter().map(candidate).collect::<Result<Vec<_>, _>>()?;
         tx.commit().await?;
@@ -76,11 +76,13 @@ pub(crate) async fn snapshot(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     id: Id,
 ) -> Result<CandidateDetailV1, StoreError> {
-    let row = sqlx::query(sqlx::AssertSqlSafe(format!("{CANDIDATE} WHERE c.id=$1")))
-        .bind(id.as_uuid())
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or(StoreError::NotFound)?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{CANDIDATE} WHERE c.source_kind='FORECAST' AND c.id=$1"
+    )))
+    .bind(id.as_uuid())
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(StoreError::NotFound)?;
     let header = candidate(&row)?;
     let members = sqlx::query(
         "SELECT * FROM app.candidate_alphas WHERE candidate_id=$1 ORDER BY alpha_version_id",

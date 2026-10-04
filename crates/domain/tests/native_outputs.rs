@@ -285,6 +285,30 @@ fn compiler_report_cannot_borrow_another_code_or_model_object() {
         &parameters,
         &[model.clone(), output("qz.model_compilation", &report)]
     ));
+    let feature_parameters = NativeTaskParametersV1::CompileFeatureModel {
+        schema_version: SchemaV1,
+        code_artifact_id: code,
+    };
+    assert!(!accepts(
+        &feature_parameters,
+        &[model.clone(), output("qz.model_compilation", &report)]
+    ));
+    let mut feature_report = report.clone();
+    feature_report.abi = contracts::science::FEATURE_MODEL_ABI_V2.into();
+    assert!(accepts(
+        &feature_parameters,
+        &[
+            model.clone(),
+            output("qz.model_compilation", &feature_report)
+        ]
+    ));
+    assert!(!accepts(
+        &parameters,
+        &[
+            model.clone(),
+            output("qz.model_compilation", &feature_report)
+        ]
+    ));
     for dimension in 0..5 {
         let mut invalid = report.clone();
         match dimension {

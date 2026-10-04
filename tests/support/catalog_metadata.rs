@@ -46,6 +46,7 @@ pub fn metadata() -> RuntimeCatalogMetadataV1 {
         maximum_rows: 3,
     };
     RuntimeCatalogMetadataV1 {
+        recorded_feature_inputs: None,
         schema_version: SchemaV1,
         registered_ref: "controlled-catalog".into(),
         native_snapshot_ref: "controlled-snapshot".into(),

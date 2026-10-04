@@ -6,8 +6,8 @@ use contracts::{science::*, DbCounter, DecimalValue, SchemaV1};
 use nautilus_analysis::{
     analyzer::{PortfolioAnalyzer, Statistic},
     statistics::{
-        returns_volatility::ReturnsVolatility, sharpe_ratio::SharpeRatio,
-        sortino_ratio::SortinoRatio,
+        max_drawdown::MaxDrawdown, returns_volatility::ReturnsVolatility,
+        sharpe_ratio::SharpeRatio, sortino_ratio::SortinoRatio,
     },
 };
 use nautilus_backtest::{
@@ -22,7 +22,9 @@ use nautilus_execution::models::{
 use nautilus_model::{
     data::{Bar, BarType, Data, InstrumentClose},
     enums::{AccountType, BookType, OmsType, OrderSide, OrderStatus},
-    events::{OrderDenied, OrderFilled, OrderRejected},
+    events::{
+        OrderDenied, OrderFilled, OrderRejected, PositionChanged, PositionClosed, PositionOpened,
+    },
     identifiers::{ClientOrderId, InstrumentId, StrategyId, Venue},
     instruments::{Instrument, InstrumentAny},
     orders::{Order, OrderAny},
@@ -41,6 +43,7 @@ use std::{
     path::Path,
     rc::Rc,
     str::FromStr,
+    sync::Arc,
 };
 
 const MAX_TARGET_ORDERS: usize = 65_536;
@@ -60,9 +63,29 @@ fn count(value: usize) -> Result<DbCounter> {
 struct ReplayStatus {
     consumed: usize,
     failure: Option<&'static str>,
+    callback_error: Option<anyhow::Error>,
     submitted_after_ns: u64,
     study_infeasible: bool,
     frames: Vec<NativePortfolioStudyFrameV1>,
+}
+
+impl ReplayStatus {
+    fn record_callback_error(&mut self, error: anyhow::Error) {
+        if self.failure.is_none() {
+            self.failure = Some("NATIVE_TARGET_REPLAY_FAILED");
+            self.callback_error = Some(error);
+        }
+    }
+
+    fn finish_run(&mut self, native_result: Result<()>) -> Result<()> {
+        if let Some(error) = self.callback_error.take() {
+            return Err(error.context("NATIVE_TARGET_REPLAY_FAILED"));
+        }
+        if let Some(code) = self.failure {
+            return Err(anyhow::anyhow!(code).context("NATIVE_TARGET_REPLAY_FAILED"));
+        }
+        native_result
+    }
 }
 
 pub(crate) struct StudyInput {
@@ -80,6 +103,11 @@ struct TargetReplay {
     latest: BTreeMap<InstrumentId, Bar>,
     points: Vec<NativeTargetPointV1>,
     study_inputs: Vec<StudyInput>,
+    strategy_constraints: Option<(
+        contracts::portfolio::PortfolioConstraintsV1,
+        String,
+        DecimalValue,
+    )>,
     settings: NativeSimulationSettingsV1,
     currency: Currency,
     venue: Venue,
@@ -88,6 +116,8 @@ struct TargetReplay {
     reduction_ids: BTreeSet<ClientOrderId>,
     deferred_orders: Vec<OrderAny>,
     active_expiry_ns: u64,
+    awaiting_settlement: bool,
+    outstanding_orders: BTreeSet<ClientOrderId>,
     settlement_events: BTreeMap<InstrumentId, InstrumentClose>,
     status: Rc<RefCell<ReplayStatus>>,
 }
@@ -146,21 +176,60 @@ nautilus_strategy!(TargetReplay, {
             self.status.borrow_mut().failure = Some("NATIVE_NONCAUSAL_OR_EXPIRED_FILL");
             return;
         }
-        if self.reduction_ids.contains(&event.client_order_id)
-            && self
-                .cache()
-                .order(&event.client_order_id)
-                .is_some_and(|order| order.status() == OrderStatus::Filled)
-        {
+        let fully_filled = self
+            .cache()
+            .order(&event.client_order_id)
+            .is_some_and(|order| order.status() == OrderStatus::Filled);
+        if fully_filled {
+            self.outstanding_orders.remove(&event.client_order_id);
+        }
+        if self.reduction_ids.contains(&event.client_order_id) && fully_filled {
             self.reduction_ids.remove(&event.client_order_id);
-            if self.reduction_ids.is_empty() && self.submit_deferred(now).is_err() {
-                self.status.borrow_mut().failure = Some("NATIVE_DEFERRED_TARGET_FAILED");
+            if self.reduction_ids.is_empty() {
+                if let Err(error) = self.submit_deferred(now) {
+                    self.status
+                        .borrow_mut()
+                        .record_callback_error(error.context("NATIVE_DEFERRED_TARGET_FAILED"));
+                }
             }
         }
+    }
+    fn on_position_opened(&mut self, event: PositionOpened) {
+        self.resume_after_settlement(event.ts_init.as_u64());
+    }
+    fn on_position_changed(&mut self, event: PositionChanged) {
+        self.resume_after_settlement(event.ts_init.as_u64());
+    }
+    fn on_position_closed(&mut self, event: PositionClosed) {
+        self.resume_after_settlement(event.ts_init.as_u64());
     }
 });
 
 impl TargetReplay {
+    fn orders_settled(&self) -> bool {
+        // Initialized commands have not reached the native open/inflight indexes.
+        self.outstanding_orders.is_empty()
+            && self.cache().orders_open_count(None, None, None, None, None) == 0
+            && self
+                .cache()
+                .orders_inflight_count(None, None, None, None, None)
+                == 0
+    }
+
+    fn resume_after_settlement(&mut self, receipt_ns: u64) {
+        if !self.awaiting_settlement || !self.orders_settled() {
+            return;
+        }
+        // Native position events follow order fills and the Portfolio's higher-
+        // priority handler refreshes net positions before this strategy sees them.
+        self.awaiting_settlement = false;
+        if let Some(bar) = self.latest.values().max_by_key(|bar| bar.ts_init).copied() {
+            if let Err(error) = self.apply_bar(&bar, receipt_ns) {
+                self.status.borrow_mut().record_callback_error(error);
+            }
+        }
+    }
+
     fn submit_deferred(&mut self, now: u64) -> Result<()> {
         ensure!(
             self.reduction_ids.is_empty() && self.status.borrow().failure.is_none(),
@@ -173,6 +242,7 @@ impl TargetReplay {
         );
         self.status.borrow_mut().submitted_after_ns = now;
         for order in std::mem::take(&mut self.deferred_orders) {
+            self.outstanding_orders.insert(order.client_order_id());
             self.submit_order(order, None, None, None)?;
             ensure!(
                 self.status.borrow().failure.is_none(),
@@ -183,7 +253,7 @@ impl TargetReplay {
         Ok(())
     }
 
-    fn apply_bar(&mut self, bar: &Bar) -> Result<()> {
+    fn apply_bar(&mut self, bar: &Bar, receipt_ns: u64) -> Result<()> {
         if self.status.borrow().study_infeasible {
             return Ok(());
         }
@@ -194,9 +264,10 @@ impl TargetReplay {
         self.latest.insert(bar.bar_type.instrument_id(), *bar);
         if !self.reduction_ids.is_empty() {
             ensure!(
-                bar.ts_init.as_u64() < self.active_expiry_ns,
+                receipt_ns < self.active_expiry_ns,
                 "SIMULATION_REDUCTION_EXPIRED"
             );
+            self.awaiting_settlement = true;
             return Ok(());
         }
         let next = self.status.borrow().consumed;
@@ -218,7 +289,8 @@ impl TargetReplay {
             .values()
             .map(|v| v.ts_init.as_u64())
             .max()
-            .ok_or_else(|| anyhow::anyhow!("SIMULATION_MISSING_PRICE"))?;
+            .ok_or_else(|| anyhow::anyhow!("SIMULATION_MISSING_PRICE"))?
+            .max(receipt_ns);
         if now < point.asof_ns.get() {
             return Ok(());
         }
@@ -237,14 +309,14 @@ impl TargetReplay {
                 .is_none_or(|p| p.asof_ns.get() > now),
             "SIMULATION_TARGETS_COALESCED"
         );
-        ensure!(
-            self.cache().orders_open_count(None, None, None, None, None) == 0
-                && self
-                    .cache()
-                    .orders_inflight_count(None, None, None, None, None)
-                    == 0,
-            "SIMULATION_UNSETTLED_PREVIOUS_TARGET"
-        );
+        if !self.orders_settled() {
+            // Nautilus delivers BAR data before draining queued execution events.
+            // Wait for its position callback and settled cache before a new
+            // target; never manufacture fills or calculate from pending equity.
+            self.awaiting_settlement = true;
+            return Ok(());
+        }
+        self.awaiting_settlement = false;
         let equity = self
             .portfolio()
             .equity(&self.venue, None)
@@ -303,6 +375,35 @@ impl TargetReplay {
             point.cash_weight = cash;
             point.asof_ns = DbCounter::new(now).map_err(anyhow::Error::msg)?;
             validate_point(&self.settings, &point, &self.instruments)?;
+        }
+        if let Some((constraints, currency, tolerance)) = &self.strategy_constraints {
+            let current = self
+                .instruments
+                .iter()
+                .map(|instrument| {
+                    let price = self.latest[&instrument.id()].close.as_decimal();
+                    let notional = checked(
+                        checked(
+                            self.portfolio()
+                                .net_position(&instrument.id())
+                                .checked_mul(price),
+                        )?
+                        .checked_mul(instrument.multiplier().as_decimal()),
+                    )?;
+                    checked(notional.checked_div(equity))?
+                        .round_dp(18)
+                        .to_string()
+                        .parse()
+                        .map_err(anyhow::Error::msg)
+                })
+                .collect::<Result<Vec<DecimalValue>>>()?;
+            domain::execution::strategy::target_bounds(
+                constraints,
+                currency,
+                tolerance,
+                &point,
+                &current,
+            )?;
         }
         let mut reductions = Vec::<OrderAny>::new();
         let mut increases = Vec::<OrderAny>::new();
@@ -405,6 +506,7 @@ impl TargetReplay {
             return self.submit_deferred(now);
         }
         for order in reductions {
+            self.outstanding_orders.insert(order.client_order_id());
             self.submit_order(order, None, None, None)?;
             ensure!(
                 self.status.borrow().failure.is_none(),
@@ -423,14 +525,11 @@ impl DataActor for TargetReplay {
         Ok(())
     }
     fn on_bar(&mut self, bar: &Bar) -> Result<()> {
-        if let Err(error) = self.apply_bar(bar) {
+        if let Err(error) = self.apply_bar(bar, bar.ts_init.as_u64()) {
             // Native actor callbacks may log rather than propagate. Keep an explicit
             // in-process failure observation that the outer adapter MUST inspect.
-            self.status
-                .borrow_mut()
-                .failure
-                .get_or_insert("NATIVE_TARGET_REPLAY_FAILED");
-            return Err(error);
+            self.status.borrow_mut().record_callback_error(error);
+            return Err(anyhow::anyhow!("NATIVE_TARGET_REPLAY_FAILED"));
         }
         Ok(())
     }
@@ -533,7 +632,9 @@ fn validate_settings(
         ensure!(
             point.asof_ns < point.valid_until_ns
                 && point.asof_ns >= request.selection.event_start_ns
-                && point.asof_ns < request.selection.event_end_ns
+                // Targets are decisions on the receive clock. BAR event bounds
+                // select rows; delayed availability can be later than event_end.
+                && point.asof_ns <= request.selection.decision_cutoff_ns
                 && (index == 0 || request.target_points[index - 1].asof_ns < point.asof_ns)
                 && point.targets.len() == data.series.len(),
             "SIMULATION_TARGET_INVALID"
@@ -596,9 +697,9 @@ fn portfolio_return_analysis(
         .borrow()
         .snapshots(&account_ids[0]);
     let mut analyzer = PortfolioAnalyzer::default();
+    analyzer.register_statistic(Arc::new(MaxDrawdown::new()));
     let period = domain::prediction::portfolio_annualization_days(&settings.fee_model);
     if domain::prediction::uses_native_fee(&settings.fee_model) {
-        use std::sync::Arc;
         let replacements: [(Statistic, Statistic); 3] = [
             (
                 Arc::new(ReturnsVolatility::new(None)),
@@ -640,6 +741,41 @@ pub(crate) fn run(
     Option<NativeSimulationResultV1>,
     Vec<NativePortfolioStudyFrameV1>,
 )> {
+    run_with_strategy(root, request, study_inputs, None)
+}
+
+pub fn simulate_strategy(
+    root: &Path,
+    request: &NativeSimulationRequestV1,
+    mandate: &contracts::strategy_portfolio::StrategyMandateContentV1,
+) -> Result<NativeSimulationResultV1> {
+    run_with_strategy(
+        root,
+        request,
+        Vec::new(),
+        Some((
+            mandate.constraints.clone(),
+            mandate.base_currency.clone(),
+            mandate.exposure_tolerance.clone(),
+        )),
+    )?
+    .0
+    .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
+}
+
+fn run_with_strategy(
+    root: &Path,
+    request: &NativeSimulationRequestV1,
+    study_inputs: Vec<StudyInput>,
+    strategy_constraints: Option<(
+        contracts::portfolio::PortfolioConstraintsV1,
+        String,
+        DecimalValue,
+    )>,
+) -> Result<(
+    Option<NativeSimulationResultV1>,
+    Vec<NativePortfolioStudyFrameV1>,
+)> {
     ensure!(
         study_inputs.is_empty() || study_inputs.len() == request.target_points.len(),
         "STUDY_FRAME_COUNT"
@@ -671,6 +807,7 @@ pub(crate) fn run(
         latest: BTreeMap::new(),
         points: request.target_points.clone(),
         study_inputs,
+        strategy_constraints,
         settings: request.settings.clone(),
         currency,
         venue,
@@ -679,6 +816,8 @@ pub(crate) fn run(
         reduction_ids: BTreeSet::new(),
         deferred_orders: Vec::new(),
         active_expiry_ns: 0,
+        awaiting_settlement: false,
+        outstanding_orders: BTreeSet::new(),
         settlement_events,
         status: status.clone(),
     };
@@ -764,11 +903,8 @@ pub(crate) fn run(
         events.extend(closes.into_iter().map(Data::InstrumentClose));
         engine.add_strategy(strategy)?;
         engine.add_data(events, None, true, true)?;
-        engine.run(None, None, None, false)?;
-        ensure!(
-            status.borrow().failure.is_none(),
-            "NATIVE_TARGET_REPLAY_FAILED"
-        );
+        let native_result = engine.run(None, None, None, false);
+        status.borrow_mut().finish_run(native_result)?;
         for instrument_id in &settled_ids {
             ensure!(
                 engine
@@ -869,4 +1005,48 @@ pub(crate) fn run(
     engine.dispose();
     let frames = std::mem::take(&mut status.borrow_mut().frames);
     Ok((result?, frames))
+}
+
+#[cfg(test)]
+mod replay_error_tests {
+    use super::ReplayStatus;
+
+    #[test]
+    fn original_callback_chain_survives_native_shutdown_error() {
+        let mut status = ReplayStatus::default();
+        status.record_callback_error(anyhow::anyhow!("underlying cause").context("apply bar"));
+        status.record_callback_error(anyhow::anyhow!("later callback"));
+        let error = status
+            .finish_run(Err(anyhow::anyhow!("native shutdown")))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "NATIVE_TARGET_REPLAY_FAILED");
+        assert_eq!(
+            format!("{error:#}"),
+            "NATIVE_TARGET_REPLAY_FAILED: apply bar: underlying cause"
+        );
+    }
+
+    #[test]
+    fn event_failure_retains_specific_reason() {
+        let mut status = ReplayStatus {
+            failure: Some("NATIVE_ORDER_DENIED"),
+            ..ReplayStatus::default()
+        };
+        status.record_callback_error(anyhow::anyhow!("SIMULATION_ALREADY_FAILED"));
+        let error = status.finish_run(Ok(())).unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "NATIVE_TARGET_REPLAY_FAILED: NATIVE_ORDER_DENIED"
+        );
+    }
+
+    #[test]
+    fn native_run_error_or_success_is_preserved_without_actor_failure() {
+        let mut status = ReplayStatus::default();
+        assert!(status.finish_run(Ok(())).is_ok());
+        let error = status
+            .finish_run(Err(anyhow::anyhow!("native failure")))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "native failure");
+    }
 }

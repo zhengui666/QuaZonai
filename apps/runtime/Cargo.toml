@@ -62,6 +62,9 @@ tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
 
 [dev-dependencies]
+tower-sessions = { version = "=0.15.0", default-features = false, features = ["axum-core", "private"] }
+tower-sessions-sqlx-store = { git = "https://github.com/maxcountryman/tower-sessions-stores", rev = "d18c9bf76f1d4fb73130dbe5aa643197f14b5d2d", features = ["postgres"] }
+nautilus-analysis = { version = "=0.63.0", default-features = false }
 # Real control-plane checkpoint acceptance only; not a Runtime production dependency.
 store = { path = "../../crates/store" }
 server = { path = "../server" }

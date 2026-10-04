@@ -64,19 +64,6 @@ fn frozen(file: &File) -> Result<()> {
     file.sync_all()?;
     Ok(())
 }
-fn create(path: &Path) -> Result<File> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options
-            .mode(0o600)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
-    }
-    Ok(options.open(path)?)
-}
-
 struct LimitedFile {
     file: File,
     remaining: u64,
@@ -116,8 +103,11 @@ impl Outputs {
         write: impl FnOnce(&mut LimitedFile) -> Result<()>,
     ) -> Result<Id> {
         let id = Id::new();
+        // Runtime scans this mount while the job is running: all entries must
+        // remain ordinary, single-link files, including incomplete writes.
+        let staged = tempfile::NamedTempFile::new_in(&self.root)?;
         let mut stream = LimitedFile {
-            file: create(&self.root.join(id.to_string()))?,
+            file: staged.as_file().try_clone()?,
             remaining: self.remaining,
             written: 0,
         };
@@ -125,8 +115,7 @@ impl Outputs {
         stream.flush()?;
         ensure!(stream.written > 0, "NATIVE_EMPTY_OUTPUT");
         frozen(&stream.file)?;
-        self.remaining -= stream.written;
-        self.items.push(RuntimeOutputV1 {
+        let item = RuntimeOutputV1 {
             kind,
             schema: contracts::runtime::RuntimeArtifactSchemaV1 {
                 name: name.into(),
@@ -136,7 +125,10 @@ impl Outputs {
             storage_version: Revision::INITIAL,
             byte_count: counter(stream.written)?,
             media_type: media.into(),
-        });
+        };
+        publish(&staged, &self.root.join(id.to_string()))?;
+        self.remaining -= stream.written;
+        self.items.push(item);
         Ok(id)
     }
     fn history(
@@ -162,39 +154,46 @@ impl Outputs {
         );
         Ok(())
     }
-    fn compiled_model(&mut self, id: Id, bytes: &[u8]) -> Result<()> {
-        ensure!(bytes.len() as u64 <= self.remaining, "NATIVE_OUTPUT_LIMIT");
-        let file = File::open(self.root.join(id.to_string()))?;
-        frozen(&file)?;
-        self.remaining -= bytes.len() as u64;
-        self.items.push(RuntimeOutputV1 {
-            kind: RuntimeOutputKind::Model,
-            schema: contracts::runtime::RuntimeArtifactSchemaV1 {
-                name: "qz.wasm_model".into(),
-                version: "1".into(),
-            },
-            storage_ref: id,
-            storage_version: Revision::INITIAL,
-            byte_count: counter(bytes.len() as u64)?,
-            media_type: "application/wasm".into(),
-        });
-        Ok(())
+    fn compiled_model(&mut self, bytes: &[u8]) -> Result<Id> {
+        self.document(
+            "qz.wasm_model",
+            RuntimeOutputKind::Model,
+            "application/wasm",
+            |stream| Ok(stream.write_all(bytes)?),
+        )
     }
     fn seal(self) -> Result<()> {
         let index = NativeJobOutputIndexV1 {
             schema_version: SchemaV1,
             artifacts: self.items,
         };
+        let staged = tempfile::NamedTempFile::new_in(&self.root)?;
         let mut stream = LimitedFile {
-            file: create(&self.root.join("index.json"))?,
+            file: staged.as_file().try_clone()?,
             remaining: SPEC_LIMIT as u64,
             written: 0,
         };
         serde_json::to_writer(&mut stream, &index)?;
+        stream.flush()?;
         frozen(&stream.file)?;
+        publish(&staged, &self.root.join("index.json"))?;
         File::open(&self.root)?.sync_all()?;
         Ok(())
     }
+}
+
+fn publish(staged: &tempfile::NamedTempFile, target: &Path) -> Result<()> {
+    // Unlike persist_noclobber's portable fallback, this cannot momentarily
+    // hard-link the file and trip Runtime's live single-link invariant.
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        staged.path(),
+        rustix::fs::CWD,
+        target,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(std::io::Error::from)?;
+    Ok(())
 }
 
 struct CompilerChild(Child);
@@ -206,11 +205,28 @@ impl Drop for CompilerChild {
     }
 }
 
-fn compile(spec: &JobSpecV1, input: &Path, code: Id, outputs: &mut Outputs) -> Result<()> {
+fn compile(
+    spec: &JobSpecV1,
+    input: &Path,
+    code: Id,
+    outputs: &mut Outputs,
+    features: bool,
+) -> Result<()> {
+    compile_with(spec, input, code, outputs, features, Path::new(COMPILER))
+}
+
+fn compile_with(
+    spec: &JobSpecV1,
+    input: &Path,
+    code: Id,
+    outputs: &mut Outputs,
+    features: bool,
+    compiler: &Path,
+) -> Result<()> {
     let source = input.join("objects").join(code.to_string());
     let bytes = read(&source, crate::signals::MAX_SIGNAL_MODULE_BYTES)?;
     std::str::from_utf8(&bytes)?;
-    let version = Command::new(COMPILER)
+    let version = Command::new(compiler)
         .arg("--version")
         .env_clear()
         .env("PATH", "/opt/rust/bin:/usr/bin:/bin")
@@ -227,10 +243,13 @@ fn compile(spec: &JobSpecV1, input: &Path, code: Id, outputs: &mut Outputs) -> R
         version.starts_with("rustc 1.98.1 "),
         "NATIVE_COMPILER_VERSION"
     );
-    let model = Id::new();
-    let target = outputs.root.join(model.to_string());
-    ensure!(!target.exists(), "NATIVE_OUTPUT_EXISTS");
-    let child = Command::new(COMPILER)
+    // rustc creates linker scratch directories next to -o, regardless of
+    // TMPDIR. Keep those directories off the flat, live-scanned output mount.
+    let staging = tempfile::Builder::new()
+        .prefix("qz-compile-")
+        .tempdir_in("/tmp")?;
+    let target = staging.path().join("model.wasm");
+    let child = Command::new(compiler)
         .args([
             "--edition=2021",
             "--crate-type=cdylib",
@@ -271,8 +290,15 @@ fn compile(spec: &JobSpecV1, input: &Path, code: Id, outputs: &mut Outputs) -> R
     }
     let wasm = read(&target, crate::signals::MAX_SIGNAL_MODULE_BYTES)?;
     // Native Wasmi verifies imports, start functions, limits and exact predict ABI.
-    crate::signals::WasmSignal::new(&wasm, 1, 100_000)?;
-    outputs.compiled_model(model, &wasm)?;
+    let abi = if features {
+        let module = crate::signals::SignalModule::new(&wasm)?;
+        crate::feature_model::FeatureModel::new(&module, 1, 100_000)?;
+        crate::feature_model::ABI
+    } else {
+        crate::signals::WasmSignal::new(&wasm, 1, 100_000)?;
+        "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64"
+    };
+    let model = outputs.compiled_model(&wasm)?;
     outputs.json(
         "qz.model_compilation",
         RuntimeOutputKind::Report,
@@ -282,7 +308,7 @@ fn compile(spec: &JobSpecV1, input: &Path, code: Id, outputs: &mut Outputs) -> R
             model_storage_ref: model,
             rustc_version: version.to_owned(),
             target: "wasm32-unknown-unknown".into(),
-            abi: "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64".into(),
+            abi: abi.into(),
             module_bytes: counter(wasm.len() as u64)?,
         },
     )?;
@@ -370,7 +396,40 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
     match parameters {
         NativeTaskParametersV1::CompileModel {
             code_artifact_id, ..
-        } => compile(&spec, input, code_artifact_id, &mut outputs)?,
+        } => compile(&spec, input, code_artifact_id, &mut outputs, false)?,
+        NativeTaskParametersV1::CompileFeatureModel {
+            code_artifact_id, ..
+        } => compile(&spec, input, code_artifact_id, &mut outputs, true)?,
+        NativeTaskParametersV1::EvaluateExperiment {
+            dataset_revision_id,
+            model_artifact_id,
+            feature_artifact_ids,
+            request,
+            ..
+        } => {
+            let bytes = read(
+                &input.join("objects").join(model_artifact_id.to_string()),
+                crate::signals::MAX_SIGNAL_MODULE_BYTES,
+            )?;
+            let parts = feature_artifact_ids
+                .iter()
+                .map(|id| document(&input.join("objects").join(id.to_string()), 2 * 1024 * 1024))
+                .collect::<Result<Vec<contracts::science::FeatureObservationsV1>>>()?;
+            let result = crate::experiment::evaluate(
+                &input.join("catalogs").join(dataset_revision_id.to_string()),
+                &request,
+                dataset_revision_id,
+                model_artifact_id,
+                &feature_artifact_ids,
+                &parts,
+                &bytes,
+            )?;
+            outputs.json(
+                "qz.experiment_evaluation",
+                RuntimeOutputKind::Report,
+                &result,
+            )?;
+        }
         NativeTaskParametersV1::ValidateData { .. } => {}
         NativeTaskParametersV1::EvaluateForward { request, .. } => {
             let result = crate::forward::evaluate(&request, |id| {
@@ -467,6 +526,43 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             )?;
             outputs.json("qz.portfolio_study", RuntimeOutputKind::Report, &result)?;
             outputs.history(&request, &result)?;
+        }
+        NativeTaskParametersV1::ComposeStrategyTargets {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
+            let settings: contracts::science::NativeSimulationSettingsV1 = document(
+                &input.join("objects").join(
+                    request
+                        .mandate
+                        .constraints
+                        .transaction_costs_ref
+                        .to_string(),
+                ),
+                PARAMETERS_LIMIT,
+            )?;
+            ensure!(
+                serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
+                "STRATEGY_SETTINGS_SOURCE_MISMATCH"
+            );
+            let result = crate::strategy::compose(
+                &input.join("catalogs").join(dataset_revision_id.to_string()),
+                &request,
+                |id| {
+                    let maximum = if request
+                        .members
+                        .iter()
+                        .any(|member| member.policy.source.report_artifact_id == id)
+                    {
+                        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize
+                    } else {
+                        2 * 1024 * 1024
+                    };
+                    read(&input.join("objects").join(id.to_string()), maximum)
+                },
+            )?;
+            outputs.json("qz.strategy_portfolio", RuntimeOutputKind::Report, &result)?;
         }
         NativeTaskParametersV1::BuildPortfolio {
             dataset_revision_id,
@@ -578,4 +674,357 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
     }
     ensure!(chrono::Utc::now() < spec.deadline_at, "NATIVE_JOB_DEADLINE");
     outputs.seal()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    fn test_outputs(root: &Path, remaining: u64) -> Outputs {
+        Outputs {
+            root: root.to_owned(),
+            remaining,
+            items: Vec::new(),
+        }
+    }
+
+    fn signal() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module (func (export "predict")
+                (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64)
+                f64.const 0))"#,
+        )
+        .unwrap()
+    }
+
+    // This checks the live mount contract only. The native_oci integration test
+    // separately executes the fixed official rustc image and Runtime scanner.
+    fn scan_flat_output(root: &Path, maximum: u64) -> u64 {
+        let mut total = 0;
+        for entry in fs::read_dir(root).unwrap() {
+            let metadata = fs::symlink_metadata(entry.unwrap().path()).unwrap();
+            assert!(metadata.is_file());
+            assert_eq!(metadata.nlink(), 1);
+            total += metadata.len();
+        }
+        assert!(total <= maximum);
+        total
+    }
+
+    #[test]
+    fn failed_bounded_write_removes_partial_output_without_spending_budget() {
+        let root = tempfile::tempdir().unwrap();
+        let mut outputs = test_outputs(root.path(), 5);
+        let error = outputs
+            .document(
+                "test",
+                RuntimeOutputKind::Model,
+                "application/wasm",
+                |stream| {
+                    stream.write_all(b"1234")?;
+                    assert_eq!(scan_flat_output(root.path(), 5), 4);
+                    // A partial output is still a temporary, never a committed ID.
+                    assert!(fs::read_dir(root.path()).unwrap().all(|entry| entry
+                        .unwrap()
+                        .file_name()
+                        .to_str()
+                        .unwrap()
+                        .starts_with('.')));
+                    Ok(stream.write_all(b"56")?)
+                },
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("NATIVE_OUTPUT_LIMIT"));
+        assert_eq!(outputs.remaining, 5);
+        assert!(outputs.items.is_empty());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn output_publication_never_overwrites_or_adds_a_link() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join(Id::new().to_string());
+        fs::write(&target, b"original").unwrap();
+        let mut staged = tempfile::NamedTempFile::new_in(root.path()).unwrap();
+        staged.write_all(b"replacement").unwrap();
+        frozen(staged.as_file()).unwrap();
+        assert!(publish(&staged, &target).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        assert_eq!(staged.as_file().metadata().unwrap().nlink(), 1);
+        drop(staged);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+
+        let mut outputs = test_outputs(root.path(), 100);
+        let id = outputs.compiled_model(b"validated fixture").unwrap();
+        let metadata = fs::metadata(root.path().join(id.to_string())).unwrap();
+        assert_eq!(metadata.nlink(), 1);
+        assert_eq!(metadata.mode() & 0o777, 0o444);
+        assert_eq!(outputs.remaining, 100 - b"validated fixture".len() as u64);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn json_and_arrow_outputs_keep_exact_content_budget_and_index() {
+        use arrow_array::{
+            ArrayRef, Decimal128Array, RecordBatch, StringArray, TimestampNanosecondArray,
+        };
+        use contracts::portfolio_history as history;
+        use std::sync::Arc;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut outputs = test_outputs(root.path(), 16 * 1024);
+        let json = serde_json::json!({"fixture": "unchanged report"});
+        let report = outputs
+            .json("test", RuntimeOutputKind::Report, &json)
+            .unwrap();
+        assert_eq!(
+            fs::read(root.path().join(report.to_string())).unwrap(),
+            serde_json::to_vec(&json).unwrap()
+        );
+        let time: ArrayRef =
+            Arc::new(TimestampNanosecondArray::from(vec![123]).with_timezone("UTC"));
+        let weight: ArrayRef = Arc::new(
+            Decimal128Array::from(vec![Some(0)])
+                .with_precision_and_scale(38, 18)
+                .unwrap(),
+        );
+        let batch = RecordBatch::try_new(
+            history::schema(),
+            vec![
+                time.clone(),
+                time.clone(),
+                time,
+                Arc::new(StringArray::from(vec!["A"])),
+                Arc::new(StringArray::from(vec!["USD"])),
+                Arc::new(StringArray::from(vec!["OPTIMAL"])),
+                weight.clone(),
+                weight,
+            ],
+        )
+        .unwrap();
+        let id = outputs
+            .document(
+                history::NAME,
+                RuntimeOutputKind::Targets,
+                history::MEDIA_TYPE,
+                |stream| Ok(history::write(stream, &batch)?),
+            )
+            .unwrap();
+        let bytes = read(&root.path().join(id.to_string()), 16 * 1024).unwrap();
+        assert_eq!(history::read(&bytes).unwrap(), batch);
+        let artifacts = outputs.items.clone();
+        assert_eq!(
+            scan_flat_output(root.path(), 16 * 1024),
+            16 * 1024 - outputs.remaining
+        );
+        outputs.seal().unwrap();
+        let index: NativeJobOutputIndexV1 =
+            document(&root.path().join("index.json"), SPEC_LIMIT).unwrap();
+        assert_eq!(
+            serde_json::to_value(index.artifacts).unwrap(),
+            serde_json::to_value(artifacts).unwrap()
+        );
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn failed_index_write_or_publish_leaves_no_partial_index() {
+        let root = tempfile::tempdir().unwrap();
+        let mut outputs = test_outputs(root.path(), 1024);
+        outputs
+            .json("test", RuntimeOutputKind::Report, &true)
+            .unwrap();
+        outputs.items[0].schema.name = "x".repeat(SPEC_LIMIT);
+        assert!(outputs
+            .seal()
+            .unwrap_err()
+            .to_string()
+            .contains("NATIVE_OUTPUT_LIMIT"));
+        assert!(!root.path().join("index.json").exists());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+
+        fs::write(root.path().join("index.json"), b"original index").unwrap();
+        assert!(test_outputs(root.path(), 1024).seal().is_err());
+        assert_eq!(
+            fs::read(root.path().join("index.json")).unwrap(),
+            b"original index"
+        );
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+    }
+
+    // Deliberately controlled compiler fixture, not evidence of official rustc
+    // execution. It holds an adjacent linker scratch directory until the test
+    // has scanned output, then emits the supplied WASM or a compilation error.
+    fn controlled_compile(
+        wasm: &[u8],
+        capacity: u64,
+        features: bool,
+        exit_code: u8,
+    ) -> (tempfile::TempDir, Outputs, Result<()>) {
+        let fixture = tempfile::tempdir().unwrap();
+        let input = fixture.path().join("input");
+        let output = fixture.path().join("output");
+        fs::create_dir_all(input.join("objects")).unwrap();
+        fs::create_dir(&output).unwrap();
+        let code = Id::new();
+        fs::write(input.join("objects").join(code.to_string()), b"fixture").unwrap();
+        fs::write(fixture.path().join("module.wasm"), wasm).unwrap();
+        fs::write(fixture.path().join("exit-code"), exit_code.to_string()).unwrap();
+        let compiler = fixture.path().join("controlled-compiler");
+        fs::write(
+            &compiler,
+            r#"#!/bin/sh
+set -eu
+if [ "$1" = '--version' ]; then
+    printf '%s\n' 'rustc 1.98.1 (controlled fixture)'
+    exit 0
+fi
+fixture=${0%/*}
+while [ "$1" != '-o' ]; do shift; done
+target=$2
+mkdir "${target%/*}/rustc-controlled-linker"
+printf '%s' "$target" > "$fixture/ready.tmp"
+mv "$fixture/ready.tmp" "$fixture/ready"
+while [ ! -f "$fixture/release" ]; do sleep 0.01; done
+cp "$fixture/module.wasm" "$target"
+exit "$(cat "$fixture/exit-code")"
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o700)).unwrap();
+        let parameters = NativeTaskParametersV1::CompileModel {
+            schema_version: SchemaV1,
+            code_artifact_id: code,
+        };
+        let run_id = Id::new();
+        let spec = JobSpecV1 {
+            schema_version: SchemaV1,
+            run_id,
+            attempt_no: 1,
+            owner_epoch: Revision::INITIAL,
+            external_job_id: domain::runtime_jobs::external_id(run_id, 1).unwrap(),
+            job_kind: parameters.job_kind(),
+            image_ref: format!(
+                "example.invalid/controlled-compiler@sha256:{}",
+                "a".repeat(64)
+            ),
+            input_set_id: Id::new(),
+            inputs: Vec::new(),
+            parameters_artifact_id: Id::new(),
+            limits: contracts::runtime_jobs::RuntimeJobLimitsV1 {
+                cpu: 1,
+                cpu_seconds: counter(10).unwrap(),
+                memory_mib: 512,
+                wall_seconds: 10,
+                output_bytes: counter(capacity).unwrap(),
+            },
+            deadline_at: chrono::Utc::now() + chrono::Duration::seconds(10),
+            requested_output_schemas: parameters.output_schemas(),
+        };
+        let mut outputs = test_outputs(&output, capacity);
+        let (outputs, result) = std::thread::scope(|scope| {
+            let running = scope.spawn(move || {
+                let result = compile_with(&spec, &input, code, &mut outputs, features, &compiler);
+                (outputs, result)
+            });
+            let began = Instant::now();
+            let ready = fixture.path().join("ready");
+            while !ready.is_file() {
+                assert!(began.elapsed() < Duration::from_secs(5));
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let target = PathBuf::from(fs::read_to_string(ready).unwrap());
+            let staging = target.parent().unwrap();
+            assert!(staging.starts_with("/tmp"));
+            assert_ne!(staging, output);
+            assert_eq!(fs::metadata(staging).unwrap().mode() & 0o777, 0o700);
+            assert!(staging.join("rustc-controlled-linker").is_dir());
+            assert!(!target.exists());
+            assert_eq!(scan_flat_output(&output, capacity), 0);
+            assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
+            fs::write(fixture.path().join("release"), b"").unwrap();
+            let result = running.join().unwrap();
+            assert!(
+                !staging.exists(),
+                "compiler scratch must be removed on every return"
+            );
+            result
+        });
+        (fixture, outputs, result)
+    }
+
+    #[test]
+    fn compiler_scratch_is_private_until_valid_model_publication() {
+        let wasm = signal();
+        let (fixture, outputs, result) = controlled_compile(&wasm, 8192, false, 0);
+        result.unwrap();
+        assert_eq!(outputs.items.len(), 2);
+        let model = outputs
+            .items
+            .iter()
+            .find(|item| item.kind == RuntimeOutputKind::Model)
+            .unwrap();
+        assert_eq!(
+            fs::read(outputs.root.join(model.storage_ref.to_string())).unwrap(),
+            wasm
+        );
+        let report = outputs
+            .items
+            .iter()
+            .find(|item| item.kind == RuntimeOutputKind::Report)
+            .unwrap();
+        let report: NativeModelCompilationV1 =
+            document(&outputs.root.join(report.storage_ref.to_string()), 8192).unwrap();
+        assert_eq!(report.model_storage_ref, model.storage_ref);
+        assert_eq!(report.module_bytes.get(), wasm.len() as u64);
+        assert_eq!(
+            scan_flat_output(&outputs.root, 8192),
+            8192 - outputs.remaining
+        );
+        assert!(!outputs.root.join("index.json").exists());
+        outputs.seal().unwrap();
+        let output = fixture.path().join("output");
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 3);
+        let index: NativeJobOutputIndexV1 =
+            document(&output.join("index.json"), SPEC_LIMIT).unwrap();
+        assert_eq!(index.artifacts.len(), 2);
+    }
+
+    #[test]
+    fn compiler_rejections_leave_no_model_report_or_temporary_output() {
+        let invalid_abi =
+            wat::parse_str(r#"(module (func (export "predict") (result f64) f64.const 0))"#)
+                .unwrap();
+        let wasm = signal();
+        for (bytes, capacity, features, exit_code, expected) in [
+            (
+                wasm.clone(),
+                wasm.len() as u64 - 1,
+                false,
+                0,
+                "NATIVE_OUTPUT_LIMIT",
+            ),
+            (invalid_abi, 8192, false, 0, "SIGNAL_ABI_MISMATCH"),
+            (wasm.clone(), 8192, true, 0, "FEATURE_MODEL_ABI_MISMATCH"),
+            (
+                vec![0; crate::signals::MAX_SIGNAL_MODULE_BYTES + 1],
+                8192,
+                false,
+                0,
+                "NATIVE_FILE_LIMIT",
+            ),
+            (wasm, 8192, false, 1, "NATIVE_COMPILATION_FAILED"),
+        ] {
+            let (_fixture, outputs, result) =
+                controlled_compile(&bytes, capacity, features, exit_code);
+            assert!(
+                result.unwrap_err().to_string().contains(expected),
+                "{expected}"
+            );
+            assert_eq!(outputs.remaining, capacity);
+            assert!(outputs.items.is_empty());
+            assert_eq!(fs::read_dir(&outputs.root).unwrap().count(), 0);
+        }
+    }
 }

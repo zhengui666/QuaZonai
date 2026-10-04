@@ -58,9 +58,19 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         OperatorCommand::DataGrantCreate(r) => crate::data::grant_create(r),
         OperatorCommand::DataGrantRevoke(r) => crate::data::grant_revoke(r),
         OperatorCommand::DatasetRegister(r) => crate::data::dataset_register(r),
+        OperatorCommand::RecordedFeatureRegister(r) => crate::data::recorded_feature_intent(r),
         OperatorCommand::DataValidate(r) => crate::data::validate_request(r),
         OperatorCommand::AlphaEvaluate(r) => crate::data::bounded_native_limits(&r.limits),
-        OperatorCommand::PortfolioBuild(r) => crate::portfolio::build_selection(r),
+        OperatorCommand::ExperimentEvaluate(r) => crate::experiments::evaluate(&r.request),
+        OperatorCommand::ExperimentAdoptAlpha(r) => crate::experiments::adopt_alpha(&r.request),
+        OperatorCommand::PortfolioBuild(r) => match r.as_ref() {
+            contracts::strategy_portfolio::PortfolioBuildEnvelopeV2::Forecast(r) => {
+                crate::portfolio::build_selection(r)
+            }
+            contracts::strategy_portfolio::PortfolioBuildEnvelopeV2::Strategy(r) => {
+                crate::execution::strategy::build(r)
+            }
+        },
         OperatorCommand::PortfolioSimulate(r) => crate::data::bounded_native_limits(&r.limits),
         OperatorCommand::PortfolioStudy(r) => crate::data::bounded_native_limits(&r.limits),
         OperatorCommand::PolicyAuthorize(v) => crate::delivery::automation_policy(&v.content),
@@ -77,7 +87,10 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         OperatorCommand::ReleaseReopen(r) => {
             crate::delivery::decision_reason(&r.reason_code, &r.reason)
         }
-        OperatorCommand::CycleStart(_) | OperatorCommand::MigrationImport(_) => Ok(()),
+        OperatorCommand::CycleStart(_)
+        | OperatorCommand::CycleStartExternal(_)
+        | OperatorCommand::CycleFinishExternal(_)
+        | OperatorCommand::MigrationImport(_) => Ok(()),
         OperatorCommand::IntegrationSecretRegister(r) => crate::settings::secret_intent(r),
         OperatorCommand::RuntimeProbe(_) | OperatorCommand::DownstreamProbe(_) => Ok(()),
         OperatorCommand::RuntimeCreate(r) => crate::settings::runtime_create(r),
@@ -91,7 +104,14 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         OperatorCommand::BriefCreate(r) => {
             crate::brief::content(&r.request.content, &r.request.bindings)
         }
-        OperatorCommand::MandateCreate(r) => crate::portfolio::mandate(&r.content),
+        OperatorCommand::MandateCreate(r) => match r.as_ref() {
+            contracts::strategy_portfolio::MandateCreateEnvelopeV2::Forecast(r) => {
+                crate::portfolio::mandate(&r.content)
+            }
+            contracts::strategy_portfolio::MandateCreateEnvelopeV2::Strategy(r) => {
+                crate::execution::strategy::mandate(&r.content)
+            }
+        },
         OperatorCommand::ExecutionAssumptionsCreate(r) => {
             text(&r.settlement_rule_ref, 1, 200, false)?;
             crate::portfolio::simulation_settings(&r.settings)
@@ -118,6 +138,26 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
 mod tests {
     use super::*;
     use contracts::{Id, SchemaV1};
+
+    #[test]
+    fn strategy_build_grant_validates_the_original_one_member_command() {
+        let mut body = serde_json::json!({
+            "operation":"PORTFOLIO_BUILD",
+            "request": {
+                "schema_version":1,"source_kind":"STRATEGY_ALPHA","cycle_id":Id::new(),
+                "mandate_id":Id::new(),"input_set_id":Id::new(),"runtime_id":Id::new(),
+                "expected_runtime_revision":"1","members":[{"alpha_version_id":Id::new(),"ensemble_weight":"1"}],
+                "purpose":{"purpose":"HISTORICAL_REPLAY"},
+                "limits":{"schema_version":1,"experiments":0,"cpu_seconds":"10","wall_seconds":60,"memory_mib":512,"output_bytes":"65536"}
+            }
+        });
+        let valid: OperatorCommand = serde_json::from_value(body.clone()).unwrap();
+        assert!(command(&valid).is_ok());
+        assert_eq!(valid.normalized_request().unwrap(), body["request"]);
+        body["request"]["members"][0]["ensemble_weight"] = "0.5".into();
+        let invalid: OperatorCommand = serde_json::from_value(body).unwrap();
+        assert!(command(&invalid).is_err());
+    }
 
     #[test]
     fn downstream_requires_exact_project_and_downstream_bindings() {

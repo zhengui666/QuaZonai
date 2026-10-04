@@ -164,6 +164,29 @@ fn strict_wire_rejects_injected_probes_authority_and_unknown_versions() {
     c.accepted_package_versions.clear();
     assert!(downstream_configuration(&c).is_err());
     let mut value = serde_json::to_value(c).unwrap();
-    value["accepted_package_versions"] = json!(["2"]);
+    value["accepted_package_versions"] = json!(["3"]);
     assert!(serde_json::from_value::<DownstreamConfigurationV1>(value).is_err());
+}
+
+#[test]
+fn downstream_negotiates_v1_v2_without_duplicate_or_empty_versions() {
+    let mut config = DownstreamConfigurationV1 {
+        name: "Native Paper".into(),
+        endpoint: "http://127.0.0.1:8099".into(),
+        accepted_package_versions: vec![PackageSchemaVersion::V1, PackageSchemaVersion::V2],
+        environments: DownstreamEnvironments::Paper,
+        enabled: true,
+        development_http: true,
+    };
+    assert!(downstream_configuration(&config).is_ok());
+    config.accepted_package_versions.reverse();
+    assert!(downstream_configuration(&config).is_ok());
+    config.accepted_package_versions = vec![PackageSchemaVersion::V2];
+    assert!(downstream_configuration(&config).is_ok());
+    config
+        .accepted_package_versions
+        .push(PackageSchemaVersion::V2);
+    assert!(downstream_configuration(&config).is_err());
+    config.accepted_package_versions.clear();
+    assert!(downstream_configuration(&config).is_err());
 }
