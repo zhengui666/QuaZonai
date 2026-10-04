@@ -21,6 +21,9 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Operation {
+    /// Foreground native Sandbox execution with explicitly configured public live data.
+    #[cfg(feature = "native-paper")]
+    Paper(job::paper_node::Arguments),
     /// Apply the immutable native wall deadline before executing the fixed job entrypoint.
     RunBounded,
     /// Project official native snapshots into downstream account observation envelopes.
@@ -142,6 +145,11 @@ fn model_bytes(path: &Path, maximum_bytes: usize) -> Result<Vec<u8>> {
 
 fn run(operation: Operation) -> Result<()> {
     match operation {
+        #[cfg(feature = "native-paper")]
+        Operation::Paper(args) => {
+            job::paper_node::run(args)?;
+            Ok(())
+        }
         Operation::NativeAccountObservation(args) => {
             job::account_observation_cli::run(args)?;
             Ok(())
@@ -341,6 +349,65 @@ mod tests {
             "unused-output-directory",
         ])
         .is_err());
+    }
+
+    #[cfg(feature = "native-paper")]
+    #[test]
+    fn paper_commands_dispatch_through_the_existing_job_executable() {
+        for arguments in [
+            vec![
+                "job",
+                "paper",
+                "preflight",
+                "--config",
+                "paper.json",
+                "--claim",
+                "claim.json",
+            ],
+            vec!["job", "paper", "serve", "--config", "paper.json"],
+            vec![
+                "job",
+                "paper",
+                "apply",
+                "--origin",
+                "http://127.0.0.1:8080",
+                "--credential-file",
+                "token",
+                "--claim",
+                "claim.json",
+            ],
+            vec![
+                "job",
+                "paper",
+                "status",
+                "--origin",
+                "http://127.0.0.1:8080",
+                "--credential-file",
+                "token",
+            ],
+            vec![
+                "job",
+                "paper",
+                "stop",
+                "--origin",
+                "http://127.0.0.1:8080",
+                "--credential-file",
+                "token",
+            ],
+        ] {
+            assert!(matches!(
+                Arguments::try_parse_from(arguments).unwrap().command,
+                Operation::Paper(_)
+            ));
+        }
+    }
+
+    #[cfg(not(feature = "native-paper"))]
+    #[test]
+    fn default_scientific_job_does_not_expose_paper_commands() {
+        assert!(
+            Arguments::try_parse_from(["job", "paper", "serve", "--config", "paper.json"]).is_err()
+        );
     }
 
     #[test]

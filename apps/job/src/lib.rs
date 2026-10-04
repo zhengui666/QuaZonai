@@ -8,9 +8,15 @@ pub mod feature_model;
 pub mod forecast;
 pub mod forward;
 pub mod managed;
+#[cfg(feature = "native-node-observer")]
+pub mod native_node_observer;
 #[cfg(any(feature = "catalog-prepare", feature = "polymarket-history"))]
 pub mod operator;
 mod optimization;
+#[cfg(feature = "native-paper")]
+pub mod paper_node;
+#[cfg(feature = "native-paper")]
+pub mod paper_service;
 pub mod portfolio;
 mod prediction;
 pub use domain::codex::verified_codex_version;

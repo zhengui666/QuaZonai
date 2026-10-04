@@ -213,6 +213,8 @@ pub enum Forward {
 
 #[derive(Subcommand)]
 pub enum ForwardAccounts {
+    /// Relay retained native envelopes in order, preserving original bytes and replay identity.
+    Relay(super::account_transport::Arguments),
     /// Submit one original native snapshot/heartbeat envelope from stdin. Retry unchanged.
     Submit,
     Sources {
@@ -751,6 +753,37 @@ fn action(base: &str, value: String, suffix: &str) -> Result<String> {
     Ok(format!("{}/{suffix}", item(base, value)?))
 }
 impl Request {
+    pub(super) fn requires_idempotency_key(&self) -> bool {
+        self.method != Method::GET
+            && !(self.method == Method::POST
+                && self.route == "/api/v2/forward/account-observations")
+    }
+
+    pub(super) fn account_observation(
+        bytes: &[u8],
+    ) -> Result<(
+        Self,
+        contracts::account_observation::AccountObservationSubmitV1,
+    )> {
+        use contracts::account_observation::{
+            AccountObservationReceiptV1, AccountObservationSubmitV1,
+        };
+        let observation: AccountObservationSubmitV1 =
+            serde_json::from_slice(bytes).map_err(|_| Failure::Input)?;
+        Ok((
+            Self {
+                method: Method::POST,
+                route: "/api/v2/forward/account-observations".into(),
+                query: vec![],
+                body: Some(bytes.to_vec()),
+                status: 201,
+                operator: false,
+                output: Output::Json(decode::<AccountObservationReceiptV1>),
+            },
+            observation,
+        ))
+    }
+
     fn get<T: DeserializeOwned + Serialize>(route: impl Into<String>) -> Self {
         Self {
             method: Method::GET,
@@ -801,6 +834,7 @@ impl ForwardAccounts {
     fn request(self) -> Result<Request> {
         use contracts::account_observation::*;
         Ok(match self {
+            Self::Relay(_) => return Err(Failure::Input),
             Self::Submit => {
                 Request::write::<AccountObservationSubmitV1, AccountObservationReceiptV1>(
                     Method::POST,

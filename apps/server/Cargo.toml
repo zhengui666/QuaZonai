@@ -16,6 +16,7 @@ codex-container = []
 native-science = ["native-codex"]
 
 [dependencies]
+same-file = "=1.0.6"
 bollard = { version = "=0.21.1", default-features = false, features = ["pipe"] }
 tokio-util = { version = "=0.7.19", features = ["io"] }
 futures-util = "=0.3.34"
@@ -56,3 +57,6 @@ rmcp = { version = "=3.2.0", default-features = false, features = ["client"] }
 name = "native_science_thread"
 path = "tests/native_science_thread.rs"
 required-features = ["native-science"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"

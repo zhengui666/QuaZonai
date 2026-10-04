@@ -23,6 +23,12 @@ use nautilus_model::{
 use std::{future::Future, io::Write, pin::Pin, str::FromStr};
 use store::{authority::Actor, StoreError};
 
+pub(super) struct ClaimedStrategy {
+    pub claim: HandoffClaimViewV2,
+    pub execution_assumptions: contracts::execution_assumptions::ExecutionAssumptionsViewV1,
+    pub principal_id: Id,
+}
+
 pub(super) fn paper_market(
     market: &mut job::catalog::NativeMarketData,
     request: &mut NativeExperimentEvaluationRequestV1,
@@ -303,7 +309,7 @@ pub(super) fn research_to_claim<'a>(
     experiment: &'a ExperimentView,
     source: &'a NativeExperimentEvaluationResultV1,
     forward: FeatureObservationsV1,
-) -> Pin<Box<impl Future<Output = ()> + 'a>> {
+) -> Pin<Box<impl Future<Output = ClaimedStrategy> + 'a>> {
     Box::pin(async move {
         let store = &prepared.store;
         let actor = &prepared.actor;
@@ -790,6 +796,13 @@ pub(super) fn research_to_claim<'a>(
             file.sync_all().unwrap();
             assert_eq!(fs::read(path).unwrap(), bytes);
         }
-        println!("native strategy: original Evaluate → adopted alpha → actual historical/current OCI composition → REPORT/candidate → SQL release/approval/offer/claim; duplicate messages/claims preserved; Paper consumer execution is a separate required target");
+        println!(
+            "native strategy: original Evaluate → adopted alpha → actual historical/current OCI composition → REPORT/candidate → SQL release/approval/offer/claim; duplicate messages/claims preserved; Paper consumer execution is a separate required target"
+        );
+        ClaimedStrategy {
+            claim: claim.resource,
+            execution_assumptions: assumption,
+            principal_id: principal.id,
+        }
     })
 }

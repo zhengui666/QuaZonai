@@ -14,6 +14,8 @@ mod direct_strategy;
 mod external_support;
 #[path = "../../../job/tests/support/experiment.rs"]
 mod fixture;
+#[path = "paper_account_readback.rs"]
+mod paper_account_readback;
 #[path = "../../../server/tests/support/mod.rs"]
 #[allow(dead_code)]
 mod support;
@@ -785,7 +787,12 @@ fn scientific_assertions(report: &NativeExperimentEvaluationResultV1, evaluation
         .any(|d| d.label_end_ns.unwrap().get() - d.event_ns.get() > 2 * fixture::SECOND));
 }
 
-async fn scenario(pool: PgPool, market: fixture::FixtureMarket, strategy: bool) {
+async fn scenario(
+    pool: PgPool,
+    market: fixture::FixtureMarket,
+    strategy: bool,
+    paper_harness: Option<std::path::PathBuf>,
+) {
     let native_profiles = external_support::unused_native_profiles(&pool).await;
     let cli = std::env::var_os("QUAZONAI_NATIVE_CLI_BIN")
         .expect("build the candidate portable CLI and set QUAZONAI_NATIVE_CLI_BIN");
@@ -1261,7 +1268,7 @@ async fn scenario(pool: PgPool, market: fixture::FixtureMarket, strategy: bool) 
         native_profiles
     );
     if let Some(forward_feature) = forward_feature {
-        direct_strategy::research_to_claim(
+        let claimed = direct_strategy::research_to_claim(
             &pool,
             &prepared,
             &mut remote,
@@ -1272,6 +1279,12 @@ async fn scenario(pool: PgPool, market: fixture::FixtureMarket, strategy: bool) 
             forward_feature,
         )
         .await;
+        if let Some(harness) = paper_harness {
+            // Keep this producer's original SQLx database, shared vault and TCP
+            // listener alive until the Paper stream and its replay are read back.
+            paper_account_readback::run(&pool, &auth, &cookie, &origin, &claimed, &harness, &token)
+                .await;
+        }
     }
     remote.assert_private_logs();
     println!(
@@ -1284,7 +1297,7 @@ async fn scenario(pool: PgPool, market: fixture::FixtureMarket, strategy: bool) 
 async fn direct_cli_equity_research_roundtrip(pool: PgPool) {
     tokio::time::timeout(
         Duration::from_secs(360),
-        Box::pin(scenario(pool, fixture::FixtureMarket::Equity, false)),
+        Box::pin(scenario(pool, fixture::FixtureMarket::Equity, false, None)),
     )
     .await
     .expect("joined direct Equity research deadline");
@@ -1298,6 +1311,7 @@ async fn direct_cli_btc_usdt_research_roundtrip(pool: PgPool) {
             pool,
             fixture::FixtureMarket::CryptoUsdtCurrencyPair,
             false,
+            None,
         )),
     )
     .await
@@ -1312,10 +1326,31 @@ async fn direct_native_strategy_research_to_claim(pool: PgPool) {
             pool,
             fixture::FixtureMarket::CryptoUsdtCurrencyPair,
             true,
+            None,
         )),
     )
     .await
     .expect(
         "native accepted Evaluate → alpha → historical/current composition → SQL claim deadline",
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires same-candidate native_paper_target executable in QUAZONAI_NATIVE_PAPER_TEST_BIN, portable CLI and native OCI/SQLx prerequisites; select this exact test explicitly"]
+async fn direct_native_strategy_paper_account_readback(pool: PgPool) {
+    let harness = std::env::var_os("QUAZONAI_NATIVE_PAPER_TEST_BIN")
+        .map(std::path::PathBuf::from)
+        .expect("build this candidate's job/native_paper_target with native-paper-test and supply its Cargo-reported executable path");
+    assert!(harness.is_absolute() && harness.is_file());
+    tokio::time::timeout(
+        Duration::from_secs(660),
+        Box::pin(scenario(
+            pool,
+            fixture::FixtureMarket::CryptoUsdtCurrencyPair,
+            true,
+            Some(harness),
+        )),
+    )
+    .await
+    .expect("original native research → SQL claim → Paper → account relay/readback deadline");
 }

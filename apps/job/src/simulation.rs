@@ -1,5 +1,5 @@
-//! Replay frozen targets in one native Nautilus account. This is never live execution.
-use crate::catalog::{load_catalog, NativeMarketData};
+//! Apply frozen targets in one native Nautilus simulated account, in replay or Paper.
+use crate::catalog::{load_catalog, NativeBarSeries, NativeMarketData};
 use anyhow::{ensure, Result};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use contracts::{science::*, DbCounter, DecimalValue, SchemaV1};
@@ -20,12 +20,13 @@ use nautilus_execution::models::{
     latency::{LatencyModelHandle, StaticLatencyModel},
 };
 use nautilus_model::{
+    accounts::{Account, AccountAny},
     data::{Bar, BarType, Data, InstrumentClose},
     enums::{AccountType, BookType, OmsType, OrderSide, OrderStatus},
     events::{
         OrderDenied, OrderFilled, OrderRejected, PositionChanged, PositionClosed, PositionOpened,
     },
-    identifiers::{ClientOrderId, InstrumentId, StrategyId, Venue},
+    identifiers::{AccountId, ClientId, ClientOrderId, InstrumentId, StrategyId, Venue},
     instruments::{Instrument, InstrumentAny},
     orders::{Order, OrderAny},
     types::{Currency, Money},
@@ -60,9 +61,9 @@ fn count(value: usize) -> Result<DbCounter> {
 }
 
 #[derive(Default)]
-struct ReplayStatus {
-    consumed: usize,
-    failure: Option<&'static str>,
+pub(crate) struct ReplayStatus {
+    pub(crate) consumed: usize,
+    pub(crate) failure: Option<&'static str>,
     callback_error: Option<anyhow::Error>,
     submitted_after_ns: u64,
     study_infeasible: bool,
@@ -96,7 +97,7 @@ pub(crate) struct StudyInput {
     pub liquidity_maximum_age: Option<u32>,
 }
 
-struct TargetReplay {
+pub(crate) struct TargetReplay {
     core: StrategyCore,
     instruments: Vec<InstrumentAny>,
     bar_types: Vec<BarType>,
@@ -120,6 +121,13 @@ struct TargetReplay {
     outstanding_orders: BTreeSet<ClientOrderId>,
     settlement_events: BTreeMap<InstrumentId, InstrumentClose>,
     status: Rc<RefCell<ReplayStatus>>,
+    paper: Option<PaperClock>,
+}
+
+struct PaperClock {
+    execution_client_id: ClientId,
+    started_ns: u64,
+    fresh_account: Option<contracts::strategy_portfolio::FreshPaperCashV1>,
 }
 
 impl fmt::Debug for TargetReplay {
@@ -206,6 +214,153 @@ nautilus_strategy!(TargetReplay, {
 });
 
 impl TargetReplay {
+    #[cfg(feature = "native-paper")]
+    pub(crate) fn require_strategy_constraints(
+        &mut self,
+        constraints: contracts::portfolio::PortfolioConstraintsV1,
+        base_currency: String,
+        tolerance: DecimalValue,
+    ) {
+        self.strategy_constraints = Some((constraints, base_currency, tolerance));
+    }
+
+    #[cfg(feature = "native-paper")]
+    pub(crate) fn require_fresh_paper_account(
+        &mut self,
+        expected: contracts::strategy_portfolio::FreshPaperCashV1,
+    ) -> Result<()> {
+        let paper = self
+            .paper
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("PAPER_ACCOUNT_MODE"))?;
+        ensure!(
+            expected.base_currency == self.settings.base_currency
+                && expected.starting_capital == self.settings.starting_capital,
+            "PAPER_ACCOUNT_SETTINGS"
+        );
+        paper.fresh_account = Some(expected);
+        Ok(())
+    }
+
+    fn verify_fresh_paper_account(&self) -> Result<()> {
+        let Some(expected) = self
+            .paper
+            .as_ref()
+            .and_then(|paper| paper.fresh_account.as_ref())
+        else {
+            return Ok(());
+        };
+        let id = AccountId::new_checked(&expected.account_id)?;
+        let account = self
+            .cache()
+            .account(&id)
+            .ok_or_else(|| anyhow::anyhow!("PAPER_INITIAL_ACCOUNT_UNAVAILABLE"))?;
+        let amount = native_decimal(&expected.starting_capital)?;
+        ensure!(
+            matches!(&account, AccountAny::Margin(margin) if margin.default_leverage == Decimal::ONE && margin.leverages.values().all(|v| *v == Decimal::ONE)),
+            "PAPER_INITIAL_ACCOUNT_LEVERAGE"
+        );
+        ensure!(
+            self.trader_id()
+                .is_some_and(|id| id.to_string() == expected.trader_id)
+                && account.id() == id
+                && account.account_type() == AccountType::Margin
+                && account.base_currency() == Some(self.currency)
+                && account.currencies() == vec![self.currency]
+                && account
+                    .balance_total(Some(self.currency))
+                    .is_some_and(|v| v.as_decimal() == amount)
+                && account
+                    .balance_free(Some(self.currency))
+                    .is_some_and(|v| v.as_decimal() == amount)
+                && account
+                    .balance_locked(Some(self.currency))
+                    .is_some_and(|v| v.as_decimal() == Decimal::ZERO)
+                && self
+                    .cache()
+                    .positions_open(None, None, None, Some(&id), None)
+                    .is_empty()
+                && self
+                    .cache()
+                    .orders_open(None, None, None, Some(&id), None)
+                    .is_empty()
+                && self
+                    .cache()
+                    .orders_inflight(None, None, None, Some(&id), None)
+                    .is_empty(),
+            "PAPER_INITIAL_ACCOUNT_MISMATCH"
+        );
+        Ok(())
+    }
+
+    fn submit_target_order(&mut self, order: OrderAny) -> Result<()> {
+        let client_id = if let Some(paper) = &self.paper {
+            ensure!(
+                self.clock().timestamp_ns().as_u64() < self.active_expiry_ns,
+                "SIMULATION_TARGET_EXPIRED"
+            );
+            Some(paper.execution_client_id)
+        } else {
+            None
+        };
+        self.submit_order(order, None, client_id, None)
+    }
+
+    fn start_paper(&mut self) -> Result<()> {
+        self.verify_fresh_paper_account()?;
+        let now = self.clock().timestamp_ns().as_u64();
+        let point = &self.points[0];
+        ensure!(
+            now < point.valid_until_ns.get(),
+            "SIMULATION_TARGET_EXPIRED"
+        );
+        // LiveNode connects its clients before starting strategies. The native
+        // cache, populated by those clients, is the authoritative instrument
+        // source; no historical catalog is loaded or replayed for Paper.
+        let instruments = point
+            .targets
+            .iter()
+            .map(|target| {
+                let id = InstrumentId::from_str(&target.instrument_id)?;
+                self.cache()
+                    .instrument(&id)
+                    .ok_or_else(|| anyhow::anyhow!("PAPER_INSTRUMENT_UNAVAILABLE"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        ensure!(
+            instruments
+                .iter()
+                .all(|instrument| instrument.ts_init().as_u64() <= now),
+            "SIMULATION_BASELINE_FROM_FUTURE"
+        );
+        validate_paper_instruments(&self.settings, &instruments, &self.bar_types, point)?;
+        self.instruments = instruments;
+        self.paper.as_mut().expect("Paper mode checked").started_ns = now;
+        Ok(())
+    }
+
+    fn accept_new_paper_bar(&self, bar: &Bar) -> Result<bool> {
+        let Some(paper) = &self.paper else {
+            return Ok(true);
+        };
+        ensure!(
+            self.bar_types.contains(&bar.bar_type),
+            "PAPER_BAR_TYPE_MISMATCH"
+        );
+        let now = self.clock().timestamp_ns().as_u64();
+        ensure!(
+            bar.ts_event <= bar.ts_init && bar.ts_init.as_u64() <= now,
+            "PAPER_BAR_FROM_FUTURE"
+        );
+        // Only callbacks for newly completed native bars enter this check.
+        // Position-event settlement resumption retains the existing cached bar.
+        Ok(bar.ts_event.as_u64() > paper.started_ns
+            && self
+                .latest
+                .get(&bar.bar_type.instrument_id())
+                .is_none_or(|previous| previous.ts_event < bar.ts_event))
+    }
+
     fn orders_settled(&self) -> bool {
         // Initialized commands have not reached the native open/inflight indexes.
         self.outstanding_orders.is_empty()
@@ -231,6 +386,11 @@ impl TargetReplay {
     }
 
     fn submit_deferred(&mut self, now: u64) -> Result<()> {
+        let now = if self.paper.is_some() {
+            self.clock().timestamp_ns().as_u64()
+        } else {
+            now
+        };
         ensure!(
             self.reduction_ids.is_empty() && self.status.borrow().failure.is_none(),
             "SIMULATION_REDUCTIONS_NOT_CONFIRMED"
@@ -243,7 +403,7 @@ impl TargetReplay {
         self.status.borrow_mut().submitted_after_ns = now;
         for order in std::mem::take(&mut self.deferred_orders) {
             self.outstanding_orders.insert(order.client_order_id());
-            self.submit_order(order, None, None, None)?;
+            self.submit_target_order(order)?;
             ensure!(
                 self.status.borrow().failure.is_none(),
                 "NATIVE_ORDER_NOT_ACCEPTED"
@@ -254,6 +414,11 @@ impl TargetReplay {
     }
 
     fn apply_bar(&mut self, bar: &Bar, receipt_ns: u64) -> Result<()> {
+        let receipt_ns = if self.paper.is_some() {
+            self.clock().timestamp_ns().as_u64()
+        } else {
+            receipt_ns
+        };
         if self.status.borrow().study_infeasible {
             return Ok(());
         }
@@ -317,6 +482,9 @@ impl TargetReplay {
             return Ok(());
         }
         self.awaiting_settlement = false;
+        if next == 0 {
+            self.verify_fresh_paper_account()?;
+        }
         let equity = self
             .portfolio()
             .equity(&self.venue, None)
@@ -507,7 +675,7 @@ impl TargetReplay {
         }
         for order in reductions {
             self.outstanding_orders.insert(order.client_order_id());
-            self.submit_order(order, None, None, None)?;
+            self.submit_target_order(order)?;
             ensure!(
                 self.status.borrow().failure.is_none(),
                 "NATIVE_ORDER_NOT_ACCEPTED"
@@ -519,13 +687,26 @@ impl TargetReplay {
 
 impl DataActor for TargetReplay {
     fn on_start(&mut self) -> Result<()> {
+        if self.paper.is_some() {
+            if let Err(error) = self.start_paper() {
+                self.status.borrow_mut().record_callback_error(error);
+                return Err(anyhow::anyhow!("PAPER_TARGET_START_FAILED"));
+            }
+        }
         for kind in self.bar_types.clone() {
             self.subscribe_bars(kind, None, None);
         }
         Ok(())
     }
     fn on_bar(&mut self, bar: &Bar) -> Result<()> {
-        if let Err(error) = self.apply_bar(bar, bar.ts_init.as_u64()) {
+        let result = self.accept_new_paper_bar(bar).and_then(|accepted| {
+            if accepted {
+                self.apply_bar(bar, bar.ts_init.as_u64())
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(error) = result {
             // Native actor callbacks may log rather than propagate. Keep an explicit
             // in-process failure observation that the outer adapter MUST inspect.
             self.status.borrow_mut().record_callback_error(error);
@@ -533,6 +714,107 @@ impl DataActor for TargetReplay {
         }
         Ok(())
     }
+}
+
+/// Construct one target for a native Paper node. Instrument definitions may be
+/// absent until the data client connects; on_start always reloads them from cache.
+/// Sandbox execution uses its live clock and immediate runtime latency. The
+/// historical latency model remains a validated setting, never a Paper delay.
+#[cfg(feature = "native-paper")]
+pub(crate) fn paper_target_strategy(
+    settings: NativeSimulationSettingsV1,
+    instruments: Vec<InstrumentAny>,
+    bar_types: Vec<BarType>,
+    point: NativeTargetPointV1,
+    strategy_id: StrategyId,
+    client_id: ClientId,
+) -> Result<(TargetReplay, Rc<RefCell<ReplayStatus>>)> {
+    domain::portfolio::simulation_settings(&settings)?;
+    ensure!(
+        !point.targets.is_empty()
+            && point.targets.len() == bar_types.len()
+            && point.asof_ns < point.valid_until_ns,
+        "SIMULATION_TARGET_INVALID"
+    );
+    let mut ids = BTreeSet::new();
+    for (target, kind) in point.targets.iter().zip(&bar_types) {
+        ensure!(
+            kind.is_internally_aggregated()
+                && !kind.is_composite()
+                && kind.spec().is_time_aggregated()
+                && target.instrument_id == kind.instrument_id().to_string()
+                && ids.insert(kind.instrument_id()),
+            "PAPER_BAR_TYPE_MISMATCH"
+        );
+    }
+    if !instruments.is_empty() {
+        validate_paper_instruments(&settings, &instruments, &bar_types, &point)?;
+    }
+    let currency = Currency::from_str(&settings.base_currency)?;
+    let venue = bar_types[0].instrument_id().venue;
+    let tolerance = native_decimal(&settings.exposure_tolerance)?;
+    let status = Rc::new(RefCell::new(ReplayStatus::default()));
+    let strategy = TargetReplay {
+        core: StrategyCore::new_checked(
+            StrategyConfig::builder()
+                .strategy_id(strategy_id)
+                .order_id_tag(strategy_id.get_tag().to_owned())
+                .oms_type(OmsType::Netting)
+                .log_events(false)
+                .log_commands(false)
+                .build()?,
+        )?,
+        instruments,
+        bar_types,
+        latest: BTreeMap::new(),
+        points: vec![point],
+        study_inputs: Vec::new(),
+        settings,
+        currency,
+        venue,
+        tolerance,
+        latency_ns: 0,
+        reduction_ids: BTreeSet::new(),
+        deferred_orders: Vec::new(),
+        active_expiry_ns: 0,
+        awaiting_settlement: false,
+        outstanding_orders: BTreeSet::new(),
+        settlement_events: BTreeMap::new(),
+        status: status.clone(),
+        strategy_constraints: None,
+        paper: Some(PaperClock {
+            execution_client_id: client_id,
+            started_ns: 0,
+            fresh_account: None,
+        }),
+    };
+    Ok((strategy, status))
+}
+
+fn validate_paper_instruments(
+    settings: &NativeSimulationSettingsV1,
+    instruments: &[InstrumentAny],
+    bar_types: &[BarType],
+    point: &NativeTargetPointV1,
+) -> Result<()> {
+    validate_point(settings, point, instruments)?;
+    // Reuse the historical metadata predicates without inventing market data.
+    // Empty bars are validation input only and never enter the Paper data engine.
+    let metadata = NativeMarketData {
+        series: instruments
+            .iter()
+            .zip(bar_types)
+            .map(|(instrument, &bar_type)| NativeBarSeries {
+                instrument: instrument.clone(),
+                instrument_updates: Vec::new(),
+                bar_type,
+                bars: Vec::new(),
+            })
+            .collect(),
+        rows: 0,
+    };
+    execution_market(&metadata, settings)?;
+    Ok(())
 }
 
 pub(crate) fn execution_market(
@@ -820,6 +1102,7 @@ fn run_with_strategy(
         outstanding_orders: BTreeSet::new(),
         settlement_events,
         status: status.clone(),
+        paper: None,
     };
     let config = BacktestEngineConfig {
         portfolio: Some(
