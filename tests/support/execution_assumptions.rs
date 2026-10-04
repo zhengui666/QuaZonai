@@ -4,7 +4,7 @@ pub mod data;
 #[path = "execution_models.rs"]
 mod models;
 #[path = "runtime_observation.rs"]
-mod observation;
+pub mod observation;
 use contracts::{
     execution_assumptions::ExecutionAssumptionsCreateV1,
     research::{DataPartition, InputItemV1, InputPurpose, InputSetCreate},

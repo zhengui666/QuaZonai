@@ -1,8 +1,6 @@
 //! Controlled native metadata plus real Store execution-assumption and mandate commands.
 #[path = "execution_assumptions.rs"]
 mod execution;
-#[path = "runtime_observation.rs"]
-pub mod observation;
 use contracts::{
     portfolio::AllocationInputV1,
     runtime::{RuntimeArtifactSchemaV1, RuntimeProbeOutcomeV1},
@@ -11,7 +9,7 @@ use contracts::{
     },
     SchemaV1,
 };
-pub use execution::{data, prepare as execution_request};
+pub use execution::{data, observation, prepare as execution_request};
 use sqlx::PgPool;
 
 pub async fn prepare(
