@@ -108,16 +108,19 @@ impl Fixture {
     fn standard() -> Self {
         Self::new("2025-01-01", "1m", 3, "SYNTHETIC", ".123456789", "BTCUSDT")
     }
-    fn run(&self) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_catalog-prepare"))
+    fn command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_catalog-prepare"));
+        command
             .args(["ingest-archive-candles", "--acquisition"])
             .arg(self.source.join("archive.json"))
             .arg("--instruments")
             .arg(&self.definitions)
             .arg("--output")
-            .arg(&self.output)
-            .output()
-            .unwrap()
+            .arg(&self.output);
+        command
+    }
+    fn run(&self) -> Output {
+        self.command().output().unwrap()
     }
     fn report(&self) -> Value {
         let r = self.run();
@@ -219,6 +222,81 @@ fn exact_native_roundtrip_retains_original_evidence_and_nine_digit_receipts() {
         saved
     );
 }
+
+#[cfg(feature = "polymarket-history")]
+#[test]
+fn installed_dispatch_preserves_archive_artifacts_and_exact_receipts() {
+    let mut f = Fixture::standard();
+    let manifest = f.manifest();
+    let originals = std::iter::once(f.source.join("archive.json"))
+        .chain(
+            manifest["files"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(|name| f.source.join(name)),
+        )
+        .chain(std::iter::once(f.definitions.clone()))
+        .map(|path| {
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect::<Vec<_>>();
+    let standalone = f.run();
+    assert!(
+        standalone.status.success(),
+        "{}",
+        String::from_utf8_lossy(&standalone.stderr)
+    );
+    let report: Value = serde_json::from_slice(&standalone.stdout).unwrap();
+    let kind = report["native_selection"]["bar_types"][0].as_str().unwrap();
+    let original_bars = f.bars(kind);
+    let original_report = fs::read(f.output.join("import-report.json")).unwrap();
+    let original_evidence = fs::read(f.output.join("source-evidence.json")).unwrap();
+    f.output = f._dir.path().join("dispatched archive [行情] ' ; $literal");
+    let original_command = f.command();
+    let mut dispatcher = Command::new(env!("CARGO_BIN_EXE_source-tools"));
+    dispatcher
+        .arg("catalog-prepare")
+        .args(original_command.get_args());
+    let selected = dispatcher.output().unwrap();
+    assert_eq!(selected.status, standalone.status);
+    assert_eq!(selected.stdout, standalone.stdout);
+    assert_eq!(selected.stderr, standalone.stderr);
+    assert_eq!(f.bars(kind), original_bars);
+    assert_eq!(original_bars.len(), 3);
+    assert!(original_bars
+        .iter()
+        .all(|bar| bar.ts_init.as_u64() == 1_735_776_000_123_456_789));
+    let selection = serde_json::from_value(report["native_selection"].clone()).unwrap();
+    let loaded = job::catalog::load_catalog(&f.output.join("catalog"), &selection).unwrap();
+    assert_eq!(loaded.series[0].bars, original_bars);
+    assert_eq!(
+        serde_json::to_value(&loaded.series[0].instrument).unwrap(),
+        serde_json::to_value(&f.instrument).unwrap()
+    );
+    assert_eq!(report["receipt_basis"]["ts_init_ns"], "1735776000123456789");
+    assert_eq!(report["source_provenance_kind"], "SYNTHETIC");
+    assert_eq!(report["historical_availability"], "UNVERIFIED");
+    assert_eq!(report["research_qualified"], false);
+    assert_eq!(report["registered_in_quazonai"], false);
+    assert_eq!(
+        fs::read(f.output.join("source-evidence.json")).unwrap(),
+        original_evidence
+    );
+    let reused = dispatcher.output().unwrap();
+    assert_eq!(reused.status.code(), Some(1));
+    assert!(reused.stdout.is_empty());
+    assert_eq!(reused.stderr, b"QZ_CATALOG_PREPARATION_FAILED\n");
+    assert_eq!(
+        fs::read(f.output.join("import-report.json")).unwrap(),
+        original_report
+    );
+    for (path, bytes) in originals {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+}
+
 #[test]
 fn full_sparse_and_transition_days_keep_source_clock_units() {
     for (day, interval, count, symbol) in [

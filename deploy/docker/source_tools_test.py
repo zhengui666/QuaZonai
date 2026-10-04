@@ -107,6 +107,32 @@ class InstalledSourceTests(unittest.TestCase):
         self.assertIn('io.quazonai.source.owner=' + str(os.getuid()), command)
         self.assertRegex(command[command.index('--name') + 1], r'^quazonai-source-[0-9a-f]{32}$')
 
+    def test_packaged_history_smoke_is_offline_owned_and_uses_literal_mounts(self):
+        observed = {}
+        def execute(config, root, operation, command_for):
+            command = command_for('a' * 32)
+            observed['command'] = command
+            self.assertEqual(operation, 'packaged_history_import_readback')
+            self.assertEqual(command[command.index('--network') + 1], 'none')
+            self.assertIn(f'type=bind,source={self.input},target={self.input},readonly', command)
+            self.assertIn(f'type=bind,source={self.output},target={self.output}', command)
+            self.assertEqual(command[-2:], [str(self.input), str(self.output)])
+            self.assertIn('io.quazonai.source.owner=' + str(os.getuid()), command)
+            program = command[command.index('-c') + 1]
+            compile(program, '<packaged history acceptance>', 'exec')
+            self.assertNotIn('shell=True', program)
+            return {'accepted': True}
+        config = {**self.config, **{key: self.release[key] for key in ('image', 'version', 'revision')}}
+        with patch.object(smoke, 'invoke_source_process', side_effect=execute):
+            self.assertEqual(smoke.invoke_packaged_history(config, self.root, self.input, self.output), {'accepted': True})
+        self.assertTrue(observed)
+        with patch.object(smoke, 'invoke_source_process') as launch, self.assertRaises(AssertionError):
+            smoke.invoke_packaged_history({**config, 'revision': 'f' * 40}, self.root, self.input, self.output)
+        launch.assert_not_called()
+        with patch.object(smoke, 'invoke_source_process') as launch, self.assertRaises(AssertionError):
+            smoke.invoke_packaged_history(config, self.root, self.input, self.input)
+        launch.assert_not_called()
+
     def test_reserved_roots_ancestors_and_state_are_rejected_before_docker(self):
         for path in [Path('/'), Path('/tmp'), Path('/opt'), Path('/usr'), Path('/proc'),
                      Path('/sys'), Path('/dev'), Path('/etc'), self.installation,
