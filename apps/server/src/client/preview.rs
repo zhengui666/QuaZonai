@@ -25,7 +25,7 @@ pub(super) fn inspect(
         let _: Id = grant.to_owned().try_into().map_err(|_| Failure::Input)?;
     }
     let output = match &request.output {
-        commands::Output::Json(_) => "json",
+        commands::Output::Json(_) | commands::Output::NativeReport(_) => "json",
         commands::Output::Binary { .. } => "bytes",
         commands::Output::Events { run, after, .. } => {
             watch::cursor(*run, after.as_deref())?;
