@@ -163,9 +163,15 @@ class CompatibilityTests(unittest.TestCase):
             self.assertFalse(list(self.root.glob('frames-*')))
 
     def test_real_exception_sections_and_program_header_relation(self):
-        library = Path('/usr/lib/x86_64-linux-gnu/libstdc++.so.6').resolve()
-        if not library.is_file():
-            self.skipTest('No installed C++ ELF fixture')
+        # Ask the installed toolchain instead of assuming Debian's multiarch path.
+        compiler = shutil.which('c++')
+        self.assertIsNotNone(compiler, 'C++ toolchain required for the native ELF fixture')
+        resolved = subprocess.run([compiler, '-print-file-name=libstdc++.so.6'],
+                                  check=True, capture_output=True, text=True, timeout=10)
+        library = Path(resolved.stdout.strip())
+        self.assertTrue(library.is_absolute() and library.is_file(),
+                        'The C++ toolchain must resolve an installed libstdc++.so.6')
+        library = library.resolve()
         headers = forensic.bounded_readelf(library, self.root / 'headers.txt')
         covered = forensic.coverage(library, headers)
         result = forensic.native_structure(covered, headers)

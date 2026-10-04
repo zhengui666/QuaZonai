@@ -427,3 +427,12 @@ CI. Merge remains blocked until the exact integrated C passes the full compariso
 applicable Web, Worker, Runtime, Container and installed source acceptance, with
 independent integration review. Neither the earlier A/A success nor local Python
 and shell checks establish those final delivery gates or a five-minute CI result.
+
+The complete Manjaro checkout passed all 41 native-input/producer/cache tests.
+The operator suite passed 104 cases but skipped the genuine C++ exception-section
+case because its fixture path assumed Debian multiarch layout. Resolve that same
+installed `libstdc++.so.6` through the C++ toolchain's `-print-file-name` query.
+Missing native prerequisites now fail explicitly rather than silently skipping;
+the original real-ELF, missing-section, program-header and build-ID assertions
+remain unchanged. The corrected final head still requires its native rerun and
+hosted CI/full comparison before merge.
