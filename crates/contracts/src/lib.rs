@@ -4,6 +4,7 @@
 //! independent evaluation, or the complete Issue 62 acceptance contract.
 #![forbid(unsafe_code)]
 
+pub mod account_observation;
 pub mod agent_evaluation;
 pub mod artifacts;
 pub mod auth;
@@ -43,6 +44,10 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(components(schemas(
     http::Problem,
+    account_observation::AccountObservationSubmitV1,
+    account_observation::AccountObservationReceiptV1,
+    account_observation::AccountCurrentV1,
+    account_observation::AccountSourceV1,
     equity_curve::EquityCurveQuery,
     equity_curve::EquityCurveV1,
     delivery::TargetPackageV1,

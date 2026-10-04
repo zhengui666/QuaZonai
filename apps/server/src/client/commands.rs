@@ -162,6 +162,9 @@ pub enum Alpha {
 
 #[derive(Subcommand)]
 pub enum Forward {
+    /// Submit and read native Paper/Live account observations with an existing identity.
+    #[command(subcommand)]
+    Accounts(ForwardAccounts),
     Observations {
         id: String,
         #[command(flatten)]
@@ -199,6 +202,27 @@ pub enum Forward {
     },
     List {
         id: String,
+        #[command(flatten)]
+        page: List,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ForwardAccounts {
+    /// Submit one original native snapshot/heartbeat envelope from stdin. Retry unchanged.
+    Submit,
+    Sources {
+        project_id: String,
+        #[command(flatten)]
+        page: List,
+    },
+    Current {
+        project_id: String,
+        source_id: String,
+    },
+    History {
+        project_id: String,
+        source_id: String,
         #[command(flatten)]
         page: List,
     },
@@ -733,6 +757,48 @@ impl Request {
     }
 }
 
+impl ForwardAccounts {
+    fn request(self) -> Result<Request> {
+        use contracts::account_observation::*;
+        Ok(match self {
+            Self::Submit => {
+                Request::write::<AccountObservationSubmitV1, AccountObservationReceiptV1>(
+                    Method::POST,
+                    "/api/v2/forward/account-observations",
+                    201,
+                    false,
+                )?
+            }
+            Self::Sources { project_id, page } => Request::get::<Page<AccountSourceV1>>(action(
+                "/api/v2/projects",
+                project_id,
+                "account-sources",
+            )?)
+            .page(page)?,
+            Self::Current {
+                project_id,
+                source_id,
+            } => {
+                let base = action("/api/v2/projects", project_id, "account-sources")?;
+                Request::get::<AccountCurrentV1>(action(&base, source_id, "current")?)
+            }
+            Self::History {
+                project_id,
+                source_id,
+                page,
+            } => {
+                let base = action("/api/v2/projects", project_id, "account-sources")?;
+                Request::get::<Page<AccountObservationV1>>(action(
+                    &base,
+                    source_id,
+                    "observations",
+                )?)
+                .page(page)?
+            }
+        })
+    }
+}
+
 impl Command {
     pub(super) fn request_for(self, device: bool) -> Result<Request> {
         if device && matches!(self, Self::Identity) {
@@ -937,6 +1003,7 @@ impl Command {
                 }
             },
             Self::Forward(command) => match command {
+                Forward::Accounts(command) => command.request()?,
                 Forward::Observations { id, page } => {
                     Request::get::<Page<contracts::forward::ForwardObservationViewV1>>(action(
                         "/api/v2/projects",

@@ -23,6 +23,8 @@ struct Arguments {
 enum Operation {
     /// Apply the immutable native wall deadline before executing the fixed job entrypoint.
     RunBounded,
+    /// Project official native snapshots into downstream account observation envelopes.
+    NativeAccountObservation(job::account_observation_cli::Args),
     /// Execute one typed native operation. Root overrides are trusted local CLI only.
     Execute {
         #[arg(long, default_value = "/input")]
@@ -121,8 +123,23 @@ fn model_bytes(path: &Path, maximum_bytes: usize) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn managed_result(result: anyhow::Result<()>) -> Result<()> {
+    result.map_err(|error| {
+        // Preserve the typed resource failure across the anyhow/std error boundary.
+        if error.is::<job::managed::CompilerMemoryLimit>() {
+            Box::new(job::managed::CompilerMemoryLimit) as Box<dyn Error>
+        } else {
+            error.into()
+        }
+    })
+}
+
 fn run(operation: Operation) -> Result<()> {
     match operation {
+        Operation::NativeAccountObservation(args) => {
+            job::account_observation_cli::run(args)?;
+            Ok(())
+        }
         Operation::RunBounded => {
             job::bounded::run()?;
             Ok(())
@@ -130,10 +147,7 @@ fn run(operation: Operation) -> Result<()> {
         Operation::Execute {
             input_root,
             output_root,
-        } => {
-            job::managed::execute(&input_root, &output_root)?;
-            Ok(())
-        }
+        } => managed_result(job::managed::execute(&input_root, &output_root)),
         Operation::Allocate => output(&job::allocate(&input()?)?),
         Operation::Forecast { catalog, model } => output(&job::forecast::forecast(
             &catalog,
@@ -174,19 +188,30 @@ fn run(operation: Operation) -> Result<()> {
     }
 }
 
+fn failure(error: &(dyn Error + 'static)) -> (&'static str, i32) {
+    if error.is::<job::managed::CompilerMemoryLimit>() {
+        return (
+            "QZ_NATIVE_JOB_MEMORY_LIMIT",
+            domain::runtime_jobs::NATIVE_MEMORY_LIMIT_EXIT_CODE,
+        );
+    }
+    let code = match error.to_string().as_str() {
+        "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED" => {
+            "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
+        }
+        _ => "QZ_NATIVE_JOB_FAILED",
+    };
+    (code, 1)
+}
+
 fn main() {
     let args = Arguments::parse();
     if let Err(error) = run(args.command) {
-        // Only this fixed capability diagnostic is public. No upstream
-        // tracebacks, host paths, input contents or held-out values are exposed.
-        let code = match error.to_string().as_str() {
-            "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED" => {
-                "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
-            }
-            _ => "QZ_NATIVE_JOB_FAILED",
-        };
+        // Only fixed diagnostics are public. No upstream tracebacks, host paths,
+        // input contents or held-out values are exposed.
+        let (code, status) = failure(error.as_ref());
         eprintln!("{code}");
-        std::process::exit(1);
+        std::process::exit(status);
     }
 }
 
@@ -194,6 +219,23 @@ fn main() {
 mod tests {
     use super::Arguments;
     use clap::Parser;
+
+    #[test]
+    fn only_typed_compiler_memory_evidence_selects_the_resource_exit() {
+        let error =
+            super::managed_result(Err(job::managed::CompilerMemoryLimit.into())).unwrap_err();
+        assert_eq!(
+            super::failure(error.as_ref()),
+            (
+                "QZ_NATIVE_JOB_MEMORY_LIMIT",
+                domain::runtime_jobs::NATIVE_MEMORY_LIMIT_EXIT_CODE,
+            )
+        );
+        for message in ["NATIVE_COMPILER_MEMORY_LIMIT", "NATIVE_COMPILATION_FAILED"] {
+            let error = super::managed_result(Err(anyhow::anyhow!(message))).unwrap_err();
+            assert_eq!(super::failure(error.as_ref()), ("QZ_NATIVE_JOB_FAILED", 1));
+        }
+    }
 
     #[test]
     fn executable_commands_exclude_the_removed_compatibility_probe() {
