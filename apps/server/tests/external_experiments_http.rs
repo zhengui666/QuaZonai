@@ -381,7 +381,9 @@ async fn cli_worker_trace(pool: PgPool, success: bool) {
             },
         };
         let body = serde_json::to_value(&adopt.request).unwrap();
-        let denied_browser = client::browser(
+        // Authenticated owner browsers and owner devices share operator
+        // authority; the scoped machine CLI below still requires its grant.
+        let browser_adopted = client::browser(
             &f,
             &cookie,
             "browser-adopt",
@@ -389,7 +391,34 @@ async fn cli_worker_trace(pool: PgPool, success: bool) {
             body.clone(),
         )
         .await;
-        assert_eq!(denied_browser.status, StatusCode::FORBIDDEN);
+        assert_eq!(browser_adopted.status, StatusCode::CREATED);
+        let browser_adopted: CommandResult<StrategyAlphaVersionV1> =
+            serde_json::from_value(browser_adopted.body).unwrap();
+        assert!(!browser_adopted.replayed);
+        assert_eq!(
+            browser_adopted.resource.policy.source.report_artifact_id,
+            report_id
+        );
+        assert_eq!(
+            browser_adopted.resource.policy.source.evaluation_run_id,
+            evaluation
+        );
+        let browser_replay = client::browser(
+            &f,
+            &cookie,
+            "browser-adopt",
+            &format!("/api/v2/experiments/{id}/adopt-alpha"),
+            body.clone(),
+        )
+        .await;
+        assert_eq!(browser_replay.status, StatusCode::CREATED);
+        let browser_replay: CommandResult<StrategyAlphaVersionV1> =
+            serde_json::from_value(browser_replay.body).unwrap();
+        assert!(browser_replay.replayed);
+        assert_eq!(
+            serde_json::to_value(&browser_replay.resource).unwrap(),
+            serde_json::to_value(&browser_adopted.resource).unwrap()
+        );
         let denied = client::invoke(
             &origin,
             &token_file,
@@ -429,6 +458,11 @@ async fn cli_worker_trace(pool: PgPool, success: bool) {
         );
         let adopted: CommandResult<StrategyAlphaVersionV1> =
             serde_json::from_slice(&adopted.stdout).unwrap();
+        assert!(adopted.replayed);
+        assert_eq!(
+            serde_json::to_value(&adopted.resource).unwrap(),
+            serde_json::to_value(&browser_adopted.resource).unwrap()
+        );
         assert_eq!(adopted.resource.policy.source.report_artifact_id, report_id);
         assert_eq!(adopted.resource.policy.source.evaluation_run_id, evaluation);
         let replay = client::invoke(&origin, &token_file, &args, body).await;
@@ -465,6 +499,13 @@ async fn cli_worker_trace(pool: PgPool, success: bool) {
             Some(ExperimentOutcome::Inconclusive)
         );
         assert_eq!(original_after.conclusion_artifact_id, Some(report_id));
+        let versions: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM app.alpha_versions WHERE experiment_id=$1")
+                .bind(experiment.id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(versions, 1);
     }
     let counts:(i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.run_missions),(SELECT count(*) FROM app.external_experiment_tasks)").fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (0, 1));

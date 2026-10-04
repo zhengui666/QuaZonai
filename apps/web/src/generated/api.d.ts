@@ -661,6 +661,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/cycles/{id}/finish-external": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["finishExternalResearchCycle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/cycles/{id}/selection": {
         parameters: {
             query?: never;
@@ -989,6 +1005,72 @@ export interface paths {
             cookie?: never;
         };
         get: operations["get_experiment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/experiments/{id}/adopt-alpha": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adopt the accepted result as a reusable policy, preserving its research status. */
+        post: operations["adopt_experiment_alpha"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/experiments/{id}/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["evaluate_experiment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/experiments/{id}/evaluation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_experiment_evaluation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/experiments/{id}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A bounded view of the same adopted report, with identical ResearchRead authority. */
+        get: operations["get_experiment_summary"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1573,6 +1655,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/portfolio-candidates/{id}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The published strategy candidate's original native result, never a new replay. */
+        get: operations["get_strategy_portfolio_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/portfolio-mandates": {
         parameters: {
             query?: never;
@@ -1695,6 +1794,22 @@ export interface paths {
         get: operations["listProjectResearchCycles"];
         put?: never;
         post: operations["startResearchCycle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{id}/cycles/external": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["startExternalResearchCycle"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2121,6 +2236,12 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AcceptedExperimentSourceV1: {
+            accepted_attempt_id: components["schemas"]["Id"];
+            evaluation_run_id: components["schemas"]["Id"];
+            experiment_id: components["schemas"]["Id"];
+            report_artifact_id: components["schemas"]["Id"];
+        };
         /** @enum {string} */
         AccountConnectionFreshnessV1: "UNKNOWN" | "CONNECTED" | "DISCONNECTED" | "STALE";
         /** @enum {string} */
@@ -2256,7 +2377,7 @@ export interface components {
         /** @enum {string} */
         AllocationRisk: "VARIANCE" | "CVAR";
         AllocationTargetV1: {
-            currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             instrument_id: string;
             weight: components["schemas"]["DecimalValue"];
         };
@@ -2294,6 +2415,11 @@ export interface components {
         };
         /** @enum {string} */
         AlphaLifecycle: "RESEARCH" | "QUALIFIED" | "SUSPENDED" | "RETIRED";
+        /**
+         * @description Legacy forecast bytes keep their original shape; weight strategies carry an
+         *     explicit output discriminator and no inapplicable forecast fields.
+         */
+        AlphaVersionEnvelopeV2: components["schemas"]["AlphaVersionView"] | components["schemas"]["StrategyAlphaVersionV1"];
         AlphaVersionView: {
             alpha_id: components["schemas"]["Id"];
             calibration_id?: null | components["schemas"]["Id"];
@@ -2455,7 +2581,7 @@ export interface components {
             role: components["schemas"]["DataPartition"];
         };
         BriefContentV1: {
-            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             benchmark_ref?: null | string;
             budget: {
                 cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
@@ -2526,7 +2652,7 @@ export interface components {
             /** Format: uuid */
             universe_version_id: string;
         } | {
-            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             benchmark_ref?: null | string;
             budget: {
                 cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
@@ -2597,7 +2723,7 @@ export interface components {
             /** Format: uuid */
             universe_version_id: string;
         } | {
-            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             benchmark_ref?: null | string;
             budget: {
                 cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
@@ -3221,6 +3347,39 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_CycleViewV1: {
+            replayed: boolean;
+            resource: {
+                available_actions: components["schemas"]["CycleReadAction"][];
+                brief_id: components["schemas"]["Id"];
+                budget: components["schemas"]["BudgetV1"];
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                ended_at?: string | null;
+                id: components["schemas"]["Id"];
+                initial_run_id?: null | components["schemas"]["Id"];
+                next_action?: string | null;
+                /** Format: int32 */
+                ordinal: number;
+                outcome?: null | components["schemas"]["CycleOutcome"];
+                project_id: components["schemas"]["Id"];
+                researcher_profile?: null | components["schemas"]["CodexProfileChoiceV1"];
+                reserved_cpu_seconds: components["schemas"]["DbCounter"];
+                /** Format: int64 */
+                reserved_experiments: number;
+                reviewer_profile?: null | components["schemas"]["CodexProfileChoiceV1"];
+                revision: components["schemas"]["Revision"];
+                schema_version: components["schemas"]["SchemaV1"];
+                /** Format: date-time */
+                started_at?: string | null;
+                state: components["schemas"]["CycleState"];
+                trigger: components["schemas"]["CycleTrigger"];
+                /** Format: int64 */
+                used_experiments: number;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_DataGrantRevocationView: {
             replayed: boolean;
             resource: {
@@ -3481,11 +3640,11 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_HandoffClaimViewV1: {
+        CommandResult_HandoffClaimViewV2: {
             replayed: boolean;
             resource: {
                 handoff: components["schemas"]["HandoffViewV1"];
-                package: components["schemas"]["TargetPackageV1"];
+                package: components["schemas"]["TargetPackageEnvelopeV2"];
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -3554,17 +3713,9 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_MandateViewV1: {
+        CommandResult_MandateViewEnvelopeV2: {
             replayed: boolean;
-            resource: {
-                content: components["schemas"]["MandateContentV1"];
-                /** Format: date-time */
-                created_at: string;
-                id: components["schemas"]["Id"];
-                project_id: components["schemas"]["Id"];
-                /** Format: int32 */
-                version: number;
-            };
+            resource: components["schemas"]["MandateViewV1"] | components["schemas"]["StrategyMandateViewV1"];
             schema_version: components["schemas"]["SchemaV1"];
         };
         CommandResult_OperatorGrantView: {
@@ -3658,27 +3809,9 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_ReleaseViewV1: {
+        CommandResult_ReleaseViewEnvelopeV2: {
             replayed: boolean;
-            resource: {
-                /** Format: date-time */
-                asof: string;
-                candidate_id: components["schemas"]["Id"];
-                /** Format: date-time */
-                created_at: string;
-                environment: components["schemas"]["PackageOriginV1"];
-                evaluation_id: components["schemas"]["Id"];
-                id: components["schemas"]["Id"];
-                mandate_id: components["schemas"]["Id"];
-                market_capability_version: string;
-                package_artifact_id: components["schemas"]["Id"];
-                package_schema_version: components["schemas"]["PackageSchemaVersion"];
-                project_id: components["schemas"]["Id"];
-                /** Format: date-time */
-                valid_from: string;
-                /** Format: date-time */
-                valid_until: string;
-            };
+            resource: components["schemas"]["ReleaseViewV1"] | components["schemas"]["StrategyReleaseViewV1"];
             schema_version: components["schemas"]["SchemaV1"];
         };
         CommandResult_RunSnapshotV1: {
@@ -3742,6 +3875,23 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_StrategyAlphaVersionV1: {
+            replayed: boolean;
+            resource: {
+                alpha_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                experiment_id: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                output_kind: components["schemas"]["StrategyOutputKindV1"];
+                policy: components["schemas"]["FrozenTargetPolicyV1"];
+                project_id: components["schemas"]["Id"];
+                root_lineage_id: components["schemas"]["Id"];
+                schema_version: components["schemas"]["SchemaV1"];
+                version: components["schemas"]["Revision"];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         /** @enum {string} */
         ComparableScope: "FAMILY_LINEAGE";
         /** @enum {string} */
@@ -3786,6 +3936,19 @@ export interface components {
             /** Format: date-time */
             revoked_at?: string | null;
             scope_codes: components["schemas"]["MachineScope"][];
+        };
+        CycleFinishExternalIntent: {
+            cycle_id: components["schemas"]["Id"];
+            request: components["schemas"]["CycleFinishExternalV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Close an external cycle only after every admitted scientific stage settles.
+         *     Unexecuted proposals remain history; this does not create a review or PASS.
+         */
+        CycleFinishExternalV1: {
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
         };
         /** @enum {string} */
         CycleOutcome: "QUALIFIED_CANDIDATES" | "NO_SUPPORTED_CANDIDATE" | "BUDGET_EXHAUSTED" | "INCONCLUSIVE";
@@ -4141,7 +4304,7 @@ export interface components {
         DownstreamWeightsSubmitV1: {
             asof_ns: components["schemas"]["DbCounter"];
             available_ns: components["schemas"]["DbCounter"];
-            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             cash_weight: components["schemas"]["DecimalValue"];
             environment: components["schemas"]["ForwardEnvironmentV1"];
             external_message_id: string;
@@ -4310,6 +4473,61 @@ export interface components {
             venue_capability_ref: string;
         };
         /** @enum {string} */
+        ExperimentDecisionOutputV1: "TARGET_WEIGHT";
+        ExperimentEquityPreviewV1: {
+            distinct_point_count: components["schemas"]["DbCounter"];
+            points: components["schemas"]["EquityPointV1"][];
+            sampled: boolean;
+            /**
+             * @description Display only: first/last and uniformly spaced indices of the projected series.
+             *     No interpolated values/timestamps; never use preview points to estimate metrics.
+             */
+            sampling_method: string;
+            source_point_count: components["schemas"]["DbCounter"];
+            /** @description Native, or the existing UTC bucket-end projection before preview selection. */
+            source_resolution: components["schemas"]["EquityResolution"];
+        };
+        ExperimentEvaluateIntent: {
+            experiment_id: components["schemas"]["Id"];
+            request: components["schemas"]["ExperimentEvaluateV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @description Direct owner execution of an immutable proposal under its existing cycle. */
+        ExperimentEvaluateV1: {
+            compile_limits: components["schemas"]["JobLimitsV1"];
+            evaluation_limits: components["schemas"]["JobLimitsV1"];
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        ExperimentFoldSummaryV1: {
+            account_id: string;
+            account_kind: components["schemas"]["NativeAccountKind"];
+            base_currency: string;
+            commissions?: null | components["schemas"]["DecimalValue"];
+            commissions_reason?: string | null;
+            daily_return_count: components["schemas"]["DbCounter"];
+            decision_count: components["schemas"]["DbCounter"];
+            equity_preview: components["schemas"]["ExperimentEquityPreviewV1"];
+            /** Format: int32 */
+            fold_index: number;
+            /** @description Native UTC daily return drawdown, negative fraction: -0.20 means 20%. */
+            max_drawdown: components["schemas"]["ExperimentSummaryStatisticV1"];
+            /**
+             * @description Native account PnL (total), including the engine's unrealized-PnL argument.
+             *     Never recomputed from preview points or relabeled as economic net profit.
+             */
+            native_account_pnl: components["schemas"]["ExperimentSummaryStatisticV1"];
+            native_version: string;
+            orders: components["schemas"]["DbCounter"];
+            period_end_ns: components["schemas"]["DbCounter"];
+            period_start_ns: components["schemas"]["DbCounter"];
+            positions: components["schemas"]["DbCounter"];
+            return_frequency: string;
+            /** @description Native UTC daily portfolio returns, zero risk-free rate, frozen annualization. */
+            sharpe_ratio: components["schemas"]["ExperimentSummaryStatisticV1"];
+            starting_capital: components["schemas"]["DecimalValue"];
+        };
+        /** @enum {string} */
         ExperimentOutcome: "PENDING" | "SUPPORTED" | "REJECTED" | "INVALID" | "INCONCLUSIVE";
         ExperimentProposalV1: {
             code_artifact_id?: null | string;
@@ -4331,6 +4549,39 @@ export interface components {
         ExperimentResultVisibility: "PENDING" | "RESEARCH" | "RESTRICTED";
         /** @enum {string} */
         ExperimentSource: "CODEX" | "OPTUNA" | "OPERATOR";
+        /** @description A direct selection from native statistics, with original missingness retained. */
+        ExperimentSummaryStatisticV1: {
+            /** Format: int32 */
+            annualization_days?: number | null;
+            method_id: string;
+            native_key: string;
+            reason_code?: string | null;
+            scope: string;
+            status: components["schemas"]["MetricStatus"];
+            unit: string;
+            /** Format: double */
+            value: number | null;
+        };
+        ExperimentSummaryV1: {
+            dataset_revision_id: components["schemas"]["Id"];
+            experiment_id: components["schemas"]["Id"];
+            feature_artifact_ids: components["schemas"]["Id"][];
+            /** @description Each fold starts with fresh capital. No aggregate/average Sharpe or joined equity. */
+            folds: components["schemas"]["ExperimentFoldSummaryV1"][];
+            instrument_id: string;
+            /**
+             * @description Independent frozen-policy replay; no fitted-model, external-training PIT,
+             *     Alpha qualification or investment-performance claim follows from it.
+             */
+            interpretation: string;
+            model_artifact_id: components["schemas"]["Id"];
+            native_versions: {
+                [key: string]: string;
+            };
+            report_artifact_id: components["schemas"]["Id"];
+            run_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         ExperimentView: {
             author_attempt_id?: null | components["schemas"]["Id"];
             author_run_id?: null | components["schemas"]["Id"];
@@ -4357,6 +4608,52 @@ export interface components {
             trial_source: components["schemas"]["ExperimentSource"];
             /** Format: date-time */
             updated_at: string;
+        };
+        ExternalCycleStartIntent: {
+            project_id: components["schemas"]["Id"];
+            request: components["schemas"]["ExternalCycleStartV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @description An owner-managed scientific cycle. No embedded researcher/reviewer session. */
+        ExternalCycleStartV1: {
+            brief_id: components["schemas"]["Id"];
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        FeatureAvailabilityV1: {
+            /** @enum {string} */
+            basis: "OBSERVED";
+        } | {
+            /** @enum {string} */
+            basis: "MODELED_LAG";
+            lag_ns: components["schemas"]["DbCounter"];
+        };
+        FeatureDefinitionV1: {
+            availability: components["schemas"]["FeatureAvailabilityV1"];
+            feature_key: string;
+            max_age_ns?: null | components["schemas"]["DbCounter"];
+            source_key: string;
+            /** @description Caller-declared immutable source reference. Not a fetch URL or PIT grant. */
+            source_ref: string;
+        };
+        /** @enum {string} */
+        FeatureMissingReasonV1: "NOT_YET_AVAILABLE" | "EXPIRED" | "SOURCE_MISSING";
+        FeatureReplayInitializationV1: {
+            first_decision_ns: components["schemas"]["DbCounter"];
+            first_event_ns: components["schemas"]["DbCounter"];
+            /** Format: int32 */
+            first_ordinal: number;
+            /** Format: int32 */
+            source_fold_index: number;
+        };
+        FeatureValueV1: {
+            effective_available_ns?: null | components["schemas"]["DbCounter"];
+            event_ns?: null | components["schemas"]["DbCounter"];
+            missing_reason?: null | components["schemas"]["FeatureMissingReasonV1"];
+            observed_available_ns?: null | components["schemas"]["DbCounter"];
+            sequence?: null | components["schemas"]["DbCounter"];
+            /** Format: double */
+            value: number | null;
         };
         FieldError: {
             code: string;
@@ -4451,10 +4748,43 @@ export interface components {
             /** Format: date-time */
             window_start?: string | null;
         };
+        /**
+         * @description Declared initialization of the next fresh Paper session, not an observed
+         *     balance or a snapshot from a different account/session.
+         */
+        FreshPaperCashV1: {
+            account_id: string;
+            base_currency: string;
+            downstream_id: components["schemas"]["Id"];
+            execution_assumptions_id: components["schemas"]["Id"];
+            starting_capital: components["schemas"]["DecimalValue"];
+            trader_id: string;
+        };
         FrozenBriefV1: {
             brief: components["schemas"]["BriefView"];
             execution_context: components["schemas"]["BriefExecutionContextV1"];
             schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description A fresh instance replays every decision from the original fold start. It
+         *     retains WASM globals/memory and original ordinals between predictions.
+         */
+        FrozenTargetPolicyV1: {
+            base_currency: string;
+            code_artifact_id: components["schemas"]["Id"];
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_artifact_ids: components["schemas"]["Id"][];
+            feature_schema: components["schemas"]["FeatureDefinitionV1"][];
+            initialization: components["schemas"]["FeatureReplayInitializationV1"];
+            instrument_id: string;
+            model_abi: string;
+            model_artifact_id: components["schemas"]["Id"];
+            output_kind: components["schemas"]["StrategyOutputKindV1"];
+            parameter_artifact_id: components["schemas"]["Id"];
+            runtime_image_ref: string;
+            schema_version: components["schemas"]["SchemaV1"];
+            source: components["schemas"]["AcceptedExperimentSourceV1"];
+            target_ttl_ns: components["schemas"]["DbCounter"];
         };
         GroupBoundV1: {
             group_id: string;
@@ -4476,9 +4806,9 @@ export interface components {
             package_schema_version: components["schemas"]["PackageSchemaVersion"];
             schema_version: components["schemas"]["SchemaV1"];
         };
-        HandoffClaimViewV1: {
+        HandoffClaimViewV2: {
             handoff: components["schemas"]["HandoffViewV1"];
-            package: components["schemas"]["TargetPackageV1"];
+            package: components["schemas"]["TargetPackageEnvelopeV2"];
         };
         HandoffOfferV1: {
             approval_id: components["schemas"]["Id"];
@@ -4764,6 +5094,20 @@ export interface components {
         };
         /** @enum {string} */
         IsolationProfile: "OCI_RESEARCH_V1";
+        JobLimitsV1: {
+            cpu_seconds: components["schemas"]["DbCounter"];
+            /**
+             * Format: int64
+             * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
+             */
+            experiments: number;
+            /** Format: int64 */
+            memory_mib: number;
+            output_bytes: components["schemas"]["DbCounter"];
+            schema_version: components["schemas"]["SchemaV1"];
+            /** Format: int64 */
+            wall_seconds: number;
+        };
         LabelIntervalSupportV1: {
             fixed_bars: boolean;
             fixed_duration: boolean;
@@ -4798,6 +5142,7 @@ export interface components {
             risk_measure: components["schemas"]["AllocationRisk"];
             universe_version_id: components["schemas"]["Id"];
         };
+        MandateCreateEnvelopeV2: components["schemas"]["MandateCreateV1"] | components["schemas"]["StrategyMandateCreateV1"];
         MandateCreateV1: {
             content: components["schemas"]["MandateContentV1"];
             expected_runtime_revision: components["schemas"]["Revision"];
@@ -4805,6 +5150,7 @@ export interface components {
             runtime_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        MandateViewEnvelopeV2: components["schemas"]["MandateViewV1"] | components["schemas"]["StrategyMandateViewV1"];
         MandateViewV1: {
             content: components["schemas"]["MandateContentV1"];
             /** Format: date-time */
@@ -4889,6 +5235,69 @@ export interface components {
         };
         /** @enum {string} */
         NativeAccountTypeV1: "CASH" | "MARGIN" | "BETTING" | "WALLET";
+        NativeBarSelectionV1: {
+            /** @description Complete native BarType strings, never SQL or directory prefixes. */
+            bar_types: string[];
+            decision_cutoff_ns: components["schemas"]["DbCounter"];
+            /** @description Exclusive event-time boundary. */
+            event_end_ns: components["schemas"]["DbCounter"];
+            event_start_ns: components["schemas"]["DbCounter"];
+            /** Format: int32 */
+            maximum_rows: number;
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        NativeExperimentDecisionV1: {
+            decision_ns: components["schemas"]["DbCounter"];
+            event_ns: components["schemas"]["DbCounter"];
+            features: components["schemas"]["FeatureValueV1"][];
+            label_available_ns?: null | components["schemas"]["DbCounter"];
+            label_end_ns?: null | components["schemas"]["DbCounter"];
+            /** Format: double */
+            label_return: number | null;
+            /** Format: int32 */
+            ordinal: number;
+            target_weight: components["schemas"]["DecimalValue"];
+        };
+        NativeExperimentEvaluationRequestV1: {
+            decision_output: components["schemas"]["ExperimentDecisionOutputV1"];
+            feature_schema: components["schemas"]["FeatureDefinitionV1"][];
+            instrument_id: string;
+            /** Format: int32 */
+            label_horizon_observations: number;
+            schema_version: components["schemas"]["SchemaV1"];
+            selection: components["schemas"]["NativeBarSelectionV1"];
+            settings: components["schemas"]["NativeSimulationSettingsV1"];
+            split_policy: components["schemas"]["SplitPolicyV1"];
+            target_ttl_ns: components["schemas"]["DbCounter"];
+            total_fuel: components["schemas"]["DbCounter"];
+        };
+        NativeExperimentEvaluationResultV1: {
+            consumed_fuel: components["schemas"]["DbCounter"];
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_artifact_ids: components["schemas"]["Id"][];
+            /** Format: int32 */
+            feature_count: number;
+            folds: components["schemas"]["NativeExperimentFoldV1"][];
+            instrument_id: string;
+            model_artifact_id: components["schemas"]["Id"];
+            native_versions: {
+                [key: string]: string;
+            };
+            /** @description Original frozen request, including ordered feature meanings and limits. */
+            request: components["schemas"]["NativeExperimentEvaluationRequestV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_row_count: components["schemas"]["DbCounter"];
+        };
+        NativeExperimentFoldV1: {
+            decisions: components["schemas"]["NativeExperimentDecisionV1"][];
+            /** Format: int32 */
+            fold_index: number;
+            simulation: components["schemas"]["NativeSimulationResultV1"];
+            /** @description Exact generated targets replayed through the existing native engine. */
+            simulation_request: components["schemas"]["NativeSimulationRequestV1"];
+            training_end_available_ns: components["schemas"]["DbCounter"];
+            training_ordinals: number[];
+        };
         NativeFeeRateV1: {
             instrument_id: string;
             maker: components["schemas"]["DecimalValue"];
@@ -5013,6 +5422,8 @@ export interface components {
             /** Format: double */
             value: number | null;
         };
+        /** @enum {string} */
+        NativeReturnsKind: "PORTFOLIO_DAILY";
         /** @description Original per-rebalance measurement policy, not a previously measured snapshot. */
         NativeRollingBarLiquidityPolicyV1: {
             /** Format: int32 */
@@ -5020,9 +5431,49 @@ export interface components {
             participation_limit: components["schemas"]["DecimalValue"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        NativeSettlementGroupV1: {
+            condition_id: string;
+            /** @description The complete two-outcome condition, even when only one token is traded. */
+            outcomes: components["schemas"]["NativeSettlementOutcomeV1"][];
+            source_reference: string;
+        };
+        NativeSettlementOutcomeV1: {
+            close_price: components["schemas"]["DecimalValue"];
+            instrument_id: string;
+            ts_event: components["schemas"]["DbCounter"];
+            ts_init: components["schemas"]["DbCounter"];
+        };
+        NativeSimulationRequestV1: {
+            schema_version: components["schemas"]["SchemaV1"];
+            selection: components["schemas"]["NativeBarSelectionV1"];
+            settings: components["schemas"]["NativeSimulationSettingsV1"];
+            /** @description Complete original condition payouts; not inferred from a last bar or expiry. */
+            settlements?: components["schemas"]["NativeSettlementGroupV1"][];
+            target_points: components["schemas"]["NativeTargetPointV1"][];
+        };
+        NativeSimulationResultV1: {
+            /** @description Unmodified native canonical document; stored as restricted simulation evidence. */
+            canonical_result: unknown;
+            consumed_target_points: components["schemas"]["DbCounter"];
+            events: components["schemas"]["DbCounter"];
+            iterations: components["schemas"]["DbCounter"];
+            native_version: string;
+            orders: components["schemas"]["DbCounter"];
+            positions: components["schemas"]["DbCounter"];
+            returns: components["schemas"]["NativeReturnV1"][];
+            /** @description UTC daily equity changes from native snapshots, never per-position fallback. */
+            returns_kind: components["schemas"]["NativeReturnsKind"];
+            returns_reason?: string | null;
+            returns_status: components["schemas"]["MetricStatus"];
+            schema_version: components["schemas"]["SchemaV1"];
+            statistics: components["schemas"]["NativeStatisticV1"][];
+            summary: {
+                [key: string]: string;
+            };
+        };
         NativeSimulationSettingsV1: {
             account_kind: components["schemas"]["NativeAccountKind"];
-            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             exposure_tolerance: components["schemas"]["DecimalValue"];
             fee_model: components["schemas"]["NativeModelRefV1"];
             fee_rates: components["schemas"]["NativeFeeRateV1"][];
@@ -5033,6 +5484,60 @@ export interface components {
             /** Format: int32 */
             snapshot_interval_ms: number;
             starting_capital: components["schemas"]["DecimalValue"];
+        };
+        /**
+         * @description Shared-account native replay projection, also used by experiment fold summaries.
+         *     This view selects existing statistics and observations; it does not rerun science.
+         */
+        NativeSimulationSummaryV1: {
+            account_id: string;
+            account_kind: components["schemas"]["NativeAccountKind"];
+            base_currency: string;
+            commissions?: null | components["schemas"]["DecimalValue"];
+            commissions_reason?: string | null;
+            daily_return_count: components["schemas"]["DbCounter"];
+            decision_count: components["schemas"]["DbCounter"];
+            equity_preview: components["schemas"]["ExperimentEquityPreviewV1"];
+            /** @description Native UTC daily return drawdown, negative fraction: -0.20 means 20%. */
+            max_drawdown: components["schemas"]["ExperimentSummaryStatisticV1"];
+            /**
+             * @description Native account PnL (total), including the engine's unrealized-PnL argument.
+             *     Never recomputed from preview points or relabeled as economic net profit.
+             */
+            native_account_pnl: components["schemas"]["ExperimentSummaryStatisticV1"];
+            native_version: string;
+            orders: components["schemas"]["DbCounter"];
+            period_end_ns: components["schemas"]["DbCounter"];
+            period_start_ns: components["schemas"]["DbCounter"];
+            positions: components["schemas"]["DbCounter"];
+            return_frequency: string;
+            /** @description Native UTC daily portfolio returns, zero risk-free rate, frozen annualization. */
+            sharpe_ratio: components["schemas"]["ExperimentSummaryStatisticV1"];
+            starting_capital: components["schemas"]["DecimalValue"];
+        };
+        /** @enum {string} */
+        NativeStatisticGroup: "PNL" | "RETURNS" | "GENERAL";
+        NativeStatisticV1: {
+            currency?: string | null;
+            group: components["schemas"]["NativeStatisticGroup"];
+            native_key: string;
+            reason_code?: string | null;
+            /** Format: double */
+            value: number | null;
+        };
+        NativeTargetDecisionSourceV1: {
+            accepted_attempt_id: components["schemas"]["Id"];
+            alpha_version_ids: components["schemas"]["Id"][];
+            input_provenance: components["schemas"]["StrategyInputProvenanceV1"];
+            report_artifact_id: components["schemas"]["Id"];
+            run_id: components["schemas"]["Id"];
+        };
+        NativeTargetPointV1: {
+            asof_ns: components["schemas"]["DbCounter"];
+            cash_weight: components["schemas"]["DecimalValue"];
+            schema_version: components["schemas"]["SchemaV1"];
+            targets: components["schemas"]["AllocationTargetV1"][];
+            valid_until_ns: components["schemas"]["DbCounter"];
         };
         OperatorCommand: {
             /** @enum {string} */
@@ -5084,6 +5589,10 @@ export interface components {
             request: components["schemas"]["DatasetRegister"];
         } | {
             /** @enum {string} */
+            operation: "RECORDED_FEATURE_REGISTER";
+            request: components["schemas"]["RecordedFeatureRegisterIntentV1"];
+        } | {
+            /** @enum {string} */
             operation: "DATA_VALIDATE";
             request: components["schemas"]["DataValidateRequest"];
         } | {
@@ -5092,8 +5601,16 @@ export interface components {
             request: components["schemas"]["AlphaEvaluateRequestV1"];
         } | {
             /** @enum {string} */
+            operation: "EXPERIMENT_EVALUATE";
+            request: components["schemas"]["ExperimentEvaluateIntent"];
+        } | {
+            /** @enum {string} */
+            operation: "EXPERIMENT_ADOPT_ALPHA";
+            request: components["schemas"]["StrategyAlphaAdoptIntentV1"];
+        } | {
+            /** @enum {string} */
             operation: "PORTFOLIO_BUILD";
-            request: components["schemas"]["PortfolioBuildRequestV1"];
+            request: components["schemas"]["PortfolioBuildEnvelopeV2"];
         } | {
             /** @enum {string} */
             operation: "PORTFOLIO_SIMULATE";
@@ -5105,7 +5622,7 @@ export interface components {
         } | {
             /** @enum {string} */
             operation: "RELEASE_CREATE";
-            request: components["schemas"]["ReleaseCreateV1"];
+            request: components["schemas"]["ReleaseCreateEnvelopeV2"];
         } | {
             /** @enum {string} */
             operation: "RELEASE_APPROVE";
@@ -5138,6 +5655,14 @@ export interface components {
             /** @enum {string} */
             operation: "CYCLE_START";
             request: components["schemas"]["CycleStartIntent"];
+        } | {
+            /** @enum {string} */
+            operation: "CYCLE_START_EXTERNAL";
+            request: components["schemas"]["ExternalCycleStartIntent"];
+        } | {
+            /** @enum {string} */
+            operation: "CYCLE_FINISH_EXTERNAL";
+            request: components["schemas"]["CycleFinishExternalIntent"];
         } | {
             /** @enum {string} */
             operation: "INTEGRATION_SECRET_REGISTER";
@@ -5173,7 +5698,7 @@ export interface components {
         } | {
             /** @enum {string} */
             operation: "MANDATE_CREATE";
-            request: components["schemas"]["MandateCreateV1"];
+            request: components["schemas"]["MandateCreateEnvelopeV2"];
         } | {
             /** @enum {string} */
             operation: "EXECUTION_ASSUMPTIONS_CREATE";
@@ -5232,11 +5757,11 @@ export interface components {
             target_id: components["schemas"]["Id"];
         };
         /** @enum {string} */
-        OperatorOperation: "MIGRATION_IMPORT" | "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_APPROVE" | "HANDOFF_OFFER" | "APPROVAL_REVOKE" | "POLICY_AUTHORIZE" | "POLICY_REVOKE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
+        OperatorOperation: "MIGRATION_IMPORT" | "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "RECORDED_FEATURE_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "EXPERIMENT_EVALUATE" | "EXPERIMENT_ADOPT_ALPHA" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_APPROVE" | "HANDOFF_OFFER" | "APPROVAL_REVOKE" | "POLICY_AUTHORIZE" | "POLICY_REVOKE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "CYCLE_START_EXTERNAL" | "CYCLE_FINISH_EXTERNAL" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
         /** @enum {string} */
         PackageOriginV1: "DEMO" | "REAL";
         /** @enum {string} */
-        PackageSchemaVersion: "1";
+        PackageSchemaVersion: "1" | "2";
         PackageTargetV1: {
             currency: string;
             instrument_id: string;
@@ -5275,27 +5800,8 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
-        Page_AlphaVersionView: {
-            items: {
-                alpha_id: components["schemas"]["Id"];
-                calibration_id?: null | components["schemas"]["Id"];
-                code_artifact_id: components["schemas"]["Id"];
-                /** Format: date-time */
-                created_at: string;
-                experiment_id: components["schemas"]["Id"];
-                forecast_unit: components["schemas"]["ForecastUnit"];
-                horizon_kind: components["schemas"]["HorizonKind"];
-                horizon_value?: null | components["schemas"]["DbCounter"];
-                id: components["schemas"]["Id"];
-                model_artifact_id?: null | components["schemas"]["Id"];
-                origin?: null | components["schemas"]["DataOrigin"];
-                project_id: components["schemas"]["Id"];
-                root_lineage_id: components["schemas"]["Id"];
-                runtime_image_ref: string;
-                signal_contract_version: string;
-                signal_kind: components["schemas"]["TargetKind"];
-                version: components["schemas"]["Revision"];
-            }[];
+        Page_AlphaVersionEnvelopeV2: {
+            items: (components["schemas"]["AlphaVersionView"] | components["schemas"]["StrategyAlphaVersionV1"])[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -5405,34 +5911,6 @@ export interface components {
                 updated_at: string;
                 /** Format: int32 */
                 version: number;
-            }[];
-            next_cursor?: null | components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        Page_CandidateViewV1: {
-            items: {
-                allocation_evaluation_id?: null | components["schemas"]["Id"];
-                cash_weight?: null | components["schemas"]["DecimalValue"];
-                covariance_artifact_id?: null | components["schemas"]["Id"];
-                /** Format: date-time */
-                created_at: string;
-                current_weights_artifact_id?: null | components["schemas"]["Id"];
-                current_weights_source: components["schemas"]["CandidateWeightsSourceV1"];
-                /** Format: date-time */
-                decision_asof: string;
-                diagnostics_artifact_id: components["schemas"]["Id"];
-                evidence_status: components["schemas"]["EvidenceStatus"];
-                execution_status: components["schemas"]["RunState"];
-                forecast_artifact_id?: null | components["schemas"]["Id"];
-                id: components["schemas"]["Id"];
-                input_set_id: components["schemas"]["Id"];
-                mandate_id: components["schemas"]["Id"];
-                origin: components["schemas"]["DataOrigin"];
-                project_id: components["schemas"]["Id"];
-                reason_code?: string | null;
-                run_id: components["schemas"]["Id"];
-                solver_status: components["schemas"]["SolverStatus"];
-                target_artifact_id?: null | components["schemas"]["Id"];
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -5895,16 +6373,8 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
-        Page_MandateViewV1: {
-            items: {
-                content: components["schemas"]["MandateContentV1"];
-                /** Format: date-time */
-                created_at: string;
-                id: components["schemas"]["Id"];
-                project_id: components["schemas"]["Id"];
-                /** Format: int32 */
-                version: number;
-            }[];
+        Page_MandateViewEnvelopeV2: {
+            items: (components["schemas"]["MandateViewV1"] | components["schemas"]["StrategyMandateViewV1"])[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -5945,6 +6415,11 @@ export interface components {
                 id: components["schemas"]["Id"];
                 reason: string;
             }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_PortfolioCandidateListEnvelopeV2: {
+            items: (components["schemas"]["CandidateViewV1"] | components["schemas"]["StrategyPortfolioCandidateV1"])[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -6032,26 +6507,8 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
-        Page_ReleaseViewV1: {
-            items: {
-                /** Format: date-time */
-                asof: string;
-                candidate_id: components["schemas"]["Id"];
-                /** Format: date-time */
-                created_at: string;
-                environment: components["schemas"]["PackageOriginV1"];
-                evaluation_id: components["schemas"]["Id"];
-                id: components["schemas"]["Id"];
-                mandate_id: components["schemas"]["Id"];
-                market_capability_version: string;
-                package_artifact_id: components["schemas"]["Id"];
-                package_schema_version: components["schemas"]["PackageSchemaVersion"];
-                project_id: components["schemas"]["Id"];
-                /** Format: date-time */
-                valid_from: string;
-                /** Format: date-time */
-                valid_until: string;
-            }[];
+        Page_ReleaseViewEnvelopeV2: {
+            items: (components["schemas"]["ReleaseViewV1"] | components["schemas"]["StrategyReleaseViewV1"])[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -6176,6 +6633,7 @@ export interface components {
             reason: string;
             schema_version: components["schemas"]["SchemaV1"];
         };
+        PortfolioBuildEnvelopeV2: components["schemas"]["PortfolioBuildRequestV1"] | components["schemas"]["StrategyPortfolioBuildV1"];
         /** @description Source references only; trusted admission resolves the original native inputs. */
         PortfolioBuildRequestV1: {
             current_weights_source: components["schemas"]["PortfolioBuildWeightsV1"];
@@ -6220,6 +6678,9 @@ export interface components {
             /** @enum {string} */
             kind: "LAST_TARGET";
         };
+        PortfolioCandidateEnvelopeV2: components["schemas"]["CandidateDetailV1"] | components["schemas"]["StrategyPortfolioCandidateV1"];
+        /** @description List rows preserve the original flat forecast header, unlike detail responses. */
+        PortfolioCandidateListEnvelopeV2: components["schemas"]["CandidateViewV1"] | components["schemas"]["StrategyPortfolioCandidateV1"];
         PortfolioConstraintsV1: {
             asset_overrides: components["schemas"]["AssetBoundV1"][];
             group_bounds: components["schemas"]["GroupBoundV1"][];
@@ -6427,6 +6888,32 @@ export interface components {
             target_ttl_seconds: number;
             timezone: string;
         };
+        /**
+         * @description Small nonsecret approval/receipt input derived from the original upload.
+         *     A matching intent does not replace Store's original-byte replay comparison.
+         */
+        RecordedFeatureRegisterIntentV1: {
+            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+            byte_count: string;
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_part_key: string;
+            project_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Immutable source identity resolved from the registered feature relationship.
+         *     It is never supplied by a registration client and never extends grant scope.
+         */
+        RecordedFeatureSourceBindingV1: {
+            data_use_grant_id: components["schemas"]["Id"];
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_part_key: string;
+            native_metadata_artifact_id: components["schemas"]["Id"];
+            origin: components["schemas"]["DataOrigin"];
+            pit_status: components["schemas"]["PitStatus"];
+            revision_policy: components["schemas"]["DataRevisionPolicy"];
+            source_id: components["schemas"]["Id"];
+        };
         ReleaseApproveV1: {
             downstream_id: components["schemas"]["Id"];
             environment: components["schemas"]["ForwardEnvironmentV1"];
@@ -6436,6 +6923,7 @@ export interface components {
             /** Format: date-time */
             valid_until: string;
         };
+        ReleaseCreateEnvelopeV2: components["schemas"]["ReleaseCreateV1"] | components["schemas"]["StrategyReleaseCreateV1"];
         ReleaseCreateV1: {
             candidate_id: components["schemas"]["Id"];
             evaluation_id: components["schemas"]["Id"];
@@ -6476,6 +6964,7 @@ export interface components {
             reason_code: string;
             schema_version: components["schemas"]["SchemaV1"];
         };
+        ReleaseViewEnvelopeV2: components["schemas"]["ReleaseViewV1"] | components["schemas"]["StrategyReleaseViewV1"];
         ReleaseViewV1: {
             /** Format: date-time */
             asof: string;
@@ -6825,7 +7314,219 @@ export interface components {
             stop_on_qualified_count: number;
         };
         /** @enum {string} */
+        StrategyAllocationMethodV1: "FIXED_TARGET_WEIGHTS";
+        StrategyAlphaAdoptIntentV1: {
+            experiment_id: components["schemas"]["Id"];
+            request: components["schemas"]["StrategyAlphaAdoptV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        StrategyAlphaAdoptV1: {
+            expected_revision: components["schemas"]["Revision"];
+            name: string;
+            schema_version: components["schemas"]["SchemaV1"];
+            /**
+             * Format: int32
+             * @description Selects an original fold; its clocks and ordinals are resolved by Store.
+             */
+            source_fold_index: number;
+        };
+        StrategyAlphaVersionV1: {
+            alpha_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            experiment_id: components["schemas"]["Id"];
+            id: components["schemas"]["Id"];
+            output_kind: components["schemas"]["StrategyOutputKindV1"];
+            policy: components["schemas"]["FrozenTargetPolicyV1"];
+            project_id: components["schemas"]["Id"];
+            root_lineage_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            version: components["schemas"]["Revision"];
+        };
+        StrategyCurrentInputsV1: {
+            alpha_version_id: components["schemas"]["Id"];
+            /** @description New observations retain the frozen feature dictionary and source meaning. */
+            feature_artifact_ids: components["schemas"]["Id"][];
+        };
+        /** @description Market/feature provenance remains separate from the simulated account. */
+        StrategyInputProvenanceV1: {
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_artifact_origins: {
+                [key: string]: components["schemas"]["DataOrigin"];
+            };
+            /**
+             * @description Only registered features have bindings. None preserves old reports;
+             *     new fields require a matching Job binary as well as Server/Runtime.
+             *     A current decision may also retain bindings for its historical policy Dataset.
+             */
+            feature_source_bindings?: {
+                [key: string]: components["schemas"]["RecordedFeatureSourceBindingV1"];
+            } | null;
+            market_data_origin: components["schemas"]["DataOrigin"];
+            pit_status: components["schemas"]["PitStatus"];
+            revision_policy: components["schemas"]["DataRevisionPolicy"];
+        };
+        StrategyMandateContentV1: {
+            allocation_method: components["schemas"]["StrategyAllocationMethodV1"];
+            base_currency: string;
+            capital_assumption: components["schemas"]["DecimalValue"];
+            constraints: components["schemas"]["PortfolioConstraintsV1"];
+            execution_assumptions_id: components["schemas"]["Id"];
+            exposure_tolerance: components["schemas"]["DecimalValue"];
+            /** Format: int32 */
+            max_input_age_seconds: number;
+            schema_version: components["schemas"]["SchemaV1"];
+            /** Format: int32 */
+            target_ttl_seconds: number;
+            universe_version_id: components["schemas"]["Id"];
+        };
+        StrategyMandateCreateV1: {
+            content: components["schemas"]["StrategyMandateContentV1"];
+            expected_runtime_revision: components["schemas"]["Revision"];
+            project_id: components["schemas"]["Id"];
+            runtime_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        StrategyMandateViewV1: {
+            content: components["schemas"]["StrategyMandateContentV1"];
+            /** Format: date-time */
+            created_at: string;
+            id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            /** Format: int32 */
+            version: number;
+        };
+        StrategyMemberSelectionV1: {
+            alpha_version_id: components["schemas"]["Id"];
+            ensemble_weight: components["schemas"]["DecimalValue"];
+        };
+        /** @enum {string} */
+        StrategyOutputKindV1: "TARGET_WEIGHT";
+        StrategyPortfolioBuildV1: {
+            cycle_id: components["schemas"]["Id"];
+            expected_runtime_revision: components["schemas"]["Revision"];
+            input_set_id: components["schemas"]["Id"];
+            limits: {
+                cpu_seconds: components["schemas"]["DbCounter"];
+                /**
+                 * Format: int64
+                 * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
+                 */
+                experiments: number;
+                /** Format: int64 */
+                memory_mib: number;
+                output_bytes: components["schemas"]["DbCounter"];
+                schema_version: components["schemas"]["SchemaV1"];
+                /** Format: int64 */
+                wall_seconds: number;
+            } & {
+                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+                cpu_seconds?: string;
+                /** @enum {integer} */
+                experiments?: 0;
+                memory_mib?: number;
+                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+                output_bytes?: string;
+                wall_seconds?: number;
+            };
+            mandate_id: components["schemas"]["Id"];
+            members: components["schemas"]["StrategyMemberSelectionV1"][];
+            purpose: components["schemas"]["StrategyPortfolioPurposeV1"];
+            runtime_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_kind: components["schemas"]["StrategyPortfolioSourceV1"];
+        };
+        StrategyPortfolioCandidateV1: {
+            accepted_attempt_id: components["schemas"]["Id"];
+            allocation_method: components["schemas"]["StrategyAllocationMethodV1"];
+            cash_weight: components["schemas"]["DecimalValue"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decision_asof: string;
+            id: components["schemas"]["Id"];
+            input_provenance: components["schemas"]["StrategyInputProvenanceV1"];
+            input_set_id: components["schemas"]["Id"];
+            mandate_id: components["schemas"]["Id"];
+            members: components["schemas"]["StrategyMemberSelectionV1"][];
+            project_id: components["schemas"]["Id"];
+            purpose: components["schemas"]["StrategyPortfolioPurposeV1"];
+            report_artifact_id: components["schemas"]["Id"];
+            run_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_kind: components["schemas"]["StrategyPortfolioSourceV1"];
+            targets: components["schemas"]["AllocationTargetV1"][];
+        };
+        StrategyPortfolioPurposeV1: {
+            /** @enum {string} */
+            purpose: "HISTORICAL_REPLAY";
+        } | {
+            account_start: components["schemas"]["FreshPaperCashV1"];
+            member_inputs: components["schemas"]["StrategyCurrentInputsV1"][];
+            /** @enum {string} */
+            purpose: "CURRENT_DECISION";
+        };
+        /** @enum {string} */
+        StrategyPortfolioSourceV1: "STRATEGY_ALPHA";
+        StrategyPortfolioSummaryOutcomeV1: {
+            /** @enum {string} */
+            purpose: "HISTORICAL_REPLAY";
+            /** @description One original shared-capital simulation; never summed member curves. */
+            simulation: components["schemas"]["NativeSimulationSummaryV1"];
+        } | {
+            /** @enum {string} */
+            purpose: "CURRENT_DECISION";
+            /** @description A target-only decision has no simulated returns or historical equity. */
+            reason_code: string;
+        };
+        /** @description Bounded read-only projection of a published candidate's accepted native report. */
+        StrategyPortfolioSummaryV1: {
+            accepted_attempt_id: components["schemas"]["Id"];
+            candidate_id: components["schemas"]["Id"];
+            input_provenance: components["schemas"]["StrategyInputProvenanceV1"];
+            /** @description Accepted execution is not scientific qualification, PIT or delivery approval. */
+            interpretation: string;
+            native_versions: {
+                [key: string]: string;
+            };
+            outcome: components["schemas"]["StrategyPortfolioSummaryOutcomeV1"];
+            project_id: components["schemas"]["Id"];
+            report_artifact_id: components["schemas"]["Id"];
+            run_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        StrategyReleaseCreateV1: {
+            candidate_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_kind: components["schemas"]["StrategyReleaseSourceV1"];
+        };
+        /** @enum {string} */
+        StrategyReleaseSourceV1: "NATIVE_TARGET_DECISION";
+        StrategyReleaseViewV1: {
+            /** Format: date-time */
+            asof: string;
+            candidate_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            execution_environment: components["schemas"]["ForwardEnvironmentV1"];
+            id: components["schemas"]["Id"];
+            mandate_id: components["schemas"]["Id"];
+            market_capability_version: string;
+            package_artifact_id: components["schemas"]["Id"];
+            package_schema_version: components["schemas"]["TargetPackageVersionV2"];
+            project_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source: components["schemas"]["NativeTargetDecisionSourceV1"];
+            source_kind: components["schemas"]["StrategyReleaseSourceV1"];
+            /** Format: date-time */
+            valid_from: string;
+            /** Format: date-time */
+            valid_until: string;
+        };
+        /** @enum {string} */
         TargetKind: "SCORE" | "EXPECTED_RETURN";
+        TargetPackageEnvelopeV2: components["schemas"]["TargetPackageV1"] | components["schemas"]["TargetPackageV2"];
         TargetPackageV1: {
             /** Format: date-time */
             asof: string;
@@ -6846,7 +7547,8 @@ export interface components {
             input_revision_refs: components["schemas"]["Id"][];
             limitations: string[];
             mandate_id: components["schemas"]["Id"];
-            package_schema_version: components["schemas"]["PackageSchemaVersion"];
+            /** @enum {string} */
+            package_schema_version: "1";
             project_id: components["schemas"]["Id"];
             provenance_artifact_refs: components["schemas"]["Id"][];
             qualification_refs: components["schemas"]["Id"][];
@@ -6857,6 +7559,40 @@ export interface components {
             /** Format: date-time */
             valid_until: string;
         };
+        TargetPackageV2: {
+            account_start: components["schemas"]["FreshPaperCashV1"];
+            /** Format: date-time */
+            asof: string;
+            base_currency: string;
+            candidate_id: components["schemas"]["Id"];
+            capital_assumption: components["schemas"]["DecimalValue"];
+            cash_weight: components["schemas"]["DecimalValue"];
+            compatible_market_capabilities: string[];
+            constraints_summary: components["schemas"]["PortfolioConstraintsV1"];
+            cost_assumption_ref: components["schemas"]["Id"];
+            engine_versions: {
+                [key: string]: string;
+            };
+            execution_environment: components["schemas"]["ForwardEnvironmentV1"];
+            execution_settings: components["schemas"]["NativeSimulationSettingsV1"];
+            exposure_tolerance: components["schemas"]["DecimalValue"];
+            input_revision_refs: components["schemas"]["Id"][];
+            limitations: string[];
+            mandate_id: components["schemas"]["Id"];
+            package_schema_version: components["schemas"]["TargetPackageVersionV2"];
+            project_id: components["schemas"]["Id"];
+            provenance_artifact_refs: components["schemas"]["Id"][];
+            release_id: components["schemas"]["Id"];
+            source: components["schemas"]["NativeTargetDecisionSourceV1"];
+            source_kind: components["schemas"]["StrategyReleaseSourceV1"];
+            targets: components["schemas"]["PackageTargetV1"][];
+            /** Format: date-time */
+            valid_from: string;
+            /** Format: date-time */
+            valid_until: string;
+        };
+        /** @enum {string} */
+        TargetPackageVersionV2: "2";
         /** @enum {string} */
         TlsPolicy: "SYSTEM_CA" | "PINNED_CA";
         /** @enum {string} */
@@ -7312,7 +8048,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_AlphaVersionView"];
+                    "application/json": components["schemas"]["Page_AlphaVersionEnvelopeV2"];
                 };
             };
             401: {
@@ -7384,7 +8120,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AlphaVersionView"];
+                    "application/json": components["schemas"]["AlphaVersionEnvelopeV2"];
                 };
             };
             401: {
@@ -9806,6 +10542,92 @@ export interface operations {
             };
         };
     };
+    finishExternalResearchCycle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CycleFinishExternalV1"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CycleViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     getCycleSelection: {
         parameters: {
             query?: never;
@@ -11815,6 +12637,320 @@ export interface operations {
             };
         };
     };
+    adopt_experiment_alpha: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StrategyAlphaAdoptV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_StrategyAlphaVersionV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    evaluate_experiment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExperimentEvaluateV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_RunSnapshotV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_experiment_evaluation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeExperimentEvaluationResultV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_experiment_summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExperimentSummaryV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     submit_account_observation: {
         parameters: {
             query?: never;
@@ -12309,7 +13445,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommandResult_HandoffClaimViewV1"];
+                    "application/json": components["schemas"]["CommandResult_HandoffClaimViewV2"];
                 };
             };
             401: {
@@ -14681,7 +15817,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PortfolioBuildRequestV1"];
+                "application/json": components["schemas"]["PortfolioBuildEnvelopeV2"];
             };
         };
         responses: {
@@ -14769,7 +15905,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CandidateDetailV1"];
+                    "application/json": components["schemas"]["PortfolioCandidateEnvelopeV2"];
                 };
             };
             401: {
@@ -14890,6 +16026,77 @@ export interface operations {
             };
         };
     };
+    get_strategy_portfolio_summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyPortfolioSummaryV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     create_mandate: {
         parameters: {
             query?: never;
@@ -14902,7 +16109,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MandateCreateV1"];
+                "application/json": components["schemas"]["MandateCreateEnvelopeV2"];
             };
         };
         responses: {
@@ -14911,7 +16118,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommandResult_MandateViewV1"];
+                    "application/json": components["schemas"]["CommandResult_MandateViewEnvelopeV2"];
                 };
             };
             401: {
@@ -14982,7 +16189,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MandateViewV1"];
+                    "application/json": components["schemas"]["MandateViewEnvelopeV2"];
                 };
             };
             401: {
@@ -15802,6 +17009,92 @@ export interface operations {
             };
         };
     };
+    startExternalResearchCycle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExternalCycleStartV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CycleViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_execution_assumptions: {
         parameters: {
             query?: {
@@ -16167,7 +17460,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_CandidateViewV1"];
+                    "application/json": components["schemas"]["Page_PortfolioCandidateListEnvelopeV2"];
                 };
             };
             401: {
@@ -16233,7 +17526,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_MandateViewV1"];
+                    "application/json": components["schemas"]["Page_MandateViewEnvelopeV2"];
                 };
             };
             401: {
@@ -16299,7 +17592,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_ReleaseViewV1"];
+                    "application/json": components["schemas"]["Page_ReleaseViewEnvelopeV2"];
                 };
             };
             401: {
@@ -16707,7 +18000,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ReleaseCreateV1"];
+                "application/json": components["schemas"]["ReleaseCreateEnvelopeV2"];
             };
         };
         responses: {
@@ -16716,7 +18009,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommandResult_ReleaseViewV1"];
+                    "application/json": components["schemas"]["CommandResult_ReleaseViewEnvelopeV2"];
                 };
             };
             401: {
@@ -16795,7 +18088,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReleaseViewV1"];
+                    "application/json": components["schemas"]["ReleaseViewEnvelopeV2"];
                 };
             };
             401: {
