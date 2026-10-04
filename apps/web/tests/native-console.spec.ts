@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Request, type Response } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -148,6 +148,64 @@ async ({ page, context }) => {
     expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     projectId = created.id;
     expect(projectId).toBe(receipt.resource.id);
+  });
+
+  await test.step('read producer sections from the real project without browser business commands', async () => {
+    if (!checkpoint) throw new Error('The original committed project is required for observation checks');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const writes: string[] = [];
+    const reads: { path: string; status: number }[] = [];
+    const observeRequest = (request: Request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) writes.push(`${request.method()} ${path}`);
+    };
+    const observeResponse = (response: Response) => {
+      if (response.request().method() === 'GET') reads.push({ path: new URL(response.url()).pathname, status: response.status() });
+    };
+    page.on('request', observeRequest); page.on('response', observeResponse);
+    const projectPath = `/api/v2/projects/${projectId}`;
+    const forbidden = /^(请求封存评估|新建组合配置|保存不可变配置|请求组合构建|请求组合 Study|冻结目标包|新建执行假设|新建评估政策|冻结自动化政策|审批此目标包|人工拒绝与重新考虑|登记 Offer|撤销审批|撤销政策)$/;
+    async function observe(path: string) {
+      await expect.poll(() => reads.some(read => read.path === path && read.status === 200)).toBe(true);
+      await expect(page.locator('.ant-skeleton:visible, .ant-spin-spinning:visible, .ant-btn-loading:visible')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: forbidden })).toHaveCount(0);
+      await expect(page.getByRole('dialog').locator('form, button[type=submit]')).toHaveCount(0);
+      expect(writes).toEqual([]);
+    }
+    try {
+      for (const section of [
+        { label: 'Alpha', picker: '选择 Alpha 所属项目', firstPath: '/api/v2/alphas', refresh: '刷新 Alpha', tabs: [] },
+        { label: '组合', picker: '选择组合所属项目', firstPath: `${projectPath}/portfolio-mandates`, refresh: '刷新配置', tabs: [
+          ['执行假设', `${projectPath}/execution-assumptions`], ['候选快照', `${projectPath}/portfolio-candidates`], ['评估政策', '/api/v2/evaluation-policies'],
+        ] },
+        { label: '交付', picker: '选择交付所属项目', firstPath: `${projectPath}/releases`, refresh: '刷新目标包', tabs: [
+          ['交付记录', `${projectPath}/handoffs`], ['Forward 证据', `${projectPath}/forward`], ['观察与唤醒', `${projectPath}/forward-observations`], ['自动化政策', `${projectPath}/automation-policies`],
+        ] },
+      ]) {
+        await page.getByRole('menuitem', { name: section.label, exact: true }).click();
+        const selector = page.getByRole('combobox', { name: section.picker, exact: true });
+        await expect(selector).toBeEnabled(); await selector.click();
+        await page.getByText(`${name} · ${projectId}`, { exact: true }).last().click();
+        await observe(section.firstPath);
+        const beforeRefresh = reads.filter(read => read.path === section.firstPath).length;
+        await page.getByRole('button', { name: section.refresh, exact: true }).click();
+        await expect.poll(() => reads.filter(read => read.path === section.firstPath).length).toBeGreaterThan(beforeRefresh);
+        await observe(section.firstPath);
+        for (const [label, path] of section.tabs) {
+          await page.getByRole('tab', { name: label!, exact: true }).click();
+          await observe(path!);
+        }
+      }
+      await page.getByRole('tab', { name: '观察与唤醒', exact: true }).click();
+      await page.getByRole('tab', { name: 'Wake 记录', exact: true }).click();
+      await observe(`${projectPath}/wakes`);
+      // Return navigation must not submit a producer command or recreate the project.
+      await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+      await expect(page.getByRole('article').filter({ hasText: name })).toHaveCount(1);
+      expect(writes).toEqual([]);
+    } finally {
+      page.off('request', observeRequest); page.off('response', observeResponse);
+    }
   });
 
   await test.step('reject an authenticated cross-origin write without changing the database', async () => {

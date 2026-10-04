@@ -5,20 +5,17 @@ import { api, dataOf, displayTime } from './api';
 import type { Schema } from './api';
 import { ErrorNotice, GuardContext, NoData, Pager, QueryPanel, useOnline } from './ui';
 import { ResourceSelect } from './resource-select';
-import { ReleaseApprove } from './release-approve';
-import { HandoffOffer } from './handoff-offer';
-import { ApprovalRevoke } from './approval-revoke';
-import { ReleaseDecision } from './release-decision';
 import { ForwardHistory } from './forward-history';
 import { Forward } from './forward';
 import { AutomationPolicies } from './automation-policies';
+import { isForecastRelease } from './producer-views';
 
 export function Delivery() {
   const [project, setProject] = useState<string>();
   const { blocked } = useContext(GuardContext);
   return <Space orientation="vertical" size="large" className="full-width">
     <Typography.Title level={1}>交付</Typography.Title>
-    
+    <Typography.Paragraph>只读查看原始目标包与授权历史。交付操作由外部 Agent 通过 CLI/Skill 执行。</Typography.Paragraph>
     <ResourceSelect label="选择交付所属项目" value={project} onChange={setProject} disabled={blocked} queryKey={['delivery-projects']} load={async (cursor, signal) => {
       const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
       return { next_cursor: page.next_cursor, items: page.items.map(item => ({ value: item.id, label: `${item.name} · ${item.id}` })) };
@@ -38,9 +35,9 @@ function Releases({ project }: { project: string }) {
   return <Space orientation="vertical" className="full-width">
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新目标包</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      <Table<Schema['ReleaseViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="暂无目标包" /> }} columns={[
+      <Table<Schema['ReleaseViewEnvelopeV2']> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="暂无目标包" /> }} columns={[
         { title: '目标包版本', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>Release {item.id.slice(-8)}</Button> },
-        { title: '候选', dataIndex: 'candidate_id' }, { title: '来源（非交付环境）', dataIndex: 'environment' },
+        { title: '候选', dataIndex: 'candidate_id' }, { title: '来源（非交付环境）', key: 'origin', render: (_, item) => isForecastRelease(item) ? item.environment : item.source.input_provenance.market_data_origin },
         { title: '目标时点', dataIndex: 'asof', render: displayTime }, { title: '原有效期', dataIndex: 'valid_until', render: displayTime },
       ]} />
     </QueryPanel>
@@ -53,17 +50,13 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
   const online = useOnline();
   const transfer = useRef<{ controller: AbortController; url?: string } | undefined>(undefined);
   useEffect(() => () => { transfer.current?.controller.abort(); if (transfer.current?.url) URL.revokeObjectURL(transfer.current.url); }, []);
-  const [approving, setApproving] = useState(false);
-  const [deciding, setDeciding] = useState(false);
-  const [offering, setOffering] = useState<Schema['ApprovalViewV1']>();
-  const [revoking, setRevoking] = useState<Schema['ApprovalViewV1']>();
   const query = useQuery({ queryKey: ['release', project, id], queryFn: async ({ signal }) => {
     const item = dataOf(await api.GET('/api/v2/releases/{id}', { params: { path: { id } }, signal }));
     if (item.id !== id || item.project_id !== project) throw new Error('服务器返回了其他目标包版本。');
     return item;
   } });
   const item = query.data;
-  const deliverableOrigin = item?.environment === 'REAL';
+  const forecast = item && isForecastRelease(item) ? item : undefined;
   const download = useMutation({ mutationFn: async () => {
     if (!online || !item || query.isError || query.isFetching) return;
     transfer.current?.controller.abort(); if (transfer.current?.url) URL.revokeObjectURL(transfer.current.url);
@@ -72,7 +65,7 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
     const metadata = dataOf(await api.GET('/api/v2/artifacts/{id}', { params, signal }));
     if (metadata.id !== item.package_artifact_id || metadata.project_id !== item.project_id || metadata.kind !== 'PACKAGE'
       || metadata.media_type !== 'application/json' || metadata.schema_name !== 'qz.target_package' || metadata.schema_version !== item.package_schema_version
-      || (item.environment === 'REAL' && (metadata.origin !== 'REAL' || metadata.access_class !== 'DELIVERY'))
+      || (isForecastRelease(item) ? item.environment === 'REAL' && (metadata.origin !== 'REAL' || metadata.access_class !== 'DELIVERY') : metadata.access_class !== 'DELIVERY')
       || BigInt(metadata.byte_count) <= 0n || BigInt(metadata.byte_count) > 67108864n) throw new Error('产物元数据与原目标包不一致。');
     const blob = dataOf(await api.GET('/api/v2/artifacts/{id}/content', { params, signal, parseAs: 'blob' }));
     if (signal.aborted) return;
@@ -80,29 +73,35 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
     current.url = URL.createObjectURL(blob);
     const anchor = document.createElement('a'); anchor.href = current.url; anchor.download = `${metadata.id}.bin`; anchor.click();
   } });
-  return <Drawer title="原始目标包版本" open onClose={approving || offering || revoking || deciding ? undefined : close} closable={!approving && !offering && !revoking && !deciding} maskClosable={!approving && !offering && !revoking && !deciding} width={760}>
+  return <Drawer title="原始目标包版本" open onClose={close} width={760}>
     
     <QueryPanel pending={query.isPending} error={query.error} stale={!!item} reload={() => { void query.refetch(); }}>
       {item && <Descriptions column={1} className="break-word" items={[
         { key: 'id', label: 'Release 编号', children: item.id }, { key: 'project', label: '项目', children: item.project_id },
         { key: 'candidate', label: '原候选', children: item.candidate_id }, { key: 'mandate', label: '原组合配置', children: item.mandate_id },
-        { key: 'evaluation', label: '原独立评估', children: item.evaluation_id }, { key: 'artifact', label: '不可变 Package 产物', children: item.package_artifact_id },
+        { key: 'evaluation', label: '原独立评估', children: isForecastRelease(item) ? item.evaluation_id : '不适用（原生目标决策，无预测评估引用）' }, { key: 'artifact', label: '不可变 Package 产物', children: item.package_artifact_id },
         { key: 'schema', label: 'Package 协议版本', children: item.package_schema_version }, { key: 'market', label: '市场合同版本', children: item.market_capability_version },
-        { key: 'origin', label: '来源', children: item.environment }, { key: 'asof', label: '目标时点', children: displayTime(item.asof) },
+        { key: 'origin', label: '数据来源', children: isForecastRelease(item) ? item.environment : item.source.input_provenance.market_data_origin }, { key: 'asof', label: '目标时点', children: displayTime(item.asof) },
         { key: 'start', label: '原有效起点', children: displayTime(item.valid_from) }, { key: 'end', label: '原有效终点', children: displayTime(item.valid_until) },
         { key: 'created', label: '冻结于', children: displayTime(item.created_at) },
       ]} />}
+      {item && !isForecastRelease(item) && <>
+        <Descriptions column={1} className="break-word" items={[
+          { key: 'source', label: '目标决策来源', children: item.source_kind },
+          { key: 'environment', label: '执行环境', children: item.execution_environment },
+        ]} />
+        <Typography.Paragraph>原生目标决策仅提供目标权重；数据来源、执行环境与科学资格分别记录，不能据此认定已获交付审批。</Typography.Paragraph>
+        <Typography.Title level={3}>服务器保存的原生来源</Typography.Title>
+        <pre className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(item.source, null, 2)}</pre>
+      </>}
     </QueryPanel>
     {item && !query.isError && <Button disabled={!online || query.isFetching || download.isPending} onClick={() => download.mutate()}>下载原始目标包</Button>}
     <ErrorNotice error={download.error} />
-    {item?.environment === 'DEMO' && <Alert showIcon type="warning" title="该历史记录的来源不满足交付条件。" />}
-    {item && !query.isError && <Button disabled={!deliverableOrigin} onClick={() => setApproving(true)}>审批此目标包</Button>}
-    {item && !query.isError && <Button onClick={() => setDeciding(true)}>人工拒绝与重新考虑</Button>}
-    {deciding && item && <ReleaseDecision release={item} close={() => setDeciding(false)} />}
-    {revoking && <ApprovalRevoke approval={revoking} close={() => setRevoking(undefined)} />}
-    {offering && item && deliverableOrigin && <HandoffOffer release={item} approval={offering} close={() => setOffering(undefined)} />}
-    {approving && item && deliverableOrigin && <ReleaseApprove release={item} close={() => setApproving(false)} />}
-    {item && !query.isError && <Collapse items={[{ key: 'approvals', label: '原审批历史', children: <ReleaseApprovals release={item} offer={setOffering} revoke={setRevoking} /> }]} />}
+    {forecast?.environment === 'DEMO' && <Alert showIcon type="warning" title="该历史记录的来源不满足交付条件。" />}
+    {forecast && !query.isError && <Collapse items={[
+      { key: 'approvals', label: '原审批历史', children: <ReleaseApprovals release={forecast} /> },
+      { key: 'decisions', label: '原人工决定历史', children: <ReleaseDecisionHistory release={forecast} /> },
+    ]} />}
   </Drawer>;
 }
 
@@ -154,7 +153,7 @@ function HandoffDetail({ id, project, close }: { id: string; project: string; cl
   </Drawer>;
 }
 
-function ReleaseApprovals({ release, offer, revoke }: { release: Schema['ReleaseViewV1']; offer: (approval: Schema['ApprovalViewV1']) => void; revoke: (approval: Schema['ApprovalViewV1']) => void }) {
+export function ReleaseApprovals({ release }: { release: Schema['ReleaseViewV1'] }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
   const query = useQuery({ queryKey: ['release-approvals', release.id, history.at(-1)], queryFn: async ({ signal }) => {
     const page = dataOf(await api.GET('/api/v2/releases/{id}/approvals', { params: { path: { id: release.id }, query: { cursor: history.at(-1), limit: 25 } }, signal }));
@@ -166,15 +165,55 @@ function ReleaseApprovals({ release, offer, revoke }: { release: Schema['Release
     <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新审批历史</Button>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['ApprovalViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 720 }} onHeaderRow={() => ({ tabIndex: 0 })} locale={{ emptyText: <NoData text="原目标包尚无审批记录。" /> }} columns={[
-        { title: '原审批', dataIndex: 'id' }, { title: '操作', key: 'offer', render: (_, item) => <Space><Button disabled={release.environment !== 'REAL' || query.isError || query.isFetching || item.authority_kind !== 'OPERATOR'} onClick={() => offer(item)}>登记 Offer</Button><Button danger disabled={query.isError || query.isFetching} onClick={() => revoke(item)}>撤销审批</Button></Space> }, { title: '下游', dataIndex: 'downstream_id' }, { title: '环境', dataIndex: 'environment' },
+        { title: '原审批', dataIndex: 'id' }, { title: '下游', dataIndex: 'downstream_id' }, { title: '环境', dataIndex: 'environment' },
         { title: '授权来源', dataIndex: 'authority_kind' }, { title: '原期限', dataIndex: 'valid_until', render: displayTime },
-      ]} expandable={{ expandedRowRender: item => <Descriptions column={1} className="break-word" items={[
+      ]} expandable={{ expandedRowRender: item => <><Descriptions column={1} className="break-word" items={[
         { key: 'evidence', label: '原证据集合', children: item.evidence_set_id }, { key: 'policy', label: '原自动化政策', children: item.automation_policy_id ?? '无自动化政策' },
         { key: 'revision', label: '原下游配置版本', children: item.downstream_revision ?? '历史未记录' },
         { key: 'decision', label: '原决定序号', children: item.decision_ordinal ?? '历史未记录' },
         { key: 'observation', label: '原就绪观察', children: item.readiness_observation_id ?? '历史未记录' },
         { key: 'granted', label: '原授权时间', children: displayTime(item.granted_at) }, { key: 'created', label: '记录时间', children: displayTime(item.created_at) },
-      ]} /> }} />
+      ]} /><ApprovalRevocations id={item.id} /></> }} />
+    </QueryPanel>
+    <Pager history={history} next={query.isError ? undefined : query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
+  </Space>;
+}
+
+export function ReleaseDecisionHistory({ release }: { release: Schema['ReleaseViewV1'] }) {
+  const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
+  const cursor = history.at(-1);
+  const query = useQuery({ queryKey: ['release-decisions', release.id, cursor], queryFn: async ({ signal }) => {
+    const page = dataOf(await api.GET('/api/v2/releases/{id}/decisions', { params: { path: { id: release.id }, query: { cursor, limit: 25 } }, signal }));
+    if (page.items.some(item => item.project_id !== release.project_id || item.candidate_id !== release.candidate_id)) throw new Error('决定记录不属于原候选。');
+    return page;
+  } });
+  return <Space orientation="vertical" className="full-width">
+    <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新决定历史</Button>
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+      <Table<Schema['ReleaseDecisionViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }} onHeaderRow={() => ({ tabIndex: 0 })} columns={[
+        { title: '原决定', dataIndex: 'id' }, { title: '下游', dataIndex: 'downstream_id' }, { title: '环境', dataIndex: 'environment' },
+        { title: '决定', dataIndex: 'decision' }, { title: '序号', dataIndex: 'ordinal' }, { title: '时间', dataIndex: 'decided_at', render: displayTime },
+        { title: '原因', dataIndex: 'reason' },
+      ]} />
+    </QueryPanel>
+    <Pager history={history} next={query.isError ? undefined : query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
+  </Space>;
+}
+
+export function ApprovalRevocations({ id }: { id: string }) {
+  const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
+  const cursor = history.at(-1);
+  const query = useQuery({ queryKey: ['approval-revocations', id, cursor], queryFn: async ({ signal }) => {
+    const page = dataOf(await api.GET('/api/v2/approvals/{id}/revocations', { params: { path: { id }, query: { cursor, limit: 25 } }, signal }));
+    if (page.items.some(item => item.approval_id !== id)) throw new Error('撤销记录不属于原审批。');
+    return page;
+  } });
+  return <Space orientation="vertical" className="full-width">
+    <Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新撤销历史</Button>
+    <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
+      <Table<Schema['ApprovalRevocationViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 600 }} onHeaderRow={() => ({ tabIndex: 0 })} columns={[
+        { title: '原撤销', dataIndex: 'id' }, { title: '生效于', dataIndex: 'effective_at', render: displayTime }, { title: '原因代码', dataIndex: 'reason_code' }, { title: '原因', dataIndex: 'reason' },
+      ]} />
     </QueryPanel>
     <Pager history={history} next={query.isError ? undefined : query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
   </Space>;
