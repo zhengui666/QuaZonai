@@ -39,3 +39,9 @@ This scope uses the existing typed JSON and transaction equality; it adds no SHA
 The dev integration removes the historical per-vector 256/4096 ceilings and exact native-version rejection. The normal transport body size and typed monetary/time semantics remain; version text is recorded as declared provenance. A regression preserves larger compatible snapshots without adding a replacement count gate.
 
 Source observed_at wall time is retained as evidence, not used as the delivery cursor. Future source time is marked stale by the current read model; advancing sequence/drop cursors accept wall-clock rollback and preserve unchanged replay receipts. Native valuation time ordering remains independent.
+
+## Native integration result and fixture correction
+
+The 90b936aa evaluation compiled every requested target and observed 25 passing tests and two HTTP test failures. Domain (5), observer (3), conversion (2), Store (3), CLI (10), and two ordinary HTTP cases passed. The two failing fixtures omitted the real CLI login Origin/transport marker and write idempotency key respectively. The source now follows the existing shipping CLI protocol; replay reuses the same key and complete envelope, with all original SQL/receipt assertions retained. The corrected HTTP cases have not yet been rerun.
+
+The native domain/API exports and frontend generation/typecheck passed. Their 24 actual generated outputs (8 modifications, 16 new response modules) are integrated without hand edits. Subsequent evaluation should target the corrected HTTP/native cases using the existing compiled dependency cache; no additional digest or source-manifest check is introduced.

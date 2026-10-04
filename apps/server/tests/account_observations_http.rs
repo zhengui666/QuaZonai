@@ -157,6 +157,8 @@ async fn fixture(pool: &PgPool) -> AccountFixture {
 async fn owner_cli_session(a: &AccountFixture) -> String {
     let response = a.http
         .post(format!("{}/api/v2/auth/cli/login", a.origin))
+        .header("origin", &a.origin)
+        .header("x-quazonai-cli", "1")
         .json(&json!({"schema_version":1,"password":"native-test-password","name":"Native account readback"}))
         .send().await.unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
@@ -629,7 +631,11 @@ async fn native_portfolio_submit_preserves_values_and_original_receipts(pool: Pg
     ];
     let mut receipts = Vec::new();
     for envelope in &envelopes {
-        let sent = portable_client::saved(directory.path(), &arguments, envelope.clone()).await;
+        let key = format!("native-account-{}", envelope["sequence"].as_str().unwrap());
+        let mut submit_arguments = arguments.to_vec();
+        submit_arguments.extend(["--idempotency-key", key.as_str()]);
+        let sent =
+            portable_client::saved(directory.path(), &submit_arguments, envelope.clone()).await;
         assert_clean_exit(&sent, "native account submit", Some(&a.token));
         assert!(!String::from_utf8_lossy(&sent.stdout).contains(&a.token));
         receipts.push(serde_json::from_slice::<Value>(&sent.stdout).unwrap());
@@ -721,7 +727,12 @@ async fn native_portfolio_submit_preserves_values_and_original_receipts(pool: Pg
     // clocks and every persisted cursor/source field must be unchanged.
     let mut replayed = Vec::new();
     for envelope in &envelopes {
-        let replay = portable_client::saved(directory.path(), &arguments, envelope.clone()).await;
+        // Reuse the original operation key and complete envelope after restart.
+        let key = format!("native-account-{}", envelope["sequence"].as_str().unwrap());
+        let mut submit_arguments = arguments.to_vec();
+        submit_arguments.extend(["--idempotency-key", key.as_str()]);
+        let replay =
+            portable_client::saved(directory.path(), &submit_arguments, envelope.clone()).await;
         assert_clean_exit(&replay, "native account replay", Some(&a.token));
         assert!(!String::from_utf8_lossy(&replay.stdout).contains(&a.token));
         replayed.push(serde_json::from_slice::<Value>(&replay.stdout).unwrap());
