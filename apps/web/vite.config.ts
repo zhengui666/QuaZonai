@@ -69,5 +69,5 @@ export default defineConfig({
       },
     } },
   },
-  test: { include: ['src/**/*.test.ts'], environment: 'node' },
+  test: { include: ['src/**/*.test.{ts,tsx}'], environment: 'node' },
 });

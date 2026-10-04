@@ -7,8 +7,11 @@ import { validateResponse } from '../src/generated/responses.cjs';
 // in the independently provisioned Rust/PostgreSQL browser harness.
 async function session(page: Page, failProjects = false) {
   let reads = 0;
+  const writes: string[] = [];
   await page.route('**/api/**', async route => {
-    const path = new URL(route.request().url()).pathname;
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (!['GET', 'HEAD'].includes(request.method())) { writes.push(`${request.method()} ${path}`); return route.abort('blockedbyclient'); }
     const reply = (json: unknown) => route.fulfill({ json });
     if (path === '/api/v2/auth/status') return reply({ schema_version: 1, setup_required: false });
     if (path === '/api/v2/auth/session') return reply({ schema_version: 1,
@@ -24,10 +27,11 @@ async function session(page: Page, failProjects = false) {
       });
       return reply({ schema_version: 1, items: [], next_cursor: null });
     }
-    if (path === '/api/v2/runs') return reply({ schema_version: 1, items: [], next_cursor: null });
+    if (['/api/v2/runs', '/api/v2/settings/codex', '/api/v2/integrations/runtimes'].includes(path))
+      return reply({ schema_version: 1, items: [], next_cursor: null });
     return route.abort('blockedbyclient');
   });
-  return () => reads;
+  return { reads: () => reads, writes };
 }
 
 test('an unopened section is deferred; a failed chunk leaves navigation usable', async ({ page }) => {
@@ -68,8 +72,8 @@ test('late section loading cannot replace a newer navigation choice', async ({ p
   await expect(page.getByRole('menuitem', { name: '研究', exact: true })).toHaveClass(/ant-menu-item-selected/);
 });
 
-test('an idle editor has no error-clock interval and keeps its fields on theme changes', async ({ page }) => {
-  await session(page);
+test('an idle Settings editor has no error-clock interval and keeps its fields on theme changes', async ({ page }) => {
+  const state = await session(page);
   await page.addInitScript(() => {
     const active = new Set<number>();
     Object.defineProperty(window, '__testOneSecondIntervals', { value: active });
@@ -81,24 +85,25 @@ test('an idle editor has no error-clock interval and keeps its fields on theme c
     window.clearInterval = id => { if (typeof id === 'number') active.delete(id); cancel(id); };
   });
   await page.goto('/');
-  await page.getByRole('button', { name: '新建研究', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: '新建研究项目', exact: true });
-  const name = editor.getByLabel('研究名称');
-  await name.fill('保留未提交的研究');
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  await page.getByRole('tab', { name: '集成', exact: true }).click();
+  await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: '登记 Runtime', exact: true });
+  const name = editor.getByRole('textbox', { name: '名称', exact: true });
+  await name.fill('保留未提交的 Runtime');
   expect(await page.evaluate(() => (window as unknown as {
     __testOneSecondIntervals: Set<number>;
   }).__testOneSecondIntervals.size)).toBe(0);
-  // Changing the system theme exercises the same non-remounting preference
-  // update without clicking through the editor's native modal mask.
+  // System-theme changes must not remount the Settings form behind its mask.
   await page.emulateMedia({ colorScheme: 'dark' });
-  await expect(name).toHaveValue('保留未提交的研究');
-  await page.getByRole('button', { name: '关闭', exact: true }).click();
-  await page.getByRole('button', { name: '继续编辑', exact: true }).click();
-  await expect(name).toHaveValue('保留未提交的研究');
+  await expect(name).toHaveValue('保留未提交的 Runtime');
+  await editor.getByRole('button', { name: '返回', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  expect(state.writes).toEqual([]);
 });
 
 test('retry countdown expires without replaying the request automatically', async ({ page }) => {
-  const reads = await session(page, true);
+  const { reads, writes } = await session(page, true);
   await page.clock.install();
   await page.goto('/');
   const retry = page.getByRole('button', { name: '重新载入', exact: true });
@@ -109,20 +114,20 @@ test('retry countdown expires without replaying the request automatically', asyn
   await expect(page.getByText(/秒后可重试/)).toHaveCount(0);
   expect(reads()).toBe(1);
   await retry.click();
-  await expect(page.getByText('你的下一个研究，从这里开始', { exact: true })).toBeVisible();
+  await expect(page.getByText('尚无研究项目', { exact: true })).toBeVisible();
   expect(reads()).toBe(2);
+  expect(writes).toEqual([]);
 });
 
-test('research workbench offers an actionable empty state and guarded shortcuts', async ({ page }) => {
+test('research workbench explains external authoring and keeps read-only shortcuts usable', async ({ page }) => {
   await session(page);
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '研究项目', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: '你的下一个研究，从这里开始' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '尚无研究项目' })).toBeVisible();
   await expect(page.getByLabel('搜索本页研究项目')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '下一页', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: '创建第一个研究' }).click();
-  await expect(page.getByRole('dialog', { name: '新建研究项目' })).toBeVisible();
-  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(page.getByText('由外部 Agent 通过 CLI/Skill 登记研究后，这里展示原始目标、过程与评估证据。')).toBeVisible();
+  await expect(page.getByRole('button', { name: /新建研究|创建第一个研究/ })).toHaveCount(0);
   await page.getByRole('button', { name: '运行记录 追踪执行、状态与回执' }).click();
   await expect(page.getByRole('heading', { name: '运行', exact: true })).toBeVisible();
 });
@@ -173,33 +178,41 @@ async function researchWorkspace(page: Page, options: { archived?: boolean; curr
   expect(validateResponse('/api/v2/projects/{id}', 'GET', 200, project, 'application/json')).toBe(true);
   expect(validateResponse('/api/v2/briefs/{id}', 'GET', 200, brief, 'application/json')).toBe(true);
   expect(validateResponse('/api/v2/projects/{id}/cycles', 'GET', 200, { schema_version: 1, items: [cycle], next_cursor: null }, 'application/json')).toBe(true);
+  const input: Schema['InputSetSummary'] = { id: id(10), project_id: project.id, purpose: 'DISCOVERY', revision: '1',
+    created_at: now, decision_cutoff: '2026-09-30T00:00:00.000001Z', frozen_at: now };
+  const frozen: Schema['FrozenBriefV1'] = { schema_version: 1, brief, execution_context: { schema_version: 1, runtime_id: id(11), runtime_revision: '3',
+    discovery_input_set_id: input.id, validation_input_set_id: id(12), sealed_input_set_id: id(13) } };
+  expect(validateResponse('/api/v2/input-sets', 'GET', 200, { schema_version: 1, items: [input], next_cursor: null }, 'application/json')).toBe(true);
+  expect(validateResponse('/api/v2/briefs/{id}/execution-context', 'GET', 200, frozen, 'application/json')).toBe(true);
   const requestedInputs: string[] = [];
+  const writes: string[] = [];
+  let briefReads = 0; let failBrief = false;
   await page.route('**/api/**', route => {
-    const url = new URL(route.request().url()); const path = url.pathname;
+    const request = route.request();
+    const url = new URL(request.url()); const path = url.pathname;
+    if (!['GET', 'HEAD'].includes(request.method())) { writes.push(`${request.method()} ${path}`); return route.abort('blockedbyclient'); }
     const reply = (json: unknown) => route.fulfill({ json });
     const listing = (items: unknown[]) => reply({ schema_version: 1, items, next_cursor: null });
     if (path === '/api/v2/auth/status') return reply({ schema_version: 1, setup_required: false });
     if (path === '/api/v2/auth/session') return reply({ schema_version: 1, authenticated_at: now, expires_at: '2099-01-01T00:00:00Z' });
     if (path === '/api/v2/projects') return listing([project]);
     if (path === `/api/v2/projects/${project.id}`) return reply(project);
-    if (path === `/api/v2/projects/${project.id}/briefs`) return listing([brief]);
-    if (path === `/api/v2/briefs/${brief.id}`) {
-      if (route.request().method() === 'PATCH') {
-        const body = route.request().postDataJSON() as Schema['BriefUpdate'];
-        brief.content = body.content; brief.bindings = body.bindings; brief.revision = '2';
-        return reply({ schema_version: 1, resource: brief, replayed: false });
-      }
-      return reply(brief);
+    if (path === `/api/v2/projects/${project.id}/briefs`) {
+      briefReads++;
+      if (failBrief) { failBrief = false; return route.abort('failed'); }
+      return listing([brief]);
     }
+    if (path === `/api/v2/briefs/${brief.id}`) return reply(brief);
+    if (path === `/api/v2/briefs/${brief.id}/execution-context`) return reply(frozen);
     if (path === `/api/v2/projects/${project.id}/cycles`) return listing([cycle]);
-    if (path === '/api/v2/input-sets') { requestedInputs.push(url.searchParams.get('project_id') ?? ''); return listing([]); }
+    if (path === '/api/v2/input-sets') { requestedInputs.push(url.searchParams.get('project_id') ?? ''); return listing([input]); }
     if (['/api/v2/data/revisions', '/api/v2/integrations/runtimes'].includes(path)) return listing([]);
     return route.abort('blockedbyclient');
   });
   await page.goto('/');
   await page.getByRole('button', { name: project.name, exact: true }).click();
   await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
-  return { project, brief, cycle, requestedInputs };
+  return { project, brief, cycle, input, frozen, requestedInputs, writes, briefReads: () => briefReads, failNextBrief: () => { failBrief = true; } };
 }
 
 test('project overview never substitutes an available Brief for the actual current reference', async ({ page }) => {
@@ -209,24 +222,27 @@ test('project overview never substitutes an available Brief for the actual curre
   await page.getByRole('tab', { name: '研究 Brief', exact: true }).click();
   await expect(page.getByRole('heading', { name: state.brief.content.hypothesis, exact: true })).toBeVisible();
   await expect(page.getByText('当前版本', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '启动新 Cycle', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '启动新 Cycle', exact: true })).toHaveCount(0);
+  expect(state.writes).toEqual([]);
 });
 
-test('project-scoped inputs reuse the chosen project and cannot be unmounted during an operation', async ({ page }) => {
+test('project-scoped inputs show the chosen project records and permit read-only navigation', async ({ page }) => {
   const state = await researchWorkspace(page);
   await page.getByRole('tab', { name: '冻结输入', exact: true }).click();
   await expect(page.getByLabel('冻结输入所属研究项目', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: state.input.id, exact: true })).toBeVisible();
+  await expect(page.getByText(state.input.decision_cutoff, { exact: true })).toBeVisible();
   await expect.poll(() => state.requestedInputs.length).toBeGreaterThan(0);
   expect(state.requestedInputs.every(id => id === state.project.id)).toBe(true);
-  await page.getByRole('button', { name: '新建冻结输入', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '创建并冻结项目输入', exact: true });
-  await expect(dialog).toBeVisible();
-  await dialog.getByLabel('决策截止（精确 UTC）', { exact: true }).fill('2026-01-01T00:00:00Z');
-  // Exercise the navigation guard directly; the normal dialog mask also blocks pointer input.
-  await page.getByRole('tab', { name: '研究 Brief', exact: true }).dispatchEvent('click');
-  await page.getByRole('button', { name: '返回研究列表', exact: true }).dispatchEvent('click');
-  await expect(page.getByRole('tab', { name: '冻结输入', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(dialog.getByLabel('决策截止（精确 UTC）', { exact: true })).toHaveValue('2026-01-01T00:00:00Z');
+  await expect(page.getByRole('button', { name: '新建冻结输入', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '刷新冻结输入', exact: true }).click();
+  await expect.poll(() => state.requestedInputs.length).toBe(2);
+  await page.getByRole('tab', { name: '研究 Brief', exact: true }).click();
+  await expect(page.getByRole('heading', { name: state.brief.content.hypothesis, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+  await expect(page.getByRole('button', { name: state.project.name, exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(state.writes).toEqual([]);
 });
 
 test('archived research retains readable frozen Briefs without allowing a new cycle', async ({ page }) => {
@@ -234,9 +250,17 @@ test('archived research retains readable frozen Briefs without allowing a new cy
   await expect(page.getByRole('heading', { name: state.brief.content.hypothesis, exact: true })).toBeVisible();
   await page.getByRole('tab', { name: '研究 Brief', exact: true }).click();
   await expect(page.getByText('当前版本', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '新建 Brief 草稿', exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: '启动新 Cycle', exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: '查看冻结版本', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '新建 Brief 草稿', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '启动新 Cycle', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '查看冻结版本', exact: true }).click();
+  const detail = page.getByRole('dialog', { name: 'Brief · 版本 2', exact: true });
+  await expect(detail.getByLabel('原完整 Brief', { exact: true })).toHaveText(JSON.stringify(state.brief, null, 2));
+  await expect(detail.getByText(`${state.frozen.execution_context.runtime_id} / 3`, { exact: true })).toBeVisible();
+  await expect(detail.getByText(state.frozen.execution_context.sealed_input_set_id, { exact: true })).toBeVisible();
+  await expect(detail.getByRole('textbox')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(detail).toHaveCount(0);
+  expect(state.writes).toEqual([]);
 });
 
 test('cycle cards show server next actions without inventing permissions from a run ID', async ({ page }) => {
@@ -256,34 +280,51 @@ test('current Brief from another project is rejected rather than displayed as ev
 });
 
 
-test('Brief authoring retains dirty content when project navigation is requested', async ({ page }) => {
-  await researchWorkspace(page, { draft: true, current: true });
+test('a Brief draft remains original and readable across viewport and theme changes', async ({ page }) => {
+  const state = await researchWorkspace(page, { draft: true, current: true });
   await page.getByRole('tab', { name: '研究 Brief', exact: true }).click();
-  await page.getByRole('button', { name: '查看 / 编辑', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: 'Brief · 版本 2', exact: true });
-  await editor.getByLabel('可检验的假设', { exact: true }).fill('保留尚未提交的假设');
+  await page.getByRole('button', { name: '查看草稿', exact: true }).click();
+  const detail = page.getByRole('dialog', { name: 'Brief · 版本 2', exact: true });
+  const original = detail.getByLabel('原完整 Brief', { exact: true });
   for (const width of [390, 768, 1280]) {
     await page.setViewportSize({ width, height: 900 });
-    await expect(editor.getByLabel('可检验的假设', { exact: true })).toHaveValue('保留尚未提交的假设');
+    await expect(original).toHaveText(JSON.stringify(state.brief, null, 2));
+    await original.focus();
+    await expect(original).toBeFocused();
   }
-  await page.getByRole('tab', { name: '研究周期', exact: true }).dispatchEvent('click');
-  await page.getByRole('button', { name: '返回研究列表', exact: true }).dispatchEvent('click');
-  await expect(page.getByRole('tab', { name: '研究 Brief', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(editor.getByLabel('可检验的假设', { exact: true })).toHaveValue('保留尚未提交的假设');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(original).toHaveText(JSON.stringify(state.brief, null, 2));
+  await expect(detail.getByRole('textbox')).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: /保存|冻结|启动|创建/ })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(detail).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: /放弃/ })).toHaveCount(0);
+  await page.getByRole('tab', { name: '研究周期', exact: true }).click();
+  await expect(page.getByText('核对输入边界', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+  await expect(page.getByRole('button', { name: state.project.name, exact: true })).toBeVisible();
+  expect(state.writes).toEqual([]);
 });
 
-
-test('saving the current Brief invalidates the overview before returning to it', async ({ page }) => {
+test('a failed Brief refresh preserves the original record and retries without a write', async ({ page }) => {
   const state = await researchWorkspace(page, { draft: true, current: true });
-  // Warm the original overview cache before unmounting it; otherwise even an
-  // unrelated query key could fetch fresh data on its first successful read.
   await expect(page.getByRole('heading', { name: state.brief.content.hypothesis, exact: true })).toBeVisible();
   await page.getByRole('tab', { name: '研究 Brief', exact: true }).click();
-  await page.getByRole('button', { name: '查看 / 编辑', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: 'Brief · 版本 2', exact: true });
-  await editor.getByLabel('可检验的假设', { exact: true }).fill('保存后应立即反映在工作概览中的假设');
-  await editor.getByRole('button', { name: '保存 Brief 草稿', exact: true }).click();
-  await expect(editor).toBeHidden();
+  await expect(page.getByRole('heading', { name: state.brief.content.hypothesis, exact: true })).toBeVisible();
+  state.failNextBrief();
+  await page.getByRole('button', { name: '刷新 Brief', exact: true }).click();
+  await expect(page.getByText('数据未更新', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: state.brief.content.hypothesis, exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看草稿', exact: true })).toBeDisabled();
+  expect(state.briefReads()).toBe(2);
+  await page.getByRole('button', { name: '重新载入', exact: true }).click();
+  await expect(page.getByText('数据未更新', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '查看草稿', exact: true }).click();
+  const detail = page.getByRole('dialog', { name: 'Brief · 版本 2', exact: true });
+  await expect(detail.getByLabel('原完整 Brief', { exact: true })).toHaveText(JSON.stringify(state.brief, null, 2));
+  await page.keyboard.press('Escape');
   await page.getByRole('tab', { name: '工作概览', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '保存后应立即反映在工作概览中的假设', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: state.brief.content.hypothesis, exact: true })).toBeVisible();
+  expect(state.briefReads()).toBe(3);
+  expect(state.writes).toEqual([]);
 });

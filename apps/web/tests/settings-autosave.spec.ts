@@ -432,137 +432,149 @@ test('new data source registration checks the selected Runtime after its autosav
   expect(writes.filter(write => write.kind === 'source-create')).toHaveLength(0);
 });
 
-test('immutable portfolio editors wait for a Runtime autosave and read its new revision', async ({ page }) => {
-  const { runtime, writes, holdNextRuntime } = await setup(page);
+// These HTTP fixtures exercise the real read-only UI and response validators.
+// Native command idempotency remains a Store/HTTP responsibility; no browser
+// form or synthetic command is retained merely to create observation records.
+async function portfolioReadFixture(page: Page, runtime: Schema['RuntimeView']) {
   const now = new Date().toISOString();
-  const projectId = '01990000-0000-7000-8000-000000000071';
-  const project: Schema['ProjectView'] = { id: projectId, root_lineage_id: projectId, name: 'Portfolio fixture',
+  const id = (value: number) => `01990000-0000-7000-8000-${String(value).padStart(12, '0')}`;
+  const project: Schema['ProjectView'] = { id: id(71), root_lineage_id: id(71), name: 'Portfolio fixture',
     description: '', state: 'ACTIVE', revision: '1', created_by: 'OPERATOR', created_at: now, updated_at: now };
-  await page.route(url => new URL(url).pathname === '/api/v2/projects', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-    schema_version: 1, items: [project], next_cursor: null,
-  }) }));
+  const assumption: Schema['ExecutionAssumptionsViewV1'] = {
+    id: id(72), project_id: project.id, input_set_id: id(73), dataset_revision_id: id(74), runtime_id: runtime.id,
+    capability_snapshot_artifact_id: id(75), fee_schedule_artifact_id: id(76), engine_image_ref: 'original-native-image',
+    venue_capability_ref: 'original-venue', calendar_version: 'original-calendar', settlement_rule_ref: 'T+0',
+    cost_assumption_status: 'CONSERVATIVE_ASSUMPTION', created_at: now,
+    settings: { schema_version: 1, account_kind: 'CASH', base_currency: 'USD', starting_capital: '12345.67', exposure_tolerance: '0.001',
+      leverage: '1', snapshot_interval_ms: 1000, fee_rates: [{ instrument_id: 'BTCUSD', maker: '0.001', taker: '0.002' }],
+      fee_model: { schema_version: 1, adapter_kind: 'NAUTILUS_MAKER_TAKER', upstream_class: 'nautilus_execution::models::fee::MakerTakerFeeModel', upstream_version: '0.63.0', parameters: {} },
+      fill_model: { schema_version: 1, adapter_kind: 'NAUTILUS_DEFAULT_FILL', upstream_class: 'nautilus_execution::models::fill::DefaultFillModel', upstream_version: '0.63.0', parameters: { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' } },
+      latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.63.0', parameters: { base_latency_ns: '1', insert_latency_ns: '2', update_latency_ns: '3', cancel_latency_ns: '4' } },
+    },
+  };
+  const mandate: Schema['StrategyMandateViewV1'] = {
+    schema_version: 1, id: id(77), project_id: project.id, version: 7, created_at: now,
+    content: { schema_version: 1, allocation_method: 'FIXED_TARGET_WEIGHTS', base_currency: 'USD', capital_assumption: '12345.67',
+      execution_assumptions_id: assumption.id, universe_version_id: id(78), exposure_tolerance: '0.001', max_input_age_seconds: 60, target_ttl_seconds: 60,
+      constraints: { schema_version: 1, long_only: true, min_asset_weight: '0', max_asset_weight: '1', min_cash_weight: '0', max_cash_weight: '1',
+        min_net_exposure: '0', max_net_exposure: '1', max_gross_exposure: '1', max_turnover_per_rebalance: '1',
+        asset_overrides: [], group_bounds: [], transaction_costs_ref: assumption.id },
+    },
+  };
+  const reads: string[] = []; const businessWrites: string[] = [];
+  let failPath: string | undefined;
+  const projectPath = `/api/v2/projects/${project.id}`;
+  const assumptionPath = `/api/v2/execution-assumptions/${assumption.id}`;
+  const mandatePath = `/api/v2/portfolio-mandates/${mandate.id}`;
+  await page.route('**/api/v2/**', async route => {
+    const request = route.request(); const path = new URL(request.url()).pathname;
+    const relevant = path === '/api/v2/projects' || path.startsWith(`${projectPath}/`)
+      || path.startsWith('/api/v2/execution-assumptions') || path.startsWith('/api/v2/portfolio-mandates');
+    if (!relevant) return route.fallback();
+    if (request.method() !== 'GET') { businessWrites.push(`${request.method()} ${path}`); return route.abort('blockedbyclient'); }
+    reads.push(path);
+    if (path === failPath) { failPath = undefined; return route.abort('failed'); }
+    const pageOf = (items: unknown[]) => ({ schema_version: 1, items, next_cursor: null });
+    const value = path === '/api/v2/projects' ? pageOf([project])
+      : path === `${projectPath}/portfolio-mandates` ? pageOf([mandate])
+      : path === `${projectPath}/execution-assumptions` ? pageOf([assumption])
+      : path === mandatePath ? mandate : path === assumptionPath ? assumption : pageOf([]);
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(value) });
+  });
+  async function openPortfolio() {
+    await page.getByRole('menuitem', { name: '组合', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '组合', exact: true })).toBeVisible();
+    await page.getByRole('combobox', { name: '选择组合所属项目' }).click();
+    await page.getByText(`${project.name} · ${project.id}`, { exact: true }).last().click();
+    await expect(page.getByRole('button', { name: '配置 v7', exact: true })).toBeVisible();
+  }
+  async function assertReadOnly() {
+    await expect(page.getByRole('button', { name: /^(新建组合配置|保存不可变配置|请求组合构建|新建执行假设|保存不可变执行假设|新建评估政策|请求组合 Study|冻结目标包)$/ })).toHaveCount(0);
+    await expect(page.getByRole('dialog').locator('form, button[type=submit]')).toHaveCount(0);
+    expect(businessWrites).toEqual([]);
+  }
+  return { project, assumption, mandate, reads, businessWrites, assumptionPath, mandatePath, openPortfolio, assertReadOnly,
+    failNextRead: (path: string) => { failPath = path; } };
+}
+
+test('portfolio observation remains read-only while a Settings Runtime autosave settles', async ({ page }) => {
+  const { runtime, writes, holdNextRuntime } = await setup(page);
+  const records = await portfolioReadFixture(page, runtime);
   await page.getByRole('tab', { name: '集成', exact: true }).click();
   await page.getByRole('button', { name: '配置与原生探测' }).click();
   await page.getByRole('button', { name: '修改配置' }).click();
   const release = holdNextRuntime();
-  await page.getByRole('dialog', { name: '修改 Runtime 配置' }).getByRole('textbox', { name: '名称' }).fill('Runtime B');
+  const editor = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  await editor.getByRole('textbox', { name: '名称' }).fill('Runtime B');
   await expect.poll(() => writes.filter(write => write.kind === 'runtime').length).toBe(1);
-  await page.getByRole('dialog', { name: '修改 Runtime 配置' }).getByRole('button', { name: '关闭' }).click();
-  await page.getByRole('menuitem', { name: '组合', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '组合', exact: true })).toBeVisible();
-  await page.getByRole('combobox', { name: '选择组合所属项目' }).click();
-  await page.getByText(`Portfolio fixture · ${projectId}`, { exact: true }).last().click();
-  await page.getByRole('button', { name: '新建组合配置' }).click();
-  const mandate = page.getByRole('dialog', { name: '新建不可变组合配置' });
-  await mandate.getByRole('textbox', { name: 'Runtime 编号' }).fill(runtime.id);
-  await expect(mandate.getByRole('button', { name: '保存不可变配置' })).toBeDisabled();
-  await mandate.getByRole('button', { name: '取消' }).click();
-  await page.getByRole('button', { name: '放弃修改' }).click();
-  await page.getByRole('tab', { name: '执行假设' }).click();
-  await page.getByRole('button', { name: '新建执行假设' }).click();
-  const assumptions = page.getByRole('dialog', { name: '新建不可变执行假设' });
-  await assumptions.getByRole('textbox', { name: 'Runtime 编号' }).fill(runtime.id);
-  await expect(assumptions.getByRole('button', { name: '保存不可变执行假设' })).toBeDisabled();
-  release();
-  await expect(assumptions.getByText('Runtime 配置版本：2')).toBeVisible();
-  await expect(assumptions.getByRole('button', { name: '保存不可变执行假设' })).toBeEnabled();
-  await assumptions.getByRole('button', { name: '取消' }).click();
-  await page.getByRole('button', { name: '放弃修改' }).click();
-  await page.getByRole('tab', { name: '组合配置' }).click();
-  await page.getByRole('button', { name: '新建组合配置' }).click();
-  const again = page.getByRole('dialog', { name: '新建不可变组合配置' });
-  await again.getByRole('textbox', { name: 'Runtime 编号' }).fill(runtime.id);
-  await expect(again.getByText('Runtime 配置版本：2')).toBeVisible();
-  await expect(again.getByRole('button', { name: '保存不可变配置' })).toBeEnabled();
+  await editor.getByRole('button', { name: '关闭' }).click();
+  try {
+    await records.openPortfolio();
+    await page.getByRole('button', { name: '配置 v7', exact: true }).click();
+    const mandate = page.getByRole('dialog', { name: '不可变组合配置', exact: true });
+    await expect(mandate.locator('pre')).toHaveText(JSON.stringify(records.mandate.content, null, 2));
+    await records.assertReadOnly();
+    await mandate.locator('.ant-drawer-close').click();
+    await expect(mandate).toHaveCount(0);
+    await page.getByRole('tab', { name: '执行假设', exact: true }).click();
+    await page.getByRole('button', { name: `查看假设 ${records.assumption.id}`, exact: true }).click();
+    const assumption = page.getByRole('dialog', { name: '不可变执行假设', exact: true });
+    await expect(assumption.locator('pre')).toHaveText(JSON.stringify(records.assumption.settings, null, 2));
+    await records.assertReadOnly();
+    release();
+    await expect.poll(() => runtime.revision).toBe('2');
+    await expect.poll(() => runtime.configuration.name).toBe('Runtime B');
+    await expect(assumption.locator('pre')).toHaveText(JSON.stringify(records.assumption.settings, null, 2));
+    await assumption.locator('.ant-drawer-close').click();
+    await page.getByRole('tab', { name: '组合配置', exact: true }).click();
+    await page.getByRole('button', { name: '刷新配置', exact: true }).click();
+    await page.getByRole('button', { name: '配置 v7', exact: true }).click();
+    await expect(mandate.locator('pre')).toHaveText(JSON.stringify(records.mandate.content, null, 2));
+    await records.assertReadOnly();
+    expect(writes).toHaveLength(1);
+    expect((writes[0]?.body as Schema['RuntimeUpdate']).expected_revision).toBe('1');
+  } finally { release(); }
 });
 
-test('an uncertain execution assumption retries the original Runtime revision', async ({ page }) => {
-  const { runtime } = await setup(page);
-  const now = new Date().toISOString();
-  const projectId = '01990000-0000-7000-8000-000000000081';
-  const project: Schema['ProjectView'] = { id: projectId, root_lineage_id: projectId, name: 'Portfolio fixture',
-    description: '', state: 'ACTIVE', revision: '1', created_by: 'OPERATOR', created_at: now, updated_at: now };
-  await page.route(url => new URL(url).pathname === '/api/v2/projects', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-    schema_version: 1, items: [project], next_cursor: null,
-  }) }));
-  const requests: { key: string | undefined; body: Schema['ExecutionAssumptionsCreateV1'] }[] = [];
-  await page.route('**/api/v2/execution-assumptions', route => {
-    const request = route.request();
-    requests.push({ key: request.headers()['idempotency-key'], body: request.postDataJSON() });
-    return route.abort('failed');
-  });
-  await page.getByRole('menuitem', { name: '组合', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '组合', exact: true })).toBeVisible();
-  await page.getByRole('combobox', { name: '选择组合所属项目' }).click();
-  await page.getByText(`Portfolio fixture · ${projectId}`, { exact: true }).last().click();
-  await page.getByRole('tab', { name: '执行假设' }).click();
-  await page.getByRole('button', { name: '新建执行假设' }).click();
-  const dialog = page.getByRole('dialog', { name: '新建不可变执行假设' });
-  const id = '01990000-0000-7000-8000-000000000082';
-  for (const [name, value] of [
-    ['Runtime 编号', runtime.id], ['冻结输入编号', id], ['数据版本编号', id], ['结算规则引用', 'T+0'],
-    ['基础币种', 'USD'], ['资本假设', '1000'], ['杠杆上限', '1'], ['敞口容差', '0.01'],
-    ['限价成交概率（0 至 1）', '0.5'], ['滑点概率（0 至 1）', '0.1'], ['随机种子', '1'],
-    ['基础延迟（纳秒）', '0'], ['插入附加延迟（纳秒）', '0'], ['更新附加延迟（纳秒）', '0'], ['取消附加延迟（纳秒）', '0'],
-    ['资产 1 标识', 'BTCUSD'], ['资产 1 maker 费率', '0.001'], ['资产 1 taker 费率', '0.002'],
-  ] as [string, string][]) await dialog.getByRole('textbox', { name }).fill(value);
-  await dialog.getByRole('combobox', { name: '模拟账户模型' }).click();
-  await page.getByText('现金', { exact: true }).last().click();
-  await dialog.getByRole('spinbutton', { name: '快照间隔（毫秒）' }).fill('1000');
-  await dialog.getByRole('button', { name: '保存不可变执行假设' }).click();
-  await expect.poll(() => requests.length).toBe(1);
-  expect(requests[0]?.body.expected_runtime_revision).toBe('1');
-  runtime.revision = '2';
-  await page.evaluate(async id => {
-    const modulePath = '/src/settings-work.ts';
-    const { setSettingsWork } = await import(modulePath);
-    setSettingsWork(`autosave:runtime:${id}`, true); setSettingsWork(`autosave:runtime:${id}`, false);
-  }, runtime.id);
-  await expect(dialog.getByText('Runtime 配置版本：2')).toBeVisible();
-  await dialog.getByRole('button', { name: '重试同一执行假设请求' }).click();
-  await expect.poll(() => requests.length).toBe(2);
-  expect(requests[1]).toEqual(requests[0]);
+test('a failed execution-assumption read retries the original record after Runtime changes', async ({ page }) => {
+  const { runtime, writes } = await setup(page);
+  const records = await portfolioReadFixture(page, runtime);
+  await records.openPortfolio();
+  records.failNextRead(records.assumptionPath);
+  await page.getByRole('tab', { name: '执行假设', exact: true }).click();
+  await page.getByRole('button', { name: `查看假设 ${records.assumption.id}`, exact: true }).click();
+  const detail = page.getByRole('dialog', { name: '不可变执行假设', exact: true });
+  await expect(detail.getByRole('button', { name: '重新载入', exact: true })).toBeVisible();
+  await records.assertReadOnly();
+  runtime.revision = '2'; runtime.configuration.name = 'Runtime external';
+  await detail.getByRole('button', { name: '重新载入', exact: true }).click();
+  await expect(detail.locator('pre')).toHaveText(JSON.stringify(records.assumption.settings, null, 2));
+  expect(records.reads.filter(path => path === records.assumptionPath)).toHaveLength(2);
+  await detail.locator('.ant-drawer-close').click();
+  await expect(detail).toHaveCount(0);
+  await page.getByRole('button', { name: `查看假设 ${records.assumption.id}`, exact: true }).click();
+  await expect(detail.locator('pre')).toHaveText(JSON.stringify(records.assumption.settings, null, 2));
+  await records.assertReadOnly(); expect(writes).toEqual([]);
 });
 
-test('an uncertain portfolio mandate retries the original Runtime revision', async ({ page }) => {
-  const { runtime } = await setup(page);
-  const now = new Date().toISOString();
-  const projectId = '01990000-0000-7000-8000-000000000091';
-  const project: Schema['ProjectView'] = { id: projectId, root_lineage_id: projectId, name: 'Portfolio fixture',
-    description: '', state: 'ACTIVE', revision: '1', created_by: 'OPERATOR', created_at: now, updated_at: now };
-  await page.route(url => new URL(url).pathname === '/api/v2/projects', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-    schema_version: 1, items: [project], next_cursor: null,
-  }) }));
-  const requests: { key: string | undefined; body: Schema['MandateCreateV1'] }[] = [];
-  await page.route('**/api/v2/portfolio-mandates', route => {
-    const request = route.request();
-    requests.push({ key: request.headers()['idempotency-key'], body: request.postDataJSON() });
-    return route.abort('failed');
-  });
-  await page.getByRole('menuitem', { name: '组合', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '组合', exact: true })).toBeVisible();
-  await page.getByRole('combobox', { name: '选择组合所属项目' }).click();
-  await page.getByText(`Portfolio fixture · ${projectId}`, { exact: true }).last().click();
-  await page.getByRole('button', { name: '新建组合配置' }).click();
-  const dialog = page.getByRole('dialog', { name: '新建不可变组合配置' });
-  const id = '01990000-0000-7000-8000-000000000092';
-  for (const [name, value] of [
-    ['Runtime 编号', runtime.id], ['投资域版本编号', id], ['评估政策编号', id], ['执行假设编号', id],
-    ['基础币种', 'USD'], ['资本假设', '1000'], ['费用依据产物编号', id],
-  ] as [string, string][]) await dialog.getByRole('textbox', { name }).fill(value);
-  await dialog.getByRole('button', { name: '保存不可变配置' }).click();
-  await expect.poll(() => requests.length).toBe(1);
-  expect(requests[0]?.body.expected_runtime_revision).toBe('1');
-  runtime.revision = '2';
-  await page.evaluate(async id => {
-    const modulePath = '/src/settings-work.ts';
-    const { setSettingsWork } = await import(modulePath);
-    setSettingsWork(`autosave:runtime:${id}`, true); setSettingsWork(`autosave:runtime:${id}`, false);
-  }, runtime.id);
-  await expect(dialog.getByText('Runtime 配置版本：2')).toBeVisible();
-  await dialog.getByRole('button', { name: '重试同一组合配置请求' }).click();
-  await expect.poll(() => requests.length).toBe(2);
-  expect(requests[1]).toEqual(requests[0]);
+test('a failed mandate read retries its original immutable version without a create command', async ({ page }) => {
+  const { runtime, writes } = await setup(page);
+  const records = await portfolioReadFixture(page, runtime);
+  await records.openPortfolio();
+  records.failNextRead(records.mandatePath);
+  await page.getByRole('button', { name: '配置 v7', exact: true }).click();
+  const detail = page.getByRole('dialog', { name: '不可变组合配置', exact: true });
+  await expect(detail.getByRole('button', { name: '重新载入', exact: true })).toBeVisible();
+  await records.assertReadOnly();
+  runtime.revision = '2'; runtime.configuration.name = 'Runtime external';
+  await detail.getByRole('button', { name: '重新载入', exact: true }).click();
+  await expect(detail.locator('pre')).toHaveText(JSON.stringify(records.mandate.content, null, 2));
+  expect(records.reads.filter(path => path === records.mandatePath)).toHaveLength(2);
+  await detail.locator('.ant-drawer-close').click();
+  await expect(detail).toHaveCount(0);
+  await page.getByRole('button', { name: '配置 v7', exact: true }).click();
+  await expect(detail.locator('pre')).toHaveText(JSON.stringify(records.mandate.content, null, 2));
+  await records.assertReadOnly(); expect(writes).toEqual([]);
 });
 
 test('a corrected server-rejected setting saves with a new request', async ({ page }) => {
@@ -732,29 +744,35 @@ test('detached pending autosaves protect browser reload until every write settle
   } finally { releaseRuntime(); releaseSource(); }
 });
 
-test('a local dirty project keeps its existing browser and in-app leave warnings', async ({ page }) => {
-  await setup(page);
+test('browsing and filtering original projects never creates pending Settings work or leave warnings', async ({ page }) => {
+  const { writes } = await setup(page);
+  const now = '2026-10-01T00:00:00Z';
+  const id = '01990000-0000-7000-8000-000000000091';
+  const project: Schema['ProjectView'] = { id, root_lineage_id: id, name: '只读研究记录', description: 'Original server record',
+    state: 'ACTIVE', revision: '4', created_by: 'OPERATOR', created_at: now, updated_at: now, current_brief_id: null };
   const mutations: string[] = [];
   page.on('request', request => { if (!['GET', 'HEAD'].includes(request.method())) mutations.push(request.url()); });
+  await page.route(/\/api\/v2\/projects(?:\?|$)/, route => route.request().method() === 'GET'
+    ? route.fulfill({ json: { schema_version: 1, items: [project], next_cursor: null } }) : route.fallback());
+  await page.reload();
+  const search = page.getByRole('textbox', { name: '搜索本页研究项目', exact: true });
+  await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
+  await search.fill('只读');
+  await expect(page.getByRole('article')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /新建研究|创建第一个研究|编辑项目|修改项目状态/ })).toHaveCount(0);
+  expect(await page.evaluate(async () => {
+    const modulePath = '/src/settings-work.ts';
+    return (await import(modulePath)).settingsWorkActive();
+  })).toBe(false);
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: /放弃|丢失/ })).toHaveCount(0);
   await page.getByRole('menuitem', { name: '研究', exact: true }).click();
-  await page.getByRole('button', { name: '新建研究', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: '新建研究项目', exact: true });
-  const name = editor.getByLabel('研究名称');
-  await expect(name).toHaveRole('textbox');
-  await name.fill('Unsaved research');
-  await browserReload(page, 'stay');
-  await expect(name).toHaveValue('Unsaved research');
-  await editor.getByRole('button', { name: '取消', exact: true }).click();
-  const confirmation = page.getByRole('dialog', { name: '放弃尚未保存的修改？', exact: true });
-  await expect(confirmation).toBeVisible();
-  await confirmation.getByRole('button', { name: '继续编辑', exact: true }).click();
-  await expect(name).toHaveValue('Unsaved research');
-  await editor.getByRole('button', { name: '取消', exact: true }).click();
-  await confirmation.getByRole('button', { name: '放弃修改', exact: true }).click();
-  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
   await browserReload(page, 'clean');
-  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
   expect(mutations).toHaveLength(0);
+  expect(writes).toHaveLength(0);
 });
 
 test('a detached data source command protects browser reload through retry and receipt acknowledgement', async ({ page }) => {

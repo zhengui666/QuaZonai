@@ -1,13 +1,13 @@
-import { Button, Card, Descriptions, Drawer, Modal, Select, Space, Table, Timeline, Typography } from 'antd';
+import { Button, Card, Descriptions, Drawer, Select, Space, Table, Timeline, Typography } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { useEffect, useRef, useState, type ComponentPropsWithRef } from 'react';
-import { api, ApiFailure, dataOf, displayTime, Intent, responseFailure, terminal } from './api';
+import { api, ApiFailure, dataOf, displayTime, responseFailure, terminal } from './api';
 import { responseKind } from '@quazonai/web/response-contract/metadata';
 import type { Schema } from './api';
 import { decodeRunEvent } from './run-events';
-import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';
+import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useOnline } from './ui';
 
 type Run = Schema['RunSnapshotV1'];
 // Keep the native table keyboard-reachable even when no row contains an action.
@@ -43,21 +43,10 @@ export function Runs({ projectId }: { projectId?: string }) {
   </Space>;
 }
 export function RunDetail({ id, close }: { id: string; close: () => void }) {
-  const client = useQueryClient(); const online = useOnline();
   const query = useQuery({ queryKey: ['run', id], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/runs/{id}', { params: { path: { id } }, signal })),
     refetchInterval: current => current.state.data && terminal(current.state.data.state) ? false : 5000,
   });
-  const [target, setTarget] = useState<Run>();
-  const intent = useRef(new Intent());
-  const cancel = useMutation({ mutationFn: async (run: Run) => {
-    const body: Schema['RunCancelV1'] = { schema_version: 1, expected_revision: run.revision };
-    return dataOf(await api.POST('/api/v2/runs/{id}/cancel', { params: { path: { id: run.id }, header: intent.current.headers('POST', `/api/v2/runs/${run.id}/cancel`, body) }, body }));
-  }, onSuccess: async result => {
-    client.setQueryData(['run', id], result.resource);
-    intent.current.clear(); setTarget(undefined); await client.invalidateQueries({ queryKey: ['runs'] });
-  } });
-  useGuard(target !== undefined || cancel.isPending);
-  return <Drawer title="运行详情" open width={800} onClose={() => { if (!cancel.isPending && !target) close(); }} closable={!target && !cancel.isPending} maskClosable={!target && !cancel.isPending}>
+  return <Drawer title="运行详情" open width={800} onClose={close}>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       {query.data && <>
         <Space wrap><StateTag value={query.data.state} /><Typography.Text>版本 {query.data.revision}</Typography.Text></Space>
@@ -77,19 +66,10 @@ export function RunDetail({ id, close }: { id: string; close: () => void }) {
           { content: `结束：${displayTime(query.data.finished_at)}` },
         ]} />
         
-        <Button danger disabled={!online || query.isError || cancel.isPending || terminal(query.data.state)} onClick={() => { cancel.reset(); setTarget(query.data); }}>请求取消运行</Button>
         {(query.data.kind === 'PORTFOLIO_BUILD' || query.data.kind === 'PORTFOLIO_SIMULATE') && <RunRebalance id={id} />}
         <RunEvents key={id} snapshot={query.data} />
       </>}
     </QueryPanel>
-    <Modal open={target !== undefined} title="确认请求取消这一运行？" onCancel={() => { if (!cancel.isPending) setTarget(undefined); }}
-      onOk={() => { if (target && !cancel.isPending && online) cancel.mutate(target); }} okText="确认请求取消" cancelText="返回" confirmLoading={cancel.isPending}
-      okButtonProps={{ 'aria-label': '确认请求取消', 'aria-busy': cancel.isPending, danger: true, disabled: !online || (cancel.error instanceof ApiFailure && cancel.error.code === 'REVISION_CONFLICT') }} closable={!cancel.isPending} maskClosable={!cancel.isPending}>
-      <Typography.Paragraph className="break-word">运行：{target?.id} · 确认版本：{target?.revision}</Typography.Paragraph>
-      
-      <ErrorNotice error={cancel.error} />
-      {cancel.error instanceof ApiFailure && cancel.error.code === 'REVISION_CONFLICT' && <Button onClick={() => { setTarget(undefined); void query.refetch(); }}>关闭确认并重载最新版本</Button>}
-    </Modal>
   </Drawer>;
 }
 function RunEvents({ snapshot }: { snapshot: Run }) {
