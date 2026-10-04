@@ -333,12 +333,17 @@ async fn reject_mutable_inputs_wrong_capabilities_and_budget_excess(pool: PgPool
     let (store, f, request, _) = setup(&pool).await;
     let input = Id::new();
     sqlx::query("INSERT INTO app.input_sets(id,project_id,purpose,decision_cutoff) VALUES($1,$2,'DISCOVERY',clock_timestamp())").bind(input.as_uuid()).bind(f.project.as_uuid()).execute(&pool).await.unwrap();
+    // Otherwise valid membership isolates the missing freeze from shape errors.
+    sqlx::query("INSERT INTO app.input_set_items(input_set_id,artifact_id,role,ordinal) VALUES($1,$2,'PARAMETERS',0)")
+        .bind(input.as_uuid()).bind(f.artifact.as_uuid()).execute(&pool).await.unwrap();
     let mut invalid = request.clone();
     invalid.input_set_id = input;
-    assert!(matches!(
-        store.enqueue_run("draft", &invalid).await,
-        Err(StoreError::Invalid("frozen_inputs_required"))
-    ));
+    let error = store.enqueue_run("draft", &invalid).await.unwrap_err();
+    assert!(
+        matches!(error, StoreError::Invalid("frozen_inputs_required")),
+        "mutable input must fail the frozen-input contract: {error:?}"
+    );
+    assert_eq!(usage(&pool, f.cycle).await, (0, 0, 0));
     invalid = request.clone();
     invalid.kind = RunKind::PortfolioBuild;
     assert!(matches!(

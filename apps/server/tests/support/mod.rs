@@ -26,6 +26,8 @@ pub struct Fixture {
     pub store: Store,
     pub _state: tempfile::TempDir,
 }
+// Each integration target selects its own fixture entry point.
+#[allow(dead_code)]
 pub async fn fixture(pool: PgPool) -> Fixture {
     fixture_with_runtime_targets(pool, None).await
 }

@@ -392,10 +392,12 @@ pub(crate) async fn frozen_dataset_uses(
     id: Id,
     project: Id,
 ) -> Result<Vec<DatasetUse>, StoreError> {
-    let view = input(tx, id).await?;
-    if view.header.project_id != project {
+    let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.input_sets WHERE id=$1 AND project_id=$2 AND frozen_at IS NOT NULL)")
+        .bind(id.as_uuid()).bind(project.as_uuid()).fetch_one(&mut **tx).await?;
+    if !valid {
         return Err(StoreError::Invalid("frozen_inputs_required"));
     }
+    let view = input(tx, id).await?;
     let request = InputSetCreate {
         schema_version: contracts::SchemaV1,
         project_id: view.header.project_id,

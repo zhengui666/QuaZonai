@@ -300,7 +300,14 @@ async fn attempt_bound_legacy_credential_cannot_borrow_the_current_owner_on_upgr
         .unwrap();
     initialized_historical_operator(&pool).await;
     let f = fixture(pool.clone()).await;
-    let (project, run, attempt, principal) = mission(&f, &pool).await;
+    // Use historical relational Run/Attempt facts. Today's admission reads
+    // current input-source metadata that deliberately does not exist before 023.
+    let data = run_support::fixture(&pool, run_support::budget()).await;
+    let (project, run, attempt) = (data.project, data.run, data.fence.attempt_id);
+    let principal = Id::new();
+    sqlx::query("INSERT INTO app.machine_principals(id,name,kind,project_id,run_id,enabled,credential_epoch) VALUES($1,'pre-023 researcher fixture','MISSION',$2,$3,true,1)")
+        .bind(principal.as_uuid()).bind(project.as_uuid()).bind(run.as_uuid())
+        .execute(&pool).await.unwrap();
     let (cli_token, cli_id) = historical_cli(&f, &pool, project).await;
     let mut cli_before: Value =
         sqlx::query_scalar("SELECT to_jsonb(c) FROM app.machine_credentials c WHERE id=$1")
