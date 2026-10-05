@@ -63,25 +63,18 @@ class DevReleaseTests(unittest.TestCase):
             release.wait_ci("a" * 40)
             sleep.assert_called_once_with(30)
         for conclusion in ("failure", "cancelled", "skipped", "timed_out"):
-            failed = {**success, ".github/workflows/cli.yml": {"status": "completed", "conclusion": conclusion}}
+            failed = {**success, ".github/workflows/ci.yml": {"status": "completed", "conclusion": conclusion}}
             with patch.object(release, "ci_runs", return_value=failed), self.assertRaises(ValueError):
                 release.wait_ci("a" * 40)
 
-    def test_dev_waits_for_native_data_browser_before_publishing(self):
-        required = ".github/workflows/native-data-browser.yml"
-        self.assertIn(required, release.CI_PATHS)
-        success = {path: {"status": "completed", "conclusion": "success"} for path in release.CI_PATHS}
-        missing = {path: result for path, result in success.items() if path != required}
-        pending = {**success, required: {"status": "in_progress", "conclusion": None}}
-        with patch.object(release, "ci_runs", side_effect=[missing, pending, success]), \
+    def test_dev_waits_for_rust_ci_without_manual_acceptance_runs(self):
+        self.assertEqual(release.CI_PATHS, {".github/workflows/ci.yml"})
+        pending = {".github/workflows/ci.yml": {"status": "in_progress", "conclusion": None}}
+        success = {".github/workflows/ci.yml": {"status": "completed", "conclusion": "success"}}
+        with patch.object(release, "ci_runs", side_effect=[pending, success]), \
                 patch.object(release.time, "sleep") as sleep:
             release.wait_ci("a" * 40)
-            self.assertEqual(sleep.call_count, 2)
-        for conclusion in ("failure", "cancelled", "skipped", "timed_out"):
-            with self.subTest(conclusion=conclusion), patch.object(release, "ci_runs", return_value={
-                    **success, required: {"status": "completed", "conclusion": conclusion}}), \
-                    self.assertRaises(ValueError):
-                release.wait_ci("a" * 40)
+            sleep.assert_called_once_with(30)
 
     def test_dev_does_not_authorize_stable_tags_or_an_arbitrary_branch(self):
         with patch.dict(os.environ, {"RELEASE_BRANCH": "dev"}), self.assertRaisesRegex(ValueError, "Timestamped"):
@@ -106,3 +99,4 @@ class DevReleaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

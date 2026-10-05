@@ -1,9 +1,8 @@
 name: Polymarket history
+# Optional focused acceptance; ordinary PR/push validation is Rust CI.
 on:
-  pull_request:
-  push:
-    branches: [main, dev]
   workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:
@@ -47,3 +46,4 @@ jobs:
           cargo run --locked -q -p job --features catalog-prepare --bin catalog-prepare -- ingest-candles --help
           cargo run --locked -q -p job --features catalog-prepare --bin catalog-prepare -- ingest-archive-candles --help
           git diff --exit-code
+

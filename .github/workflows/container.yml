@@ -1,30 +1,8 @@
 name: Container
+# Optional focused acceptance; ordinary PR/push validation is Rust CI.
 on:
-  pull_request:
-    paths:
-      - 'deploy/**'
-      - '.github/actions/container/**'
-      - '.github/workflows/container.yml'
-      - '.github/workflows/release.yml'
-      - '.github/workflows/dev-image.yml'
-      - '.github/workflows/dev-image-publish.yml'
-      - 'apps/**'
-      - 'crates/**'
-      - 'migrations/**'
-      - 'contracts/**'
-      - 'skills/**'
-      - 'Cargo.*'
-      - 'rust-toolchain.toml'
-      - 'runtimes/**'
-      - '.github/workflows/release-version.yml'
-      - '.github/workflows/dev-release.yml'
-      - '.github/workflows/cli.yml'
-      - '.github/workflows/codex-image.yml'
-      - 'LICENSE'
-      - 'NOTICE'
-      - 'THIRD_PARTY_NOTICES.md'
-  push:
-    branches: [main, dev]
+  workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:
@@ -94,3 +72,4 @@ jobs:
           verify-native-input-cache: 'true'
           native-probe-deadline: ${{ steps.probe-budget.outputs.deadline }}
           cache-native-dependencies: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'pull_request' && github.base_ref == 'dev') }}
+

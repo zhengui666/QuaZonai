@@ -1,9 +1,8 @@
 name: Web console
+# Optional focused acceptance; ordinary PR/push validation is Rust CI.
 on:
-  pull_request:
-  push:
-    branches: [main, dev]
   workflow_dispatch:
+
 permissions:
   contents: read
 env:
@@ -269,3 +268,4 @@ jobs:
         env:
           WEB_JOB_RESULTS: ${{ toJSON(needs) }}
         run: node apps/web/scripts/web-ci.mjs gate
+
