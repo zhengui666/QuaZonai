@@ -145,7 +145,15 @@ jobs:
           # Includes native account/HTTP and App Server -> stdio MCP -> HTTP -> PG.
           QUAZONAI_NATIVE_CLI_BIN=$(python3 tests/native/build_portable_cli.py rustup run "$RUSTUP_TOOLCHAIN" cargo)
           export QUAZONAI_NATIVE_CLI_BIN
-          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked --no-fail-fast -p store -p server --features server/native-codex -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
+          # One bounded fixture-only observation of the unresolved release case.
+          # Preserve both failure codes and still execute the original full suite.
+          diagnostic_status=0
+          QZ_RELEASE_DIAGNOSTIC=1 rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p store --test experiment_compilations qualified_portfolio::release_freezes_original_package_and_replays_without_republishing -- --exact --nocapture --test-threads=1 2>&1 | tee /tmp/store-evidence/release-diagnostic.log || diagnostic_status=$?
+          printf '%s\n' "$diagnostic_status" > /tmp/store-evidence/release-diagnostic-exit.txt
+          suite_status=0
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked --no-fail-fast -p store -p server --features server/native-codex -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log || suite_status=$?
+          if [ "$diagnostic_status" -ne 0 ]; then exit "$diagnostic_status"; fi
+          if [ "$suite_status" -ne 0 ]; then exit "$suite_status"; fi
           git diff --exit-code
       - name: Remove the job-only native sandbox profile
         if: always()
@@ -171,4 +179,3 @@ jobs:
       - name: Remove only this disposable database
         if: always()
         run: docker rm --force --volumes store-database
-

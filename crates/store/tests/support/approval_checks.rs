@@ -13,6 +13,7 @@ pub(super) async fn check(
     release: &ReleaseViewV1,
     sibling: &ReleaseViewV1,
 ) {
+    release_diagnostic("approval_setup.begin");
     let down = store
         .create_downstream(
             actor,
@@ -42,6 +43,12 @@ pub(super) async fn check(
         expected_latest_decision_id: None,
         valid_until: release.valid_until,
     };
+    release_diagnostic("approval_no_readiness.begin");
+    release_future_size("store.approve_release", || {
+        store.approve_release(actor, "no-readiness", release.id, &request, |id, size| {
+            f.read(id, size)
+        })
+    });
     assert!(Box::pin(store.approve_release(
         actor,
         "no-readiness",
@@ -51,6 +58,7 @@ pub(super) async fn check(
     ))
     .await
     .is_err());
+    release_diagnostic("approval_no_readiness.complete");
     let store::downstream::ProbePreparation::Pending(ticket) = store
         .prepare_downstream_probe(
             actor,
@@ -85,6 +93,8 @@ pub(super) async fn check(
         .await
         .unwrap()
         .resource;
+    release_diagnostic("approval_probe.complete");
+    release_diagnostic("approval_live_license.begin");
     let mut live = request.clone();
     live.environment = ForwardEnvironmentV1::Live;
     let rejected = Box::pin(store.approve_release(
@@ -104,6 +114,8 @@ pub(super) async fn check(
             .map(ToString::to_string)
             .unwrap_or_else(|| "unexpected success".into())
     );
+    release_diagnostic("approval_live_license.complete");
+    release_diagnostic("approval_insert_rollback.begin");
     let before: i64 = sqlx::query_scalar("SELECT count(*) FROM app.input_sets")
         .fetch_one(pool)
         .await
@@ -127,6 +139,8 @@ pub(super) async fn check(
         "failed approval must roll back frozen evidence too"
     );
     sqlx::raw_sql("DROP TRIGGER fail_approval_fixture ON app.approvals; DROP FUNCTION app.fail_approval_fixture();").execute(pool).await.unwrap();
+    release_diagnostic("approval_insert_rollback.complete");
+    release_diagnostic("approval_concurrent.begin");
     let (a, b) = tokio::join!(
         Box::pin(store.approve_release(
             actor,
@@ -144,6 +158,7 @@ pub(super) async fn check(
         ))
     );
     let (a, b) = (a.unwrap(), b.unwrap());
+    release_diagnostic("approval_concurrent.complete");
     assert_eq!(a.resource.id, b.resource.id);
     assert_ne!(a.replayed, b.replayed);
     let approval = a.resource;
@@ -165,6 +180,7 @@ pub(super) async fn check(
         .await
         .unwrap();
     assert!(valid);
+    release_diagnostic("approval_evidence.complete");
     // Restricted report references are not ordinary executable research input.
     let view = store
         .input_set(actor, approval.evidence_set_id)
@@ -184,6 +200,7 @@ pub(super) async fn check(
         )
         .await
         .is_err());
+    release_diagnostic("approval_private_input.complete");
     let reject = store
         .reject_release(
             actor,
@@ -240,6 +257,8 @@ pub(super) async fn check(
         .await,
         Err(StoreError::Conflict)
     ));
+    release_diagnostic("approval_decisions.complete");
+    release_diagnostic("approval_renewal.begin");
     let mut renewed = request.clone();
     renewed.expected_latest_decision_id = Some(reopened.id);
     let second =
@@ -251,6 +270,7 @@ pub(super) async fn check(
         .await
         .unwrap()
         .resource;
+    release_diagnostic("approval_renewal.complete");
     assert_eq!(second.decision_ordinal, Some(reopened.ordinal));
     assert_ne!(second.id, approval.id);
     let first = store
@@ -319,10 +339,17 @@ pub(super) async fn check(
     .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.resource.decision_ordinal, Some(0));
+    release_diagnostic("handoffs.begin");
+    release_future_size("handoffs.check", || {
+        handoffs::check(
+            pool, store, actor, f, release, sibling, &approval, &second, &renewed,
+        )
+    });
     Box::pin(handoffs::check(
         pool, store, actor, f, release, sibling, &approval, &second, &renewed,
     ))
     .await;
+    release_diagnostic("handoffs.complete");
     let mut expired = renewed.clone();
     expired.valid_until = chrono::Utc::now() - chrono::Duration::seconds(1);
     assert!(Box::pin(store.approve_release(
@@ -369,4 +396,5 @@ pub(super) async fn check(
             .unwrap(),
         7 // Two original offers plus five independent claim scenarios.
     );
+    release_diagnostic("approval_checks.complete");
 }

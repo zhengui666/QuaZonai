@@ -10,6 +10,7 @@ pub(super) async fn check(
     revoked: &HandoffViewV1,
     offer: &HandoffViewV1,
 ) {
+    release_diagnostic("claim_preflight.begin");
     let request = HandoffClaimV1 {
         schema_version: SchemaV1,
         external_claim_id: "claim-original".into(),
@@ -46,6 +47,8 @@ pub(super) async fn check(
         .await,
         Err(StoreError::Conflict)
     ));
+    release_diagnostic("claim_preflight.complete");
+    release_diagnostic("claim_transfer_rollback.begin");
     sqlx::raw_sql("CREATE FUNCTION app.fail_transfer_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'transfer_fixture'; END $$; CREATE TRIGGER fail_transfer_fixture BEFORE INSERT ON app.handoff_transfers FOR EACH ROW EXECUTE FUNCTION app.fail_transfer_fixture();").execute(pool).await.unwrap();
     assert!(Box::pin(store.claim_handoff(
         machine,
@@ -68,6 +71,13 @@ pub(super) async fn check(
         0
     );
     sqlx::raw_sql("DROP TRIGGER fail_transfer_fixture ON app.handoff_transfers; DROP FUNCTION app.fail_transfer_fixture();").execute(pool).await.unwrap();
+    release_diagnostic("claim_transfer_rollback.complete");
+    release_diagnostic("claim_concurrent.begin");
+    release_future_size("store.claim_handoff", || {
+        store.claim_handoff(machine, "claim-original", offer.id, &request, |id, size| {
+            f.read(id, size)
+        })
+    });
     let (a, b) = tokio::join!(
         Box::pin(
             store.claim_handoff(machine, "claim-original", offer.id, &request, |id, size| f
@@ -84,6 +94,7 @@ pub(super) async fn check(
         serde_json::to_value(&a.resource).unwrap(),
         serde_json::to_value(&b.resource).unwrap()
     );
+    release_diagnostic("claim_concurrent.complete");
     assert_eq!(a.resource.handoff.state, HandoffStateV1::Claimed);
     assert_eq!(a.resource.package.release_id, offer.release_id);
     assert_eq!(
@@ -141,7 +152,12 @@ pub(super) async fn check(
         replay.resource.handoff.claimed_at,
         a.resource.handoff.claimed_at
     );
+    release_diagnostic("claim_expiry.begin");
+    release_future_size("claims.expiry", || {
+        expiry(pool, store, operator, f, offer, "expiry")
+    });
     Box::pin(expiry(pool, store, operator, f, offer, "expiry")).await;
+    release_diagnostic("claim_expiry.complete");
     assert_eq!(
         store.handoff(operator, offer.id).await.unwrap().state,
         HandoffStateV1::Claimed
@@ -257,6 +273,7 @@ pub(super) async fn check(
     for scenario in ["scheduled", "revoke-race", "reject", "competing-claims"] {
         Box::pin(expiry(pool, store, operator, f, offer, scenario)).await;
     }
+    release_diagnostic("claim_checks.complete");
 }
 
 async fn expiry(
@@ -267,6 +284,9 @@ async fn expiry(
     claimed: &HandoffViewV1,
     scenario: &str,
 ) {
+    if std::env::var_os("QZ_RELEASE_DIAGNOSTIC").is_some() {
+        eprintln!("QZ_RELEASE_DIAGNOSTIC expiry_scenario={scenario} phase=begin");
+    }
     let original = store.release(operator, claimed.release_id).await.unwrap();
     let down = store
         .create_downstream(
@@ -322,6 +342,7 @@ async fn expiry(
         )
         .await
         .unwrap();
+    release_diagnostic("claim_expiry.approval.begin");
     let approval = Box::pin(store.approve_release(
         operator,
         &format!("{scenario}-approval"),
@@ -339,6 +360,7 @@ async fn expiry(
     .await
     .unwrap()
     .resource;
+    release_diagnostic("claim_expiry.approval.complete");
     let principal = store
         .create_principal(
             operator,
@@ -384,6 +406,7 @@ async fn expiry(
     };
     let expires_at =
         chrono::Utc::now() + chrono::Duration::seconds(if scenario == "expiry" { 4 } else { 60 });
+    release_diagnostic("claim_expiry.offer.begin");
     let offer = Box::pin(store.offer_handoff(
         operator,
         &format!("{scenario}-offer"),
@@ -399,6 +422,7 @@ async fn expiry(
     .await
     .unwrap()
     .resource;
+    release_diagnostic("claim_expiry.offer.complete");
     assert_eq!(store.reconcile_handoffs().await.unwrap(), 0);
     if scenario == "reject" {
         let mut ack = HandoffAckV1 {
