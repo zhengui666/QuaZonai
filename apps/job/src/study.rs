@@ -77,8 +77,9 @@ pub fn evaluate(
         let mut selection = request.source_selection.clone();
         selection.event_end_ns = cutoff;
         selection.decision_cutoff_ns = cutoff;
+        let market = crate::catalog::load_catalog(catalog, &selection)?;
         let prepared = crate::portfolio::prepare(
-            catalog,
+            &market,
             &selection,
             &request.mandate,
             &request.execution_settings,
@@ -99,10 +100,11 @@ pub fn evaluate(
             .checked_add(prepared.consumed_fuel.get())
             .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))?;
         let bar_notionals = if request.rolling_liquidity.is_some() {
-            crate::catalog::last_bar_notionals(&crate::catalog::load_catalog(catalog, &selection)?)?
+            crate::catalog::last_bar_notionals(&market)?
         } else {
             Vec::new()
         };
+        drop(market);
         let source_assets = domain::execution::portfolio_study_liquidity_assets(
             request,
             cutoff,
