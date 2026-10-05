@@ -1,6 +1,6 @@
 //! Operator-only historical data preparation. Not a scientific job or trading client.
 //! Native clients own HTTP, pagination, asset parsing and market-data serialization.
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use contracts::SchemaV1;

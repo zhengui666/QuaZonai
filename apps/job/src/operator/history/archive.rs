@@ -1,6 +1,6 @@
 //! Public vendor schemas stop at this operator boundary. Scientific jobs stay offline.
-use super::{MAX_INPUT_BYTES, MAX_ROWS, NativeArchive, epoch_ns, historical_instrument};
-use anyhow::{Context, Result, bail, ensure};
+use super::{epoch_ns, historical_instrument, NativeArchive, MAX_INPUT_BYTES, MAX_ROWS};
+use anyhow::{bail, ensure, Context, Result};
 use chrono::{DateTime, Utc};
 use nautilus_data::aggregation::BarBuilder;
 use nautilus_model::{
@@ -1146,24 +1146,20 @@ mod tests {
         args.end_seconds = 120;
         assert_eq!(prepare(&args).unwrap().trades.len(), 1);
         args.end_seconds = 86_460;
-        assert!(
-            prepare(&args)
-                .unwrap_err()
-                .to_string()
-                .contains("SELECTION_WINDOW_OUTSIDE_REQUEST")
-        );
+        assert!(prepare(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("SELECTION_WINDOW_OUTSIDE_REQUEST"));
         args.start_seconds = 0;
         args.end_seconds = 120;
         alter_selection(&args, |value| {
             value["plan"]["request"]["start_date"] = "1970-01-02".into();
             value["plan"]["request"]["end_date"] = "1970-01-03".into();
         });
-        assert!(
-            prepare(&args)
-                .unwrap_err()
-                .to_string()
-                .contains("SELECTION_WINDOW_OUTSIDE_REQUEST")
-        );
+        assert!(prepare(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("SELECTION_WINDOW_OUTSIDE_REQUEST"));
     }
 
     #[test]
@@ -1239,14 +1235,12 @@ mod tests {
                     let end = bytes.len() - 4;
                     bytes[4..end].fill(0);
                     fs::write(&cached, bytes).unwrap();
-                    assert!(
-                        hf_selection::load(
-                            args.selection.as_ref().unwrap(),
-                            args.start_seconds,
-                            args.end_seconds
-                        )
-                        .is_ok()
-                    );
+                    assert!(hf_selection::load(
+                        args.selection.as_ref().unwrap(),
+                        args.start_seconds,
+                        args.end_seconds
+                    )
+                    .is_ok());
                     assert!(SerializedFileReader::new(fs::File::open(&cached).unwrap()).is_err());
                 }
                 "reordered" => {
@@ -1325,12 +1319,10 @@ mod tests {
             let moved = directory.path().join("original");
             fs::rename(&target, &moved).unwrap();
             symlink(&moved, &target).unwrap();
-            assert!(
-                prepare(&args)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("SELECTION_SYMLINK")
-            );
+            assert!(prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("SELECTION_SYMLINK"));
             assert!(!args.output.exists());
         }
     }
@@ -1408,19 +1400,15 @@ mod tests {
             directory.path(),
             &[row("137_1_1", 10, "420000"), row("137_1_1", 10, "500000")],
         );
-        assert!(
-            prepare(&args)
-                .unwrap_err()
-                .to_string()
-                .contains("CONFLICTING_SOURCE_EVENT")
-        );
+        assert!(prepare(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("CONFLICTING_SOURCE_EVENT"));
         args.start_seconds = 1;
-        assert!(
-            prepare(&args)
-                .unwrap_err()
-                .to_string()
-                .contains("FULL_BAR_INTERVALS_REQUIRED")
-        );
+        assert!(prepare(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("FULL_BAR_INTERVALS_REQUIRED"));
         args.start_seconds = 0;
         fs::write(
             directory
@@ -1429,12 +1417,10 @@ mod tests {
             b"corrupted",
         )
         .unwrap();
-        assert!(
-            prepare(&args)
-                .unwrap_err()
-                .to_string()
-                .contains("SOURCE_CHECKSUM_MISMATCH")
-        );
+        assert!(prepare(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("SOURCE_CHECKSUM_MISMATCH"));
         assert!(!args.output.exists());
     }
 
@@ -1539,14 +1525,12 @@ mod tests {
                 .len(),
             1
         );
-        assert!(
-            book(
-                &make("60", "[[0.9,2]]", "[[0.75,5.76]]"),
-                &instrument(),
-                &mut archive,
-                &mut Quality::default()
-            )
-            .is_err()
-        );
+        assert!(book(
+            &make("60", "[[0.9,2]]", "[[0.75,5.76]]"),
+            &instrument(),
+            &mut archive,
+            &mut Quality::default()
+        )
+        .is_err());
     }
 }

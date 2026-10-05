@@ -1,5 +1,5 @@
 //! Offline handoff for qz.hf_selection/1. No HTTP, hashes or scientific admission.
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 use std::{
