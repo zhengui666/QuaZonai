@@ -23,12 +23,6 @@ pub(super) async fn check(
         supersedes_handoff_id: None,
         expires_at: current.valid_until,
     };
-    release_diagnostic("handoff_preflight.begin");
-    release_future_size("store.offer_handoff", || {
-        store.offer_handoff(actor, "stale-approval-offer", &request, |id, size| {
-            f.read(id, size)
-        })
-    });
     assert!(matches!(
         Box::pin(
             store.offer_handoff(actor, "stale-approval-offer", &request, |id, size| f
@@ -69,7 +63,6 @@ pub(super) async fn check(
         .await,
         Err(StoreError::Conflict)
     ));
-    release_diagnostic("handoff_preflight.complete");
     let original_probe = store
         .downstream_readiness(actor, current.downstream_id)
         .await
@@ -113,8 +106,6 @@ pub(super) async fn check(
         current.readiness_observation_id,
         "a new same-revision probe may serve the original approval"
     );
-    release_diagnostic("handoff_readiness.complete");
-    release_diagnostic("handoff_original_offer.begin");
     let (a, b) = tokio::join!(
         Box::pin(
             store.offer_handoff(actor, "original-offer", &request, |id, size| f
@@ -126,7 +117,6 @@ pub(super) async fn check(
         )
     );
     let (a, b) = (a.unwrap(), b.unwrap());
-    release_diagnostic("handoff_original_offer.complete");
     assert_eq!(a.resource.id, b.resource.id);
     assert_ne!(a.replayed, b.replayed);
     let first = a.resource;
@@ -141,7 +131,6 @@ pub(super) async fn check(
         .await,
         Err(StoreError::Conflict)
     ));
-    release_diagnostic("handoff_replacement_approval.begin");
     let same = Box::pin(store.approve_release(
         actor,
         "replacement-approval",
@@ -152,7 +141,6 @@ pub(super) async fn check(
     .await
     .unwrap()
     .resource;
-    release_diagnostic("handoff_replacement_approval.complete");
     let mut replacement = request.clone();
     replacement.approval_id = same.id;
     assert!(matches!(
@@ -165,7 +153,6 @@ pub(super) async fn check(
         .await,
         Err(StoreError::Conflict)
     ));
-    release_diagnostic("handoff_sibling_approval.begin");
     let approval = Box::pin(store.approve_release(
         actor,
         "sibling-approval",
@@ -176,7 +163,6 @@ pub(super) async fn check(
     .await
     .unwrap()
     .resource;
-    release_diagnostic("handoff_sibling_approval.complete");
     let mut next = HandoffOfferV1 {
         release_id: sibling.id,
         approval_id: approval.id,
@@ -209,7 +195,6 @@ pub(super) async fn check(
             .await
             .unwrap()
             .resource;
-    release_diagnostic("handoff_next_offer.complete");
     assert_eq!(second.supersedes_handoff_id, Some(first.id));
     assert_eq!(second.delivery_sequence.get(), 2);
     let revoked = store.handoff(actor, first.id).await.unwrap();
@@ -303,15 +288,10 @@ pub(super) async fn check(
         let read = store.handoff(&machine, second.id).await;
         if allowed {
             assert_eq!(read.unwrap().id, second.id);
-            release_diagnostic("claims.begin");
-            release_future_size("claims.check", || {
-                claims::check(pool, store, actor, &machine, f, &first, &second)
-            });
             Box::pin(claims::check(
                 pool, store, actor, &machine, f, &first, &second,
             ))
             .await;
-            release_diagnostic("claims.complete");
         } else {
             assert!(matches!(read, Err(StoreError::Forbidden)));
             let ack = HandoffAckV1 {
@@ -357,7 +337,6 @@ pub(super) async fn check(
             Err(StoreError::Forbidden)
         ));
     }
-    release_diagnostic("handoff_checks.complete");
 }
 
 async fn probe(

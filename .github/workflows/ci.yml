@@ -103,38 +103,7 @@ jobs:
           set -euo pipefail
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
           rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv > /tmp/store-evidence/rustc.txt
-          # Temporary bounded static inspection of this invocation's normal Cargo artifact.
-          # No execution, debugger attachment or runtime memory inspection of the ELF.
-          layout_status=0
-          if rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p store --test experiment_compilations --no-run --message-format=json > /tmp/store-evidence/release-artifacts.json 2> /tmp/store-evidence/release-artifact-build.log; then
-            executable=$(python3 - /tmp/store-evidence/release-artifacts.json <<'PY_ARTIFACT'
-          import json
-          import sys
-          from pathlib import Path
-          executables = set()
-          for line in Path(sys.argv[1]).read_text().splitlines():
-              record = json.loads(line)
-              target = record.get("target", {})
-              if record.get("reason") == "compiler-artifact" and target.get("name") == "experiment_compilations" and target.get("kind") == ["test"] and record.get("executable"):
-                  executables.add(record["executable"])
-          if len(executables) != 1:
-              raise SystemExit("expected one executable from this Store compiler-artifact invocation")
-          print(executables.pop())
-          PY_ARTIFACT
-            ) || layout_status=$?
-            if [ "$layout_status" -eq 0 ]; then
-              python3 tests/native/release_stack_layout.py "$executable" 2>&1 | tee /tmp/store-evidence/release-stack-layout.log || layout_status=$?
-            fi
-          else
-            layout_status=$?
-          fi
-          cat /tmp/store-evidence/release-artifact-build.log || layout_status=$?
-          printf '%s\n' "$layout_status" > /tmp/store-evidence/release-stack-layout-exit.txt || layout_status=$?
-          regression_status=0
-          QZ_RELEASE_DIAGNOSTIC=1 bash tests/native/portfolio_release_regression.sh rustup run "$RUSTUP_TOOLCHAIN" cargo || regression_status=$?
-          # Static inspection failure must not prevent either original case from executing.
-          if [ "$layout_status" -ne 0 ]; then exit "$layout_status"; fi
-          if [ "$regression_status" -ne 0 ]; then exit "$regression_status"; fi
+          bash tests/native/portfolio_release_regression.sh rustup run "$RUSTUP_TOOLCHAIN" cargo
       - name: Preserve exact migrations and qualification of the evidence
         if: always()
         run: |

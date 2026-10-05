@@ -2054,47 +2054,13 @@ async fn study_admission(
     }
 }
 
-pub(super) fn release_diagnostic(phase: &str) {
-    if std::env::var_os("QZ_RELEASE_DIAGNOSTIC").is_some() {
-        eprintln!("QZ_RELEASE_DIAGNOSTIC phase={phase}");
-    }
-}
-
-// Only inspect the inferred type. Never invoke the factory, construct another
-// future, poll it, or change the original test's pinning and execution.
-pub(super) fn release_future_size<F: std::future::Future>(
-    phase: &str,
-    _factory: impl FnOnce() -> F,
-) {
-    if std::env::var_os("QZ_RELEASE_DIAGNOSTIC").is_some() {
-        eprintln!(
-            "QZ_RELEASE_DIAGNOSTIC future={phase} bytes={}",
-            std::mem::size_of::<F>()
-        );
-    }
-}
-
 #[sqlx::test(migrations = "../../migrations")]
 async fn release_freezes_original_package_and_replays_without_republishing(pool: PgPool) {
-    release_diagnostic("test.begin");
-    release_future_size("release_scenario", || {
-        release_scenario(pool.clone(), contracts::forward::ForwardEnvironmentV1::Live)
-    });
-    if std::env::var_os("QZ_RELEASE_DIAGNOSTIC").is_some() {
-        eprintln!(
-            "QZ_RELEASE_DIAGNOSTIC native_task={} native_build={} native_report={} target_package={}",
-            std::mem::size_of::<contracts::execution::NativeTaskParametersV1>(),
-            std::mem::size_of::<contracts::science::NativePortfolioBuildRequestV1>(),
-            std::mem::size_of::<contracts::science::NativePortfolioBuildResultV1>(),
-            std::mem::size_of::<contracts::delivery::TargetPackageV1>()
-        );
-    }
     Box::pin(release_scenario(
         pool,
         contracts::forward::ForwardEnvironmentV1::Live,
     ))
     .await;
-    release_diagnostic("test.complete");
 }
 
 // T33 transaction evidence only: upstream model responses remain controlled.
@@ -2277,16 +2243,6 @@ pub(super) fn release_policy(policy: &mut contracts::research::EvaluationPolicyC
 }
 
 async fn release_scenario(pool: PgPool, environment: contracts::forward::ForwardEnvironmentV1) {
-    release_diagnostic("qualified_chain.begin");
-    release_future_size("qualified_chain_policy", || {
-        qualified_chain_policy(
-            pool.clone(),
-            cycle_support::Liquidity::None,
-            environment,
-            contracts::research::DataUse::ResearchAndPaper,
-            release_policy,
-        )
-    });
     // Controlled protocol evidence tests the transaction, not real-market acceptance.
     let (store, actor, f, build, candidate, _directory) = Box::pin(qualified_chain_policy(
         pool.clone(),
@@ -2297,12 +2253,7 @@ async fn release_scenario(pool: PgPool, environment: contracts::forward::Forward
     ))
     .await
     .unwrap();
-    release_diagnostic("qualified_chain.complete");
-    release_future_size("release_check", || {
-        release_check(&pool, &store, &actor, &f, &build, candidate)
-    });
     Box::pin(release_check(&pool, &store, &actor, &f, &build, candidate)).await;
-    release_diagnostic("release_scenario.complete");
 }
 
 pub(super) async fn original_release_intent(
@@ -2377,15 +2328,10 @@ pub(super) async fn original_releases(
     contracts::delivery::ReleaseViewV1,
     contracts::delivery::ReleaseCreateV1,
 )> {
-    release_diagnostic("original_release_intent.begin");
-    release_future_size("original_release_intent", || {
-        original_release_intent(pool, store, actor, f, build, candidate)
-    });
     let intent = Box::pin(original_release_intent(
         pool, store, actor, f, build, candidate,
     ))
     .await;
-    release_diagnostic("original_release_intent.complete");
     if store
         .candidate(actor, candidate)
         .await
@@ -2415,16 +2361,6 @@ pub(super) async fn original_releases(
         );
         return None;
     }
-    release_diagnostic("release_failed_publication.begin");
-    release_future_size("store.create_release.failed_publication", || {
-        store.create_release(
-            actor,
-            "release-failed",
-            &intent,
-            |id, size| f.read(id, size),
-            |_| async { Err(StoreError::Integrity) },
-        )
-    });
     let failed = Box::pin(store.create_release(
         actor,
         "release-failed",
@@ -2433,7 +2369,6 @@ pub(super) async fn original_releases(
         |_| async { Err(StoreError::Integrity) },
     ))
     .await;
-    release_diagnostic("release_failed_publication.complete");
     assert!(matches!(failed, Err(StoreError::Integrity)), "{failed:?}");
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.releases")
@@ -2449,16 +2384,6 @@ pub(super) async fn original_releases(
                 .map_err(|_| StoreError::Integrity),
         )
     };
-    release_diagnostic("release_concurrent_publication.begin");
-    release_future_size("store.create_release.original", || {
-        store.create_release(
-            actor,
-            "release-original",
-            &intent,
-            |id, size| f.read(id, size),
-            publish,
-        )
-    });
     let (left, right) = tokio::join!(
         Box::pin(store.create_release(
             actor,
@@ -2476,7 +2401,6 @@ pub(super) async fn original_releases(
         ))
     );
     let (left, right) = (left.unwrap(), right.unwrap());
-    release_diagnostic("release_concurrent_publication.complete");
     assert_ne!(left.replayed, right.replayed);
     assert_eq!(left.resource.id, right.resource.id);
     let view = store.release(actor, left.resource.id).await.unwrap();
@@ -2508,7 +2432,6 @@ pub(super) async fn original_releases(
             .unwrap(),
         1
     );
-    release_diagnostic("release_receipt_replay.begin");
     let replay = Box::pin(store.create_release(
         actor,
         "release-original",
@@ -2518,7 +2441,6 @@ pub(super) async fn original_releases(
     ))
     .await
     .unwrap();
-    release_diagnostic("release_receipt_replay.complete");
     assert!(replay.replayed);
     let changed = contracts::delivery::ReleaseCreateV1 {
         evaluation_id: Id::new(),
@@ -2541,7 +2463,6 @@ pub(super) async fn original_releases(
         })
         .await
         .unwrap());
-    release_diagnostic("release_sibling.begin");
     let sibling = Box::pin(store.create_release(
         actor,
         "release-sibling",
@@ -2558,7 +2479,6 @@ pub(super) async fn original_releases(
     .await
     .unwrap()
     .resource;
-    release_diagnostic("release_sibling.complete");
     let first = store
         .releases(
             actor,
@@ -2602,29 +2522,13 @@ async fn release_check(
     build: &contracts::portfolio::PortfolioBuildRequestV1,
     candidate: Id,
 ) {
-    release_diagnostic("original_releases.begin");
-    release_future_size("original_releases", || {
-        original_releases(pool, store, actor, f, build, candidate)
-    });
     let Some((view, sibling, intent)) =
         Box::pin(original_releases(pool, store, actor, f, build, candidate)).await
     else {
         return;
     };
-    release_diagnostic("original_releases.complete");
-    release_diagnostic("release_decisions.begin");
-    release_future_size("release_decision_checks", || {
-        release_decision_checks(pool, store, actor, &view, &sibling)
-    });
     release_decision_checks(pool, store, actor, &view, &sibling).await;
-    release_diagnostic("release_decisions.complete");
-    release_diagnostic("approvals.begin");
-    release_future_size("approvals.check", || {
-        approvals::check(pool, store, actor, f, &view, &sibling)
-    });
     Box::pin(approvals::check(pool, store, actor, f, &view, &sibling)).await;
-    release_diagnostic("approvals.complete");
-    release_diagnostic("release_expiry.begin");
     let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(pool)
         .await
@@ -2652,19 +2556,16 @@ async fn release_check(
         &intent,
         |id, size| f.read(id, size),
         |object| async move {
-            release_diagnostic("release_expiry.callback.begin");
             let package: contracts::delivery::TargetPackageV1 =
                 serde_json::from_slice(&object.bytes).unwrap();
             assert!(package.valid_until <= deadline);
             f.objects.put(object.id, &object.bytes).unwrap();
             *recorded.lock().unwrap() = Some(object.id);
             tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-            release_diagnostic("release_expiry.callback.complete");
             Ok(())
         },
     ))
     .await;
-    release_diagnostic("release_expiry.complete");
     assert!(
         matches!(
             expired,
@@ -2699,7 +2600,6 @@ async fn release_check(
     .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.resource.valid_until, view.valid_until);
-    release_diagnostic("release_check.complete");
 }
 
 async fn release_decision_checks(
