@@ -215,7 +215,34 @@ jobs:
           # Includes native account/HTTP and App Server -> stdio MCP -> HTTP -> PG.
           QUAZONAI_NATIVE_CLI_BIN=$(python3 tests/native/build_portable_cli.py rustup run "$RUSTUP_TOOLCHAIN" cargo)
           export QUAZONAI_NATIVE_CLI_BIN
-          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked --no-fail-fast -p store -p server --features server/native-codex -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
+          test_status=0
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked --no-fail-fast -p store -p server --features server/native-codex -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log || test_status=$?
+          # Temporary PR166 diagnosis: reuse the original emitted harness and default stack.
+          if test "$test_status" -ne 0 && grep -Eq "thread 'qualified_portfolio::release_freezes_original_package_and_replays_without_republishing'.*has overflowed its stack" /tmp/store-evidence/tests.log; then
+            mapfile -t release_harnesses < <(sed -n 's/.*Running tests\/experiment_compilations\.rs (\(target\/debug\/deps\/experiment_compilations-[0-9a-f]*\)).*/\1/p' /tmp/store-evidence/tests.log)
+            if test "${#release_harnesses[@]}" -eq 1 && test -x "${release_harnesses[0]}" && {
+              command -v gdb >/dev/null || (sudo apt-get update && sudo apt-get install --no-install-recommends -y gdb) > /tmp/store-evidence/release-stack-gdb-install.log 2>&1
+            }; then
+              ulimit -c 0
+              diagnostic_status=0
+              timeout --signal=TERM --kill-after=5s 180s env -u RUST_MIN_STACK gdb --batch --return-child-result \
+                -ex 'set pagination off' -ex 'set confirm off' \
+                -ex 'set print frame-arguments none' -ex 'set print entry-values no' \
+                -ex 'set debuginfod enabled off' -ex 'set disable-randomization off' \
+                -ex 'handle SIGSEGV stop print nopass' -ex 'handle SIGABRT stop print nopass' \
+                -ex run -ex 'bt 96' -ex 'info registers rsp rbp rip r11' -ex 'x/32i $pc' \
+                -ex 'python import re; s = gdb.execute("info symbol $pc", to_string=True); print(s); m = re.search(r" \+ ([0-9]+) in section ", s); gdb.execute("x/24i $pc-" + (m.group(1) if m else "0"))' \
+                --args "${release_harnesses[0]}" \
+                qualified_portfolio::release_freezes_original_package_and_replays_without_republishing \
+                --exact --test-threads=4 --nocapture \
+                > /tmp/store-evidence/release-stack-gdb.log 2>&1 || diagnostic_status=$?
+              printf 'debugger_exit=%s; the original suite exit remains %s\n' "$diagnostic_status" "$test_status" >> /tmp/store-evidence/release-stack-gdb.log
+            else
+              printf 'Diagnostic unavailable: expected one emitted executable harness; see official apt installation log if gdb was unavailable\n' > /tmp/store-evidence/release-stack-gdb.log
+            fi
+            cat /tmp/store-evidence/release-stack-gdb.log
+          fi
+          if test "$test_status" -ne 0; then exit "$test_status"; fi
           git diff --exit-code
       - name: Remove the job-only native sandbox profile
         if: always()
