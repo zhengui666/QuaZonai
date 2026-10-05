@@ -526,7 +526,27 @@ where
 }
 
 impl Store {
-    pub async fn claim_handoff<R, Read>(
+    #[inline(never)]
+    pub fn claim_handoff<'a, R, Read>(
+        &'a self,
+        actor: &'a Actor,
+        key: &'a str,
+        id: Id,
+        request: &'a HandoffClaimV1,
+        read: R,
+    ) -> impl std::future::Future<Output = Result<CommandResult<HandoffClaimViewV1>, StoreError>>
+           + 'a
+           + use<'a, R, Read>
+    where
+        R: FnMut(Id, DbCounter) -> Read + 'a,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>> + 'a,
+    {
+        // Build the owned state machine before the caller polls it. Keeping
+        // its construction frame separate also bounds nested caller temporaries.
+        Box::pin(self.claim_handoff_inner(actor, key, id, request, read))
+    }
+
+    async fn claim_handoff_inner<R, Read>(
         &self,
         actor: &Actor,
         key: &str,
@@ -559,3 +579,4 @@ impl Store {
         })
     }
 }
+

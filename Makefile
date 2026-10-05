@@ -1,21 +1,32 @@
-.PHONY: check check-unit check-store check-http check-docs check-links check-cli check-architecture check-web require-test-database
+.PHONY: check check-unit check-release-regression check-regression check-store check-http check-docs check-links check-cli check-architecture check-web require-test-database
 
 # Use the repository pin even when a distribution cargo precedes rustup in PATH.
 RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)
 CARGO := rustup run $(RUST_TOOLCHAIN) cargo
 LYCHEE ?= lychee
 
-# Routine checks are Rust compilation/build/tests and require a disposable test database.
-check: require-test-database
-	$(CARGO) check --locked --workspace --all-targets --all-features
-	$(CARGO) build --locked --workspace --all-targets --features job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test,server/native-codex
-	$(CARGO) test --locked --workspace --features job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test,server/native-codex
+# Routine CI scope: Rust compilation/build, rules/local components, and two real-PG stack cases.
+RUST_BUILD_FEATURES := job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test,server/native-codex
 
-# Rust tests without PostgreSQL or container acceptance.
+check: check-unit check-release-regression
+
+# Check all targets/features; actually link only production lib/bin targets.
+# Integration/example linking and doctests are retained in check-regression.
 check-unit:
 	$(CARGO) check --locked --workspace --all-targets --all-features
-	$(CARGO) build --locked --workspace --all-targets --features job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test,server/native-codex
-	$(CARGO) test --locked --workspace --exclude store --exclude server --features job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test -- --test-threads=1
+	$(CARGO) build --locked --workspace --lib --bins --features $(RUST_BUILD_FEATURES)
+	bash tests/native/rust_unit.sh $(CARGO)
+
+check-release-regression: require-test-database
+	bash tests/native/portfolio_release_regression.sh $(CARGO)
+
+# Former full default Rust suite, without the routine classification filters.
+# Native Codex, portable CLI, systemd and filesystem setup: rust-regression.yml.
+# OCI/native-science acceptance remains in its existing focused workflows.
+check-regression: require-test-database
+	$(CARGO) check --locked --workspace --all-targets --all-features
+	$(CARGO) build --locked --workspace --all-targets --features $(RUST_BUILD_FEATURES)
+	$(CARGO) test --locked --no-fail-fast --workspace --features $(RUST_BUILD_FEATURES) -- --test-threads=1
 
 check-store: require-test-database
 	$(CARGO) test --locked -p store
