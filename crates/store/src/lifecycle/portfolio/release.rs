@@ -222,12 +222,18 @@ where
         read,
     )
     .await?;
-    let NativeTaskParametersV1::BuildPortfolio {
-        request: frozen, ..
-    } = serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?
-    else {
-        return Err(StoreError::Integrity);
-    };
+    // Delivery revalidation reaches this decode through a deep lifecycle poll
+    // chain. Decode only owned bytes off that stack; keep SQL with this task.
+    let frozen = tokio::task::spawn_blocking(move || {
+        let NativeTaskParametersV1::BuildPortfolio { request, .. } =
+            serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?
+        else {
+            return Err(StoreError::Integrity);
+        };
+        Ok(request)
+    })
+    .await
+    .map_err(|_| StoreError::Integrity)??;
     if frozen.mandate != mandate.content
         || frozen.members.len() != build.members.len()
         || binding.try_get::<String, _>("image_ref")? != row.try_get::<String, _>("image_ref")?
