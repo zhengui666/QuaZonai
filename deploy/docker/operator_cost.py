@@ -274,15 +274,25 @@ def payload_program(layout='shared'):
             + ', ' + repr(layout) + ')))\n')
 
 
-def native_validation_errors(payload, expected, application_hashes, layout='shared'):
+def source_operator_modules(source=None):
+    source = Path(source) if source is not None else Path(__file__).resolve().parents[2]
+    modules = {'source_plugins.py', 'acquire.py', 'providers.py', 'snapshot.py', 'binance_vision.py'}
+    lines = (source / 'deploy/docker/Dockerfile').read_text(encoding='utf-8').splitlines()
+    if any(line.lstrip().startswith('COPY ') and 'runtimes/data/hf_dataset.py' in line.split()[1:-1]
+           for line in lines):
+        modules.add('hf_dataset.py')
+    return modules
+
+
+def native_validation_errors(payload, expected, application_hashes, layout='shared', source=None):
     if layout not in ('standalone', 'shared'):
         raise ValueError('Unknown operator executable layout.')
     errors = list(payload.get('inventory_errors', []))
     operators = {'source-tools'} if layout == 'shared' else {'catalog-prepare', 'polymarket-history'}
     launchers = {'catalog-prepare', 'polymarket-history'} if layout == 'shared' else set()
     names = {'server', 'runtime'} | operators
-    expected_files = {'build-metrics.json', 'source_plugins.py', 'acquire.py', 'providers.py',
-                      'snapshot.py', 'binance_vision.py'} | {'bin/' + name for name in operators | launchers}
+    expected_files = {'build-metrics.json'} | source_operator_modules(source) | {
+        'bin/' + name for name in operators | launchers}
     if payload.get('layout') != layout:
         errors.append('Measured operator layout does not match the explicit selector.')
     files = payload.get('operator_payload_file_bytes', {})
@@ -341,8 +351,8 @@ def native_validation_errors(payload, expected, application_hashes, layout='shar
     return errors
 
 
-def validate_native_build(payload, expected, application_hashes, layout='shared'):
-    errors = native_validation_errors(payload, expected, application_hashes, layout)
+def validate_native_build(payload, expected, application_hashes, layout='shared', source=None):
+    errors = native_validation_errors(payload, expected, application_hashes, layout, source=source)
     if errors:
         raise ValueError('; '.join(errors))
 
@@ -414,7 +424,7 @@ def report(directory, baseline, candidate, revision, version, layout='shared', e
         payload = result['payload'] = after.pop('payload')
         try:
             result['validation_errors'].extend(native_validation_errors(
-                payload, expected or {}, before.get('application_elf_sha256', {}), layout))
+                payload, expected or {}, before.get('application_elf_sha256', {}), layout, source=source))
         except Exception as error:
             result['validation_errors'].append('Payload validation: ' + type(error).__name__ + ': ' + str(error))
     if (before.get('application_elf_sha256') != after.get('application_elf_sha256')

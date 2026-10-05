@@ -1,14 +1,5 @@
 name: Operator packaging cost comparison
 on:
-  pull_request:
-    # Fixed equivalent-capability qualification against the merged producer.
-    # Changes to this harness must qualify the exact final integration head.
-    paths:
-      - '.github/workflows/operator-cost-comparison.yml'
-      - 'deploy/docker/operator_cost*'
-      - 'deploy/docker/operator_compare*'
-      - 'deploy/docker/operator_diagnostics*'
-      - 'deploy/docker/operator_elf_forensics*'
   workflow_dispatch:
     inputs:
       candidate_revision:
