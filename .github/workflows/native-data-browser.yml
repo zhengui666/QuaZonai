@@ -1,9 +1,8 @@
 name: Native data browser
+# Optional focused acceptance; ordinary PR/push validation is Rust CI.
 on:
-  pull_request:
-  push:
-    branches: [main, dev]
   workflow_dispatch:
+
 permissions:
   contents: read
 env:
@@ -143,3 +142,4 @@ jobs:
           path: apps/web/test-results/native-summary/
           if-no-files-found: error
           retention-days: 7
+

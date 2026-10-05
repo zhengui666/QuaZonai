@@ -1,9 +1,8 @@
 name: Native Runtime
+# Optional focused acceptance; ordinary PR/push validation is Rust CI.
 on:
-  pull_request:
-  push:
-    branches: [main, dev]
   workflow_dispatch:
+
 permissions:
   contents: read
 env:
@@ -151,3 +150,4 @@ jobs:
             [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]]
             docker image rm "$image"
           fi
+

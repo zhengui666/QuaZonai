@@ -3,6 +3,7 @@ use super::*;
 use contracts::delivery::{
     PackageOriginV1, PackageTargetV1, ReleaseCreateV1, ReleaseViewV1, TargetPackageV1,
 };
+use std::future::Future;
 
 fn view(row: &PgRow) -> Result<ReleaseViewV1, StoreError> {
     Ok(ReleaseViewV1 {
@@ -159,7 +160,24 @@ where
     Ok((tx, view))
 }
 
-pub(super) async fn package<R, Read>(
+pub(super) fn package<'a, 'tx: 'a, R, Read>(
+    tx: &'a mut Tx<'tx>,
+    project: Id,
+    intent: &'a ReleaseCreateV1,
+    release: Id,
+    read: &'a mut R,
+) -> impl Future<Output = Result<TargetPackageV1, StoreError>> + 'a + use<'a, 'tx, R, Read>
+where
+    R: FnMut(Id, DbCounter) -> Read + 'a,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>> + 'a,
+{
+    // Construct and move the large state machine before it is polled, so this
+    // constructor's temporary stack frame unwinds before lifecycle validation.
+    // Keep the same borrowed transaction, callbacks and eligibility checks.
+    Box::pin(package_inner(tx, project, intent, release, read))
+}
+
+async fn package_inner<R, Read>(
     tx: &mut Tx<'_>,
     project: Id,
     intent: &ReleaseCreateV1,
@@ -250,14 +268,15 @@ where
         read,
     )
     .await?;
-    // Keep the remaining owned report decode and pure validation off the
-    // lifecycle poll stack too; source reads and eligibility stay with SQL.
+    // Decode and validate on the blocking stack, then keep the report boxed.
+    // Its inline JoinHandle output and poll storage would otherwise return
+    // to the nested lifecycle stack; source checks stay with this transaction.
     let (frozen, report) = tokio::task::spawn_blocking(move || {
         let report: NativePortfolioBuildResultV1 =
             serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
         domain::execution::portfolio_build_result(&frozen, &report)
             .map_err(|_| StoreError::Integrity)?;
-        Ok::<_, StoreError>((frozen, report))
+        Ok::<_, StoreError>((frozen, Box::new(report)))
     })
     .await
     .map_err(|_| StoreError::Integrity)??;

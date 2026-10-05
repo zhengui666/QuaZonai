@@ -42,8 +42,9 @@ pub fn build(
         original == request.current_weights,
         "PORTFOLIO_CURRENT_WEIGHTS_SOURCE_MISMATCH"
     );
+    let market = crate::catalog::load_catalog(catalog, &request.selection)?;
     let prepared = prepare(
-        catalog,
+        &market,
         &request.selection,
         &request.mandate,
         &request.execution_settings,
@@ -52,13 +53,11 @@ pub fn build(
         &mut read,
     )?;
     let bar_notionals = if request.rolling_liquidity.is_some() {
-        crate::catalog::last_bar_notionals(&crate::catalog::load_catalog(
-            catalog,
-            &request.selection,
-        )?)?
+        crate::catalog::last_bar_notionals(&market)?
     } else {
         Vec::new()
     };
+    drop(market);
     let source_assets = domain::execution::portfolio_rolling_liquidity_assets(
         &request.selection,
         &request.assets,
@@ -96,9 +95,11 @@ pub(crate) struct Prepared {
     pub consumed_fuel: DbCounter,
 }
 
-/// Pure model/catalog preparation, deliberately without any weights-source identity.
+/// Borrow the caller's selected market so forecasts and liquidity use the same
+/// authorized native rows. No catalog cache or state is shared across cutoffs.
+/// Deliberately without any weights-source identity.
 pub(crate) fn prepare(
-    catalog: &Path,
+    market: &crate::catalog::NativeMarketData,
     selection: &NativeBarSelectionV1,
     mandate: &MandateContentV1,
     settings: &NativeSimulationSettingsV1,
@@ -107,8 +108,7 @@ pub(crate) fn prepare(
     mut read: impl FnMut(Id) -> Result<Vec<u8>>,
 ) -> Result<Prepared> {
     ensure!((2..=256).contains(&models.len()), "PORTFOLIO_MEMBERS");
-    let market = crate::catalog::load_catalog(catalog, selection)?;
-    crate::simulation::execution_market(&market, settings)?;
+    crate::simulation::execution_market(market, settings)?;
     let until = selection
         .decision_cutoff_ns
         .get()
@@ -198,7 +198,7 @@ pub(crate) fn prepare(
             .map(|id| read(id).and_then(|bytes| Ok(serde_json::from_slice(&bytes)?)))
             .transpose()?;
         let result = crate::forecast::forecast_market(
-            &market,
+            market,
             &NativeForecastRequestV1 {
                 schema_version: SchemaV1,
                 selection: selection.clone(),

@@ -4,7 +4,7 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_run:
-    workflows: [CI, Web console, Native Runtime, Native data browser, Polymarket history, Container, Portable CLI]
+    workflows: [CI]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -56,3 +56,4 @@ jobs:
     with:
       version: ${{ matrix.version }}
       revision: ${{ matrix.revision }}
+

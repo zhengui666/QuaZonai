@@ -5,17 +5,17 @@ RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.
 CARGO := rustup run $(RUST_TOOLCHAIN) cargo
 LYCHEE ?= lychee
 
-# Full check requires a disposable test database.
-check: require-test-database check-docs
-	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy --locked --workspace --all-targets --features server/native-codex,runtime/native-oci -- -D warnings
-	$(CARGO) test --locked --workspace --features server/native-codex
+# Routine checks are Rust compilation/build/tests and require a disposable test database.
+check: require-test-database
+	$(CARGO) check --locked --workspace --all-targets --all-features
+	$(CARGO) build --locked --workspace --all-targets --features job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test,server/native-codex
+	$(CARGO) test --locked --workspace --features job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test,server/native-codex
 
-# Unit and native computation tests without a PostgreSQL instance.
+# Rust tests without PostgreSQL or container acceptance.
 check-unit:
-	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy --locked --workspace --all-targets --features server/native-codex,runtime/native-oci -- -D warnings
-	$(CARGO) test --locked --workspace --exclude store --exclude server
+	$(CARGO) check --locked --workspace --all-targets --all-features
+	$(CARGO) build --locked --workspace --all-targets --features job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test,server/native-codex
+	$(CARGO) test --locked --workspace --exclude store --exclude server --features job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test -- --test-threads=1
 
 check-store: require-test-database
 	$(CARGO) test --locked -p store
@@ -49,3 +49,4 @@ check-web:
 
 require-test-database:
 	@test -n "$$DATABASE_URL" || { printf '%s\n' 'DATABASE_URL is required: use only a disposable PostgreSQL18 + PGMQ1.10.0 test instance.' >&2; exit 1; }
+

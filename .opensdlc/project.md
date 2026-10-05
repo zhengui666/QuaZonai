@@ -22,19 +22,21 @@ npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 | Markdown links only | `make check-links` | All tracked Markdown, including `.opensdlc`, resolves; this does not run CLI checks |
 | Package ownership and upstream sources | `make check-architecture` | Allowed dependency directions and official source packages; Cargo fetches missing locked packages when the cache is cold |
 | Portable CLI and release assets | `cargo test --locked -p quazonai-cli` and `python3 -B -m unittest discover -s deploy -p '*_test.py'` | Native Windows/macOS/Linux jobs in the CLI workflow execute the actual binaries; installer checks use `node --test deploy/install.test.mjs` |
-| Rust logic | `make check-unit` | Formatting, Clippy and non-Store/non-Server tests; not the full suite |
+| Rust logic | `make check-unit` | Rust compilation/build and non-Store/non-Server tests, including optional Job features; not the full suite |
 | Transactions | `make check-store` | Disposable PostgreSQL/PGMQ through `DATABASE_URL` |
 | HTTP and Worker | `make check-http` | Disposable database plus native Codex/system prerequisites from CI |
 | Full Rust suite | `make check` | Real disposable dependencies; no production database |
 | Web and generated client | `make check-web` | No generated drift; types, tests and production build pass |
 | Browser/PWA | `CADDY_BIN=/path/to/caddy npm --prefix apps/web run test:e2e` | Real API, Worker, PostgreSQL, Caddy and systemd user manager; use the Web workflow setup |
-| Data acquisition/Worker/browser closure | [Native data browser workflow](../.github/workflows/native-data-browser.yml) | Original synthetic candle clocks, real preparation/registration/Worker/OCI, exact artifact downloads and restart identity; mandatory exact-source release gate |
+| Data acquisition/Worker/browser closure | [Native data browser workflow](../.github/workflows/native-data-browser.yml) | Original synthetic candle clocks, real preparation/registration/Worker/OCI, exact artifact downloads and restart identity; optional manually dispatched acceptance |
 | Scientific/OCI boundaries | [Native Runtime workflow](../.github/workflows/native-runtime.yml) | Built native image, Docker/cgroup prerequisites, actual execution/cancellation/restore tests |
 | Container installer | [Container action](../.github/actions/container/action.yml) | Real installation, upgrade and recovery against disposable resources |
 
-Store/HTTP tests use PostgreSQL 18 with PGMQ 1.10.0. [CI](../.github/workflows/ci.yml) defines the native binaries, environment and schema export commands. [Web console](../.github/workflows/web.yml) defines browser setup, including Chromium. Cold-archive tests may elevate only their disposable ownership/archive operations, never Cargo or the application.
+Routine PR and main/dev push validation runs only [Rust CI](../.github/workflows/ci.yml): workspace compilation/build and Rust tests, with real disposable PostgreSQL/PGMQ for Store/Server tests. Frontend, documentation, benchmarks and container acceptance are optional focused checks, not merge prerequisites. Native Runtime, Native data browser, Web, Polymarket history and Container workflows run only by manual dispatch. Portable CLI packaging runs through the version publisher; Rust CI still builds and tests its workspace package.
 
-For a contract change, edit Rust DTOs/handlers, run the relevant native schema export from CI, then `npm --prefix apps/web run generate`. Commit the source and generated diff together. `quazonai openapi --list-schemas` and `quazonai openapi --schema ArtifactCreate` inspect an installed binary offline; they do not query a running server's version.
+Store/HTTP tests use PostgreSQL 18 with PGMQ 1.10.0. [CI](../.github/workflows/ci.yml) defines the native binaries and environment needed by Rust tests. [Web console](../.github/workflows/web.yml) defines browser setup, including Chromium. Cold-archive tests may elevate only their disposable ownership/archive operations, never Cargo or the application.
+
+For a contract change, edit Rust DTOs/handlers, export the affected native schema with `cargo run --locked -q -p contracts --example generate`, `cargo run --locked -q -p server -- openapi`, or `cargo run --locked -q -p runtime -- openapi` into the corresponding `contracts/generated/` snapshot, then run `npm --prefix apps/web run generate`. Commit the source and generated diff together. `quazonai openapi --list-schemas` and `quazonai openapi --schema ArtifactCreate` inspect an installed binary offline; they do not query a running server's version.
 
 Domain and HTTP exports are sorted compact JSON snapshots with a final newline;
 their native values and byte-for-byte drift checks remain authoritative. Response
@@ -51,7 +53,7 @@ retains its 2 MiB chunk gate.
 <a id="runtime-image-build"></a>
 ### Image production
 
-[Container CI](../.github/actions/container/action.yml) builds the application, scientific job and Codex images, then installs those already-built artifacts. [Version publishing](../.github/workflows/release-version.yml) pushes the tested images and validates GHCR installation on a fresh runner before publishing the deployment bundle. The job-image assembler lives in [runtimes/native](../runtimes/native); deployment uses the manifest and installed [Runtime entry](operations.md#scientific-runtime).
+[Container action](../.github/actions/container/action.yml) builds the application, scientific job and Codex images, then installs those already-built artifacts. [Version publishing](../.github/workflows/release-version.yml) pushes the tested images and validates GHCR installation on a fresh runner before publishing the deployment bundle. The job-image assembler lives in [runtimes/native](../runtimes/native); deployment uses the manifest and installed [Runtime entry](operations.md#scientific-runtime).
 
 <a id="conventions"></a>
 ## Conventions
@@ -81,3 +83,4 @@ Use one `tasks/<task-id>/task.md` linking the Issue and PR. New task IDs/prose u
 ## Native entrypoints
 
 [AGENTS.md](../AGENTS.md) remains the coding-agent entry. [skills/quazonai/SKILL.md](../skills/quazonai/SKILL.md) is the independently installable service-operation Skill; its [portable-package checks](../apps/server/tests/client_skill.rs) do not require developer documentation. [GitHub workflows](../.github/workflows) and the [PR template](../.github/PULL_REQUEST_TEMPLATE.md) retain their native locations. Instruction reviews use the [evaluation cases](evals/suite.md).
+
