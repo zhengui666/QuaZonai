@@ -19,6 +19,7 @@ import urllib.parse
 
 import acquire
 import binance_vision
+import hf_dataset
 import providers
 import snapshot
 
@@ -601,6 +602,33 @@ def snapshot_capabilities():
             "verify": Capability(snapshot_verify_options, snapshot_verify)}
 
 
+def hf_dataset_options(parser, download=False):
+    parser.add_argument("--dataset", required=True, help="public Hugging Face dataset repository ID")
+    parser.add_argument("--revision", help="ordinary branch/tag/ref; resolved once for this request")
+    parser.add_argument("--include", action="append", help="explicit file glob; repeatable")
+    parser.add_argument("--manifest", help="actual qz.hf_partitions/1 index path in the repository")
+    parser.add_argument("--market", action="append", help="exact indexed market identifier; repeatable")
+    parser.add_argument("--start-date", help="inclusive YYYY-MM-DD partition date")
+    parser.add_argument("--end-date", help="exclusive YYYY-MM-DD partition date")
+    byte_budget_options(parser)
+    if download:
+        parser.add_argument("--cache-dir", type=Path, required=True, help="reusable repository/revision file cache")
+        parser.add_argument("--output", type=Path, required=True, help="new request directory containing selection.json")
+
+
+def hf_dataset_plan(args):
+    return hf_dataset.plan(args.dataset, args.include, args.revision, args.max_bytes,
+                           args.manifest, args.market, args.start_date, args.end_date)
+
+
+def hf_dataset_download(args):
+    return hf_dataset.download(hf_dataset_plan(args), args.cache_dir, args.output)
+
+
+def hf_dataset_verify_options(parser):
+    parser.add_argument("--selection", type=Path, required=True, help="existing selection.json request manifest")
+
+
 PLUGINS = {provider_id: http_plugin(provider_id) for provider_id in providers.PROVIDERS}
 PLUGINS["coinbase-candles"].capabilities["convert"] = Capability(candle_options, candle_convert)
 PLUGINS["coinbase-candles"].capabilities["prepare"] = Capability(
@@ -613,6 +641,13 @@ PLUGINS["coinbase-candles"].descriptor["limitations"].append(
     "Native conversion preserves bucket-end events and actual retrieval clocks; consult report admission limits")
 PLUGINS["hf-snapshot"] = source_plugin("hf-snapshot", "immutable public Hugging Face files",
     snapshot_capabilities(), ["Raw acquisition only; arbitrary Hugging Face Parquet has no native converter"])
+PLUGINS["hf-dataset"] = source_plugin("hf-dataset", "on-demand Hugging Face file partitions",
+    {"plan": Capability(hf_dataset_options, hf_dataset_plan, public_network=True),
+     "download": Capability(partial(hf_dataset_options, download=True), hf_dataset_download, public_network=True),
+     "verify": Capability(hf_dataset_verify_options, lambda args: hf_dataset.verify(args.selection))},
+    ["Market/date selection requires an actual repository partition index; otherwise use explicit file includes",
+     "Only requested file partitions are downloaded; overlapping requests share resumable cached files",
+     "Byte/format checks do not establish full market coverage, data-use rights, PIT or native conversion"])
 PLUGINS["polymarket-capture"] = source_plugin("polymarket-capture", "lokima-dual-capture",
     snapshot_capabilities() | {"convert": Capability(partial(history_options, capture=True),
                                                        partial(history_convert, capture=True)),
