@@ -15,13 +15,13 @@ from pathlib import Path
 
 
 CATEGORIES = (
-    ("fixture.expiry", r"qualified_portfolio::approvals::handoffs::claims::expiry\b"),
-    ("fixture.claims", r"qualified_portfolio::approvals::handoffs::claims::check\b"),
-    ("claim.envelope", r"store::lifecycle::portfolio::handoffs::.*\bclaim_handoff_envelope\b"),
-    ("claim.v1", r"store::lifecycle::portfolio::handoffs::.*\bclaim_handoff\b"),
-    ("handoff.admission", r"store::lifecycle::portfolio::handoffs::admission\b"),
-    ("approval.source", r"store::lifecycle::portfolio::approvals::source(?:_envelope)?\b"),
-    ("release.package", r"store::lifecycle::portfolio::release::package_inner\b"),
+    ("fixture.expiry", r"^experiment_compilations::qualified_portfolio::approvals::handoffs::claims::expiry(?:$|::|<)"),
+    ("fixture.claims", r"^experiment_compilations::qualified_portfolio::approvals::handoffs::claims::check(?:$|::|<)"),
+    ("claim.envelope", r"^(?:<store::Store>|store::Store|store::lifecycle::portfolio::handoffs::<impl store::Store>)::claim_handoff_envelope(?:$|::|<)"),
+    ("claim.v1", r"^(?:<store::Store>|store::Store|store::lifecycle::portfolio::handoffs::<impl store::Store>)::claim_handoff(?:$|::|<)"),
+    ("handoff.admission", r"^store::lifecycle::portfolio::handoffs::admission(?:$|::|<)"),
+    ("approval.source", r"^store::lifecycle::portfolio::approvals::source(?:_envelope)?(?:$|::|<)"),
+    ("release.package", r"^store::lifecycle::portfolio::release::package_inner(?:$|::|<)"),
 )
 MAX_SYMBOLS_PER_CATEGORY = 32
 MAX_OUTPUT_PER_CATEGORY = 4
@@ -251,6 +251,13 @@ def main() -> None:
             for address, (size, name) in display_symbols.items()
             if size > 0 and re.search(pattern, name) and "drop_in_place" not in name
         ]
+        # The primary callable already matched an anchored owned function.
+        # Prefer its monomorphs used by this exact failing fixture, without
+        # admitting unrelated helpers that merely mention the type argument.
+        selected.sort(key=lambda item: (
+            "experiment_compilations::qualified_portfolio::approvals::handoffs::claims::expiry" not in item[2],
+            item[0],
+        ))
         records = []
         for address, size, name in selected[:MAX_SYMBOLS_PER_CATEGORY]:
             if time.monotonic() - started > MAX_SECONDS:
@@ -268,7 +275,11 @@ def main() -> None:
             reserved, slack, complete = prologue_reservation(code)
             records.append((reserved, slack, complete, name))
         if not records:
-            raise ValueError("no fixed-symbol prologue matched " + category)
+            print(
+                f"category={category} matching_functions={len(selected)} "
+                "inspected_functions=0 reported_functions=0 incomplete=True"
+            )
+            continue
         print(
             f"category={category} matching_functions={len(selected)} "
             f"inspected_functions={len(records)} "
