@@ -250,10 +250,17 @@ where
         read,
     )
     .await?;
-    let report: NativePortfolioBuildResultV1 =
-        serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
-    domain::execution::portfolio_build_result(&frozen, &report)
-        .map_err(|_| StoreError::Integrity)?;
+    // Keep the remaining owned report decode and pure validation off the
+    // lifecycle poll stack too; source reads and eligibility stay with SQL.
+    let (frozen, report) = tokio::task::spawn_blocking(move || {
+        let report: NativePortfolioBuildResultV1 =
+            serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
+        domain::execution::portfolio_build_result(&frozen, &report)
+            .map_err(|_| StoreError::Integrity)?;
+        Ok::<_, StoreError>((frozen, report))
+    })
+    .await
+    .map_err(|_| StoreError::Integrity)??;
     publication::eligibility(
         tx,
         project,
