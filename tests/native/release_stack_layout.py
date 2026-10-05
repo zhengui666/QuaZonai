@@ -18,7 +18,7 @@ CATEGORIES = (
     ("fixture.expiry", r"^experiment_compilations::qualified_portfolio::approvals::handoffs::claims::expiry(?:$|::|<)"),
     ("fixture.claims", r"^experiment_compilations::qualified_portfolio::approvals::handoffs::claims::check(?:$|::|<)"),
     ("claim.envelope", r"^(?:<store::Store>|store::Store|store::lifecycle::portfolio::handoffs::<impl store::Store>)::claim_handoff_envelope(?:$|::|<)"),
-    ("claim.v1", r"^(?:<store::Store>|store::Store|store::lifecycle::portfolio::handoffs::<impl store::Store>)::claim_handoff(?:$|::|<)"),
+    ("claim.v1", r"^(?:<store::Store>|store::Store|store::lifecycle::portfolio::handoffs::<impl store::Store>)::claim_handoff(?:_inner)?(?:$|::|<)"),
     ("handoff.admission", r"^store::lifecycle::portfolio::handoffs::admission(?:$|::|<)"),
     ("approval.source", r"^store::lifecycle::portfolio::approvals::source(?:_envelope)?(?:$|::|<)"),
     ("release.package", r"^store::lifecycle::portfolio::release::package_inner(?:$|::|<)"),
