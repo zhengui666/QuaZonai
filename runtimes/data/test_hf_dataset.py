@@ -261,8 +261,10 @@ class HfDatasetTest(unittest.TestCase):
         self.assertEqual(outside.read_bytes(), self.content["data/a.parquet"])
         target.unlink()
         target.write_bytes(self.content["data/a.parquet"])
+        different = hf_dataset.plan(DATASET, manifest="partitions.json", markets=["market-a"],
+                                    start_date="2026-09-01", end_date="2026-09-03")
         with self.assertRaisesRegex(ValueError, "different request"):
-            hf_dataset.download(selection | {"request": {"includes": ["different"]}}, self.cache, self.output)
+            hf_dataset.download(different, self.cache, self.output)
 
     def test_duplicate_concurrent_requests_share_one_completed_file(self):
         selection = self.plan()
@@ -341,7 +343,7 @@ class HfDatasetTest(unittest.TestCase):
                              "--cache-dir", str(self.cache), "--output", str(self.output)]), 0)
         self.assertEqual(json.loads(output.getvalue())["schema"], hf_dataset.SELECTION_SCHEMA)
         descriptor = next(p for p in source_plugins.plugin_descriptors() if p["id"] == "hf-dataset")
-        self.assertEqual(descriptor["capabilities"], ["download", "plan", "verify"])
+        self.assertEqual(descriptor["capabilities"], ["convert", "download", "plan", "prepare", "verify"])
         dockerfile = Path(__file__).parents[2] / "deploy/docker/Dockerfile"
         self.assertIn("runtimes/data/hf_dataset.py", dockerfile.read_text())
 

@@ -80,6 +80,25 @@ class InstalledHfSourceTest(unittest.TestCase):
         self.assertEqual((original / "request.json").read_bytes(), b"original partial request")
         self.assertEqual(self.calls, [])
 
+    def test_actual_inventory_native_bridge_is_offline_with_separate_literal_mounts(self):
+        native_inputs = self.root / "native inputs"
+        native_inputs.mkdir()
+        examples = [
+            ["convert", "hf-dataset", "--selection", str(native_inputs / "selection.json"),
+             "--format", "moose-fills", "--instruments", str(native_inputs / "instruments.json"),
+             "--start-seconds", "1788220800", "--end-seconds", "1788307200"],
+            ["prepare", "hf-dataset", "--native-output", str(native_inputs / "native"),
+             "--declaration", str(native_inputs / "declaration.json"),
+             "--selection", str(native_inputs / "native-dataset-selection.json")],
+        ]
+        for index, arguments in enumerate(examples):
+            arguments = [*arguments, "--output", str(self.outputs / f"native-{index}")]
+            command = self.command(arguments, inputs=[native_inputs], output=self.outputs)
+            self.assertEqual(command[command.index("--network") + 1], "none")
+            self.assertIn(f"type=bind,source={native_inputs},target={native_inputs},readonly", command)
+            self.assertIn(f"type=bind,source={self.outputs},target={self.outputs}", command)
+            self.assertEqual(command[-len(arguments):], arguments)
+
 
 if __name__ == "__main__":
     unittest.main()

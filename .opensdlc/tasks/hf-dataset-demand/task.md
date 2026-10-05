@@ -7,9 +7,13 @@ free local storage, and support Hugging Face data-source plugins with on-demand
 downloads. This slice implements acquisition in the existing operator source
 entrypoint; uploading, deletion and account setup are separate authorized work.
 
-Delivery base: `6139e5421cfb45aebfd56d5d65510103ddf6c428` in
-`zhengui666/QuaZonai`. Keep this feature separate from the current release fix
-and its CI. The delivery PR is to be linked when the independent branch exists.
+First acquisition delivery: `efd0057b99e3c4333da899334c330039c6332611` in
+`zhengui666/QuaZonai`, [PR167](https://github.com/zhengui666/QuaZonai/pull/167).
+Its temporary base is the native strategy-paper branch at
+`6139e5421cfb45aebfd56d5d65510103ddf6c428` and it depends on
+[PR166](https://github.com/zhengui666/QuaZonai/pull/166). Keep feature changes
+separate from the release repair. A final `dev` delivery needs that dependency
+merged or an explicit correct rebase; the temporary base does not prove independence.
 
 ## Implementation
 
@@ -30,11 +34,17 @@ inventory/help and patch application checks. Independent review must examine
 the final slice. Installed dispatch uses the real registry; mock Docker metadata
 checks are not a built container run or live Hub/native-research acceptance.
 
-## Remaining production bridge
+## Explicit production bridge and remaining acceptance
 
-The existing native history converter accepts its original `snapshot.json`,
-not the new `selection.json`. A subsequent thin explicit pre-research adapter
-must connect acquired files to native conversion/preparation, actual catalog
-registration and existing source/dataset/frozen-input validation. Preserve the
-existing scientific job's offline boundary and never download after input
-freezing. This acquisition slice alone does not complete that research chain.
+The native history converter now has a separate explicit `--selection` branch
+for acquired cache Parquet files; the original `--snapshot` path stays compatible.
+Python `convert`/`prepare` reuse native row conversion and final catalog-metadata
+handoffs without computing new file/instruments checksums. Real partition facts,
+original definitions, source clock meaning and ordinary mutation observations
+remain explicit. The single pinned native library target and independent review
+must actually pass; mocked Python publications alone are not native acceptance.
+
+Actual Runtime/catalog registration and existing source/dataset/frozen-input
+validation still follow the returned metadata handoff. Preserve scientific jobs'
+offline boundary and never download after input freezing. Do not call the full
+research chain complete before actual registration, fresh validation and execution.

@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 from threading import Lock
 
+import acquire
 import providers
 import snapshot
 
@@ -208,6 +209,40 @@ def validate_plan(selection):
             or not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision)):
         raise ValueError("invalid on-demand dataset revision")
     snapshot.checked_path(repository)
+    if (not isinstance(selection.get("requested_revision"), str) or not selection["requested_revision"].strip()
+            or selection.get("coverage") != "NOT_ASSERTED"
+            or selection.get("download_granularity") != "FILE_PARTITION"
+            or selection.get("selection_bounds") != "[start_date,end_date)"):
+        raise ValueError("on-demand selection scope differs from its original file-partition contract")
+    request = selection.get("request")
+    if not isinstance(request, dict):
+        raise ValueError("on-demand selection has no original request")
+    includes, markets = request.get("includes"), request.get("markets")
+    if (not isinstance(includes, list) or not isinstance(markets, list)
+            or any(not isinstance(m, str) or not m.strip() for m in markets)):
+        raise ValueError("invalid on-demand file or market request")
+    for pattern in includes:
+        snapshot.checked_path(pattern)
+    lower, upper = request.get("start_date"), request.get("end_date")
+    if lower is None and upper is None:
+        lower_date = upper_date = None
+    else:
+        lower_date, upper_date = date(lower), date(upper)
+        if lower_date >= upper_date:
+            raise ValueError("invalid on-demand request date range")
+    if not (includes or markets or lower_date is not None):
+        raise ValueError("on-demand selection has no explicit file, market or date request")
+    index = selection.get("partition_index")
+    if index is None:
+        if markets or lower_date is not None:
+            raise ValueError("on-demand market/date request has no actual partition index")
+    elif not isinstance(index, dict):
+        raise ValueError("invalid on-demand partition index record")
+    else:
+        index_path = snapshot.checked_path(index.get("path"))
+        providers.integer(index.get("size"), "partition index byte size", maximum=MAX_INDEX_BYTES)
+        if index.get("url") != snapshot.repository_file_url(repository, revision, index_path):
+            raise ValueError("partition index source differs from its selected repository revision")
     budget = providers.integer(selection.get("max_bytes"), "max_bytes", minimum=1, maximum=2**63 - 1)
     files = selection.get("files")
     if not isinstance(files, list) or not 1 <= len(files) <= 100_000:
@@ -221,8 +256,27 @@ def validate_plan(selection):
                 or item.get("url") != snapshot.repository_file_url(repository, revision, path)):
             raise ValueError("on-demand file identity differs from the repository revision")
         seen.add(path)
+        if includes and not any(fnmatch.fnmatchcase(path, pattern) for pattern in includes):
+            raise ValueError("selected file does not match the original explicit file request")
+        partition = item.get("partition")
+        if index is not None:
+            if not isinstance(partition, dict):
+                raise ValueError("selected file has no original partition mapping")
+            source_markets = partition.get("markets")
+            if (not isinstance(source_markets, list) or not source_markets
+                    or any(not isinstance(m, str) or not m.strip() for m in source_markets)
+                    or len(set(source_markets)) != len(source_markets) or partition.get("format") != item["format"]):
+                raise ValueError("invalid original partition market/format mapping")
+            a, b = date(partition.get("start_date")), date(partition.get("end_date"))
+            if (a >= b or (markets and not set(markets).intersection(source_markets))
+                    or (lower_date is not None and (b <= lower_date or a >= upper_date))):
+                raise ValueError("selected file does not overlap its original partition request")
+        elif partition is not None:
+            raise ValueError("selected file claims a partition mapping without its source index")
         total += providers.integer(item.get("size"), "source file byte size", maximum=budget)
-    if total > budget or total != selection.get("total_bytes"):
+    declared_total = providers.integer(selection.get("total_bytes"), "total_bytes", maximum=budget)
+    if (total > budget or total != declared_total
+            or any(not any(fnmatch.fnmatchcase(path, pattern) for path in seen) for pattern in includes)):
         raise ValueError("on-demand selection exceeds or differs from its byte budget")
 
 
@@ -304,19 +358,78 @@ def verify(selection_path):
     path = Path(os.path.abspath(selection_path))
     snapshot.safe_local(path.parent, path.name)
     result = snapshot.fetch_local_manifest(path)
+    return validate_manifest(result, check_files=True)
+
+
+def validate_manifest(result, check_files=False):
+    """Validate preserved request/file identities; optional original-cache byte/format readback."""
+    if not isinstance(result, dict):
+        raise ValueError("on-demand selection manifest must be an object")
     if result.get("schema") != SELECTION_SCHEMA:
         raise ValueError("unsupported on-demand selection manifest")
     plan = result.get("plan")
     validate_plan(plan)
-    root = Path(result.get("cache_root", ""))
-    if not root.is_absolute() or not isinstance(result.get("files"), list) or len(result["files"]) != len(plan["files"]):
+    retrieved_at = acquire.utc_clock(result.get("retrieved_at"))
+    if retrieved_at > acquire.utc_clock(acquire.now()):
+        raise ValueError("on-demand selection observation is in the future")
+    if not isinstance(result.get("cache_root"), str):
+        raise ValueError("invalid on-demand cache root")
+    root = Path(result["cache_root"])
+    if (not root.is_absolute() or ".." in root.parts or not isinstance(result.get("files"), list)
+            or len(result["files"]) != len(plan["files"])):
         raise ValueError("invalid on-demand cache file list")
+    downloaded, cached = 0, 0
     for item, recorded in zip(plan["files"], result["files"]):
-        target = snapshot.safe_local(root, "files/" + item["path"])
-        if (not isinstance(recorded, dict) or any(recorded.get(k) != v for k, v in item.items())
+        target = (snapshot.safe_local(root, "files/" + item["path"]) if check_files
+                  else root / "files" / item["path"])
+        if (not isinstance(recorded, dict) or set(recorded) != set(item) | {"local_path", "cached", "resumed_bytes", "validation"}
+                or any(recorded.get(k) != v for k, v in item.items())
                 or recorded.get("local_path") != str(target)):
             raise ValueError("cached file record differs from the original request")
-        inspect_file(target, item)
+        resumed = providers.integer(recorded.get("resumed_bytes"), "resumed_bytes", maximum=item["size"])
+        scopes = {"parquet": ("PARQUET_ENVELOPE",), "zip": ("ARCHIVE_HEADER",), "gzip": ("ARCHIVE_HEADER",),
+                  "json": ("JSON_DOCUMENT", "JSON_PREFIX_ONLY"), "jsonl": ("JSONL_FIRST_ROW",),
+                  "csv": ("CSV_FIRST_ROW",), "opaque": ("BYTE_SIZE_ONLY",)}
+        if type(recorded.get("cached")) is not bool or recorded.get("validation") not in scopes[item["format"]]:
+            raise ValueError("cached file record has an invalid byte/format validation scope")
+        cached += int(recorded["cached"])
+        downloaded += 0 if recorded["cached"] else item["size"] - resumed
+        if check_files:
+            inspect_file(target, item)
+    if (providers.integer(result.get("downloaded_bytes"), "downloaded_bytes", maximum=plan["total_bytes"]) != downloaded
+            or providers.integer(result.get("cached_files"), "cached_files", maximum=len(plan["files"])) != cached):
+        raise ValueError("cached file totals differ from the original request")
     return {"repository": plan["repository"], "revision": plan["revision"],
             "files": len(plan["files"]), "total_bytes": plan["total_bytes"],
-            "validation": "BYTE_SIZE_AND_DECLARED_FORMAT", "download_granularity": "FILE_PARTITION"}
+            "validation": "BYTE_SIZE_AND_DECLARED_FORMAT" if check_files else "REQUEST_FILE_IDENTITIES_ONLY",
+            "download_granularity": "FILE_PARTITION"}
+
+
+def native_window(selection, start_seconds, end_seconds):
+    """A native UTC window may narrow, never widen a requested partition date range."""
+    providers.integer(start_seconds, "start_seconds")
+    providers.integer(end_seconds, "end_seconds")
+    if start_seconds >= end_seconds:
+        raise ValueError("selection requires start_seconds < end_seconds")
+    request = selection["plan"].get("request")
+    if not isinstance(request, dict):
+        raise ValueError("on-demand selection has no original request")
+    start, end = request.get("start_date"), request.get("end_date")
+    if bool(start) != bool(end):
+        raise ValueError("on-demand selection has an incomplete date request")
+    if start:
+        lower = datetime.datetime.combine(date(start), datetime.time.min, datetime.timezone.utc)
+        upper = datetime.datetime.combine(date(end), datetime.time.min, datetime.timezone.utc)
+        if lower >= upper or start_seconds < int(lower.timestamp()) or end_seconds > int(upper.timestamp()):
+            raise ValueError("native conversion window exceeds the requested partition dates")
+
+
+def file_observations(selection):
+    """Ordinary local file observations catch mutation during native conversion without hashes."""
+    result = []
+    for item in selection["files"]:
+        path = snapshot.safe_local(Path(selection["cache_root"]), "files/" + item["path"])
+        observed = path.stat()
+        result.append((str(path), observed.st_dev, observed.st_ino, observed.st_size,
+                       observed.st_mtime_ns, observed.st_ctime_ns))
+    return result

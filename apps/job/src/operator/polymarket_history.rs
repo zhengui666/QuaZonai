@@ -1,6 +1,6 @@
 //! Operator-only historical data preparation. Not a scientific job or trading client.
 //! Native clients own HTTP, pagination, asset parsing and market-data serialization.
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use contracts::SchemaV1;
@@ -49,7 +49,7 @@ enum Command {
     Chain(archive::chain::Arguments),
     /// Convert matching dual live captures with original Gamma metadata and resolution messages.
     Capture(archive::capture::Arguments),
-    /// Convert a verified public Parquet snapshot; select native instruments and a UTC window.
+    /// Convert an original snapshot or already-cached HF selection with an explicit native format.
     Archive(archive::Arguments),
     /// Read public history through the pinned Nautilus Rust clients. Coverage remains unproven.
     Fetch {
@@ -530,10 +530,17 @@ async fn fetch(slug: &str, start: u64, end: u64, max_trades: u32) -> Result<Nati
     }
     Ok(NativeArchive {
         schema_version: SchemaV1,
-        source_reference: format!("nautilus-polymarket/{NATIVE_VERSION}:market/{slug};seconds=[{start},{end});per_outcome_limit={max_trades}"),
+        source_reference: format!(
+            "nautilus-polymarket/{NATIVE_VERSION}:market/{slug};seconds=[{start},{end});per_outcome_limit={max_trades}"
+        ),
         source_observed_at: observed,
         source_metadata: serde_json::to_value(market)?,
-        instruments, trades, quotes: Vec::new(), deltas: Vec::new(), bars: Vec::new(), closes: Vec::new(),
+        instruments,
+        trades,
+        quotes: Vec::new(),
+        deltas: Vec::new(),
+        bars: Vec::new(),
+        closes: Vec::new(),
     })
 }
 

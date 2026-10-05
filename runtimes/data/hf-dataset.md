@@ -6,9 +6,10 @@ expose it through the same operator source command. It downloads requested
 source-file partitions into one reusable cache. It does not automatically
 register a catalog, trigger a research Worker, or decode arbitrary Parquet as
 native Nautilus data. Existing `hf-snapshot` and archive adapters retain their
-original interfaces and manifests. In particular, the existing archive converter
-requires its original `snapshot.json`; the new `selection.json` is not that input.
-An explicit pre-research native-adapter bridge is a separate acceptance step.
+original interfaces and manifests. The explicit `convert hf-dataset` bridge
+uses the native archive adapter's separate `--selection` input; it never
+manufactures the older `snapshot.json` or its checksums. Native conversion and
+catalog preparation occur before registration/freezing, and remain offline.
 
 ## Select files before downloading
 
@@ -143,6 +144,85 @@ and is not converted into an automatic download gate or a rights grant.
 Uploading and using data still requires the actual applicable source rights.
 No local source data is deleted by this plugin.
 
+## Explicit offline native preparation
+
+For a release containing both this plugin and its matching native executable:
+
+```sh
+python3 -B runtimes/data/source_plugins.py convert hf-dataset \
+  --selection /data/hf/request-02/selection.json \
+  --format moose-fills --instruments /data/native-inputs/instruments.json \
+  --start-seconds 1788220800 --end-seconds 1788307200 --bar-seconds 60 \
+  --output /data/native-output/converted-01
+
+python3 -B runtimes/data/source_plugins.py prepare hf-dataset \
+  --native-output /data/native-output/converted-01 \
+  --declaration /data/native-inputs/catalog-declaration.json \
+  --selection /data/native-inputs/native-dataset-selection.json \
+  --output /data/prepared-output/catalog-01
+```
+
+The second `--selection` is the original native dataset-selection contract, not
+the HF acquisition request. Input definitions, declaration and native selection
+are actual operator-provided originals; the plugin does not generate them or
+infer historical fees, ticks, precision, instruments or point-in-time status.
+
+For installed execution, use separate owned output parents and literal inputs:
+
+```sh
+python3 /path/to/installed-bundle/manage.py source \
+  --directory /path/to/quazonai-installation \
+  --read-only /data/hf --read-only /data/native-inputs \
+  --output-parent /data/native-output \
+  -- convert hf-dataset --selection /data/hf/request-02/selection.json \
+  --format moose-fills --instruments /data/native-inputs/instruments.json \
+  --start-seconds 1788220800 --end-seconds 1788307200 --bar-seconds 60 \
+  --output /data/native-output/converted-01
+
+python3 /path/to/installed-bundle/manage.py source \
+  --directory /path/to/quazonai-installation \
+  --read-only /data/native-output --read-only /data/native-inputs \
+  --output-parent /data/prepared-output \
+  -- prepare hf-dataset --native-output /data/native-output/converted-01 \
+  --declaration /data/native-inputs/catalog-declaration.json \
+  --selection /data/native-inputs/native-dataset-selection.json \
+  --output /data/prepared-output/catalog-01
+```
+
+All named parents must already be owner-managed directories. Conversion reads
+only completed selected-cache Parquet files and original definitions. It
+accepts the explicit existing `moose-fills`, `time-seventeen-v2` or `joseph-books`
+schema and reuses the native row decoder. A format label or Parquet envelope is
+not enough: the native decoder must successfully read the actual required
+columns and produce nonempty observations. The new selection branch can use
+arbitrary safe partition paths and does not infer a schema from a filename.
+The old `--snapshot` input retains its original interface and layout semantics.
+
+UTC conversion windows may narrow a requested half-open date range. Index
+markets select file partitions; original instrument token IDs select decoded
+native observations. No market-to-token mapping is guessed when the actual
+source/definitions do not supply it. The original request and actual native
+window remain in detached source evidence.
+
+`selection.json`'s `retrieved_at` is the request's assembly/cache-reading time,
+not historical availability or the first HTTP download of reused bytes.
+Native source metadata states
+`REQUEST_SELECTION_AT_NOT_HISTORICAL_AVAILABILITY`. An explicitly supplied
+original v2 chain observation may advance the native observation to the later
+of the two recorded clocks; it does not establish historical PIT. Ordinary
+size, format and stat observations detect changes during conversion; no new
+source-file or instruments checksums are calculated on this branch.
+
+Preparation consumes the actually published native BAR catalog and original
+declaration/native selection. It can proceed without re-downloading or keeping
+the original raw cache mounted. It re-reads the native final catalog metadata
+and returns `catalog_registration.root` and `catalog_registration.metadata_file`
+for the existing operator registration flow. `joseph-books` is books-only and
+has no BAR preparation support. Preparation returns explicit unperformed
+steps; it does not register the Runtime/catalog, create source grants/datasets,
+freeze inputs, run `DATA_VALIDATE`, or start research. Those existing steps
+must complete before a research cycle. Scientific jobs remain offline.
+
 Official Hub behavior and file/revision interfaces:
 [download guide](https://huggingface.co/docs/huggingface_hub/guides/download),
 [Hub API](https://huggingface.co/docs/hub/api).
@@ -160,3 +240,18 @@ truncation, over-sized responses, format rejection, conflicts and symlinks.
 A disposable loopback HTTP server exercises real urllib redirects, interrupted
 source bytes, Range resumption and repeated cache reads. Its small source bytes
 are explicitly fixtures. It is not a live Hub download or native research run.
+
+`test_hf_bridge.py` checks offline Python orchestration and handoffs using
+explicit fixture native output. It does not prove actual native conversion.
+The Rust archive tests additionally contain real small Parquet writer/decoder
+and native catalog readback cases, including the older snapshot path. Run the
+single library target when the pinned compiler/dependencies are already cached:
+
+```sh
+cargo +1.98.1 test --offline --locked -p job --features polymarket-history \
+  --lib operator::polymarket_history::archive::tests -- --nocapture
+```
+
+This target must actually pass before claiming native bridge acceptance. Missing
+compiler/dependencies or insufficient disk is a reported blocker, not a pass;
+do not replace it with fake converters or a broad dependency rebuild.

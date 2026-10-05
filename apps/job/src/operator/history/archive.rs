@@ -1,6 +1,6 @@
 //! Public vendor schemas stop at this operator boundary. Scientific jobs stay offline.
-use super::{epoch_ns, historical_instrument, NativeArchive, MAX_INPUT_BYTES, MAX_ROWS};
-use anyhow::{bail, ensure, Context, Result};
+use super::{MAX_INPUT_BYTES, MAX_ROWS, NativeArchive, epoch_ns, historical_instrument};
+use anyhow::{Context, Result, bail, ensure};
 use chrono::{DateTime, Utc};
 use nautilus_data::aggregation::BarBuilder;
 use nautilus_model::{
@@ -39,6 +39,9 @@ mod v2;
 #[path = "chain.rs"]
 pub mod chain;
 
+#[path = "hf_selection.rs"]
+mod hf_selection;
+
 #[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Format {
@@ -53,8 +56,19 @@ pub enum Format {
 #[derive(clap::Args)]
 pub struct Arguments {
     /// snapshot.json emitted by runtimes/data/snapshot.py (fixed revision and hashes).
-    #[arg(long)]
-    snapshot: PathBuf,
+    #[arg(
+        long,
+        conflicts_with = "selection",
+        required_unless_present = "selection"
+    )]
+    snapshot: Option<PathBuf>,
+    /// selection.json emitted by hf-dataset; reads only already-cached selected Parquet.
+    #[arg(
+        long,
+        conflicts_with = "snapshot",
+        required_unless_present = "snapshot"
+    )]
+    selection: Option<PathBuf>,
     /// Optional original EVM evidence from runtimes/data/evm.py, for v2 corroboration.
     #[arg(long)]
     chain_evidence: Option<PathBuf>,
@@ -109,7 +123,7 @@ struct Quality {
     empty_books: usize,
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+fn read_input_bytes(path: &Path) -> Result<Vec<u8>> {
     let file = fs::File::open(path)?;
     ensure!(
         file.metadata()?.is_file() && file.metadata()?.len() <= MAX_INPUT_BYTES,
@@ -118,7 +132,11 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     let mut bytes = Vec::new();
     file.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)?;
     ensure!(bytes.len() as u64 <= MAX_INPUT_BYTES, "INPUT_FILE_LIMIT");
-    Ok(serde_json::from_slice(&bytes)?)
+    Ok(bytes)
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+    Ok(serde_json::from_slice(&read_input_bytes(path)?)?)
 }
 
 fn digest(path: &Path) -> Result<String> {
@@ -275,8 +293,11 @@ fn normalized_trade(
     ))
 }
 
-fn load_instruments(path: &Path) -> Result<(Vec<InstrumentAny>, BTreeMap<String, InstrumentAny>)> {
-    let instruments: Vec<InstrumentAny> = read_json(path)?;
+fn instruments_from_bytes(
+    bytes: &[u8],
+) -> Result<(Vec<InstrumentAny>, BTreeMap<String, InstrumentAny>)> {
+    // Preserve the original typed parser, including duplicate-field rejection.
+    let instruments: Vec<InstrumentAny> = serde_json::from_slice(bytes)?;
     ensure!((1..=256).contains(&instruments.len()), "INSTRUMENT_LIMIT");
     let mut by_token = BTreeMap::new();
     for instrument in &instruments {
@@ -296,6 +317,24 @@ fn load_instruments(path: &Path) -> Result<(Vec<InstrumentAny>, BTreeMap<String,
         );
     }
     Ok((instruments, by_token))
+}
+
+// Shared by the existing chain module through use super::*; keep its contract.
+fn load_instruments(path: &Path) -> Result<(Vec<InstrumentAny>, BTreeMap<String, InstrumentAny>)> {
+    instruments_from_bytes(&read_input_bytes(path)?)
+}
+
+fn load_instruments_with_definitions(
+    path: &Path,
+) -> Result<(
+    Vec<InstrumentAny>,
+    BTreeMap<String, InstrumentAny>,
+    serde_json::Value,
+)> {
+    let bytes = read_input_bytes(path)?;
+    let (instruments, by_token) = instruments_from_bytes(&bytes)?;
+    let definitions: serde_json::Value = serde_json::from_slice(&bytes)?;
+    Ok((instruments, by_token, definitions))
 }
 
 fn fill(
@@ -532,10 +571,49 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
             "FULL_BAR_INTERVALS_REQUIRED"
         );
     }
-    let snapshot: Snapshot = read_json(&args.snapshot)?;
-    let root = args.snapshot.parent().context("SNAPSHOT_ROOT")?;
-    let files = verified_files(&snapshot, root)?;
-    let (instruments, by_token) = load_instruments(&args.instruments)?;
+    // Keep the legacy checksum/provenance path intact. The explicit selection
+    // path checks ordinary cached bytes and format, never fabricates a snapshot.
+    let (snapshot, selection, root, files, file_states, repository, revision, retrieved_at) =
+        match (&args.snapshot, &args.selection) {
+            (Some(path), None) => {
+                let snapshot: Snapshot = read_json(path)?;
+                let root = path.parent().context("SNAPSHOT_ROOT")?.to_path_buf();
+                let files = verified_files(&snapshot, &root)?;
+                let repository = snapshot.repository.clone();
+                let revision = snapshot.revision.clone();
+                let retrieved_at = snapshot.retrieved_at;
+                (
+                    Some(snapshot),
+                    None,
+                    root,
+                    files,
+                    None,
+                    repository,
+                    revision,
+                    retrieved_at,
+                )
+            }
+            (None, Some(path)) => {
+                let selection = hf_selection::load(path, args.start_seconds, args.end_seconds)?;
+                (
+                    None,
+                    Some(selection.manifest),
+                    selection.files_root,
+                    selection.files,
+                    Some(selection.file_states),
+                    selection.repository,
+                    selection.revision,
+                    selection.retrieved_at,
+                )
+            }
+            _ => bail!("EXACTLY_ONE_ARCHIVE_SOURCE_REQUIRED"),
+        };
+    let (instruments, by_token, instrument_definitions) = if snapshot.is_some() {
+        let (instruments, by_token) = load_instruments(&args.instruments)?;
+        (instruments, by_token, serde_json::Value::Null)
+    } else {
+        load_instruments_with_definitions(&args.instruments)?
+    };
     ensure!(
         args.chain_evidence.is_none() || args.format == Format::TimeSeventeenV2,
         "CHAIN_EVIDENCE_REQUIRES_V2"
@@ -552,11 +630,11 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
         schema_version: contracts::SchemaV1,
         source_reference: format!(
             "https://huggingface.co/datasets/{}/tree/{}",
-            snapshot.repository, snapshot.revision
+            repository, revision
         ),
-        source_observed_at: chain.as_ref().map_or(snapshot.retrieved_at, |c| {
-            snapshot.retrieved_at.max(c.observed_at())
-        }),
+        source_observed_at: chain
+            .as_ref()
+            .map_or(retrieved_at, |c| retrieved_at.max(c.observed_at())),
         source_metadata: serde_json::Value::Null,
         instruments,
         trades: Vec::new(),
@@ -568,14 +646,20 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
     let mut quality = Quality::default();
     let mut identities = BTreeMap::new();
     for file in &files {
-        let relative = file.strip_prefix(root)?.to_string_lossy();
+        let relative = file.strip_prefix(&root)?.to_string_lossy();
         let prefix = match args.format {
             Format::MooseFills => "order_filled/",
             Format::TimeSeventeenV2 => "OrderFilled/",
             Format::JosephBooks => "orderbook_1min/",
         };
-        if !relative.starts_with(prefix) {
+        if snapshot.is_some() && !relative.starts_with(prefix) {
             continue;
+        }
+        if let Some(states) = &file_states {
+            ensure!(
+                states.get(file) == Some(&hf_selection::file_state(file)?),
+                "SELECTION_FILE_CHANGED"
+            );
         }
         let reader = SerializedFileReader::new(fs::File::open(file)?)?;
         for row in reader.get_row_iter(None)? {
@@ -644,6 +728,22 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
             );
             identities.insert(identity, signature);
         }
+        if let Some(states) = &file_states {
+            ensure!(
+                states.get(file) == Some(&hf_selection::file_state(file)?),
+                "SELECTION_FILE_CHANGED"
+            );
+        }
+    }
+    // A later file's scan can overlap a change to an earlier cached source.
+    // Recheck the complete selected set before constructing a publication.
+    if let Some(states) = &file_states {
+        for (file, state) in states {
+            ensure!(
+                state == &hf_selection::file_state(file)?,
+                "SELECTION_FILE_CHANGED"
+            );
+        }
     }
     ensure!(quality.selected_rows > 0, "EMPTY_ARCHIVE_SELECTION");
     if let Some(evidence) = &chain {
@@ -666,7 +766,7 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
         aggregate(&mut archive, interval)?;
     }
     archive.source_metadata = serde_json::json!({
-        "snapshot": snapshot, "format": args.format,
+        "format": args.format,
         "chain_evidence": chain.as_ref().map(chain::Evidence::metadata),
         "selection": {"start_seconds": args.start_seconds, "end_seconds": args.end_seconds, "bar_seconds": args.bar_seconds},
         "quality": quality,
@@ -678,8 +778,18 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
             Format::TimeSeventeenV2 => "TimeSeventeen v2 normalized float64 amounts, pUSD collateral. Optional matching raw Polygon logs supply original integers, contract and transaction identity; otherwise only unique exact six-decimal recovery is accepted. Exchange-counterparty summaries excluded; self trades retained; aggressor unknown; price rounding counted.",
             _ => "v1 USDC.e cash/token OrderFilled, excluding exchange-counterparty summaries; self trades retained; aggressor unknown; price rounding counted.",
         },
-        "instruments_sha256": digest(&args.instruments)?,
     });
+    if let Some(snapshot) = snapshot {
+        archive.source_metadata["snapshot"] = serde_json::to_value(snapshot)?;
+        archive.source_metadata["instruments_sha256"] = digest(&args.instruments)?.into();
+    } else {
+        archive.source_metadata["selection_manifest"] = selection.context("SELECTION_REQUIRED")?;
+        archive.source_metadata["clock_basis"] =
+            "REQUEST_SELECTION_AT_NOT_HISTORICAL_AVAILABILITY".into();
+        archive.source_metadata["instruments_bytes"] =
+            fs::metadata(&args.instruments)?.len().into();
+        archive.source_metadata["instruments_definitions"] = instrument_definitions;
+    }
     super::validate(&archive)?;
     Ok(archive)
 }
@@ -797,7 +907,8 @@ mod tests {
         )
         .unwrap();
         Arguments {
-            snapshot: manifest,
+            snapshot: Some(manifest),
+            selection: None,
             chain_evidence: None,
             instruments: definitions,
             format,
@@ -809,6 +920,418 @@ mod tests {
                 None
             },
             output: root.join("native"),
+        }
+    }
+
+    fn selection_fixture(root: &Path, rows: &[Row]) -> Arguments {
+        // Some platforms place their temporary directory beneath a symlink.
+        // The handoff's absolute root itself must have no symlink ancestors.
+        let root = root.canonicalize().unwrap();
+        let mut args = fixture(&root, rows);
+        let snapshot: Snapshot = read_json(args.snapshot.as_ref().unwrap()).unwrap();
+        let source = &snapshot.files[0];
+        let relative = "data/selected fill +\u{e9}.parquet";
+        let cache_root = root.join("cache");
+        let cached = cache_root.join("files").join(relative);
+        fs::create_dir_all(cached.parent().unwrap()).unwrap();
+        fs::copy(root.join(&source.path), &cached).unwrap();
+        let url = format!(
+            "https://huggingface.co/datasets/fixture/public-history/resolve/{}/data/selected%20fill%20%2B%C3%A9.parquet",
+            snapshot.revision
+        );
+        let plan_file = serde_json::json!({
+            "path": relative, "size": source.size, "url": url, "format": "parquet"
+        });
+        let mut record = plan_file.clone();
+        record["local_path"] = cached.to_str().unwrap().into();
+        record["cached"] = true.into();
+        record["resumed_bytes"] = 0.into();
+        record["validation"] = "PARQUET_ENVELOPE".into();
+        let selection = serde_json::json!({
+            "schema": "qz.hf_selection/1",
+            "plan": {
+                "schema": "qz.hf_dataset_plan/1", "repository": snapshot.repository,
+                "requested_revision": "main", "revision": snapshot.revision, "license": null,
+                "partition_index": null,
+                "request": {"includes": [relative], "markets": [], "start_date": null, "end_date": null},
+                "selection_bounds": "[start_date,end_date)", "download_granularity": "FILE_PARTITION",
+                "coverage": "NOT_ASSERTED", "max_bytes": 1_000_000,
+                "total_bytes": source.size, "files": [plan_file]
+            },
+            "cache_root": cache_root.to_str().unwrap(), "files": [record],
+            "retrieved_at": snapshot.retrieved_at, "downloaded_bytes": 0, "cached_files": 1
+        });
+        let manifest = root.join("selection.json");
+        fs::write(&manifest, serde_json::to_vec(&selection).unwrap()).unwrap();
+        args.snapshot = None;
+        args.selection = Some(manifest);
+        args
+    }
+
+    fn alter_selection(args: &Arguments, alter: impl FnOnce(&mut serde_json::Value)) {
+        let path = args.selection.as_ref().unwrap();
+        let mut value: serde_json::Value = read_json(path).unwrap();
+        alter(&mut value);
+        fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
+    fn indexed_selection(args: &Arguments) {
+        // The market ID is declared by the fixture's indexed partition. Its
+        // mapping to instrument tokens is absent and must never be invented.
+        alter_selection(args, |value| {
+            value["plan"]["partition_index"] = serde_json::json!({
+                "path": "partitions.json", "size": 200,
+                "url": format!("https://huggingface.co/datasets/fixture/public-history/resolve/{}/partitions.json", "a".repeat(40))
+            });
+            value["plan"]["request"] = serde_json::json!({
+                "includes": [], "markets": ["indexed-market-without-token-map"],
+                "start_date": "1970-01-01", "end_date": "1970-01-02"
+            });
+            let partition = serde_json::json!({
+                "markets": ["indexed-market-without-token-map", "co-partitioned-market"],
+                "start_date": "1970-01-01", "end_date": "1970-01-03", "format": "parquet"
+            });
+            value["plan"]["files"][0]["partition"] = partition.clone();
+            value["files"][0]["partition"] = partition;
+        });
+    }
+
+    #[test]
+    fn archive_cli_requires_exactly_one_snapshot_or_selection() {
+        use clap::Parser;
+        let base = [
+            "polymarket-history",
+            "archive",
+            "--format",
+            "moose-fills",
+            "--instruments",
+            "instruments.json",
+            "--start-seconds",
+            "0",
+            "--end-seconds",
+            "60",
+            "--output",
+            "native",
+        ];
+        assert!(super::super::Arguments::try_parse_from(base).is_err());
+        for option in ["--snapshot", "--selection"] {
+            let mut argv = base.to_vec();
+            argv.extend([option, "source.json"]);
+            assert!(super::super::Arguments::try_parse_from(argv).is_ok());
+        }
+        let mut argv = base.to_vec();
+        argv.extend([
+            "--snapshot",
+            "snapshot.json",
+            "--selection",
+            "selection.json",
+        ]);
+        assert!(super::super::Arguments::try_parse_from(argv).is_err());
+    }
+
+    #[test]
+    fn hf_selection_reads_real_cached_parquet_without_hashes_and_preserves_request_clock() {
+        let directory = tempfile::tempdir().unwrap();
+        let args = selection_fixture(
+            directory.path(),
+            &[
+                row("137_1_10", 10, "500000"),
+                row("137_1_2", 10, "420000"),
+                row("137_2_1", 130, "600000"),
+                row("137_3_1", 240, "900000"),
+            ],
+        );
+        let manifest: serde_json::Value = read_json(args.selection.as_ref().unwrap()).unwrap();
+        // Existing chain consumers destructure this shared loader as two values.
+        let (instruments, by_token) = load_instruments(&args.instruments).unwrap();
+        assert_eq!(instruments.len(), 1);
+        assert!(by_token.contains_key("123"));
+        // Only the selected cached source is consumed; a same-byte-count change
+        // to the legacy fixture neither supplies nor invalidates this handoff.
+        fs::write(
+            directory
+                .path()
+                .join("order_filled/year=2022/month=11.parquet"),
+            b"unused",
+        )
+        .unwrap();
+        let archive = prepare(&args).unwrap();
+        assert_eq!(archive.trades.len(), 3);
+        assert_eq!(archive.bars.len(), 2);
+        assert_eq!(archive.trades[0].trade_id.as_str(), "137_1_2");
+        assert_eq!(archive.source_metadata["selection_manifest"], manifest);
+        assert_eq!(archive.source_metadata["selection"]["end_seconds"], 240);
+        assert_eq!(
+            archive.source_metadata["clock_basis"],
+            "REQUEST_SELECTION_AT_NOT_HISTORICAL_AVAILABILITY"
+        );
+        assert!(archive.source_metadata.get("snapshot").is_none());
+        assert!(archive.source_metadata.get("instruments_sha256").is_none());
+        assert_eq!(
+            archive.source_metadata["instruments_bytes"],
+            fs::metadata(&args.instruments).unwrap().len()
+        );
+        assert_eq!(
+            archive.source_metadata["instruments_definitions"],
+            read_json::<serde_json::Value>(&args.instruments).unwrap()
+        );
+        assert_eq!(
+            archive.source_observed_at,
+            serde_json::from_value::<DateTime<Utc>>(manifest["retrieved_at"].clone()).unwrap()
+        );
+        let report = super::super::import(archive, &args.output).unwrap();
+        assert_eq!(report.trades, 3);
+        assert_eq!(report.bars, 2);
+        assert_eq!(report.coverage, "UNPROVEN");
+        assert_eq!(report.historical_availability, "UNVERIFIED");
+        assert!(!report.registered_in_quazonai);
+        let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+            args.output.join("catalog").to_str().unwrap(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let trades = catalog
+            .query::<TradeTick>(None, None, None, None, None, true)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(trades.len(), 3);
+        assert!(trades.iter().any(|data| matches!(
+            data, nautilus_model::data::Data::Trade(trade)
+                if trade.trade_id.as_str() == "137_1_2"
+        )));
+        assert_eq!(
+            catalog
+                .query::<Bar>(None, None, None, None, None, true)
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn hf_index_dates_bound_native_half_open_rows_and_do_not_infer_market_token_mapping() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut other = row("137_1_3", 30, "420000").into_columns();
+        other
+            .iter_mut()
+            .find(|(k, _)| k == "takerAssetId")
+            .unwrap()
+            .1 = Field::Str("456".into());
+        let mut args = selection_fixture(
+            directory.path(),
+            &[
+                row("137_1_1", 0, "420000"),
+                row("137_1_2", 60, "500000"),
+                Row::new(other),
+                row("137_2_1", 86_400, "900000"),
+            ],
+        );
+        indexed_selection(&args);
+        args.end_seconds = 86_400;
+        let archive = prepare(&args).unwrap();
+        assert_eq!(archive.trades.len(), 2);
+        assert_eq!(archive.trades[0].ts_event.as_u64(), 0);
+        assert_eq!(archive.trades[1].ts_event.as_u64(), 60_000_000_000);
+        assert_eq!(
+            archive.source_metadata["selection_manifest"]["plan"]["request"]["markets"][0],
+            "indexed-market-without-token-map"
+        );
+        args.start_seconds = 60;
+        args.end_seconds = 120;
+        assert_eq!(prepare(&args).unwrap().trades.len(), 1);
+        args.end_seconds = 86_460;
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("SELECTION_WINDOW_OUTSIDE_REQUEST")
+        );
+        args.start_seconds = 0;
+        args.end_seconds = 120;
+        alter_selection(&args, |value| {
+            value["plan"]["request"]["start_date"] = "1970-01-02".into();
+            value["plan"]["request"]["end_date"] = "1970-01-03".into();
+        });
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("SELECTION_WINDOW_OUTSIDE_REQUEST")
+        );
+    }
+
+    #[test]
+    fn hf_selection_rejects_identity_size_format_and_record_changes_before_publication() {
+        let cases: [(&str, &str); 9] = [
+            ("schema", "SELECTION_SCHEMA_INVALID"),
+            ("revision", "SELECTION_REVISION_REQUIRED"),
+            ("url", "SELECTION_SOURCE_URL_INVALID"),
+            ("traversal", "SELECTION_PATH_INVALID"),
+            ("size", "SELECTION_BYTE_SIZE_MISMATCH"),
+            ("format", "SELECTION_NATIVE_PARQUET_REQUIRED"),
+            ("local_path", "SELECTION_LOCAL_PATH_INVALID"),
+            ("record", "SELECTION_RECORD_DIFFERS_FROM_PLAN"),
+            ("coverage", "SELECTION_SCOPE_INVALID"),
+        ];
+        for (case, expected) in cases {
+            let directory = tempfile::tempdir().unwrap();
+            let args = selection_fixture(directory.path(), &[row("137_1_1", 10, "420000")]);
+            alter_selection(&args, |value| match case {
+                "schema" => value["schema"] = "qz.hf_selection/2".into(),
+                "revision" => value["plan"]["revision"] = "main".into(),
+                "url" => {
+                    value["plan"]["files"][0]["url"] = "https://huggingface.co/datasets/fixture/public-history/resolve/main/data.parquet".into();
+                    value["files"][0]["url"] = value["plan"]["files"][0]["url"].clone();
+                }
+                "traversal" => value["plan"]["files"][0]["path"] = "../outside.parquet".into(),
+                "size" => {
+                    let size = value["plan"]["files"][0]["size"].as_u64().unwrap() + 1;
+                    value["plan"]["files"][0]["size"] = size.into();
+                    value["files"][0]["size"] = size.into();
+                    value["plan"]["total_bytes"] = size.into();
+                }
+                "format" => value["plan"]["files"][0]["format"] = "opaque".into(),
+                "local_path" => {
+                    value["files"][0]["local_path"] = directory
+                        .path()
+                        .join("outside.parquet")
+                        .to_str()
+                        .unwrap()
+                        .into()
+                }
+                "record" => value["files"][0]["url"] = "different".into(),
+                "coverage" => value["plan"]["coverage"] = "COMPLETE".into(),
+                _ => unreachable!(),
+            });
+            assert!(
+                prepare(&args).unwrap_err().to_string().contains(expected),
+                "{case}"
+            );
+            assert!(!args.output.exists());
+        }
+    }
+
+    #[test]
+    fn hf_selection_rejects_missing_corrupt_and_reordered_cached_files() {
+        for case in ["missing", "header", "footer", "decode", "reordered"] {
+            let directory = tempfile::tempdir().unwrap();
+            let args = selection_fixture(directory.path(), &[row("137_1_1", 10, "420000")]);
+            let value: serde_json::Value = read_json(args.selection.as_ref().unwrap()).unwrap();
+            let cached = PathBuf::from(value["files"][0]["local_path"].as_str().unwrap());
+            match case {
+                "missing" => fs::remove_file(&cached).unwrap(),
+                "header" | "footer" => {
+                    let mut bytes = fs::read(&cached).unwrap();
+                    let offset = if case == "header" { 0 } else { bytes.len() - 4 };
+                    bytes[offset..offset + 4].copy_from_slice(b"FAIL");
+                    fs::write(&cached, bytes).unwrap();
+                }
+                "decode" => {
+                    // Matching size and a valid envelope alone cannot qualify
+                    // bytes as native Parquet; the real reader must decode them.
+                    let mut bytes = fs::read(&cached).unwrap();
+                    let end = bytes.len() - 4;
+                    bytes[4..end].fill(0);
+                    fs::write(&cached, bytes).unwrap();
+                    assert!(
+                        hf_selection::load(
+                            args.selection.as_ref().unwrap(),
+                            args.start_seconds,
+                            args.end_seconds
+                        )
+                        .is_ok()
+                    );
+                    assert!(SerializedFileReader::new(fs::File::open(&cached).unwrap()).is_err());
+                }
+                "reordered" => {
+                    let second = cached.parent().unwrap().join("other.parquet");
+                    fs::copy(&cached, &second).unwrap();
+                    alter_selection(&args, |value| {
+                        let mut item = value["plan"]["files"][0].clone();
+                        item["path"] = "data/other.parquet".into();
+                        item["url"] = format!("https://huggingface.co/datasets/fixture/public-history/resolve/{}/data/other.parquet", "a".repeat(40)).into();
+                        let mut record = value["files"][0].clone();
+                        record["path"] = item["path"].clone();
+                        record["url"] = item["url"].clone();
+                        record["local_path"] = second.to_str().unwrap().into();
+                        value["plan"]["files"].as_array_mut().unwrap().push(item);
+                        value["files"].as_array_mut().unwrap().insert(0, record);
+                        value["plan"]["total_bytes"] =
+                            (value["plan"]["total_bytes"].as_u64().unwrap() * 2).into();
+                        value["cached_files"] = 2.into();
+                    });
+                }
+                _ => unreachable!(),
+            }
+            let error = prepare(&args).unwrap_err();
+            if case != "decode" {
+                let expected = match case {
+                    "missing" => "SELECTION_FILE_MISSING",
+                    "reordered" => "SELECTION_RECORD_DIFFERS_FROM_PLAN",
+                    _ => "SELECTION_PARQUET_ENVELOPE",
+                };
+                assert!(error.to_string().contains(expected), "{case}");
+            }
+            assert!(!args.output.exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hf_selection_stat_detects_same_size_rewrite_with_restored_mtime() {
+        use std::{
+            io::{Seek, SeekFrom, Write},
+            time::Duration,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let args = selection_fixture(directory.path(), &[row("137_1_1", 10, "420000")]);
+        let value: serde_json::Value = read_json(args.selection.as_ref().unwrap()).unwrap();
+        let cached = PathBuf::from(value["files"][0]["local_path"].as_str().unwrap());
+        let metadata = fs::metadata(&cached).unwrap();
+        let before = hf_selection::file_state(&cached).unwrap();
+        // Ensure even second-resolution Unix timestamps can observe the write.
+        std::thread::sleep(Duration::from_secs(1));
+        let mut file = fs::OpenOptions::new().write(true).open(&cached).unwrap();
+        file.seek(SeekFrom::Start(4)).unwrap();
+        file.write_all(b"X").unwrap();
+        file.set_times(fs::FileTimes::new().set_modified(metadata.modified().unwrap()))
+            .unwrap();
+        file.sync_all().unwrap();
+        let after = fs::metadata(&cached).unwrap();
+        assert_eq!(metadata.len(), after.len());
+        assert_eq!(metadata.modified().unwrap(), after.modified().unwrap());
+        assert_ne!(before, hf_selection::file_state(&cached).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hf_selection_rejects_file_and_cache_ancestor_symlinks() {
+        use std::os::unix::fs::symlink;
+        for ancestor in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let args = selection_fixture(directory.path(), &[row("137_1_1", 10, "420000")]);
+            let value: serde_json::Value = read_json(args.selection.as_ref().unwrap()).unwrap();
+            let target = if ancestor {
+                directory.path().join("cache")
+            } else {
+                PathBuf::from(value["files"][0]["local_path"].as_str().unwrap())
+            };
+            let moved = directory.path().join("original");
+            fs::rename(&target, &moved).unwrap();
+            symlink(&moved, &target).unwrap();
+            assert!(
+                prepare(&args)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("SELECTION_SYMLINK")
+            );
+            assert!(!args.output.exists());
         }
     }
 
@@ -846,6 +1369,12 @@ mod tests {
         assert_eq!(archive.bars[0].ts_event.as_u64(), 60_000_000_000);
         assert_eq!(archive.bars[1].ts_event.as_u64(), 180_000_000_000);
         assert_eq!(archive.source_metadata["quality"]["duplicate_rows"], 1);
+        assert!(archive.source_metadata.get("selection_manifest").is_none());
+        assert!(archive.source_metadata.get("clock_basis").is_none());
+        assert_eq!(
+            archive.source_metadata["instruments_sha256"],
+            digest(&args.instruments).unwrap()
+        );
         assert_eq!(
             archive.source_metadata["quality"]["exchange_summaries_excluded"],
             1
@@ -879,15 +1408,19 @@ mod tests {
             directory.path(),
             &[row("137_1_1", 10, "420000"), row("137_1_1", 10, "500000")],
         );
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("CONFLICTING_SOURCE_EVENT"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("CONFLICTING_SOURCE_EVENT")
+        );
         args.start_seconds = 1;
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("FULL_BAR_INTERVALS_REQUIRED"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("FULL_BAR_INTERVALS_REQUIRED")
+        );
         args.start_seconds = 0;
         fs::write(
             directory
@@ -896,10 +1429,12 @@ mod tests {
             b"corrupted",
         )
         .unwrap();
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("SOURCE_CHECKSUM_MISMATCH"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("SOURCE_CHECKSUM_MISMATCH")
+        );
         assert!(!args.output.exists());
     }
 
@@ -1004,12 +1539,14 @@ mod tests {
                 .len(),
             1
         );
-        assert!(book(
-            &make("60", "[[0.9,2]]", "[[0.75,5.76]]"),
-            &instrument(),
-            &mut archive,
-            &mut Quality::default()
-        )
-        .is_err());
+        assert!(
+            book(
+                &make("60", "[[0.9,2]]", "[[0.75,5.76]]"),
+                &instrument(),
+                &mut archive,
+                &mut Quality::default()
+            )
+            .is_err()
+        );
     }
 }
