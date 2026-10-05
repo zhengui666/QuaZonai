@@ -138,14 +138,13 @@ fn main() -> Result<()> {
     let partition_bytes = fs::read(&partition)?;
     ensure!(!partition_bytes.is_empty());
     let partitions = json!([{"relative_path":relative_path,"data_kind":"BAR",
-        "bar_type":bar_type,"size_bytes":partition_bytes.len(),
-        "sha256":acquisition::hash(&partition_bytes)}]);
+        "bar_type":bar_type,"size_bytes":partition_bytes.len()}]);
     let report = json!({"schema_version":1,
         "scope":"synthetic acquisition through actual plugin and native preparation; no qualification",
         "catalog_root":prepared.join("catalog"),"metadata_file":prepared.join("catalog-metadata.json"),
         "metadata":metadata,"selection":selection,"conversion":conversion,"native_readback":readback,
         "native_partitions":partitions,
-        "metadata_sha256":acquisition::hash(&bytes),"original_receipt_ns":acquisition::RECEIVED.to_string()});
+        "original_receipt_ns":acquisition::RECEIVED.to_string()});
     // Publication last. The harness never treats a partially prepared root as ready.
     acquisition::write_json(&root.join("prepared.json"), &report);
     println!("native fixture catalog prepared without scientific qualification");

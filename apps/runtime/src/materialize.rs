@@ -50,6 +50,30 @@ pub async fn parameters(
         serde_json::from_slice(&bytes).map_err(|_| Failure::Invalid("native_parameters"))?;
     domain::execution::task(spec, &parameters)
         .map_err(|_| Failure::Invalid("native_task_binding"))?;
+    if let NativeTaskParametersV1::EvaluateExperiment {
+        feature_artifact_ids,
+        request,
+        ..
+    } = &parameters
+    {
+        let mut parts = Vec::with_capacity(feature_artifact_ids.len());
+        for id in feature_artifact_ids {
+            let (_, bytes) = journal.input_object(*id).await?;
+            if bytes.len() > 2 * 1024 * 1024 {
+                return Err(Failure::Invalid("feature_parameters_size"));
+            }
+            parts.push(
+                serde_json::from_slice::<contracts::science::FeatureObservationsV1>(&bytes)
+                    .map_err(|_| Failure::Invalid("feature_parameters"))?,
+            );
+        }
+        domain::execution::features::bind_observations(
+            &parts,
+            &request.feature_schema,
+            contracts::research::DataPartition::Validation,
+        )
+        .map_err(|_| Failure::Invalid("feature_parameters_binding"))?;
+    }
     for input in &spec.inputs {
         if let RuntimeInputV1::Dataset {
             registered_ref,
@@ -76,6 +100,11 @@ pub async fn parameters(
         } => {
             vec![(*dataset_revision_id, &request.selection)]
         }
+        NativeTaskParametersV1::EvaluateExperiment {
+            dataset_revision_id,
+            request,
+            ..
+        } => vec![(*dataset_revision_id, &request.selection)],
         NativeTaskParametersV1::SimulatePortfolio {
             dataset_revision_id,
             request,
@@ -105,12 +134,18 @@ pub async fn parameters(
         } => {
             vec![(*dataset_revision_id, &request.forecast.selection)]
         }
+        NativeTaskParametersV1::ComposeStrategyTargets {
+            dataset_revision_id,
+            request,
+            ..
+        } => vec![(*dataset_revision_id, &request.selection)],
         NativeTaskParametersV1::BuildPortfolio {
             dataset_revision_id,
             request,
             ..
         } => vec![(*dataset_revision_id, &request.selection)],
         NativeTaskParametersV1::CompileModel { .. }
+        | NativeTaskParametersV1::CompileFeatureModel { .. }
         | NativeTaskParametersV1::EvaluateForward { .. } => Vec::new(),
         NativeTaskParametersV1::StudyPortfolio {
             dataset_revision_id,

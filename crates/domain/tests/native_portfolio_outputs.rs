@@ -448,3 +448,221 @@ fn simulation_cannot_borrow_another_account_capital_currency_or_return_window() 
     }
     assert!(!accepts(&changed, "qz.native_simulation", &result));
 }
+
+#[test]
+fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_accounts() {
+    use contracts::research::{SplitKind, SplitPolicyV1};
+    let (template_task, template_result) = simulation();
+    let NativeTaskParametersV1::SimulatePortfolio {
+        request: template, ..
+    } = template_task
+    else {
+        unreachable!()
+    };
+    let request = NativeExperimentEvaluationRequestV1 {
+        schema_version: SchemaV1,
+        selection: NativeBarSelectionV1 {
+            schema_version: SchemaV1,
+            bar_types: template.selection.bar_types.clone(),
+            event_start_ns: count(1),
+            event_end_ns: count(101),
+            decision_cutoff_ns: count(102),
+            maximum_rows: 10,
+        },
+        instrument_id: "A.SIM".into(),
+        feature_schema: vec![FeatureDefinitionV1 {
+            feature_key: "external-signal".into(),
+            source_ref: "snapshot:warehouse".into(),
+            source_key: "event-3".into(),
+            availability: FeatureAvailabilityV1::Observed,
+            max_age_ns: None,
+        }],
+        split_policy: SplitPolicyV1 {
+            schema_version: SchemaV1,
+            kind: SplitKind::WalkForward,
+            train_size: count(4),
+            test_size: count(2),
+            step_size: Some(count(2)),
+            group_count: None,
+            test_group_count: None,
+            purge_observations: count(1),
+            embargo_observations: count(0),
+            label_horizon_observations: Some(count(1)),
+            interval_validation_required: true,
+            sealed_revision_id: Id::new(),
+        },
+        label_horizon_observations: 1,
+        total_fuel: count(100_000),
+        target_ttl_ns: count(200),
+        decision_output: ExperimentDecisionOutputV1::TargetWeight,
+        settings: template.settings.clone(),
+    };
+    domain::execution::experiment_request(&request).unwrap();
+    // Irregular event spacing proves label end is an observed-row clock, not a duration.
+    let event = |index: usize| ((index + 1) * (index + 1)) as u64;
+    let folds = domain::execution::validation::validation_folds(&request.split_policy, 9)
+        .unwrap()
+        .into_iter()
+        .enumerate()
+        .map(|(index, indices)| {
+            let decisions: Vec<_> = indices
+                .test
+                .iter()
+                .map(|&ordinal| NativeExperimentDecisionV1 {
+                    ordinal: ordinal as u32,
+                    event_ns: count(event(ordinal)),
+                    decision_ns: count(event(ordinal) + 1),
+                    label_end_ns: Some(count(event(ordinal + 1))),
+                    label_available_ns: Some(count(event(ordinal + 1) + 1)),
+                    label_return: Some(0.0),
+                    features: vec![FeatureValueV1 {
+                        value: None,
+                        missing_reason: Some(FeatureMissingReasonV1::NotYetAvailable),
+                        event_ns: None,
+                        observed_available_ns: None,
+                        effective_available_ns: None,
+                        sequence: None,
+                    }],
+                    target_weight: "0".parse().unwrap(),
+                })
+                .collect();
+            let mut replay = (*template).clone();
+            replay.selection.event_start_ns = decisions[0].event_ns;
+            replay.selection.event_end_ns =
+                count(decisions.last().unwrap().label_end_ns.unwrap().get() + 1);
+            replay.selection.decision_cutoff_ns =
+                decisions.last().unwrap().label_available_ns.unwrap();
+            replay.selection.maximum_rows = 10;
+            replay.target_points = decisions
+                .iter()
+                .map(|point| NativeTargetPointV1 {
+                    schema_version: SchemaV1,
+                    asof_ns: point.decision_ns,
+                    valid_until_ns: count(point.decision_ns.get() + request.target_ttl_ns.get()),
+                    targets: vec![AllocationTargetV1 {
+                        instrument_id: request.instrument_id.clone(),
+                        currency: "USD".into(),
+                        weight: point.target_weight.clone(),
+                    }],
+                    cash_weight: "1".parse().unwrap(),
+                })
+                .collect();
+            let mut native = template_result.clone();
+            native.consumed_target_points = count(decisions.len() as u64);
+            native.returns.clear();
+            native.returns_status = MetricStatus::InsufficientData;
+            native.returns_reason = Some("PORTFOLIO_DAILY_RETURNS_UNAVAILABLE".into());
+            native.canonical_result["run"]["backtest_start_ns"] =
+                json!(replay.selection.event_start_ns.get().to_string());
+            native.canonical_result["run"]["backtest_end_ns"] =
+                json!(replay.selection.decision_cutoff_ns.get().to_string());
+            native.canonical_result["portfolio_snapshots"][0]["ts_event"] =
+                json!(replay.selection.decision_cutoff_ns.get().to_string());
+            NativeExperimentFoldV1 {
+                fold_index: index as u16,
+                training_end_available_ns: count(event(*indices.train.last().unwrap() + 1) + 1),
+                training_ordinals: indices.train.into_iter().map(|n| n as u32).collect(),
+                decisions,
+                simulation_request: replay,
+                simulation: native,
+            }
+        })
+        .collect();
+    let feature_artifact_ids = vec![Id::new(), Id::new()];
+    let dataset_revision_id = Id::new();
+    let model_artifact_id = Id::new();
+    let result = NativeExperimentEvaluationResultV1 {
+        schema_version: SchemaV1,
+        native_versions: BTreeMap::from([
+            ("nautilus-backtest".into(), "0.63.0".into()),
+            ("solow-cv".into(), "0.7.3".into()),
+            ("wasmi".into(), "2.0.0".into()),
+        ]),
+        dataset_revision_id,
+        model_artifact_id,
+        request: request.clone(),
+        feature_artifact_ids: feature_artifact_ids.clone(),
+        instrument_id: request.instrument_id.clone(),
+        consumed_fuel: count(1),
+        source_row_count: count(10),
+        feature_count: 1,
+        folds,
+    };
+    let task = NativeTaskParametersV1::EvaluateExperiment {
+        schema_version: SchemaV1,
+        dataset_revision_id,
+        model_artifact_id,
+        feature_artifact_ids,
+        request: Box::new(request),
+    };
+    let downloaded: contracts::execution::NativeJsonOutputV1 =
+        serde_json::from_slice(&serde_json::to_vec(&result).unwrap()).unwrap();
+    assert!(matches!(
+        downloaded,
+        contracts::execution::NativeJsonOutputV1::ExperimentEvaluation(_)
+    ));
+    assert!(accepts(&task, "qz.experiment_evaluation", &result));
+    for dimension in 0..17 {
+        let mut invalid = result.clone();
+        match dimension {
+            0 => invalid.feature_artifact_ids.reverse(),
+            1 => invalid.folds[0].training_ordinals[0] = 1,
+            2 => invalid.folds[0].decisions[0].ordinal += 1,
+            3 => {
+                invalid.folds[0].training_end_available_ns =
+                    invalid.folds[0].decisions[0].decision_ns
+            }
+            4 => invalid.folds[0].simulation_request.target_points[0].valid_until_ns = count(50),
+            5 => invalid.folds[0].decisions[0].target_weight = "0.5".parse().unwrap(),
+            6 => {
+                invalid.folds[0]
+                    .simulation_request
+                    .settings
+                    .starting_capital = "999".parse().unwrap()
+            }
+            7 => invalid.folds[0].decisions[0].features[0].event_ns = Some(count(1)),
+            8 => invalid.folds[0].simulation_request.selection.event_start_ns = count(1),
+            9 => invalid.folds[0].decisions[0].label_available_ns = None,
+            10 => {
+                invalid.folds[0].decisions[0].label_end_ns = Some(count(10_000));
+                invalid.folds[0].decisions[0].label_available_ns = Some(count(10_001));
+            }
+            11 => {
+                invalid.folds[0].decisions[0].label_end_ns = Some(count(37));
+                invalid.folds[0].decisions[0].label_available_ns = Some(count(38));
+            }
+            12 => invalid.folds[0].decisions[0].label_available_ns = Some(count(51)),
+            13 => invalid.folds[0].training_end_available_ns = count(0),
+            14 => invalid.folds[1].training_end_available_ns = count(49),
+            15 => invalid.dataset_revision_id = Id::new(),
+            _ => invalid.model_artifact_id = Id::new(),
+        }
+        assert!(
+            !accepts(&task, "qz.experiment_evaluation", &invalid),
+            "experiment dimension {dimension}"
+        );
+    }
+    for dimension in 0..5 {
+        let mut other = task.clone();
+        let NativeTaskParametersV1::EvaluateExperiment {
+            dataset_revision_id,
+            model_artifact_id,
+            request,
+            ..
+        } = &mut other
+        else {
+            unreachable!()
+        };
+        match dimension {
+            0 => *dataset_revision_id = Id::new(),
+            1 => *model_artifact_id = Id::new(),
+            2 => request.feature_schema[0].feature_key = "different-meaning".into(),
+            3 => request.feature_schema[0].source_ref = "different-source".into(),
+            _ => request.feature_schema[0].source_key = "different-event".into(),
+        }
+        assert!(
+            !accepts(&other, "qz.experiment_evaluation", &result),
+            "reassociated request dimension {dimension}"
+        );
+    }
+}

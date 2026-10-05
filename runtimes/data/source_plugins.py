@@ -328,15 +328,25 @@ def convert_candles(plugin_id, args, *, verify, native_mode, record_count):
     acquisition = local_path(args.acquisition)
     instruments = local_path(args.instruments)
     # The native parser owns original definition semantics and exact decimal conversion.
-    original_definitions = providers.read_json(acquire.local_bytes(instruments, MAX_REPORT_BYTES))
-    original_acquisition = load_json(acquisition)
-    hashes = {"acquisition_sha256": sha256(acquisition),
-              "instrument_definitions_sha256": sha256(instruments)}
+    definition_bytes = acquire.local_bytes(instruments, MAX_REPORT_BYTES)
+    acquisition_bytes = acquire.local_bytes(acquisition, MAX_REPORT_BYTES)
+    original_definitions = providers.read_json(definition_bytes)
+    original_acquisition = providers.read_json(acquisition_bytes)
+    if not isinstance(original_acquisition, dict):
+        raise ValueError("expected a JSON object")
+    if plugin_id == "coinbase-candles":
+        selected_records = original_acquisition["records"]
+        records_limit = acquire.MAX_OUTPUT_BYTES
+    else:
+        selected_records = original_acquisition["files"]["records.jsonl"]
+        records_limit = binance_vision.LIMITS["records_bytes"]
+    record_bytes = acquire.checked_file(acquisition.parent, selected_records, "records.jsonl", records_limit)
     output = run_native(args, [native_mode, "--acquisition", str(acquisition),
                                "--instruments", str(instruments)])
     if (verify(args) != verified
-            or sha256(acquisition) != hashes["acquisition_sha256"]
-            or sha256(instruments) != hashes["instrument_definitions_sha256"]):
+            or acquire.local_bytes(acquisition, MAX_REPORT_BYTES) != acquisition_bytes
+            or acquire.local_bytes(instruments, MAX_REPORT_BYTES) != definition_bytes
+            or acquire.checked_file(acquisition.parent, selected_records, "records.jsonl", records_limit) != record_bytes):
         raise ValueError("native conversion inputs changed during preparation")
     report, evidence = published_native(output)
     if (report.get("source_provider") != plugin_id
@@ -344,8 +354,6 @@ def convert_candles(plugin_id, args, *, verify, native_mode, record_count):
             or report.get("source_evidence_relative_path") != "source-evidence.json"
             or report.get("native_readback_verified") is not True
             or report.get("research_qualified") is not False
-            or any(report.get(key) != value for key, value in hashes.items())
-            or any(evidence.get(key) != value for key, value in hashes.items())
             or evidence.get("source_acquisition_path") != str(acquisition)
             or evidence.get("acquisition") != original_acquisition
             or evidence.get("instrument_definitions") != original_definitions

@@ -560,10 +560,61 @@ impl Worker {
             }
         }
         result?;
+        self.advance_external_experiment(message.run_id).await?;
         self.store.observe_forward(message.run_id).await?;
         if self.store.advance_initial_cycle(message.run_id).await? {
             self.store.acknowledge_run(message).await?;
         }
+        Ok(())
+    }
+
+    async fn advance_external_experiment(&self, run: Id) -> Result<(), WorkerFailure> {
+        let reading = self.objects.clone();
+        let publishing = self.objects.clone();
+        let mut allocated = None;
+        let result = self
+            .store
+            .advance_external_experiment(
+                run,
+                move |id, size| {
+                    let objects = reading.clone();
+                    async move {
+                        tokio::task::spawn_blocking(move || objects.read(id, size))
+                            .await
+                            .map_err(|_| StoreError::Integrity)?
+                            .map_err(|_| StoreError::Integrity)
+                    }
+                },
+                |object| {
+                    allocated = Some(object.id);
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            publishing.put(object.id, &object.bytes)
+                        })
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(crate::error::artifact_storage)
+                    }
+                },
+            )
+            .await;
+        if let Some(id) = allocated.filter(|_| result.is_err()) {
+            let objects = self.objects.clone();
+            if self
+                .store
+                .discard_unpublished_native_object(run, id, move |id| async move {
+                    tokio::task::spawn_blocking(move || objects.discard_unpublished(id))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                })
+                .await
+                .is_err()
+            {
+                tracing::warn!(artifact_id=%id, "external experiment parameter cleanup deferred");
+            }
+        }
+        result?;
         Ok(())
     }
 

@@ -1,17 +1,16 @@
-import { App, Alert, Button, Descriptions, Drawer, Form, Input, InputNumber, Modal, Skeleton, Space, Table, Typography } from 'antd';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, useRef, useState } from 'react';
-import { api, ApiFailure, dataOf, displayTime, Intent, isCounter } from './api';
+import { Button, Descriptions, Drawer, Skeleton, Space, Table, Typography } from 'antd';
+import { useQuery } from '@tanstack/react-query';
+import { lazy, Suspense, useState } from 'react';
+import { api, dataOf, displayTime } from './api';
 import type { Schema } from './api';
 import { ResourceSelect } from './resource-select';
-import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';
-import { counterRules } from './budget-fields';
-import { RunDetail } from './runs';
+import { NoData, Pager, QueryPanel, StateTag } from './ui';
+import { isForecastAlphaVersion } from './producer-views';
 
 const EquityCurve = lazy(() => import('./equity-curve'));
 
 type Alpha = Schema['AlphaView'];
-type Version = Schema['AlphaVersionView'];
+type Version = Schema['AlphaVersionEnvelopeV2'];
 type Evaluation = Schema['EvaluationView'];
 type Metric = Schema['MetricValueV1'];
 function isAlphaEvaluation(value: Evaluation, project: string, version?: string): value is Evaluation & { subject_alpha_version_id: string } {
@@ -24,7 +23,7 @@ export function Alphas() {
   const [project, setProject] = useState<string>();
   return <Space orientation="vertical" size="large" className="full-width">
     <Typography.Title level={1}>Alpha</Typography.Title>
-    
+    <Typography.Paragraph>查看原始版本与评估证据。研究操作由外部 Agent 通过 CLI/Skill 执行。</Typography.Paragraph>
     <ResourceSelect label="选择 Alpha 所属项目" value={project} onChange={setProject} queryKey={['alpha-projects']}
       load={async (cursor, signal) => {
         const page = dataOf(await api.GET('/api/v2/projects', { params: { query: { cursor, limit: 50 } }, signal }));
@@ -87,10 +86,10 @@ function Versions({ alpha }: { alpha: Alpha }) {
       <Table<Version> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 850 }}
         locale={{ emptyText: <NoData text="尚无已登记版本。" /> }} columns={[
           { title: '版本', key: 'version', render: (_, item) => <Button type="link" disabled={query.isError || query.isFetching} onClick={() => setSelected(item)}>版本 {item.version}</Button> },
-          { title: '数据来源', key: 'origin', render: (_, item) => item.origin ?? '来源未核验' },
-          { title: '信号 / 单位', key: 'unit', render: (_, item) => `${item.signal_kind} / ${item.forecast_unit}` },
-          { title: 'Horizon', key: 'horizon', render: (_, item) => `${item.horizon_kind} · ${item.horizon_value ?? '变量区间'}` },
-          { title: '校准引用', key: 'calibration', render: (_, item) => item.calibration_id ?? '未登记校准' },
+          { title: '数据来源', key: 'origin', render: (_, item) => isForecastAlphaVersion(item) ? item.origin ?? '来源未核验' : '此版本未提供来源结论' },
+          { title: '信号 / 单位', key: 'unit', render: (_, item) => isForecastAlphaVersion(item) ? `${item.signal_kind} / ${item.forecast_unit}` : item.output_kind },
+          { title: 'Horizon', key: 'horizon', render: (_, item) => isForecastAlphaVersion(item) ? `${item.horizon_kind} · ${item.horizon_value ?? '变量区间'}` : '不适用（目标权重）' },
+          { title: '校准引用', key: 'calibration', render: (_, item) => isForecastAlphaVersion(item) ? item.calibration_id ?? '未登记校准' : '不适用（目标权重）' },
           { title: '创建于', key: 'created', render: (_, item) => displayTime(item.created_at) },
         ]} />
       <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
@@ -98,10 +97,9 @@ function Versions({ alpha }: { alpha: Alpha }) {
   </Space>;
 }
 
-function VersionDetail({ alpha, project, number, expectedId }: { alpha: string; project: string; number: string; expectedId: string }) {
+export function VersionDetail({ alpha, project, number, expectedId }: { alpha: string; project: string; number: string; expectedId: string }) {
   const [calibration, setCalibration] = useState(false);
   const [qualifications, setQualifications] = useState(false);
-  const [evaluate, setEvaluate] = useState(false);
   const query = useQuery({ queryKey: ['alpha-version', alpha, number, project, expectedId], queryFn: async ({ signal }) => {
     const item = dataOf(await api.GET('/api/v2/alphas/{id}/versions/{version}', {
     params: { path: { id: alpha, version: number } }, signal,
@@ -118,105 +116,36 @@ function VersionDetail({ alpha, project, number, expectedId }: { alpha: string; 
         { key: 'alpha', label: 'Alpha', children: version.alpha_id },
         { key: 'experiment', label: '原实验', children: version.experiment_id },
         { key: 'lineage', label: '根血缘', children: version.root_lineage_id },
-        { key: 'code', label: '原 CODE', children: version.code_artifact_id },
-        { key: 'model', label: '原 MODEL', children: version.model_artifact_id ?? '未登记模型' },
-        { key: 'signal', label: '信号合同 / 单位', children: `${version.signal_contract_version} · ${version.signal_kind} · ${version.forecast_unit}` },
-        { key: 'horizon', label: 'Horizon', children: `${version.horizon_kind} · ${version.horizon_value ?? '变量区间'}` },
-        { key: 'origin', label: '原 Discovery 数据来源', children: version.origin ?? '来源未核验' },
-        { key: 'calibration', label: '校准引用', children: version.calibration_id ?? '未登记校准，不能据此认为已校准' },
-        { key: 'runtime', label: '冻结镜像', children: version.runtime_image_ref },
       ]} />
-      {version.calibration_id && <Button onClick={() => setCalibration(true)}>查看冻结校准来源</Button>}
-      <Button onClick={() => setQualifications(true)}>查看原资格历史</Button>
-      <Button disabled={!version.model_artifact_id || (version.signal_kind === 'SCORE' && !version.calibration_id)} onClick={() => setEvaluate(true)}>请求封存评估</Button>
-      <Evaluations key={version.id} version={version.id} project={version.project_id} />
-      {calibration && version.calibration_id && <CalibrationDetail version={version.id} project={version.project_id} expectedId={version.calibration_id} close={() => setCalibration(false)} />}
-      {qualifications && <Qualifications key={version.id} version={version.id} close={() => setQualifications(false)} />}
-      {evaluate && <AlphaEvaluate version={version} close={() => setEvaluate(false)} />}
+      {isForecastAlphaVersion(version) ? <>
+        <Descriptions column={1} items={[
+          { key: 'code', label: '原 CODE', children: version.code_artifact_id },
+          { key: 'model', label: '原 MODEL', children: version.model_artifact_id ?? '未登记模型' },
+          { key: 'signal', label: '信号合同 / 单位', children: `${version.signal_contract_version} · ${version.signal_kind} · ${version.forecast_unit}` },
+          { key: 'horizon', label: 'Horizon', children: `${version.horizon_kind} · ${version.horizon_value ?? '变量区间'}` },
+          { key: 'origin', label: '原 Discovery 数据来源', children: version.origin ?? '来源未核验' },
+          { key: 'calibration', label: '校准引用', children: version.calibration_id ?? '未登记校准，不能据此认为已校准' },
+          { key: 'runtime', label: '冻结镜像', children: version.runtime_image_ref },
+        ]} />
+        {version.calibration_id && <Button onClick={() => setCalibration(true)}>查看冻结校准来源</Button>}
+        <Button onClick={() => setQualifications(true)}>查看原资格历史</Button>
+        <Evaluations key={version.id} version={version.id} project={version.project_id} />
+        {calibration && version.calibration_id && <CalibrationDetail version={version.id} project={version.project_id} expectedId={version.calibration_id} close={() => setCalibration(false)} />}
+        {qualifications && <Qualifications key={version.id} version={version.id} close={() => setQualifications(false)} />}
+      </> : <>
+        <Descriptions column={1} items={[
+          { key: 'output', label: '策略输出', children: version.output_kind },
+          { key: 'code', label: '原 CODE', children: version.policy.code_artifact_id },
+          { key: 'model', label: '原 MODEL', children: version.policy.model_artifact_id },
+          { key: 'parameters', label: '冻结参数', children: version.policy.parameter_artifact_id },
+          { key: 'runtime', label: '冻结镜像', children: version.policy.runtime_image_ref },
+        ]} />
+        <Typography.Paragraph>目标权重策略不提供预测单位、Horizon 或校准资格；已登记版本不代表科学评估通过。</Typography.Paragraph>
+        <Typography.Title level={3}>服务器保存的冻结策略</Typography.Title>
+        <pre className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(version.policy, null, 2)}</pre>
+      </>}
     </Space>}
   </QueryPanel>;
-}
-
-function AlphaEvaluate({ version, close }: { version: Version; close: () => void }) {
-  type Request = Schema['AlphaEvaluateRequestV1'];
-  type Fields = Omit<Request['limits'], 'schema_version' | 'experiments'> & { cycle_id: string };
-  const [form] = Form.useForm<Fields>();
-  const online = useOnline(); const client = useQueryClient(); const { modal } = App.useApp();
-  const intent = useRef(new Intent()); const hadUnknown = useRef(false);
-  const [submitted, setSubmitted] = useState<Request>();
-  const [receipt, setReceipt] = useState<Schema['RunSnapshotV1']>();
-  const [showRun, setShowRun] = useState(false);
-  const cycleId: string | undefined = Form.useWatch('cycle_id', form);
-  const cycle = useQuery({ queryKey: ['cycle', cycleId], enabled: !!cycleId, staleTime: 0,
-    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/cycles/{id}', { params: { path: { id: cycleId! } }, signal })) });
-  const frozen = useQuery({ queryKey: ['frozen-brief', cycle.data?.brief_id], enabled: !!cycle.data && !cycle.isError,
-    queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/briefs/{id}/execution-context', { params: { path: { id: cycle.data!.brief_id } }, signal })) });
-  const mutation = useMutation({ mutationFn: async (body: Request) => dataOf(await api.POST('/api/v2/alpha-versions/{id}/evaluations', {
-    params: { path: { id: version.id }, header: intent.current.headers('POST', `/api/v2/alpha-versions/${version.id}/evaluations`, body) }, body,
-  })), onSuccess: async result => {
-    setReceipt(result.resource); intent.current.clear();
-    await Promise.all([client.invalidateQueries({ queryKey: ['runs'] }), client.invalidateQueries({ queryKey: ['cycles', version.project_id] })]);
-  }, onError: error => {
-    const rejected = error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500) || error.code === 'OFFLINE');
-    if (!rejected) hadUnknown.current = true;
-    if (rejected && !hadUnknown.current) setSubmitted(undefined);
-  } });
-  useGuard(!receipt);
-  const ready = cycle.data?.project_id === version.project_id && cycle.data.state === 'RUNNING' && !cycle.isError && !cycle.isFetching
-    && frozen.data?.brief.project_id === version.project_id && !frozen.isError && !frozen.isFetching;
-  const retry = submitted !== undefined && mutation.isError;
-  function submit(value: Fields) {
-    if (!online || mutation.isPending || submitted || !ready || !frozen.data) return;
-    const context = frozen.data.execution_context;
-    const request: Request = { schema_version: 1, cycle_id: value.cycle_id, policy_id: frozen.data.brief.content.evaluation_policy_id,
-      input_set_id: context.sealed_input_set_id, runtime_id: context.runtime_id, expected_runtime_revision: context.runtime_revision,
-      limits: { schema_version: 1, experiments: 0, cpu_seconds: value.cpu_seconds, wall_seconds: value.wall_seconds, memory_mib: value.memory_mib, output_bytes: value.output_bytes } };
-    setSubmitted(request); mutation.mutate(request);
-  }
-  function dismiss() {
-    if (mutation.isPending) return;
-    if (retry) modal.confirm({ title: '关闭未确认的封存请求？', content: '关闭不撤销可能已登记的 Run。请先核对运行记录，不要创建另一次封存请求。', okText: '关闭并核对', cancelText: '保留原请求', onOk: close });
-    else close();
-  }
-  if (showRun && receipt) return <RunDetail id={receipt.id} close={() => setShowRun(false)} />;
-  return <Modal open title="确认请求封存评估" width={760} maskClosable={false} onCancel={dismiss} closable={!mutation.isPending}
-    footer={receipt ? <Button onClick={close}>返回版本</Button> : undefined} cancelText="返回" okText={retry ? '重试同一请求' : '确认请求评估'}
-    confirmLoading={mutation.isPending} okButtonProps={{ disabled: !online || (!retry && !ready) }}
-    onOk={() => { if (!online || mutation.isPending || receipt) return; if (retry && submitted) mutation.mutate(submitted); else form.submit(); }}>
-    <Space orientation="vertical" className="full-width" size="middle">
-      <Typography.Paragraph className="break-word">原 Alpha 版本：{version.id}</Typography.Paragraph>
-      <ErrorNotice error={mutation.error} />
-      {retry && <Alert type="warning" showIcon title="提交结果未知，请重试当前操作" />}
-      {receipt ? <>
-        <Alert type="success" showIcon title="封存评估 Run 已登记。" />
-        <Typography.Text className="break-word">Run {receipt.id} · {receipt.state}</Typography.Text>
-        <Button onClick={() => setShowRun(true)}>查看评估运行</Button>
-      </> : <>
-        
-        <Form form={form} layout="vertical" onFinish={submit} disabled={!online || mutation.isPending || submitted !== undefined}
-          initialValues={{ cpu_seconds: '10', wall_seconds: 60, memory_mib: 1024, output_bytes: '1048576' }}>
-          <Form.Item name="cycle_id" label="承担评估预算的 Cycle" rules={[{ required: true, message: '请选择本项目运行中的 Cycle。' }]}>
-            <ResourceSelect label="选择评估 Cycle" queryKey={['alpha-evaluate-cycles', version.project_id]} load={async (cursor, signal) => {
-              const page = dataOf(await api.GET('/api/v2/projects/{id}/cycles', { params: { path: { id: version.project_id }, query: { cursor, limit: 50 } }, signal }));
-              return { next_cursor: page.next_cursor, items: page.items.filter(item => item.project_id === version.project_id).map(item => ({ value: item.id, label: `Cycle ${item.ordinal} · ${item.state} · ${item.id}`, disabled: item.state !== 'RUNNING' })) };
-            }} />
-          </Form.Item>
-          <ErrorNotice error={cycle.error} /><ErrorNotice error={frozen.error} />
-          {frozen.data && <Descriptions column={1} size="small" className="break-word" items={[
-            { key: 'policy', label: '冻结政策', children: frozen.data.brief.content.evaluation_policy_id },
-            { key: 'input', label: '冻结 Sealed 输入', children: frozen.data.execution_context.sealed_input_set_id },
-            { key: 'runtime', label: '冻结 Runtime / 修订', children: `${frozen.data.execution_context.runtime_id} / ${frozen.data.execution_context.runtime_revision}` },
-          ]} />}
-          <div className="field-grid">
-            <Form.Item name="cpu_seconds" label="CPU 秒数上限" rules={counterRules}><Input inputMode="numeric" maxLength={19} /></Form.Item>
-            <Form.Item name="wall_seconds" label="墙钟秒数上限" rules={[{ required: true, type: 'integer', min: 1, max: 86400 }]}><InputNumber min={1} max={86400} precision={0} /></Form.Item>
-            <Form.Item name="memory_mib" label="内存上限（MiB）" rules={[{ required: true, type: 'integer', min: 1, max: 1048576 }]}><InputNumber min={1} max={1048576} precision={0} /></Form.Item>
-            <Form.Item name="output_bytes" label="输出字节上限" rules={[{ required: true }, { validator: (_: unknown, value: unknown) => typeof value === 'string' && isCounter(value, true) && BigInt(value) <= 67108864n ? Promise.resolve() : Promise.reject(new Error('请输入 1 至 67108864 的整数字符串。')) }]}><Input inputMode="numeric" maxLength={19} /></Form.Item>
-          </div>
-        </Form>
-      </>}
-    </Space>
-  </Modal>;
 }
 
 function Qualifications({ version, close }: { version: string; close: () => void }) {

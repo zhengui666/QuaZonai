@@ -9,6 +9,11 @@ repository.workspace = true
 publish = false
 
 [features]
+# Optional official node observer and controlled Sandbox Paper host.
+native-node-observer = ["dep:nautilus-live", "dep:tokio", "tokio/time"]
+native-sandbox-test = ["native-node-observer", "dep:nautilus-sandbox"]
+native-paper = ["native-node-observer", "dep:nautilus-sandbox", "dep:nautilus-binance", "dep:axum", "dep:reqwest", "tokio/net", "tokio/sync", "tokio/signal"]
+native-paper-test = ["native-paper"]
 # Operator data preparation only; default scientific job images remain offline.
 polymarket-history = ["dep:tokio", "dep:parquet", "dep:sha2", "dep:nautilus-data", "dep:alloy-core", "dep:url"]
 catalog-prepare = ["dep:sha2", "dep:rc-zip", "dep:winnow", "dep:flate2", "dep:crc32fast", "dep:csv"]
@@ -29,6 +34,12 @@ path = "src/bin/source-tools.rs"
 required-features = ["catalog-prepare", "polymarket-history"]
 
 [dependencies]
+nautilus-live = { version = "=0.63.0", default-features = false, features = ["node"], optional = true }
+nautilus-sandbox = { version = "=0.63.0", default-features = false, optional = true }
+nautilus-binance = { version = "=0.63.0", default-features = false, optional = true }
+axum = { version = "=0.8.9", optional = true }
+reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls"], optional = true }
+tempfile = "=3.27.0"
 serde.workspace = true
 serde_json.workspace = true
 chrono = { version = "=0.4.45", features = ["serde"] }
@@ -72,11 +83,19 @@ linregress = "=0.5.4"
 wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "std", "validate", "deterministic", "portable-dispatch"] }
 
 [dev-dependencies]
+async-trait = "=0.1.92"
 arrow-array = "=56.2.0"
 nautilus-model = { version = "=0.63.0", default-features = false, features = ["test-support"] }
-tempfile = "=3.27.0"
 wat = "=1.258.0"
 
 [[example]]
 name = "browser_catalog_fixture"
 required-features = ["catalog-prepare"]
+
+[[test]]
+name = "native_sandbox_observer"
+required-features = ["native-sandbox-test"]
+
+[[test]]
+name = "native_paper_target"
+required-features = ["native-paper-test"]

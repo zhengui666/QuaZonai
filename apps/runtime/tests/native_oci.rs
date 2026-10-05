@@ -1550,7 +1550,59 @@ async fn real_native_compile_publishes_exact_model_and_concurrent_retry_has_one_
     assert_eq!(first.attempt_no, replay.attempt_no);
     assert_eq!(first.submitted_at, replay.submitted_at);
     assert_eq!(first.external_job_id, spec.external_job_id);
-    let terminal = f.terminal(&spec).await;
+    let observe_output = async {
+        tokio::time::timeout(Duration::from_secs(70), async {
+            let output = f
+                .config
+                .state_dir
+                .join("jobs")
+                .join(format!("{}-{}", spec.run_id, spec.attempt_no))
+                .join("output");
+            let mut scans = 0u64;
+            let mut disappeared = 0u64;
+            loop {
+                let container = f.native_container(&spec).await;
+                if container.state.as_ref().and_then(|state| state.running) == Some(true) {
+                    match runtime::files::output_usage(
+                        &output,
+                        spec.limits.output_bytes.get() + 1024 * 1024,
+                    ) {
+                        Ok(_) => {
+                            // Both native observations must bound the scan while
+                            // the original job is running, never just final files.
+                            let after = f.native_container(&spec).await;
+                            if after.state.as_ref().and_then(|state| state.running) == Some(true) {
+                                scans += 1;
+                            }
+                        }
+                        Err(runtime::Failure::Io(error))
+                            if error.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            // A same-directory rename may race read_dir/metadata.
+                            // Production defers IO errors instead of OutputLimit.
+                            disappeared += 1;
+                        }
+                        Err(error) => panic!("live compiler output scan failed: {error:?}"),
+                    }
+                }
+                if f.status(&spec).await.state.is_terminal() {
+                    return (scans, disappeared);
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("live compiler output observation deadline")
+    };
+    let (terminal, (live_scans, rename_deferrals)) =
+        tokio::join!(f.terminal(&spec), observe_output);
+    eprintln!(
+        "native compiler live output scans={live_scans}; rename_not_found_deferrals={rename_deferrals}"
+    );
+    assert!(
+        live_scans > 0,
+        "the actual compiler job must overlap successful live scans"
+    );
     assert_eq!(terminal.state, RuntimeJobState::Succeeded);
     let manifest = f.manifest(&spec).await;
     domain::runtime_jobs::manifest(&manifest, &spec, first.submitted_at, runtime::now()).unwrap();

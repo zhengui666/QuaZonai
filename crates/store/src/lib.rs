@@ -33,6 +33,7 @@ mod historical_source;
 pub mod lifecycle;
 mod migration;
 pub mod portfolio;
+mod recorded_features;
 mod recovery;
 pub mod research;
 pub mod runtime;

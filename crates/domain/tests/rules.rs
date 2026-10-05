@@ -238,6 +238,47 @@ fn every_resource_and_all_internal_optuna_trials_consume_budget() {
 }
 
 #[test]
+fn staged_job_preflight_reuses_inclusive_limits_without_replacing_shape_validation() {
+    let budget = budget();
+    assert_eq!(
+        job_resource_limits(
+            &budget,
+            budget.max_wall_seconds,
+            budget.max_memory_mib,
+            budget.max_output_bytes,
+        ),
+        Ok(())
+    );
+    for (wall, memory, output) in [
+        (budget.max_wall_seconds + 1, 1, count(1)),
+        (1, budget.max_memory_mib + 1, count(1)),
+        (1, 1, budget.max_output_bytes.checked_add(1).unwrap()),
+    ] {
+        assert_eq!(
+            job_resource_limits(&budget, wall, memory, output),
+            Err(DomainError::BudgetExhausted("job_resource_limit"))
+        );
+    }
+    // This helper owns only upper bounds. Reservation keeps its earlier shape
+    // check, including its original error precedence over resource exhaustion.
+    assert_eq!(job_resource_limits(&budget, 0, 0, count(0)), Ok(()));
+    assert_eq!(
+        reserve(
+            ProjectState::Active,
+            &budget,
+            &stop(),
+            &empty_usage(),
+            &Reservation {
+                wall_seconds: 0,
+                memory_mib: budget.max_memory_mib + 1,
+                ..request()
+            },
+        ),
+        Err(DomainError::Invalid("reservation"))
+    );
+}
+
+#[test]
 fn configurable_stop_flags_do_not_disable_the_hard_budget() {
     let mut rule = stop();
     rule.stop_on_budget = false;

@@ -21,15 +21,9 @@ import codex
 
 from manage import BUNDLE, BUNDLE_FILES, DATABASE_IMAGE, REPOSITORY, run, validate_manifest, version, version_precedence
 
-CI_PATHS = {
-    ".github/workflows/ci.yml",
-    ".github/workflows/web.yml",
-    ".github/workflows/native-runtime.yml",
-    ".github/workflows/native-data-browser.yml",
-    ".github/workflows/polymarket-history.yml",
-    ".github/workflows/container.yml",
-    ".github/workflows/cli.yml",
-}
+# Routine source validation is the Rust workflow. Image/CLI production and
+# installation remain in release-version.yml after this prerequisite succeeds.
+CI_PATHS = {".github/workflows/ci.yml"}
 CODEX_REPOSITORY = "ghcr.io/zhengui666/quazonai-codex"
 DEV_TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*")
 
@@ -428,3 +422,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

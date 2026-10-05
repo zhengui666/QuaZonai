@@ -167,6 +167,7 @@ fn catalog() -> (
             .max()
             .unwrap();
         let metadata = RuntimeCatalogMetadataV1 {
+            recorded_feature_inputs: None,
             schema_version: SchemaV1,
             registered_ref: REGISTRY.into(),
             native_snapshot_ref: format!("native-window-{index}"),
@@ -248,7 +249,45 @@ pub async fn upload(
 }
 
 pub async fn prepare(pool: &PgPool, remote: &mut support::Fixture) -> Prepared {
-    let (catalog, versions, settings) = tokio::task::spawn_blocking(catalog).await.unwrap();
+    let catalog = tokio::task::spawn_blocking(catalog).await.unwrap();
+    prepare_catalog(pool, remote, catalog, None).await
+}
+
+/// The same native registration path, optionally for an external cycle without an Agent.
+pub async fn prepare_catalog(
+    pool: &PgPool,
+    remote: &mut support::Fixture,
+    (catalog, versions, settings): (
+        tempfile::TempDir,
+        Vec<RuntimeCatalogMetadataV1>,
+        NativeSimulationSettingsV1,
+    ),
+    external_split: Option<SplitPolicyV1>,
+) -> Prepared {
+    prepare_catalog_with_paper(
+        pool,
+        remote,
+        (catalog, versions, settings),
+        external_split,
+        false,
+    )
+    .await
+}
+
+/// Paper permission is an explicit test input, frozen before dataset registration.
+pub async fn prepare_catalog_with_paper(
+    pool: &PgPool,
+    remote: &mut support::Fixture,
+    (catalog, versions, settings): (
+        tempfile::TempDir,
+        Vec<RuntimeCatalogMetadataV1>,
+        NativeSimulationSettingsV1,
+    ),
+    external_split: Option<SplitPolicyV1>,
+    paper: bool,
+) -> Prepared {
+    let external = external_split.is_some();
+    let base_currency = settings.base_currency.clone();
     remote.crash();
     let mut config: serde_json::Value =
         serde_json::from_slice(&fs::read(&remote.config_path).unwrap()).unwrap();
@@ -302,7 +341,11 @@ pub async fn prepare(pool: &PgPool, remote: &mut support::Fixture) -> Prepared {
         .resource
         .id;
     let proof = upload(&store, &actor, &objects, project, ResearchArtifactKind::Report,
-        r#"{"schema_version":1,"license":"Locally generated synthetic test data; research only, not market evidence."}"#.into()).await;
+        if paper {
+            r#"{"schema_version":1,"license":"Locally generated synthetic data for research and Paper engineering acceptance; not market evidence."}"#.into()
+        } else {
+            r#"{"schema_version":1,"license":"Locally generated synthetic test data; research only, not market evidence."}"#.into()
+        }).await;
     let checking = vault.clone();
     let integration = store
         .create_runtime(
@@ -314,11 +357,20 @@ pub async fn prepare(pool: &PgPool, remote: &mut support::Fixture) -> Prepared {
                     name: "Test-owned actual Runtime".into(),
                     endpoint: remote.origin.as_str().trim_end_matches('/').to_owned(),
                     tls_policy: TlsPolicy::SystemCa,
-                    allowed_capabilities: vec![
-                        RunKind::DataValidate,
-                        RunKind::AlphaEvaluate,
-                        RunKind::PortfolioSimulate,
-                    ],
+                    allowed_capabilities: if paper {
+                        vec![
+                            RunKind::DataValidate,
+                            RunKind::AlphaEvaluate,
+                            RunKind::PortfolioBuild,
+                            RunKind::PortfolioSimulate,
+                        ]
+                    } else {
+                        vec![
+                            RunKind::DataValidate,
+                            RunKind::AlphaEvaluate,
+                            RunKind::PortfolioSimulate,
+                        ]
+                    },
                     enabled: true,
                     development_http: true,
                 },
@@ -376,9 +428,18 @@ pub async fn prepare(pool: &PgPool, remote: &mut support::Fixture) -> Prepared {
             &DataGrantCreate {
                 schema_version: SchemaV1,
                 source_id: source.id,
-                license_reference: "Locally authored synthetic fixture, research only".into(),
+                license_reference: if paper {
+                    "Locally authored synthetic fixture for research and Paper acceptance"
+                } else {
+                    "Locally authored synthetic fixture, research only"
+                }
+                .into(),
                 evidence_artifact_id: proof,
-                allowed_uses: DataUse::Research,
+                allowed_uses: if paper {
+                    DataUse::ResearchAndPaper
+                } else {
+                    DataUse::Research
+                },
                 valid_from: runtime::now() - chrono::Duration::hours(1),
                 valid_until: None,
             },
@@ -542,6 +603,12 @@ pub async fn prepare(pool: &PgPool, remote: &mut support::Fixture) -> Prepared {
         threshold_low: Some("0.2".parse().unwrap()),
         ..policy.metric_requirements[0].clone()
     }];
+    if let Some(mut split) = external_split {
+        split.sealed_revision_id = datasets[2];
+        policy.split_policy = split;
+        policy.selection.frequency = "1-SECOND-LAST-EXTERNAL;horizon=2".into();
+    }
+    let horizon = policy.split_policy.label_horizon_observations.unwrap();
     let policy = store
         .create_evaluation_policy(&actor, "native-science-policy", &policy)
         .await
@@ -552,6 +619,11 @@ pub async fn prepare(pool: &PgPool, remote: &mut support::Fixture) -> Prepared {
     ))
     .unwrap();
     request.content.universe_version_id = universe.unwrap();
+    request.content.base_currency = base_currency;
+    request.content.horizon_value = Some(horizon);
+    if external {
+        request.content.budget.max_output_bytes = support::count(4 * 1024 * 1024);
+    }
     request.content.execution_assumptions_id = assumption;
     request.content.evaluation_policy_id = policy.id;
     // Explicitly smaller than the generic contract fixture and within this Runtime's
@@ -587,35 +659,43 @@ pub async fn prepare(pool: &PgPool, remote: &mut support::Fixture) -> Prepared {
         .await
         .unwrap()
         .resource;
-    let profile = store
-        .create_codex_profile(
-            &actor,
-            "native-science-profile",
-            &CodexProfileCreateV1 {
-                schema_version: SchemaV1,
-                name: "Native account-waived Responses fixture".into(),
-                home_binding: format!("native-{}", Id::new()),
-                profile_origin: ProfileOrigin::ManagedVolume,
-                connection: CodexConnectionCreateV1::System {},
-                model_settings: SavedModelSettingsV1 {
+    let choice = if external {
+        // The legacy Fixture shape carries these fields; external admission never reads them.
+        CodexProfileChoiceV1 {
+            profile_id: Id::new(),
+            expected_revision: contracts::Revision::INITIAL,
+        }
+    } else {
+        let profile = store
+            .create_codex_profile(
+                &actor,
+                "native-science-profile",
+                &CodexProfileCreateV1 {
                     schema_version: SchemaV1,
-                    use_default_model_settings: true,
-                    saved_model: None,
-                    saved_reasoning_effort: None,
-                    saved_fast_mode: false,
+                    name: "Native account-waived Responses fixture".into(),
+                    home_binding: format!("native-{}", Id::new()),
+                    profile_origin: ProfileOrigin::ManagedVolume,
+                    connection: CodexConnectionCreateV1::System {},
+                    model_settings: SavedModelSettingsV1 {
+                        schema_version: SchemaV1,
+                        use_default_model_settings: true,
+                        saved_model: None,
+                        saved_reasoning_effort: None,
+                        saved_fast_mode: false,
+                    },
                 },
-            },
-            |binding| async move {
-                domain::codex::settings::home_binding(&binding.home_binding)?;
-                Ok(())
-            },
-        )
-        .await
-        .unwrap()
-        .resource;
-    let choice = CodexProfileChoiceV1 {
-        profile_id: profile.id,
-        expected_revision: profile.revision,
+                |binding| async move {
+                    domain::codex::settings::home_binding(&binding.home_binding)?;
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap()
+            .resource;
+        CodexProfileChoiceV1 {
+            profile_id: profile.id,
+            expected_revision: profile.revision,
+        }
     };
     let data = cycle_support::Fixture {
         data: research_support::ResearchFixture {

@@ -3,6 +3,24 @@ use crate::{Id, Revision, SchemaV1, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// Direct owner execution of an immutable proposal under its existing cycle.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExperimentEvaluateV1 {
+    pub schema_version: SchemaV1,
+    pub expected_revision: Revision,
+    pub compile_limits: crate::lifecycle::JobLimitsV1,
+    pub evaluation_limits: crate::lifecycle::JobLimitsV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExperimentEvaluateIntent {
+    pub schema_version: SchemaV1,
+    pub experiment_id: Id,
+    pub request: ExperimentEvaluateV1,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExperimentProposalV1 {

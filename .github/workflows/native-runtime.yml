@@ -1,9 +1,8 @@
 name: Native Runtime
+# Optional focused acceptance; ordinary PR/push validation is Rust CI.
 on:
-  pull_request:
-  push:
-    branches: [main, dev]
   workflow_dispatch:
+
 permissions:
   contents: read
 env:
@@ -55,7 +54,7 @@ jobs:
           rustup run "$RUSTUP_TOOLCHAIN" cargo fmt --all -- --check
           rustup run "$RUSTUP_TOOLCHAIN" cargo clippy --locked -p runtime --all-targets --features native-oci -- -D warnings
           rustup run "$RUSTUP_TOOLCHAIN" cargo clippy --locked -p server --test native_science_thread --features native-science -- -D warnings
-          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p runtime -p job -p server --bin runtime --bin job --bin server
+          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p runtime -p job -p server -p quazonai-cli --features job/native-paper --bin runtime --bin job --bin server --bin quazonai
           rustup run "$RUSTUP_TOOLCHAIN" rustc --edition=2021 -D warnings -C opt-level=1 -C debuginfo=0 -C strip=symbols tests/native/oci_probe.rs -o "$RUNNER_TEMP/isolation-probe"
           rustup run "$RUSTUP_TOOLCHAIN" rustfmt --edition 2021 --check tests/native/oci_probe.rs
           rustup run "$RUSTUP_TOOLCHAIN" rustc --edition=2021 -D warnings --test tests/native/oci_probe.rs -o "$RUNNER_TEMP/isolation-probe-tests"
@@ -82,6 +81,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:native-runtime-ci-only@127.0.0.1:55435/postgres
           QZ_TEST_PG_CONTAINER: ${{ job.services.postgres.id }}
+          QUAZONAI_NATIVE_CLI_BIN: ${{ github.workspace }}/target/debug/quazonai
           QUAZONAI_NATIVE_SERVER_BIN: ${{ github.workspace }}/target/debug/server
         run: |
           set -euo pipefail
@@ -113,6 +113,7 @@ jobs:
       - name: Execute native scientific results through the original Mission Thread
         env:
           DATABASE_URL: postgresql://postgres:native-runtime-ci-only@127.0.0.1:55435/postgres
+          QUAZONAI_NATIVE_CLI_BIN: ${{ github.workspace }}/target/debug/quazonai
           QUAZONAI_NATIVE_SERVER_BIN: ${{ github.workspace }}/target/debug/server
           QUAZONAI_NATIVE_JOB_BIN: ${{ github.workspace }}/target/debug/job
         run: |
@@ -149,3 +150,4 @@ jobs:
             [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]]
             docker image rm "$image"
           fi
+

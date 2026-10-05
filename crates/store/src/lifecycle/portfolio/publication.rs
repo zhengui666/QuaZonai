@@ -19,6 +19,11 @@ where
     P: FnMut(NativeObjectPublication) -> Published,
     Published: std::future::Future<Output = Result<(), StoreError>>,
 {
+    let strategy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.portfolio_build_tasks WHERE run_id=$1 AND source_kind='STRATEGY_ALPHA')")
+        .bind(locked.run.id.as_uuid()).fetch_one(&mut *tx).await?;
+    if strategy {
+        return super::strategy_publication::publish(tx, locked, read, publish).await;
+    }
     let run = &locked.run;
     let binding = sqlx::query("SELECT b.request,t.parameters_artifact_id,t.image_ref,t.origin FROM app.portfolio_build_tasks b JOIN app.run_native_tasks t ON t.run_id=b.run_id WHERE b.run_id=$1")
         .bind(run.id.as_uuid()).fetch_one(&mut *tx).await?;

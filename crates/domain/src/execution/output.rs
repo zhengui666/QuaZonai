@@ -12,6 +12,12 @@ use contracts::{
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod experiment;
+mod experiment_summary;
+mod strategy_summary;
+pub use experiment::binding as check_experiment_evaluation;
+pub use experiment_summary::experiment_summary;
+pub use strategy_summary::strategy_portfolio_summary;
 mod forecast;
 mod sealed;
 pub use sealed::{
@@ -21,6 +27,7 @@ pub use sealed::{
 mod equity_curve;
 mod simulation;
 pub use equity_curve::{equity_curve_query, portfolio_equity_curve};
+pub(crate) use simulation::binding as check_simulation;
 pub use simulation::metrics as portfolio_simulation_metrics;
 mod study;
 pub use study::binding as check_portfolio_study;
@@ -128,7 +135,11 @@ fn compilation(value: &NativeModelCompilationV1) -> Result<(), DomainError> {
     text(&value.rustc_version, 1, 512, false)?;
     if !value.rustc_version.starts_with("rustc 1.98.1 ")
         || value.target != "wasm32-unknown-unknown"
-        || value.abi != "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64"
+        || ![
+            "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64",
+            contracts::science::FEATURE_MODEL_ABI_V2,
+        ]
+        .contains(&value.abi.as_str())
         || !(8..=2 * 1024 * 1024).contains(&value.module_bytes.get())
     {
         return Err(bad("native_output.compilation"));
@@ -201,7 +212,13 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         "qz.data_quality" => quality(&decode(bytes)?),
         "qz.native_forecast" => forecast::shape(&decode::<NativeForecastResultV1>(bytes)?),
         "qz.alpha_validation" => validation::shape(&decode(bytes)?),
+        "qz.experiment_evaluation" => experiment::shape(&decode(bytes)?),
         "qz.alpha_sealed" => sealed::shape(&decode(bytes)?),
+        "qz.strategy_portfolio" => {
+            let result: contracts::strategy_portfolio::NativeStrategyCompositionResultV1 =
+                decode(bytes)?;
+            super::strategy_composition_result(&result.request, &result)
+        }
         "qz.native_portfolio" => {
             let result: contracts::science::NativePortfolioBuildResultV1 = decode(bytes)?;
             allocation(&result.allocation)?;
@@ -325,10 +342,22 @@ pub fn output_bindings(
         }
         NativeTaskParametersV1::CompileModel {
             code_artifact_id, ..
+        }
+        | NativeTaskParametersV1::CompileFeatureModel {
+            code_artifact_id, ..
         } => {
             let value: NativeModelCompilationV1 = decode(body("qz.model_compilation")?.1)?;
             let model = body("qz.wasm_model")?.0;
-            if value.code_artifact_id != *code_artifact_id
+            let abi = if matches!(
+                parameters,
+                NativeTaskParametersV1::CompileFeatureModel { .. }
+            ) {
+                contracts::science::FEATURE_MODEL_ABI_V2
+            } else {
+                "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64"
+            };
+            if value.abi != abi
+                || value.code_artifact_id != *code_artifact_id
                 || value.model_storage_ref != model.storage_ref
                 || value.module_bytes != model.byte_count
             {
@@ -337,6 +366,21 @@ pub fn output_bindings(
         }
         NativeTaskParametersV1::EvaluateAlpha { request, .. } => {
             forecast::binding(request, &decode(body("qz.native_forecast")?.1)?)?;
+        }
+        NativeTaskParametersV1::EvaluateExperiment {
+            request,
+            dataset_revision_id,
+            model_artifact_id,
+            feature_artifact_ids,
+            ..
+        } => {
+            experiment::binding(
+                request,
+                *dataset_revision_id,
+                *model_artifact_id,
+                feature_artifact_ids,
+                &decode(body("qz.experiment_evaluation")?.1)?,
+            )?;
         }
         NativeTaskParametersV1::ValidateAlpha { request, .. } => {
             validation::binding(request, &decode(body("qz.alpha_validation")?.1)?)?;
@@ -350,6 +394,12 @@ pub fn output_bindings(
                 return Err(bad("sealed.calibration_input"));
             }
             sealed::binding(request, calibration, &decode(body("qz.alpha_sealed")?.1)?)?;
+        }
+        NativeTaskParametersV1::ComposeStrategyTargets { request, .. } => {
+            super::strategy_composition_result(
+                request,
+                &decode(body("qz.strategy_portfolio")?.1)?,
+            )?;
         }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {
             super::portfolio_build_result(request, &decode(body("qz.native_portfolio")?.1)?)?;

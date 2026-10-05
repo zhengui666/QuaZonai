@@ -281,3 +281,106 @@ pub struct DataListQuery {
     #[schema(default = 50, minimum = 1, maximum = 100)]
     pub limit: u16,
 }
+
+/// Register an existing recorded attachment using its exact UTF-8 bytes. The
+/// frozen Dataset metadata is authoritative; no client origin/PIT/license claims.
+/// Deliberately no Debug, as with ArtifactCreate, to avoid logging the raw content.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordedFeatureRegisterV1 {
+    pub schema_version: SchemaV1,
+    pub project_id: Id,
+    /// Must equal the Dataset ID in the route and normalized operator intent.
+    pub dataset_revision_id: Id,
+    #[schema(
+        min_length = 1,
+        max_length = 120,
+        pattern = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}(?![\s\S])"
+    )]
+    pub feature_part_key: String,
+    /// 1..=2097152 encoded UTF-8 bytes; whitespace and final newline are retained.
+    /// This is a string, never a parsed JSON Value to be reserialized for storage.
+    #[schema(min_length = 1)]
+    pub content: String,
+}
+
+impl RecordedFeatureRegisterV1 {
+    /// Bind the project, route identity, part and original UTF-8 size.
+    /// Store separately compares original bytes when replaying a registration.
+    pub fn intent(&self) -> Result<RecordedFeatureRegisterIntentV1, String> {
+        Ok(RecordedFeatureRegisterIntentV1 {
+            schema_version: self.schema_version,
+            project_id: self.project_id,
+            dataset_revision_id: self.dataset_revision_id,
+            feature_part_key: self.feature_part_key.clone(),
+            byte_count: DbCounter::new(self.content.len() as u64)?,
+        })
+    }
+}
+
+/// Small nonsecret approval/receipt input derived from the original upload.
+/// A matching intent does not replace Store's original-byte replay comparison.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordedFeatureRegisterIntentV1 {
+    pub schema_version: SchemaV1,
+    pub project_id: Id,
+    pub dataset_revision_id: Id,
+    #[schema(
+        min_length = 1,
+        max_length = 120,
+        pattern = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}(?![\s\S])"
+    )]
+    pub feature_part_key: String,
+    #[schema(schema_with = crate::catalogs::recorded_feature_bytes_schema)]
+    pub byte_count: DbCounter,
+}
+
+/// Immutable source identity resolved from the registered feature relationship.
+/// It is never supplied by a registration client and never extends grant scope.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordedFeatureSourceBindingV1 {
+    pub dataset_revision_id: Id,
+    pub source_id: Id,
+    pub data_use_grant_id: Id,
+    pub native_metadata_artifact_id: Id,
+    #[schema(
+        min_length = 1,
+        max_length = 120,
+        pattern = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}(?![\s\S])"
+    )]
+    pub feature_part_key: String,
+    pub origin: DataOrigin,
+    pub pit_status: PitStatus,
+    pub revision_policy: DataRevisionPolicy,
+}
+
+/// Project research-read projection of frozen registration evidence. Historical
+/// reads do not imply that a grant is currently valid for new scientific use.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordedFeatureViewV1 {
+    pub artifact_id: Id,
+    pub project_id: Id,
+    pub source_binding: RecordedFeatureSourceBindingV1,
+    pub partition: DataPartition,
+    pub source_selection_start_ns: DbCounter,
+    pub source_selection_end_ns: DbCounter,
+    /// Original fragment descriptor including byte size, count and exact clocks.
+    pub fragment: crate::catalogs::RecordedFeatureFragmentV1,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordedFeatureListQuery {
+    pub project_id: Id,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordedFeatureListV1 {
+    #[schema(max_items = 16)]
+    pub items: Vec<RecordedFeatureViewV1>,
+}

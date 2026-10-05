@@ -17,7 +17,7 @@ The password-auth migration invalidates pre-password browser sessions. The first
 
 [release.yml](../.github/workflows/release.yml) observes main/tag pushes and check completion. A release tag is `vMAJOR.MINOR.PATCH[-prerelease]`, without leading zeros, build metadata or a floating alias. Its dereferenced commit must be an ancestor of current main; squash/rebase does not move an old tag.
 
-Release requires successful current-source CI, Web console, Native Runtime, [Native data browser](../.github/workflows/native-data-browser.yml), Polymarket history, Container and portable CLI workflows. The [version workflow](../.github/workflows/release-version.yml) builds and validates the application, scientific job and Codex images, pushes those same images to GHCR, then runs installation/update/recovery on a fresh runner with no checkout or cached product images and with host build commands denied. The release also builds and executes native Linux x86_64, Windows x86_64 and macOS Intel/Apple Silicon CLIs, archives and reloads all four Docker images, and checks the one-line installer on a fresh Linux runner. Only after every platform and installation check succeeds does it upload all archives, installers, tag-rendered README and SHA256SUMS, verify the uploaded asset sizes/digests, and complete the draft Release. It does not rebuild a different image after testing, overwrite a complete version or publish an application `latest` tag. A main push without a version tag is not a release.
+Release selection/waiting requires successful current-source [Rust CI](../.github/workflows/ci.yml). The [version workflow](../.github/workflows/release-version.yml) then directly calls the complete former [Rust regression](../.github/workflows/rust-regression.yml) at `inputs.revision`; its image `build` job depends on successful regression. The manual/reusable regression is deliberately not added to `release.py` source-workflow waiting, because it has no automatic source trigger. Frontend and standalone container acceptance workflows remain optional focused checks. After regression, the version workflow builds and validates the application, scientific job and Codex images, pushes those same images to GHCR, then runs installation/update/recovery on a fresh runner with no checkout or cached product images and with host build commands denied. The release also builds and executes native Linux x86_64, Windows x86_64 and macOS Intel/Apple Silicon CLIs, archives and reloads all four Docker images, and checks the one-line installer on a fresh Linux runner. Only after every platform and installation check succeeds does it upload all archives, installers, tag-rendered README and SHA256SUMS, verify the uploaded asset sizes/digests, and complete the draft Release. It does not rebuild a different image after testing, overwrite a complete version or publish an application `latest` tag. A main push without a version tag is not a release.
 
 Push the chosen immutable tag only within release authorization. Reconcile an existing tag/draft before retrying. Verify the published revision, image digest, package visibility and `quazonai-deploy.tar.gz`; repository visibility alone does not set GHCR visibility. Deployment uses the [versioned bundle](../deploy/docker/README.md), not a developer checkout.
 
@@ -50,9 +50,11 @@ the installation's temporary cleanup; a local CLI exit is not cancellation proof
 
 Every push to remote `dev` runs [Dev release](../.github/workflows/dev-release.yml).
 It creates `v<workspace core>-dev.<UTC YYYYMMDDHHMMSS>.<Actions run ID>` at the
-exact push SHA, then waits for all seven source workflows and calls the same
+exact push SHA, then waits for routine Rust CI and calls the same
 [version publisher](../.github/workflows/release-version.yml) with `branch=dev`.
-The native data browser check is mandatory on that exact SHA: absent, pending, skipped, cancelled or failed execution cannot authorize publication. Its fixture success does not grant source permission or PIT qualification.
+The publisher requires the complete former Rust regression at that revision
+before its image build/push job; this also applies to automatic dev versions.
+Absent, pending, skipped, cancelled or failed Rust CI cannot authorize publication. Manual acceptance fixtures do not grant source permission or PIT qualification.
 The run creation timestamp and ID make retries reuse the existing tag; a tag
 pointing elsewhere is rejected. Successive dev pushes keep their own source CI.
 Main release selection excludes these automatic timestamped tags even after their source is merged into main; the original dev run owns retries. The source must remain contained in dev. Force-pushing it away prevents release.
@@ -354,3 +356,4 @@ No unattended production monitor is installed by these documents. Actual automat
 ## Measurements
 
 Report observed duration, workload, profile, source revision and outcome. Keep execution success, evidence validity, review, merge and deployment separate. A microbenchmark does not establish a whole-system speedup; a disposable smoke test does not exercise a real account or market-data entitlement.
+

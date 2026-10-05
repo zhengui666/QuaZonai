@@ -1,8 +1,5 @@
 name: Portable CLI
 on:
-  pull_request:
-  push:
-    branches: [main, dev]
   workflow_call:
     inputs:
       version:
@@ -92,3 +89,4 @@ jobs:
           path: ${{ runner.temp }}/cli-assets/${{ matrix.archive }}
           retention-days: 7
           if-no-files-found: error
+

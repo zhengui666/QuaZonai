@@ -8,6 +8,8 @@ use contracts::{
     runtime::{RuntimeArtifactSchemaV1, RuntimeProbeOutcomeV1, RuntimeProbeRequestV1},
     DbCounter, Id, SchemaV1,
 };
+#[path = "external_evaluation_report.rs"]
+mod external_report;
 use sqlx::PgPool;
 use store::{
     authority::Actor,
@@ -325,8 +327,27 @@ pub async fn complete_sealed(
     .await
 }
 
+pub async fn complete_external_evaluation(
+    pool: &PgPool,
+    store: &Store,
+    f: &cycle_support::Fixture,
+    run: Id,
+    minimum_bytes: Option<usize>,
+) -> Id {
+    complete_native(
+        pool,
+        store,
+        f,
+        run,
+        Observation::ExternalEvaluation { minimum_bytes },
+        None,
+    )
+    .await
+}
+
 enum Observation {
     Compilation,
+    ExternalEvaluation { minimum_bytes: Option<usize> },
     Forecast,
     Validation { rows: usize, ic: f64 },
     Sealed,
@@ -385,11 +406,60 @@ async fn complete_native(
             model_storage_ref: model_ref,
             rustc_version: "rustc 1.98.1 (controlled observation)".into(),
             target: "wasm32-unknown-unknown".into(),
-            abi: "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64".into(),
+            abi: {
+                let size = job
+                    .spec
+                    .inputs
+                    .iter()
+                    .find_map(|input| match input {
+                        RuntimeInputV1::Artifact {
+                            artifact_id,
+                            byte_count,
+                            ..
+                        } if *artifact_id == job.spec.parameters_artifact_id => Some(*byte_count),
+                        _ => None,
+                    })
+                    .unwrap();
+                let task: contracts::execution::NativeTaskParametersV1 = serde_json::from_slice(
+                    &f.objects
+                        .read(job.spec.parameters_artifact_id, size)
+                        .unwrap(),
+                )
+                .unwrap();
+                if matches!(
+                    task,
+                    contracts::execution::NativeTaskParametersV1::CompileFeatureModel { .. }
+                ) {
+                    contracts::science::FEATURE_MODEL_ABI_V2.into()
+                } else {
+                    "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64".into()
+                }
+            },
             module_bytes: DbCounter::new(wasm.len() as u64).unwrap(),
         })
         .unwrap();
         vec![wasm, report]
+    } else if let Observation::ExternalEvaluation { minimum_bytes } = observation {
+        let size = job
+            .spec
+            .inputs
+            .iter()
+            .find_map(|input| match input {
+                RuntimeInputV1::Artifact {
+                    artifact_id,
+                    byte_count,
+                    ..
+                } if *artifact_id == job.spec.parameters_artifact_id => Some(*byte_count),
+                _ => None,
+            })
+            .unwrap();
+        let task: contracts::execution::NativeTaskParametersV1 = serde_json::from_slice(
+            &f.objects
+                .read(job.spec.parameters_artifact_id, size)
+                .unwrap(),
+        )
+        .unwrap();
+        vec![serde_json::to_vec(&external_report::report(&task, minimum_bytes)).unwrap()]
     } else if let Observation::Validation { rows, ic } = observation {
         let size = job
             .spec

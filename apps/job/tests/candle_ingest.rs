@@ -17,7 +17,7 @@ use std::{
 
 #[path = "support/candle_acquisition.rs"]
 mod acquisition;
-use acquisition::{file, hash, write_json, OBSERVED, RECEIVED, VALUES};
+use acquisition::{file, write_json, OBSERVED, RECEIVED, VALUES};
 
 struct Fixture {
     directory: tempfile::TempDir,
@@ -127,9 +127,14 @@ fn native_roundtrip_preserves_exact_prices_volume_definitions_and_batch_clock() 
     assert_eq!(report["historical_availability"], "UNVERIFIED");
     assert_eq!(report["research_qualified"], false);
     assert_eq!(report["native_readback_verified"], true);
+    assert!(report.get("acquisition_sha256").is_none());
+    assert!(report.get("instrument_definitions_sha256").is_none());
+    let evidence: Value =
+        serde_json::from_slice(&fs::read(f.output.join("source-evidence.json")).unwrap()).unwrap();
+    assert_eq!(evidence["acquisition"], f.manifest);
     assert_eq!(
-        report["acquisition_sha256"],
-        hash(&fs::read(f.source.join("acquisition.json")).unwrap())
+        evidence["instrument_definitions"],
+        serde_json::to_value([&f.instrument]).unwrap()
     );
     let bars = f.native_rows();
     assert_eq!(bars.len(), 3);
@@ -156,8 +161,8 @@ fn native_roundtrip_preserves_exact_prices_volume_definitions_and_batch_clock() 
 }
 
 #[test]
-fn source_raw_derived_hashes_and_lineage_cannot_be_changed() {
-    for case in 0..5 {
+fn source_sizes_derived_values_and_lineage_must_match() {
+    for case in 0..6 {
         let mut f = Fixture::new();
         match case {
             0 => fs::write(f.source.join("raw/0000.json"), b"[]").unwrap(),
@@ -173,6 +178,13 @@ fn source_raw_derived_hashes_and_lineage_cannot_be_changed() {
                 f.manifest["admission"]["research_qualified"] = true.into();
                 f.save_manifest();
             }
+            4 => {
+                let path = f.source.join("raw/0000.json");
+                let changed = fs::read_to_string(&path)
+                    .unwrap()
+                    .replace("42000.99", "42000.98");
+                fs::write(path, changed).unwrap();
+            }
             _ => {
                 let path = f.source.join("records.jsonl");
                 let changed = fs::read_to_string(&path)
@@ -185,6 +197,22 @@ fn source_raw_derived_hashes_and_lineage_cannot_be_changed() {
         }
         f.reject();
     }
+}
+
+#[test]
+fn legacy_checksum_metadata_is_read_without_certifying_it() {
+    let mut f = Fixture::new();
+    f.manifest["source_terms"]["file"]["sha256"] = "legacy metadata is not verified".into();
+    f.manifest["records"]["sha256"] = "legacy metadata is not verified".into();
+    f.manifest["responses"][0]["file"]["sha256"] = "legacy metadata is not verified".into();
+    f.save_manifest();
+    let result = f.run();
+    assert!(result.status.success());
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert!(report.get("acquisition_sha256").is_none());
+    assert_eq!(report["bars"], 3);
+    assert_eq!(report["research_qualified"], false);
+    assert_eq!(f.native_rows().len(), 3);
 }
 
 #[test]

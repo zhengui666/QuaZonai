@@ -228,16 +228,12 @@ impl Fixture {
         body: Option<serde_json::Value>,
         statuses: &[StatusCode],
     ) -> T {
-        let mut request = self.client.request(method, self.url(segments));
+        let mut request = self.client.request(method.clone(), self.url(segments));
         if let Some(body) = body {
             request = request.json(&body);
         }
         let response = request.send().await.expect("native runtime request failed");
-        assert!(
-            statuses.contains(&response.status()),
-            "native HTTP returned unexpected status {}",
-            response.status()
-        );
+        let status = response.status();
         assert_eq!(
             response.headers()[reqwest::header::CACHE_CONTROL],
             "no-store"
@@ -250,6 +246,25 @@ impl Fixture {
                 .any(|part| part == SECRET.as_bytes()),
             "native response reflected credential"
         );
+        if !statuses.contains(&status) {
+            let problem = serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .map(|value| {
+                    // RuntimeProblem has only these nonsecret contract fields.
+                    // Never log a successful response payload or the request body.
+                    json!({
+                        "schema_version": value.get("schema_version"),
+                        "code": value.get("code"),
+                        "status": value.get("status"),
+                        "retryable": value.get("retryable"),
+                        "field": value.get("field"),
+                    })
+                });
+            panic!(
+                "native HTTP {method} {} returned unexpected status {status}: {problem:?}",
+                segments.join("/")
+            );
+        }
         serde_json::from_slice(&bytes).expect("native response did not satisfy shared DTO")
     }
     pub async fn object(&self, id: Id, bytes: &[u8]) {

@@ -15,12 +15,18 @@ permissions:
   contents: read
   actions: read
 jobs:
+  regression:
+    uses: ./.github/workflows/rust-regression.yml
+    with:
+      revision: ${{ inputs.revision }}
+      artifact_label: ${{ inputs.version }}
   cli:
     uses: ./.github/workflows/cli.yml
     with:
       version: ${{ inputs.version }}
       revision: ${{ inputs.revision }}
   build:
+    needs: regression
     runs-on: ubuntu-24.04
     timeout-minutes: 85
     permissions:

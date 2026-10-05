@@ -16,38 +16,69 @@ use axum::{
 use contracts::{
     control::{CommandResult, ListQuery, Page},
     portfolio::*,
+    strategy_portfolio::*,
     Id,
 };
 use store::StoreError;
 
-#[utoipa::path(get,path="/api/v2/projects/{id}/portfolio-candidates",operation_id="list_candidates",tag="Portfolio candidates",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<CandidateViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/projects/{id}/portfolio-candidates",operation_id="list_candidates",tag="Portfolio candidates",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<PortfolioCandidateListEnvelopeV2>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
 pub async fn candidates(
     State(state): State<AppState>,
     Authority(actor): Authority,
     id: Result<Path<Id>, PathRejection>,
     query: Result<Query<ListQuery>, QueryRejection>,
-) -> Result<Json<Page<CandidateViewV1>>, ApiError> {
+) -> Result<Json<Page<PortfolioCandidateListEnvelopeV2>>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     let Query(query) = query.map_err(|_| ApiError::validation())?;
-    Ok(Json(state.store.candidates(&actor, id, &query).await?))
+    Ok(Json(
+        state.store.candidates_envelope(&actor, id, &query).await?,
+    ))
 }
 
-#[utoipa::path(get,path="/api/v2/portfolio-candidates/{id}",operation_id="get_candidate",tag="Portfolio candidates",params(("id"=Id,Path)),responses((status=200,body=CandidateDetailV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/portfolio-candidates/{id}",operation_id="get_candidate",tag="Portfolio candidates",params(("id"=Id,Path)),responses((status=200,body=PortfolioCandidateEnvelopeV2),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
 pub async fn candidate(
     State(state): State<AppState>,
     Authority(actor): Authority,
     id: Result<Path<Id>, PathRejection>,
-) -> Result<Json<CandidateDetailV1>, ApiError> {
+) -> Result<Json<PortfolioCandidateEnvelopeV2>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
-    Ok(Json(state.store.candidate(&actor, id).await?))
+    Ok(Json(state.store.candidate_envelope(&actor, id).await?))
 }
 
-#[utoipa::path(post,path="/api/v2/portfolio-builds",operation_id="start_portfolio_build",tag="Portfolio",request_body=PortfolioBuildRequestV1,params(("Idempotency-Key"=String,Header)),responses((status=202,body=CommandResult<contracts::runs::RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+/// The published strategy candidate's original native result, never a new replay.
+#[utoipa::path(get,path="/api/v2/portfolio-candidates/{id}/summary",operation_id="get_strategy_portfolio_summary",tag="Portfolio candidates",params(("id"=Id,Path)),responses((status=200,body=StrategyPortfolioSummaryV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=503,body=Problem)))]
+pub async fn summary(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    id: Result<Path<Id>, PathRejection>,
+) -> Result<Json<StrategyPortfolioSummaryV1>, ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(StoreError::IntegrationUnavailable)?;
+    Ok(Json(
+        state
+            .store
+            .strategy_portfolio_summary(&actor, id, move |id, size| {
+                let objects = objects.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || objects.read(id, size))
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
+                }
+            })
+            .await?,
+    ))
+}
+
+#[utoipa::path(post,path="/api/v2/portfolio-builds",operation_id="start_portfolio_build",tag="Portfolio",request_body=PortfolioBuildEnvelopeV2,params(("Idempotency-Key"=String,Header)),responses((status=202,body=CommandResult<contracts::runs::RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn build(
     State(state): State<AppState>,
     Authority(actor): Authority,
     headers: HeaderMap,
-    body: Result<Json<PortfolioBuildRequestV1>, JsonRejection>,
+    body: Result<Json<PortfolioBuildEnvelopeV2>, JsonRejection>,
 ) -> Result<
     (
         StatusCode,
@@ -150,11 +181,18 @@ async fn run_portfolio(
             }
         };
         let result = match command {
-            contracts::control::OperatorCommand::PortfolioBuild(request) => {
-                store
-                    .start_portfolio_build(&actor, &key, &request, read, publish)
-                    .await
-            }
+            contracts::control::OperatorCommand::PortfolioBuild(request) => match *request {
+                PortfolioBuildEnvelopeV2::Forecast(request) => {
+                    store
+                        .start_portfolio_build(&actor, &key, &request, read, publish)
+                        .await
+                }
+                PortfolioBuildEnvelopeV2::Strategy(request) => {
+                    store
+                        .start_strategy_portfolio_build(&actor, &key, &request, read, publish)
+                        .await
+                }
+            },
             contracts::control::OperatorCommand::PortfolioSimulate(request) => {
                 store
                     .start_candidate_simulation(&actor, &key, &request, read, publish)
@@ -188,42 +226,58 @@ async fn run_portfolio(
     Ok((StatusCode::ACCEPTED, Json(result)))
 }
 
-#[utoipa::path(post,path="/api/v2/portfolio-mandates",operation_id="create_mandate",tag="Portfolio mandates",params(("Idempotency-Key"=String,Header)),request_body=MandateCreateV1,responses((status=201,body=CommandResult<MandateViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(post,path="/api/v2/portfolio-mandates",operation_id="create_mandate",tag="Portfolio mandates",params(("Idempotency-Key"=String,Header)),request_body=MandateCreateEnvelopeV2,responses((status=201,body=CommandResult<MandateViewEnvelopeV2>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
 pub async fn create(
     State(state): State<AppState>,
     Authority(actor): Authority,
     headers: HeaderMap,
-    body: Result<Json<MandateCreateV1>, JsonRejection>,
-) -> Result<(StatusCode, Json<CommandResult<MandateViewV1>>), ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(
-            state
+    body: Result<Json<MandateCreateEnvelopeV2>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<MandateViewEnvelopeV2>>), ApiError> {
+    let key = idempotency_key(&headers)?;
+    let result = match json(body)? {
+        MandateCreateEnvelopeV2::Forecast(request) => {
+            let result = state.store.create_mandate(&actor, key, &request).await?;
+            CommandResult {
+                schema_version: result.schema_version,
+                replayed: result.replayed,
+                resource: MandateViewEnvelopeV2::Forecast(Box::new(result.resource)),
+            }
+        }
+        MandateCreateEnvelopeV2::Strategy(request) => {
+            let result = state
                 .store
-                .create_mandate(&actor, idempotency_key(&headers)?, &json(body)?)
-                .await?,
-        ),
-    ))
+                .create_strategy_mandate(&actor, key, &request)
+                .await?;
+            CommandResult {
+                schema_version: result.schema_version,
+                replayed: result.replayed,
+                resource: MandateViewEnvelopeV2::Strategy(Box::new(result.resource)),
+            }
+        }
+    };
+    Ok((StatusCode::CREATED, Json(result)))
 }
 
-#[utoipa::path(get,path="/api/v2/projects/{id}/portfolio-mandates",operation_id="list_mandates",tag="Portfolio mandates",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<MandateViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/projects/{id}/portfolio-mandates",operation_id="list_mandates",tag="Portfolio mandates",params(("id"=Id,Path),("cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=Page<MandateViewEnvelopeV2>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
 pub async fn list(
     State(state): State<AppState>,
     Authority(actor): Authority,
     id: Result<Path<Id>, PathRejection>,
     query: Result<Query<ListQuery>, QueryRejection>,
-) -> Result<Json<Page<MandateViewV1>>, ApiError> {
+) -> Result<Json<Page<MandateViewEnvelopeV2>>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
     let Query(query) = query.map_err(|_| ApiError::validation())?;
-    Ok(Json(state.store.mandates(&actor, id, &query).await?))
+    Ok(Json(
+        state.store.mandates_envelope(&actor, id, &query).await?,
+    ))
 }
 
-#[utoipa::path(get,path="/api/v2/portfolio-mandates/{id}",operation_id="get_mandate",tag="Portfolio mandates",params(("id"=Id,Path)),responses((status=200,body=MandateViewV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(get,path="/api/v2/portfolio-mandates/{id}",operation_id="get_mandate",tag="Portfolio mandates",params(("id"=Id,Path)),responses((status=200,body=MandateViewEnvelopeV2),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
 pub async fn get(
     State(state): State<AppState>,
     Authority(actor): Authority,
     id: Result<Path<Id>, PathRejection>,
-) -> Result<Json<MandateViewV1>, ApiError> {
+) -> Result<Json<MandateViewEnvelopeV2>, ApiError> {
     let Path(id) = id.map_err(|_| ApiError::validation())?;
-    Ok(Json(state.store.mandate(&actor, id).await?))
+    Ok(Json(state.store.mandate_envelope(&actor, id).await?))
 }

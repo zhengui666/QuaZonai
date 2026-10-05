@@ -73,7 +73,7 @@ pub struct DownstreamReadinessV1 {
 pub struct DownstreamCapabilitiesV1 {
     pub schema_version: crate::SchemaV1,
     pub delivery_mode: DownstreamDeliveryModeV1,
-    #[schema(value_type = std::collections::BTreeSet<PackageSchemaVersion>, min_items = 1, max_items = 1)]
+    #[schema(value_type = std::collections::BTreeSet<PackageSchemaVersion>, min_items = 1, max_items = 2)]
     pub accepted_package_versions: Vec<PackageSchemaVersion>,
     #[schema(value_type = std::collections::BTreeSet<crate::forward::ForwardEnvironmentV1>, min_items = 1, max_items = 2)]
     pub environments: Vec<crate::forward::ForwardEnvironmentV1>,
@@ -175,6 +175,11 @@ pub struct PackageTargetV1 {
 #[serde(deny_unknown_fields)]
 pub struct TargetPackageV1 {
     pub release_id: Id,
+    #[serde(
+        serialize_with = "serialize_package_v1",
+        deserialize_with = "deserialize_package_v1"
+    )]
+    #[schema(schema_with = package_v1_schema)]
     pub package_schema_version: PackageSchemaVersion,
     pub environment_origin: PackageOriginV1,
     pub project_id: Id,
@@ -205,6 +210,36 @@ pub struct TargetPackageV1 {
     pub limitations: Vec<String>,
     #[schema(min_items = 1, max_items = 256)]
     pub provenance_artifact_refs: Vec<Id>,
+}
+
+fn serialize_package_v1<S: serde::Serializer>(
+    version: &PackageSchemaVersion,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if *version != PackageSchemaVersion::V1 {
+        return Err(serde::ser::Error::custom(
+            "forecast package requires version 1",
+        ));
+    }
+    serializer.serialize_str("1")
+}
+
+fn deserialize_package_v1<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<PackageSchemaVersion, D::Error> {
+    match PackageSchemaVersion::deserialize(deserializer)? {
+        PackageSchemaVersion::V1 => Ok(PackageSchemaVersion::V1),
+        PackageSchemaVersion::V2 => Err(serde::de::Error::custom(
+            "forecast package requires version 1",
+        )),
+    }
+}
+
+fn package_v1_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    utoipa::openapi::schema::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::Type::String)
+        .enum_values(Some(["1"]))
+        .into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

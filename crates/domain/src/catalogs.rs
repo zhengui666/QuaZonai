@@ -366,6 +366,9 @@ pub fn metadata(
     {
         return Err(bad("quality_times"));
     }
+    if let Some(features) = &value.recorded_feature_inputs {
+        recorded_feature_inputs(features, value.partition, value.available_through)?;
+    }
     let universe = &value.universe;
     text(&universe.name, 1, 120, false)?;
     text(&universe.calendar_ref, 1, 120, false)?;
@@ -574,4 +577,66 @@ pub fn portfolio_groups(
         return Err(bad_source());
     }
     Ok(groups)
+}
+
+/// A bounded attachment key cannot name a host path or a URL.
+pub fn recorded_feature_part_key(value: &str) -> Result<(), DomainError> {
+    if !(1..=120).contains(&value.len())
+        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err(bad("recorded_feature_inputs.part_key"));
+    }
+    Ok(())
+}
+
+/// Structural checks only: the trusted source preparer checks the original
+/// paired reports and buffers. Descriptors grant no license or PIT authority.
+pub fn recorded_feature_inputs(
+    value: &RecordedFeatureInputsV1,
+    partition: contracts::research::DataPartition,
+    available_through: DateTime<Utc>,
+) -> Result<(), DomainError> {
+    use contracts::{
+        artifacts::MAX_UPLOAD_BYTES,
+        science::{MAX_FEATURE_ARTIFACTS, MAX_FEATURE_OBSERVATIONS},
+    };
+    let available = available_through
+        .timestamp_nanos_opt()
+        .and_then(|n| u64::try_from(n).ok())
+        .ok_or_else(|| bad("recorded_feature_inputs.available_through"))?;
+    if value.partition != partition
+        || partition == contracts::research::DataPartition::Sealed
+        || value.source_selection_start_ns >= value.source_selection_end_ns
+        || !(1..=MAX_FEATURE_ARTIFACTS).contains(&value.fragments.len())
+    {
+        return Err(bad("recorded_feature_inputs"));
+    }
+    let mut keys = BTreeSet::new();
+    let mut observations = 0u64;
+    for fragment in &value.fragments {
+        recorded_feature_part_key(&fragment.part_key)?;
+        observations = observations
+            .checked_add(fragment.observations.get())
+            .ok_or_else(|| bad("recorded_feature_inputs.observations"))?;
+        if !keys.insert(&fragment.part_key)
+            || !(1..=MAX_UPLOAD_BYTES as u64).contains(&fragment.byte_count.get())
+            || fragment.observations.get() == 0
+            || observations > MAX_FEATURE_OBSERVATIONS as u64
+            || fragment.min_event_ns > fragment.max_event_ns
+            || fragment.min_event_ns < value.source_selection_start_ns
+            || fragment.max_event_ns >= value.source_selection_end_ns
+            || fragment.min_observed_available_ns > fragment.max_observed_available_ns
+            || fragment.min_observed_available_ns < fragment.min_event_ns
+            || fragment.max_observed_available_ns < fragment.max_event_ns
+            || fragment.max_observed_available_ns.get() > available
+        {
+            return Err(bad("recorded_feature_inputs.fragment"));
+        }
+        // Observed availability may exceed the source event selection end.
+        // BAR event_start/end are intentionally not bounds on feature events.
+    }
+    Ok(())
 }

@@ -1,9 +1,11 @@
 //! Original approval consumption; an offer is not a transfer or execution.
 use super::*;
+use contracts::strategy_portfolio::{HandoffClaimViewV2, TargetPackageEnvelopeV2};
 use contracts::{
     control::{MachineScope, PrincipalKind},
     delivery::*,
 };
+use domain::delivery::package_delivery;
 use sqlx::postgres::PgRow;
 
 fn view(row: &PgRow) -> Result<HandoffViewV1, StoreError> {
@@ -37,7 +39,7 @@ async fn admission<R, Read>(
     approval_id: Id,
     release_id: Id,
     read: &mut R,
-) -> Result<(PgRow, TargetPackageV1, DateTime<Utc>), StoreError>
+) -> Result<(PgRow, TargetPackageEnvelopeV2, DateTime<Utc>), StoreError>
 where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
@@ -52,7 +54,7 @@ where
     let environment = db::enum_value(&approval, "environment")?;
     let downstream = db::id(approval.try_get("downstream_id")?)?;
     let (_, candidate, package, source_until) =
-        approvals::source(tx, release_id, environment, read).await?;
+        approvals::source_envelope(tx, release_id, environment, read).await?;
     // Native downstream row serializes its sequence, including offers from other projects.
     sqlx::query("SELECT id FROM app.downstream_integrations WHERE id=$1 FOR UPDATE")
         .bind(downstream.as_uuid())
@@ -74,10 +76,13 @@ where
             let observations = observations
                 .map(|ids| ids.into_iter().map(db::id).collect::<Result<Vec<_>, _>>())
                 .transpose()?;
+            let TargetPackageEnvelopeV2::Forecast(package) = &package else {
+                return Err(StoreError::Invalid("strategy_manual_approval_required"));
+            };
             super::automated::policy_authority(
                 tx,
                 db::id(approval.try_get("automation_policy_id")?)?,
-                &package,
+                package,
                 downstream,
                 environment,
                 observations.as_deref(),
@@ -240,14 +245,14 @@ impl Store {
 }
 
 impl Store {
-    pub async fn claim_handoff<R, Read>(
+    pub async fn claim_handoff_envelope<R, Read>(
         &self,
         actor: &Actor,
         key: &str,
         id: Id,
         request: &HandoffClaimV1,
         mut read: R,
-    ) -> Result<CommandResult<HandoffClaimViewV1>, StoreError>
+    ) -> Result<CommandResult<HandoffClaimViewV2>, StoreError>
     where
         R: FnMut(Id, DbCounter) -> Read,
         Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
@@ -311,11 +316,11 @@ impl Store {
         if current.state != HandoffStateV1::Offered {
             return Err(StoreError::Conflict);
         }
-        if request.package_schema_version != package.package_schema_version {
+        if request.package_schema_version != package_delivery(&package).package_schema_version {
             return Err(StoreError::Invalid("claim_package_version"));
         }
         let revision = db::revision(approval.try_get("downstream_revision")?)?;
-        approvals::downstream(
+        approvals::downstream_envelope(
             &mut tx,
             current.downstream_id,
             revision,
@@ -326,7 +331,7 @@ impl Store {
         crate::authority::machine(&mut tx, actor, true).await?;
         let accepted = now(&mut tx).await?;
         if accepted < current.offered_at
-            || accepted < package.valid_from
+            || accepted < package_delivery(&package).valid_from
             || accepted < approval.try_get::<DateTime<Utc>, _>("granted_at")?
             || accepted >= current.expires_at
             || accepted >= until
@@ -337,7 +342,7 @@ impl Store {
             .bind(id.as_uuid()).bind(&request.external_claim_id).execute(&mut *tx).await?;
         // SQL triggers record the transfer and may wait; expiry and credential checks
         // after the write still roll back state, transfer and receipt together.
-        approvals::downstream(
+        approvals::downstream_envelope(
             &mut tx,
             current.downstream_id,
             revision,
@@ -354,7 +359,7 @@ impl Store {
         let result = commands::finish(
             &mut tx,
             prepared,
-            HandoffClaimViewV1 { handoff, package },
+            HandoffClaimViewV2 { handoff, package },
             200,
         )
         .await?;
@@ -364,7 +369,7 @@ impl Store {
 
     /// Trusted worker maintenance only. Claim independently checks the DB clock.
     pub async fn reconcile_handoffs(&self) -> Result<u64, StoreError> {
-        let revoked="EXISTS(SELECT 1 FROM app.approval_revocations r WHERE r.approval_id=h.approval_id AND r.effective_at<=clock_timestamp()) OR EXISTS(SELECT 1 FROM app.approvals a JOIN app.automation_policies policy ON policy.id=a.automation_policy_id JOIN app.projects project ON project.id=policy.project_id WHERE a.id=h.approval_id AND a.authority_kind='FROZEN_POLICY' AND (project.state<>'ACTIVE' OR project.current_automation_policy_id IS DISTINCT FROM policy.id OR NOT policy.enabled_for_new_rebalances OR policy.mode='MANUAL' OR EXISTS(SELECT 1 FROM app.policy_revocations r WHERE r.automation_policy_id=policy.id AND r.effective_at<=clock_timestamp())))";
+        let revoked = "EXISTS(SELECT 1 FROM app.approval_revocations r WHERE r.approval_id=h.approval_id AND r.effective_at<=clock_timestamp()) OR EXISTS(SELECT 1 FROM app.approvals a JOIN app.automation_policies policy ON policy.id=a.automation_policy_id JOIN app.projects project ON project.id=policy.project_id WHERE a.id=h.approval_id AND a.authority_kind='FROZEN_POLICY' AND (project.state<>'ACTIVE' OR project.current_automation_policy_id IS DISTINCT FROM policy.id OR NOT policy.enabled_for_new_rebalances OR policy.mode='MANUAL' OR EXISTS(SELECT 1 FROM app.policy_revocations r WHERE r.automation_policy_id=policy.id AND r.effective_at<=clock_timestamp())))";
         let changed=sqlx::query(sqlx::AssertSqlSafe(format!("WITH pending AS (SELECT h.id,CASE WHEN {revoked} THEN 'REVOKED' ELSE 'EXPIRED' END AS state FROM app.handoff_offers h WHERE h.state='OFFERED' AND (h.expires_at<=clock_timestamp() OR {revoked}) ORDER BY h.expires_at,h.id LIMIT 128 FOR UPDATE OF h SKIP LOCKED) UPDATE app.handoff_offers h SET state=p.state FROM pending p WHERE h.id=p.id AND h.state='OFFERED'")))
             .execute(&self.pool).await?;
         Ok(changed.rows_affected())
@@ -455,8 +460,8 @@ where
 {
     let (approval, package, until) =
         admission(tx, request.approval_id, request.release_id, read).await?;
-    let project = package.project_id;
-    let candidate = package.candidate_id;
+    let project = package_delivery(&package).project_id;
+    let candidate = package_delivery(&package).candidate_id;
     let downstream = db::id(approval.try_get("downstream_id")?)?;
     let environment = db::enum_value(&approval, "environment")?;
     let revision = approval.try_get::<i64, _>("downstream_revision")?;
@@ -466,7 +471,7 @@ where
         return Err(StoreError::Conflict);
     }
     let latest=sqlx::query("SELECT h.id,h.state FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND c.mandate_id=$2 AND h.downstream_id=$3 AND h.environment=$4 ORDER BY h.delivery_sequence DESC LIMIT 1 FOR UPDATE OF h")
-            .bind(project.as_uuid()).bind(package.mandate_id.as_uuid()).bind(downstream.as_uuid()).bind(db::code(&environment)?).fetch_optional(&mut **tx).await?;
+            .bind(project.as_uuid()).bind(package_delivery(&package).mandate_id.as_uuid()).bind(downstream.as_uuid()).bind(db::code(&environment)?).fetch_optional(&mut **tx).await?;
     let latest_id = latest
         .as_ref()
         .map(|r| db::id(r.try_get("id")?))
@@ -476,7 +481,7 @@ where
     }
     let sequence:i64=sqlx::query_scalar("SELECT coalesce(max(delivery_sequence),0)+1 FROM app.handoff_offers WHERE downstream_id=$1 AND environment=$2")
             .bind(downstream.as_uuid()).bind(db::code(&environment)?).fetch_one(&mut **tx).await?;
-    approvals::downstream(
+    approvals::downstream_envelope(
         tx,
         downstream,
         db::revision(revision)?,
@@ -486,7 +491,7 @@ where
     .await?;
 
     let offered_at = now(tx).await?;
-    if offered_at < package.valid_from
+    if offered_at < package_delivery(&package).valid_from
         || offered_at < approval.try_get::<DateTime<Utc>, _>("granted_at")?
         || request.expires_at <= offered_at
         || request.expires_at > until
@@ -504,7 +509,7 @@ where
     let id = Id::new();
     sqlx::query("INSERT INTO app.handoff_offers(id,release_id,approval_id,downstream_id,environment,delivery_sequence,state,offered_at,expires_at,supersedes_handoff_id) VALUES($1,$2,$3,$4,$5,$6,'OFFERED',$7,$8,$9)")
             .bind(id.as_uuid()).bind(request.release_id.as_uuid()).bind(request.approval_id.as_uuid()).bind(downstream.as_uuid()).bind(db::code(&environment)?).bind(sequence).bind(offered_at).bind(request.expires_at).bind(request.supersedes_handoff_id.map(|v|v.as_uuid())).execute(&mut **tx).await?;
-    approvals::downstream(
+    approvals::downstream_envelope(
         tx,
         downstream,
         db::revision(revision)?,
@@ -519,3 +524,59 @@ where
     let resource = view(&load(tx, id).await?)?;
     Ok(resource)
 }
+
+impl Store {
+    #[inline(never)]
+    pub fn claim_handoff<'a, R, Read>(
+        &'a self,
+        actor: &'a Actor,
+        key: &'a str,
+        id: Id,
+        request: &'a HandoffClaimV1,
+        read: R,
+    ) -> impl std::future::Future<Output = Result<CommandResult<HandoffClaimViewV1>, StoreError>>
+           + 'a
+           + use<'a, R, Read>
+    where
+        R: FnMut(Id, DbCounter) -> Read + 'a,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>> + 'a,
+    {
+        // Build the owned state machine before the caller polls it. Keeping
+        // its construction frame separate also bounds nested caller temporaries.
+        Box::pin(self.claim_handoff_inner(actor, key, id, request, read))
+    }
+
+    async fn claim_handoff_inner<R, Read>(
+        &self,
+        actor: &Actor,
+        key: &str,
+        id: Id,
+        request: &HandoffClaimV1,
+        read: R,
+    ) -> Result<CommandResult<HandoffClaimViewV1>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+    {
+        if request.package_schema_version != contracts::settings::PackageSchemaVersion::V1 {
+            return Err(
+                domain::DomainError::CapabilityUnavailable("target_package_version").into(),
+            );
+        }
+        let result = self
+            .claim_handoff_envelope(actor, key, id, request, read)
+            .await?;
+        let TargetPackageEnvelopeV2::Forecast(package) = result.resource.package else {
+            return Err(StoreError::Integrity);
+        };
+        Ok(CommandResult {
+            schema_version: result.schema_version,
+            replayed: result.replayed,
+            resource: HandoffClaimViewV1 {
+                handoff: result.resource.handoff,
+                package: *package,
+            },
+        })
+    }
+}
+

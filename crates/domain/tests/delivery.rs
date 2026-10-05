@@ -11,7 +11,9 @@ fn release_creation_is_an_exact_candidate_command_not_a_package_upload() {
         candidate_id: Id::new(),
         evaluation_id: Id::new(),
     };
-    let command = contracts::control::OperatorCommand::ReleaseCreate(intent.clone());
+    let command = contracts::control::OperatorCommand::ReleaseCreate(
+        contracts::strategy_portfolio::ReleaseCreateEnvelopeV2::Forecast(intent.clone()),
+    );
     assert_eq!(command.operation().code(), "RELEASE_CREATE");
     assert!(!command.operation().creates()); // Grant targets the original Candidate.
     domain::control::command(&command).unwrap();
@@ -175,4 +177,49 @@ fn release_decisions_require_bounded_reasons_and_exact_wire_fields() {
     let mut raw = serde_json::to_value(r).unwrap();
     raw["approval_id"] = json!(Id::new());
     assert!(serde_json::from_value::<ReleaseRejectV1>(raw).is_err());
+}
+
+#[test]
+fn observed_downstream_capabilities_accept_both_typed_versions_only_once() {
+    let now = chrono::Utc::now();
+    let mut capability = DownstreamCapabilitiesV1 {
+        schema_version: SchemaV1,
+        delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
+        accepted_package_versions: vec![
+            contracts::settings::PackageSchemaVersion::V1,
+            contracts::settings::PackageSchemaVersion::V2,
+        ],
+        environments: vec![contracts::forward::ForwardEnvironmentV1::Paper],
+        market_capability_versions: vec!["native-paper/1".into()],
+        accepting_targets: true,
+        checked_at: now,
+    };
+    assert!(domain::delivery::downstream_capabilities(&capability, now).is_ok());
+    capability.accepted_package_versions = vec![contracts::settings::PackageSchemaVersion::V2];
+    assert!(domain::delivery::downstream_capabilities(&capability, now).is_ok());
+    capability
+        .accepted_package_versions
+        .push(contracts::settings::PackageSchemaVersion::V2);
+    assert!(domain::delivery::downstream_capabilities(&capability, now).is_err());
+    capability.accepted_package_versions.clear();
+    assert!(domain::delivery::downstream_capabilities(&capability, now).is_err());
+}
+
+#[test]
+fn strategy_release_uses_existing_operator_authority_without_fake_evaluation() {
+    let candidate = Id::new();
+    let request = json!({"operation":"RELEASE_CREATE", "request":{
+        "schema_version":1,"source_kind":"NATIVE_TARGET_DECISION","candidate_id":candidate
+    }});
+    let command: contracts::control::OperatorCommand =
+        serde_json::from_value(request.clone()).unwrap();
+    assert_eq!(command.operation().code(), "RELEASE_CREATE");
+    assert!(!command.operation().creates());
+    domain::control::command(&command).unwrap();
+    assert_eq!(serde_json::to_value(&command).unwrap(), request);
+    assert!(command
+        .normalized_request()
+        .unwrap()
+        .get("evaluation_id")
+        .is_none());
 }

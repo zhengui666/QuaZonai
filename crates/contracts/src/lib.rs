@@ -20,6 +20,7 @@ pub mod equity_curve;
 pub mod evidence;
 pub mod execution;
 pub mod execution_assumptions;
+pub mod experiment_summary;
 pub mod experiments;
 pub mod forward;
 pub mod http;
@@ -36,6 +37,7 @@ pub mod scalars;
 pub mod science;
 pub mod settings;
 pub mod settlement;
+pub mod strategy_portfolio;
 
 pub use scalars::{DbCounter, DecimalValue, Id, Revision, SchemaV1, Timestamp};
 
@@ -44,6 +46,56 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(components(schemas(
     http::Problem,
+    catalogs::RecordedFeatureFragmentV1,
+    catalogs::RecordedFeatureInputsV1,
+    data::RecordedFeatureRegisterV1,
+    data::RecordedFeatureRegisterIntentV1,
+    data::RecordedFeatureSourceBindingV1,
+    data::RecordedFeatureViewV1,
+    data::RecordedFeatureListQuery,
+    data::RecordedFeatureListV1,
+    strategy_portfolio::StrategyOutputKindV1,
+    strategy_portfolio::StrategyAlphaAdoptV1,
+    strategy_portfolio::StrategyAlphaAdoptIntentV1,
+    strategy_portfolio::AcceptedExperimentSourceV1,
+    strategy_portfolio::FeatureReplayInitializationV1,
+    strategy_portfolio::FrozenTargetPolicyV1,
+    strategy_portfolio::StrategyAlphaVersionV1,
+    strategy_portfolio::AlphaVersionEnvelopeV2,
+    strategy_portfolio::StrategyAllocationMethodV1,
+    strategy_portfolio::StrategyPortfolioSourceV1,
+    strategy_portfolio::StrategyReleaseSourceV1,
+    strategy_portfolio::StrategyMandateContentV1,
+    strategy_portfolio::StrategyMandateCreateV1,
+    strategy_portfolio::StrategyMandateViewV1,
+    strategy_portfolio::MandateCreateEnvelopeV2,
+    strategy_portfolio::MandateViewEnvelopeV2,
+    strategy_portfolio::StrategyMemberSelectionV1,
+    strategy_portfolio::FreshPaperCashV1,
+    strategy_portfolio::StrategyCurrentInputsV1,
+    strategy_portfolio::StrategyPortfolioPurposeV1,
+    strategy_portfolio::StrategyPortfolioBuildV1,
+    strategy_portfolio::PortfolioBuildEnvelopeV2,
+    strategy_portfolio::NativeStrategyMemberV1,
+    strategy_portfolio::StrategyInputProvenanceV1,
+    strategy_portfolio::NativeStrategyCompositionRequestV1,
+    strategy_portfolio::StrategyCompositionOutcomeV1,
+    strategy_portfolio::NativeStrategyCompositionResultV1,
+    strategy_portfolio::StrategyPortfolioCandidateV1,
+    strategy_portfolio::StrategyPortfolioSummaryV1,
+    strategy_portfolio::StrategyPortfolioSummaryOutcomeV1,
+    experiment_summary::NativeSimulationSummaryV1,
+    strategy_portfolio::PortfolioCandidateEnvelopeV2,
+    strategy_portfolio::PortfolioCandidateListEnvelopeV2,
+    strategy_portfolio::StrategyReleaseCreateV1,
+    strategy_portfolio::ReleaseCreateEnvelopeV2,
+    strategy_portfolio::NativeTargetDecisionSourceV1,
+    strategy_portfolio::TargetPackageVersionV2,
+    strategy_portfolio::TargetPackageV2,
+    strategy_portfolio::TargetPackageEnvelopeV2,
+    strategy_portfolio::HandoffClaimViewV2,
+    strategy_portfolio::StrategyReleaseViewV1,
+    strategy_portfolio::ReleaseViewEnvelopeV2,
     account_observation::AccountObservationSubmitV1,
     account_observation::AccountObservationReceiptV1,
     account_observation::AccountCurrentV1,
@@ -81,6 +133,14 @@ use utoipa::OpenApi;
     cycles::BriefFreezeV1,
     cycles::FrozenBriefV1,
     cycles::CycleStartIntent,
+    cycles::ExternalCycleStartIntent,
+    cycles::CycleFinishExternalIntent,
+    experiments::ExperimentEvaluateIntent,
+    experiment_summary::ExperimentSummaryV1,
+    science::FeatureObservationsV1,
+    science::ExperimentEvaluationParametersV1,
+    science::NativeExperimentEvaluationRequestV1,
+    science::NativeExperimentEvaluationResultV1,
     cycles::CycleViewV1,
     cycles::CycleStartedV1,
     cycles::CycleSelectionV1,

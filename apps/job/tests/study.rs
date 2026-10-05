@@ -107,7 +107,10 @@ fn rolling_original_models_use_one_native_account_and_observed_weights() {
     fully_invested.mandate.constraints.max_net_exposure = "1".parse().unwrap();
     let denied = execute(&fully_invested);
     assert!(!denied.status.success());
-    assert_eq!(denied.stderr, b"QZ_NATIVE_JOB_FAILED\n");
+    assert_eq!(
+        String::from_utf8_lossy(&denied.stderr).lines().next(),
+        Some("QZ_NATIVE_JOB_FAILED")
+    );
     // A distinct, explicit study mandate reserves cash; the engine never adjusts the frozen input.
     let output = execute(&request);
     assert!(

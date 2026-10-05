@@ -175,6 +175,16 @@ pub struct NativeOutputContract {
 
 pub const NATIVE_OUTPUT_CONTRACTS: &[NativeOutputContract] = &[
     NativeOutputContract {
+        name: "qz.strategy_portfolio",
+        kind: RuntimeOutputKind::Report,
+        media_type: "application/json",
+    },
+    NativeOutputContract {
+        name: "qz.experiment_evaluation",
+        kind: RuntimeOutputKind::Report,
+        media_type: "application/json",
+    },
+    NativeOutputContract {
         name: "qz.forward_evaluation",
         kind: RuntimeOutputKind::Report,
         media_type: "application/json",

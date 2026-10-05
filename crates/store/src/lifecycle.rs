@@ -25,6 +25,7 @@ use serde_json::{json, Value};
 use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 
 mod experiment;
+mod external_experiment;
 mod forward;
 pub use experiment::ExperimentWork;
 pub mod mission;
@@ -403,6 +404,17 @@ async fn queue_matches(tx: &mut Tx<'_>, message: &RunMessage) -> Result<(), Stor
             .fetch_optional(&mut **tx)
             .await?
             .ok_or(StoreError::NotFound)?;
+    queue_payload_matches(payload, message)
+}
+async fn archived_queue_matches(tx: &mut Tx<'_>, message: &RunMessage) -> Result<(), StoreError> {
+    let payload: Value = sqlx::query_scalar("SELECT message FROM pgmq.a_runs WHERE msg_id=$1")
+        .bind(message.message_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+    queue_payload_matches(payload, message)
+}
+fn queue_payload_matches(payload: Value, message: &RunMessage) -> Result<(), StoreError> {
     let payload: QueuePayload =
         serde_json::from_value(payload).map_err(|_| StoreError::Integrity)?;
     let _version = payload.schema_version;
@@ -857,7 +869,14 @@ impl Store {
         }
         let mut tx = self.pool.begin().await?;
         let mut locked = lock_run(&mut tx, message.run_id).await?;
-        queue_matches(&mut tx, message).await?;
+        match queue_matches(&mut tx, message).await {
+            // Another delivery can finish and archive this same message before
+            // this consumer claims it. Only an exact terminal archive is a replay.
+            Err(StoreError::NotFound) if locked.run.state.is_terminal() => {
+                archived_queue_matches(&mut tx, message).await?;
+            }
+            result => result?,
+        }
         if locked.run.state.is_terminal() {
             let result = locked.run;
             tx.commit().await?;
@@ -961,12 +980,11 @@ impl Store {
         if !locked.admission_open() || locked.run.deadline_at <= now(&mut tx).await? {
             return Err(DomainError::AdmissionClosed.into());
         }
-        revalidate_run_inputs(
+        native::revalidate_dispatch_inputs(
             &mut tx,
-            locked.run.kind,
-            locked.run.input_set_id,
-            locked.run.project_id,
+            &locked.run,
             db::id(locked.admission.try_get("runtime_id")?)?,
+            owner.attempt_id,
         )
         .await?;
         let limits: JobLimitsV1 = serde_json::from_value(locked.admission.try_get("limits")?)
@@ -986,6 +1004,13 @@ impl Store {
         // Runtime configuration can be locked by an Operator update. A lease
         // valid before that wait is not authority after it; query DB time only
         // after the last potentially conflicting authority lock.
+        native::revalidate_dispatch_inputs(
+            &mut tx,
+            &locked.run,
+            db::id(locked.admission.try_get("runtime_id")?)?,
+            owner.attempt_id,
+        )
+        .await?;
         fence(&mut tx, &locked.run, owner).await?;
         if locked.run.deadline_at <= now(&mut tx).await? {
             return Err(DomainError::AdmissionClosed.into());
@@ -1211,13 +1236,16 @@ impl Store {
             .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
         let sealed_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.sealed_evaluation_tasks s WHERE s.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=s.run_id AND e.subject_alpha_version_id=s.alpha_version_id AND e.policy_id=s.policy_id AND e.evaluation_kind='SEALED'))")
             .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
-        let candidate_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.portfolio_build_tasks b WHERE b.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.portfolio_candidates c JOIN app.candidate_publications p ON p.candidate_id=c.id WHERE c.run_id=b.run_id))")
+        let candidate_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.portfolio_build_tasks b JOIN app.runs r ON r.id=b.run_id WHERE b.run_id=$1 AND (b.source_kind='FORECAST' OR r.state='SUCCEEDED') AND NOT EXISTS(SELECT 1 FROM app.portfolio_candidates c JOIN app.candidate_publications p ON p.candidate_id=c.id WHERE c.run_id=b.run_id))")
             .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
         let simulation_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.candidate_simulation_tasks s WHERE s.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=s.run_id AND e.subject_candidate_id=s.candidate_id AND e.policy_id=s.policy_id AND e.evaluation_kind='FORWARD'))")
             .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
         let study_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.portfolio_study_tasks s WHERE s.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=s.run_id AND e.subject_candidate_id=s.candidate_id AND e.policy_id=s.policy_id AND e.evaluation_kind='PORTFOLIO'))")
             .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
-        if evaluation_pending
+        let external_pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.external_experiment_requests q LEFT JOIN app.external_experiment_tasks t ON t.experiment_id=q.experiment_id WHERE (q.compile_run_id=$1 AND t.run_id IS NULL OR t.run_id=$1) AND NOT EXISTS(SELECT 1 FROM app.external_experiment_results result WHERE result.experiment_id=q.experiment_id))")
+            .bind(message.run_id.as_uuid()).fetch_one(&mut *tx).await?;
+        if external_pending
+            || evaluation_pending
             || sealed_pending
             || candidate_pending
             || simulation_pending
@@ -1264,17 +1292,7 @@ impl Store {
                 }
             }
             Err(StoreError::NotFound) => {
-                let value: Value =
-                    sqlx::query_scalar("SELECT message FROM pgmq.a_runs WHERE msg_id=$1")
-                        .bind(message.message_id)
-                        .fetch_optional(&mut *tx)
-                        .await?
-                        .ok_or(StoreError::NotFound)?;
-                let payload: QueuePayload =
-                    serde_json::from_value(value).map_err(|_| StoreError::Integrity)?;
-                if payload.run_id != message.run_id {
-                    return Err(StoreError::Conflict);
-                }
+                archived_queue_matches(&mut tx, message).await?;
             }
             Err(error) => return Err(error),
         }
@@ -1368,7 +1386,9 @@ impl Store {
             return Err(StoreError::NotFound);
         }
         let project = query.project_id.or(scope.0);
-        let sql=format!("SELECT {FIELDS} FROM app.runs r WHERE ($1::uuid IS NULL OR r.project_id=$1) AND ($2::uuid IS NULL OR r.id=$2) AND ($3::text IS NULL OR r.state=$3) AND ($4::uuid IS NULL OR r.id>$4) ORDER BY r.id LIMIT $5");
+        let sql = format!(
+            "SELECT {FIELDS} FROM app.runs r WHERE ($1::uuid IS NULL OR r.project_id=$1) AND ($2::uuid IS NULL OR r.id=$2) AND ($3::text IS NULL OR r.state=$3) AND ($4::uuid IS NULL OR r.id>$4) ORDER BY r.id LIMIT $5"
+        );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(project.map(Id::as_uuid))
             .bind(scope.1.map(Id::as_uuid))

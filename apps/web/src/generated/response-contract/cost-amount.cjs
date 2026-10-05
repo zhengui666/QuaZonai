@@ -1,2 +1,2 @@
 // Generated from Rust OpenAPI. Do not edit.
-const t=require("./modules/schema-1b3834b027eed2721898.cjs").validate_1b3834b027eed2721898_0;exports.validateCostAmount=function(e){return t(e)};
+const e=require("./modules/schema-654.cjs").validate_385_0;exports.validateCostAmount=function(t){return e(t)};

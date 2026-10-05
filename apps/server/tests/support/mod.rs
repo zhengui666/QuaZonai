@@ -17,11 +17,17 @@ use tower_sessions_sqlx_store::PostgresStore;
 
 pub struct Fixture {
     pub app: Router,
+    // Business scenarios explicitly opt into a real, password-authenticated
+    // owner device. Browser requests never consult or inherit this credential.
+    #[allow(dead_code)]
+    pub owner_token: tokio::sync::OnceCell<String>,
     // Each integration target compiles this shared fixture independently.
     #[allow(dead_code)]
     pub store: Store,
     pub _state: tempfile::TempDir,
 }
+// Each integration target selects its own fixture entry point.
+#[allow(dead_code)]
 pub async fn fixture(pool: PgPool) -> Fixture {
     fixture_with_runtime_targets(pool, None).await
 }
@@ -81,6 +87,7 @@ pub async fn fixture_with_key(
     let app = server::router(state, cookie_key);
     Fixture {
         app,
+        owner_token: tokio::sync::OnceCell::new(),
         store,
         _state: root,
     }
@@ -191,6 +198,62 @@ pub async fn local_session(f: &Fixture) -> Reply {
     assert_eq!(response.body["schema_version"], 1);
     assert!(response.body.get("provisioning_uri").is_none());
     response
+}
+
+/// Authenticate through the public CLI login route after local_session setup.
+/// Reusing this device preserves the actor identity for idempotent retries.
+#[allow(dead_code)]
+pub async fn owner_session(f: &Fixture) -> &str {
+    f.owner_token
+        .get_or_init(|| async {
+            let body = json!({"schema_version":1,"password":"native-test-password","name":"HTTP scenario owner"});
+            let request = Request::builder()
+                .method("POST")
+                .uri("/api/v2/auth/cli/login")
+                .header(header::HOST, "localhost")
+                .header(header::ORIGIN, "https://localhost")
+                .header("x-quazonai-cli", "1")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap();
+            let registered = exchange(&f.app, request).await;
+            assert_eq!(registered.status, StatusCode::CREATED);
+            assert!(registered.cookie.is_none());
+            assert_eq!(registered.headers[header::CACHE_CONTROL], "no-store");
+            registered.body["token"].as_str().unwrap().to_owned()
+        })
+        .await
+}
+
+#[allow(dead_code)]
+pub async fn owner_request(
+    f: &Fixture,
+    method: &str,
+    path: &str,
+    key: &str,
+    body: Value,
+) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::HOST, "localhost")
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", owner_session(f).await),
+        )
+        .header("idempotency-key", key);
+    let body = if body.is_null() {
+        Body::empty()
+    } else {
+        request = request.header(header::CONTENT_TYPE, "application/json");
+        Body::from(serde_json::to_vec(&body).unwrap())
+    };
+    request.body(body).unwrap()
+}
+
+#[allow(dead_code)]
+pub async fn owner_command(f: &Fixture, method: &str, path: &str, key: &str, body: Value) -> Reply {
+    exchange(&f.app, owner_request(f, method, path, key, body).await).await
 }
 
 // Only machine-boundary targets need this shared request helper.

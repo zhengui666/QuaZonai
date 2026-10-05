@@ -124,7 +124,7 @@ runs:
         CARGO_PROFILE_RELEASE_DEBUG: '0'
       run: |
         set -euo pipefail
-        rustup run 1.98.1 cargo build --locked --release -p job
+        rustup run 1.98.1 cargo build --locked --release -p job --features native-paper --bin job
         assembly=$(mktemp -d "$RUNNER_TEMP/native-image.XXXXXX")
         node runtimes/native/build-native-image.mjs --profile release --output-dir "$assembly/image" --image-version "$IMAGE_VERSION"
         echo "image=$(cat "$assembly/image/image-id.txt")" >> "$GITHUB_OUTPUT"

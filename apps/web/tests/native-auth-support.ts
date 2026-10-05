@@ -30,6 +30,6 @@ export async function loginNative(page: Page, config: Fixture, remember = true, 
   await page.getByLabel('登录密码', { exact: true }).fill(password);
   await page.getByRole('checkbox', { name: '记住本设备 30 天' }).setChecked(remember);
   await page.getByRole('button', { name: '登录', exact: true }).click();
-  await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
   for (const cookie of await page.context().cookies()) rememberPrivateValue(config, cookie.value);
 }

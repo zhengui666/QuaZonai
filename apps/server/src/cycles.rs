@@ -180,3 +180,61 @@ pub async fn get(
 ) -> Result<Json<CycleViewV1>, ApiError> {
     Ok(Json(state.store.cycle(&actor, path(id)?).await?))
 }
+
+#[utoipa::path(post,path="/api/v2/projects/{id}/cycles/external",operation_id="startExternalResearchCycle",tag="Research startup",request_body=ExternalCycleStartV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=201,body=CommandResult<CycleViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn start_external(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    id: Result<Path<Id>, PathRejection>,
+    body: Result<Json<ExternalCycleStartV1>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<CycleViewV1>>), ApiError> {
+    let request = ExternalCycleStartIntent {
+        schema_version: SchemaV1,
+        project_id: path(id)?,
+        request: json(body)?,
+    };
+    let objects = state
+        .artifact_store
+        .clone()
+        .ok_or(store::StoreError::IntegrationUnavailable)?;
+    let result = state
+        .store
+        .start_external_cycle(
+            &actor,
+            idempotency_key(&headers)?,
+            &request,
+            move |id, size| {
+                let objects = objects.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || objects.read(id, size))
+                        .await
+                        .map_err(|_| store::StoreError::Integrity)?
+                        .map_err(|_| store::StoreError::Integrity)
+                }
+            },
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(result)))
+}
+
+#[utoipa::path(post,path="/api/v2/cycles/{id}/finish-external",operation_id="finishExternalResearchCycle",tag="Research startup",request_body=CycleFinishExternalV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<CycleViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn finish_external(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    id: Result<Path<Id>, PathRejection>,
+    body: Result<Json<CycleFinishExternalV1>, JsonRejection>,
+) -> Result<Json<CommandResult<CycleViewV1>>, ApiError> {
+    let request = CycleFinishExternalIntent {
+        schema_version: SchemaV1,
+        cycle_id: path(id)?,
+        request: json(body)?,
+    };
+    Ok(Json(
+        state
+            .store
+            .finish_external_cycle(&actor, idempotency_key(&headers)?, &request)
+            .await?,
+    ))
+}

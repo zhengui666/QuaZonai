@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Request, type Response, type Page, type Route } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -21,8 +21,40 @@ test.beforeEach(async ({ page }) => {
   if (config.phase === 'before-restart') await loginNative(page, config);
 });
 
+// Test-only command preparation. The real Rust service commits before this
+// fixture drops the ACK; observation components never issue these writes.
+async function nativeCommandWithLostAck<T>(page: Page, path: string, body: unknown, key: string) {
+  const committed: { status: number; receipt: T }[] = [];
+  const match = (url: URL) => url.pathname === path;
+  const dropAcknowledgement = async (route: Route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    expect(route.request().headers()['idempotency-key']).toBe(key);
+    expect(route.request().postDataJSON()).toEqual(body);
+    const upstream = await route.fetch({ maxRetries: 0, timeout: 20_000 });
+    committed.push({ status: upstream.status(), receipt: await upstream.json() });
+    await upstream.dispose();
+    await route.abort('failed');
+  };
+  await page.context().route(match, dropAcknowledgement);
+  try {
+    const lost = await page.evaluate(async ({ path, body, key }) => {
+      try {
+        await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify(body) });
+        return false;
+      } catch { return true; }
+    }, { path, body, key });
+    expect(lost).toBe(true);
+    expect(committed).toHaveLength(1);
+    const original = committed[0];
+    if (!original) throw new Error('The real native command did not commit before ACK loss');
+    expect(original.status).toBeGreaterThanOrEqual(200);
+    expect(original.status).toBeLessThan(300);
+    return original;
+  } finally { await page.context().unroute(match, dropAcknowledgement); }
+}
+
 test(config.phase === 'before-restart'
-  ? 'packaged local entry, lost-ACK project retry, CSRF and both themes in three viewports'
+  ? 'packaged read-only entry, native API lost-ACK retry, CSRF and both themes in three viewports'
   : 'new Rust process retains the original local session, project, receipt and theme',
 async ({ page, context }) => {
   // Only assert presence, never print any credential on assertion failure.
@@ -34,7 +66,7 @@ async ({ page, context }) => {
     expect(saved.receipt.replayed).toBe(false);
     expect(saved.receipt.resource.id).toMatch(/^[0-9a-f-]{36}$/);
     await page.goto('/');
-    await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: '绑定你的验证器' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '登录', exact: true })).toHaveCount(0);
     expect((await page.request.get('/api/v2/auth/session')).status()).toBe(200);
@@ -71,8 +103,6 @@ async ({ page, context }) => {
   // Exercise the 120-character limit, including an unbroken segment on mobile.
   const name = `Native browser ${randomUUID()} ${'x'.repeat(68)}`;
   let projectId: string;
-  let initialKey: string | undefined;
-  let initialRequest: Schema['ProjectCreate'] | undefined;
   let checkpoint: Checkpoint | undefined;
 
   await test.step('enter the local workbench through the actual Rust API', async () => {
@@ -86,68 +116,93 @@ async ({ page, context }) => {
     expect(await missingAsset.text()).not.toContain('<html');
     await expect(page.getByRole('heading', { name: '绑定你的验证器' })).toHaveCount(0);
     await expect(page.getByLabel('动态验证码')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
     expect((await page.request.get('/api/v2/auth/session')).status()).toBe(200);
     const cookies = await context.cookies();
     expect(cookies.length).toBeGreaterThan(0);
     for (const cookie of cookies) expect(cookie.httpOnly).toBe(true);
   });
 
-  await test.step('lose a real committed response and retry the same idempotency key', async () => {
-    let committedStatus: number | undefined;
-    let originalReceipt: Checkpoint['receipt'] | undefined;
-    let intercepted = false;
-    await page.route('**/api/v2/projects', async (route) => {
-      if (route.request().method() !== 'POST' || intercepted) return route.continue();
-      intercepted = true;
-      initialKey = route.request().headers()['idempotency-key'];
-      initialRequest = route.request().postDataJSON();
-      // The real Rust transaction commits before we discard its acknowledgement.
-      const upstream = await route.fetch({ maxRetries: 0, timeout: 20_000 });
-      committedStatus = upstream.status();
-      originalReceipt = await upstream.json();
-      await upstream.dispose();
-      await route.abort('failed');
-    });
-    await page.getByRole('button', { name: '新建研究', exact: true }).click();
-    await page.getByLabel('研究名称').fill(name);
-    await page.getByLabel('研究说明', { exact: true }).fill('Native browser acceptance; research only, no qualification claims.');
-    await page.getByRole('button', { name: '保存项目', exact: true }).click();
-    await expect(page.getByText(/连接中断，提交结果未知/)).toBeVisible();
-    expect(committedStatus).toBeGreaterThanOrEqual(200);
-    expect(committedStatus).toBeLessThan(300);
-    expect(typeof initialKey).toBe('string');
-    expect(originalReceipt).toMatchObject({
-      schema_version: 1, replayed: false, resource: { name, revision: '1', state: 'DRAFT' },
-    });
-    if (!originalReceipt || !initialRequest || !initialKey || !committedStatus) {
-      throw new Error('The first real commit must yield its original request and receipt');
-    }
-    checkpoint = { key: initialKey, request: initialRequest, status: committedStatus, receipt: originalReceipt };
-    await page.unroute('**/api/v2/projects');
-    const retryPromise = page.waitForResponse((response) =>
-      new URL(response.url()).pathname === '/api/v2/projects' && response.request().method() === 'POST');
-    await page.getByRole('button', { name: '保存项目', exact: true }).click();
-    const retried = await retryPromise;
-    expect(retried.ok()).toBe(true);
-    expect(retried.request().headers()['idempotency-key']).toBe(initialKey);
+  await test.step('prepare a real project through the native API and recover its lost ACK', async () => {
+    const key = randomUUID();
+    const request: Schema['ProjectCreate'] = { schema_version: 1, name,
+      description: 'Native browser acceptance; research only, no qualification claims.', fork_from_project_id: null };
+    const committed = await nativeCommandWithLostAck<Checkpoint['receipt']>(page, '/api/v2/projects', request, key);
+    expect(committed.receipt).toMatchObject({ schema_version: 1, replayed: false, resource: { name, revision: '1', state: 'DRAFT' } });
+    checkpoint = { key, request, status: committed.status, receipt: committed.receipt };
+    const retried = await page.request.post('/api/v2/projects', { headers: { Origin: config.baseUrl, 'Idempotency-Key': key }, data: request });
+    expect(retried.status()).toBe(committed.status);
     const receipt: Checkpoint['receipt'] = await retried.json();
-    expect(receipt.schema_version).toBe(1);
-    expect(receipt).toEqual({ ...originalReceipt, replayed: true });
-    expect(retried.request().postDataJSON()).toEqual(initialRequest);
-    await expect(page.getByRole('article').filter({ hasText: name })).toHaveCount(1);
-    const response = await page.request.get('/api/v2/projects?limit=100');
-    expect(response.status()).toBe(200);
-    const listing: { items: { id: string; name: string; revision: unknown; state: string }[] } = await response.json();
-    const matches = listing.items.filter((project) => project.name === name);
+    expect(receipt).toEqual({ ...committed.receipt, replayed: true });
+    const listing = await page.request.get('/api/v2/projects?limit=100');
+    expect(listing.status()).toBe(200);
+    const projects: { items: Schema['ProjectView'][] } = await listing.json();
+    const matches = projects.items.filter(project => project.name === name);
     expect(matches).toHaveLength(1);
-    const created = matches[0];
-    if (!created) throw new Error('Committed project missing from the real API listing');
-    expect(created.revision).toBe('1');
-    expect(created.state).toBe('DRAFT');
-    expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    projectId = created.id;
-    expect(projectId).toBe(receipt.resource.id);
+    expect(matches[0]).toEqual(receipt.resource);
+    projectId = receipt.resource.id;
+    expect(projectId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    await page.reload();
+    await expect(page.getByRole('article').filter({ hasText: name })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '新建研究', exact: true })).toHaveCount(0);
+  });
+
+  await test.step('read producer sections from the real project without browser business commands', async () => {
+    if (!checkpoint) throw new Error('The original committed project is required for observation checks');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const writes: string[] = [];
+    const reads: { path: string; status: number }[] = [];
+    const observeRequest = (request: Request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) writes.push(`${request.method()} ${path}`);
+    };
+    const observeResponse = (response: Response) => {
+      if (response.request().method() === 'GET') reads.push({ path: new URL(response.url()).pathname, status: response.status() });
+    };
+    page.on('request', observeRequest); page.on('response', observeResponse);
+    const projectPath = `/api/v2/projects/${projectId}`;
+    const forbidden = /^(请求封存评估|新建组合配置|保存不可变配置|请求组合构建|请求组合 Study|冻结目标包|新建执行假设|新建评估政策|冻结自动化政策|审批此目标包|人工拒绝与重新考虑|登记 Offer|撤销审批|撤销政策)$/;
+    async function observe(path: string) {
+      await expect.poll(() => reads.some(read => read.path === path && read.status === 200)).toBe(true);
+      await expect(page.locator('.ant-skeleton:visible, .ant-spin-spinning:visible, .ant-btn-loading:visible')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: forbidden })).toHaveCount(0);
+      await expect(page.getByRole('dialog').locator('form, button[type=submit]')).toHaveCount(0);
+      expect(writes).toEqual([]);
+    }
+    try {
+      for (const section of [
+        { label: 'Alpha', picker: '选择 Alpha 所属项目', firstPath: '/api/v2/alphas', refresh: '刷新 Alpha', tabs: [] },
+        { label: '组合', picker: '选择组合所属项目', firstPath: `${projectPath}/portfolio-mandates`, refresh: '刷新配置', tabs: [
+          ['执行假设', `${projectPath}/execution-assumptions`], ['候选快照', `${projectPath}/portfolio-candidates`], ['评估政策', '/api/v2/evaluation-policies'],
+        ] },
+        { label: '交付', picker: '选择交付所属项目', firstPath: `${projectPath}/releases`, refresh: '刷新目标包', tabs: [
+          ['交付记录', `${projectPath}/handoffs`], ['Forward 证据', `${projectPath}/forward`], ['观察与唤醒', `${projectPath}/forward-observations`], ['自动化政策', `${projectPath}/automation-policies`],
+        ] },
+      ]) {
+        await page.getByRole('menuitem', { name: section.label, exact: true }).click();
+        const selector = page.getByRole('combobox', { name: section.picker, exact: true });
+        await expect(selector).toBeEnabled(); await selector.click();
+        await page.getByText(`${name} · ${projectId}`, { exact: true }).last().click();
+        await observe(section.firstPath);
+        const beforeRefresh = reads.filter(read => read.path === section.firstPath).length;
+        await page.getByRole('button', { name: section.refresh, exact: true }).click();
+        await expect.poll(() => reads.filter(read => read.path === section.firstPath).length).toBeGreaterThan(beforeRefresh);
+        await observe(section.firstPath);
+        for (const [label, path] of section.tabs) {
+          await page.getByRole('tab', { name: label!, exact: true }).click();
+          await observe(path!);
+        }
+      }
+      await page.getByRole('tab', { name: '观察与唤醒', exact: true }).click();
+      await page.getByRole('tab', { name: 'Wake 记录', exact: true }).click();
+      await observe(`${projectPath}/wakes`);
+      // Return navigation must not submit a producer command or recreate the project.
+      await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+      await expect(page.getByRole('article').filter({ hasText: name })).toHaveCount(1);
+      expect(writes).toEqual([]);
+    } finally {
+      page.off('request', observeRequest); page.off('response', observeResponse);
+    }
   });
 
   await test.step('reject an authenticated cross-origin write without changing the database', async () => {
@@ -162,8 +217,8 @@ async ({ page, context }) => {
     expect(listing.items.some((project) => project.id === projectId)).toBe(true);
   });
 
-  await test.step('keep both themes and the local editor inside three viewports', async () => {
-    if (!checkpoint) throw new Error('The original project is required for responsive editing checks');
+  await test.step('keep read-only project navigation and both themes inside three viewports', async () => {
+    if (!checkpoint) throw new Error('The original project is required for responsive observation checks');
     const originalProject = checkpoint.receipt.resource;
     for (const mode of ['light', 'dark']) {
       if (await page.locator('html').getAttribute('data-theme') !== mode) {
@@ -171,13 +226,14 @@ async ({ page, context }) => {
       }
       for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
         await page.setViewportSize(viewport);
-        await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
-        await page.getByRole('button', { name: '新建研究', exact: true }).click();
-        await expect(page.getByLabel('研究名称')).toBeVisible();
-        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
-        await page.getByRole('button', { name: '取消', exact: true }).click();
-        await expect(page.getByLabel('研究名称')).toHaveCount(0);
+        await expect(page.getByRole('button', { name: /^(新建研究|创建第一个研究|编辑)$/ })).toHaveCount(0);
+        const search = page.getByRole('textbox', { name: '搜索本页研究项目', exact: true });
+        await search.fill(name); await expect(page.getByRole('article')).toHaveCount(1);
+        await search.fill('No matching observed project');
+        await expect(page.getByRole('heading', { name: '本页没有匹配的项目', exact: true })).toBeVisible();
+        await page.getByRole('button', { name: '清除搜索', exact: true }).click();
         await expect(page.getByRole('heading', { name: '研究项目', exact: true })).toBeVisible();
         await expect(page.getByRole('article')).toHaveCount(1);
         if (viewport.width < 768) {
@@ -193,56 +249,37 @@ async ({ page, context }) => {
             row.getByText('草稿', { exact: true }),
             row.getByText('下一步：建立研究 Brief', { exact: true }),
             row.locator('time'),
-            row.getByRole('button', { name: '编辑', exact: true }),
+            row.getByRole('button', { name: '进入研究', exact: true }),
           ]) await expect(control).toBeInViewport({ ratio: 1 });
           await expect(row.locator('time')).toHaveAttribute('datetime', originalProject.updated_at);
           await expect(row.locator('time')).toHaveText(/\d/);
           await expect.poll(() => row.evaluate(element =>
             element.scrollWidth <= element.clientWidth + 1 && element.scrollLeft === 0)).toBe(true);
 
-          await row.getByRole('button', { name: '编辑', exact: true }).click();
-          const editor = page.getByRole('dialog', { name: '编辑研究项目', exact: true });
-          const draftName = `Unsaved ${name.slice(0, 112)}`;
-          const draftDescription = 'Unsaved mobile editor text; no research qualification claims.';
-          await editor.getByLabel('研究名称').fill(draftName);
-          await editor.getByLabel('研究说明', { exact: true }).fill(draftDescription);
+          await row.getByRole('button', { name, exact: true }).click();
+          await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
           for (const width of [768, 1440, 390]) {
             await page.setViewportSize({ width, height: viewport.height });
-            await expect(editor).toHaveCount(1);
-            await expect(editor.getByLabel('研究名称')).toHaveValue(draftName);
-            await expect(editor.getByLabel('研究说明', { exact: true })).toHaveValue(draftDescription);
+            await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+            await expect(page.getByRole('button', { name: '修改项目状态', exact: true })).toHaveCount(0);
           }
-
-          // The real second tab changes the stored theme while the first tab's
-          // modal editor remains open; no forced click through its mask.
+          // A second real tab changes the theme while the original read view
+          // stays selected; resizing or theme propagation cannot edit its record.
           const themePage = await context.newPage();
           try {
             await themePage.goto('/');
             await themePage.getByRole('button', { name: mode === 'light' ? '切换为深色主题' : '切换为浅色主题' }).click();
             await expect(page.locator('html')).toHaveAttribute('data-theme', mode === 'light' ? 'dark' : 'light');
-            await expect(editor.getByLabel('研究名称')).toHaveValue(draftName);
-            await expect(editor.getByLabel('研究说明', { exact: true })).toHaveValue(draftDescription);
+            await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
             await themePage.getByRole('button', { name: mode === 'light' ? '切换为浅色主题' : '切换为深色主题' }).click();
             await expect(page.locator('html')).toHaveAttribute('data-theme', mode);
-          } finally {
-            await themePage.close();
-          }
-
-          await editor.getByRole('button', { name: '取消', exact: true }).click();
-          const discard = page.getByRole('dialog', { name: '放弃尚未保存的修改？', exact: true });
-          await discard.getByRole('button', { name: '继续编辑', exact: true }).click();
-          await expect(editor.getByLabel('研究名称')).toHaveValue(draftName);
-          await editor.getByRole('button', { name: '取消', exact: true }).click();
-          await discard.getByRole('button', { name: '放弃修改', exact: true }).click();
-          await expect(editor).toHaveCount(0);
+          } finally { await themePage.close(); }
           const unchanged = await page.request.get(`/api/v2/projects/${projectId}`);
           expect(unchanged.status()).toBe(200);
           expect(await unchanged.json()).toEqual(originalProject);
-          await row.getByRole('button', { name, exact: true }).click();
-          await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
           await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
           await row.scrollIntoViewIfNeeded();
-          await expect(row.getByRole('button', { name: '编辑', exact: true })).toBeInViewport({ ratio: 1 });
+          await expect(row.getByRole('button', { name: '进入研究', exact: true })).toBeInViewport({ ratio: 1 });
         }
         await page.evaluate(() => window.scrollTo(0, 0));
         // Capture only the project surface, never browser session material.
@@ -279,7 +316,7 @@ async ({ page, context }) => {
           await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
           if (tab === '冻结输入') {
             await expect(page.getByLabel('冻结输入所属研究项目', { exact: true })).toHaveCount(0);
-            await expect(page.getByRole('button', { name: '新建冻结输入', exact: true })).toBeVisible();
+            await expect(page.getByRole('button', { name: '新建冻结输入', exact: true })).toHaveCount(0);
           }
           await page.evaluate(() => window.scrollTo(0, 0));
           await page.locator('.console-layout').screenshot({ path: resolve(dirname(config.redactionsFile), `${surface}-${mode}-${viewport.width}.png`), animations: 'disabled' });
@@ -289,65 +326,49 @@ async ({ page, context }) => {
     }
   });
 
-  await test.step('upload a protocol-only Agent report with a lost ACK and inspect exact stored evidence', async () => {
+  await test.step('prepare a real protocol-only report with a lost ACK and read its exact stored evidence', async () => {
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole('button', { name, exact: true }).click();
-    await page.getByRole('tab', { name: 'Agent 评估', exact: true }).click();
-    await page.getByRole('button', { name: '上传报告', exact: true }).click();
-    await page.locator('input[type=file]').setInputFiles(resolve('..', '..', 'tests', 'fixtures', 'agent-evaluation', 'unrun-v1.json'));
-    await expect(page.getByText(/unrun-v1.json/)).toBeVisible();
-    await page.getByRole('button', { name: '取消', exact: true }).click();
-    const discardUnsent = page.getByRole('dialog', { name: '放弃未上传的报告？', exact: true });
-    await expect(discardUnsent).toBeVisible();
-    await discardUnsent.getByRole('button', { name: '继续编辑', exact: true }).click();
-    await expect(discardUnsent).toHaveCount(0);
-    let key: string | undefined;
-    let original: unknown;
-    let artifactId: string | undefined;
-    await page.route('**/api/v2/artifacts', async route => {
-      if (route.request().method() !== 'POST') return route.continue();
-      key = route.request().headers()['idempotency-key'];
-      original = route.request().postDataJSON();
-      const response = await route.fetch({ maxRetries: 0 });
-      expect(response.status()).toBe(201);
-      const receipt = await response.json();
-      artifactId = receipt.resource.id;
-      await response.dispose();
-      await route.abort('failed');
-    });
-    const editor = page.getByRole('dialog', { name: '上传 Agent 评估报告' });
-    await editor.getByRole('button', { name: '上传报告', exact: true }).click();
-    await expect(page.getByText(/连接中断，提交结果未知/)).toBeVisible();
-    await expect(editor.getByRole('button', { name: '选择 JSON 报告', exact: true })).toBeDisabled();
-    await expect(editor.locator('input[type=file]')).toBeDisabled();
-    await expect(editor.getByText(/原报告内容与幂等键已锁定/)).toBeVisible();
-    await editor.getByRole('button', { name: '取消', exact: true }).click();
-    const discardSent = page.getByRole('dialog', { name: '关闭报告上传？', exact: true });
-    await expect(discardSent).toBeVisible();
-    await expect(discardSent.getByText(/关闭不会撤回已保存的报告/)).toBeVisible();
-    await discardSent.getByRole('button', { name: '继续编辑', exact: true }).click();
-    await expect(discardSent).toHaveCount(0);
-    await page.unroute('**/api/v2/artifacts');
-    const retry = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/artifacts' && response.request().method() === 'POST');
-    const retryButton = editor.locator('button').filter({ hasText: '原样重试上传请求' });
-    await expect(retryButton).toHaveCount(1);
-    await expect(retryButton).toHaveAccessibleName('原样重试上传请求');
-    await editor.getByRole('button', { name: '原样重试上传请求', exact: true }).click();
-    const response = await retry;
-    expect(response.status()).toBe(201);
-    expect(response.request().headers()['idempotency-key']).toBe(key);
-    expect(response.request().postDataJSON()).toEqual(original);
-    expect((await response.json()).resource.id).toBe(artifactId);
-    const detail = page.getByRole('dialog', { name: 'Agent 评估详情' });
-    await expect(detail.getByText('PROTOCOL_ONLY：协议测试，不是实际模型评估')).toBeVisible();
-    await expect(detail.getByText('UNRUN: 2', { exact: true })).toBeVisible();
-    await expect(detail.getByText('gpt-6-luna / max', { exact: true })).toBeVisible();
-    await expect(detail.getByText('未知（未观察到）', { exact: true })).toHaveCount(2);
+    const content = readFileSync(resolve('..', '..', 'tests', 'fixtures', 'agent-evaluation', 'unrun-v1.json'), 'utf8');
+    const body: Schema['ArtifactCreate'] = { schema_version: 1, project_id: projectId, kind: 'REPORT', content };
+    const key = randomUUID();
+    type Receipt = { schema_version: number; replayed: boolean; resource: Schema['ArtifactView'] };
+    const committed = await nativeCommandWithLostAck<Receipt>(page, '/api/v2/artifacts', body, key);
+    expect(committed.status).toBe(201);
+    expect(committed.receipt.replayed).toBe(false);
+    expect(committed.receipt.resource.project_id).toBe(projectId);
+    expect(committed.receipt.resource.kind).toBe('REPORT');
+    const retry = await page.request.post('/api/v2/artifacts', { headers: { Origin: config.baseUrl, 'Idempotency-Key': key }, data: body });
+    expect(retry.status()).toBe(201);
+    expect(await retry.json()).toEqual({ ...committed.receipt, replayed: true });
+    const artifactId = committed.receipt.resource.id;
     const stored = await page.request.get(`/api/v2/artifacts/${artifactId}/agent-evaluation`);
     expect(stored.status()).toBe(200);
-    expect(await stored.json()).toEqual(JSON.parse(readFileSync(resolve('..', '..', 'tests', 'fixtures', 'agent-evaluation', 'unrun-v1.json'), 'utf8')));
-    await detail.locator('.ant-drawer-close').click();
-    await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+    expect(await stored.json()).toEqual(JSON.parse(content));
+    const writes: string[] = [];
+    const observe = (request: Request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) writes.push(`${request.method()} ${path}`);
+    };
+    page.on('request', observe);
+    try {
+      await page.getByRole('button', { name, exact: true }).click();
+      await page.getByRole('tab', { name: 'Agent 评估', exact: true }).click();
+      await expect(page.getByRole('button', { name: '上传报告', exact: true })).toHaveCount(0);
+      await expect(page.locator('input[type=file]')).toHaveCount(0);
+      await page.getByRole('button', { name: artifactId, exact: true }).click();
+      const detail = page.getByRole('dialog', { name: 'Agent 评估详情' });
+      await expect(detail.getByText('PROTOCOL_ONLY：协议测试，不是实际模型评估')).toBeVisible();
+      await expect(detail.getByText('UNRUN: 2', { exact: true })).toBeVisible();
+      await expect(detail.getByText('gpt-6-luna / max', { exact: true })).toBeVisible();
+      await expect(detail.getByText('未知（未观察到）', { exact: true })).toHaveCount(2);
+      await detail.locator('.ant-drawer-close').click();
+      await expect(detail).toHaveCount(0);
+      await page.getByRole('button', { name: artifactId, exact: true }).click();
+      await expect(detail.getByText('UNRUN: 2', { exact: true })).toBeVisible();
+      await detail.locator('.ant-drawer-close').click();
+      await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+      expect(writes).toEqual([]);
+    } finally { page.off('request', observe); }
   });
 
   await test.step('retain the original browser state and command only in private test storage', async () => {
@@ -424,7 +445,7 @@ if (config.phase === 'before-restart') {
   test('all native pages remain accessible in both themes and three viewports', async ({ page, context }) => {
     test.setTimeout(180_000);
     await page.goto('/');
-    await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
     for (const cookie of await context.cookies()) rememberPrivateValue(config, cookie.value);
     for (const mode of ['light', 'dark']) {
       if (await page.locator('html').getAttribute('data-theme') !== mode) {
@@ -462,7 +483,7 @@ if (config.phase === 'before-restart') {
     }
   });
 
-  test('the deployed service worker keeps API data out of caches and protects unsaved edits during updates', async ({ page, context }) => {
+  test('the deployed service worker excludes API data and protects a pending Settings command during updates', async ({ page, context }) => {
     const workerFile = resolve(dirname(config.redactionsFile), 'release/web/sw.js');
     const originalWorker = readFileSync(workerFile, 'utf8');
     const writes: string[] = [];
@@ -471,18 +492,44 @@ if (config.phase === 'before-restart') {
         writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
       }
     });
+    let releaseAck!: () => void;
+    const heldAck = new Promise<void>(resolve => { releaseAck = resolve; });
+    const committed: { body: Schema['CodexAccountRequestV1']; key: string | undefined; result: Schema['CodexAccountStartV1'] }[] = [];
+    const modelsPath = (url: URL) => url.pathname === '/api/v2/codex/models';
+    let releaseInitialModels!: () => void;
+    const initialModels = new Promise<void>(resolve => { releaseInitialModels = resolve; });
+    const holdInitialModels = async (route: Route) => {
+      if (route.request().method() === 'GET') await initialModels;
+      await route.continue();
+    };
+    const isProbe = (response: Response) => new URL(response.url()).pathname === '/api/v2/codex/probe'
+      && response.request().method() === 'POST';
+    async function verifyProbe(response: Response, body: Schema['CodexProbeRequestV1']) {
+      expect(response.status()).toBe(200);
+      expect(response.request().postDataJSON()).toEqual(body);
+      const key = response.request().headers()['idempotency-key'];
+      expect(key).toBeTruthy();
+      const probe: Schema['CommandResult_CodexProbeViewV1'] = await response.json();
+      expect(probe.schema_version).toBe(1); expect(probe.replayed).toBe(false);
+      expect(probe.resource.schema_version).toBe(1);
+      expect(probe.resource.profile_id).toBe(body.profile_id);
+      expect(probe.resource.profile_revision).toBe(body.expected_revision);
+      expect(probe.resource.outcome).toEqual({ status: 'UNAVAILABLE', reason: 'DEPLOYMENT_UNAVAILABLE' });
+      const modelsResponse = await page.request.get('/api/v2/codex/models', { params: { profile_id: body.profile_id } });
+      expect(modelsResponse.status()).toBe(200);
+      const models: Schema['CodexObservationV1'] = await modelsResponse.json();
+      expect(models.state).toBe('UNAVAILABLE'); expect(models.observation).toEqual(probe.resource);
+      return { key, models };
+    }
     try {
       await page.goto('/');
-      await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
       for (const cookie of await context.cookies()) rememberPrivateValue(config, cookie.value);
       await page.evaluate(async () => { await navigator.serviceWorker.ready; });
-      // Workbox deliberately does not claim an already-open document.
       await page.reload();
       await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
-      await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
       const caches = await page.evaluate(async () => {
-        const names = await window.caches.keys();
-        const urls: string[] = [];
+        const names = await window.caches.keys(); const urls: string[] = [];
         for (const name of names) {
           const cache = await window.caches.open(name);
           urls.push(...(await cache.keys()).map(request => new URL(request.url).pathname));
@@ -492,44 +539,109 @@ if (config.phase === 'before-restart') {
       expect(caches.names.length).toBeGreaterThan(0);
       expect(caches.urls.some(path => path.startsWith('/assets/'))).toBe(true);
       expect(caches.urls.some(path => path.startsWith('/api/') || path.startsWith('/health/'))).toBe(false);
-
-      await page.getByRole('button', { name: '新建研究', exact: true }).click();
-      await page.getByLabel('研究名称').fill('Unsaved native PWA edit');
+      expect(writes).toEqual([]);
+      const profilesResponse = await page.request.get('/api/v2/settings/codex?limit=100');
+      expect(profilesResponse.status()).toBe(200);
+      const profiles: Schema['Page_CodexProfileViewV1'] = await profilesResponse.json();
+      expect(profiles.items).toHaveLength(2);
+      const profile = profiles.items[0]!;
+      // A prior test may leave a fresh or expired 60-second observation. Hold
+      // only its browser read while the real Refresh button makes one native
+      // probe, so Settings cannot race that click with a stale-state auto-probe.
+      // No response is fabricated; the released GET reads the committed result.
+      await context.route(modelsPath, holdInitialModels);
+      await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+      const login = page.getByRole('button', { name: '登录 ChatGPT', exact: true });
+      await expect(login).toBeEnabled();
+      const initialProbed = page.waitForResponse(isProbe);
+      await page.getByRole('button', { name: '刷新', exact: true }).click();
+      const initialProbe = await verifyProbe(await initialProbed, {
+        schema_version: 1, profile_id: profile.id, expected_revision: profile.revision,
+      });
+      const initialReadback = page.waitForResponse(response => modelsPath(new URL(response.url()))
+        && response.request().method() === 'GET');
+      releaseInitialModels();
+      const readback = await initialReadback;
+      expect(readback.status()).toBe(200); expect(await readback.json()).toEqual(initialProbe.models);
+      await context.unroute(modelsPath, holdInitialModels);
+      await expect(page.locator('.ant-tag').filter({ hasText: /^不可用$/ })).toBeVisible();
+      await expect(login).toBeEnabled();
+      const setupWrites = ['POST /api/v2/codex/probe'];
+      expect(writes).toEqual(setupWrites);
       await context.setOffline(true);
       await expect(page.getByText('离线，无法提交操作', { exact: true })).toBeVisible();
-      await expect(page.getByRole('button', { name: '保存项目', exact: true })).toBeDisabled();
-      expect(writes).toEqual([]);
+      await expect(login).toBeDisabled(); expect(writes).toEqual(setupWrites);
       await context.setOffline(false);
-      await expect(page.getByText('离线，无法提交操作', { exact: true })).toHaveCount(0);
-      await expect(page.getByLabel('研究名称')).toHaveValue('Unsaved native PWA edit');
-      expect(writes).toEqual([]);
-
-      // Update the actual test-owned installed script served by Caddy. There is
-      // no fabricated Worker, navigator override, route fulfilment or API peer.
+      await expect(login).toBeEnabled(); expect(writes).toEqual(setupWrites);
+      await context.route('**/api/v2/codex/login/start', async route => {
+        const response = await route.fetch({ maxRetries: 0 });
+        expect(response.status()).toBe(202);
+        const result: Schema['CodexAccountStartV1'] = await response.json();
+        // The fixture's real unavailable deployment must never look like a successful login.
+        expect(result.current.state).toBe('FAILED'); expect(result.current.reason).toBe('DEPLOYMENT_UNAVAILABLE');
+        expect(result.device_code == null).toBe(true);
+        committed.push({ body: route.request().postDataJSON(), key: route.request().headers()['idempotency-key'], result });
+        expect(committed[0]!.key).toBeTruthy();
+        expect(committed[0]!.body).toEqual({ schema_version: 1, profile_id: result.current.operation.profile_id,
+          expected_revision: result.current.operation.profile_revision });
+        await response.dispose(); await heldAck; await route.abort('failed');
+      });
+      await login.click();
+      await expect.poll(() => committed.length).toBe(1);
+      // Hold the real committed Settings acknowledgement while Workbox discovers
+      // the actual changed installed worker. There is no fabricated Worker or API success.
       appendFileSync(workerFile, `\n// Native update ${randomUUID()}\n`);
       await page.evaluate(async () => { await (await navigator.serviceWorker.ready).update(); });
       await expect(page.getByRole('dialog', { name: '检测到新的前端版本' })).toBeVisible();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeDisabled();
       await expect(page.getByText('请先保存或取消当前编辑', { exact: true })).toBeVisible();
       await page.getByRole('button', { name: '稍后', exact: true }).click();
-      await expect(page.getByLabel('研究名称')).toHaveValue('Unsaved native PWA edit');
-      await page.getByRole('button', { name: '取消', exact: true }).click();
-      await page.getByRole('button', { name: '放弃修改', exact: true }).click();
-      await expect(page.getByLabel('研究名称')).toHaveCount(0);
+      await expect(login).toBeDisabled();
+      expect(writes).toEqual([...setupWrites, 'POST /api/v2/codex/login/start']);
+      releaseAck();
+      await expect(page.getByRole('button', { name: '重试当前操作', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: '有新版本', exact: true }).click();
+      await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeDisabled();
+      await page.getByRole('button', { name: '稍后', exact: true }).click();
+      expect(writes).toEqual([...setupWrites, 'POST /api/v2/codex/login/start']);
+      await context.unroute('**/api/v2/codex/login/start');
+      const retried = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/codex/login/start');
+      const refreshed = page.waitForResponse(isProbe);
+      await page.getByRole('button', { name: '重试当前操作', exact: true }).click();
+      const response = await retried;
+      expect(response.status()).toBe(202);
+      expect(response.request().headers()['idempotency-key']).toBe(committed[0]!.key);
+      expect(response.request().postDataJSON()).toEqual(committed[0]!.body);
+      const replay: Schema['CodexAccountStartV1'] = await response.json();
+      expect(replay.acceptance).toEqual({ ...committed[0]!.result.acceptance, replayed: true });
+      expect(replay.current).toEqual(committed[0]!.result.current);
+      expect(replay.device_code == null).toBe(true);
+      // The terminal account receipt invalidates this profile's old catalog.
+      // Its one Settings refresh is a real unavailable-deployment probe, never
+      // a model run or a business write initiated by the Research page.
+      const probeResponse = await refreshed;
+      await expect(page.getByRole('heading', { level: 1, name: '设置', exact: true })).toBeVisible();
+      const probe = await verifyProbe(probeResponse, committed[0]!.body);
+      expect(probe.key).not.toBe(committed[0]!.key); expect(probe.key).not.toBe(initialProbe.key);
+      await expect(login).toBeEnabled();
+      const settingsWrites = [...setupWrites, 'POST /api/v2/codex/login/start', 'POST /api/v2/codex/login/start', 'POST /api/v2/codex/probe'];
+      expect(writes).toEqual(settingsWrites);
       await page.getByRole('button', { name: '有新版本', exact: true }).click();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeEnabled();
       const reloaded = page.waitForEvent('load');
-      await page.getByRole('button', { name: '确认更新', exact: true }).click();
-      await reloaded;
-      await expect(page.getByRole('button', { name: '新建研究', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: '确认更新', exact: true }).click(); await reloaded;
+      await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
       const saved: Checkpoint = JSON.parse(readFileSync(projectFile, 'utf8'));
       const listing = await page.request.get('/api/v2/projects?limit=100');
       expect(listing.status()).toBe(200);
       const body: { items: Schema['ProjectView'][] } = await listing.json();
       expect(body.items).toEqual([saved.receipt.resource]);
-      expect(writes).toEqual([]);
+      expect(writes).toEqual(settingsWrites);
     } finally {
+      releaseInitialModels(); releaseAck();
+      await context.unroute(modelsPath, holdInitialModels);
       await context.setOffline(false);
+      await context.unroute('**/api/v2/codex/login/start');
       writeFileSync(workerFile, originalWorker);
     }
   });

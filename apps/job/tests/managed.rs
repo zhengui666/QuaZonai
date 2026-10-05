@@ -1,4 +1,6 @@
 //! Actual one-job native subprocesses. All numerical inputs here are synthetic fixtures.
+#[path = "support/experiment.rs"]
+mod experiment_fixture;
 #[path = "support/market.rs"]
 mod market;
 use contracts::{
@@ -7,6 +9,7 @@ use contracts::{
     runtime_jobs::*,
     DbCounter, Id, Revision, SchemaV1,
 };
+use market::execution_models;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -112,7 +115,14 @@ fn execute(f: &Fixture) -> bool {
     if status.success() {
         assert!(error.is_empty());
     } else {
-        assert_eq!(error, b"QZ_NATIVE_JOB_FAILED\n");
+        assert_eq!(
+            String::from_utf8_lossy(&error).lines().next(),
+            Some("QZ_NATIVE_JOB_FAILED")
+        );
+        eprintln!(
+            "stage=managed execute; status={status}; stderr: {}",
+            String::from_utf8_lossy(&error)
+        );
     }
     status.success()
 }
@@ -1676,6 +1686,65 @@ fn native_compiler_rejects_a_dataset_mount_before_starting_a_compiler() {
     fs::write(f.input.join("objects").join(code.to_string()), b"x").unwrap();
     assert!(!execute(&f));
     assert!(fs::read_dir(&f.output).unwrap().next().is_none());
+}
+
+#[test]
+fn managed_cross_source_evaluation_publishes_native_bound_fold_evidence() {
+    let (catalog, request, parts) = experiment_fixture::fixture(false);
+    let dataset_id = Id::new();
+    let model_id = Id::new();
+    let model = experiment_fixture::feature_policy();
+    let feature_ids = parts.iter().map(|_| Id::new()).collect::<Vec<_>>();
+    let raw_parts = parts
+        .iter()
+        .map(|part| serde_json::to_vec(part).unwrap())
+        .collect::<Vec<_>>();
+    let mut inputs = vec![
+        RuntimeInputV1::Dataset {
+            revision_id: dataset_id,
+            registered_ref: "synthetic-seconds-cross-source".into(),
+            storage_version: "1".into(),
+            role: DataPartition::Validation,
+        },
+        RuntimeInputV1::Artifact {
+            artifact_id: model_id,
+            storage_version: "1".into(),
+            byte_count: market::count(model.len() as u64),
+            role: ArtifactInputRole::Model,
+        },
+    ];
+    for (&id, raw) in feature_ids.iter().zip(&raw_parts) {
+        inputs.push(RuntimeInputV1::Artifact {
+            artifact_id: id,
+            storage_version: "1".into(),
+            byte_count: market::count(raw.len() as u64),
+            role: ArtifactInputRole::Parameters,
+        });
+    }
+    let f = fixture(
+        NativeTaskParametersV1::EvaluateExperiment {
+            schema_version: SchemaV1,
+            dataset_revision_id: dataset_id,
+            model_artifact_id: model_id,
+            feature_artifact_ids: feature_ids.clone(),
+            request: Box::new(request),
+        },
+        inputs,
+    );
+    fs::write(f.input.join("objects").join(model_id.to_string()), model).unwrap();
+    for (&id, raw) in feature_ids.iter().zip(raw_parts) {
+        fs::write(f.input.join("objects").join(id.to_string()), raw).unwrap();
+    }
+    attach_catalog(&f, dataset_id, catalog.path());
+    assert!(execute(&f));
+    let report: contracts::science::NativeExperimentEvaluationResultV1 =
+        result(&f, "qz.experiment_evaluation");
+    assert_eq!(report.feature_artifact_ids, feature_ids);
+    assert!(report.folds.len() > 1);
+    assert!(report
+        .folds
+        .iter()
+        .all(|fold| fold.simulation.consumed_target_points.get() == fold.decisions.len() as u64));
 }
 
 #[test]

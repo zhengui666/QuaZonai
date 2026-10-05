@@ -9,6 +9,9 @@ use contracts::{
     control::{ListQuery, MachineScope, Page, PrincipalKind},
     evidence::*,
     research::ResearchListQuery,
+    strategy_portfolio::{
+        AlphaVersionEnvelopeV2, FrozenTargetPolicyV1, StrategyAlphaVersionV1, StrategyOutputKindV1,
+    },
     DbCounter, Id, Revision, SchemaV1,
 };
 use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
@@ -127,6 +130,44 @@ fn version(row: &PgRow) -> Result<AlphaVersionView, StoreError> {
             .transpose()?,
         created_at: row.try_get("created_at")?,
     })
+}
+
+/// Decode the explicit weight branch without inventing forecast metadata.
+pub(crate) fn strategy_version(row: &PgRow) -> Result<StrategyAlphaVersionV1, StoreError> {
+    let policy: FrozenTargetPolicyV1 = serde_json::from_value(row.try_get("strategy_policy")?)
+        .map_err(|_| StoreError::Integrity)?;
+    let experiment_id = db::id(row.try_get("experiment_id")?)?;
+    if row.try_get::<String, _>("output_kind")? != "TARGET_WEIGHT"
+        || policy.source.experiment_id != experiment_id
+        || policy.source.evaluation_run_id != db::id(row.try_get("source_evaluation_run_id")?)?
+        || policy.source.accepted_attempt_id != db::id(row.try_get("source_accepted_attempt_id")?)?
+        || policy.source.report_artifact_id != db::id(row.try_get("source_report_artifact_id")?)?
+        || policy.code_artifact_id != db::id(row.try_get("code_artifact_id")?)?
+        || Some(policy.model_artifact_id) != db::optional_id(row, "model_artifact_id")?
+        || policy.runtime_image_ref != row.try_get::<String, _>("runtime_image_ref")?
+    {
+        return Err(StoreError::Integrity);
+    }
+    Ok(StrategyAlphaVersionV1 {
+        schema_version: SchemaV1,
+        output_kind: StrategyOutputKindV1::TargetWeight,
+        id: db::id(row.try_get("id")?)?,
+        project_id: db::id(row.try_get("project_id")?)?,
+        alpha_id: db::id(row.try_get("alpha_id")?)?,
+        version: db::revision(i64::from(row.try_get::<i32, _>("version")?))?,
+        experiment_id,
+        root_lineage_id: db::id(row.try_get("root_lineage_id")?)?,
+        policy,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+fn version_envelope(row: &PgRow) -> Result<AlphaVersionEnvelopeV2, StoreError> {
+    match row.try_get::<String, _>("output_kind")?.as_str() {
+        "FORECAST" => version(row).map(AlphaVersionEnvelopeV2::Forecast),
+        "TARGET_WEIGHT" => strategy_version(row).map(AlphaVersionEnvelopeV2::TargetWeight),
+        _ => Err(StoreError::Integrity),
+    }
 }
 
 fn evaluation(row: &PgRow) -> Result<EvaluationView, StoreError> {
@@ -319,7 +360,7 @@ impl Store {
         domain::control::list(query)?;
         let mut tx = self.pool.begin().await?;
         alpha_project(&mut tx, actor, alpha).await?;
-        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{VERSION} WHERE v.alpha_id=$1 AND ($2::uuid IS NULL OR v.id<$2) ORDER BY v.id DESC LIMIT $3")))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{VERSION} WHERE v.output_kind='FORECAST' AND v.alpha_id=$1 AND ($2::uuid IS NULL OR v.id<$2) ORDER BY v.id DESC LIMIT $3")))
             .bind(alpha.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let result = page(
             rows.iter().map(version).collect::<Result<Vec<_>, _>>()?,
@@ -339,7 +380,7 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         alpha_project(&mut tx, actor, alpha).await?;
         let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "{VERSION} WHERE v.alpha_id=$1 AND v.version=$2"
+            "{VERSION} WHERE v.output_kind='FORECAST' AND v.alpha_id=$1 AND v.version=$2"
         )))
         .bind(alpha.as_uuid())
         .bind(number.get() as i64)
@@ -347,6 +388,52 @@ impl Store {
         .await?
         .ok_or(StoreError::NotFound)?;
         let result = version(&row)?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn alpha_versions_v2(
+        &self,
+        actor: &Actor,
+        alpha: Id,
+        query: &ListQuery,
+    ) -> Result<Page<AlphaVersionEnvelopeV2>, StoreError> {
+        domain::control::list(query)?;
+        let mut tx = self.pool.begin().await?;
+        alpha_project(&mut tx, actor, alpha).await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("{VERSION} WHERE v.alpha_id=$1 AND ($2::uuid IS NULL OR v.id<$2) ORDER BY v.id DESC LIMIT $3")))
+            .bind(alpha.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let result = page(
+            rows.iter()
+                .map(version_envelope)
+                .collect::<Result<Vec<_>, _>>()?,
+            query.limit,
+            |v| match v {
+                AlphaVersionEnvelopeV2::Forecast(v) => v.id,
+                AlphaVersionEnvelopeV2::TargetWeight(v) => v.id,
+            },
+        );
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn alpha_version_v2(
+        &self,
+        actor: &Actor,
+        alpha: Id,
+        number: Revision,
+    ) -> Result<AlphaVersionEnvelopeV2, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        alpha_project(&mut tx, actor, alpha).await?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "{VERSION} WHERE v.alpha_id=$1 AND v.version=$2"
+        )))
+        .bind(alpha.as_uuid())
+        .bind(number.get() as i64)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        let result = version_envelope(&row)?;
         tx.commit().await?;
         Ok(result)
     }

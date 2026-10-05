@@ -6,6 +6,8 @@ use utoipa::ToSchema;
 
 mod validation;
 pub use validation::*;
+mod experiment;
+pub use experiment::*;
 mod sealed;
 pub use sealed::*;
 mod portfolio;

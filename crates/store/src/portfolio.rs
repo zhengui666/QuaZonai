@@ -10,6 +10,7 @@ use contracts::{
 use sqlx::{postgres::PgRow, Row};
 
 pub(crate) mod candidates;
+pub(crate) mod strategy;
 
 pub(crate) fn risk_capability(
     content: &MandateContentV1,
@@ -103,7 +104,7 @@ impl Store {
         if !exists {
             return Err(StoreError::NotFound);
         }
-        let rows = sqlx::query("SELECT * FROM app.portfolio_mandates WHERE project_id=$1 AND ($2::uuid IS NULL OR id<$2) ORDER BY id DESC LIMIT $3")
+        let rows = sqlx::query("SELECT * FROM app.portfolio_mandates WHERE allocation_method='NATIVE_OPTIMIZER' AND project_id=$1 AND ($2::uuid IS NULL OR id<$2) ORDER BY id DESC LIMIT $3")
             .bind(project.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let items = rows.iter().map(view).collect::<Result<Vec<_>, _>>()?;
         tx.commit().await?;
@@ -112,7 +113,7 @@ impl Store {
 
     pub async fn mandate(&self, actor: &Actor, id: Id) -> Result<MandateViewV1, StoreError> {
         let mut tx = self.pool.begin().await?;
-        let r = sqlx::query("SELECT * FROM app.portfolio_mandates WHERE id=$1")
+        let r = sqlx::query("SELECT * FROM app.portfolio_mandates WHERE allocation_method='NATIVE_OPTIMIZER' AND id=$1")
             .bind(id.as_uuid())
             .fetch_optional(&mut *tx)
             .await?
@@ -210,7 +211,7 @@ impl Store {
         let id = prepared.target;
         sqlx::query("INSERT INTO app.portfolio_mandates(id,project_id,version,objective,risk_measure,base_currency,capital_assumption,universe_version_id,covariance_estimator,alpha_ensemble,optimizer,constraints,rebalance_schedule,required_evaluation_policy_id,execution_assumptions_id,exposure_tolerance) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
             .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(version).bind(db::code(&c.objective)?).bind(db::code(&c.risk_measure)?).bind(&c.base_currency).bind(c.capital_assumption.as_decimal()).bind(c.universe_version_id.as_uuid()).bind(db::json(&c.covariance_estimator)?).bind(db::json(&c.alpha_ensemble)?).bind(db::json(&c.optimizer)?).bind(db::json(&c.constraints)?).bind(db::json(&c.rebalance_schedule)?).bind(c.required_evaluation_policy_id.as_uuid()).bind(c.execution_assumptions_id.as_uuid()).bind(c.exposure_tolerance.as_decimal()).execute(&mut *tx).await?;
-        let r = sqlx::query("SELECT * FROM app.portfolio_mandates WHERE id=$1")
+        let r = sqlx::query("SELECT * FROM app.portfolio_mandates WHERE allocation_method='NATIVE_OPTIMIZER' AND id=$1")
             .bind(id.as_uuid())
             .fetch_one(&mut *tx)
             .await?;

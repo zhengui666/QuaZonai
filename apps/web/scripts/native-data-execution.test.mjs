@@ -1,7 +1,6 @@
 // Ownership/control-flow checks only. No mock result counts as OCI acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { link, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -80,7 +79,6 @@ test('interrupted explicit execution cannot launch a new Runtime or pass', async
   await assert.rejects(subject.start(), /interrupted/); assert.equal(subject.started, false);
 });
 
-const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const corruptBytes = Buffer.from('explicit test-owned corrupt native parquet');
 async function corruptionFixture(t) {
   const root = await mkdtemp(resolve(tmpdir(), 'quazonai-native-partition-'));
@@ -102,7 +100,7 @@ async function corruptionFixture(t) {
     await writeFile(path, bytes);
   }
   const partition = { relative_path: relativePath, data_kind: 'BAR', bar_type: 'verified-native-type',
-    size_bytes: originals.get(bar).length, sha256: hash(originals.get(bar)) };
+    size_bytes: originals.get(bar).length };
   const subject = new NativeDataExecution({ root });
   subject.prepared = { catalog_root: catalog, native_partitions: [partition],
     selection: { selection: { bar_types: [partition.bar_type] } } };
@@ -120,7 +118,6 @@ test('native descriptor selects exactly its BAR regardless of directory spelling
   assert.deepEqual(await readFile(fixture.bar), corruptBytes);
   await assertOriginals(fixture, fixture.bar);
   assert.deepEqual(fixture.subject.evidence.corruption, { ...fixture.partition,
-    before_sha256: fixture.partition.sha256, after_sha256: hash(corruptBytes),
     before_size_bytes: fixture.partition.size_bytes, after_size_bytes: corruptBytes.length });
   await assert.rejects(fixture.subject.corrupt(), /byte count changed/);
   await assertOriginals(fixture, fixture.bar);
@@ -132,8 +129,6 @@ for (const [name, change, error] of [
   ['two partitions', f => { f.subject.prepared.native_partitions.push({ ...f.partition }); }, /Exactly one/],
   ['wrong data kind', f => { f.partition.data_kind = 'INSTRUMENT'; }, /Only a discovered native BAR/],
   ['wrong verified series', f => { f.partition.bar_type = 'other-series'; }, /deep-equal/],
-  ['changed hash', f => { f.partition.sha256 = '0'.repeat(64); }, /SHA256 changed/],
-  ['malformed hash', f => { f.partition.sha256 = 'not-a-hash'; }, /SHA256 required/],
   ['changed size', f => { f.partition.size_bytes += 1; }, /byte count changed/],
   ['invalid size', f => { f.partition.size_bytes = '26'; }, /byte count required/],
   ['empty size', f => { f.partition.size_bytes = 0; }, /byte count required/],

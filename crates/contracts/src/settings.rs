@@ -123,6 +123,8 @@ pub enum DownstreamEnvironments {
 pub enum PackageSchemaVersion {
     #[serde(rename = "1")]
     V1,
+    #[serde(rename = "2")]
+    V2,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -132,7 +134,7 @@ pub struct DownstreamConfigurationV1 {
     pub name: String,
     #[schema(min_length = 1, max_length = 2048)]
     pub endpoint: String,
-    #[schema(value_type = std::collections::BTreeSet<PackageSchemaVersion>, min_items = 1, max_items = 1)]
+    #[schema(value_type = std::collections::BTreeSet<PackageSchemaVersion>, min_items = 1, max_items = 2)]
     pub accepted_package_versions: Vec<PackageSchemaVersion>,
     pub environments: DownstreamEnvironments,
     pub enabled: bool,

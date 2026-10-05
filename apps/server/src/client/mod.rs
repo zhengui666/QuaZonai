@@ -1,4 +1,6 @@
 //! Native HTTP CLI over shared Rust contracts. Never opens a database or an application vault.
+#[path = "../../../cli/src/account_transport.rs"]
+mod account_transport;
 mod commands;
 mod preview;
 mod private;
@@ -34,7 +36,7 @@ pub struct Arguments {
     /// Validate the local request and print a redacted plan; never contacts the server.
     #[arg(long, global = true)]
     pub preview: bool,
-    /// Required for writes. Keep the same key and input after an unknown result.
+    /// Required for writes except native account observations, which replay by envelope identity.
     #[arg(long, global = true)]
     pub idempotency_key: Option<String>,
     /// Single-use human grant for scoped machine credentials; saved owner devices need none.
@@ -62,10 +64,16 @@ pub enum Failure {
     ResponseLimit,
     ResetRequired,
     Output,
+    AccountStreamChanged,
+    AccountStreamIncomplete,
+    AccountRelay(Box<Failure>),
     Rejected(Box<Problem>),
 }
 impl fmt::Display for Failure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Self::AccountRelay(error) = self {
+            return fmt::Display::fmt(error, formatter);
+        }
         formatter.write_str(match self {
             Self::Configuration => "CLI_CONFIGURATION_INVALID",
             Self::LoginRequired => "CLI_LOGIN_REQUIRED",
@@ -80,6 +88,11 @@ impl fmt::Display for Failure {
             Self::ResponseLimit => "CLI_RESPONSE_LIMIT",
             Self::ResetRequired => "CLI_EVENT_CURSOR_RESET_REQUIRED",
             Self::Output => "CLI_OUTPUT_UNAVAILABLE",
+            Self::AccountStreamChanged => {
+                "CLI_ACCOUNT_STREAM_CHANGED_REPLAY_OR_NEW_SESSION_REQUIRED"
+            }
+            Self::AccountStreamIncomplete => "CLI_ACCOUNT_STREAM_INCOMPLETE_RETAIN_INPUT",
+            Self::AccountRelay(_) => unreachable!(),
             Self::Rejected(_) => "CLI_SERVER_REJECTED_REQUEST",
         })
     }
@@ -224,16 +237,18 @@ impl Connection {
             .client
             .request(request.method.clone(), self.url(request)?);
         if request.method != Method::GET {
-            let key = key.ok_or(Failure::IdempotencyRequired)?;
-            let mut headers = header::HeaderMap::new();
-            headers.insert(
-                "idempotency-key",
-                header::HeaderValue::from_str(key).map_err(|_| Failure::Input)?,
-            );
-            if !contracts::http::valid_idempotency_key(key) {
-                return Err(Failure::Input);
+            if request.requires_idempotency_key() || key.is_some() {
+                let key = key.ok_or(Failure::IdempotencyRequired)?;
+                let mut headers = header::HeaderMap::new();
+                headers.insert(
+                    "idempotency-key",
+                    header::HeaderValue::from_str(key).map_err(|_| Failure::Input)?,
+                );
+                if !contracts::http::valid_idempotency_key(key) {
+                    return Err(Failure::Input);
+                }
+                call = call.headers(headers);
             }
-            call = call.headers(headers);
             if let Some(body) = &request.body {
                 call = call
                     .header(header::CONTENT_TYPE, "application/json")
@@ -331,6 +346,14 @@ fn write_json(value: &impl serde::Serialize) -> Result<()> {
 }
 
 pub async fn run(arguments: Arguments) -> Result<()> {
+    if let commands::Command::Forward(commands::Forward::Accounts(
+        commands::ForwardAccounts::Relay(ref relay),
+    )) = arguments.command
+    {
+        return account_transport::run(&arguments, relay)
+            .await
+            .map_err(|error| Failure::AccountRelay(Box::new(error)));
+    }
     if let commands::Command::Login { ref name, replace } = arguments.command {
         return session::login(&arguments, name.as_deref(), replace).await;
     }
@@ -392,10 +415,15 @@ pub async fn run(arguments: Arguments) -> Result<()> {
             request.status,
         )
         .await?;
+    let json_maximum = if matches!(&request.output, commands::Output::NativeReport(_)) {
+        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize
+    } else {
+        MAX_JSON_BYTES
+    };
     match request.output {
-        commands::Output::Json(decode) => {
+        commands::Output::Json(decode) | commands::Output::NativeReport(decode) => {
             media(&response, "application/json")?;
-            let bytes = body(response, MAX_JSON_BYTES).await?;
+            let bytes = body(response, json_maximum).await?;
             verify(&bytes, &connection.credential)?;
             write_json(&decode(&bytes)?)
         }
@@ -440,6 +468,17 @@ pub async fn run(arguments: Arguments) -> Result<()> {
 /// Print only a validated common Problem or a closed local code, never a native error.
 pub fn report(error: &Failure) {
     let value = match error {
+        Failure::AccountRelay(error) => Some(serde_json::json!({
+            "schema_version": 1,
+            "code": error.to_string(),
+            "problem": match error.as_ref() {
+                Failure::Rejected(problem) => serde_json::to_value(problem).ok(),
+                _ => None,
+            },
+            "records_may_have_been_submitted": true,
+            "automatic_retries_possible": true,
+            "recovery": "Retain the input. Replay the same file; never recreate clocks or reset source sequence."
+        })),
         Failure::Rejected(problem) => serde_json::to_value(problem).ok(),
         _ => Some(
             serde_json::json!({"schema_version":1,"code":error.to_string(),"request_sent_again":false}),

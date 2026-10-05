@@ -1,10 +1,5 @@
 name: Dev image
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/dev-image.yml'
-      - '.github/workflows/dev-image-publish.yml'
-      - '.github/actions/container/**'
   workflow_dispatch:
     inputs:
       source_branch:
@@ -22,17 +17,17 @@ jobs:
       - name: Check out the workflow's container action
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Validate the requested branch name
         if: github.event_name == 'workflow_dispatch'
         env:
           SOURCE_BRANCH: ${{ inputs.source_branch }}
         run: git check-ref-format "refs/heads/$SOURCE_BRANCH"
-      - name: Check out only a repository branch (or the read-only PR test source)
+      - name: Check out the requested repository branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/heads/{0}', inputs.source_branch) || github.event.pull_request.head.sha }}
+          ref: ${{ format('refs/heads/{0}', inputs.source_branch) }}
           path: source
           persist-credentials: false
       - name: Freeze source revision and unique dev tag
@@ -71,3 +66,4 @@ jobs:
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
+

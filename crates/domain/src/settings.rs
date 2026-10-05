@@ -119,7 +119,10 @@ pub fn downstream_configuration(request: &DownstreamConfigurationV1) -> Result<(
         return Err(invalid("configuration.name", "INVALID_NAME"));
     }
     endpoint(&request.endpoint, request.development_http)?;
-    if request.accepted_package_versions != [PackageSchemaVersion::V1] {
+    if !(1..=2).contains(&request.accepted_package_versions.len())
+        || request.accepted_package_versions.len() == 2
+            && request.accepted_package_versions[0] == request.accepted_package_versions[1]
+    {
         return Err(invalid(
             "configuration.accepted_package_versions",
             "UNSUPPORTED_OR_DUPLICATE_PACKAGE_VERSION",

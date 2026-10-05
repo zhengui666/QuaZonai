@@ -160,6 +160,23 @@ pub fn reserve_mission(
     reserve_job(project, budget, stop, usage, request, false, 1)
 }
 
+/// Per-job upper bounds shared by reservation and staged-execution preflight.
+/// Request shape, cumulative usage and the actual reservation remain separate.
+pub fn job_resource_limits(
+    budget: &BudgetV1,
+    wall_seconds: u32,
+    memory_mib: u32,
+    output_bytes: DbCounter,
+) -> Result<(), DomainError> {
+    if wall_seconds > budget.max_wall_seconds
+        || memory_mib > budget.max_memory_mib
+        || output_bytes > budget.max_output_bytes
+    {
+        return Err(DomainError::BudgetExhausted("job_resource_limit"));
+    }
+    Ok(())
+}
+
 fn reserve_job(
     project: ProjectState,
     budget: &BudgetV1,
@@ -181,12 +198,12 @@ fn reserve_job(
     {
         return Err(DomainError::Invalid("reservation"));
     }
-    if request.wall_seconds > budget.max_wall_seconds
-        || request.memory_mib > budget.max_memory_mib
-        || request.output_bytes > budget.max_output_bytes
-    {
-        return Err(DomainError::BudgetExhausted("job_resource_limit"));
-    }
+    job_resource_limits(
+        budget,
+        request.wall_seconds,
+        request.memory_mib,
+        request.output_bytes,
+    )?;
     let reserved_experiments = usage
         .reserved_experiments
         .checked_add(request.experiments)

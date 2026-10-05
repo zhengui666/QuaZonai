@@ -1,6 +1,6 @@
 import { test, expect, request } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Schema } from '../src/api';
@@ -10,7 +10,6 @@ const config = fixture();
 const root = dirname(config.redactionsFile);
 const read = (name: string) => JSON.parse(readFileSync(resolve(root, name), 'utf8'));
 const save = (name: string, value: unknown) => writeFileSync(resolve(root, name), JSON.stringify(value), { mode: 0o600 });
-const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 type Quality = { schema_version: number; native_version: string; checked_at: string; datasets: {
   dataset_revision_id: string; row_count: string; first_event_ns: string; last_event_ns: string;
   available_through_ns: string; instrument_ids: string[]; selection: Record<string, unknown>;
@@ -166,7 +165,7 @@ test('real Worker publishes original OCI bytes and preserves identities across p
   expect(measured.last_bar_notionals[0]).toMatchObject({ instrument_id: 'BTC-USD.COINBASE', event_ns: '180000000000',
     available_ns: '1704153601000000000', close_price: '42000.99', traded_volume: '0.10000001', currency: 'USD', notional_value: '4200.1' });
   await openInput(page, run.id);
-  const downloads: { id: string; schema: string; sha256: string }[] = [];
+  const downloads: { id: string; schema: string; byte_count: string }[] = [];
   for (const item of outputs) {
     const expected = item.schema_name === 'qz.job_result' ? manifestBytes : qualityBytes;
     const row = page.getByRole('row').filter({ hasText: item.id });
@@ -191,7 +190,12 @@ test('real Worker publishes original OCI bytes and preserves identities across p
     const actual = Buffer.concat(chunks); expect(actual).toEqual(expected);
     expect(String(actual.length)).toBe(item.byte_count);
     await expect(action).toHaveAttribute('aria-busy', 'false');
-    downloads.push({ id: item.id, schema: item.schema_name, sha256: hash(actual) });
+    // Preserve the original bytes themselves across restart, inside the same
+    // private fixture directory, rather than reducing them to a digest.
+    const originalPath = resolve(root, `native-data-artifact-${item.id}.bin`);
+    if (config.phase === 'data-complete') writeFileSync(originalPath, actual, { mode: 0o600, flag: 'wx' });
+    else expect(actual).toEqual(readFileSync(originalPath));
+    downloads.push({ id: item.id, schema: item.schema_name, byte_count: item.byte_count });
   }
   const evidence = { run_id: run.id, attempt_id: run.active_attempt_id, downloads: downloads.sort((a, b) => a.id.localeCompare(b.id)), quality };
   if (config.phase === 'data-complete') save('native-data-quality.json', evidence);

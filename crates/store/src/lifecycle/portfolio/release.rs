@@ -3,6 +3,7 @@ use super::*;
 use contracts::delivery::{
     PackageOriginV1, PackageTargetV1, ReleaseCreateV1, ReleaseViewV1, TargetPackageV1,
 };
+use std::future::Future;
 
 fn view(row: &PgRow) -> Result<ReleaseViewV1, StoreError> {
     Ok(ReleaseViewV1 {
@@ -159,7 +160,24 @@ where
     Ok((tx, view))
 }
 
-pub(super) async fn package<R, Read>(
+pub(super) fn package<'a, 'tx: 'a, R, Read>(
+    tx: &'a mut Tx<'tx>,
+    project: Id,
+    intent: &'a ReleaseCreateV1,
+    release: Id,
+    read: &'a mut R,
+) -> impl Future<Output = Result<TargetPackageV1, StoreError>> + 'a + use<'a, 'tx, R, Read>
+where
+    R: FnMut(Id, DbCounter) -> Read + 'a,
+    Read: std::future::Future<Output = Result<Vec<u8>, StoreError>> + 'a,
+{
+    // Construct and move the large state machine before it is polled, so this
+    // constructor's temporary stack frame unwinds before lifecycle validation.
+    // Keep the same borrowed transaction, callbacks and eligibility checks.
+    Box::pin(package_inner(tx, project, intent, release, read))
+}
+
+async fn package_inner<R, Read>(
     tx: &mut Tx<'_>,
     project: Id,
     intent: &ReleaseCreateV1,
@@ -222,12 +240,18 @@ where
         read,
     )
     .await?;
-    let NativeTaskParametersV1::BuildPortfolio {
-        request: frozen, ..
-    } = serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?
-    else {
-        return Err(StoreError::Integrity);
-    };
+    // Delivery revalidation reaches this decode through a deep lifecycle poll
+    // chain. Decode only owned bytes off that stack; keep SQL with this task.
+    let frozen = tokio::task::spawn_blocking(move || {
+        let NativeTaskParametersV1::BuildPortfolio { request, .. } =
+            serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?
+        else {
+            return Err(StoreError::Integrity);
+        };
+        Ok(request)
+    })
+    .await
+    .map_err(|_| StoreError::Integrity)??;
     if frozen.mandate != mandate.content
         || frozen.members.len() != build.members.len()
         || binding.try_get::<String, _>("image_ref")? != row.try_get::<String, _>("image_ref")?
@@ -244,10 +268,18 @@ where
         read,
     )
     .await?;
-    let report: NativePortfolioBuildResultV1 =
-        serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
-    domain::execution::portfolio_build_result(&frozen, &report)
-        .map_err(|_| StoreError::Integrity)?;
+    // Decode and validate on the blocking stack, then keep the report boxed.
+    // Its inline JoinHandle output and poll storage would otherwise return
+    // to the nested lifecycle stack; source checks stay with this transaction.
+    let (frozen, report) = tokio::task::spawn_blocking(move || {
+        let report: NativePortfolioBuildResultV1 =
+            serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
+        domain::execution::portfolio_build_result(&frozen, &report)
+            .map_err(|_| StoreError::Integrity)?;
+        Ok::<_, StoreError>((frozen, Box::new(report)))
+    })
+    .await
+    .map_err(|_| StoreError::Integrity)??;
     publication::eligibility(
         tx,
         project,
@@ -403,4 +435,130 @@ where
     };
     domain::delivery::target_package(&package, &source.document, &mandate, &candidate)?;
     Ok(package)
+}
+
+fn envelope_view(
+    row: &PgRow,
+) -> Result<contracts::strategy_portfolio::ReleaseViewEnvelopeV2, StoreError> {
+    use contracts::{forward::ForwardEnvironmentV1, strategy_portfolio::*};
+    if row.try_get::<String, _>("source_kind")? == "FORECAST_EVALUATION" {
+        return Ok(ReleaseViewEnvelopeV2::Forecast(view(row)?));
+    }
+    let candidate: StrategyPortfolioCandidateV1 =
+        serde_json::from_value(row.try_get("strategy_detail")?)
+            .map_err(|_| StoreError::Integrity)?;
+    Ok(ReleaseViewEnvelopeV2::TargetDecision(
+        StrategyReleaseViewV1 {
+            schema_version: SchemaV1,
+            id: db::id(row.try_get("id")?)?,
+            project_id: db::id(row.try_get("project_id")?)?,
+            candidate_id: db::id(row.try_get("candidate_id")?)?,
+            mandate_id: db::id(row.try_get("mandate_id")?)?,
+            package_artifact_id: db::id(row.try_get("package_artifact_id")?)?,
+            package_schema_version: TargetPackageVersionV2::V2,
+            source_kind: StrategyReleaseSourceV1::NativeTargetDecision,
+            source: NativeTargetDecisionSourceV1 {
+                run_id: db::id(row.try_get("decision_run_id")?)?,
+                accepted_attempt_id: db::id(row.try_get("decision_attempt_id")?)?,
+                report_artifact_id: db::id(row.try_get("decision_report_artifact_id")?)?,
+                alpha_version_ids: candidate
+                    .members
+                    .iter()
+                    .map(|m| m.alpha_version_id)
+                    .collect(),
+                input_provenance: candidate.input_provenance,
+            },
+            execution_environment: ForwardEnvironmentV1::Paper,
+            market_capability_version: row.try_get("market_capability_version")?,
+            asof: candidate.decision_asof,
+            valid_from: row.try_get("valid_from")?,
+            valid_until: row.try_get("valid_until")?,
+            created_at: row.try_get("created_at")?,
+        },
+    ))
+}
+
+impl Store {
+    pub async fn releases_envelope(
+        &self,
+        actor: &Actor,
+        project: Id,
+        query: &contracts::control::ListQuery,
+    ) -> Result<
+        contracts::control::Page<contracts::strategy_portfolio::ReleaseViewEnvelopeV2>,
+        StoreError,
+    > {
+        domain::control::list(query)?;
+        let mut tx = self.pool.begin().await?;
+        crate::evidence::authorize(&mut tx, actor, project).await?;
+        sqlx::query("SELECT id FROM app.projects WHERE id=$1")
+            .bind(project.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+        let rows = sqlx::query("SELECT r.*,c.project_id,c.strategy_detail FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND ($2::uuid IS NULL OR r.id<$2) ORDER BY r.id DESC LIMIT $3")
+            .bind(project.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let items = rows
+            .iter()
+            .map(envelope_view)
+            .collect::<Result<Vec<_>, _>>()?;
+        tx.commit().await?;
+        Ok(crate::control::page(items, query.limit, |v| match v {
+            contracts::strategy_portfolio::ReleaseViewEnvelopeV2::Forecast(v) => v.id,
+            contracts::strategy_portfolio::ReleaseViewEnvelopeV2::TargetDecision(v) => v.id,
+        }))
+    }
+
+    pub async fn release_envelope(
+        &self,
+        actor: &Actor,
+        id: Id,
+    ) -> Result<contracts::strategy_portfolio::ReleaseViewEnvelopeV2, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query("SELECT r.*,c.project_id,c.strategy_detail FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE r.id=$1")
+            .bind(id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        crate::evidence::authorize(&mut tx, actor, db::id(row.try_get("project_id")?)?).await?;
+        let result = envelope_view(&row)?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn create_release_envelope<R, Read, P, Published>(
+        &self,
+        actor: &Actor,
+        key: &str,
+        request: &contracts::strategy_portfolio::ReleaseCreateEnvelopeV2,
+        read: R,
+        publish: P,
+    ) -> Result<CommandResult<contracts::strategy_portfolio::ReleaseViewEnvelopeV2>, StoreError>
+    where
+        R: FnMut(Id, DbCounter) -> Read,
+        Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
+        P: FnMut(NativeObjectPublication) -> Published,
+        Published: std::future::Future<Output = Result<(), StoreError>>,
+    {
+        use contracts::strategy_portfolio::{ReleaseCreateEnvelopeV2, ReleaseViewEnvelopeV2};
+        match request {
+            ReleaseCreateEnvelopeV2::Forecast(request) => {
+                let result = self
+                    .create_release(actor, key, request, read, publish)
+                    .await?;
+                Ok(CommandResult {
+                    schema_version: result.schema_version,
+                    replayed: result.replayed,
+                    resource: ReleaseViewEnvelopeV2::Forecast(result.resource),
+                })
+            }
+            ReleaseCreateEnvelopeV2::TargetDecision(request) => {
+                let result = self
+                    .create_strategy_release(actor, key, request, read, publish)
+                    .await?;
+                Ok(CommandResult {
+                    schema_version: result.schema_version,
+                    replayed: result.replayed,
+                    resource: ReleaseViewEnvelopeV2::TargetDecision(result.resource),
+                })
+            }
+        }
+    }
 }

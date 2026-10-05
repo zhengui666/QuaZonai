@@ -331,12 +331,28 @@ async fn http(
     let archived: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pgmq.a_runs WHERE msg_id=$1) AND NOT EXISTS(SELECT 1 FROM pgmq.q_runs WHERE msg_id=$1)")
         .bind(message.message_id).fetch_one(pool).await.unwrap();
     assert!(archived, "Worker ACK must follow independent publication");
-    // An already archived message is rejected, not treated as new work.
-    assert!(
-        Box::pin(worker.process_message(message, "study-http-worker-replay", shutdown))
-            .await
-            .is_err()
-    );
+    // An already-read delivery can race its ACK. Exact terminal replay keeps
+    // the original receipt, attempt state and independent publication.
+    const REPLAY_EVIDENCE: &str = "SELECT jsonb_build_object(
+        'attempts',(SELECT jsonb_agg(to_jsonb(a) ORDER BY a.id) FROM app.run_attempts a WHERE a.run_id=$1),
+        'terminal',(SELECT to_jsonb(t) FROM app.run_terminal_receipts t WHERE t.run_id=$1),
+        'evaluations',(SELECT jsonb_agg(jsonb_build_object('evaluation',to_jsonb(e),'publication',to_jsonb(p)) ORDER BY e.id) FROM app.evaluations e JOIN app.evaluation_publications p ON p.evaluation_id=e.id WHERE e.run_id=$1),
+        'artifacts',(SELECT jsonb_agg(to_jsonb(a) ORDER BY a.id) FROM app.artifacts a WHERE a.producer_run_id=$1)
+    )";
+    let before_replay: serde_json::Value = sqlx::query_scalar(REPLAY_EVIDENCE)
+        .bind(run.id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    Box::pin(worker.process_message(message, "study-http-worker-replay", shutdown))
+        .await
+        .unwrap();
+    let after_replay: serde_json::Value = sqlx::query_scalar(REPLAY_EVIDENCE)
+        .bind(run.id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(after_replay, before_replay);
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.evaluations WHERE run_id=$1")
         .bind(run.id.as_uuid())
         .fetch_one(pool)

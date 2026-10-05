@@ -33,6 +33,18 @@ pub enum NativeTaskParametersV1 {
         schema_version: SchemaV1,
         code_artifact_id: Id,
     },
+    CompileFeatureModel {
+        schema_version: SchemaV1,
+        code_artifact_id: Id,
+    },
+    EvaluateExperiment {
+        schema_version: SchemaV1,
+        dataset_revision_id: Id,
+        model_artifact_id: Id,
+        #[schema(min_items = 1, max_items = 16)]
+        feature_artifact_ids: Vec<Id>,
+        request: Box<crate::science::NativeExperimentEvaluationRequestV1>,
+    },
     ValidateData {
         schema_version: SchemaV1,
         #[schema(min_items = 1, max_items = 256)]
@@ -56,6 +68,11 @@ pub enum NativeTaskParametersV1 {
         model_artifact_id: Id,
         calibration_artifact_id: Option<Id>,
         request: Box<crate::science::NativeAlphaSealedRequestV1>,
+    },
+    ComposeStrategyTargets {
+        schema_version: SchemaV1,
+        dataset_revision_id: Id,
+        request: Box<crate::strategy_portfolio::NativeStrategyCompositionRequestV1>,
     },
     BuildPortfolio {
         schema_version: SchemaV1,
@@ -101,13 +118,18 @@ impl NativeTaskParametersV1 {
     pub fn job_kind(&self) -> crate::runs::RunKind {
         use crate::runs::RunKind;
         match self {
-            Self::CompileModel { .. } | Self::ValidateData { .. } => RunKind::DataValidate,
+            Self::CompileModel { .. }
+            | Self::CompileFeatureModel { .. }
+            | Self::ValidateData { .. } => RunKind::DataValidate,
             Self::EvaluateAlpha { .. }
             | Self::ValidateAlpha { .. }
             | Self::EvaluateSealedAlpha { .. } => RunKind::AlphaEvaluate,
-            Self::BuildPortfolio { .. } => RunKind::PortfolioBuild,
+            Self::BuildPortfolio { .. } | Self::ComposeStrategyTargets { .. } => {
+                RunKind::PortfolioBuild
+            }
             Self::EvaluateForward { .. } => RunKind::ForwardEvaluate,
-            Self::SimulatePortfolio { .. }
+            Self::EvaluateExperiment { .. }
+            | Self::SimulatePortfolio { .. }
             | Self::SimulateCandidate { .. }
             | Self::SimulatePortfolioSequence { .. }
             | Self::StudyPortfolio { .. } => RunKind::PortfolioSimulate,
@@ -115,13 +137,17 @@ impl NativeTaskParametersV1 {
     }
     pub fn output_schemas(&self) -> Vec<RuntimeArtifactSchemaV1> {
         let names: &[&str] = match self {
-            Self::CompileModel { .. } => &["qz.wasm_model", "qz.model_compilation"],
+            Self::CompileModel { .. } | Self::CompileFeatureModel { .. } => {
+                &["qz.wasm_model", "qz.model_compilation"]
+            }
+            Self::EvaluateExperiment { .. } => &["qz.experiment_evaluation"],
             Self::ValidateData { .. } => &["qz.data_quality"],
             Self::EvaluateForward { .. } => &["qz.forward_evaluation"],
             Self::EvaluateAlpha { .. } => &["qz.native_forecast"],
             Self::ValidateAlpha { .. } => &["qz.alpha_validation"],
             Self::EvaluateSealedAlpha { .. } => &["qz.alpha_sealed"],
             Self::BuildPortfolio { .. } => &["qz.native_portfolio"],
+            Self::ComposeStrategyTargets { .. } => &["qz.strategy_portfolio"],
             Self::SimulatePortfolio { .. } => &["qz.native_simulation"],
             Self::StudyPortfolio { .. } => &[
                 "qz.data_quality",
@@ -216,8 +242,10 @@ pub enum NativeJsonOutputV1 {
     DataQuality(Box<NativeDataQualityReportV1>),
     Forecast(Box<crate::science::NativeForecastResultV1>),
     AlphaValidation(Box<crate::science::NativeAlphaValidationResultV1>),
+    ExperimentEvaluation(Box<crate::science::NativeExperimentEvaluationResultV1>),
     AlphaSealed(Box<crate::science::NativeAlphaSealedResultV1>),
     Portfolio(Box<crate::science::NativePortfolioBuildResultV1>),
+    StrategyPortfolio(Box<crate::strategy_portfolio::NativeStrategyCompositionResultV1>),
     PortfolioStudy(Box<crate::science::NativePortfolioStudyResultV1>),
     Simulation(Box<crate::science::NativeSimulationResultV1>),
     Forward(Box<crate::forward::NativeForwardResultV1>),

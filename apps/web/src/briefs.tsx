@@ -1,135 +1,42 @@
-import { App, Alert, Button, Card, ConfigProvider, Divider, Drawer, Form, Input, Select, Space, Typography } from 'antd';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
-import { api, ApiFailure, dataOf, Intent } from './api';
+import { Button, Drawer, Space, Typography } from 'antd';
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { api, dataOf } from './api';
 import type { Schema } from './api';
-import { uuidPattern } from './api';
-import { briefContent, initialBudget, initialStop } from './brief-fields';
-import { BudgetFields, counterRules } from './budget-fields';
-import { bindingAccessOptions } from './authoring-options';
-import { bindingListError } from './authoring-constraints';
-import { validateBaseCurrency } from '@quazonai/web/response-contract/base-currency';
-import { BriefExecution } from './cycles';
-import { ErrorNotice, Pager, QueryPanel, ResourceFacts, StateTag, useGuard, useOnline } from './ui';
+import { BriefExecutionContext } from './cycles';
+import { Pager, QueryPanel, ResourceFacts, StateTag } from './ui';
 
 type Brief = Schema['BriefView'];
-type Content = Schema['BriefContentV1'];
-type Fields = { content: Content; bindings: Schema['BriefBindingV1'][] };
-const uuidRules = [{ required: true, pattern: uuidPattern, message: '需要现有记录的完整 UUIDv7 编号。' }];
-export function Briefs({ projectId, projectState, currentBriefId }: { projectId: string; projectState?: Schema['ProjectState']; currentBriefId?: string | null }) {
+export function Briefs({ projectId, currentBriefId }: { projectId: string; projectState?: Schema['ProjectState']; currentBriefId?: string | null }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
-  const [editing, setEditing] = useState<Brief | 'new'>();
-  const [executing, setExecuting] = useState<Brief>();
-  const cursor = history.at(-1); const online = useOnline();
-  const editable = projectState !== undefined && projectState !== 'ARCHIVED';
+  const [selected, setSelected] = useState<Brief>();
+  const cursor = history.at(-1);
   const query = useQuery({ queryKey: ['briefs', projectId, cursor], queryFn: async ({ signal }) => dataOf(await api.GET('/api/v2/projects/{id}/briefs', { params: { path: { id: projectId }, query: { cursor, limit: 25 } }, signal })) });
   return <Space orientation="vertical" className="full-width" size="middle">
-    
-    <div className="section-toolbar"><div><h2>研究 Brief</h2><p>明确假设与边界，保留每个版本的研究依据。</p></div><Button type="primary" disabled={!online || !editable} onClick={() => setEditing('new')}>新建 Brief 草稿</Button></div>
+    <div className="section-toolbar"><div><h2>研究 Brief</h2><p>查看假设与边界，保留每个版本的研究依据。</p></div><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新 Brief</Button></div>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      {query.data?.items.length === 0 ? <div className="research-empty"><h3>先把研究问题写清楚</h3><p>建立 Brief 草稿，定义假设、数据边界与预算。保存草稿不会启动研究。</p><Button disabled={!online || !editable} onClick={() => setEditing('new')}>编写第一个 Brief</Button></div> : <div className="brief-list">{query.data?.items.map(item => <article className="brief-record" key={item.id}>
+      {query.data?.items.length === 0 ? <div className="research-empty"><h3>尚无 Brief</h3><p>这里展示外部 Agent 通过 CLI / Skill 保存的 Brief、数据边界与预算。</p></div> : <div className="brief-list">{query.data?.items.map(item => <article className="brief-record" key={item.id}>
         <div className="brief-record-main"><div className="record-label"><span>BRIEF · 版本 {item.version}</span><StateTag value={item.state} />{item.id === currentBriefId && <span className="current-record">当前版本</span>}</div>
           <h3>{item.content.hypothesis}</h3><p className="brief-rationale">{item.content.economic_rationale}</p>
           <div className="record-meta"><span>预测单位：{item.content.target_kind}</span><span>基础币种：{item.content.base_currency}</span><span>数据绑定：{item.bindings.length}</span></div>
           <details className="record-details"><summary>版本记录与修订</summary><ResourceFacts id={item.id} revision={item.revision} updated={item.updated_at} /></details></div>
-        <div className="record-actions"><p>{item.state === 'DRAFT' ? '下一步：确认数据与执行上下文后冻结' : projectState === 'ACTIVE' ? '可用冻结版本启动新的研究周期' : '启动研究周期前，项目必须处于启用状态'}</p>
-          <Button disabled={query.isError} onClick={() => setEditing(item)}>{item.state === 'DRAFT' ? '查看 / 编辑' : '查看冻结版本'}</Button>
-          <Button type="primary" disabled={!online || query.isError || !projectState || (item.state === 'DRAFT' ? projectState === 'ARCHIVED' : projectState !== 'ACTIVE')} onClick={() => setExecuting(item)}>{item.state === 'DRAFT' ? '冻结执行上下文' : '启动新 Cycle'}</Button></div>
+        <div className="record-actions"><p>{item.state === 'DRAFT' ? '尚未冻结的原研究草稿' : '查看原冻结版本与执行上下文'}</p>
+          <Button disabled={query.isError} onClick={() => setSelected(item)}>{item.state === 'DRAFT' ? '查看草稿' : '查看冻结版本'}</Button></div>
       </article>)}</div>}
       {(history.length > 1 || query.data?.next_cursor) && <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />}
     </QueryPanel>
-    {editing && <BriefEditor projectId={projectId} editable={editable} brief={editing === 'new' ? undefined : editing} close={() => setEditing(undefined)} />}
-    {executing && <BriefExecution brief={executing} close={() => setExecuting(undefined)} />}
+    {selected && <BriefDetail brief={selected} close={() => setSelected(undefined)} />}
   </Space>;
 }
-function BriefEditor({ projectId, editable, brief, close }: { projectId: string; editable: boolean; brief?: Brief; close: () => void }) {
-  const [form] = Form.useForm<Fields>(); const [dirty, setDirty] = useState(false);
-  const [fork, setFork] = useState(false);
-  const online = useOnline(); const client = useQueryClient(); const { modal, message } = App.useApp();
-  const intent = useRef(new Intent());
-  const horizon: Content['horizon_kind'] | undefined = Form.useWatch(['content', 'horizon_kind'], form);
-  const readOnly = brief?.state === 'FROZEN' && !fork;
-  const mutation = useMutation({ mutationFn: async (value: Fields) => {
-    const bindingError = bindingListError(value.bindings);
-    if (bindingError) throw new ApiFailure('VALIDATION_ERROR', bindingError);
-    const content = briefContent(value.content);
-    if (brief && !fork) {
-      const body: Schema['BriefUpdate'] = { schema_version: 1, expected_revision: brief.revision, content, bindings: value.bindings };
-      return dataOf(await api.PATCH('/api/v2/briefs/{id}', { params: { path: { id: brief.id }, header: intent.current.headers('PATCH', `/api/v2/briefs/${brief.id}`, body) }, body }));
-    }
-    const body: Schema['BriefCreate'] = { schema_version: 1, content, bindings: value.bindings, supersedes_id: brief?.id ?? null };
-    return dataOf(await api.POST('/api/v2/projects/{id}/briefs', { params: { path: { id: projectId }, header: intent.current.headers('POST', `/api/v2/projects/${projectId}/briefs`, body) }, body }));
-  }, onSuccess: async result => {
-    intent.current.clear(); setDirty(false); await client.invalidateQueries({ queryKey: ['briefs', projectId] });
-    void message.success(result.replayed ? '已确认上次保存的结果。' : 'Brief 草稿已保存，尚未启动研究。'); close();
-  } });
-  useGuard(dirty || mutation.isPending);
-  const conflict = mutation.error instanceof ApiFailure && mutation.error.code === 'REVISION_CONFLICT';
-  const disabled = !online || !editable || mutation.isPending || readOnly || conflict;
-  function dismiss() {
-    if (mutation.isPending) return;
-    if (!dirty) { close(); return; }
-    modal.confirm({ title: '放弃未保存的 Brief 修改？', okText: '放弃修改', cancelText: '继续编辑', onOk: close });
-  }
-  return <Drawer title={brief ? `Brief · 版本 ${brief.version}${fork ? ' 的新草稿' : ''}` : '新建 Brief 草稿'} open width={840} onClose={dismiss} closable={!mutation.isPending} maskClosable={!mutation.isPending}>
+
+export function BriefDetail({ brief, close }: { brief: Brief; close: () => void }) {
+  return <Drawer title={`Brief · 版本 ${brief.version}`} open width={840} onClose={close}>
     <Space orientation="vertical" className="full-width" size="middle">
-      {brief && <ResourceFacts id={brief.id} revision={brief.revision} updated={brief.updated_at} />}
-      {readOnly && <Alert showIcon type="info" title="只读版本" action={<Button disabled={!online || !editable} onClick={() => { setFork(true); setDirty(true); }}>以此创建新版本</Button>} />}
-      <ErrorNotice error={mutation.error} />
-      {conflict && <Button onClick={() => { void client.invalidateQueries({ queryKey: ['briefs', projectId] }); dismiss(); }}>关闭并重载服务器版本</Button>}
-      <ConfigProvider getPopupContainer={trigger => trigger?.parentElement ?? document.body}>
-      <Form className="authoring-form" form={form} layout="vertical" disabled={disabled} scrollToFirstError initialValues={brief ? { content: brief.content, bindings: brief.bindings } : {
-        content: { target_kind: 'SCORE', horizon_kind: 'FIXED_BARS', horizon_value: '1', base_currency: 'USD', budget: initialBudget, stop_rule: initialStop }, bindings: [],
-      }} onValuesChange={() => setDirty(true)} onFinish={value => { if (!disabled) mutation.mutate(value); }}>
-        <Typography.Title level={3}>假设与预测目标</Typography.Title>
-        <Form.Item name={['content', 'hypothesis']} label="可检验的假设" rules={[{ required: true, whitespace: true, max: 8000 }]}><Input.TextArea rows={3} maxLength={8000} /></Form.Item>
-        <Form.Item name={['content', 'economic_rationale']} label="经济依据" rules={[{ required: true, whitespace: true, max: 8000 }]}><Input.TextArea rows={3} maxLength={8000} /></Form.Item>
-        <div className="field-grid">
-          <Form.Item name={['content', 'target_kind']} label="预测单位" rules={[{ required: true }]}><Select options={[{ value: 'SCORE', label: '无量纲分数' }, { value: 'EXPECTED_RETURN', label: '预期收益' }]} /></Form.Item>
-          <Form.Item name={['content', 'base_currency']} label="基础币种" rules={[{ required: true }, { validator: (_, value: unknown) => validateBaseCurrency(value) ? Promise.resolve() : Promise.reject(new Error('基础币种必须属于服务器原生币种表。')) }]}><Input maxLength={6} /></Form.Item>
-          <Form.Item name={['content', 'horizon_kind']} label="预测周期" rules={[{ required: true }]}><Select options={[{ value: 'FIXED_BARS', label: '固定 K 线数' }, { value: 'FIXED_DURATION', label: '固定时长' }, { value: 'VARIABLE_INTERVAL', label: '可变区间' }]} /></Form.Item>
-          {horizon !== 'VARIABLE_INTERVAL' && <Form.Item name={['content', 'horizon_value']} label="固定周期值（整数）" rules={counterRules}><Input inputMode="numeric" maxLength={19} /></Form.Item>}
-        </div>
-        <Typography.Title level={3}>真实记录引用</Typography.Title>
-        
-        <div className="field-grid">
-          {([['universe_version_id', '投资域版本'], ['evaluation_policy_id', '评估策略'], ['execution_assumptions_id', '执行假设']] as const).map(([field, label]) => <Form.Item key={field} name={['content', field]} label={label} rules={uuidRules}><Input /></Form.Item>)}
-          <Form.Item name={['content', 'benchmark_ref']} label="基准引用（可选）" rules={[{ pattern: uuidPattern }]}><Input /></Form.Item>
-        </div>
-        <Form.List name="bindings" rules={[{ validator: async (_, values: unknown) => {
-          const problem = bindingListError(values);
-          if (problem) throw new Error(problem);
-        } }]}>
-          {(fields, { add, remove }, { errors }) => <Space orientation="vertical" className="full-width">
-            {fields.map(field => <Card key={field.key} size="small" title={`数据绑定 ${field.name + 1}`} extra={<Button danger disabled={disabled} onClick={() => remove(field.name)}>删除绑定 {field.name + 1}</Button>}>
-              <Form.Item name={[field.name, 'dataset_revision_id']} label="数据集版本" rules={uuidRules}><Input /></Form.Item>
-              <div className="field-grid">
-                <Form.Item name={[field.name, 'role']} label="数据角色" rules={[{ required: true }]}>
-                  <Select options={['DISCOVERY', 'VALIDATION', 'SEALED', 'FORWARD'].map(value => ({ value, label: value }))}
-                    onChange={role => {
-                      const name: ['bindings', number, 'access_policy'] = ['bindings', field.name, 'access_policy'];
-                      if (!bindingAccessOptions(role).some(option => option.value === form.getFieldValue(name))) {
-                        form.setFieldValue(name, undefined);
-                      }
-                    }} />
-                </Form.Item>
-                <Form.Item noStyle shouldUpdate={(previous, current) => previous.bindings?.[field.name]?.role !== current.bindings?.[field.name]?.role}>
-                  {({ getFieldValue }) => <Form.Item name={[field.name, 'access_policy']} label="访问边界"
-                    dependencies={[[ 'bindings', field.name, 'role' ]]}
-                    rules={[{ required: true }, { validator: (_, value: unknown) => bindingAccessOptions(getFieldValue(['bindings', field.name, 'role'])).some(option => option.value === value)
-                      ? Promise.resolve() : Promise.reject(new Error('访问边界必须符合所选数据角色，请明确重选。')) }]}>
-                    <Select options={bindingAccessOptions(getFieldValue(['bindings', field.name, 'role']))} placeholder="请选择兼容的访问边界" />
-                  </Form.Item>}
-                </Form.Item>
-              </div>
-            </Card>)}
-            <Form.ErrorList errors={errors} /><Button disabled={disabled || fields.length >= 64} onClick={() => add({ role: 'DISCOVERY', access_policy: 'METADATA_ONLY' })}>添加数据绑定</Button>
-          </Space>}
-        </Form.List>
-        <Divider /><BudgetFields />
-        {!readOnly && <Button type="primary" htmlType="submit" aria-label="保存 Brief 草稿" aria-busy={mutation.isPending} loading={mutation.isPending} disabled={disabled}>保存 Brief 草稿</Button>}
-      </Form>
-      </ConfigProvider>
+      <ResourceFacts id={brief.id} revision={brief.revision} updated={brief.updated_at} />
+      <StateTag value={brief.state} />
+      <Typography.Title level={3}>服务器保存的完整 Brief</Typography.Title>
+      <pre tabIndex={0} aria-label="原完整 Brief" className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(brief, null, 2)}</pre>
+      {brief.state === 'FROZEN' && <BriefExecutionContext briefId={brief.id} />}
     </Space>
   </Drawer>;
 }

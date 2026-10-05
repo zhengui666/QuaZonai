@@ -335,7 +335,10 @@ fn real_job_process_returns_native_fold_evidence_and_rejects_unknown_fields() {
     let failed = command::command(&args, &invalid);
     assert!(!failed.status.success());
     assert!(failed.stdout.is_empty());
-    assert_eq!(failed.stderr, b"QZ_NATIVE_JOB_FAILED\n");
+    assert_eq!(
+        String::from_utf8_lossy(&failed.stderr).lines().next(),
+        Some("QZ_NATIVE_JOB_FAILED")
+    );
 }
 
 fn accepted(

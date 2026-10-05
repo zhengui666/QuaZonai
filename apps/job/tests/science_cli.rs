@@ -48,7 +48,7 @@ fn real_native_cli_forecasts_and_replays_a_single_shared_account() {
 }
 
 #[test]
-fn native_cli_does_not_echo_invalid_model_contents_or_host_paths() {
+fn native_cli_reports_invalid_model_cause_without_echoing_model_contents() {
     let (directory, request) = market("0", 20);
     let model = directory.path().join("private-sentinel.wasm");
     std::fs::write(&model, b"SENTINEL_NOT_FOR_LOGS").unwrap();
@@ -64,7 +64,12 @@ fn native_cli_does_not_echo_invalid_model_contents_or_host_paths() {
     );
     assert!(!result.status.success());
     assert!(result.stdout.is_empty());
-    assert_eq!(result.stderr, b"QZ_NATIVE_JOB_FAILED\n");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(
+        stderr.trim(),
+        "QZ_NATIVE_JOB_FAILED\nSIGNAL_REQUIRES_WASM_BINARY"
+    );
+    assert!(!stderr.contains("SENTINEL_NOT_FOR_LOGS"));
 }
 
 #[cfg(unix)]
@@ -86,7 +91,10 @@ fn native_cli_rejects_model_symlinks_and_fifos_without_opening_them() {
         &forecast_request(&request),
     );
     assert!(!result.status.success());
-    assert_eq!(result.stderr, b"QZ_NATIVE_JOB_FAILED\n");
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr).trim(),
+        "QZ_NATIVE_JOB_FAILED\nnative model file limit"
+    );
     let fifo = directory.path().join("fifo.wasm");
     rustix::fs::mknodat(
         rustix::fs::CWD,
@@ -107,7 +115,10 @@ fn native_cli_rejects_model_symlinks_and_fifos_without_opening_them() {
         &forecast_request(&request),
     );
     assert!(!result.status.success());
-    assert_eq!(result.stderr, b"QZ_NATIVE_JOB_FAILED\n");
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr).trim(),
+        "QZ_NATIVE_JOB_FAILED\nnative model file limit"
+    );
 }
 
 #[test]
@@ -154,7 +165,10 @@ fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
     ] {
         assert_eq!(result.status.code(), Some(1));
         assert!(result.stdout.is_empty());
-        assert_eq!(result.stderr, b"QZ_NATIVE_JOB_FAILED\n");
+        assert_eq!(
+            String::from_utf8_lossy(&result.stderr).lines().next(),
+            Some("QZ_NATIVE_JOB_FAILED")
+        );
     }
     assert_eq!(std::fs::read(&path).unwrap(), corrupted);
     std::fs::write(path, original).unwrap();
