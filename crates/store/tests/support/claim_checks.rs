@@ -424,6 +424,7 @@ async fn expiry(
     .resource;
     release_diagnostic("claim_expiry.offer.complete");
     assert_eq!(store.reconcile_handoffs().await.unwrap(), 0);
+    release_diagnostic("claim_expiry.reconcile.complete");
     if scenario == "reject" {
         let mut ack = HandoffAckV1 {
             schema_version: SchemaV1,
@@ -540,7 +541,9 @@ async fn expiry(
         return;
     }
     if scenario == "revoke-race" {
+        release_diagnostic("claim_revoke_race.construct.begin");
         let (claim, revoke) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            release_diagnostic("claim_revoke_race.poll.begin");
             tokio::join!(
                 Box::pin(store.claim_handoff(
                     &machine,

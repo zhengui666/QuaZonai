@@ -1,0 +1,182 @@
+name: Rust regression
+on:
+  workflow_call:
+    inputs:
+      revision:
+        required: true
+        type: string
+      artifact_label:
+        description: Distinguishes version calls within the same release matrix run
+        required: false
+        type: string
+        default: manual
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Source revision; leave empty for the selected workflow branch
+        required: false
+        type: string
+permissions:
+  contents: read
+env:
+  TEST_REVISION: ${{ inputs.revision || github.sha }}
+  RUSTUP_TOOLCHAIN: '1.98.1'
+jobs:
+  rust-native-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.TEST_REVISION }}
+          persist-credentials: false
+      - name: Prepare isolated native filesystem fault test
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/native-evidence
+          cp /usr/bin/unshare /tmp/native-evidence/unshare
+          cat > /tmp/native-evidence/artifact-filesystem.apparmor <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile quazonai-ci-artifact-filesystem /tmp/native-evidence/unshare flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /tmp/native-evidence/artifact-filesystem.apparmor
+          echo 'QZ_TEST_UNSHARE=/tmp/native-evidence/unshare' >> "$GITHUB_ENV"
+      - name: Compile all Rust targets and optional feature paths
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/native-evidence
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv > /tmp/native-evidence/rustc.txt
+          # Compile Docker-specific adapters without executing container acceptance.
+          rustup run "$RUSTUP_TOOLCHAIN" cargo check --locked --workspace --all-targets --all-features
+          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked --workspace --all-targets --features job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test,server/native-codex
+      - name: Run non-database Rust tests, including optional job features
+        run: |
+          set -euo pipefail
+          # Paper/Sandbox fixtures use local synthetic data, never exchange orders.
+          # OCI acceptance stays in the optional Native Runtime workflow.
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked --workspace --exclude store --exclude server --features job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test -- --test-threads=1 2>&1 | tee /tmp/native-evidence/tests.log
+      - name: Remove the job-only filesystem test profile
+        if: always()
+        run: |
+          profile=/tmp/native-evidence/artifact-filesystem.apparmor
+          if test -f "$profile"; then sudo apparmor_parser -R "$profile"; fi
+      - name: Record exactly tested source and actual outcomes
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/native-evidence
+          git rev-parse HEAD > /tmp/native-evidence/tested-commit.txt
+          git archive --format=tar HEAD | gzip > /tmp/native-evidence/source.tar.gz
+          cp Cargo.lock /tmp/native-evidence/Cargo.lock
+          printf 'Rust workspace compilation/build and non-database tests; no frontend or container acceptance.\n' > /tmp/native-evidence/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: regression-native-evidence-${{ inputs.artifact_label || 'manual' }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/native-evidence/
+          retention-days: 7
+          if-no-files-found: error
+  store-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      PGMQ_IMAGE: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.TEST_REVISION }}
+          persist-credentials: false
+      - name: Start isolated PostgreSQL and verify extension version
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/store-evidence
+          git rev-parse HEAD > /tmp/store-evidence/tested-commit.txt
+          database_password=$(openssl rand -hex 24)
+          echo "::add-mask::$database_password"
+          echo "DATABASE_URL=postgres://postgres:${database_password}@127.0.0.1:55432/postgres" >> "$GITHUB_ENV"
+          docker pull "$PGMQ_IMAGE"
+          docker run --detach --name store-database --publish 127.0.0.1:55432:5432 --env "POSTGRES_PASSWORD=$database_password" "$PGMQ_IMAGE"
+          for attempt in $(seq 1 60); do
+            if docker exec store-database pg_isready -h 127.0.0.1 -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec store-database pg_isready -h 127.0.0.1 -U postgres
+          docker exec -i --env "PGPASSWORD=$database_password" store-database psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 < tests/native/pgmq_contract.sql | tee /tmp/store-evidence/pgmq-contract.log
+          docker exec --env "PGPASSWORD=$database_password" store-database psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c 'SELECT version()' > /tmp/store-evidence/database-version.txt
+          docker image inspect --format '{{json .RepoDigests}}' "$PGMQ_IMAGE" > /tmp/store-evidence/image.json
+      - name: Prepare the native user resource manager for Mission tests
+        run: |
+          set -euo pipefail
+          mission_uid=$(id -u)
+          sudo loginctl enable-linger "$mission_uid"
+          sudo systemctl start "user@$mission_uid.service"
+          export XDG_RUNTIME_DIR="/run/user/$mission_uid"
+          systemctl --user show --property=Version > /tmp/store-evidence/systemd-version.txt
+          prlimit --version > /tmp/store-evidence/prlimit-version.txt
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+      - name: Run every Store test against real independently migrated databases
+        env:
+          QZ_TEST_PG_CONTAINER: store-database
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv > /tmp/store-evidence/rustc.txt
+          npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
+          export CODEX_NATIVE_BIN="$PWD/runtimes/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          test "$("$CODEX_NATIVE_BIN" --version)" = 'codex-cli 0.156.1'
+          # Allow the pinned sandbox launcher to use Ubuntu's restricted user namespaces.
+          sysctl -n kernel.apparmor_restrict_unprivileged_userns > /tmp/store-evidence/userns-restriction.txt
+          cat > /tmp/store-evidence/quazonai-ci-codex.apparmor <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile quazonai-ci-codex "$CODEX_NATIVE_BIN" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          cp /usr/bin/unshare /tmp/store-evidence/unshare
+          cat >> /tmp/store-evidence/quazonai-ci-codex.apparmor <<'EOF'
+          profile quazonai-ci-cycle-filesystem /tmp/store-evidence/unshare flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /tmp/store-evidence/quazonai-ci-codex.apparmor
+          export QZ_TEST_UNSHARE=/tmp/store-evidence/unshare
+          # Isolated native homes and synthetic Responses only, never real credentials.
+          # Includes native account/HTTP and App Server -> stdio MCP -> HTTP -> PG.
+          QUAZONAI_NATIVE_CLI_BIN=$(python3 tests/native/build_portable_cli.py rustup run "$RUSTUP_TOOLCHAIN" cargo)
+          export QUAZONAI_NATIVE_CLI_BIN
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked --no-fail-fast -p store -p server --features server/native-codex -- --test-threads=4 2>&1 | tee /tmp/store-evidence/tests.log
+          git diff --exit-code
+      - name: Remove the job-only native sandbox profile
+        if: always()
+        run: |
+          set -euo pipefail
+          profile=/tmp/store-evidence/quazonai-ci-codex.apparmor
+          if test -f "$profile"; then sudo apparmor_parser -R "$profile"; fi
+      - name: Preserve exact migrations and qualification of the evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/store-evidence
+          cp Cargo.lock /tmp/store-evidence/Cargo.lock
+          cp migrations/*.sql /tmp/store-evidence/
+          printf 'PostgreSQL migrations, Store transactions, HTTP and Codex integration tests.\n' > /tmp/store-evidence/SCOPE.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: regression-store-evidence-${{ inputs.artifact_label || 'manual' }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/store-evidence/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove only this disposable database
+        if: always()
+        run: docker rm --force --volumes store-database
