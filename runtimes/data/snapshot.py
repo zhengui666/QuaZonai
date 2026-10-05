@@ -2,6 +2,7 @@
 """Plan or acquire explicitly selected, immutable public Hugging Face files."""
 
 import argparse
+from contextlib import contextmanager
 import datetime
 import fnmatch
 import hashlib
@@ -12,6 +13,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,24 +33,26 @@ def checked_path(path):
 
 
 def fetch_json(url):
-    with urllib.request.urlopen(url, timeout=60) as response:
-        body = response.read(32 * CHUNK + 1)
-    if len(body) > 32 * CHUNK:
-        raise ValueError("repository metadata exceeds 32 MiB")
+    body = fetch_bytes(url, 32 * CHUNK)
     value = json.loads(body)
     if not isinstance(value, dict):
         raise ValueError("repository metadata must be an object")
     return value
 
 
-def plan(dataset, includes, revision=None, max_bytes=DEFAULT_MAX_BYTES, license=None):
+def fetch_bytes(url, limit):
+    with urllib.request.urlopen(url, timeout=60) as response:
+        body = response.read(limit + 1)
+    if len(body) > limit:
+        raise ValueError("repository metadata exceeds its byte limit")
+    return body
+
+
+def repository_metadata(dataset, revision=None):
+    """Resolve ordinary Hub refs once and list that exact revision's public files."""
     if not re.fullmatch(r"[\w.-]+(?:/[\w.-]+)?", dataset, flags=re.ASCII):
         raise ValueError("dataset must be a Hugging Face repository ID")
     checked_path(dataset)
-    if not includes or max_bytes <= 0:
-        raise ValueError("explicit --include and positive --max-bytes are required")
-    for pattern in includes:
-        checked_path(pattern)
     api = f"{HUB}/api/datasets/{dataset}"
     requested = f"/revision/{urllib.parse.quote(revision, safe='')}" if revision else ""
     head = fetch_json(api + requested)
@@ -72,6 +76,19 @@ def plan(dataset, includes, revision=None, max_bytes=DEFAULT_MAX_BYTES, license=
         if path in available:
             raise ValueError("duplicate repository file metadata")
         available[path] = item
+    return commit, available, metadata, metadata_url
+
+
+def repository_file_url(dataset, revision, path):
+    return f"{HUB}/datasets/{dataset}/resolve/{revision}/{urllib.parse.quote(checked_path(path))}"
+
+
+def plan(dataset, includes, revision=None, max_bytes=DEFAULT_MAX_BYTES, license=None):
+    if not includes or max_bytes <= 0:
+        raise ValueError("explicit --include and positive --max-bytes are required")
+    for pattern in includes:
+        checked_path(pattern)
+    commit, available, metadata, metadata_url = repository_metadata(dataset, revision)
     selected = set()
     for pattern in includes:
         matches = {path for path in available if fnmatch.fnmatchcase(path, pattern)}
@@ -234,6 +251,133 @@ def fetch_local_manifest(path):
     if not isinstance(result, dict):
         raise ValueError("existing snapshot manifest must be an object")
     return result
+
+
+def replace_json(path, value):
+    """Atomically update our small cache metadata, never the source data file."""
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".hf-state-", delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            stream.write((json.dumps(value, indent=2, allow_nan=False) + "\n").encode())
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def cache_lock(path):
+    """The OS releases this per-file lock after an interrupted or crashed process."""
+    with path.open("a+b") as stream:
+        try:
+            import fcntl
+        except ImportError:  # Standalone Python users on Windows.
+            import msvcrt
+            if stream.seek(0, os.SEEK_END) == 0:
+                stream.write(b"\0")
+                stream.flush()
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+def acquire_cached_file(root, item, inspect):
+    """Shared public Hub transport: size/format checks, reusable cache and HTTP resume.
+
+    The caller owns repository/revision selection. No checksums are calculated
+    on this path. Failed bytes remain partial until a complete response validates.
+    """
+    target = safe_local(root, "files/" + item["path"])
+    # The original path gets a directory of fixed control filenames. Adding a
+    # suffix directly would collide for valid source paths like a / a.lock/b.
+    partial = safe_local(root, "transfers/" + item["path"] + "/data.partial")
+    state = safe_local(root, "transfers/" + item["path"] + "/state.json")
+    lock = safe_local(root, "transfers/" + item["path"] + "/lock")
+    for path in (target, partial, state, lock):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        safe_local(root, path.relative_to(root).as_posix())
+    with cache_lock(lock):
+        identity = {key: item[key] for key in ("url", "size", "format")}
+        if state.exists() and fetch_local_manifest(state) != identity:
+            raise ValueError("partial download belongs to different file metadata")
+        if target.exists():
+            validation = inspect(target, item)
+            return {"local_path": str(target), "cached": True, "resumed_bytes": 0,
+                    "validation": validation}
+        if partial.exists() and not partial.is_file():
+            raise ValueError("partial download is not a regular file")
+        if partial.exists() and not state.exists():
+            raise ValueError("partial download metadata is missing")
+        offset = partial.stat().st_size if partial.exists() else 0
+        if offset > item["size"]:
+            raise ValueError("partial download exceeds its declared byte size")
+        # A crash might occur after the final write but before response EOF or
+        # publication. Recheck the last byte through Range instead of assuming
+        # a full-size partial was a completed transfer.
+        if offset and offset == item["size"]:
+            offset -= 1
+        replace_json(state, identity)
+        headers = {"Accept-Encoding": "identity", "User-Agent": "QuaZonai-public-data/1.0"}
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
+        request = urllib.request.Request(item["url"], headers=headers)
+        with urllib.request.urlopen(request, timeout=60) as response:
+            status = response.status
+            if response.headers.get("Content-Encoding", "identity") != "identity":
+                raise ValueError("Hub file response has unsupported content encoding")
+            if offset and status == 206:
+                expected = f"bytes {offset}-{item['size'] - 1}/{item['size']}"
+                if response.headers.get("Content-Range") != expected:
+                    raise ValueError("Hub file response has an unexpected byte range")
+            elif status == 200:
+                offset = 0  # The server ignored Range: restart, never append a full body.
+            else:
+                raise ValueError("Hub file response has an unexpected HTTP status")
+            declared = response.headers.get("Content-Length")
+            if declared is not None and (not re.fullmatch(r"[0-9]+", declared)
+                                         or int(declared) != item["size"] - offset):
+                raise ValueError("Hub file response has an unexpected byte size")
+            mode = "r+b" if partial.exists() else "w+b"
+            with partial.open(mode) as stream:
+                stream.seek(offset)
+                stream.truncate()
+                size = offset
+                try:
+                    while chunk := response.read(min(CHUNK, item["size"] - size + 1)):
+                        if size + len(chunk) > item["size"]:
+                            raise ValueError("Hub file response exceeds its declared byte size")
+                        stream.write(chunk)
+                        size += len(chunk)
+                finally:
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            if size != item["size"]:
+                raise ValueError("Hub file response was truncated; partial bytes retained")
+        try:
+            validation = inspect(partial, item)
+        except ValueError:
+            # Keep the actual rejected source bytes for diagnosis; the next
+            # request starts a fresh partial rather than retrying invalid bytes.
+            partial.rename(partial.with_name(partial.name + f".rejected-{time.time_ns()}"))
+            state.unlink()
+            raise
+        safe_local(root, target.relative_to(root).as_posix())
+        os.link(partial, target)  # Publish complete data atomically without replacing existing files.
+        partial.unlink()
+        state.unlink()
+        return {"local_path": str(target), "cached": False, "resumed_bytes": offset,
+                "validation": validation}
 
 
 def main(argv=None):

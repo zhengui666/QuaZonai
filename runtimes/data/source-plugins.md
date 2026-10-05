@@ -45,6 +45,11 @@ python3 -B runtimes/data/source_plugins.py prepare --help
   instrument definitions
 - `hf-snapshot`: plan, download, verify. Generic immutable public files only;
   arbitrary Parquet is not promised a native converter
+- `hf-dataset`: plan, download, verify, convert, prepare. [On-demand source-file partitions](hf-dataset.md)
+  selected by explicit files or an actual market/date index; overlapping requests
+  share a resumable cache. Explicit offline conversion uses the existing native
+  archive schemas and original definitions; preparation requires native BAR
+  output. This operator handoff does not register or trigger research
 - `polymarket-capture`: the snapshot lifecycle plus conversion and BAR preparation through existing
   `polymarket-history capture`, specifically the supported lokima format with
   original Gamma responses and both recorded CLOB feeds

@@ -53,7 +53,7 @@ class CostTests(unittest.TestCase):
                 path = payload_root / 'bin' / name
                 path.write_text('#!/bin/sh\nexec /opt/quazonai/operator/bin/source-tools ' + name + ' "$@"\n')
                 path.chmod(0o755)
-        for name in ('source_plugins.py', 'acquire.py', 'providers.py', 'snapshot.py', 'binance_vision.py'):
+        for name in ('source_plugins.py', 'acquire.py', 'providers.py', 'snapshot.py', 'binance_vision.py', 'hf_dataset.py'):
             (payload_root / name).write_text('# actual fixture bytes\n')
         native = {'schema_version': 2, **expected, 'elf_sha256': hashes.copy(),
                   'original_native_build_elapsed_seconds': 1576,
@@ -83,10 +83,23 @@ class CostTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Unknown'):
             cost.payload_program('legacy')
 
+    def test_module_expectation_follows_current_and_historical_source_declarations(self):
+        original = {'source_plugins.py', 'acquire.py', 'providers.py', 'snapshot.py', 'binance_vision.py'}
+        for hf in (False, True):
+            with self.subTest(hf=hf), tempfile.TemporaryDirectory() as temporary:
+                source = Path(temporary)
+                dockerfile = source / 'deploy/docker/Dockerfile'
+                dockerfile.parent.mkdir(parents=True)
+                modules = sorted(original | ({'hf_dataset.py'} if hf else set()))
+                dockerfile.write_text('COPY ' + ' '.join('runtimes/data/' + name for name in modules)
+                                      + ' /opt/quazonai/operator/\n'
+                                      + '# COPY runtimes/data/hf_dataset.py /ignored/\n')
+                self.assertEqual(cost.source_operator_modules(source), set(modules))
+
     def test_missing_extra_or_misclassified_elf_and_nonregular_payload_are_rejected(self):
         for layout in ('shared', 'standalone'):
             for change in ('missing-elf', 'extra-elf', 'elf-as-script', 'bad-header',
-                           'extra-file', 'missing-module', 'symlink', 'not-executable', 'extra-directory'):
+                           'extra-file', 'missing-module', 'missing-hf-module', 'symlink', 'not-executable', 'extra-directory'):
                 with self.subTest(layout=layout, change=change), tempfile.TemporaryDirectory() as temporary:
                     root, app, expected, application = self.write_native_fixture(Path(temporary), layout)
                     name = 'source-tools' if layout == 'shared' else 'catalog-prepare'
@@ -105,6 +118,8 @@ class CostTests(unittest.TestCase):
                         (root / 'unrecorded.txt').write_text('extra')
                     elif change == 'missing-module':
                         (root / 'binance_vision.py').unlink()
+                    elif change == 'missing-hf-module':
+                        (root / 'hf_dataset.py').unlink()
                     elif change == 'symlink':
                         path.unlink()
                         path.symlink_to(app / 'server')

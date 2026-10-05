@@ -19,6 +19,7 @@ import urllib.parse
 
 import acquire
 import binance_vision
+import hf_dataset
 import providers
 import snapshot
 
@@ -440,6 +441,86 @@ def history_convert(args, capture=False):
     return converted("polymarket-capture" if capture else "polymarket-archive", output, report)
 
 
+def hf_history_options(parser):
+    native_options(parser)
+    parser.add_argument("--selection", type=Path, required=True,
+                        help="original hf-dataset selection.json; conversion remains offline")
+    window_options(parser)
+    parser.add_argument("--format", choices=ARCHIVE_FORMATS, required=True)
+    parser.add_argument("--instruments", type=Path, required=True,
+                        help="original native InstrumentAny definitions; no inferred market/token mapping")
+    parser.add_argument("--bar-seconds", type=int)
+    parser.add_argument("--chain-evidence", type=Path)
+
+
+def hf_history_convert(args):
+    selection_path = local_path(args.selection)
+    hf_dataset.verify(selection_path)
+    original = snapshot.fetch_local_manifest(selection_path)
+    hf_dataset.native_window(original, args.start_seconds, args.end_seconds)
+    if any(item["format"] != "parquet" for item in original["plan"]["files"]):
+        raise ValueError("native archive conversion requires every selected source file to be declared Parquet")
+    if args.format not in ARCHIVE_FORMATS:
+        raise ValueError("unsupported native archive format")
+    if args.bar_seconds is not None:
+        providers.integer(args.bar_seconds, "bar_seconds", minimum=1, maximum=86400)
+    inputs = {"selection": (selection_path, hf_dataset.MAX_SELECTION_BYTES),
+              "instruments": (local_path(args.instruments), MAX_EVIDENCE_BYTES)}
+    argv = ["archive", "--selection", str(selection_path),
+            "--start-seconds", str(args.start_seconds), "--end-seconds", str(args.end_seconds),
+            "--format", args.format, "--instruments", str(inputs["instruments"][0])]
+    if args.bar_seconds is not None:
+        argv += ["--bar-seconds", str(args.bar_seconds)]
+    if args.chain_evidence is not None:
+        if args.format != "time-seventeen-v2":
+            raise ValueError("chain evidence requires the original time-seventeen-v2 archive format")
+        inputs["chain_evidence"] = (local_path(args.chain_evidence), MAX_EVIDENCE_BYTES)
+        argv += ["--chain-evidence", str(inputs["chain_evidence"][0])]
+    originals = {name: acquire.local_bytes(path, limit) for name, (path, limit) in inputs.items()}
+    observations = hf_dataset.file_observations(original)
+    output = run_native(args, argv, "polymarket-history")
+    if (any(acquire.local_bytes(path, limit) != originals[name] for name, (path, limit) in inputs.items())
+            or hf_dataset.file_observations(original) != observations):
+        raise ValueError("HF native conversion inputs changed during preparation; artifacts retained")
+    hf_dataset.verify(selection_path)
+    report, evidence = published_native(output)
+    metadata = evidence.get("source_metadata")
+    reference = f"{snapshot.HUB}/datasets/{original['plan']['repository']}/tree/{original['plan']['revision']}"
+    window = {"start_seconds": args.start_seconds, "end_seconds": args.end_seconds,
+              "bar_seconds": args.bar_seconds}
+    if (not isinstance(metadata, dict) or metadata.get("selection_manifest") != original
+            or metadata.get("selection") != window or metadata.get("format") != args.format
+            or metadata.get("clock_basis") != "REQUEST_SELECTION_AT_NOT_HISTORICAL_AVAILABILITY"
+            or metadata.get("instruments_bytes") != len(originals["instruments"])
+            or metadata.get("instruments_definitions") != providers.read_json(originals["instruments"])
+            or "instruments_sha256" in metadata
+            or report.get("source_reference") != reference or evidence.get("source_reference") != reference
+            or evidence.get("source_observed_at") != report.get("source_observed_at")):
+        raise ValueError("native history report differs from its original HF selection and inputs")
+    chain = metadata.get("chain_evidence")
+    if args.chain_evidence is None:
+        if chain is not None:
+            raise ValueError("native HF history introduced unrequested chain evidence")
+    else:
+        original_chain = providers.read_json(originals["chain_evidence"])
+        if (not isinstance(original_chain, dict) or not isinstance(chain, dict)
+                or not isinstance(chain.get("snapshot"), dict)
+                or acquire.utc_clock(chain["snapshot"].get("retrieved_at"))
+                != acquire.utc_clock(original_chain.get("retrieved_at"))):
+            raise ValueError("native HF chain observation differs from the original supplied evidence")
+    hf_publication_clock(metadata, report, evidence)
+    total = 0
+    for key in ("trades", "quotes", "deltas", "bars", "closes"):
+        providers.integer(report.get(key), f"native {key}", maximum=1_000_000)
+        if not isinstance(evidence.get(key), list) or len(evidence[key]) != report[key]:
+            raise ValueError("native history counts differ from preserved HF evidence")
+        total += report[key]
+    if (not total or not isinstance(evidence.get("instruments"), list)
+            or len(evidence["instruments"]) != report["instrument_versions"]):
+        raise ValueError("native HF history is empty or has inconsistent definitions")
+    return converted("hf-dataset", output, report)
+
+
 def prepare_options(parser):
     native_options(parser)
     parser.add_argument("--native-output", type=Path, required=True,
@@ -453,6 +534,25 @@ def prepare_options(parser):
 def file_record(path, limit):
     body = acquire.local_bytes(path, limit)
     return {"path": str(path), "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()}
+
+
+def plain_file_record(path, limit):
+    return {"path": str(path), "bytes": len(acquire.local_bytes(path, limit))}
+
+
+def catalog_observations(root):
+    records = []
+    for directory, directories, files in os.walk(root, followlinks=False):
+        for name in directories + files:
+            relative = (Path(directory) / name).relative_to(root).as_posix()
+            path = snapshot.safe_local(root, relative)
+            if name in files:
+                if not path.is_file():
+                    raise ValueError("native catalog input is not a regular file")
+                info = path.stat()
+                records.append((relative, info.st_dev, info.st_ino, info.st_size,
+                                info.st_mtime_ns, info.st_ctime_ns))
+    return sorted(records)
 
 
 def catalog_identity(value):
@@ -513,16 +613,46 @@ def archive_publication(report, evidence, *, declaration=None):
         raise ValueError("catalog origin REAL contradicts preserved SYNTHETIC source provenance")
 
 
+def hf_publication_clock(metadata, report, evidence):
+    expected = acquire.utc_clock(metadata["selection_manifest"].get("retrieved_at"))
+    chain = metadata.get("chain_evidence")
+    if chain is not None:
+        if (metadata.get("format") != "time-seventeen-v2" or not isinstance(chain, dict)
+                or not isinstance(chain.get("snapshot"), dict)):
+            raise ValueError("native HF history has unsupported chain observation metadata")
+        chain_clock = acquire.utc_clock(chain["snapshot"].get("retrieved_at"))
+        if chain_clock > acquire.utc_clock(acquire.now()):
+            raise ValueError("native HF chain observation is in the future")
+        expected = max(expected, chain_clock)
+    if (acquire.utc_clock(report.get("source_observed_at")) != expected
+            or acquire.utc_clock(evidence.get("source_observed_at")) != expected):
+        raise ValueError("native HF source observation differs from the selection/chain clock meaning")
+
+
 def history_publication(plugin_id, report, evidence, *, declaration=None):
     metadata = evidence.get("source_metadata")
     formats = ("lokima-dual-capture",) if plugin_id == "polymarket-capture" else (
         "moose-fills", "time-seventeen-v2")
-    if (plugin_id not in ("polymarket-capture", "polymarket-archive")
+    if (plugin_id not in ("polymarket-capture", "polymarket-archive", "hf-dataset")
             or not isinstance(metadata, dict) or metadata.get("format") not in formats
             or not isinstance(evidence.get("bars"), list) or len(evidence["bars"]) != report["bars"]
             or not isinstance(report.get("source_reference"), str) or not report["source_reference"].strip()
             or report["source_reference"] != evidence.get("source_reference")):
         raise ValueError("native publication is not a supported source BAR preparation")
+    if plugin_id == "hf-dataset":
+        manifest = metadata.get("selection_manifest")
+        if (not isinstance(manifest, dict) or manifest.get("schema") != hf_dataset.SELECTION_SCHEMA
+                or metadata.get("clock_basis") != "REQUEST_SELECTION_AT_NOT_HISTORICAL_AVAILABILITY"):
+            raise ValueError("native publication does not preserve its explicit HF source selection")
+        hf_dataset.validate_manifest(manifest)
+        window = metadata.get("selection")
+        if not isinstance(window, dict):
+            raise ValueError("native publication has no explicit HF conversion window")
+        hf_dataset.native_window(manifest, window.get("start_seconds"), window.get("end_seconds"))
+        reference = f"{snapshot.HUB}/datasets/{manifest['plan']['repository']}/tree/{manifest['plan']['revision']}"
+        if evidence["source_reference"] != reference:
+            raise ValueError("native publication HF source reference differs from its selected revision")
+        hf_publication_clock(metadata, report, evidence)
 
 
 def validate_native(plugin_id, report, evidence, *, declaration=None):
@@ -542,18 +672,28 @@ def prepare_source(plugin_id, args):
     paths = {"import_report": (snapshot.safe_local(source, "import-report.json"), MAX_REPORT_BYTES),
              "source_evidence": (snapshot.safe_local(source, "source-evidence.json"), MAX_EVIDENCE_BYTES),
              "declaration": (declaration, MAX_REPORT_BYTES), "selection": (selection, MAX_REPORT_BYTES)}
-    originals = {name: file_record(path, limit) for name, (path, limit) in paths.items()}
+    no_checksums = plugin_id == "hf-dataset"
+    record = plain_file_record if no_checksums else file_record
+    original_bytes = ({name: acquire.local_bytes(path, limit) for name, (path, limit) in paths.items()}
+                      if no_checksums else None)
+    originals = {name: record(path, limit) for name, (path, limit) in paths.items()}
+    original_catalog = catalog_observations(source / "catalog") if no_checksums else None
+    def unchanged():
+        return (all((acquire.local_bytes(path, limit) == original_bytes[name] if no_checksums
+                     else file_record(path, limit) == originals[name])
+                    for name, (path, limit) in paths.items())
+                and (not no_checksums or catalog_observations(source / "catalog") == original_catalog))
     declared = load_json(declaration)
     identity = catalog_identity(declared)
     load_json(selection)  # Bounded original JSON only; the native parser owns selection semantics.
     report, evidence = published_native(source)
     providers.integer(report.get("bars"), "native preparation bars", minimum=1, maximum=1_000_000)
     validate_native(plugin_id, report, evidence, declaration=declared)
-    if any(file_record(path, limit) != originals[name] for name, (path, limit) in paths.items()):
+    if not unchanged():
         raise ValueError("catalog preparation inputs changed during input checks")
     output = run_native(args, ["--catalog", str(source / "catalog"),
                                "--declaration", str(declaration), "--selection", str(selection)])
-    if any(file_record(path, limit) != originals[name] for name, (path, limit) in paths.items()):
+    if not unchanged():
         raise ValueError("catalog preparation inputs changed during native execution; artifacts retained")
     catalog = published_catalog(output)
     metadata_file = snapshot.safe_local(output, "catalog-metadata.json")
@@ -566,13 +706,15 @@ def prepare_source(plugin_id, args):
         raise ValueError("catalog preparation published identity differs from the explicit declaration")
     result = {"schema": "qz.source_preparation/1", "plugin": plugin_id, "status": "CATALOG_PREPARED",
               "output": str(output), "catalog_root": str(catalog), "metadata_file": str(metadata_file),
-              "metadata_bytes": len(body), "metadata_sha256": hashlib.sha256(body).hexdigest(),
+              "metadata_bytes": len(body),
               "catalog_registration": {"root": str(catalog), "metadata_file": str(metadata_file)},
               "identity_hints": identity,
               "source_artifacts": {name: originals[name] for name in ("import_report", "source_evidence")},
               "admission": dict(acquire.ADMISSION),
               "unperformed_steps": ["runtime_configuration", "source_registration", "source_grant_registration",
                                     "dataset_registration", "frozen_input_set", "fresh_DATA_VALIDATE"]}
+    if not no_checksums:
+        result["metadata_sha256"] = hashlib.sha256(body).hexdigest()
     producer = {name: os.environ.get(f"QZ_OPERATOR_{name.upper()}") for name in ("version", "revision", "image")}
     if all(producer.values()):
         result["producer"] = producer  # Informational installed image identity, never source authority.
@@ -601,6 +743,33 @@ def snapshot_capabilities():
             "verify": Capability(snapshot_verify_options, snapshot_verify)}
 
 
+def hf_dataset_options(parser, download=False):
+    parser.add_argument("--dataset", required=True, help="public Hugging Face dataset repository ID")
+    parser.add_argument("--revision", help="ordinary branch/tag/ref; resolved once for this request")
+    parser.add_argument("--include", action="append", help="explicit file glob; repeatable")
+    parser.add_argument("--manifest", help="actual qz.hf_partitions/1 index path in the repository")
+    parser.add_argument("--market", action="append", help="exact indexed market identifier; repeatable")
+    parser.add_argument("--start-date", help="inclusive YYYY-MM-DD partition date")
+    parser.add_argument("--end-date", help="exclusive YYYY-MM-DD partition date")
+    byte_budget_options(parser)
+    if download:
+        parser.add_argument("--cache-dir", type=Path, required=True, help="reusable repository/revision file cache")
+        parser.add_argument("--output", type=Path, required=True, help="new request directory containing selection.json")
+
+
+def hf_dataset_plan(args):
+    return hf_dataset.plan(args.dataset, args.include, args.revision, args.max_bytes,
+                           args.manifest, args.market, args.start_date, args.end_date)
+
+
+def hf_dataset_download(args):
+    return hf_dataset.download(hf_dataset_plan(args), args.cache_dir, args.output)
+
+
+def hf_dataset_verify_options(parser):
+    parser.add_argument("--selection", type=Path, required=True, help="existing selection.json request manifest")
+
+
 PLUGINS = {provider_id: http_plugin(provider_id) for provider_id in providers.PROVIDERS}
 PLUGINS["coinbase-candles"].capabilities["convert"] = Capability(candle_options, candle_convert)
 PLUGINS["coinbase-candles"].capabilities["prepare"] = Capability(
@@ -613,6 +782,17 @@ PLUGINS["coinbase-candles"].descriptor["limitations"].append(
     "Native conversion preserves bucket-end events and actual retrieval clocks; consult report admission limits")
 PLUGINS["hf-snapshot"] = source_plugin("hf-snapshot", "immutable public Hugging Face files",
     snapshot_capabilities(), ["Raw acquisition only; arbitrary Hugging Face Parquet has no native converter"])
+PLUGINS["hf-dataset"] = source_plugin("hf-dataset", "on-demand Hugging Face file partitions",
+    {"plan": Capability(hf_dataset_options, hf_dataset_plan, public_network=True),
+     "download": Capability(partial(hf_dataset_options, download=True), hf_dataset_download, public_network=True),
+     "verify": Capability(hf_dataset_verify_options, lambda args: hf_dataset.verify(args.selection)),
+     "convert": Capability(hf_history_options, hf_history_convert),
+     "prepare": Capability(prepare_options, partial(prepare_source, "hf-dataset"))},
+    ["Market/date selection requires an actual repository partition index; otherwise use explicit file includes",
+     "Only requested file partitions are downloaded; overlapping requests share resumable cached files",
+     "Native conversion uses the explicit existing archive format and original definitions; preparation requires BAR output",
+     "Byte/format checks do not establish full market coverage, data-use rights or PIT"],
+    validate_native=partial(history_publication, "hf-dataset"))
 PLUGINS["polymarket-capture"] = source_plugin("polymarket-capture", "lokima-dual-capture",
     snapshot_capabilities() | {"convert": Capability(partial(history_options, capture=True),
                                                        partial(history_convert, capture=True)),

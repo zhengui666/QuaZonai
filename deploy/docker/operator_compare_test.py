@@ -688,14 +688,13 @@ class ComparisonTests(unittest.TestCase):
                 if 'free' in values:
                     self.assertFalse(any('create' in args for args in calls))
 
-    def test_workflow_is_one_bounded_pair_and_only_harness_changes_trigger(self):
+    def test_workflow_is_manual_only_with_one_bounded_pair(self):
         workflow = Path(comparison.__file__).resolve().parents[2] / '.github/workflows/operator-cost-comparison.yml'
         body = workflow.read_text()
-        paths = body.split('    paths:\n')[1].split('  workflow_dispatch:')[0]
-        self.assertEqual([line.strip() for line in paths.splitlines() if line.strip()], [
-            "- '.github/workflows/operator-cost-comparison.yml'", "- 'deploy/docker/operator_cost*'",
-            "- 'deploy/docker/operator_compare*'", "- 'deploy/docker/operator_diagnostics*'",
-            "- 'deploy/docker/operator_elf_forensics*'"])
+        trigger = body.split('on:\n', 1)[1].split('\npermissions:', 1)[0]
+        events = [line.strip() for line in trigger.splitlines()
+                  if line.startswith('  ') and not line.startswith('   ') and line.endswith(':')]
+        self.assertEqual(events, ['workflow_dispatch:'])
         self.assertIn('timeout-minutes: 95', body)
         self.assertIn('for variant in old candidate', body)
         self.assertIn('85 * 60', body)
