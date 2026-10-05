@@ -795,8 +795,8 @@ async fn settled_scientific_protocol(pool: PgPool, origin: DataOrigin) {
         )
         .await
         .unwrap();
-    // PGMQ cannot redeliver an archived message. The ACK entry point, not a
-    // fresh claim of that removed queue row, owns acknowledgement replay.
+    // PGMQ does not newly read an archived row, but an already-read delivery
+    // may race its ACK. Both replay paths retain the original publication.
     assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.calibrations c JOIN app.evaluations e ON e.id=c.validation_evaluation_id JOIN app.artifacts a ON a.id=c.model_artifact_id WHERE e.run_id=$1 AND a.producer_run_id=e.run_id AND a.access_class='EVALUATOR_ONLY' AND a.origin=$2")
         .bind(validation.as_uuid()).bind(declared_origin.as_str().unwrap()).fetch_one(&pool).await.unwrap(), 1);
     f.store.acknowledge_run(&native_message).await.unwrap();
@@ -1239,12 +1239,30 @@ async fn settled_scientific_protocol(pool: PgPool, origin: DataOrigin) {
         0
     );
     f.store.acknowledge_run(review).await.unwrap();
-    // ACK itself is idempotent; a stale worker must not claim an archived
-    // message again. Both paths leave native model usage unchanged.
-    assert!(worker
+    // A delivery read before another worker's ACK can arrive after archival.
+    // Exact terminal replay reuses its receipts without another lease or Turn.
+    const REPLAY_EVIDENCE: &str = "SELECT jsonb_build_object(
+        'attempts',(SELECT jsonb_agg(to_jsonb(a) ORDER BY a.id) FROM app.run_attempts a WHERE a.run_id=$1),
+        'terminal',(SELECT to_jsonb(t) FROM app.run_terminal_receipts t WHERE t.run_id=$1),
+        'turns',(SELECT jsonb_agg(jsonb_build_object('reservation',to_jsonb(t),'receipt',to_jsonb(receipt)) ORDER BY t.id) FROM app.model_turn_reservations t LEFT JOIN app.model_turn_receipts receipt ON receipt.reservation_id=t.id WHERE t.run_id=$1),
+        'reviews',(SELECT jsonb_agg(to_jsonb(answer) ORDER BY answer.reservation_id) FROM app.mission_reviews answer JOIN app.mission_review_turns t ON t.reservation_id=answer.reservation_id WHERE t.run_id=$1),
+        'sealed',(SELECT jsonb_agg(to_jsonb(held) ORDER BY held.run_id) FROM app.mission_sealed_evaluations held JOIN app.mission_review_turns t ON t.reservation_id=held.review_reservation_id WHERE t.run_id=$1)
+    )";
+    let before_replay: serde_json::Value = sqlx::query_scalar(REPLAY_EVIDENCE)
+        .bind(review.run_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    worker
         .process_mission_message(review.clone(), "review-ack-replay", receiver)
         .await
-        .is_err());
+        .unwrap();
+    let after_replay: serde_json::Value = sqlx::query_scalar(REPLAY_EVIDENCE)
+        .bind(review.run_id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(after_replay, before_replay);
     assert_eq!(f.provider.request_count(), reviewed_requests);
     let (sealed_run, sealed_message): (uuid::Uuid, i64) = sqlx::query_as("SELECT held.run_id,admission.initial_queue_message_id FROM app.mission_sealed_evaluations held JOIN app.mission_review_turns turn ON turn.reservation_id=held.review_reservation_id JOIN app.run_admissions admission ON admission.run_id=held.run_id WHERE turn.run_id=$1")
         .bind(review.run_id.as_uuid()).fetch_one(&pool).await.unwrap();
