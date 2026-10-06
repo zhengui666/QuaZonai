@@ -17,6 +17,12 @@ mod optimization;
 pub mod paper_node;
 #[cfg(feature = "native-paper")]
 pub mod paper_service;
+#[cfg(feature = "native-node-observer")]
+pub mod polymarket_data_probe;
+#[cfg(feature = "native-paper")]
+pub mod polymarket_paper_host;
+#[cfg(feature = "native-paper")]
+pub mod polymarket_streaming_paper;
 pub mod portfolio;
 mod prediction;
 pub use domain::codex::verified_codex_version;

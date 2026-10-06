@@ -791,6 +791,35 @@ pub(crate) fn paper_target_strategy(
     Ok((strategy, status))
 }
 
+/// Reuse the same target policy with the original frozen latency for an official
+/// event-time streaming Paper simulation. The live Sandbox constructor is unchanged.
+#[cfg(feature = "native-paper")]
+pub(crate) fn streaming_paper_target_strategy(
+    settings: NativeSimulationSettingsV1,
+    instruments: Vec<InstrumentAny>,
+    bar_types: Vec<BarType>,
+    point: NativeTargetPointV1,
+    strategy_id: StrategyId,
+    client_id: ClientId,
+) -> Result<(TargetReplay, Rc<RefCell<ReplayStatus>>)> {
+    let (_, latency) = domain::portfolio::simulation_models(&settings)?;
+    let insertion_delay = latency
+        .base_latency_ns
+        .get()
+        .checked_add(latency.insert_latency_ns.get())
+        .ok_or_else(|| anyhow::anyhow!("PAPER_STREAM_LATENCY_RANGE"))?;
+    let (mut strategy, status) = paper_target_strategy(
+        settings,
+        instruments,
+        bar_types,
+        point,
+        strategy_id,
+        client_id,
+    )?;
+    strategy.latency_ns = insertion_delay;
+    Ok((strategy, status))
+}
+
 fn validate_paper_instruments(
     settings: &NativeSimulationSettingsV1,
     instruments: &[InstrumentAny],
