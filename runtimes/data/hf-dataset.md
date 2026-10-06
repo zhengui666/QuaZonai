@@ -82,6 +82,39 @@ remain in the result. There is no claim of row-level remote filtering.
 The index and selection do not establish uninterrupted date coverage, all-market
 coverage, or point-in-time availability; `coverage` is `NOT_ASSERTED`.
 
+When source-backed date bounds are known but market membership is not, retain
+that distinction explicitly. The existing index schema also accepts:
+
+```json
+{
+  "path": "data/2026-09-01.parquet",
+  "markets": [],
+  "market_mapping": "UNKNOWN",
+  "start_date": "2026-09-01",
+  "end_date": "2026-09-02",
+  "format": "parquet"
+}
+```
+
+Such a partition can be selected by date or explicit file include. A market
+filter fails if any candidate partition has unknown membership after applying
+the date and include bounds; unknown partitions are never silently discarded
+from a market-filtered request. The marker survives planning, cache handoff,
+verification and native selection. An unmarked empty list, a null mapping,
+or `UNKNOWN` paired with a nonempty list is invalid. `ALL` and `*` are not
+all-market aliases; market identifiers continue to match exactly. Existing
+nonempty market lists without the marker keep their original behavior.
+
+Use a matching consumer release for this additive index capability. A
+provenance inventory is not automatically this selection index, and a date
+label alone is not evidence for actual file contents or market membership.
+
+`--max-bytes` still bounds the total sizes of selected **complete files**,
+including cached files. A narrow date range does not reduce a monthly object's
+budget. The limit is not a cumulative network-transfer or cache-disk quota;
+metadata, repeated transfers, retained rejected partials and other revisions
+are separate costs. It does not enable remote row-group filtering.
+
 Supported declared formats are `parquet`, `json`, `jsonl`, `csv`, `zip`, `gzip`
 and `opaque`. Explicit includes infer only the corresponding common extension;
 unknown extensions receive byte-size checking only.

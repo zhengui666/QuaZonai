@@ -313,10 +313,17 @@ pub(super) fn load(path: &Path, start: u64, end: u64) -> Result<Selection> {
         if let Some(partition) = item.get("partition") {
             let source_markets = strings(partition, "markets")?;
             let unique = source_markets.iter().copied().collect::<BTreeSet<_>>();
+            let valid_mapping = match partition.get("market_mapping") {
+                None => !source_markets.is_empty(),
+                Some(Value::String(value)) if value == "UNKNOWN" => {
+                    source_markets.is_empty() && markets.is_empty()
+                }
+                _ => false,
+            };
             let a = date(string(partition, "start_date")?)?;
             let b = date(string(partition, "end_date")?)?;
             ensure!(
-                !source_markets.is_empty()
+                valid_mapping
                     && unique.len() == source_markets.len()
                     && source_markets.iter().all(|m| !m.trim().is_empty())
                     && a < b
@@ -382,4 +389,109 @@ pub(super) fn load(path: &Path, start: u64, end: u64) -> Result<Selection> {
         files,
         file_states,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn handoff(directory: &Path, partition: Value, markets: Value) -> PathBuf {
+        // Envelope-only handoff fixture, not source data or native conversion.
+        let root = directory.canonicalize().unwrap();
+        let cached = root.join("cache/files/data.parquet");
+        fs::create_dir_all(cached.parent().unwrap()).unwrap();
+        fs::write(&cached, b"PAR1xxxxPAR1").unwrap();
+        let revision = "a".repeat(40);
+        let item = json!({
+            "path": "data.parquet", "size": 12, "format": "parquet",
+            "url": source_url("fixture/history", &revision, "data.parquet"),
+            "partition": partition
+        });
+        let mut record = item.clone();
+        record["local_path"] = json!(cached);
+        record["cached"] = true.into();
+        record["resumed_bytes"] = 0.into();
+        record["validation"] = "PARQUET_ENVELOPE".into();
+        let manifest = json!({
+            "schema": "qz.hf_selection/1", "cache_root": root.join("cache"),
+            "retrieved_at": "2026-01-01T00:00:00Z", "downloaded_bytes": 0,
+            "cached_files": 1, "files": [record],
+            "plan": {
+                "schema": "qz.hf_dataset_plan/1", "repository": "fixture/history",
+                "revision": revision, "requested_revision": "main",
+                "coverage": "NOT_ASSERTED", "selection_bounds": "[start_date,end_date)",
+                "download_granularity": "FILE_PARTITION", "max_bytes": 12, "total_bytes": 12,
+                "partition_index": {"path": "partitions.json", "size": 200,
+                    "url": source_url("fixture/history", &revision, "partitions.json")},
+                "request": {"includes": [], "markets": markets,
+                    "start_date": "1970-01-01", "end_date": "1970-01-02"},
+                "files": [item]
+            }
+        });
+        let path = root.join("selection.json");
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        path
+    }
+
+    fn partition() -> Value {
+        json!({"markets": [], "market_mapping": "UNKNOWN", "format": "parquet",
+               "start_date": "1970-01-01", "end_date": "1970-01-02"})
+    }
+
+    #[test]
+    fn unknown_mapping_allows_date_and_explicit_file_handoffs() {
+        for dates in [true, false] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = handoff(directory.path(), partition(), json!([]));
+            if !dates {
+                let mut value: Value = super::super::read_json(&path).unwrap();
+                value["plan"]["request"] = json!({"includes": ["data.parquet"], "markets": [],
+                    "start_date": null, "end_date": null});
+                fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            }
+            let selection = load(&path, 0, 60).unwrap();
+            assert_eq!(selection.files.len(), 1);
+            assert_eq!(
+                selection.manifest["files"][0]["partition"]["market_mapping"],
+                "UNKNOWN"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_mapping_cannot_satisfy_market_filters_or_pseudo_all() {
+        for market in ["market-a", "ALL", "*", "UNKNOWN"] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = handoff(directory.path(), partition(), json!([market]));
+            assert!(load(&path, 0, 60)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("SELECTION_PARTITION_INVALID"));
+        }
+    }
+
+    #[test]
+    fn unknown_marker_is_explicit_and_legacy_known_mapping_stays_valid() {
+        for mapping in [json!(null), json!("unknown"), json!("ALL")] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut item = partition();
+            item["market_mapping"] = mapping;
+            let path = handoff(directory.path(), item, json!([]));
+            assert!(load(&path, 0, 60).is_err());
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let mut item = partition();
+        item["markets"] = json!(["ALL"]);
+        let path = handoff(directory.path(), item.clone(), json!([]));
+        assert!(load(&path, 0, 60).is_err());
+        item.as_object_mut().unwrap().remove("market_mapping");
+        item["markets"] = json!([]);
+        let path = handoff(directory.path(), item.clone(), json!([]));
+        assert!(load(&path, 0, 60).is_err());
+        item["markets"] = json!(["market-a"]);
+        let path = handoff(directory.path(), item, json!(["market-a"]));
+        assert!(load(&path, 0, 60).is_ok());
+    }
 }

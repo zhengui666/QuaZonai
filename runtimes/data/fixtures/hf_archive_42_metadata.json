@@ -1,0 +1,432 @@
+{
+  "scope": "Existing public-archive metadata only; no Parquet bytes or market membership. Replays the 2026-10-05 reconciliation, not fresh remote availability or coverage verification. Date bounds enclose the recorded observed event ranges, not inferred file names.",
+  "repository": "gongdeshuichang/polymarket-completed-originals",
+  "revision": "f0a74ad5a659ab0d1d37af4840d619af6e12ed3c",
+  "checked_at_utc": "2026-10-05T17:53:30Z",
+  "selected_original_bytes": 21470666882,
+  "index": {
+    "schema": "qz.hf_partitions/1",
+    "files": [
+      {
+        "path": "OrderFilled/2026_04_29.parquet",
+        "size": 304621469,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2026-04-29",
+        "end_date": "2026-04-30",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_footer_statistics"
+      },
+      {
+        "path": "OrderFilled/2026_04_30.parquet",
+        "size": 321344338,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2026-04-30",
+        "end_date": "2026-05-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_footer_statistics"
+      },
+      {
+        "path": "OrderFilled/2026_10_02.parquet",
+        "size": 250496243,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2026-10-02",
+        "end_date": "2026-10-03",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_observed_event_range"
+      },
+      {
+        "path": "OrderFilled/2026_10_03.parquet",
+        "size": 241039922,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2026-10-03",
+        "end_date": "2026-10-04",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_footer_statistics"
+      },
+      {
+        "path": "order_filled/year=2022/month=11.parquet",
+        "size": 13147,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2022-11-21",
+        "end_date": "2022-12-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_footer_statistics"
+      },
+      {
+        "path": "order_filled/year=2022/month=12.parquet",
+        "size": 241518,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2022-12-01",
+        "end_date": "2023-01-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=01.parquet",
+        "size": 485276,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-01-01",
+        "end_date": "2023-02-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=02.parquet",
+        "size": 937505,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-02-01",
+        "end_date": "2023-03-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=03.parquet",
+        "size": 2899903,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-03-01",
+        "end_date": "2023-04-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=04.parquet",
+        "size": 1316028,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-04-01",
+        "end_date": "2023-05-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=05.parquet",
+        "size": 1638867,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-05-01",
+        "end_date": "2023-06-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=06.parquet",
+        "size": 2033639,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-06-01",
+        "end_date": "2023-07-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=07.parquet",
+        "size": 1724486,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-07-01",
+        "end_date": "2023-08-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=08.parquet",
+        "size": 2870672,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-08-01",
+        "end_date": "2023-09-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=09.parquet",
+        "size": 1591258,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-09-01",
+        "end_date": "2023-10-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=10.parquet",
+        "size": 3223059,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-10-01",
+        "end_date": "2023-11-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=11.parquet",
+        "size": 3227222,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-11-01",
+        "end_date": "2023-12-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2023/month=12.parquet",
+        "size": 2870419,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2023-12-01",
+        "end_date": "2024-01-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=01.parquet",
+        "size": 8263033,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-01-01",
+        "end_date": "2024-02-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=02.parquet",
+        "size": 8352590,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-02-01",
+        "end_date": "2024-03-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=03.parquet",
+        "size": 9028772,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-03-01",
+        "end_date": "2024-04-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=04.parquet",
+        "size": 6986777,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-04-01",
+        "end_date": "2024-05-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=05.parquet",
+        "size": 19825498,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-05-01",
+        "end_date": "2024-06-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=06.parquet",
+        "size": 44182632,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-06-01",
+        "end_date": "2024-07-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=07.parquet",
+        "size": 117164062,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-07-01",
+        "end_date": "2024-08-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=08.parquet",
+        "size": 194223596,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-08-01",
+        "end_date": "2024-09-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=09.parquet",
+        "size": 233602465,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-09-01",
+        "end_date": "2024-10-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=10.parquet",
+        "size": 859483738,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-10-01",
+        "end_date": "2024-11-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=11.parquet",
+        "size": 966053822,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-11-01",
+        "end_date": "2024-12-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2024/month=12.parquet",
+        "size": 1428412314,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2024-12-01",
+        "end_date": "2025-01-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=01.parquet",
+        "size": 900293127,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-01-01",
+        "end_date": "2025-02-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=02.parquet",
+        "size": 590585580,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-02-01",
+        "end_date": "2025-03-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=03.parquet",
+        "size": 584746735,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-03-01",
+        "end_date": "2025-04-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=04.parquet",
+        "size": 526436803,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-04-01",
+        "end_date": "2025-05-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=05.parquet",
+        "size": 599435328,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-05-01",
+        "end_date": "2025-06-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=06.parquet",
+        "size": 613499907,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-06-01",
+        "end_date": "2025-07-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=07.parquet",
+        "size": 734925099,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-07-01",
+        "end_date": "2025-08-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=08.parquet",
+        "size": 785037186,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-08-01",
+        "end_date": "2025-09-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=09.parquet",
+        "size": 878146390,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-09-01",
+        "end_date": "2025-10-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=10.parquet",
+        "size": 1985965502,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-10-01",
+        "end_date": "2025-11-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=11.parquet",
+        "size": 3101166434,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-11-01",
+        "end_date": "2025-12-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      },
+      {
+        "path": "order_filled/year=2025/month=12.parquet",
+        "size": 5132274521,
+        "markets": [],
+        "market_mapping": "UNKNOWN",
+        "start_date": "2025-12-01",
+        "end_date": "2026-01-01",
+        "format": "parquet",
+        "date_bounds_basis": "recorded_source_report"
+      }
+    ]
+  }
+}
