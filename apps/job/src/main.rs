@@ -631,6 +631,64 @@ mod tests {
         .is_err());
     }
 
+    #[cfg(feature = "native-paper")]
+    #[test]
+    fn polymarket_downstream_control_is_reachable_without_order_credentials() {
+        for args in [
+            vec![
+                "job",
+                "polymarket-paper",
+                "serve",
+                "--config",
+                "existing-service.json",
+            ],
+            vec![
+                "job",
+                "polymarket-paper",
+                "apply",
+                "--origin",
+                "http://127.0.0.1:19001",
+                "--credential-file",
+                "existing-control-token",
+                "--claim",
+                "original-claim.json",
+            ],
+            vec![
+                "job",
+                "polymarket-paper",
+                "status",
+                "--origin",
+                "http://127.0.0.1:19001",
+                "--credential-file",
+                "existing-control-token",
+            ],
+            vec![
+                "job",
+                "polymarket-paper",
+                "stop",
+                "--origin",
+                "http://127.0.0.1:19001",
+                "--credential-file",
+                "existing-control-token",
+            ],
+        ] {
+            assert!(matches!(
+                Arguments::try_parse_from(args).unwrap().command,
+                Operation::PolymarketPaper(_)
+            ));
+        }
+        assert!(Arguments::try_parse_from([
+            "job",
+            "polymarket-paper",
+            "serve",
+            "--config",
+            "existing-service.json",
+            "--private-key",
+            "unsupported"
+        ])
+        .is_err());
+    }
+
     #[cfg(not(feature = "native-paper"))]
     #[test]
     fn default_scientific_job_has_no_polymarket_paper_host() {

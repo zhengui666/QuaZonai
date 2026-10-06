@@ -83,6 +83,34 @@ pub struct Arguments {
 
 #[derive(clap::Subcommand)]
 enum Operation {
+    /// Serve one bounded Polymarket Cash simulation using original frozen inputs.
+    Serve {
+        #[arg(long)]
+        config: PathBuf,
+    },
+    /// Apply the original claimed V2 target to the existing local service.
+    Apply {
+        #[arg(long)]
+        origin: String,
+        #[arg(long)]
+        credential_file: PathBuf,
+        #[arg(long)]
+        claim: PathBuf,
+    },
+    /// Read observed lifecycle state; never implies venue-account connectivity.
+    Status {
+        #[arg(long)]
+        origin: String,
+        #[arg(long)]
+        credential_file: PathBuf,
+    },
+    /// Request cancellation; termination is confirmed separately in status.
+    Stop {
+        #[arg(long)]
+        origin: String,
+        #[arg(long)]
+        credential_file: PathBuf,
+    },
     /// Use an original accepted Paper claim and frozen catalog with current public data.
     Run {
         #[arg(long)]
@@ -123,11 +151,11 @@ enum Operation {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct HostConfig {
+pub(crate) struct HostConfig {
     schema_version: SchemaV1,
     project_id: Id,
     downstream_id: Id,
-    market_capability_version: String,
+    pub(crate) market_capability_version: String,
     execution_assumptions: ExecutionAssumptionsViewV1,
     bar_interval_seconds: u32,
 }
@@ -149,7 +177,7 @@ fn now_ns() -> Result<DbCounter> {
     DbCounter::new(u64::try_from(value)?).map_err(anyhow::Error::msg)
 }
 
-fn read_original<T: DeserializeOwned>(path: &Path) -> Result<T> {
+pub(crate) fn read_original<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let file = File::open(path)?;
     ensure!(
         file.metadata()?.len() <= MAX_INPUT,
@@ -169,7 +197,7 @@ fn new_output(path: &Path) -> Result<File> {
     Ok(options.open(path)?)
 }
 
-fn claim(path: &Path) -> Result<HandoffClaimViewV2> {
+pub(crate) fn claim(path: &Path) -> Result<HandoffClaimViewV2> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum OriginalClaim {
@@ -1058,7 +1086,18 @@ struct SourceChild {
 
 impl SourceChild {
     fn wait_until(&mut self, deadline: Instant) -> Result<ExitStatus> {
+        self.wait_until_controlled(deadline, None)
+    }
+
+    fn wait_until_controlled(
+        &mut self,
+        deadline: Instant,
+        control: Option<&crate::polymarket_paper_service::ExecutionControl>,
+    ) -> Result<ExitStatus> {
         loop {
+            if let Some(control) = control {
+                control.check_stop()?;
+            }
             if let Some(status) = self.reaped {
                 return Ok(status);
             }
@@ -1119,22 +1158,41 @@ fn source_reader(stdout: impl Read + Send + 'static) -> mpsc::Receiver<SourceRea
     receiver
 }
 
+#[cfg(test)]
 fn next_source_record(
     receiver: &mpsc::Receiver<SourceRead>,
     deadline: Instant,
 ) -> Result<Option<SourceRecord>> {
-    ensure!(
-        Instant::now() < deadline,
-        "PAPER_SOURCE_PARENT_WALL_DEADLINE"
-    );
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    let value = receiver
-        .recv_timeout(remaining)
-        .map_err(|_| anyhow!("PAPER_SOURCE_PARENT_WALL_DEADLINE_OR_READER_LOSS"))?;
-    value.map_err(anyhow::Error::msg)
+    next_source_record_controlled(receiver, deadline, None)
 }
 
-fn execute(
+fn next_source_record_controlled(
+    receiver: &mpsc::Receiver<SourceRead>,
+    deadline: Instant,
+    control: Option<&crate::polymarket_paper_service::ExecutionControl>,
+) -> Result<Option<SourceRecord>> {
+    loop {
+        if let Some(control) = control {
+            control.check_stop()?;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "PAPER_SOURCE_PARENT_WALL_DEADLINE"
+        );
+        let wait = deadline
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(50));
+        match receiver.recv_timeout(wait) {
+            Ok(value) => return value.map_err(anyhow::Error::msg),
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(anyhow!("PAPER_SOURCE_PARENT_WALL_DEADLINE_OR_READER_LOSS"))
+            }
+        }
+    }
+}
+
+pub(crate) fn execute(
     config_path: &Path,
     claim_path: &Path,
     metadata_path: &Path,
@@ -1145,6 +1203,7 @@ fn execute(
     binding_path: &Path,
     max_seconds: u64,
     proxy_env: Option<&str>,
+    control: Option<&crate::polymarket_paper_service::ExecutionControl>,
 ) -> Result<()> {
     ensure!(
         (1..=300).contains(&max_seconds),
@@ -1158,6 +1217,10 @@ fn execute(
     let metadata: RuntimeCatalogMetadataV1 = read_original(metadata_path)?;
     let dataset: DatasetView = read_original(dataset_path)?;
     let (mut session, ids) = prepare(&config, &original_claim, &metadata, &dataset)?;
+    if let Some(control) = control {
+        control.check_stop()?;
+        control.started(session.session_id());
+    }
     let mut paths = BTreeSet::new();
     for path in [source_path, report_path, snapshots_path, binding_path] {
         ensure!(
@@ -1207,7 +1270,7 @@ fn execute(
     let mut definitions = BTreeSet::new();
     let mut last_observed = 0;
     let consumed = (|| -> Result<()> {
-        while let Some(record) = next_source_record(&receiver, deadline)? {
+        while let Some(record) = next_source_record_controlled(&receiver, deadline, control)? {
             ensure!(
                 !ended
                     && record.sequence.get() == expected
@@ -1280,10 +1343,20 @@ fn execute(
                 "quote" => {
                     ensure!(ready, "PAPER_SOURCE_TICK_BEFORE_READY");
                     session.push(Data::Quote(serde_json::from_value(record.payload)?))?;
+                    if session.has_started() {
+                        if let Some(control) = control {
+                            control.running(session.consumed_targets());
+                        }
+                    }
                 }
                 "trade" => {
                     ensure!(ready, "PAPER_SOURCE_TICK_BEFORE_READY");
                     session.push(Data::Trade(serde_json::from_value(record.payload)?))?;
+                    if session.has_started() {
+                        if let Some(control) = control {
+                            control.running(session.consumed_targets());
+                        }
+                    }
                 }
                 "socket" => {
                     ensure!(
@@ -1331,7 +1404,7 @@ fn execute(
         session.source_gap();
         cleanup_confirmed = child.terminate().is_ok();
     }
-    let child_ok = match child.wait_until(deadline) {
+    let child_ok = match child.wait_until_controlled(deadline, control) {
         Ok(status) => status.success(),
         Err(error) => {
             session.source_gap();
@@ -1343,6 +1416,12 @@ fn execute(
     if !child_ok {
         session.source_gap();
         source_failure.get_or_insert("PAPER_SOURCE_PROCESS_FAILED".into());
+    }
+    if let Some(control) = control {
+        if control.check_stop().is_err() {
+            session.source_gap();
+            source_failure.get_or_insert("PAPER_HOST_STOP_REQUESTED".into());
+        }
     }
     let mut report = session.finish()?;
     report["purpose"] = json!("CURRENT_PUBLIC_PAPER_ACCEPTANCE_ONLY_NOT_HISTORICAL_DATASET");
@@ -1406,6 +1485,9 @@ fn execute(
     binding_file.write_all(b"\n")?;
     snapshot_file.sync_all()?;
     binding_file.sync_all()?;
+    if let Some(control) = control {
+        control.finished(&report);
+    }
     ensure!(complete, "PAPER_HOST_INCOMPLETE_RETAIN_EVIDENCE");
     let mut stdout = std::io::stdout().lock();
     serde_json::to_writer(
@@ -1424,6 +1506,28 @@ fn execute(
 
 pub fn run(arguments: Arguments) -> Result<()> {
     match arguments.operation {
+        Operation::Serve { config } => crate::polymarket_paper_service::run(&config),
+        Operation::Apply {
+            origin,
+            credential_file,
+            claim: path,
+        } => {
+            let original = claim(&path)?;
+            crate::polymarket_paper_service::control(
+                &origin,
+                &credential_file,
+                "targets",
+                Some(original),
+            )
+        }
+        Operation::Status {
+            origin,
+            credential_file,
+        } => crate::polymarket_paper_service::control(&origin, &credential_file, "status", None),
+        Operation::Stop {
+            origin,
+            credential_file,
+        } => crate::polymarket_paper_service::control(&origin, &credential_file, "stop", None),
         Operation::Run {
             config,
             claim,
@@ -1446,6 +1550,7 @@ pub fn run(arguments: Arguments) -> Result<()> {
             &binding_output,
             max_seconds,
             proxy_env.as_deref(),
+            None,
         ),
         Operation::Source {
             instrument_id,
@@ -1696,6 +1801,115 @@ mod tests {
         assert!(child.reaped.is_some());
         assert_eq!(child.process.try_wait().unwrap(), Some(status));
         assert!(began.elapsed() < Duration::from_secs(6));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn downstream_stop_interrupts_silent_source_and_reaps_the_actual_child() {
+        use crate::paper_service::{PaperProfile, PaperStatus};
+        use crate::polymarket_paper_service::ExecutionControl;
+        let mut child = SourceChild {
+            process: Command::new("/bin/sh")
+                .args(["-c", "printf '{'; exec sleep 60"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+            reaped: None,
+        };
+        let receiver = source_reader(child.process.stdout.take().unwrap());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (status, _) =
+            tokio::sync::watch::channel(PaperStatus::idle_with_profile(PaperProfile::Polymarket));
+        let control = ExecutionControl::new(stop.clone(), status);
+        let stopper = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            stop.store(true, Ordering::Release);
+        });
+        let began = Instant::now();
+        let error = next_source_record_controlled(
+            &receiver,
+            began + Duration::from_secs(60),
+            Some(&control),
+        )
+        .err()
+        .expect("stop must interrupt read");
+        assert_eq!(error.to_string(), "PAPER_HOST_STOP_REQUESTED");
+        drop(receiver);
+        let outcome = child.terminate().unwrap();
+        stopper.join().unwrap();
+        assert!(!outcome.success());
+        assert_eq!(child.process.try_wait().unwrap(), Some(outcome));
+        assert!(began.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn downstream_stop_after_stdout_eof_interrupts_exit_wait_and_reaps() {
+        use crate::paper_service::{PaperProfile, PaperStatus};
+        let mut child = SourceChild {
+            process: Command::new("/bin/sh")
+                .args(["-c", "exec 1>&-; exec sleep 60"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+            reaped: None,
+        };
+        let receiver = source_reader(child.process.stdout.take().unwrap());
+        assert!(
+            next_source_record(&receiver, Instant::now() + Duration::from_secs(3))
+                .unwrap()
+                .is_none()
+        );
+        let stop = Arc::new(AtomicBool::new(false));
+        let (status, _) =
+            tokio::sync::watch::channel(PaperStatus::idle_with_profile(PaperProfile::Polymarket));
+        let control = crate::polymarket_paper_service::ExecutionControl::new(stop.clone(), status);
+        let stopper = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            stop.store(true, Ordering::Release);
+        });
+        let began = Instant::now();
+        let error = child
+            .wait_until_controlled(began + Duration::from_secs(60), Some(&control))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "PAPER_HOST_STOP_REQUESTED");
+        let outcome = child.terminate().unwrap();
+        stopper.join().unwrap();
+        assert_eq!(child.process.try_wait().unwrap(), Some(outcome));
+        assert!(began.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn downstream_stop_precedes_already_buffered_source_data() {
+        use crate::paper_service::{PaperProfile, PaperStatus};
+        let (sender, receiver) = mpsc::sync_channel(1);
+        sender
+            .send(Ok(Some(SourceRecord {
+                schema_version: SchemaV1,
+                sequence: DbCounter::new(1).unwrap(),
+                observed_at_ns: DbCounter::new(1).unwrap(),
+                kind: "start".into(),
+                payload: json!({}),
+            })))
+            .ok()
+            .expect("fixture receiver is open");
+        let (status, _) =
+            tokio::sync::watch::channel(PaperStatus::idle_with_profile(PaperProfile::Polymarket));
+        let control = crate::polymarket_paper_service::ExecutionControl::new(
+            Arc::new(AtomicBool::new(true)),
+            status,
+        );
+        assert!(next_source_record_controlled(
+            &receiver,
+            Instant::now() + Duration::from_secs(60),
+            Some(&control)
+        )
+        .is_err());
+        assert!(receiver.try_recv().is_ok());
     }
 
     #[test]

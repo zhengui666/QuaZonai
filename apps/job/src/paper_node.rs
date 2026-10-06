@@ -745,7 +745,7 @@ fn read_claim(path: &Path) -> Result<HandoffClaimViewV2> {
     })
 }
 
-async fn stop_signal() {
+pub(crate) async fn stop_signal() {
     #[cfg(unix)]
     {
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
@@ -822,7 +822,7 @@ async fn serve(config: PaperConfig) -> Result<()> {
     native_result
 }
 
-async fn control_request(
+pub(crate) async fn control_request(
     origin: &str,
     credential_file: &Path,
     operation: &str,
