@@ -191,7 +191,7 @@ python3 /path/to/installed-bundle/manage.py source \
 
 All named parents must already be owner-managed directories. Conversion reads
 only completed selected-cache Parquet files and original definitions. It
-accepts the explicit existing `moose-fills`, `time-seventeen-v2` or `joseph-books`
+accepts the explicit `moose-fills`, `time-seventeen-v2`, `sii-order-filled` or `joseph-books`
 schema and reuses the native row decoder. A format label or Parquet envelope is
 not enough: the native decoder must successfully read the actual required
 columns and produce nonempty observations. The new selection branch can use
@@ -255,3 +255,45 @@ cargo +1.98.1 test --offline --locked -p job --features polymarket-history \
 This target must actually pass before claiming native bridge acceptance. Missing
 compiler/dependencies or insufficient disk is a reported blocker, not a pass;
 do not replace it with fake converters or a broad dependency rebuild.
+
+## SII raw OrderFilled schema
+
+`--format sii-order-filled` decodes the published raw schema of
+[SII-WANGZJ/Polymarket_data](https://huggingface.co/datasets/SII-WANGZJ/Polymarket_data).
+It requires snake_case asset fields, 32-byte little-endian uint256 amounts/fees,
+canonical transaction/order hashes, unsigned block/log identifiers and explicit
+V1/V2 contract labels. Derived `trades.parquet`, `quant.parquet` and `users.parquet`
+are not interchangeable raw inputs. Exact integers outside the pinned native
+number range fail; neither float recovery nor silent integer truncation is used.
+
+V1 contracts require original `USDC.e` instrument collateral; V2 contracts require
+`pUSD`. Exchange-counterparty taker summaries are excluded, self trades retained,
+and aggressor side left unknown. Raw per-fill fees are not a historical fee
+schedule and do not supply the missing original instrument rules. No prices are
+normalized to the YES outcome.
+
+The native ID remains `137_block_log`, within Nautilus's 36-character limit.
+The [source collector](https://github.com/SII-WANGZJ/Polymarket_data/blob/188eee28f09ba83d79c125bfb367f72ac93962c4/polymarket/fetchers/rpc.py)
+preserves `eth_getLogs.logIndex`, a block-global index. The adapter independently
+checks original `(transaction_hash, log_index)` identity and rejects conflicting
+block mappings or records. `source_metadata.sii_event_identities` retains each
+selected native ID's transaction hash, block, log index and contract. An order
+hash is not a unique fill key. Original file evidence remains detached.
+
+Acquisition is still whole-file. This adapter does not add remote row-group
+filtering or make the 127.2 GB monolithic raw file a small download. Prefer a
+licensed, fixed, source-preserving small raw partition when available. A
+re-encoded row-group extract must retain its actual derived provenance and must
+not be represented as a byte-identical source file or forged HF selection.
+The acquisition byte budget remains mandatory; do not raise it simply to test
+compatibility. The `sii-order-filled` decoder also supports the existing explicit
+legacy snapshot path when an original source snapshot already exists.
+
+Vendor event timestamps remain UNVERIFIED event-time proxies. The public
+collector revision includes a fallback timestamp-estimation path; its existence
+does not prove which values in a later export used that path. Latest Gamma
+market state, export time, on-chain fields and successful decoding do not prove
+historical membership, definition availability, fee schedules, settlement or PIT.
+Current native tests use clearly synthetic records encoded as genuine Parquet;
+real SII row-group decoding and catalog/Runtime registration still need separate
+source evidence and acceptance.

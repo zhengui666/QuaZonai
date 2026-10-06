@@ -36,6 +36,9 @@ pub mod capture;
 #[path = "v2.rs"]
 mod v2;
 
+#[path = "sii.rs"]
+mod sii;
+
 #[path = "chain.rs"]
 pub mod chain;
 
@@ -47,6 +50,8 @@ mod hf_selection;
 pub enum Format {
     /// Envio v1 OrderFilled; exclude exchange-counterparty taker summaries.
     MooseFills,
+    /// SII-WANGZJ raw snake_case OrderFilled, with exact little-endian uint256 amounts.
+    SiiOrderFilled,
     /// TimeSeventeen v2 normalized amounts, with exact six-decimal recovery.
     TimeSeventeenV2,
     /// Joseph3222 minute-END full-book snapshots, not a continuous event feed.
@@ -563,8 +568,10 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
     );
     if let Some(interval) = args.bar_seconds {
         ensure!(
-            matches!(args.format, Format::MooseFills | Format::TimeSeventeenV2)
-                && interval > 0
+            matches!(
+                args.format,
+                Format::MooseFills | Format::TimeSeventeenV2 | Format::SiiOrderFilled
+            ) && interval > 0
                 && interval <= 86400
                 && args.start_seconds.is_multiple_of(u64::from(interval))
                 && args.end_seconds.is_multiple_of(u64::from(interval)),
@@ -645,10 +652,13 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
     };
     let mut quality = Quality::default();
     let mut identities = BTreeMap::new();
+    let mut sii_events = BTreeMap::new();
+    let mut sii_transaction_logs = BTreeMap::new();
     for file in &files {
         let relative = file.strip_prefix(&root)?.to_string_lossy();
         let prefix = match args.format {
             Format::MooseFills => "order_filled/",
+            Format::SiiOrderFilled => "orderfilled",
             Format::TimeSeventeenV2 => "OrderFilled/",
             Format::JosephBooks => "orderbook_1min/",
         };
@@ -666,24 +676,32 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
             let row = row?;
             quality.scanned_rows += 1;
             let label = match args.format {
-                Format::MooseFills | Format::TimeSeventeenV2 => "timestamp",
+                Format::MooseFills | Format::TimeSeventeenV2 | Format::SiiOrderFilled => {
+                    "timestamp"
+                }
                 Format::JosephBooks => "minute_ts",
             };
             let label_at = seconds(&row, label)?;
             let at = match args.format {
-                Format::MooseFills | Format::TimeSeventeenV2 => label_at,
+                Format::MooseFills | Format::TimeSeventeenV2 | Format::SiiOrderFilled => label_at,
                 Format::JosephBooks => label_at.checked_add(60).context("TIMESTAMP_RANGE")?,
             };
             if at < args.start_seconds || at >= args.end_seconds {
                 continue;
             }
             let (identity, signature) = match args.format {
-                Format::MooseFills | Format::TimeSeventeenV2 => {
+                Format::MooseFills | Format::TimeSeventeenV2 | Format::SiiOrderFilled => {
                     let mut row_quality = Quality::default();
+                    let mut sii_event = None;
                     let parsed = match args.format {
                         Format::TimeSeventeenV2 => {
                             v2::fill(&row, &by_token, &mut row_quality, chain.as_ref())?
                         }
+                        Format::SiiOrderFilled => sii::fill(&row, &by_token, &mut row_quality)?
+                            .map(|(trade, event)| {
+                                sii_event = Some(event);
+                                trade
+                            }),
                         _ => fill(&row, &by_token, &mut row_quality)?,
                     };
                     let Some(trade) = parsed else {
@@ -697,6 +715,14 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
                         ensure!(previous == &signature, "CONFLICTING_SOURCE_EVENT");
                         quality.duplicate_rows += 1;
                         continue;
+                    }
+                    if let Some(event) = sii_event {
+                        let key = (event.transaction_hash.clone(), event.log_index);
+                        ensure!(
+                            sii_transaction_logs.insert(key, identity.clone()).is_none(),
+                            "CONFLICTING_SII_TRANSACTION_LOG"
+                        );
+                        sii_events.insert(identity.clone(), event);
                     }
                     quality.rounded_trade_prices += row_quality.rounded_trade_prices;
                     quality.self_trades += row_quality.self_trades;
@@ -775,10 +801,15 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
         "settlement": "Not inferred from state tables, redemption times, end dates or last prices.",
         "book_semantics": "Minute-end snapshots, sequence unknown (0); missing or one-sided books never create tradable zero quotes.",
         "trade_semantics": match args.format {
+            Format::SiiOrderFilled => "SII raw v1/v2 OrderFilled. Original 32-byte little-endian uint256 amounts; collateral follows the explicit contract family. Original transaction/log identity retained and checked independently of native chain/block/log IDs. Exchange-counterparty summaries excluded, self trades retained, aggressor unknown. Raw per-fill fees do not establish a historical fee schedule. Vendor timestamps remain unverified event-time proxies.",
             Format::TimeSeventeenV2 => "TimeSeventeen v2 normalized float64 amounts, pUSD collateral. Optional matching raw Polygon logs supply original integers, contract and transaction identity; otherwise only unique exact six-decimal recovery is accepted. Exchange-counterparty summaries excluded; self trades retained; aggressor unknown; price rounding counted.",
             _ => "v1 USDC.e cash/token OrderFilled, excluding exchange-counterparty summaries; self trades retained; aggressor unknown; price rounding counted.",
         },
     });
+    if args.format == Format::SiiOrderFilled {
+        archive.source_metadata["sii_event_identities"] =
+            serde_json::to_value(sii_events.into_values().collect::<Vec<_>>())?;
+    }
     if let Some(snapshot) = snapshot {
         archive.source_metadata["snapshot"] = serde_json::to_value(snapshot)?;
         archive.source_metadata["instruments_sha256"] = digest(&args.instruments)?.into();
@@ -854,6 +885,7 @@ mod tests {
     fn fixture_for(root: &Path, rows: &[Row], format: Format) -> Arguments {
         let relative = match format {
             Format::MooseFills => "order_filled/year=2022/month=11.parquet",
+            Format::SiiOrderFilled => "orderfilled.parquet",
             Format::TimeSeventeenV2 => "OrderFilled/2026-08-09.parquet",
             Format::JosephBooks => "orderbook_1min/date=2026-05-01/data_0.parquet",
         };

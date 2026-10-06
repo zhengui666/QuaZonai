@@ -26,7 +26,7 @@ import snapshot
 
 MAX_REPORT_BYTES = 1024 * 1024
 MAX_EVIDENCE_BYTES = 128 * 1024 * 1024
-ARCHIVE_FORMATS = ("moose-fills", "time-seventeen-v2", "joseph-books")
+ARCHIVE_FORMATS = ("moose-fills", "time-seventeen-v2", "sii-order-filled", "joseph-books")
 
 
 @dataclass(frozen=True)
@@ -632,7 +632,7 @@ def hf_publication_clock(metadata, report, evidence):
 def history_publication(plugin_id, report, evidence, *, declaration=None):
     metadata = evidence.get("source_metadata")
     formats = ("lokima-dual-capture",) if plugin_id == "polymarket-capture" else (
-        "moose-fills", "time-seventeen-v2")
+        "moose-fills", "time-seventeen-v2", "sii-order-filled")
     if (plugin_id not in ("polymarket-capture", "polymarket-archive", "hf-dataset")
             or not isinstance(metadata, dict) or metadata.get("format") not in formats
             or not isinstance(evidence.get("bars"), list) or len(evidence["bars"]) != report["bars"]
@@ -803,9 +803,9 @@ PLUGINS["polymarket-capture"] = source_plugin("polymarket-capture", "lokima-dual
 PLUGINS["polymarket-archive"] = source_plugin("polymarket-archive", list(ARCHIVE_FORMATS),
     snapshot_capabilities() | {"convert": Capability(history_options, history_convert),
                                "prepare": Capability(prepare_options, partial(prepare_source, "polymarket-archive"))},
-    ["Only the three listed existing native formats; original native definitions are required",
+    ["Only the four listed explicit native formats; original native definitions are required",
      "Archive conversion preserves each native adapter's existing semantics and limitations",
-     "Preparation requires existing nonempty BAR output from moose-fills or time-seventeen-v2; joseph-books is unsupported"],
+     "Preparation requires nonempty BAR output from moose-fills, time-seventeen-v2 or sii-order-filled; joseph-books is unsupported"],
     validate_native=partial(history_publication, "polymarket-archive"))
 PLUGINS[binance_vision.PROVIDER["id"]] = source_plugin(binance_vision.PROVIDER["id"], binance_vision.SCHEMA,
     {**{operation: Capability(partial(archive_options, operation=operation), partial(archive_operation, operation))

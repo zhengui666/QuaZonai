@@ -54,8 +54,8 @@ python3 -B runtimes/data/source_plugins.py prepare --help
   `polymarket-history capture`, specifically the supported lokima format with
   original Gamma responses and both recorded CLOB feeds
 - `polymarket-archive`: the snapshot lifecycle plus existing `archive` conversion
-  for `moose-fills`, `time-seventeen-v2`, and `joseph-books`. Preparation requires
-  nonempty native BAR output from `moose-fills` or `time-seventeen-v2`;
+  for `moose-fills`, `time-seventeen-v2`, `sii-order-filled`, and `joseph-books`. Preparation requires
+  nonempty native BAR output from `moose-fills`, `time-seventeen-v2` or `sii-order-filled`;
   `joseph-books` is not supported for preparation
 - `binance-vision-spot-klines`: offline plan, inspect, freeze, verify, convert and
   prepare for an already supplied single-symbol/day spot archive. No download or
