@@ -62,11 +62,45 @@ pub(crate) fn forecast_market(
     request: &NativeForecastRequestV1,
     module: &[u8],
 ) -> Result<NativeForecastResultV1> {
+    let (consumed_fuel, points) = forecast_points(market, request, module, false)?;
+    Ok(NativeForecastResultV1 {
+        schema_version: SchemaV1,
+        native_versions: BTreeMap::from([
+            ("nautilus-indicators".into(), "0.63.0".into()),
+            ("nautilus-persistence".into(), "0.63.0".into()),
+            ("wasmi".into(), "2.0.0".into()),
+        ]),
+        consumed_fuel,
+        points,
+    })
+}
+
+/// Portfolio preparation only consumes the last point for each instrument.
+/// Execute and validate the whole prefix, retaining no unused historical output.
+/// The returned fuel and points are internal inputs, not a complete forecast report.
+pub(crate) fn forecast_latest_market(
+    market: &NativeMarketData,
+    request: &NativeForecastRequestV1,
+    module: &[u8],
+) -> Result<(DbCounter, Vec<NativeForecastPointV1>)> {
+    forecast_points(market, request, module, true)
+}
+
+fn forecast_points(
+    market: &NativeMarketData,
+    request: &NativeForecastRequestV1,
+    module: &[u8],
+    latest_only: bool,
+) -> Result<(DbCounter, Vec<NativeForecastPointV1>)> {
     domain::execution::forecast_request(request)?;
     let parameters = &request.parameters;
     let module = SignalModule::new(module)?;
     let mut remaining = parameters.total_fuel.get();
-    let mut points = Vec::with_capacity(market.rows);
+    let mut points = Vec::with_capacity(if latest_only {
+        market.series.len()
+    } else {
+        market.rows
+    });
     let mut prediction_count = 0_u64;
     for series in &market.series {
         ensure!(
@@ -99,19 +133,28 @@ pub(crate) fn forecast_market(
             });
             let label = future.map(|future| future.close.as_f64() / close - 1.0);
             ensure!(label.is_none_or(f64::is_finite), "FORECAST_LABEL_NONFINITE");
+            // Keep every original conversion and label check, including rows
+            // which a portfolio does not retain. A bad prefix must still fail.
+            let ordinal = u32::try_from(index)?;
+            let event_ns = counter(bar.ts_event.as_u64())?;
+            let available_ns = counter(bar.ts_init.as_u64())?;
+            let label_available_ns = future
+                .map(|future| counter(future.ts_init.as_u64()))
+                .transpose()?;
+            if latest_only && index + 1 != series.bars.len() {
+                continue;
+            }
             points.push(NativeForecastPointV1 {
                 instrument_id: instrument_id.clone(),
-                ordinal: u32::try_from(index)?,
-                event_ns: counter(bar.ts_event.as_u64())?,
-                available_ns: counter(bar.ts_init.as_u64())?,
+                ordinal,
+                event_ns,
+                available_ns,
                 forecast: prediction,
                 forecast_reason: prediction
                     .is_none()
                     .then_some(ForecastMissingReason::IndicatorWarmup),
                 label_return: label,
-                label_available_ns: future
-                    .map(|future| counter(future.ts_init.as_u64()))
-                    .transpose()?,
+                label_available_ns,
                 label_reason: if prediction.is_none() {
                     Some(ForecastMissingReason::IndicatorWarmup)
                 } else {
@@ -125,14 +168,9 @@ pub(crate) fn forecast_market(
         remaining = model.remaining_fuel();
     }
     ensure!(prediction_count > 0, "FORECAST_NO_PREDICTIONS");
-    Ok(NativeForecastResultV1 {
-        schema_version: SchemaV1,
-        native_versions: BTreeMap::from([
-            ("nautilus-indicators".into(), "0.63.0".into()),
-            ("nautilus-persistence".into(), "0.63.0".into()),
-            ("wasmi".into(), "2.0.0".into()),
-        ]),
-        consumed_fuel: counter(parameters.total_fuel.get() - remaining)?,
-        points,
-    })
+    Ok((counter(parameters.total_fuel.get() - remaining)?, points))
 }
+
+#[cfg(test)]
+#[path = "forecast_tests.rs"]
+mod tests;

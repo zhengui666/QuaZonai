@@ -197,7 +197,7 @@ pub(crate) fn prepare(
             .calibration_artifact_id
             .map(|id| read(id).and_then(|bytes| Ok(serde_json::from_slice(&bytes)?)))
             .transpose()?;
-        let result = crate::forecast::forecast_market(
+        let (consumed_fuel, points) = crate::forecast::forecast_latest_market(
             market,
             &NativeForecastRequestV1 {
                 schema_version: SchemaV1,
@@ -207,13 +207,12 @@ pub(crate) fn prepare(
             &module,
         )?;
         consumed = consumed
-            .checked_add(result.consumed_fuel.get())
+            .checked_add(consumed_fuel.get())
             .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))?;
         let mut forecasts = Vec::new();
         let mut available = 0;
         for (instrument, bar_type) in instruments.iter().zip(&selection.bar_types) {
-            let point = result
-                .points
+            let point = points
                 .iter()
                 .rev()
                 .find(|p| &p.instrument_id == instrument)
