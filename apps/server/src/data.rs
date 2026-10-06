@@ -21,6 +21,8 @@ use contracts::{
 };
 use store::{data_registration::RegistrationPreparation, StoreError};
 
+pub mod recorded_features;
+
 #[utoipa::path(post,path="/api/v2/data/validate",tag="Data administration",request_body=DataValidateRequest,params(("Idempotency-Key"=String,Header)),responses((status=202,body=CommandResult<contracts::runs::RunSnapshotV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn validate(
     State(state): State<AppState>,

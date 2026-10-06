@@ -419,6 +419,10 @@ pub enum Project {
 }
 #[derive(Subcommand)]
 pub enum Brief {
+    /// Read the original frozen Brief and execution context without replaying a write.
+    ExecutionContext {
+        id: String,
+    },
     List {
         project_id: String,
         #[command(flatten)]
@@ -479,6 +483,8 @@ pub enum Data {
     Revision(Revision),
     #[command(subcommand)]
     Universe(Universe),
+    #[command(subcommand)]
+    Features(RecordedFeatures),
 }
 #[derive(Subcommand)]
 pub enum Source {
@@ -520,6 +526,17 @@ pub enum Revision {
         id: String,
     },
     Register,
+}
+#[derive(Subcommand)]
+pub enum RecordedFeatures {
+    /// Read registered original feature parts for one project and Dataset.
+    List {
+        dataset_revision_id: String,
+        #[arg(long)]
+        project_id: String,
+    },
+    /// Register original recorded feature bytes against immutable native Dataset metadata.
+    Register { dataset_revision_id: String },
 }
 #[derive(Subcommand)]
 pub enum Universe {
@@ -1320,6 +1337,11 @@ impl Command {
                 ),
             },
             Self::Brief(command) => match command {
+                Brief::ExecutionContext { id } => Request::get::<FrozenBriefV1>(action(
+                    "/api/v2/briefs",
+                    id,
+                    "execution-context",
+                )?),
                 Brief::List { project_id, page } => Request::get::<Page<BriefView>>(action(
                     "/api/v2/projects",
                     project_id,
@@ -1394,6 +1416,43 @@ impl Command {
                 DataValidateRequest,
                 CommandResult<RunSnapshotV1>,
             >(POST, "/api/v2/data/validate", 202, true)?,
+            Self::Data(Data::Features(command)) => match command {
+                RecordedFeatures::List {
+                    dataset_revision_id,
+                    project_id,
+                } => {
+                    let mut request = Request::get::<RecordedFeatureListV1>(action(
+                        "/api/v2/data/revisions",
+                        dataset_revision_id,
+                        "features",
+                    )?);
+                    request
+                        .query
+                        .push(("project_id".into(), id(project_id)?.to_string()));
+                    request
+                }
+                RecordedFeatures::Register {
+                    dataset_revision_id,
+                } => {
+                    let dataset = id(dataset_revision_id)?;
+                    let request = Request::write::<
+                        RecordedFeatureRegisterV1,
+                        CommandResult<RecordedFeatureViewV1>,
+                    >(
+                        POST,
+                        format!("/api/v2/data/revisions/{dataset}/features"),
+                        201,
+                        true,
+                    )?;
+                    let body: RecordedFeatureRegisterV1 =
+                        serde_json::from_slice(request.body.as_deref().ok_or(Failure::Input)?)
+                            .map_err(|_| Failure::Input)?;
+                    if body.dataset_revision_id != dataset {
+                        return Err(Failure::Input);
+                    }
+                    request
+                }
+            },
             Self::Data(Data::Source(command)) => {
                 match command {
                     Source::List(page) => {
@@ -1864,5 +1923,121 @@ impl Command {
             )?,
         };
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod brief_read_tests {
+    use super::*;
+    use clap::Parser;
+    use serde_json::{json, Value};
+
+    const BRIEF: &str = "018fc823-8e40-7000-8000-000000000001";
+    const PROJECT: &str = "018fc823-8e40-7000-8000-000000000002";
+
+    #[derive(Parser)]
+    struct Arguments {
+        #[command(subcommand)]
+        command: Command,
+    }
+
+    fn read(command: &str, id: &str) -> Result<Request> {
+        Arguments::try_parse_from(["client", "brief", command, id])
+            .map_err(|_| Failure::Input)?
+            .command
+            .request()
+    }
+
+    fn frozen() -> Value {
+        let create: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/contracts/research-brief.json"
+        )))
+        .unwrap();
+        json!({
+            "schema_version": 1,
+            "brief": {
+                "id": BRIEF, "project_id": PROJECT, "version": 1,
+                "revision": "9007199254740993", "state": "FROZEN",
+                "content": create["content"], "bindings": create["bindings"],
+                "supersedes_id": null,
+                "frozen_at": "2026-09-01T00:00:00Z",
+                "created_at": "2026-08-31T00:00:00Z",
+                "updated_at": "2026-09-01T00:00:00Z"
+            },
+            "execution_context": {
+                "schema_version": 1,
+                "runtime_id": "018fc823-8e40-7000-8000-000000000003",
+                "runtime_revision": "9007199254740993",
+                "discovery_input_set_id": "018fc823-8e40-7000-8000-000000000004",
+                "validation_input_set_id": "018fc823-8e40-7000-8000-000000000005",
+                "sealed_input_set_id": "018fc823-8e40-7000-8000-000000000006"
+            }
+        })
+    }
+
+    #[test]
+    fn execution_context_is_an_existing_read_only_route() {
+        let request = read("execution-context", BRIEF).unwrap();
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(
+            request.route,
+            format!("/api/v2/briefs/{BRIEF}/execution-context")
+        );
+        assert_eq!(request.status, 200);
+        assert!(!request.operator);
+        assert!(!request.requires_idempotency_key());
+        assert!(request.query.is_empty());
+        assert!(request.body.is_none());
+        assert!(read("execution-context", "not-a-uuid").is_err());
+    }
+
+    #[test]
+    fn execution_context_preserves_original_frozen_ids_and_revisions() {
+        let request = read("execution-context", BRIEF).unwrap();
+        let Output::Json(decode) = request.output else {
+            panic!("JSON response required")
+        };
+        let response = frozen();
+        assert_eq!(
+            decode(&serde_json::to_vec(&response).unwrap()).unwrap(),
+            response
+        );
+        let mut missing = response.clone();
+        missing.as_object_mut().unwrap().remove("execution_context");
+        assert!(matches!(
+            decode(&serde_json::to_vec(&missing).unwrap()),
+            Err(Failure::Contract)
+        ));
+        let mut invalid = response.clone();
+        invalid["execution_context"]["runtime_revision"] = json!(9007199254740993_u64);
+        assert!(matches!(
+            decode(&serde_json::to_vec(&invalid).unwrap()),
+            Err(Failure::Contract)
+        ));
+        invalid = response;
+        invalid["execution_context"]["native_path"] = json!("/untrusted");
+        assert!(matches!(
+            decode(&serde_json::to_vec(&invalid).unwrap()),
+            Err(Failure::Contract)
+        ));
+    }
+
+    #[test]
+    fn brief_show_keeps_its_original_view_contract() {
+        let request = read("show", BRIEF).unwrap();
+        assert_eq!(request.route, format!("/api/v2/briefs/{BRIEF}"));
+        let Output::Json(decode) = request.output else {
+            panic!("JSON response required")
+        };
+        let response = frozen();
+        assert_eq!(
+            decode(&serde_json::to_vec(&response["brief"]).unwrap()).unwrap(),
+            response["brief"]
+        );
+        assert!(matches!(
+            decode(&serde_json::to_vec(&response).unwrap()),
+            Err(Failure::Contract)
+        ));
     }
 }

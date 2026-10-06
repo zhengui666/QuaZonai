@@ -467,6 +467,12 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             get(data::revisions).post(data::register),
         )
         .route("/api/v2/data/revisions/{id}", get(data::revision))
+        .route(
+            "/api/v2/data/revisions/{id}/features",
+            get(data::recorded_features::list)
+                .post(data::recorded_features::register)
+                .layer(DefaultBodyLimit::max(contracts::artifacts::MAX_UPLOAD_BODY_BYTES)),
+        )
         .route("/api/v2/data/universes", get(data::universes))
         .route("/api/v2/data/universes/{id}", get(data::universe))
         .route("/api/v2/input-sets/{id}", get(research::input_set))
@@ -796,6 +802,7 @@ codex_profiles::account::login_operation,codex_profiles::account::latest_operati
 data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
 data::revisions,data::revision,data::register,data::universes,data::universe,data::validate,
+data::recorded_features::list,data::recorded_features::register,
 artifacts::list,artifacts::get,artifacts::create,artifacts::content,artifacts::agent_evaluation),components(schemas(error::Problem)),tags((name="Authentication",description="Password browser sessions and revocable CLI devices")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
