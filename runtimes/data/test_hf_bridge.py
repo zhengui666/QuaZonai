@@ -113,6 +113,20 @@ class HfBridgeTest(unittest.TestCase):
         self.assertFalse(result["admission"]["research_qualified"])
         self.assertEqual(self.source_file.read_bytes(), self.original_source_bytes)
 
+    def test_sii_raw_format_dispatches_and_prepares_without_network_hashes_or_pit_claim(self):
+        self.args.format = "sii-order-filled"
+        with patch.object(plugins.subprocess, "run", side_effect=self.runner()) as run, \
+                patch.object(snapshot.urllib.request, "urlopen") as network, \
+                patch.object(plugins.hashlib, "sha256", side_effect=AssertionError("must not hash")):
+            result = plugins.hf_history_convert(self.args)
+        self.assertEqual(run.call_args.args[0][run.call_args.args[0].index("--format") + 1], "sii-order-filled")
+        self.assertEqual(result["native_report"]["historical_availability"], "UNVERIFIED")
+        network.assert_not_called()
+        self.args.output = self.root / "second native"
+        args, runner = self.prepare_fixture()
+        with patch.object(plugins.subprocess, "run", side_effect=runner):
+            self.assertEqual(plugins.prepare_source("hf-dataset", args)["status"], "CATALOG_PREPARED")
+
     def test_native_window_only_narrows_requested_half_open_dates(self):
         hf_dataset.native_window(self.manifest, START, START + 2 * 86400)
         hf_dataset.native_window(self.manifest, START + 60, END)
