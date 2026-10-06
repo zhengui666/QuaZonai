@@ -121,6 +121,18 @@ pub struct PolymarketStreamingPaper {
 }
 
 impl PolymarketStreamingPaper {
+    pub(crate) fn session_id(&self) -> String {
+        self.engine.instance_id().to_string()
+    }
+
+    pub(crate) fn consumed_targets(&self) -> usize {
+        self.replay.borrow().consumed
+    }
+
+    pub(crate) fn has_started(&self) -> bool {
+        self.native_started
+    }
+
     /// `account_start`, settings and target must come from the same original
     /// accepted Q package. The outer consumer owns that existing binding check.
     pub fn new(

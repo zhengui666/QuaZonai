@@ -22,6 +22,8 @@ pub mod polymarket_data_probe;
 #[cfg(feature = "native-paper")]
 pub mod polymarket_paper_host;
 #[cfg(feature = "native-paper")]
+pub mod polymarket_paper_service;
+#[cfg(feature = "native-paper")]
 pub mod polymarket_streaming_paper;
 pub mod portfolio;
 mod prediction;
