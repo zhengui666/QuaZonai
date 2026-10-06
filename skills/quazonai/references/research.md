@@ -49,6 +49,29 @@ Inside a [bound Mission](mission.md), artifact submission takes a workspace-rela
 
 CODE, PARAMETERS and REPORT are the permitted research kinds. Content is nonblank UTF-8, contains no NUL and is at most 2 MiB. CODE contains source text. PARAMETERS and REPORT contain a JSON object with numeric `schema_version: 1`, for example `{"schema_version":1,"text":"research notes"}`. Raw Markdown, arrays and string-valued schema versions are invalid. These content rules apply to both CLI content strings and Mission files.
 
+For scientific experiments, the generic JSON-object rule above is only the
+artifact storage envelope. Before writing a parameter artifact, discover its
+inner contract separately:
+
+```sh
+quazonai openapi --domain --schema ExperimentEvaluationParametersV1
+quazonai openapi --domain --schema FeatureObservationsV1
+```
+
+`ExperimentEvaluationParametersV1` is the experiment's parameter document;
+`FeatureObservationsV1` describes a feature-observation document. Keep each as
+JSON encoded once in the outer `ArtifactCreate.content` string, not as extra
+outer request fields. Follow the selected contract's transitive schemas for
+settings, feature definitions, nullable values and decimal-string counters.
+The installed contract describes wire structure, not approved scientific
+choices or server eligibility. Do not infer model ABI or code requirements
+from a JSON schema; report an unavailable contract or unsupported workflow.
+
+For native recorded feature registration, discover `RecordedFeatureRegisterV1`
+from the default HTTP scope and preserve the original attachment bytes. Schema
+discovery never authorizes synthesizing or relabeling feature observations;
+self-authored PARAMETERS uploads cannot establish recorded-source provenance.
+
 ## Preserve original recorded feature provenance
 
 `brief execution-context BRIEF_ID` reads the existing `FrozenBriefV1`; it does not

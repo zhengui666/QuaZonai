@@ -21,8 +21,11 @@ struct Cli {
 enum Command {
     /// Use the authenticated HTTP API with shared native contracts.
     Client(Box<client::Arguments>),
-    /// Inspect the API contracts bundled with this CLI release, without a server connection.
+    /// Inspect installed native contracts offline (HTTP API by default).
     Openapi {
+        /// Inspect domain DTOs, including scientific artifact content, instead of HTTP contracts.
+        #[arg(long)]
+        domain: bool,
         #[arg(long)]
         schema: Option<String>,
         #[arg(long, conflicts_with = "schema")]
@@ -42,21 +45,27 @@ async fn run(cli: Cli) -> client::Result<()> {
     match cli.command {
         Command::Client(arguments) => client::run(*arguments).await,
         Command::Openapi {
+            domain,
             schema,
             list_schemas,
         } => {
-            use std::io::Write;
+            use std::{borrow::Cow, io::Write};
+            let document = if domain {
+                Cow::Owned(contracts::openapi_json().map_err(|_| client::Failure::Contract)?)
+            } else {
+                Cow::Borrowed(OPENAPI)
+            };
             let mut output = std::io::stdout().lock();
             if schema.is_some() || list_schemas {
                 serde_json::to_writer_pretty(
                     &mut output,
-                    &agent_schema::describe(OPENAPI, schema.as_deref())?,
+                    &agent_schema::describe(&document, schema.as_deref())?,
                 )
                 .map_err(|_| client::Failure::Output)?;
                 writeln!(output).map_err(|_| client::Failure::Output)?;
             } else {
                 output
-                    .write_all(OPENAPI.as_bytes())
+                    .write_all(document.as_bytes())
                     .map_err(|_| client::Failure::Output)?;
             }
             output.flush().map_err(|_| client::Failure::Output)
