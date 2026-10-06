@@ -41,7 +41,20 @@ def inferred_format(path):
     return {"ndjson": "jsonl", "gz": "gzip"}.get(suffix, suffix if suffix in FORMATS else "opaque")
 
 
-def partition_files(index, available, markets, start_date, end_date):
+def partition_markets(item):
+    """An explicit unknown mapping is never an empty or all-market universe."""
+    values = item.get("markets")
+    unknown = "market_mapping" in item
+    if (not isinstance(values, list)
+            or any(not isinstance(m, str) or not m.strip() for m in values)
+            or len(set(values)) != len(values)
+            or (unknown and (item["market_mapping"] != "UNKNOWN" or values))
+            or (not unknown and not values)):
+        raise ValueError("invalid partition market mapping")
+    return values, unknown
+
+
+def partition_files(index, available, markets, start_date, end_date, includes=None):
     if not isinstance(index, dict) or index.get("schema") != INDEX_SCHEMA:
         raise ValueError("unsupported Hugging Face partition index")
     entries = index.get("files")
@@ -52,21 +65,26 @@ def partition_files(index, available, markets, start_date, end_date):
         if not isinstance(item, dict):
             raise ValueError("invalid partition index entry")
         path = snapshot.checked_path(item.get("path"))
-        source_markets = item.get("markets")
-        if (path in seen or path not in available or not isinstance(source_markets, list)
-                or not source_markets or any(not isinstance(m, str) or not m.strip() for m in source_markets)
-                or len(set(source_markets)) != len(source_markets) or item.get("format") not in FORMATS):
+        source_markets, unknown = partition_markets(item)
+        if path in seen or path not in available or item.get("format") not in FORMATS:
             raise ValueError("partition index does not describe an available file")
         seen.add(path)
         indexed_markets.update(source_markets)
         start, end = date(item.get("start_date")), date(item.get("end_date"))
         if start >= end:
             raise ValueError("partition index requires start_date < end_date")
-        if markets and not set(markets).intersection(source_markets):
-            continue
         if start_date is not None and (end <= start_date or start >= end_date):
             continue
+        if includes and not any(fnmatch.fnmatchcase(path, pattern) for pattern in includes):
+            continue
+        if markets:
+            if unknown:
+                raise ValueError("market selection requires known membership for every candidate partition")
+            if not set(markets).intersection(source_markets):
+                continue
         selected[path] = {key: item[key] for key in ("markets", "start_date", "end_date", "format")}
+        if unknown:
+            selected[path]["market_mapping"] = "UNKNOWN"
     if set(markets) - indexed_markets:
         raise ValueError("a requested market is absent from the partition index")
     return selected
@@ -104,7 +122,7 @@ def plan(dataset, includes=None, revision=None, max_bytes=snapshot.DEFAULT_MAX_B
         body = snapshot.fetch_bytes(url, MAX_INDEX_BYTES)
         if len(body) != info["size"]:
             raise ValueError("partition index byte size differs from repository metadata")
-        partitions = partition_files(providers.read_json(body), available, markets, start, end)
+        partitions = partition_files(providers.read_json(body), available, markets, start, end, includes)
         selected = set(partitions)
         index_record = {"path": manifest, "size": len(body), "url": url}
     else:
@@ -262,10 +280,8 @@ def validate_plan(selection):
         if index is not None:
             if not isinstance(partition, dict):
                 raise ValueError("selected file has no original partition mapping")
-            source_markets = partition.get("markets")
-            if (not isinstance(source_markets, list) or not source_markets
-                    or any(not isinstance(m, str) or not m.strip() for m in source_markets)
-                    or len(set(source_markets)) != len(source_markets) or partition.get("format") != item["format"]):
+            source_markets, unknown = partition_markets(partition)
+            if partition.get("format") != item["format"] or (unknown and markets):
                 raise ValueError("invalid original partition market/format mapping")
             a, b = date(partition.get("start_date")), date(partition.get("end_date"))
             if (a >= b or (markets and not set(markets).intersection(source_markets))

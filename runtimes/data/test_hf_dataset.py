@@ -141,6 +141,72 @@ class HfDatasetTest(unittest.TestCase):
                 hf_dataset.plan(DATASET, **options)
         self.assertEqual(self.requests, [])
 
+    def unknown_first_partition(self):
+        self.index["files"][0].update(markets=[], market_mapping="UNKNOWN")
+        self.sync_index()
+
+    def test_unknown_market_date_selection_preserves_mapping_through_cache_and_verify(self):
+        self.unknown_first_partition()
+        selection = hf_dataset.plan(DATASET, manifest="partitions.json", includes=["data/a.parquet"],
+                                    start_date="2026-09-01", end_date="2026-09-02")
+        partition = selection["files"][0]["partition"]
+        self.assertEqual(partition["market_mapping"], "UNKNOWN")
+        self.assertEqual(partition["markets"], [])
+        self.assertEqual(selection["coverage"], "NOT_ASSERTED")
+        result = hf_dataset.download(selection, self.cache, self.output)
+        self.assertEqual(result["files"][0]["partition"], partition)
+        self.assertEqual(hf_dataset.verify(self.output / "selection.json")["files"], 1)
+        reused = hf_dataset.download(selection, self.cache, self.root / "reused")
+        self.assertEqual(reused["cached_files"], 1)
+        self.assertEqual(len(self.data_requests()), 1)
+        with self.assertRaisesRegex(ValueError, "exceeding"):
+            hf_dataset.plan(DATASET, manifest="partitions.json", includes=["data/a.parquet"], max_bytes=1)
+
+    def test_unknown_market_partition_never_matches_market_or_all_selectors(self):
+        self.unknown_first_partition()
+        for market in ("market-a", "ALL", "*", "UNKNOWN"):
+            with self.subTest(market=market), self.assertRaisesRegex(ValueError, "known membership"):
+                hf_dataset.plan(DATASET, manifest="partitions.json", markets=[market],
+                                start_date="2026-09-01", end_date="2026-09-02")
+        self.assertEqual(self.data_requests(), [])
+
+    def test_unknown_mapping_must_be_explicit_empty_and_cannot_claim_all_markets(self):
+        original = dict(self.index["files"][0])
+        for update in ({"markets": []}, {"markets": None, "market_mapping": "UNKNOWN"},
+                       {"markets": [], "market_mapping": None}, {"markets": [], "market_mapping": "unknown"},
+                       {"markets": ["ALL"], "market_mapping": "UNKNOWN"},
+                       {"markets": ["*"], "market_mapping": "UNKNOWN"}):
+            self.index["files"][0] = {**original, **update}
+            self.sync_index()
+            with self.subTest(update=update), self.assertRaisesRegex(ValueError, "market mapping"):
+                hf_dataset.plan(DATASET, manifest="partitions.json", includes=["data/a.parquet"])
+        self.assertEqual(self.data_requests(), [])
+
+    def test_unknown_mapping_outside_date_or_include_does_not_block_known_market(self):
+        self.unknown_first_partition()
+        for options in ({"start_date": "2026-09-02", "end_date": "2026-09-03"},
+                        {"includes": ["data/b.parquet"]}):
+            selection = hf_dataset.plan(DATASET, manifest="partitions.json", markets=["market-a"], **options)
+            self.assertEqual([f["path"] for f in selection["files"]], ["data/b.parquet"])
+            hf_dataset.validate_plan(selection)
+        # A literal legacy market identifier never acquires wildcard meaning.
+        with self.assertRaisesRegex(ValueError, "absent"):
+            hf_dataset.plan(DATASET, manifest="partitions.json", markets=["ALL"], includes=["data/b.parquet"])
+
+    def test_unknown_mapping_handoff_cannot_be_changed_into_market_filter(self):
+        self.unknown_first_partition()
+        selection = hf_dataset.plan(DATASET, manifest="partitions.json", includes=["data/a.parquet"])
+        for change in ("request", "pseudo_all", "missing_marker"):
+            altered = json.loads(json.dumps(selection))
+            if change == "request":
+                altered["request"]["markets"] = ["market-a"]
+            elif change == "pseudo_all":
+                altered["files"][0]["partition"]["markets"] = ["ALL"]
+            else:
+                del altered["files"][0]["partition"]["market_mapping"]
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                hf_dataset.validate_plan(altered)
+
     def test_budget_and_missing_partition_mapping_fail_before_data_download(self):
         with self.assertRaisesRegex(ValueError, "exceeding"):
             self.plan(max_bytes=1)
@@ -417,6 +483,66 @@ class RealHttpTransportTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+
+
+class HfArchiveMetadataTest(unittest.TestCase):
+    """Replay existing 42-file evidence only; every network/data read is disabled."""
+
+    def setUp(self):
+        fixture_path = Path(__file__).with_name("fixtures") / "hf_archive_42_metadata.json"
+        self.fixture = json.loads(fixture_path.read_text())
+        self.index_body = json.dumps(self.fixture["index"]).encode()
+        self.available = {f["path"]: {"size": f["size"]} for f in self.fixture["index"]["files"]}
+        self.available["partitions.json"] = {"size": len(self.index_body)}
+        self.metadata = patch.object(snapshot, "repository_metadata", return_value=(
+            self.fixture["revision"], self.available, {"cardData": {"license": "cc-by-4.0"}}, "EVIDENCE_ONLY")).start()
+        self.index_fetch = patch.object(snapshot, "fetch_bytes", side_effect=self.read_index).start()
+        self.network = patch.object(snapshot.urllib.request, "urlopen", side_effect=AssertionError("no network allowed")).start()
+        self.addCleanup(patch.stopall)
+
+    def read_index(self, url, limit):
+        self.assertEqual(url, snapshot.repository_file_url(
+            self.fixture["repository"], self.fixture["revision"], "partitions.json"))
+        self.assertEqual(limit, hf_dataset.MAX_INDEX_BYTES)
+        return self.index_body
+
+    def plan(self, **options):
+        return hf_dataset.plan(self.fixture["repository"], revision=self.fixture["revision"],
+                               manifest="partitions.json", **options)
+
+    def test_exact_archive_inventory_can_be_date_selected_without_invented_markets(self):
+        plan = self.plan(start_date="2022-11-01", end_date="2026-10-04", max_bytes=21470666882)
+        self.assertEqual(len(plan["files"]), 42)
+        self.assertEqual(plan["total_bytes"], self.fixture["selected_original_bytes"])
+        self.assertEqual(len({f["path"] for f in plan["files"]}), 42)
+        self.assertTrue(all(f["partition"]["markets"] == [] and
+                            f["partition"]["market_mapping"] == "UNKNOWN" for f in plan["files"]))
+        self.assertEqual(plan["coverage"], "NOT_ASSERTED")
+        hf_dataset.validate_plan(plan)
+        self.network.assert_not_called()
+
+    def test_narrow_date_still_requires_entire_monthly_file_budget(self):
+        options = {"start_date": "2025-12-15", "end_date": "2025-12-16"}
+        with self.assertRaisesRegex(ValueError, "5132274521 bytes"):
+            self.plan(max_bytes=5132274520, **options)
+        plan = self.plan(max_bytes=5132274521, **options)
+        self.assertEqual([(f["path"], f["size"]) for f in plan["files"]],
+                         [("order_filled/year=2025/month=12.parquet", 5132274521)])
+        self.assertEqual(plan["files"][0]["partition"]["start_date"], "2025-12-01")
+        hf_dataset.validate_plan(plan)
+        self.network.assert_not_called()
+
+    def test_only_actual_archived_dates_or_explicit_files_are_selected(self):
+        for market in ("ANY_REAL_MARKET", "ALL", "*", "UNKNOWN"):
+            with self.subTest(market=market), self.assertRaisesRegex(ValueError, "known membership"):
+                self.plan(markets=[market], start_date="2026-10-03", end_date="2026-10-04")
+        with self.assertRaisesRegex(ValueError, "no indexed files"):
+            self.plan(start_date="2026-09-26", end_date="2026-09-27")
+        plan = self.plan(includes=["OrderFilled/2026_04_29.parquet"], max_bytes=304621469)
+        self.assertEqual(plan["total_bytes"], 304621469)
+        hf_dataset.validate_plan(plan)
+        self.network.assert_not_called()
 
 
 if __name__ == "__main__":
