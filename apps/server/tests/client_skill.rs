@@ -417,6 +417,32 @@ fn offline_schema_discovery_matches_native_export_and_retains_its_reference_clos
 }
 
 #[test]
+fn server_domain_discovery_matches_native_contracts_and_rejects_unknown_versions() {
+    let native: Value = serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
+    assert_eq!(successful(&invoke(&["openapi", "--domain"], None)), native);
+    let names = successful(&invoke(&["openapi", "--domain", "--list-schemas"], None));
+    for name in ["ExperimentEvaluationParametersV1", "FeatureObservationsV1"] {
+        assert!(names["schemas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == name));
+        let selected = successful(&invoke(&["openapi", "--domain", "--schema", name], None));
+        assert_eq!(selected["name"], name);
+        for (name, schema) in selected["components"]["schemas"].as_object().unwrap() {
+            assert_eq!(schema, &native["components"]["schemas"][name]);
+        }
+    }
+    let missing = invoke(
+        &["openapi", "--domain", "--schema", "FeatureObservationsV2"],
+        None,
+    );
+    assert!(!missing.status.success());
+    assert!(missing.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("CLI_INPUT_INVALID"));
+}
+
+#[test]
 fn skill_installs_as_a_self_contained_directory_without_contributor_dependencies() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/quazonai");
     let installed = tempfile::tempdir().unwrap();

@@ -25,7 +25,7 @@ Use the current identity and delegated authority. Owner devices need no Operator
 | Explain Alpha qualification, portfolio candidates, evaluation metrics or delivery status | [Results](references/results.md) |
 | Timeout, unknown write outcome, conflict, denial, exhausted budget or incompatible response | [Recovery](references/recovery.md) |
 
-Discover only unfamiliar fields: the exact command's `--help`, one `quazonai openapi --schema NAME`, or the selected MCP schema. Report missing capabilities; do not invent endpoints or install a replacement client.
+Discover only unfamiliar fields: the exact command's `--help`, one `quazonai openapi --schema NAME` for an HTTP request, `quazonai openapi --domain --schema NAME` for scientific artifact content, or the selected MCP schema. Report missing capabilities; do not invent endpoints or install a replacement client.
 
 ## Execute with a bounded scope
 

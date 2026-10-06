@@ -35,11 +35,15 @@ Keep these flags paired; the CLI reads the credential internally. Check `kind`, 
 quazonai openapi --list-schemas
 quazonai openapi --schema ArtifactCreate
 quazonai openapi --schema ExperimentProposalV1
+quazonai openapi --domain --list-schemas
+quazonai openapi --domain --schema ExperimentEvaluationParametersV1
 ```
 
 Discovery is offline. A selected result contains its entry `schema` and transitive `components.schemas`; honor required fields and string/number distinctions. It describes the installed Rust contracts, not live-server compatibility or authority.
 
-`quazonai openapi` exports the full document only when needed. Unknown schemas fail. Missing commands or flags require reporting the installed version/capability gap.
+`quazonai openapi` selects HTTP request/response contracts; `--domain` selects the native domain DTOs, including JSON documents stored inside artifact content. The same `--schema` and `--list-schemas` options work in either scope. Read only the selected schema; full `quazonai openapi --domain` export is available when needed.
+
+The discovery envelope's `schema_version: 1` describes discovery output. The selected DTO's own `schema_version` constraint controls its content version; preserve numeric `1` for V1 content. Names are exact and case-sensitive. Unknown or unsupported names (including unprovided V2 variants) fail; do not remove version suffixes or silently substitute another DTO. Missing commands or flags require reporting the installed version/capability gap.
 
 ## Optional local preview
 

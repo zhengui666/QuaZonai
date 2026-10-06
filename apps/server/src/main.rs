@@ -176,8 +176,11 @@ enum Command {
         #[arg(long, env = "STATE_DIR", default_value = "var")]
         state_dir: PathBuf,
     },
-    /// Export native-generated HTTP contracts to stdout without connecting to a DB.
+    /// Export native-generated contracts offline (HTTP API by default).
     Openapi {
+        /// Inspect domain DTOs, including scientific artifact content, instead of HTTP contracts.
+        #[arg(long)]
+        domain: bool,
         /// Select one native DTO and its complete schema dependency closure.
         #[arg(long)]
         schema: Option<String>,
@@ -409,16 +412,19 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Command::Openapi {
+            domain,
             schema,
             list_schemas,
         } => {
-            if schema.is_none() && !list_schemas {
-                print!("{}", server::openapi_json()?);
+            let document = if domain {
+                contracts::openapi_json()?
             } else {
-                println!(
-                    "{}",
-                    agent_schema::describe(&server::openapi_json()?, schema.as_deref())?
-                );
+                server::openapi_json()?
+            };
+            if schema.is_none() && !list_schemas {
+                print!("{document}");
+            } else {
+                println!("{}", agent_schema::describe(&document, schema.as_deref())?);
             }
         }
         Command::Migrate {
