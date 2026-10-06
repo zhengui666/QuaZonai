@@ -773,6 +773,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/data/revisions/{id}/features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_recorded_features"];
+        put?: never;
+        post: operations["register_recorded_feature"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/data/sources": {
         parameters: {
             query?: never;
@@ -3783,6 +3799,26 @@ export interface components {
                 state: components["schemas"]["ProjectState"];
                 /** Format: date-time */
                 updated_at: string;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CommandResult_RecordedFeatureViewV1: {
+            replayed: boolean;
+            /**
+             * @description Project research-read projection of frozen registration evidence. Historical
+             *     reads do not imply that a grant is currently valid for new scientific use.
+             */
+            resource: {
+                artifact_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                /** @description Original fragment descriptor including byte size, count and exact clocks. */
+                fragment: components["schemas"]["RecordedFeatureFragmentV1"];
+                partition: components["schemas"]["DataPartition"];
+                project_id: components["schemas"]["Id"];
+                source_binding: components["schemas"]["RecordedFeatureSourceBindingV1"];
+                source_selection_end_ns: components["schemas"]["DbCounter"];
+                source_selection_start_ns: components["schemas"]["DbCounter"];
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -6888,6 +6924,21 @@ export interface components {
             target_ttl_seconds: number;
             timezone: string;
         };
+        RecordedFeatureFragmentV1: {
+            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+            byte_count: string;
+            max_event_ns: components["schemas"]["DbCounter"];
+            max_observed_available_ns: components["schemas"]["DbCounter"];
+            min_event_ns: components["schemas"]["DbCounter"];
+            min_observed_available_ns: components["schemas"]["DbCounter"];
+            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+            observations: string;
+            /** @description Stable attachment key, never a filesystem path. */
+            part_key: string;
+        };
+        RecordedFeatureListV1: {
+            items: components["schemas"]["RecordedFeatureViewV1"][];
+        };
         /**
          * @description Small nonsecret approval/receipt input derived from the original upload.
          *     A matching intent does not replace Store's original-byte replay comparison.
@@ -6895,6 +6946,23 @@ export interface components {
         RecordedFeatureRegisterIntentV1: {
             /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
             byte_count: string;
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_part_key: string;
+            project_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Register an existing recorded attachment using its exact UTF-8 bytes. The
+         *     frozen Dataset metadata is authoritative; no client origin/PIT/license claims.
+         *     Deliberately no Debug, as with ArtifactCreate, to avoid logging the raw content.
+         */
+        RecordedFeatureRegisterV1: {
+            /**
+             * @description 1..=2097152 encoded UTF-8 bytes; whitespace and final newline are retained.
+             *     This is a string, never a parsed JSON Value to be reserialized for storage.
+             */
+            content: string;
+            /** @description Must equal the Dataset ID in the route and normalized operator intent. */
             dataset_revision_id: components["schemas"]["Id"];
             feature_part_key: string;
             project_id: components["schemas"]["Id"];
@@ -6913,6 +6981,22 @@ export interface components {
             pit_status: components["schemas"]["PitStatus"];
             revision_policy: components["schemas"]["DataRevisionPolicy"];
             source_id: components["schemas"]["Id"];
+        };
+        /**
+         * @description Project research-read projection of frozen registration evidence. Historical
+         *     reads do not imply that a grant is currently valid for new scientific use.
+         */
+        RecordedFeatureViewV1: {
+            artifact_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            /** @description Original fragment descriptor including byte size, count and exact clocks. */
+            fragment: components["schemas"]["RecordedFeatureFragmentV1"];
+            partition: components["schemas"]["DataPartition"];
+            project_id: components["schemas"]["Id"];
+            source_binding: components["schemas"]["RecordedFeatureSourceBindingV1"];
+            source_selection_end_ns: components["schemas"]["DbCounter"];
+            source_selection_start_ns: components["schemas"]["DbCounter"];
         };
         ReleaseApproveV1: {
             downstream_id: components["schemas"]["Id"];
@@ -11119,6 +11203,165 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_recorded_features: {
+        parameters: {
+            query: {
+                project_id: components["schemas"]["Id"];
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordedFeatureListV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    register_recorded_feature: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordedFeatureRegisterV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_RecordedFeatureViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -8,6 +8,8 @@ Table entries follow `quazonai client` with the saved login or original scoped c
 | --- | --- |
 | Resolve project | `project list --limit 20`; then `project show ID` |
 | Read the research objective | `brief list PROJECT_ID --limit 20`; then `brief show BRIEF_ID` |
+| Recover the frozen execution bindings | `brief execution-context BRIEF_ID` |
+| Read registered original feature parts | `data features list DATASET_REVISION_ID --project-id PROJECT_ID` |
 | Inspect frozen inputs and policy | `input-set list --project-id PROJECT_ID --limit 20`; `input-set show ID`; `policy show ID` |
 | Inspect registered source metadata | `data source show ID`; `data revision list --source-id ID --limit 20`; `data revision show ID` |
 | Check execution readiness | `runtime readiness ID`; `codex models ID`; `codex account ID` |
@@ -25,6 +27,7 @@ For dataset suitability, report the selected project/InputSet/revision and obser
 | Freeze the selected Brief | `brief freeze BRIEF_ID` | `BriefFreezeV1` |
 | Start its research Cycle | `cycle start PROJECT_ID` | `CycleStartV1` |
 | Validate a frozen InputSet | `data validate` | `DataValidateRequest` |
+| Register an original recorded feature part | `data features register DATASET_REVISION_ID` | `RecordedFeatureRegisterV1` |
 | Publish research content | `artifact submit` | `ArtifactCreate` |
 | Propose an experiment | `experiment propose` | `ExperimentProposalV1` |
 
@@ -45,3 +48,27 @@ Inside a [bound Mission](mission.md), artifact submission takes a workspace-rela
 ## Research content
 
 CODE, PARAMETERS and REPORT are the permitted research kinds. Content is nonblank UTF-8, contains no NUL and is at most 2 MiB. CODE contains source text. PARAMETERS and REPORT contain a JSON object with numeric `schema_version: 1`, for example `{"schema_version":1,"text":"research notes"}`. Raw Markdown, arrays and string-valued schema versions are invalid. These content rules apply to both CLI content strings and Mission files.
+
+## Preserve original recorded feature provenance
+
+`brief execution-context BRIEF_ID` reads the existing `FrozenBriefV1`; it does not
+freeze again. Draft Briefs have no frozen execution context. Preserve the returned
+Runtime revision and Discovery/Validation/Sealed InputSet IDs rather than
+reconstructing them from newer records.
+
+Use `data features register DATASET_REVISION_ID` only for original recorded
+feature bytes already described in that Dataset's frozen native metadata. The
+body's `dataset_revision_id` must equal the route ID. Supply the original
+`feature_part_key`, project and unmodified UTF-8 attachment as `content`; the
+2 MiB encoded-content limit applies. Do not reserialize the inner JSON or replace
+missing clocks/values. The server retains the actual Dataset origin, PIT and
+license binding; callers cannot assert them. Raw Sealed feature registration is
+not supported.
+
+Keep the same original bytes and idempotency key for retries. Read back with
+`data features list DATASET_REVISION_ID --project-id PROJECT_ID`; the bounded
+result contains at most 16 registered part descriptors and source bindings, not
+the original observations. An empty list is not permission to reconstruct an
+attachment. Normal `artifact submit` research parameters remain self-authored
+research artifacts and must not be substituted for native recorded feature
+provenance. Registration proves neither verified PIT nor evaluation success.
