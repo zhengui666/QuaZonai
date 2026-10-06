@@ -1949,10 +1949,9 @@ mod brief_read_tests {
     }
 
     fn frozen() -> Value {
-        let create: Value = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../tests/contracts/research-brief.json"
-        )))
+        let create: Value = serde_json::from_str(include_str!(
+            "../../../../tests/contracts/research-brief.json"
+        ))
         .unwrap();
         json!({
             "schema_version": 1,
