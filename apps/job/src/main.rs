@@ -21,9 +21,15 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Operation {
+    /// Observe bounded public Polymarket native events; no execution client or orders.
+    #[cfg(feature = "native-node-observer")]
+    PolymarketDataProbe(job::polymarket_data_probe::Arguments),
     /// Foreground native Sandbox execution with explicitly configured public live data.
     #[cfg(feature = "native-paper")]
     Paper(job::paper_node::Arguments),
+    /// Real current public data to native Paper simulation; no financial orders.
+    #[cfg(feature = "native-paper")]
+    PolymarketPaper(job::polymarket_paper_host::Arguments),
     /// Apply the immutable native wall deadline before executing the fixed job entrypoint.
     RunBounded,
     /// Project official native snapshots into downstream account observation envelopes.
@@ -145,6 +151,10 @@ fn model_bytes(path: &Path, maximum_bytes: usize) -> Result<Vec<u8>> {
 
 fn run(operation: Operation) -> Result<()> {
     match operation {
+        #[cfg(feature = "native-node-observer")]
+        Operation::PolymarketDataProbe(args) => job::polymarket_data_probe::run(args),
+        #[cfg(feature = "native-paper")]
+        Operation::PolymarketPaper(args) => job::polymarket_paper_host::run(args),
         #[cfg(feature = "native-paper")]
         Operation::Paper(args) => {
             job::paper_node::run(args)?;
@@ -524,5 +534,106 @@ mod tests {
                 assert!(error.to_string().contains("canonical UUIDv7"));
             }
         }
+    }
+    #[cfg(feature = "native-node-observer")]
+    #[test]
+    fn public_polymarket_probe_has_only_bounded_data_arguments() {
+        assert!(matches!(
+            Arguments::try_parse_from([
+                "job",
+                "polymarket-data-probe",
+                "--instrument-id",
+                "condition-1.POLYMARKET",
+                "--output",
+                "probe.json",
+                "--max-seconds",
+                "30",
+                "--max-events",
+                "4096",
+                "--proxy-env",
+                "QZ_EXPLICIT_PUBLIC_PROXY",
+            ])
+            .unwrap()
+            .command,
+            Operation::PolymarketDataProbe(_)
+        ));
+        assert!(Arguments::try_parse_from([
+            "job",
+            "polymarket-data-probe",
+            "--instrument-id",
+            "condition-1.POLYMARKET",
+            "--output",
+            "probe.json",
+            "--credential-file",
+            "never-read",
+        ])
+        .is_err());
+    }
+
+    #[cfg(not(feature = "native-node-observer"))]
+    #[test]
+    fn default_scientific_job_has_no_public_polymarket_probe() {
+        assert!(Arguments::try_parse_from([
+            "job",
+            "polymarket-data-probe",
+            "--instrument-id",
+            "condition-1.POLYMARKET",
+            "--output",
+            "probe.json",
+        ])
+        .is_err());
+    }
+
+    #[cfg(feature = "native-paper")]
+    #[test]
+    fn polymarket_paper_run_is_reachable_without_venue_credentials() {
+        assert!(matches!(
+            Arguments::try_parse_from([
+                "job",
+                "polymarket-paper",
+                "run",
+                "--config",
+                "original-config.json",
+                "--claim",
+                "original-claim.json",
+                "--frozen-metadata",
+                "original-metadata.json",
+                "--dataset-revision",
+                "original-dataset.json",
+                "--source-output",
+                "new-source.ndjson",
+                "--report-output",
+                "new-report.json",
+                "--snapshots-output",
+                "new-snapshots.ndjson",
+                "--binding-output",
+                "new-binding.json",
+                "--max-seconds",
+                "30",
+                "--proxy-env",
+                "QZ_EXPLICIT_PUBLIC_PROXY",
+            ])
+            .unwrap()
+            .command,
+            Operation::PolymarketPaper(_)
+        ));
+        assert!(Arguments::try_parse_from([
+            "job",
+            "polymarket-paper",
+            "source",
+            "--instrument-id",
+            "condition-1.POLYMARKET",
+            "--output",
+            "source.ndjson",
+            "--private-key",
+            "not-supported",
+        ])
+        .is_err());
+    }
+
+    #[cfg(not(feature = "native-paper"))]
+    #[test]
+    fn default_scientific_job_has_no_polymarket_paper_host() {
+        assert!(Arguments::try_parse_from(["job", "polymarket-paper", "run"]).is_err());
     }
 }
