@@ -1,4 +1,4 @@
-# Run ten explicit release regressions before merge
+# Run explicit release regressions before merge
 
 The full 3018f release exposed failures outside the selected pre-merge gates.
 Preserve the existing selected PostgreSQL job, its twelve Dataset/Forward and eight
@@ -33,3 +33,11 @@ cover the new one-reload stop path before merge. The original nine invocations
 retain their arguments and order. The tenth case uses the same user manager,
 launcher tools, cgroup observation and exact list/run aggregation, with no new
 fixture or environment setup. Existing timing and full release coverage remain.
+
+The frozen-policy automatic rebalance publication retry is the eleventh case,
+added after the full 535a regression exposed a failure at its final Release step.
+It uses the original Store `experiment_compilations` case and the existing exact
+list/run aggregation without a new environment or weaker assertion. The original
+ten selectors remain unchanged; all selected gates now total 34 distinct cases
+(two portfolio-release, one recorded-feature, twelve Dataset/Forward, eight
+native-client and eleven release-regression cases). Full regression is preserved.

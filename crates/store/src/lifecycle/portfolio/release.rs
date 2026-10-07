@@ -121,11 +121,17 @@ where
     let bytes = serde_json::to_vec(&original).map_err(|_| StoreError::Integrity)?;
     let size = i64::try_from(bytes.len()).map_err(|_| StoreError::Integrity)?;
     let artifact = Id::new();
-    publish(NativeObjectPublication {
+    if let Err(error) = publish(NativeObjectPublication {
         id: artifact,
         bytes,
     })
-    .await?;
+    .await
+    {
+        // Drop only queues SQLx's rollback. Release the project lock before
+        // reporting failure so immediate SKIP LOCKED retries can make progress.
+        tx.rollback().await?;
+        return Err(error);
+    }
     // Recheck files and all original authority/source windows after publication.
     let mut current = package(&mut tx, project, request, release, &mut read).await?;
     current.valid_from = original.valid_from;
