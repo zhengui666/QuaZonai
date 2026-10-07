@@ -632,7 +632,42 @@ fn settled_scientific_protocol(
     Box::pin(settled_scientific_protocol_inner(pool, origin))
 }
 
+// Only original test state moves between these sequential phases. In particular,
+// Fixture keeps both services/TempDir alive and _stop keeps the watch channel open.
+struct ScientificReviewContext {
+    pool: PgPool,
+    origin: DataOrigin,
+    declared_origin: serde_json::Value,
+    f: Fixture,
+    experiment: Id,
+    worker: Worker,
+    _stop: tokio::sync::watch::Sender<bool>,
+    receiver: tokio::sync::watch::Receiver<bool>,
+    evaluation: uuid::Uuid,
+    derived: uuid::Uuid,
+    cycle: Id,
+    trials: Vec<contracts::cycles::CycleSelectionTrialV1>,
+    facts: (i64, i64, i64, String),
+    messages: Vec<RunMessage>,
+    original_tokens: i64,
+}
+
 async fn settled_scientific_protocol_inner(pool: PgPool, origin: DataOrigin) {
+    let context = scientific_research_phase(pool, origin).await;
+    scientific_review_phase(context).await;
+}
+
+fn scientific_research_phase(
+    pool: PgPool,
+    origin: DataOrigin,
+) -> std::pin::Pin<Box<impl std::future::Future<Output = ScientificReviewContext>>> {
+    Box::pin(scientific_research_phase_inner(pool, origin))
+}
+
+async fn scientific_research_phase_inner(
+    pool: PgPool,
+    origin: DataOrigin,
+) -> ScientificReviewContext {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let declared_origin = serde_json::to_value(origin).unwrap();
     let f = fixture_with_selection(&pool, false, 1, origin).await;
@@ -1089,6 +1124,51 @@ async fn settled_scientific_protocol_inner(pool: PgPool, origin: DataOrigin) {
             .unwrap(),
         2
     );
+    ScientificReviewContext {
+        pool,
+        origin,
+        declared_origin,
+        f,
+        experiment,
+        worker,
+        _stop,
+        receiver,
+        evaluation,
+        derived,
+        cycle,
+        trials,
+        facts,
+        messages,
+        original_tokens,
+    }
+}
+
+fn scientific_review_phase(
+    context: ScientificReviewContext,
+) -> std::pin::Pin<Box<impl std::future::Future<Output = ()>>> {
+    Box::pin(scientific_review_phase_inner(context))
+}
+
+async fn scientific_review_phase_inner(context: ScientificReviewContext) {
+    let ScientificReviewContext {
+        pool,
+        origin,
+        declared_origin,
+        f,
+        experiment,
+        worker,
+        _stop,
+        receiver,
+        evaluation,
+        derived,
+        cycle,
+        trials,
+        facts,
+        messages,
+        original_tokens,
+    } = context;
+    // Reborrow the exact original message; never read or create a replacement.
+    let review = &messages[0];
     eprintln!("mission_test_stage=independent-review-start");
     tokio::time::timeout(
         std::time::Duration::from_secs(150),
@@ -2578,5 +2658,24 @@ fn scientific_protocol_future_is_heap_owned_before_sqlx_wrapper() {
         size,
         std::mem::size_of::<usize>(),
         "scenario must be heap-owned before SQLx embeds its future"
+    );
+}
+
+#[test]
+fn scientific_protocol_stages_are_heap_owned_before_polling() {
+    fn absent<T>() -> T {
+        panic!("layout-only closure must not run a scientific stage")
+    }
+    fn future_bytes<F: std::future::Future>(_: impl FnOnce() -> F) -> usize {
+        std::mem::size_of::<F>()
+    }
+    // No Pool, Fixture, context or native process is constructed or polled.
+    assert_eq!(
+        future_bytes(|| scientific_research_phase(absent(), DataOrigin::Real)),
+        std::mem::size_of::<usize>()
+    );
+    assert_eq!(
+        future_bytes(|| scientific_review_phase(absent())),
+        std::mem::size_of::<usize>()
     );
 }
