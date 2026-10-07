@@ -104,6 +104,55 @@ pub(super) fn failure(phase: Phase, error: NativeFailure) -> NativeFailure {
     error
 }
 
+/// Closed classification only: unrecognized native strings become Other and are
+/// never copied into the event. This type carries no unit or resource identity.
+#[derive(Clone, Copy)]
+pub(super) enum FenceLoad {
+    Masked,
+    Loaded,
+    NotFound,
+    Other,
+}
+
+impl FenceLoad {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Masked => "masked",
+            Self::Loaded => "loaded",
+            Self::NotFound => "not-found",
+            Self::Other => "other",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct FenceState {
+    pub load: FenceLoad,
+    pub fragment_present: bool,
+}
+
+/// Called only after the original final fence predicate failed. These snapshots
+/// diagnose its operands; they neither authorize a stop nor create fence proof.
+pub(super) fn not_fenced(
+    stop_succeeded: bool,
+    refreshed: bool,
+    before: FenceState,
+    after: FenceState,
+) -> NativeFailure {
+    tracing::warn!(
+        target: "quazonai::native_shutdown",
+        phase = Phase::StopNotFenced.code(),
+        failure_class = class(NativeFailure::Unavailable),
+        stop_succeeded,
+        refreshed,
+        before_load = before.load.code(),
+        before_fragment_present = before.fragment_present,
+        after_load = after.load.code(),
+        after_fragment_present = after.fragment_present,
+    );
+    NativeFailure::Unavailable
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +187,62 @@ mod tests {
             let mut fields = Fields(BTreeMap::new());
             event.record(&mut fields);
             self.0.lock().unwrap().push(fields.0);
+        }
+    }
+
+    #[test]
+    fn failed_fence_records_only_closed_states_and_booleans() {
+        let loads = [
+            FenceLoad::Masked,
+            FenceLoad::Loaded,
+            FenceLoad::NotFound,
+            FenceLoad::Other,
+        ];
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::registry().with(capture.clone());
+        tracing::subscriber::with_default(subscriber, || {
+            for load in loads {
+                assert_eq!(
+                    not_fenced(
+                        false,
+                        true,
+                        FenceState {
+                            load: FenceLoad::NotFound,
+                            fragment_present: false
+                        },
+                        FenceState {
+                            load,
+                            fragment_present: true
+                        },
+                    ),
+                    NativeFailure::Unavailable
+                );
+            }
+        });
+        let events = capture.0.lock().unwrap();
+        assert_eq!(events.len(), loads.len());
+        for (event, load) in events.iter().zip(loads) {
+            assert_eq!(
+                event.keys().map(String::as_str).collect::<Vec<_>>(),
+                [
+                    "after_fragment_present",
+                    "after_load",
+                    "before_fragment_present",
+                    "before_load",
+                    "failure_class",
+                    "phase",
+                    "refreshed",
+                    "stop_succeeded"
+                ]
+            );
+            assert_eq!(event["phase"], "stop.not-fenced");
+            assert_eq!(event["failure_class"], "Unavailable");
+            assert_eq!(event["stop_succeeded"], "false");
+            assert_eq!(event["refreshed"], "true");
+            assert_eq!(event["before_load"], "not-found");
+            assert_eq!(event["before_fragment_present"], "false");
+            assert_eq!(event["after_load"], load.code());
+            assert_eq!(event["after_fragment_present"], "true");
         }
     }
 

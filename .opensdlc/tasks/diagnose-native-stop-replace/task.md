@@ -1,7 +1,9 @@
-# Diagnose the queued launcher outcome after native stop confirmation
+# Confirm an already-collected stop and the real queued-workload outcome
 
-The current diagnostic-only delta starts from PR 177 maintenance head
-`16727aad347b2d94235a240ac8826154cba5dea7`. See the final section for its scope.
+The current correction starts from PR 177 maintenance head
+`da1bca89b259594098a2499d1ffd253774eb069d`. See the final section for its scope.
+The earlier diagnostic-only delta started from `16727aad`; sections below retain
+the successive evidence and do not claim they validate this current delta.
 
 ## Historical failure and first correction baseline
 
@@ -158,3 +160,50 @@ command/output, credentials or values from native error text. Existing richer
 test traces remain restricted to this module's registered fixture units. The
 helper's enum/field tests and this service wiring are validated together in the
 next maintenance composition; Cargo remains NOT RUN for this delta.
+
+## Current correction: already-collected stop and actual queued outcome
+
+Run `37607974734`, job `112748026474`, artifact `11476850835` supplies the actual
+`da1bca89` outcomes on systemd `255.4-1ubuntu8.17`. Existing-start and late-launcher
+passed. The queued fixture reported `exit_code=Some(0) marker_exists=false`,
+after successful stop and with all three cleanup outcomes successful. Mission
+close still failed at `stop.not-fenced`, propagated through `host.stop` and
+`client.group`. No raw production load state or exit status was observed; the
+specific Mission operand remains unproven.
+
+The production close path calls `cgroup.kill` before `stop_and_confirm`, unlike
+the direct-stop native fixture. With `--collect`, the unit can already be gone
+when the stop command runs. Therefore a non-successful stop must not suppress
+cache refresh after a complete original mask/terminal/cgroup confirmation
+returned exactly `not-found`. The correction removes only that refresh trigger's
+stop-success prerequisite. There is still at most one native Reload, and the
+second observation repeats every original check. The final fence expression is
+unchanged: masked, or successful-stop loaded with a nonempty fragment. Failed
+stop with a remaining not-found/loaded unit is rejected; first/second native
+confirmation or Reload failure is rejected. No stop is retried, no arbitrary
+missing unit is accepted, and no account is marked closed without confirmation.
+
+The coordinated close-diagnostics helper records only a failed final fence's
+closed load-state categories and fragment-presence booleans before/after the
+single refresh, together with stop-success/refreshed booleans and fixed
+phase/error class. No unit identity, path, original load string, command output
+or external error data enters these fields. This is evidence for a subsequent
+failure, not a claim about the prior Mission operand. Its helper/type patch must
+be composed with this service delta.
+
+For the queued fixture, official v255.4 run.c and the actual captured operands
+show that launcher zero is not proof that the workload executed. The original
+child must still actually finish within its original wait/I/O contract; its exit
+code and first marker observation remain in the fixture log. A marker at either
+check fails. With the marker absent after child exit, the same target undergoes
+the original second complete stop/fence confirmation, followed by another marker
+check. Both are required. The original queued-before-start proof, blocker-stop,
+target-unmask, blocker-unmask ordering and late-launcher test stay intact.
+
+Pure regressions add failed-stop/not-found to masked acceptance through the
+unchanged final gate, persistent not-found and failed-stop loaded rejection,
+closed diagnostic snapshot preservation, and marker/fence conjunction rejection.
+Existing error, revived-state, group and refresh-count tests remain. Constructed
+observations are pure control-flow tests, not a real manager proof. This current
+delta has standalone rustfmt evidence only: Cargo, the original native cases and
+Mission PostgreSQL acceptance are NOT RUN until the final combined candidate.

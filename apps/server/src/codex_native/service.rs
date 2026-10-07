@@ -1,6 +1,6 @@
 //! Native user-service creation revocation. No polling daemon or model session.
 use super::{
-    close_diagnostics::{failure, Phase},
+    close_diagnostics::{failure, not_fenced, FenceLoad, FenceState, Phase},
     NativeFailure, Result,
 };
 use std::{path::PathBuf, process::Stdio, time::Duration};
@@ -275,24 +275,51 @@ async fn observe_stopped(name: &str, _stop_code: Option<i32>) -> Result<Observat
     Ok(observed)
 }
 
+fn fence_state(observed: &Observation) -> FenceState {
+    FenceState {
+        load: match observed.load.as_str() {
+            "masked" => FenceLoad::Masked,
+            "loaded" => FenceLoad::Loaded,
+            "not-found" => FenceLoad::NotFound,
+            _ => FenceLoad::Other,
+        },
+        fragment_present: !observed.fragment.is_empty(),
+    }
+}
+struct StopObservation {
+    observed: Observation,
+    before: FenceState,
+    refreshed: bool,
+}
+
 // `observation` performs the complete native mask/terminal/cgroup confirmation
-// on every call. One cache refresh is an action, never a successful fence.
+// on every call. A failed stop may mean a previously killed --collect unit was
+// already gone; refresh its stale name map only after this complete confirmation.
+// One cache refresh is an action, never a successful fence.
 async fn refresh_collected_observation<O, F, R>(
-    stopped: bool,
     mut observation: O,
     reload: R,
-) -> Result<Observation>
+) -> Result<StopObservation>
 where
     O: FnMut() -> F,
     F: std::future::Future<Output = Result<Observation>>,
     R: std::future::Future<Output = Result<()>>,
 {
     let observed = observation().await?;
-    if stopped && observed.load == "not-found" {
+    let before = fence_state(&observed);
+    if observed.load == "not-found" {
         reload.await?;
-        return observation().await;
+        return Ok(StopObservation {
+            observed: observation().await?,
+            before,
+            refreshed: true,
+        });
     }
-    Ok(observed)
+    Ok(StopObservation {
+        observed,
+        before,
+        refreshed: false,
+    })
 }
 
 pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
@@ -306,10 +333,8 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
         native_tests::trace(name, "stop.command", format_args!("error={error:?}"));
     }
     let stopped = stopped.map_err(|error| failure(Phase::StopCommand, error))?;
-    let observed = refresh_collected_observation(
-        stopped.status.success(),
-        || observe_stopped(name, stopped.status.code()),
-        async {
+    let confirmation =
+        refresh_collected_observation(|| observe_stopped(name, stopped.status.code()), async {
             // systemd 255 retains a name-map entry for a collected transient;
             // transient-directory changes do not invalidate that map. Refresh
             // only after confirmed termination, without unmasking this identity.
@@ -317,9 +342,9 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
             #[cfg(all(test, feature = "native-codex"))]
             native_tests::trace_error(name, "stop.reload-collected", &reload);
             reload.map_err(|error| failure(Phase::StopReloadCollected, error))
-        },
-    )
-    .await?;
+        })
+        .await?;
+    let observed = confirmation.observed;
     // A stopped transient may remain referenced by systemd-run --wait. Its
     // fragment makes it non-pristine; after GC the persistent mask is loaded.
     if !fenced(stopped.status.success(), &observed) {
@@ -334,7 +359,12 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
                 observed.fragment
             ),
         );
-        return Err(failure(Phase::StopNotFenced, NativeFailure::Unavailable));
+        return Err(not_fenced(
+            stopped.status.success(),
+            confirmation.refreshed,
+            confirmation.before,
+            fence_state(&observed),
+        ));
     }
     Ok(())
 }
@@ -374,7 +404,6 @@ mod tests {
         Ok(value)
     }
     async fn refresh_fixture(
-        stopped: bool,
         observations: Vec<Result<Observation>>,
         reload_result: Result<()>,
     ) -> (Result<Observation>, usize, usize) {
@@ -383,7 +412,6 @@ mod tests {
         let reloads = Cell::new(0);
         let mut observations = VecDeque::from(observations);
         let result = refresh_collected_observation(
-            stopped,
             || {
                 reads.set(reads.get() + 1);
                 ready(
@@ -398,26 +426,29 @@ mod tests {
             },
         )
         .await;
-        (result, reads.get(), reloads.get())
+        (
+            result.map(|confirmation| confirmation.observed),
+            reads.get(),
+            reloads.get(),
+        )
     }
     #[tokio::test]
     async fn collected_transient_refresh_is_once_and_never_replaces_the_fence() {
         let mut mask = collected();
         mask.load = "masked".into();
         let (result, reads, reloads) =
-            refresh_fixture(true, vec![Ok(collected()), Ok(mask.clone())], Ok(())).await;
+            refresh_fixture(vec![Ok(collected()), Ok(mask.clone())], Ok(())).await;
         assert_eq!((reads, reloads), (2, 1));
         assert!(fenced(true, &result.unwrap()));
 
         // A repeated not-found cannot trigger another reload or become success.
         let (result, reads, reloads) =
-            refresh_fixture(true, vec![Ok(collected()), Ok(collected())], Ok(())).await;
+            refresh_fixture(vec![Ok(collected()), Ok(collected())], Ok(())).await;
         assert_eq!((reads, reloads), (2, 1));
         assert!(!fenced(true, &result.unwrap()));
 
-        for (stopped, observed, accepted) in [(false, collected(), false), (true, mask, true)] {
-            let (result, reads, reloads) =
-                refresh_fixture(stopped, vec![Ok(observed)], Ok(())).await;
+        for (stopped, observed, accepted) in [(false, mask.clone(), true), (true, mask, true)] {
+            let (result, reads, reloads) = refresh_fixture(vec![Ok(observed)], Ok(())).await;
             assert_eq!((reads, reloads), (1, 0));
             assert_eq!(fenced(stopped, &result.unwrap()), accepted);
         }
@@ -429,9 +460,54 @@ mod tests {
         assert!(!fenced(false, &loaded));
     }
     #[tokio::test]
+    async fn collected_unit_after_failed_stop_still_requires_the_original_fence() {
+        let mut mask = collected();
+        mask.load = "masked".into();
+        let mut loaded = collected();
+        loaded.load = "loaded".into();
+        loaded.fragment = "/run/user/1/systemd/transient/quazonai-mission-fixture.service".into();
+        for (after, accepted) in [(mask, true), (collected(), false), (loaded.clone(), false)] {
+            let (result, reads, reloads) =
+                refresh_fixture(vec![Ok(collected()), Ok(after)], Ok(())).await;
+            assert_eq!((reads, reloads), (2, 1));
+            // Stop failure is never itself accepted. Only the original final
+            // masked state can satisfy the unchanged fence in this branch.
+            assert_eq!(fenced(false, &result.unwrap()), accepted);
+        }
+        let (result, reads, reloads) = refresh_fixture(vec![Ok(loaded)], Ok(())).await;
+        assert_eq!((reads, reloads), (1, 0));
+        assert!(!fenced(false, &result.unwrap()));
+    }
+    #[tokio::test]
+    async fn collected_unit_diagnostics_preserve_initial_and_final_closed_states() {
+        use std::{collections::VecDeque, future::ready};
+        let mut mask = collected();
+        mask.load = "masked".into();
+        let mut observations = VecDeque::from([Ok(collected()), Ok(mask)]);
+        let result =
+            refresh_collected_observation(|| ready(observations.pop_front().unwrap()), async {
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(result.refreshed);
+        assert!(matches!(result.before.load, FenceLoad::NotFound));
+        assert!(!result.before.fragment_present);
+        assert!(matches!(
+            fence_state(&result.observed).load,
+            FenceLoad::Masked
+        ));
+        let mut unknown = collected();
+        unknown.load = "outside-closed-vocabulary".into();
+        unknown.fragment = "/path-that-must-not-be-logged".into();
+        let snapshot = fence_state(&unknown);
+        assert!(matches!(snapshot.load, FenceLoad::Other));
+        assert!(snapshot.fragment_present);
+    }
+    #[tokio::test]
     async fn collected_transient_refresh_propagates_reload_and_confirmation_failures() {
         let (result, reads, reloads) =
-            refresh_fixture(true, vec![Ok(collected())], Err(NativeFailure::Unavailable)).await;
+            refresh_fixture(vec![Ok(collected())], Err(NativeFailure::Unavailable)).await;
         assert!(matches!(result, Err(NativeFailure::Unavailable)));
         assert_eq!((reads, reloads), (1, 1));
         for error in [
@@ -439,11 +515,11 @@ mod tests {
             NativeFailure::Contract,
             NativeFailure::Correlation,
         ] {
-            let (result, reads, reloads) = refresh_fixture(true, vec![Err(error)], Ok(())).await;
+            let (result, reads, reloads) = refresh_fixture(vec![Err(error)], Ok(())).await;
             assert!(matches!(result, Err(actual) if actual == error));
             assert_eq!((reads, reloads), (1, 0));
             let (result, reads, reloads) =
-                refresh_fixture(true, vec![Ok(collected()), Err(error)], Ok(())).await;
+                refresh_fixture(vec![Ok(collected()), Err(error)], Ok(())).await;
             assert!(matches!(result, Err(actual) if actual == error));
             assert_eq!((reads, reloads), (2, 1));
         }
@@ -467,7 +543,7 @@ mod tests {
             let second = confirmed_fixture(revived, "populated 1\nfrozen 0\n");
             assert!(second.is_err());
             let (result, reads, reloads) =
-                refresh_fixture(true, vec![Ok(collected()), second], Ok(())).await;
+                refresh_fixture(vec![Ok(collected()), second], Ok(())).await;
             assert!(result.is_err());
             assert_eq!((reads, reloads), (2, 1));
         }
@@ -613,6 +689,31 @@ mod native_tests {
             cleanup.iter().all(|(_, outcome)| outcome.is_ok()),
             "native test succeeded; cleanup remains unconfirmed: {cleanup:?}"
         );
+    }
+    fn confirm_queued_workload_absent(marker_exists: bool, confirmation: Result<()>) -> Result<()> {
+        confirmation?;
+        if marker_exists {
+            return Err(NativeFailure::Correlation);
+        }
+        Ok(())
+    }
+    #[test]
+    fn queued_completion_requires_absent_workload_and_confirmed_native_fence() {
+        assert!(confirm_queued_workload_absent(false, Ok(())).is_ok());
+        assert_eq!(
+            confirm_queued_workload_absent(true, Ok(())),
+            Err(NativeFailure::Correlation)
+        );
+        for marker in [false, true] {
+            assert_eq!(
+                confirm_queued_workload_absent(marker, Err(NativeFailure::Unavailable)),
+                Err(NativeFailure::Unavailable)
+            );
+            assert_eq!(
+                confirm_queued_workload_absent(marker, Err(NativeFailure::Correlation)),
+                Err(NativeFailure::Correlation)
+            );
+        }
     }
     #[test]
     fn diagnostics_preserve_primary_error_and_only_project_owned_unit_fields() {
@@ -844,19 +945,23 @@ mod native_tests {
                 .map_err(|_| NativeFailure::Unavailable)?
                 .map_err(|_| NativeFailure::Unavailable)?;
             let marker_exists = marker.exists();
-            if status.success() || marker_exists {
-                trace(
-                    &target,
-                    "queued.launcher-outcome",
-                    format_args!(
-                        "exit_code={:?} marker_exists={marker_exists}",
-                        status.code()
-                    ),
-                );
+            // With --pipe, systemd-run reports the service Result rather than
+            // proving that its queued start job executed. A cancelled unstarted
+            // service can exit zero. Keep the actual exit as fixture evidence.
+            trace(
+                &target,
+                "queued.launcher-outcome",
+                format_args!(
+                    "exit_code={:?} marker_exists={marker_exists}",
+                    status.code()
+                ),
+            );
+            if marker_exists {
                 return Err(NativeFailure::Correlation);
             }
             phase = "confirm-queued-stop-replay";
-            stop_and_confirm(&target).await?;
+            let confirmation = stop_and_confirm(&target).await;
+            confirm_queued_workload_absent(marker.exists(), confirmation)?;
             Ok(())
         }
         .await;
