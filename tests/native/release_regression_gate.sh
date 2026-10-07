@@ -54,5 +54,6 @@ run_case issuance-doctor store test authority_invariants '' doctor_upgrade_requi
 run_case mission-native-stack server test mission_worker native-codex controlled_real_declaration_registers_original_reviewed_qualification || failed=$((failed+1))
 run_case service-existing-start server lib '' native-codex codex_native::service::native_tests::native_stop_replace_cancels_an_existing_start_and_leaves_no_populated_group || failed=$((failed+1))
 run_case service-queued-start server lib '' native-codex codex_native::service::native_tests::native_stop_replace_cancels_a_deterministically_queued_start || failed=$((failed+1))
-printf 'cases=9\nfailed=%s\n' "$failed" > "$evidence/release-regression-combined-status.txt"
+run_case service-late-launcher server lib '' native-codex codex_native::service::native_tests::native_persistent_mask_rejects_a_sigstopped_late_launcher || failed=$((failed+1))
+printf 'cases=10\nfailed=%s\n' "$failed" > "$evidence/release-regression-combined-status.txt"
 if ((failed != 0)); then exit 1; fi

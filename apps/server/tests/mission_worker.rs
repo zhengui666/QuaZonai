@@ -623,7 +623,16 @@ async fn controlled_real_declaration_registers_original_reviewed_qualification(p
     settled_scientific_protocol(pool, DataOrigin::Real).await;
 }
 
-async fn settled_scientific_protocol(pool: PgPool, origin: DataOrigin) {
+// Own this large scenario on the heap before SQLx embeds it in its test future.
+// The unchanged protocol body still runs on the same task and ordinary stack.
+fn settled_scientific_protocol(
+    pool: PgPool,
+    origin: DataOrigin,
+) -> std::pin::Pin<Box<impl std::future::Future<Output = ()>>> {
+    Box::pin(settled_scientific_protocol_inner(pool, origin))
+}
+
+async fn settled_scientific_protocol_inner(pool: PgPool, origin: DataOrigin) {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let declared_origin = serde_json::to_value(origin).unwrap();
     let f = fixture_with_selection(&pool, false, 1, origin).await;
@@ -2546,5 +2555,22 @@ fn mission_bootstrap_future_is_heap_owned_before_async_wrappers() {
         size,
         std::mem::size_of::<usize>(),
         "bootstrap must return its thin heap-owned future before wrapper polling"
+    );
+}
+
+#[test]
+fn scientific_protocol_future_is_heap_owned_before_sqlx_wrapper() {
+    fn absent<T>() -> T {
+        panic!("layout-only closure must not run the scientific protocol")
+    }
+    fn future_bytes<F: std::future::Future>(_: impl FnOnce() -> F) -> usize {
+        std::mem::size_of::<F>()
+    }
+    // No pool, scenario or native process is constructed or polled here.
+    let size = future_bytes(|| settled_scientific_protocol(absent(), DataOrigin::Real));
+    assert_eq!(
+        size,
+        std::mem::size_of::<usize>(),
+        "scenario must be heap-owned before SQLx embeds its future"
     );
 }

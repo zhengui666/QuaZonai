@@ -183,24 +183,33 @@ pub(super) async fn probe_fresh(name: &str) -> Result<()> {
     }
     Ok(())
 }
-pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
-    barrier(name).await?;
-    let full = unit(name)?;
-    // replace explicitly supersedes an earlier queued JOB_START. A mask alone
-    // does not cancel a start that the native manager already accepted.
-    let stopped = command(&["stop", "--job-mode=replace", "--", &full]).await;
-    #[cfg(all(test, feature = "native-codex"))]
-    if let Err(error) = &stopped {
-        native_tests::trace(name, "stop.command", format_args!("error={error:?}"));
+fn terminal(observed: &Observation) -> bool {
+    !observed.job
+        && observed.main_pid == 0
+        && matches!(observed.active.as_str(), "inactive" | "failed")
+}
+fn exact_group(full: &str, group: &str) -> Result<PathBuf> {
+    if !group.starts_with("/user.slice/") || group.contains("..") || !group.ends_with(full) {
+        return Err(NativeFailure::Correlation);
     }
-    let stopped = stopped?;
+    Ok(PathBuf::from("/sys/fs/cgroup").join(group.trim_start_matches('/')))
+}
+fn unpopulated(events: &str) -> bool {
+    events.lines().any(|line| line == "populated 0")
+}
+fn fenced(stopped: bool, observed: &Observation) -> bool {
+    observed.load == "masked"
+        || (stopped && observed.load == "loaded" && !observed.fragment.is_empty())
+}
+async fn observe_stopped(name: &str, _stop_code: Option<i32>) -> Result<Observation> {
+    let full = unit(name)?;
     let observed = observe(name).await;
     #[cfg(all(test, feature = "native-codex"))]
     if let Err(error) = &observed {
         native_tests::trace(
             name,
             "stop.observe",
-            format_args!("stop_code={:?} error={error:?}", stopped.status.code()),
+            format_args!("stop_code={:?} error={error:?}", _stop_code),
         );
     }
     let observed = observed?;
@@ -212,31 +221,22 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
             "stop.verify-mask",
             format_args!(
                 "stop_code={:?} observed={observed:?} error={mask:?}",
-                stopped.status.code()
+                _stop_code
             ),
         );
     }
     mask?;
-    if observed.job
-        || observed.main_pid != 0
-        || !matches!(observed.active.as_str(), "inactive" | "failed")
-    {
+    if !terminal(&observed) {
         #[cfg(all(test, feature = "native-codex"))]
         native_tests::trace(
             name,
             "stop.not-terminal",
-            format_args!(
-                "stop_code={:?} observed={observed:?}",
-                stopped.status.code()
-            ),
+            format_args!("stop_code={:?} observed={observed:?}", _stop_code),
         );
         return Err(NativeFailure::Unavailable);
     }
-    if let Some(group) = observed.group {
-        if !group.starts_with("/user.slice/") || group.contains("..") || !group.ends_with(&full) {
-            return Err(NativeFailure::Correlation);
-        }
-        let path = PathBuf::from("/sys/fs/cgroup").join(group.trim_start_matches('/'));
+    if let Some(group) = &observed.group {
+        let path = exact_group(&full, group)?;
         if path.exists() {
             let events = std::fs::read_to_string(path.join("cgroup.events"));
             #[cfg(all(test, feature = "native-codex"))]
@@ -246,29 +246,75 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
                     "stop.cgroup-read",
                     format_args!(
                         "stop_code={:?} os_code={:?} kind={:?}",
-                        stopped.status.code(),
+                        _stop_code,
                         error.raw_os_error(),
                         error.kind()
                     ),
                 );
             }
             let events = events.map_err(|_| NativeFailure::Unavailable)?;
-            if !events.lines().any(|line| line == "populated 0") {
+            if !unpopulated(&events) {
                 #[cfg(all(test, feature = "native-codex"))]
                 native_tests::trace(
                     name,
                     "stop.cgroup-populated",
-                    format_args!("populated_zero=false stop_code={:?}", stopped.status.code()),
+                    format_args!("populated_zero=false stop_code={:?}", _stop_code),
                 );
                 return Err(NativeFailure::Unavailable);
             }
         }
     }
+    Ok(observed)
+}
+
+// `observation` performs the complete native mask/terminal/cgroup confirmation
+// on every call. One cache refresh is an action, never a successful fence.
+async fn refresh_collected_observation<O, F, R>(
+    stopped: bool,
+    mut observation: O,
+    reload: R,
+) -> Result<Observation>
+where
+    O: FnMut() -> F,
+    F: std::future::Future<Output = Result<Observation>>,
+    R: std::future::Future<Output = Result<()>>,
+{
+    let observed = observation().await?;
+    if stopped && observed.load == "not-found" {
+        reload.await?;
+        return observation().await;
+    }
+    Ok(observed)
+}
+
+pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
+    barrier(name).await?;
+    let full = unit(name)?;
+    // replace explicitly supersedes an earlier queued JOB_START. A mask alone
+    // does not cancel a start that the native manager already accepted.
+    let stopped = command(&["stop", "--job-mode=replace", "--", &full]).await;
+    #[cfg(all(test, feature = "native-codex"))]
+    if let Err(error) = &stopped {
+        native_tests::trace(name, "stop.command", format_args!("error={error:?}"));
+    }
+    let stopped = stopped?;
+    let observed = refresh_collected_observation(
+        stopped.status.success(),
+        || observe_stopped(name, stopped.status.code()),
+        async {
+            // systemd 255 retains a name-map entry for a collected transient;
+            // transient-directory changes do not invalidate that map. Refresh
+            // only after confirmed termination, without unmasking this identity.
+            let reload = manager_call("Reload", &[]).await;
+            #[cfg(all(test, feature = "native-codex"))]
+            native_tests::trace_error(name, "stop.reload-collected", &reload);
+            reload
+        },
+    )
+    .await?;
     // A stopped transient may remain referenced by systemd-run --wait. Its
     // fragment makes it non-pristine; after GC the persistent mask is loaded.
-    let fenced = observed.load == "masked"
-        || (stopped.status.success() && observed.load == "loaded" && !observed.fragment.is_empty());
-    if !fenced {
+    if !fenced(stopped.status.success(), &observed) {
         #[cfg(all(test, feature = "native-codex"))]
         native_tests::trace(
             name,
@@ -303,6 +349,140 @@ mod tests {
         }
         assert!(unit("unrelated.service").is_err());
         assert!(unit("quazonai-mission-../other").is_err());
+    }
+    fn collected() -> Observation {
+        parse("LoadState=not-found\nActiveState=inactive\nControlGroup=\nInvocationID=\nMainPID=0\nJob=\nFragmentPath=\n").unwrap()
+    }
+    fn confirmed_fixture(value: Observation, events: &str) -> Result<Observation> {
+        if !terminal(&value) {
+            return Err(NativeFailure::Unavailable);
+        }
+        if let Some(group) = &value.group {
+            exact_group("quazonai-mission-fixture.service", group)?;
+            if !unpopulated(events) {
+                return Err(NativeFailure::Unavailable);
+            }
+        }
+        Ok(value)
+    }
+    async fn refresh_fixture(
+        stopped: bool,
+        observations: Vec<Result<Observation>>,
+        reload_result: Result<()>,
+    ) -> (Result<Observation>, usize, usize) {
+        use std::{cell::Cell, collections::VecDeque, future::ready};
+        let reads = Cell::new(0);
+        let reloads = Cell::new(0);
+        let mut observations = VecDeque::from(observations);
+        let result = refresh_collected_observation(
+            stopped,
+            || {
+                reads.set(reads.get() + 1);
+                ready(
+                    observations
+                        .pop_front()
+                        .expect("unexpected extra observation"),
+                )
+            },
+            async {
+                reloads.set(reloads.get() + 1);
+                reload_result
+            },
+        )
+        .await;
+        (result, reads.get(), reloads.get())
+    }
+    #[tokio::test]
+    async fn collected_transient_refresh_is_once_and_never_replaces_the_fence() {
+        let mut mask = collected();
+        mask.load = "masked".into();
+        let (result, reads, reloads) =
+            refresh_fixture(true, vec![Ok(collected()), Ok(mask.clone())], Ok(())).await;
+        assert_eq!((reads, reloads), (2, 1));
+        assert!(fenced(true, &result.unwrap()));
+
+        // A repeated not-found cannot trigger another reload or become success.
+        let (result, reads, reloads) =
+            refresh_fixture(true, vec![Ok(collected()), Ok(collected())], Ok(())).await;
+        assert_eq!((reads, reloads), (2, 1));
+        assert!(!fenced(true, &result.unwrap()));
+
+        for (stopped, observed, accepted) in [(false, collected(), false), (true, mask, true)] {
+            let (result, reads, reloads) =
+                refresh_fixture(stopped, vec![Ok(observed)], Ok(())).await;
+            assert_eq!((reads, reloads), (1, 0));
+            assert_eq!(fenced(stopped, &result.unwrap()), accepted);
+        }
+        let mut loaded = collected();
+        loaded.load = "loaded".into();
+        assert!(!fenced(true, &loaded));
+        loaded.fragment = "/run/user/1/systemd/transient/quazonai-mission-fixture.service".into();
+        assert!(fenced(true, &loaded));
+        assert!(!fenced(false, &loaded));
+    }
+    #[tokio::test]
+    async fn collected_transient_refresh_propagates_reload_and_confirmation_failures() {
+        let (result, reads, reloads) =
+            refresh_fixture(true, vec![Ok(collected())], Err(NativeFailure::Unavailable)).await;
+        assert!(matches!(result, Err(NativeFailure::Unavailable)));
+        assert_eq!((reads, reloads), (1, 1));
+        for error in [
+            NativeFailure::Unavailable,
+            NativeFailure::Contract,
+            NativeFailure::Correlation,
+        ] {
+            let (result, reads, reloads) = refresh_fixture(true, vec![Err(error)], Ok(())).await;
+            assert!(matches!(result, Err(actual) if actual == error));
+            assert_eq!((reads, reloads), (1, 0));
+            let (result, reads, reloads) =
+                refresh_fixture(true, vec![Ok(collected()), Err(error)], Ok(())).await;
+            assert!(matches!(result, Err(actual) if actual == error));
+            assert_eq!((reads, reloads), (2, 1));
+        }
+    }
+    #[tokio::test]
+    async fn collected_transient_refresh_rejects_reactivated_and_populated_observations() {
+        for changed in 0..5 {
+            let mut revived = collected();
+            revived.load = "masked".into();
+            match changed {
+                0 => revived.job = true,
+                1 => revived.main_pid = 42,
+                2 => revived.active = "active".into(),
+                3 => revived.group = Some("/user.slice/foreign.service".into()),
+                4 => {
+                    revived.group =
+                        Some("/user.slice/user-1.slice/quazonai-mission-fixture.service".into())
+                }
+                _ => unreachable!(),
+            }
+            let second = confirmed_fixture(revived, "populated 1\nfrozen 0\n");
+            assert!(second.is_err());
+            let (result, reads, reloads) =
+                refresh_fixture(true, vec![Ok(collected()), second], Ok(())).await;
+            assert!(result.is_err());
+            assert_eq!((reads, reloads), (2, 1));
+        }
+    }
+    #[test]
+    fn stopped_group_confirmation_keeps_exact_identity_and_empty_events() {
+        let full = "quazonai-mission-fixture.service";
+        let group = format!("/user.slice/user-1.slice/{full}");
+        assert_eq!(
+            exact_group(full, &group).unwrap(),
+            PathBuf::from(format!("/sys/fs/cgroup{group}"))
+        );
+        for invalid in [
+            "/system.slice/quazonai-mission-fixture.service",
+            "/user.slice/../quazonai-mission-fixture.service",
+            "/user.slice/another.service",
+        ] {
+            assert!(exact_group(full, invalid).is_err());
+        }
+        assert!(unpopulated("populated 0\nfrozen 0\n"));
+        for events in ["", "populated 1\n", "populated 10\n", "frozen 0\n"] {
+            assert!(!unpopulated(events));
+        }
     }
 }
 

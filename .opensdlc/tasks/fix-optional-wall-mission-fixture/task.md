@@ -24,3 +24,19 @@ job. A separate maintenance-gate candidate based on PR177 preserves its existing
 12 Dataset/Forward and eight native-client selectors and adds these cases alongside
 the other explicit release regressions. A listed/compiled/ignored case is not a
 PG pass. This business patch does not overwrite the newer CI workflow.
+
+## Disabled-principal fixture follow-up at PR177 head 4e746d
+
+Run 37596191488, job 112709308070, executed the three split cases. Cancellation
+and credential revocation passed. The disabled-principal case stopped at the
+fixture's SQL update with SQLSTATE 23514, before checking the old credential:
+`guard_principal_epoch` requires a strictly greater credential epoch whenever
+`enabled` changes. The fixture had changed only `enabled=false`.
+
+The follow-up changes only that branch to atomically set `enabled=false` and
+increment `credential_epoch`, matching the existing principal-disable fixture
+and migration 202609060007. It preserves the guard, original command keys,
+all absent budget caps, positive session check and immediate-denial assertion.
+The two already passing branches and production code/migrations are unchanged.
+This candidate is source-only until the exact disabled-principal selector runs
+on the next isolated CI head; the earlier failing execution remains retained.

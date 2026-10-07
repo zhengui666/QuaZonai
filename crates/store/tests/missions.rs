@@ -2138,7 +2138,7 @@ async fn assert_optional_wall_credential_denied(pool: &PgPool, action: &str) {
                 .bind(credential.as_uuid()).execute(pool).await.unwrap();
         }
         "disable" => {
-            sqlx::query("UPDATE app.machine_principals SET enabled=false WHERE run_id=$1")
+            sqlx::query("UPDATE app.machine_principals SET enabled=false,credential_epoch=credential_epoch+1 WHERE run_id=$1")
                 .bind(lease.run.id.as_uuid())
                 .execute(pool)
                 .await
