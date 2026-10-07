@@ -10,12 +10,11 @@ env:
   EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
   RUSTUP_TOOLCHAIN: '1.98.1'
 concurrency:
-  group: native-ci-${{ github.ref == 'refs/heads/dev' && github.sha || github.ref }}
+  group: native-ci-${{ github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.ref == 'refs/heads/dev' && github.sha || github.ref }}
   cancel-in-progress: true
 jobs:
   rust-native-contracts:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -67,7 +66,6 @@ jobs:
           if-no-files-found: error
   store-postgres:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -203,3 +201,10 @@ jobs:
       - name: Remove only this disposable database
         if: always()
         run: docker rm --force --volumes store-database
+  full-rust-regression:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: [rust-native-contracts, store-postgres]
+    uses: ./.github/workflows/rust-regression.yml
+    with:
+      revision: ${{ github.sha }}
+      artifact_label: manual-full
