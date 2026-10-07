@@ -1,8 +1,11 @@
-# Confirm a collected transient through the native manager without weakening its fence
+# Diagnose the queued launcher outcome after native stop confirmation
 
-## Exact failure and baseline
+The current diagnostic-only delta starts from PR 177 maintenance head
+`16727aad347b2d94235a240ac8826154cba5dea7`. See the final section for its scope.
 
-This correction starts from PR 177 maintenance head
+## Historical failure and first correction baseline
+
+The previous transient-cache correction started from maintenance head
 `4e746d8c471997528b4cc3bb5821698e15ceb307`. Its historical diagnostic patch began
 at dev merge `3018f10b189fb912fea93da20840bc7eada0cdc1`. The original release run
 `37582752653`, job `112672750127` failed two server library cases:
@@ -111,3 +114,47 @@ The cloud manager is not accessed again. A production-fix acceptance claim
 requires the corrected exact CI head to pass both original native stop/replace
 cases and preserve the persistent-mask late-launcher boundary. The six pure
 passes establish control-flow/rule behavior, not an actual manager repair.
+
+## Subsequent queued-launcher diagnostic (base 16727aad)
+
+This follow-on delta starts from head
+`16727aad347b2d94235a240ac8826154cba5dea7`, not the earlier diagnostic/fence bases.
+Run `37601964521`, job `112728233695` actually passed the original existing-start
+and persistent-mask late-launcher cases. The queued case completed native stop
+and all blocker/unmask cleanup successfully, but its unchanged assertion failed
+at `wait-queued-launcher`. The artifact does not distinguish the two operands
+`status.success()` and `marker.exists()`.
+
+Add only a test-owned failure trace with launcher exit code and the marker
+existence boolean, evaluated once. The original Correlation rejection is kept.
+No production stop/fence/cgroup acceptance, command, timeout or cleanup changes.
+The marker path and contents are not printed, and no native stderr, command
+line, environment, credential or unrelated unit is inspected.
+
+Official v255.4 [`start_transient_service` and `run_context_check_done`](https://github.com/systemd/systemd-stable/blob/v255.4/src/run/run.c)
+show that pipe mode does not wait on the start-job result in the same way as
+stdio-none mode; its service result can produce a successful launcher exit.
+That is a candidate explanation, not evidence that this fixture's marker was
+absent. The new exact boolean diagnostic is required before altering any test
+assertion. Cargo and the queued native test have not run for this follow-on
+delta; prior pure/native successes are retained as prior-head evidence only.
+
+## Shared close-stage failure diagnostics in this same delta
+
+The owner also approved production-visible fixed close-stage/error-class
+diagnostics for the ordinary Server library used by the Mission integration
+test. `service.rs` calls the coordinated `close_diagnostics::failure(Phase,
+NativeFailure)` helper only on failures at thirteen existing barrier/stop
+boundaries. The helper and its registration are owned by the close-chain author
+and must be composed with this delta; this patch is not a standalone build.
+
+The service phases cover identity, mask, reload, post-mask verification, stop
+command, observation, terminal state, exact cgroup identity/read/population and
+final fence. The helper returns the unchanged existing NativeFailure. Native
+commands, order, timing, predicates, accounting and final-state writes remain
+unchanged. Production logs contain only the closed enum's static phase and
+static failure class, never unit identity, invocation, path, environment,
+command/output, credentials or values from native error text. Existing richer
+test traces remain restricted to this module's registered fixture units. The
+helper's enum/field tests and this service wiring are validated together in the
+next maintenance composition; Cargo remains NOT RUN for this delta.

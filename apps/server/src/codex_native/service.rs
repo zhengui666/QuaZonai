@@ -1,5 +1,8 @@
 //! Native user-service creation revocation. No polling daemon or model session.
-use super::{NativeFailure, Result};
+use super::{
+    close_diagnostics::{failure, Phase},
+    NativeFailure, Result,
+};
 use std::{path::PathBuf, process::Stdio, time::Duration};
 use tokio::process::Command;
 
@@ -143,21 +146,21 @@ async fn manager_call(method: &str, arguments: &[&str]) -> Result<()> {
     Ok(())
 }
 pub(super) async fn barrier(name: &str) -> Result<()> {
-    let full = unit(name)?;
+    let full = unit(name).map_err(|error| failure(Phase::BarrierIdentity, error))?;
     // Direct native manager methods: systemctl's offline/client-side file
     // installation fallback is not evidence that this manager is fenced.
     let result = manager_call("MaskUnitFiles", &["asbb", "1", &full, "false", "false"]).await;
     #[cfg(all(test, feature = "native-codex"))]
     native_tests::trace_error(name, "barrier.mask", &result);
-    result?;
+    result.map_err(|error| failure(Phase::BarrierMask, error))?;
     let result = manager_call("Reload", &[]).await;
     #[cfg(all(test, feature = "native-codex"))]
     native_tests::trace_error(name, "barrier.reload", &result);
-    result?;
+    result.map_err(|error| failure(Phase::BarrierReload, error))?;
     let result = masked(name).await;
     #[cfg(all(test, feature = "native-codex"))]
     native_tests::trace_error(name, "barrier.verify-mask", &result);
-    result
+    result.map_err(|error| failure(Phase::BarrierVerifyMask, error))
 }
 /// Only a brand-new, unpermitted identity can probe and remove its own mask.
 pub(super) async fn probe_fresh(name: &str) -> Result<()> {
@@ -212,7 +215,7 @@ async fn observe_stopped(name: &str, _stop_code: Option<i32>) -> Result<Observat
             format_args!("stop_code={:?} error={error:?}", _stop_code),
         );
     }
-    let observed = observed?;
+    let observed = observed.map_err(|error| failure(Phase::StopObserve, error))?;
     let mask = masked(name).await;
     #[cfg(all(test, feature = "native-codex"))]
     if mask.is_err() {
@@ -225,7 +228,7 @@ async fn observe_stopped(name: &str, _stop_code: Option<i32>) -> Result<Observat
             ),
         );
     }
-    mask?;
+    mask.map_err(|error| failure(Phase::StopVerifyMask, error))?;
     if !terminal(&observed) {
         #[cfg(all(test, feature = "native-codex"))]
         native_tests::trace(
@@ -233,10 +236,11 @@ async fn observe_stopped(name: &str, _stop_code: Option<i32>) -> Result<Observat
             "stop.not-terminal",
             format_args!("stop_code={:?} observed={observed:?}", _stop_code),
         );
-        return Err(NativeFailure::Unavailable);
+        return Err(failure(Phase::StopNotTerminal, NativeFailure::Unavailable));
     }
     if let Some(group) = &observed.group {
-        let path = exact_group(&full, group)?;
+        let path =
+            exact_group(&full, group).map_err(|error| failure(Phase::StopCgroupIdentity, error))?;
         if path.exists() {
             let events = std::fs::read_to_string(path.join("cgroup.events"));
             #[cfg(all(test, feature = "native-codex"))]
@@ -252,7 +256,8 @@ async fn observe_stopped(name: &str, _stop_code: Option<i32>) -> Result<Observat
                     ),
                 );
             }
-            let events = events.map_err(|_| NativeFailure::Unavailable)?;
+            let events =
+                events.map_err(|_| failure(Phase::StopCgroupRead, NativeFailure::Unavailable))?;
             if !unpopulated(&events) {
                 #[cfg(all(test, feature = "native-codex"))]
                 native_tests::trace(
@@ -260,7 +265,10 @@ async fn observe_stopped(name: &str, _stop_code: Option<i32>) -> Result<Observat
                     "stop.cgroup-populated",
                     format_args!("populated_zero=false stop_code={:?}", _stop_code),
                 );
-                return Err(NativeFailure::Unavailable);
+                return Err(failure(
+                    Phase::StopCgroupPopulated,
+                    NativeFailure::Unavailable,
+                ));
             }
         }
     }
@@ -297,7 +305,7 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
     if let Err(error) = &stopped {
         native_tests::trace(name, "stop.command", format_args!("error={error:?}"));
     }
-    let stopped = stopped?;
+    let stopped = stopped.map_err(|error| failure(Phase::StopCommand, error))?;
     let observed = refresh_collected_observation(
         stopped.status.success(),
         || observe_stopped(name, stopped.status.code()),
@@ -308,7 +316,7 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
             let reload = manager_call("Reload", &[]).await;
             #[cfg(all(test, feature = "native-codex"))]
             native_tests::trace_error(name, "stop.reload-collected", &reload);
-            reload
+            reload.map_err(|error| failure(Phase::StopReloadCollected, error))
         },
     )
     .await?;
@@ -326,7 +334,7 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
                 observed.fragment
             ),
         );
-        return Err(NativeFailure::Unavailable);
+        return Err(failure(Phase::StopNotFenced, NativeFailure::Unavailable));
     }
     Ok(())
 }
@@ -835,7 +843,16 @@ mod native_tests {
                 .await
                 .map_err(|_| NativeFailure::Unavailable)?
                 .map_err(|_| NativeFailure::Unavailable)?;
-            if status.success() || marker.exists() {
+            let marker_exists = marker.exists();
+            if status.success() || marker_exists {
+                trace(
+                    &target,
+                    "queued.launcher-outcome",
+                    format_args!(
+                        "exit_code={:?} marker_exists={marker_exists}",
+                        status.code()
+                    ),
+                );
                 return Err(NativeFailure::Correlation);
             }
             phase = "confirm-queued-stop-replay";

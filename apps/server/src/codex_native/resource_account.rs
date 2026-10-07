@@ -81,6 +81,7 @@ impl ResourceAccount {
         final_accounted: bool,
         closed: bool,
     ) -> Result<bool> {
+        use super::close_diagnostics::{failure, Phase};
         tokio::time::timeout(
             Duration::from_secs(2),
             self.store.checkpoint_mission_resource(
@@ -93,8 +94,8 @@ impl ResourceAccount {
             ),
         )
         .await
-        .map_err(|_| NativeFailure::Unavailable)?
-        .map_err(|_| NativeFailure::Unavailable)
+        .map_err(|_| failure(Phase::AccountCheckpointTimeout, NativeFailure::Unavailable))?
+        .map_err(|_| failure(Phase::AccountCheckpointRejected, NativeFailure::Unavailable))
     }
 }
 

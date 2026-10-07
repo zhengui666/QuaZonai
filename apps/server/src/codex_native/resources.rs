@@ -146,26 +146,49 @@ impl ProcessGroup {
     }
 
     async fn close_inner(&mut self) -> Result<()> {
+        use super::close_diagnostics::{failure, Phase};
         if let Some(account) = self.account.clone() {
-            super::service::barrier(&account.resource.name()).await?;
+            super::service::barrier(&account.resource.name())
+                .await
+                .map_err(|error| failure(Phase::HostBarrier, error))?;
             let nanos = if let Some(nanos) = self.final_cpu {
                 nanos
             } else {
-                let nanos = self.pause().await.and_then(|_| self.cpu_nanoseconds()).ok();
+                let nanos = self
+                    .pause()
+                    .await
+                    .map_err(|error| failure(Phase::HostFreeze, error))
+                    .and_then(|_| {
+                        self.cpu_nanoseconds()
+                            .map_err(|error| failure(Phase::HostCpuSample, error))
+                    })
+                    .ok();
                 if let Some(nanos) = nanos {
-                    account.checkpoint(Some(nanos), true, false).await?;
+                    account
+                        .checkpoint(Some(nanos), true, false)
+                        .await
+                        .map_err(|error| failure(Phase::HostCpuCheckpoint, error))?;
                 }
                 self.final_cpu = Some(nanos);
                 nanos
             };
-            self.kill()?;
-            super::service::stop_and_confirm(&account.resource.name()).await?;
-            account.checkpoint(nanos, nanos.is_some(), true).await?;
+            self.kill()
+                .map_err(|error| failure(Phase::HostKill, error))?;
+            super::service::stop_and_confirm(&account.resource.name())
+                .await
+                .map_err(|error| failure(Phase::HostStop, error))?;
+            account
+                .checkpoint(nanos, nanos.is_some(), true)
+                .await
+                .map_err(|error| failure(Phase::HostClosedCheckpoint, error))?;
             account.mark_closed();
             return Ok(());
         }
-        self.kill()?;
-        self.wait_gone().await
+        self.kill()
+            .map_err(|error| failure(Phase::ScopeKill, error))?;
+        self.wait_gone()
+            .await
+            .map_err(|error| failure(Phase::ScopeRelease, error))
     }
 
     async fn wait_gone(&self) -> Result<()> {
