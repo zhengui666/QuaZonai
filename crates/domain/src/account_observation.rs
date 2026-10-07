@@ -135,6 +135,13 @@ pub fn observation(value: &AccountObservationSubmitV1) -> Result<(), DomainError
     Ok(())
 }
 
+/// Structure only. Native client/account verification happens at the actual node
+/// producer; Store preserves the original authenticated source association.
+pub fn client_observation(value: &AccountObservationSubmitV2) -> Result<(), DomainError> {
+    text(&value.native_client_id, 1, 200, false)?;
+    observation(&value.observation)
+}
+
 pub fn valuation(snapshot: Option<&NativePortfolioSnapshotV1>) -> AccountValuationV1 {
     match snapshot {
         None => AccountValuationV1::Unavailable,
@@ -172,6 +179,60 @@ mod tests {
             "../../../tests/contracts/native-account-paper-snapshot.json"
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn client_bound_wrapper_preserves_original_values_and_requires_explicit_version() {
+        let original = fixture();
+        let wrapped = AccountObservationSubmitV2 {
+            schema_version: NativeClientObservationSchemaV2,
+            native_client_id: "QZ-NATIVE-CLIENT".into(),
+            observation: original.clone(),
+        };
+        client_observation(&wrapped).unwrap();
+        let wire = serde_json::to_value(&wrapped).unwrap();
+        assert_eq!(wire["schema_version"], 2);
+        assert_eq!(
+            wire["observation"],
+            serde_json::to_value(&original).unwrap()
+        );
+        assert!(serde_json::from_value::<AccountObservationSubmitV2>(
+            serde_json::to_value(&original).unwrap()
+        )
+        .is_err());
+        assert!(serde_json::from_value::<AccountObservationSubmitV1>(wire.clone()).is_err());
+        for bad_version in [
+            serde_json::json!(1),
+            serde_json::json!(3),
+            serde_json::json!("2"),
+        ] {
+            let mut bad = wire.clone();
+            bad["schema_version"] = bad_version;
+            assert!(serde_json::from_value::<AccountObservationSubmitV2>(bad).is_err());
+        }
+        let mut extra = wire.clone();
+        extra["venue_authenticated"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<AccountObservationSubmitV2>(extra).is_err());
+        let mut missing = wire;
+        missing.as_object_mut().unwrap().remove("native_client_id");
+        assert!(serde_json::from_value::<AccountObservationSubmitV2>(missing).is_err());
+    }
+
+    #[test]
+    fn client_bound_validation_keeps_native_binding_and_clock_rules() {
+        let mut wrapped = AccountObservationSubmitV2 {
+            schema_version: NativeClientObservationSchemaV2,
+            native_client_id: "QZ-NATIVE-CLIENT".into(),
+            observation: fixture(),
+        };
+        wrapped.native_client_id.clear();
+        assert!(client_observation(&wrapped).is_err());
+        wrapped.native_client_id = "QZ-NATIVE-CLIENT".into();
+        wrapped.observation.snapshot.as_mut().unwrap().account_id = "OTHER-001".into();
+        assert!(client_observation(&wrapped).is_err());
+        wrapped.observation = fixture();
+        wrapped.observation.observed_at_ns = DbCounter::new(1).unwrap();
+        assert!(client_observation(&wrapped).is_err());
     }
     #[test]
     fn preserves_currency_and_precision_without_combining_or_attributing() {

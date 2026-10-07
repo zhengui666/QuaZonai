@@ -316,6 +316,7 @@ async fn attempt_bound_legacy_credential_cannot_borrow_the_current_owner_on_upgr
             .await
             .unwrap();
     assert!(cli_before.get("issuer_owner_epoch").is_none());
+    assert!(cli_before.get("lease_bound").is_none());
     let (legacy, credential, _) =
         mission_token_scoped(&f, &pool, principal, 600, READ_SCOPES).await;
     let mut expected: Value =
@@ -326,6 +327,7 @@ async fn attempt_bound_legacy_credential_cannot_borrow_the_current_owner_on_upgr
             .unwrap();
     assert_eq!(expected["issuer_attempt_id"], attempt.to_string());
     assert!(expected.get("issuer_owner_epoch").is_none());
+    assert!(expected.get("lease_bound").is_none());
     sqlx::migrate!("../../migrations").run(&pool).await.unwrap();
     let migrated: Value =
         sqlx::query_scalar("SELECT to_jsonb(c) FROM app.machine_credentials c WHERE id=$1")
@@ -334,6 +336,10 @@ async fn attempt_bound_legacy_credential_cannot_borrow_the_current_owner_on_upgr
             .await
             .unwrap();
     expected["issuer_owner_epoch"] = Value::Null;
+    // Migration 101 adds a false default; it must not convert old finite
+    // issuance into authority backed by the current owner's renewable lease.
+    expected["lease_bound"] = Value::Bool(false);
+    assert_eq!(migrated["lease_bound"], Value::Bool(false));
     assert_eq!(
         migrated, expected,
         "migration must preserve every original issuance field"
@@ -345,6 +351,8 @@ async fn attempt_bound_legacy_credential_cannot_borrow_the_current_owner_on_upgr
             .await
             .unwrap();
     cli_before["issuer_owner_epoch"] = Value::Null;
+    cli_before["lease_bound"] = Value::Bool(false);
+    assert_eq!(cli_after["lease_bound"], Value::Bool(false));
     assert_eq!(cli_before, cli_after, "old CLI issuance fields stay exact");
     assert_eq!(
         status(&f, "/api/v2/auth/machine", &cli_token).await,
@@ -426,6 +434,7 @@ async fn legacy_unbound_mission_is_preserved_but_requires_new_issuance_after_upg
             .await
             .unwrap();
     assert!(expected.get("issuer_attempt_id").is_none());
+    assert!(expected.get("lease_bound").is_none());
     sqlx::migrate!("../../migrations").run(&pool).await.unwrap();
     let migrated: Value =
         sqlx::query_scalar("SELECT to_jsonb(c) FROM app.machine_credentials c WHERE id=$1")
@@ -435,6 +444,8 @@ async fn legacy_unbound_mission_is_preserved_but_requires_new_issuance_after_upg
             .unwrap();
     expected["issuer_attempt_id"] = Value::Null;
     expected["issuer_owner_epoch"] = Value::Null;
+    expected["lease_bound"] = Value::Bool(false);
+    assert_eq!(migrated["lease_bound"], Value::Bool(false));
     assert_eq!(
         migrated, expected,
         "all historical issuance fields must remain exact"

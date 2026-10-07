@@ -3,7 +3,7 @@
 //! No node, execution client, trading command or financial calculation is created here.
 use crate::{account_observation_cli as retained, account_observer::NativeAccountObserver};
 use anyhow::{anyhow, bail, Result};
-use contracts::{account_observation::*, forward::ForwardEnvironmentV1, DbCounter};
+use contracts::{account_observation::*, forward::ForwardEnvironmentV1, DbCounter, Id, SchemaV1};
 use nautilus_common::{
     enums::Environment,
     msgbus::{self, TypedHandler},
@@ -32,6 +32,8 @@ pub struct NativeNodeObserver {
     handle: LiveNodeHandle,
     engine: Rc<RefCell<ExecutionEngine>>,
     client_id: ClientId,
+    native_client_id: Option<String>,
+    native_account_id: String,
     writer: Option<JoinHandle<Result<File>>>,
 }
 
@@ -39,6 +41,7 @@ fn connection(
     handle: &LiveNodeHandle,
     engine: &RefCell<ExecutionEngine>,
     client_id: ClientId,
+    expected_account: Option<&str>,
 ) -> AccountConnectionV1 {
     // Native callbacks can run while the engine is mutably borrowed. Do not
     // panic or infer connectivity from receiving a snapshot in that case.
@@ -48,10 +51,34 @@ fn connection(
     let Some(client) = engine.get_client(&client_id) else {
         return AccountConnectionV1::Unknown;
     };
+    if expected_account.is_some_and(|account| {
+        client.account_id().to_string() != account || client.client_id() != client_id
+    }) {
+        return AccountConnectionV1::Unknown;
+    }
     match (handle.state(), client.is_connected()) {
         (NodeState::Running, true) => AccountConnectionV1::Connected,
         (NodeState::Running | NodeState::Stopped, false) => AccountConnectionV1::Disconnected,
         _ => AccountConnectionV1::Unknown,
+    }
+}
+
+fn retain(
+    file: &mut File,
+    envelope: &AccountObservationSubmitV1,
+    native_client_id: Option<&str>,
+) -> Result<()> {
+    if let Some(client) = native_client_id {
+        retained::retain_client_bound_envelope(
+            file,
+            &AccountObservationSubmitV2 {
+                schema_version: NativeClientObservationSchemaV2,
+                native_client_id: client.to_owned(),
+                observation: envelope.clone(),
+            },
+        )
+    } else {
+        retained::retain_envelope(file, envelope)
     }
 }
 
@@ -64,6 +91,60 @@ impl NativeNodeObserver {
         client_id: ClientId,
         output: &Path,
         queue_capacity: usize,
+    ) -> Result<Self> {
+        Self::attach_inner(node, binding, client_id, output, queue_capacity, false)
+    }
+
+    /// Opt-in client-bound observation producer. The host selects its project and
+    /// an existing client; native account/trader/session/environment/version are
+    /// read from the actual existing official node and execution client.
+    /// This does not construct or connect a client and does not prove venue access.
+    pub fn attach_client_bound(
+        node: &LiveNode,
+        project_id: Id,
+        client_id: ClientId,
+        output: &Path,
+        queue_capacity: usize,
+    ) -> Result<Self> {
+        if node.state() != NodeState::Idle || queue_capacity == 0 {
+            bail!("observer requires an idle node and a bounded nonzero queue");
+        }
+        let engine = node.kernel().exec_engine().clone();
+        let view = engine
+            .try_borrow()
+            .map_err(|_| anyhow!("native execution engine is busy"))?;
+        let client = view
+            .get_client(&client_id)
+            .ok_or_else(|| anyhow!("native execution client missing"))?;
+        if client.client_id() != client_id {
+            bail!("native execution client identity mismatch");
+        }
+        let account_id = client.account_id().to_string();
+        drop(view);
+        let environment = match node.environment() {
+            Environment::Sandbox => ForwardEnvironmentV1::Paper,
+            Environment::Live => ForwardEnvironmentV1::Live,
+            _ => bail!("native node environment is not Paper or Live"),
+        };
+        let binding = NativeAccountBindingV1 {
+            schema_version: SchemaV1,
+            project_id,
+            environment,
+            native_trader_id: node.trader_id().to_string(),
+            native_session_id: node.instance_id().to_string(),
+            native_account_id: account_id,
+            native_version: nautilus_core::consts::NAUTILUS_VERSION_CORE.to_owned(),
+        };
+        Self::attach_inner(node, binding, client_id, output, queue_capacity, true)
+    }
+
+    fn attach_inner(
+        node: &LiveNode,
+        binding: NativeAccountBindingV1,
+        client_id: ClientId,
+        output: &Path,
+        queue_capacity: usize,
+        client_bound: bool,
     ) -> Result<Self> {
         if node.state() != NodeState::Idle || queue_capacity == 0 {
             bail!("observer requires an idle node and a bounded nonzero queue");
@@ -88,16 +169,22 @@ impl NativeNodeObserver {
             if client.account_id().to_string() != binding.native_account_id {
                 bail!("observer client account binding mismatch");
             }
+            if client_bound && client.client_id() != client_id {
+                bail!("native execution client identity mismatch");
+            }
         }
+        let native_account_id = binding.native_account_id.clone();
+        let native_client_id = client_bound.then(|| client_id.to_string());
         let topic = format!("events.portfolio.{}", binding.native_account_id);
         let observer = NativeAccountObserver::new(binding, DbCounter::ZERO, DbCounter::ZERO)?;
         let mut file = retained::new_segment(output)?;
         let (sender, receiver) = mpsc::sync_channel(queue_capacity);
+        let retained_client = native_client_id.clone();
         let writer = std::thread::Builder::new()
             .name("native-account-retain".into())
             .spawn(move || {
                 for envelope in receiver {
-                    retained::retain_envelope(&mut file, &envelope)?;
+                    retain(&mut file, &envelope, retained_client.as_deref())?;
                 }
                 file.sync_all()?;
                 Ok(file)
@@ -105,8 +192,14 @@ impl NativeNodeObserver {
         let handle = node.handle();
         let status_handle = handle.clone();
         let status_engine = engine.clone();
+        let expected_account = client_bound.then(|| native_account_id.clone());
         let handler = observer.checked_handler(sender.clone(), retained::now, move || {
-            connection(&status_handle, &status_engine, client_id)
+            connection(
+                &status_handle,
+                &status_engine,
+                client_id,
+                expected_account.as_deref(),
+            )
         });
         msgbus::subscribe_portfolio_snapshot(topic.as_str().into(), handler.clone(), None);
         Ok(Self {
@@ -117,6 +210,8 @@ impl NativeNodeObserver {
             handle,
             engine,
             client_id,
+            native_client_id,
+            native_account_id,
             writer: Some(writer),
         })
     }
@@ -132,7 +227,14 @@ impl NativeNodeObserver {
         self.observer.try_emit(
             None,
             retained::now()?,
-            connection(&self.handle, &self.engine, self.client_id),
+            connection(
+                &self.handle,
+                &self.engine,
+                self.client_id,
+                self.native_client_id
+                    .as_ref()
+                    .map(|_| self.native_account_id.as_str()),
+            ),
             self.sender
                 .as_ref()
                 .ok_or_else(|| anyhow!("observer detached"))?,
@@ -160,7 +262,14 @@ impl NativeNodeObserver {
         ) {
             bail!("finish observer only after native shutdown");
         }
-        let status = connection(&self.handle, &self.engine, self.client_id);
+        let status = connection(
+            &self.handle,
+            &self.engine,
+            self.client_id,
+            self.native_client_id
+                .as_ref()
+                .map(|_| self.native_account_id.as_str()),
+        );
         self.detach();
         let mut file = self
             .writer
@@ -173,7 +282,11 @@ impl NativeNodeObserver {
         let (sender, receiver) = mpsc::sync_channel(1);
         self.observer
             .try_emit(None, retained::now()?, status, &sender)?;
-        retained::retain_envelope(&mut file, &receiver.recv()?)?;
+        retain(
+            &mut file,
+            &receiver.recv()?,
+            self.native_client_id.as_deref(),
+        )?;
         file.sync_all()?;
         Ok(self.observer.cursor())
     }

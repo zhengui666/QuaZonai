@@ -14,17 +14,20 @@ pub mod native_node_observer;
 pub mod operator;
 mod optimization;
 #[cfg(feature = "native-paper")]
-pub mod paper_node;
-#[cfg(feature = "native-paper")]
 mod paper_claim_store;
+#[cfg(feature = "native-paper")]
+pub mod paper_node;
 #[cfg(feature = "native-paper")]
 pub mod paper_service;
 #[cfg(feature = "native-node-observer")]
 pub mod polymarket_data_probe;
+pub mod polymarket_execution_preflight;
 #[cfg(feature = "native-paper")]
 pub mod polymarket_paper_host;
 #[cfg(feature = "native-paper")]
 pub mod polymarket_paper_service;
+#[cfg(any(feature = "native-paper", feature = "catalog-prepare"))]
+mod polymarket_source_record;
 #[cfg(feature = "native-paper")]
 pub mod polymarket_streaming_paper;
 pub mod portfolio;
@@ -36,9 +39,9 @@ pub use report::write_probe_report;
 pub mod signals;
 pub mod simulation;
 pub mod spot_cash_capture;
+mod spot_cash_runtime;
 #[cfg(feature = "hyperliquid-offline")]
 pub mod spot_cash_source;
-mod spot_cash_runtime;
 pub mod spot_fees;
 pub mod strategy;
 pub mod study;

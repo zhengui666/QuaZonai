@@ -1,5 +1,6 @@
 //! Thin client for the official Codex App Server. Codex owns its tool loop,
 //! authentication and canonical history; QZ owns only bounded transport and bindings.
+mod close_diagnostics;
 pub(crate) mod container;
 mod mission;
 mod projection;
@@ -455,23 +456,39 @@ impl Client {
     }
 
     pub async fn close(mut self) -> Result<()> {
+        use close_diagnostics::{failure, Phase};
         // Freeze and commit final CPU before EOF can let the native leader exit
         // and systemd/Docker discard its process-tree accounting.
         if let Some(group) = &mut self.group {
-            group.close().await?;
+            group
+                .close()
+                .await
+                .map_err(|error| failure(Phase::ClientGroup, error))?;
         }
         if let Some(container) = &mut self.container {
-            container.close().await?;
+            container
+                .close()
+                .await
+                .map_err(|error| failure(Phase::ClientContainerBeforeShutdown, error))?;
         }
         self.wire.shutdown().await;
         if let Some(container) = &mut self.container {
-            return container.close().await;
+            return container
+                .close()
+                .await
+                .map_err(|error| failure(Phase::ClientContainerAfterShutdown, error));
         }
-        let child = self.child.as_mut().ok_or(NativeFailure::Unavailable)?;
+        let child = self
+            .child
+            .as_mut()
+            .ok_or_else(|| failure(Phase::ClientChildMissing, NativeFailure::Unavailable))?;
         let result = match tokio::time::timeout(Duration::from_secs(2), child.wait()).await {
             Ok(Ok(_)) => Ok(()),
-            Ok(Err(_)) => Err(NativeFailure::Unavailable),
-            Err(_) => child.kill().await.map_err(|_| NativeFailure::Unavailable),
+            Ok(Err(_)) => Err(failure(Phase::ClientChildWait, NativeFailure::Unavailable)),
+            Err(_) => child
+                .kill()
+                .await
+                .map_err(|_| failure(Phase::ClientChildKill, NativeFailure::Unavailable)),
         };
 
         result

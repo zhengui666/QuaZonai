@@ -1,9 +1,10 @@
 //! Current public-data Paper acceptance host. HF originals remain research history.
 //! The data producer is a separate data-only native process; this process owns
 //! one official simulation engine. No exchange execution client is registered.
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{Result, anyhow, ensure};
 use contracts::{
-    account_observation::{NativeAccountBindingV1, NATIVE_ACCOUNT_VERSION},
+    DbCounter, Id, SchemaV1,
+    account_observation::{NATIVE_ACCOUNT_VERSION, NativeAccountBindingV1},
     catalogs::RuntimeCatalogMetadataV1,
     control::CommandResult,
     data::DatasetView,
@@ -14,7 +15,6 @@ use contracts::{
     research::DataOrigin,
     science::NativeTargetPointV1,
     strategy_portfolio::{HandoffClaimViewV2, TargetPackageEnvelopeV2},
-    DbCounter, Id, SchemaV1,
 };
 use nautilus_common::{
     actor::{DataActor, DataActorConfig, DataActorCore},
@@ -22,18 +22,17 @@ use nautilus_common::{
     logging::logger::LoggerConfig,
     messages::system::{QueueStateChanged, SocketState, SocketStateChanged},
     msgbus::{
-        self,
+        self, ShareableMessageHandler, TypedHandler,
         switchboard::{self, MessagingSwitchboard},
-        ShareableMessageHandler, TypedHandler,
     },
     nautilus_actor,
 };
 use nautilus_live::{
-    node::{LiveNode, NodeRunMode, NodeState},
     SocketControlFactory,
+    node::{LiveNode, NodeRunMode, NodeState},
 };
 use nautilus_model::{
-    data::{BarType, Data, InstrumentClose, InstrumentStatus, QuoteTick, TradeTick},
+    data::{Bar, BarType, Data, InstrumentClose, InstrumentStatus, QuoteTick, TradeTick},
     enums::MarketStatusAction,
     identifiers::{ClientId, InstrumentId, TraderId, Venue},
     instruments::{Instrument, InstrumentAny},
@@ -46,8 +45,8 @@ use nautilus_polymarket::{
         messages::{MarketWsMessage, PolymarketWsMessage},
     },
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use std::{
     cell::RefCell,
     collections::BTreeSet,
@@ -59,9 +58,9 @@ use std::{
     rc::Rc,
     str::FromStr,
     sync::{
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, SyncSender},
-        Arc,
     },
     time::{Duration, Instant},
 };
@@ -69,6 +68,7 @@ use std::{
 use crate::polymarket_data_probe::{
     public_config_from_proxy_env, public_transport_error, validate_proxy_env_name,
 };
+use crate::polymarket_source_record::{ForwardSourcePlan, SourceRecord};
 use crate::polymarket_streaming_paper::PolymarketStreamingPaper;
 
 const CLIENT: &str = "QZ-POLYMARKET-PAPER-DATA";
@@ -83,6 +83,16 @@ pub struct Arguments {
 
 #[derive(clap::Subcommand)]
 enum Operation {
+    /// Record only the explicit Forward business BAR window, or stop on cancellation.
+    /// No wall/CPU/token/output execution budget or trading client is created.
+    RecordForward {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        proxy_env: Option<String>,
+    },
     /// Serve one bounded Polymarket Cash simulation with durable lifecycle replay.
     /// Reuse the persistent claim_state_directory; incomplete claims require recovery.
     /// Fresh session only, without position or account restoration.
@@ -160,16 +170,6 @@ pub(crate) struct HostConfig {
     pub(crate) market_capability_version: String,
     execution_assumptions: ExecutionAssumptionsViewV1,
     bar_interval_seconds: u32,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SourceRecord {
-    schema_version: SchemaV1,
-    sequence: DbCounter,
-    observed_at_ns: DbCounter,
-    kind: String,
-    payload: Value,
 }
 
 fn now_ns() -> Result<DbCounter> {
@@ -597,6 +597,128 @@ impl Drop for NativeRetention {
     }
 }
 
+#[derive(Debug)]
+struct ForwardProgress {
+    plan: ForwardSourcePlan,
+    interval: u64,
+    observed: u32,
+    failed: bool,
+    cancelled: bool,
+    window_closed: bool,
+    aggregation_observed_before_window: bool,
+}
+impl ForwardProgress {
+    fn observe(&mut self, bar: &Bar, callback_observed_ns: u64) -> Result<()> {
+        if callback_observed_ns <= self.plan.first_close_ns.get() - self.interval
+            && bar.ts_event.as_u64() <= callback_observed_ns
+        {
+            self.aggregation_observed_before_window = true;
+        }
+        if bar.ts_event.as_u64() < self.plan.first_close_ns.get()
+            || bar.ts_event.as_u64() > self.plan.final_close(self.interval)?
+        {
+            return Ok(());
+        }
+        let expected = self
+            .plan
+            .first_close_ns
+            .get()
+            .checked_add(u64::from(self.observed) * self.interval)
+            .ok_or_else(|| anyhow!("FORWARD_SOURCE_RANGE"))?;
+        ensure!(
+            self.aggregation_observed_before_window
+                && bar.ts_event.as_u64() == expected
+                && bar.bar_type.instrument_id().to_string() == self.plan.instrument_id,
+            "FORWARD_SOURCE_CLOSE_GAP"
+        );
+        self.observed += 1;
+        Ok(())
+    }
+    fn complete(&self) -> bool {
+        self.window_closed
+            && self.aggregation_observed_before_window
+            && self.observed == self.plan.required_bars
+            && !self.failed
+            && !self.cancelled
+    }
+    fn observe_window(&mut self, actual_observed_ns: DbCounter) -> Result<bool> {
+        if !self.window_closed
+            && actual_observed_ns.get() >= self.plan.final_close(self.interval)?
+        {
+            self.window_closed = true;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+}
+
+struct ForwardActor {
+    core: DataActorCore,
+    bar_type: BarType,
+}
+impl fmt::Debug for ForwardActor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ForwardActor")
+            .field("bar_type", &self.bar_type)
+            .finish()
+    }
+}
+nautilus_actor!(ForwardActor);
+impl DataActor for ForwardActor {
+    fn on_start(&mut self) -> Result<()> {
+        self.subscribe_bars(self.bar_type, Some(ClientId::from(CLIENT)), None);
+        Ok(())
+    }
+}
+fn forward_actor(bar_type: BarType) -> ForwardActor {
+    ForwardActor {
+        core: DataActorCore::new(DataActorConfig {
+            actor_id: Some(nautilus_model::identifiers::ActorId::from(
+                "QZ-FORWARD-BARS",
+            )),
+            log_events: false,
+            log_commands: false,
+            ..Default::default()
+        }),
+        bar_type,
+    }
+}
+struct ForwardRetention {
+    topic: String,
+    handler: TypedHandler<Bar>,
+}
+impl ForwardRetention {
+    fn attach(
+        state: Rc<RefCell<ProducerState>>,
+        progress: Rc<RefCell<ForwardProgress>>,
+        bar_type: BarType,
+    ) -> Self {
+        let handler = TypedHandler::from(move |bar: &Bar| {
+            // The raw callback is retained first. Sampling progress afterwards is
+            // conservative: it can never certify an earlier source observation.
+            state
+                .borrow_mut()
+                .native("bar_close", bar.bar_type.instrument_id(), bar);
+            let mut current = progress.borrow_mut();
+            if now_ns()
+                .and_then(|at| current.observe(bar, at.get()))
+                .is_err()
+            {
+                current.failed = true;
+                state.borrow_mut().gap = true;
+            }
+        });
+        let topic = switchboard::get_bars_topic(bar_type.standard()).to_string();
+        msgbus::subscribe_bars(topic.as_str().into(), handler.clone(), None);
+        Self { topic, handler }
+    }
+}
+impl Drop for ForwardRetention {
+    fn drop(&mut self) {
+        msgbus::unsubscribe_bars(self.topic.as_str().into(), &self.handler);
+    }
+}
+
 struct LifecycleWatch {
     client: PolymarketWebSocketClient,
     messages: tokio::sync::mpsc::UnboundedReceiver<PolymarketWsMessage>,
@@ -656,7 +778,7 @@ fn lifecycle_message(
             );
         }
         PolymarketWsMessage::User(_) => {
-            return Err(anyhow!("PAPER_PUBLIC_CHANNEL_RETURNED_USER_EVENT"))
+            return Err(anyhow!("PAPER_PUBLIC_CHANNEL_RETURNED_USER_EVENT"));
         }
     }
     Ok(())
@@ -883,15 +1005,30 @@ async fn source(
     max_seconds: u64,
     proxy_env: Option<&str>,
 ) -> Result<()> {
+    source_inner(ids, output, Some(max_seconds), proxy_env, None).await
+}
+
+async fn source_inner(
+    ids: Vec<InstrumentId>,
+    output: &Path,
+    max_seconds: Option<u64>,
+    proxy_env: Option<&str>,
+    forward: Option<ForwardSourcePlan>,
+) -> Result<()> {
     let config = public_config_from_proxy_env(ids.clone(), proxy_env)?;
     let configured_proxy = config.has_proxy_url();
     let file = new_output(output)?;
+    let mirror_stdout = forward.is_none();
     let (sender, receiver) = mpsc::sync_channel::<SourceRecord>(4096);
     let writer = std::thread::spawn(move || -> Result<File> {
         let mut file = file;
-        let mut stdout = std::io::stdout().lock();
+        let mut stdout = mirror_stdout.then(|| std::io::stdout().lock());
         for record in receiver {
-            write_record(&mut file, &mut stdout, &record)?;
+            if let Some(stdout) = &mut stdout {
+                write_record(&mut file, stdout, &record)?;
+            } else {
+                write_record(&mut file, &mut std::io::sink(), &record)?;
+            }
         }
         Ok(file)
     });
@@ -908,7 +1045,7 @@ async fn source(
         definitions: BTreeSet::new(),
         ticks: BTreeSet::new(),
     }));
-    let mut node = LiveNode::builder(TraderId::from("QZ-PAPER-SOURCE-001"), Environment::Live)?
+    let mut builder = LiveNode::builder(TraderId::from("QZ-PAPER-SOURCE-001"), Environment::Live)?
         .with_logging(LoggerConfig {
             bypass_logging: true,
             ..Default::default()
@@ -922,8 +1059,34 @@ async fn source(
             Some(CLIENT.into()),
             Box::new(PolymarketDataClientFactory),
             Box::new(config.clone()),
-        )?
-        .build()?;
+        )?;
+    let forward = forward
+        .map(|plan| -> Result<_> {
+            let (_, interval) = plan.native()?;
+            Ok(Rc::new(RefCell::new(ForwardProgress {
+                plan,
+                interval,
+                observed: 0,
+                failed: false,
+                cancelled: false,
+                window_closed: false,
+                aggregation_observed_before_window: false,
+            })))
+        })
+        .transpose()?;
+    if forward.is_some() {
+        builder =
+            builder.with_data_engine_config(nautilus_live::node::config::LiveDataEngineConfig {
+                time_bars_build_with_no_updates: false,
+                time_bars_timestamp_on_close: true,
+                // Retain the initial native partial close as replay evidence.
+                // Only complete windows after readiness enter the Forward catalog.
+                time_bars_skip_first_non_full_bar: false,
+                validate_data_sequence: true,
+                ..Default::default()
+            });
+    }
+    let mut node = builder.build()?;
     let data_engine = node.kernel().data_engine.clone();
     let monitored_data_engine = data_engine.clone();
     let connected = Box::new(move || {
@@ -931,17 +1094,19 @@ async fn source(
             .try_borrow()
             .is_ok_and(|value| value.check_connected())
     });
-    state.borrow_mut().emit(
-        "start",
-        json!({
-            "purpose": "CURRENT_PUBLIC_PAPER_ACCEPTANCE_ONLY",
-            "native_session_id": node.instance_id().to_string(),
-            "native_version": NATIVE_ACCOUNT_VERSION,
-            "proxy_configured": configured_proxy,
-            "selected_instruments": ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            "execution_clients_registered": 0,
-        }),
-    );
+    let mut starting = json!({
+        "purpose": "CURRENT_PUBLIC_PAPER_ACCEPTANCE_ONLY",
+        "native_session_id": node.instance_id().to_string(),
+        "native_version": NATIVE_ACCOUNT_VERSION,
+        "proxy_configured": configured_proxy,
+        "selected_instruments": ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "execution_clients_registered": 0,
+    });
+    if let Some(progress) = &forward {
+        starting["purpose"] = json!("CURRENT_POLYMARKET_FORWARD_SOURCE");
+        starting["forward_plan"] = serde_json::to_value(&progress.borrow().plan)?;
+    }
+    state.borrow_mut().emit("start", starting);
     let retention = NativeRetention::attach(state.clone(), &ids);
     state.borrow_mut().emit(
         "source_phase",
@@ -971,11 +1136,30 @@ async fn source(
         state: state.clone(),
         connected,
     })?;
+    let forward_retention = if let Some(progress) = &forward {
+        let external = progress.borrow().plan.bar_type.clone();
+        let internal: BarType = (external
+            .strip_suffix("-EXTERNAL")
+            .ok_or_else(|| anyhow!("FORWARD_LAST_BAR_REQUIRED"))?
+            .to_owned()
+            + "-INTERNAL")
+            .parse()?;
+        let retained = ForwardRetention::attach(state.clone(), progress.clone(), internal);
+        node.add_actor(forward_actor(internal))?;
+        Some(retained)
+    } else {
+        None
+    };
     let handle = node.handle();
     let native_failure = {
         let native = node.run_with_mode(NodeRunMode::Hosted);
         tokio::pin!(native);
-        let deadline = tokio::time::sleep(Duration::from_secs(max_seconds));
+        let deadline = async {
+            match max_seconds {
+                Some(seconds) => tokio::time::sleep(Duration::from_secs(seconds)).await,
+                None => std::future::pending::<()>().await,
+            }
+        };
         tokio::pin!(deadline);
         let mut check = tokio::time::interval(Duration::from_millis(100));
         let mut lifecycle_eof = false;
@@ -988,6 +1172,12 @@ async fn source(
                         Ok(result) => result.err().map(|error| public_transport_error(&error, configured_proxy)),
                         Err(_) => Some("PAPER_SOURCE_SHUTDOWN_TIMEOUT".into()),
                     };
+                }
+                cancelled=tokio::signal::ctrl_c(), if forward.is_some()=> {
+                    if let Some(progress)=&forward {progress.borrow_mut().cancelled=true;}
+                    state.borrow_mut().emit("gap",json!({"reason_code":if cancelled.is_ok(){"FORWARD_SOURCE_CANCELLED"}else{"FORWARD_CANCEL_SIGNAL_FAILED"}}));
+                    state.borrow_mut().gap=true;handle.stop();
+                    break match tokio::time::timeout(Duration::from_secs(15),&mut native).await {Ok(result)=>result.err().map(|error|public_transport_error(&error,configured_proxy)),Err(_)=>Some("PAPER_SOURCE_SHUTDOWN_TIMEOUT".into())};
                 }
                 message = lifecycle.messages.recv(), if !lifecycle_eof => {
                     match message {
@@ -1014,6 +1204,16 @@ async fn source(
                         state.emit("gap", json!({"reason_code": "NATIVE_DATA_CLIENT_DISCONNECTED"}));
                         handle.stop();
                     }
+                    if let Some(progress)=&forward {
+                        let mut progress=progress.borrow_mut();
+                        if progress.observe_window(now_ns()?)? {
+                            state.borrow_mut().emit("forward_window_closed",json!({"bar_window_end_ns":DbCounter::new(progress.plan.final_close(progress.interval)?).map_err(anyhow::Error::msg)?}));
+                        }
+                    }
+                    if forward.as_ref().is_some_and(|p|p.borrow().window_closed || p.borrow().failed || state.borrow().gap) {
+                        handle.stop();
+                        break match tokio::time::timeout(Duration::from_secs(15),&mut native).await {Ok(result)=>result.err().map(|error|public_transport_error(&error,configured_proxy)),Err(_)=>Some("PAPER_SOURCE_SHUTDOWN_TIMEOUT".into())};
+                    }
                 }
             }
         }
@@ -1026,6 +1226,7 @@ async fn source(
         state.emit("gap", json!({"reason_code": error.to_string()}));
     }
     // Keep native retention until the actual runner and public watcher drains.
+    drop(forward_retention);
     drop(retention);
     node.dispose();
     let (sequence, complete, final_payload) = {
@@ -1039,18 +1240,22 @@ async fn source(
             && !state.gap
             && !state.encoding_failed
             && state.dropped == 0
-            && state.ticks == state.selected;
-        (
-            state.sequence,
-            complete,
-            json!({
+            && state.ticks == state.selected
+            && forward.as_ref().is_none_or(|p| p.borrow().complete());
+        (state.sequence, complete, {
+            let mut payload = json!({
                 "native_returned_success": native_ok, "native_shutdown_confirmed": stopped,
                 "native_failure": native_failure.map(|value| value.chars().take(1024).collect::<String>()),
                 "ready": state.ready, "lifecycle_complete": state.lifecycle_complete, "gap": state.gap, "dropped_events": state.dropped,
                 "encoding_failed": state.encoding_failed, "all_selected_ticks_observed": state.ticks == state.selected,
                 "complete": complete,
-            }),
-        )
+            });
+            if let Some(progress) = &forward {
+                payload["forward_observations_complete"] = json!(progress.borrow().complete());
+                payload["forward_bars_observed"] = json!(progress.borrow().observed);
+            }
+            payload
+        })
     };
     let mut file = writer
         .join()
@@ -1062,7 +1267,11 @@ async fn source(
         kind: "end".into(),
         payload: final_payload,
     };
-    write_record(&mut file, &mut std::io::stdout().lock(), &final_record)?;
+    if mirror_stdout {
+        write_record(&mut file, &mut std::io::stdout().lock(), &final_record)?;
+    } else {
+        write_record(&mut file, &mut std::io::sink(), &final_record)?;
+    }
     file.sync_all()?;
     ensure!(complete, "PAPER_SOURCE_INCOMPLETE_RETAIN_RECORDS");
     Ok(())
@@ -1188,7 +1397,7 @@ fn next_source_record_controlled(
             Ok(value) => return value.map_err(anyhow::Error::msg),
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(anyhow!("PAPER_SOURCE_PARENT_WALL_DEADLINE_OR_READER_LOSS"))
+                return Err(anyhow!("PAPER_SOURCE_PARENT_WALL_DEADLINE_OR_READER_LOSS"));
             }
         }
     }
@@ -1313,7 +1522,7 @@ pub(crate) fn execute(
                     );
                 }
                 "lifecycle_event" | "lifecycle_reconnected" => {
-                    return Err(anyhow!("PAPER_LIFECYCLE_CHANGED_OR_LOST"))
+                    return Err(anyhow!("PAPER_LIFECYCLE_CHANGED_OR_LOST"));
                 }
                 "lifecycle_coverage" => {
                     ensure!(
@@ -1508,6 +1717,26 @@ pub(crate) fn execute(
 
 pub fn run(arguments: Arguments) -> Result<()> {
     match arguments.operation {
+        Operation::RecordForward {
+            plan,
+            output,
+            proxy_env,
+        } => {
+            let plan: ForwardSourcePlan = read_original(&plan)?;
+            let (bar, _) = plan.native()?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let result = runtime.block_on(source_inner(
+                vec![bar.instrument_id()],
+                &output,
+                None,
+                proxy_env.as_deref(),
+                Some(plan),
+            ));
+            runtime.shutdown_timeout(Duration::from_millis(250));
+            result
+        }
         Operation::Serve { config } => crate::polymarket_paper_service::run(&config),
         Operation::Apply {
             origin,
@@ -1592,6 +1821,127 @@ pub fn run(arguments: Arguments) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn forward_bar_actor_registers_beside_original_source_without_starting_node() {
+        // Native actor registration only. No data client, node run or network.
+        let mut node =
+            LiveNode::builder(TraderId::from("QZ-FORWARD-REGISTRY-001"), Environment::Live)
+                .unwrap()
+                .with_logging(LoggerConfig {
+                    bypass_logging: true,
+                    ..Default::default()
+                })
+                .with_load_state(false)
+                .with_save_state(false)
+                .with_reconciliation(false)
+                .build()
+                .unwrap();
+        let (state, _) = producer(&[]);
+        node.add_actor(SourceActor {
+            core: DataActorCore::new(DataActorConfig {
+                log_events: false,
+                log_commands: false,
+                ..Default::default()
+            }),
+            ids: vec![],
+            state,
+            connected: Box::new(|| false),
+        })
+        .unwrap();
+        node.add_actor(forward_actor(
+            "fixture-event-101.POLYMARKET-1-SECOND-LAST-INTERNAL"
+                .parse()
+                .unwrap(),
+        ))
+        .unwrap();
+        node.dispose();
+    }
+
+    fn forward_fixture_progress() -> ForwardProgress {
+        ForwardProgress {
+            plan: ForwardSourcePlan {
+                schema_version: SchemaV1,
+                instrument_id: "fixture-event-101.POLYMARKET".into(),
+                bar_type: "fixture-event-101.POLYMARKET-1-SECOND-LAST-EXTERNAL".into(),
+                first_close_ns: DbCounter::new(3_000_000_000).unwrap(),
+                required_bars: 2,
+            },
+            interval: 1_000_000_000,
+            observed: 0,
+            failed: false,
+            cancelled: false,
+            window_closed: false,
+            aggregation_observed_before_window: false,
+        }
+    }
+    #[test]
+    fn forward_empty_and_partial_business_windows_stop_incomplete_at_actual_close() {
+        for observations in [0, 1] {
+            let mut progress = forward_fixture_progress();
+            progress.observed = observations;
+            assert!(
+                !progress
+                    .observe_window(DbCounter::new(3_999_999_999).unwrap())
+                    .unwrap()
+            );
+            assert!(
+                progress
+                    .observe_window(DbCounter::new(4_000_000_100).unwrap())
+                    .unwrap()
+            );
+            assert!(progress.window_closed);
+            assert!(!progress.complete());
+            assert!(
+                !progress
+                    .observe_window(DbCounter::new(5_000_000_000).unwrap())
+                    .unwrap()
+            );
+        }
+    }
+    #[test]
+    fn forward_actual_drain_may_supply_last_bar_but_cancel_never_completes() {
+        let mut progress = forward_fixture_progress();
+        let bar = |at| {
+            Bar::new(
+                "fixture-event-101.POLYMARKET-1-SECOND-LAST-INTERNAL"
+                    .parse()
+                    .unwrap(),
+                nautilus_model::types::Price::from("0.50"),
+                nautilus_model::types::Price::from("0.50"),
+                nautilus_model::types::Price::from("0.50"),
+                nautilus_model::types::Price::from("0.50"),
+                nautilus_model::types::Quantity::from("1.00"),
+                nautilus_core::UnixNanos::from(at),
+                nautilus_core::UnixNanos::from(at),
+            )
+        };
+        progress
+            .observe(&bar(1_000_000_000), 1_000_000_100)
+            .unwrap();
+        progress
+            .observe(&bar(3_000_000_000), 3_000_000_100)
+            .unwrap();
+        progress
+            .observe_window(DbCounter::new(4_000_000_100).unwrap())
+            .unwrap();
+        assert!(!progress.complete());
+        progress
+            .observe(&bar(4_000_000_000), 4_000_000_200)
+            .unwrap();
+        assert!(progress.complete());
+        progress.cancelled = true;
+        assert!(!progress.complete());
+        let mut late = forward_fixture_progress();
+        assert!(late.observe(&bar(3_000_000_000), 3_000_000_100).is_err());
+        assert!(!late.complete());
+    }
+    #[test]
+    fn forward_plan_rejects_resource_budget_fields() {
+        let mut plan = serde_json::to_value(forward_fixture_progress().plan).unwrap();
+        plan["max_seconds"] = json!(30);
+        assert!(serde_json::from_value::<ForwardSourcePlan>(plan).is_err());
+    }
 
     fn rejecting_proxy() -> (String, mpsc::Receiver<String>, std::thread::JoinHandle<()>) {
         use std::net::TcpListener;
@@ -1766,15 +2116,17 @@ mod tests {
     #[test]
     fn expired_parent_deadline_rejects_even_buffered_records() {
         let (sender, receiver) = mpsc::sync_channel(1);
-        assert!(sender
-            .send(Ok(Some(SourceRecord {
-                schema_version: SchemaV1,
-                sequence: DbCounter::new(1).unwrap(),
-                observed_at_ns: DbCounter::new(1).unwrap(),
-                kind: "start".into(),
-                payload: json!({}),
-            })))
-            .is_ok());
+        assert!(
+            sender
+                .send(Ok(Some(SourceRecord {
+                    schema_version: SchemaV1,
+                    sequence: DbCounter::new(1).unwrap(),
+                    observed_at_ns: DbCounter::new(1).unwrap(),
+                    kind: "start".into(),
+                    payload: json!({}),
+                })))
+                .is_ok()
+        );
         let expired = Instant::now() - Duration::from_millis(1);
         assert!(next_source_record(&receiver, expired).is_err());
         // Expiry is checked before consuming a queued frame.
@@ -1905,12 +2257,14 @@ mod tests {
             Arc::new(AtomicBool::new(true)),
             status,
         );
-        assert!(next_source_record_controlled(
-            &receiver,
-            Instant::now() + Duration::from_secs(60),
-            Some(&control)
-        )
-        .is_err());
+        assert!(
+            next_source_record_controlled(
+                &receiver,
+                Instant::now() + Duration::from_secs(60),
+                Some(&control)
+            )
+            .is_err()
+        );
         assert!(receiver.try_recv().is_ok());
     }
 

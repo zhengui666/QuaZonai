@@ -249,10 +249,11 @@ async fn migration_103_to_104_preserves_existing_receipt_and_rejects_new_legacy_
         .run_to(202610060103, &pool)
         .await
         .unwrap();
-    let version: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let version: i64 =
+        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(version, 202610060103);
     let old = forward_support::setup(&pool).await;
     let queued = queue(&old).await;
@@ -289,11 +290,24 @@ async fn migration_103_to_104_preserves_existing_receipt_and_rejects_new_legacy_
     let original_objects = old.objects.lock().unwrap().clone();
     // Exercise the application's native migration transaction and lock handling.
     old.store.migrate().await.unwrap();
-    let version: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(version, 202610060104);
+    let version: i64 =
+        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    // The application migrates through 104 and all later additive migrations.
+    // Keep the exact 103 starting point without freezing the current head here.
+    let migrations = sqlx::migrate!("../../migrations");
+    assert_eq!(version, migrations.iter().last().unwrap().version);
+    let applied_104: bool =
+        sqlx::query_scalar("SELECT success FROM _sqlx_migrations WHERE version=202610060104")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        applied_104,
+        "the specific Forward protection must be applied"
+    );
     assert_eq!(before, stored_receipt(&pool, queued.resource.id).await);
     let replay = old
         .store

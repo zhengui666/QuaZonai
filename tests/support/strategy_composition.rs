@@ -145,6 +145,7 @@ pub fn current_report() -> NativeStrategyCompositionResultV1 {
     NativeStrategyCompositionResultV1 {
         schema_version: SchemaV1,
         request: NativeStrategyCompositionRequestV1 {
+        binary_option: None,
             schema_version: SchemaV1,
             selection: NativeBarSelectionV1 {
                 schema_version: SchemaV1,

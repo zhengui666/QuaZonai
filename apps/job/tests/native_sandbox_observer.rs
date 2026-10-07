@@ -353,3 +353,120 @@ async fn native_sandbox_lifecycle_fills_and_portfolio_events_reach_retained_stre
     )
     .is_err());
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn client_bound_observer_uses_actual_native_identity_without_submitting_orders() {
+    let mut node = node();
+    let project_id = contracts::Id::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client-bound.ndjson");
+    let invalid_path = directory.path().join("invalid-client.ndjson");
+    assert!(NativeNodeObserver::attach_client_bound(
+        &node,
+        project_id,
+        ClientId::new("MISSING-CLIENT"),
+        &invalid_path,
+        32,
+    )
+    .is_err());
+    assert!(!invalid_path.exists());
+    assert!(NativeNodeObserver::attach_client_bound(
+        &node,
+        project_id,
+        ClientId::new("QZ-SANDBOX"),
+        &invalid_path,
+        0,
+    )
+    .is_err());
+    assert!(!invalid_path.exists());
+
+    let snapshots = Rc::new(RefCell::new(Vec::<PortfolioSnapshot>::new()));
+    let captured = snapshots.clone();
+    let handler = TypedHandler::from(move |snapshot: &PortfolioSnapshot| {
+        captured.borrow_mut().push(snapshot.clone());
+    });
+    msgbus::subscribe_portfolio_snapshot(
+        "events.portfolio.QZTEST-001".into(),
+        handler.clone(),
+        None,
+    );
+    let observer = NativeNodeObserver::attach_client_bound(
+        &node,
+        project_id,
+        ClientId::new("QZ-SANDBOX"),
+        &path,
+        64,
+    )
+    .unwrap();
+    observer.heartbeat().unwrap();
+    let handle = node.handle();
+    let (result, ()) = tokio::join!(node.run_with_mode(NodeRunMode::Hosted), async {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut ticker = tokio::time::interval(Duration::from_millis(10));
+        loop {
+            ticker.tick().await;
+            observer.heartbeat().unwrap();
+            if (handle.is_running() && !snapshots.borrow().is_empty())
+                || tokio::time::Instant::now() >= deadline
+            {
+                handle.stop();
+                break;
+            }
+        }
+    });
+    result.unwrap();
+    let cursor = observer.finish().unwrap();
+    msgbus::unsubscribe_portfolio_snapshot("events.portfolio.QZTEST-001".into(), &handler);
+    let native: HashMap<_, _> = snapshots
+        .borrow()
+        .iter()
+        .map(|s| (s.event_id.to_string(), project_snapshot(s).unwrap()))
+        .collect();
+    assert!(
+        !native.is_empty(),
+        "official Sandbox account snapshots must be observed"
+    );
+    let text = std::fs::read_to_string(&path).unwrap();
+    let records: Vec<AccountObservationSubmitV2> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(cursor.0.get(), records.len() as u64);
+    assert_eq!(cursor.1, DbCounter::ZERO);
+    assert!(records.iter().any(|r| r.observation.snapshot.is_some()));
+    for (index, record) in records.iter().enumerate() {
+        let original = &record.observation;
+        domain::account_observation::client_observation(record).unwrap();
+        assert_eq!(record.native_client_id, "QZ-SANDBOX");
+        assert_eq!(original.binding.project_id, project_id);
+        assert_eq!(
+            original.binding.native_trader_id,
+            node.trader_id().to_string()
+        );
+        assert_eq!(
+            original.binding.native_session_id,
+            node.instance_id().to_string()
+        );
+        assert_eq!(original.binding.native_account_id, "QZTEST-001");
+        assert_eq!(original.binding.environment, ForwardEnvironmentV1::Paper);
+        assert_eq!(
+            original.binding.native_version,
+            nautilus_core::consts::NAUTILUS_VERSION_CORE
+        );
+        assert_eq!(original.sequence.get(), index as u64 + 1);
+        if let Some(snapshot) = &original.snapshot {
+            assert_eq!(snapshot, &native[&snapshot.event_id]);
+        }
+    }
+    assert!(text
+        .lines()
+        .all(|line| serde_json::from_str::<AccountObservationSubmitV1>(line).is_err()));
+    assert!(
+        node.kernel()
+            .cache()
+            .borrow()
+            .orders(None, None, None, None, None)
+            .is_empty(),
+        "this fixture registers no strategy and submits no order"
+    );
+}

@@ -292,10 +292,11 @@ pub fn evaluate(
     ensure!(
         matches!(
             series.instrument,
-            InstrumentAny::CurrencyPair(_) | InstrumentAny::Equity(_)
+            InstrumentAny::CurrencyPair(_) | InstrumentAny::Equity(_) | InstrumentAny::BinaryOption(_)
         ),
         "EXPERIMENT_TRADED_INSTRUMENT_UNSUPPORTED"
     );
+    crate::prediction::bind_target_context(root, &market, &request.selection, request.binary_option.as_ref())?;
     crate::simulation::execution_market(&market, &request.settings)?;
     let horizon = request.label_horizon_observations as usize;
     let eligible = series
@@ -401,12 +402,16 @@ pub fn evaluate(
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        for target in &targets {
+            domain::prediction::binary_option_target(request.binary_option.as_ref(), target)?;
+        }
         let simulation_request = NativeSimulationRequestV1 {
             schema_version: SchemaV1,
+            settlements: domain::prediction::binary_option_settlements(request.binary_option.as_ref(),
+                &request.instrument_id, selection.decision_cutoff_ns),
             selection,
             settings: request.settings.clone(),
             target_points: targets,
-            settlements: Vec::new(),
         };
         let simulation = crate::simulation::simulate(root, &simulation_request)?;
         folds.push(NativeExperimentFoldV1 {

@@ -229,6 +229,220 @@ pub fn target_window(
     Ok(())
 }
 
+/// Bind V2 to the same Dataset-owned native evidence used by V1. Only Store
+/// calls this from authorized metadata; callers cannot supply it as parameters.
+pub fn binary_option_context(
+    definitions: &[Value],
+    groups: &[contracts::settlement::NativeSettlementGroupV1],
+    selection: &contracts::science::NativeBarSelectionV1,
+    instrument_id: &str,
+    settings: &contracts::science::NativeSimulationSettingsV1,
+) -> Result<Option<contracts::settlement::NativeBinaryOptionContextV1>, DomainError> {
+    settlements(groups)?;
+    let chains = crate::catalogs::instrument_versions(definitions)?;
+    let versions = chains.get(instrument_id).ok_or_else(invalid)?;
+    let (class, _) = crate::catalogs::instrument_definition(versions[0])?;
+    if class != "BinaryOption" {
+        if uses_native_fee(&settings.fee_model) || !groups.is_empty() {
+            return Err(invalid());
+        }
+        return Ok(None);
+    }
+    let context = contracts::settlement::NativeBinaryOptionContextV1 {
+        instrument_definitions: versions
+            .iter()
+            .filter(|v| {
+                v["BinaryOption"]["ts_init"]
+                    .as_u64()
+                    .is_some_and(|n| n <= selection.decision_cutoff_ns.get())
+            })
+            .map(|v| (*v).clone())
+            .collect(),
+        settlements: visible_settlements(
+            groups,
+            &[instrument_id.to_owned()],
+            selection.decision_cutoff_ns,
+        ),
+    };
+    binary_option_request(Some(&context), selection, instrument_id, settings)?;
+    Ok(Some(context))
+}
+
+/// Validate the evidence/fee/account contract, without replacing native types.
+pub fn binary_option_request(
+    context: Option<&contracts::settlement::NativeBinaryOptionContextV1>,
+    selection: &contracts::science::NativeBarSelectionV1,
+    instrument_id: &str,
+    settings: &contracts::science::NativeSimulationSettingsV1,
+) -> Result<(), DomainError> {
+    let Some(context) = context else {
+        return if uses_native_fee(&settings.fee_model) {
+            Err(DomainError::CapabilityUnavailable(
+                "polymarket_target_context_missing",
+            ))
+        } else {
+            Ok(())
+        };
+    };
+    if !uses_native_fee(&settings.fee_model) {
+        return Err(invalid());
+    }
+    crate::catalogs::execution_account("BinaryOption", settings.account_kind)?;
+    let chains = crate::catalogs::instrument_versions(&context.instrument_definitions)?;
+    if chains.len() != 1 || !chains.contains_key(instrument_id) {
+        return Err(invalid());
+    }
+    let rate = settings
+        .fee_rates
+        .iter()
+        .find(|r| r.instrument_id == instrument_id)
+        .ok_or_else(invalid)?;
+    for definition in &context.instrument_definitions {
+        let (class, payload) = crate::catalogs::instrument_definition(definition)?;
+        if class != "BinaryOption"
+            || payload["ts_init"]
+                .as_u64()
+                .is_none_or(|n| n > selection.decision_cutoff_ns.get())
+            || payload["currency"].as_str() != Some(settings.base_currency.as_str())
+            || rate.maker.as_decimal() != &BigDecimal::from(0)
+            || rate.taker != planning_fee(payload)?
+        {
+            return Err(invalid());
+        }
+    }
+    settlement_scope(&context.settlements, &[instrument_id.to_owned()], selection)
+}
+
+/// Preserve every original close field and the sibling outcome when selecting a fold.
+pub fn binary_option_settlements(
+    context: Option<&contracts::settlement::NativeBinaryOptionContextV1>,
+    instrument_id: &str,
+    cutoff: contracts::DbCounter,
+) -> Vec<contracts::settlement::NativeSettlementGroupV1> {
+    context
+        .map(|c| visible_settlements(&c.settlements, &[instrument_id.to_owned()], cutoff))
+        .unwrap_or_default()
+}
+
+/// The existing original-definition rule is shared by replay and current targets.
+pub fn binary_option_target(
+    context: Option<&contracts::settlement::NativeBinaryOptionContextV1>,
+    point: &contracts::science::NativeTargetPointV1,
+) -> Result<(), DomainError> {
+    if let Some(context) = context {
+        target_window(
+            &context.instrument_definitions,
+            &point
+                .targets
+                .iter()
+                .map(|t| t.instrument_id.clone())
+                .collect::<Vec<_>>(),
+            point.asof_ns.get(),
+            point.valid_until_ns.get(),
+        )?;
+        binary_option_not_closed(context, point, point.asof_ns)?;
+    }
+    Ok(())
+}
+
+/// A current target cannot be published after an already-known native close,
+/// even when the last BAR predates that close. This only gates an instruction;
+/// it neither computes payout nor redefines the original contract expiration.
+pub fn binary_option_current_target(
+    context: Option<&contracts::settlement::NativeBinaryOptionContextV1>,
+    point: &contracts::science::NativeTargetPointV1,
+    decision_cutoff: contracts::DbCounter,
+) -> Result<(), DomainError> {
+    binary_option_target(context, point)?;
+    if let Some(context) = context {
+        binary_option_not_closed(context, point, decision_cutoff)?;
+    }
+    Ok(())
+}
+
+fn binary_option_not_closed(
+    context: &contracts::settlement::NativeBinaryOptionContextV1,
+    point: &contracts::science::NativeTargetPointV1,
+    cutoff: contracts::DbCounter,
+) -> Result<(), DomainError> {
+    if context
+        .settlements
+        .iter()
+        .flat_map(|g| &g.outcomes)
+        .any(|close| {
+            close.ts_init <= cutoff
+                && point
+                    .targets
+                    .iter()
+                    .any(|t| t.instrument_id == close.instrument_id)
+        })
+    {
+        return Err(DomainError::CapabilityUnavailable(
+            "polymarket_target_already_closed",
+        ));
+    }
+    Ok(())
+}
+
+/// Compare the original definition baseline and changes across the replay window.
+/// Later available closes/updates may be added; prior evidence cannot be reinterpreted.
+pub fn binary_option_source(
+    original: Option<&contracts::settlement::NativeBinaryOptionContextV1>,
+    current: Option<&contracts::settlement::NativeBinaryOptionContextV1>,
+    selection: &contracts::science::NativeBarSelectionV1,
+) -> Result<(), DomainError> {
+    match (original, current) {
+        (None, None) => Ok(()),
+        (Some(a), Some(b)) => {
+            let scope = |c: &contracts::settlement::NativeBinaryOptionContextV1| -> Result<Vec<Value>, DomainError> {
+                let chains = crate::catalogs::instrument_versions(&c.instrument_definitions)?;
+                if chains.len() != 1 { return Err(invalid()); }
+                let versions = chains.values().next().ok_or_else(invalid)?;
+                let available = |v: &&Value| crate::catalogs::instrument_definition(v)
+                    .ok().and_then(|(_, p)| p["ts_init"].as_u64()).unwrap_or(u64::MAX);
+                let end = versions.partition_point(|v| available(v) <= selection.decision_cutoff_ns.get());
+                let start = versions[..end].partition_point(|v| available(v) < selection.event_start_ns.get())
+                    .saturating_sub(1);
+                Ok(versions[start..end].iter().map(|v| (*v).clone()).collect())
+            };
+            let closes = |c: &contracts::settlement::NativeBinaryOptionContextV1| {
+                c.settlements
+                    .iter()
+                    .filter(|g| {
+                        g.outcomes
+                            .iter()
+                            .all(|o| o.ts_init <= selection.decision_cutoff_ns)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            if scope(a)? != scope(b)? || closes(a) != closes(b) {
+                return Err(DomainError::Invalid("polymarket_target_source_binding"));
+            }
+            Ok(())
+        }
+        _ => Err(DomainError::Invalid("polymarket_target_source_class")),
+    }
+}
+
+pub fn binary_option_capability(
+    context: Option<&contracts::settlement::NativeBinaryOptionContextV1>,
+    capabilities: &contracts::runtime::RuntimeCapabilitiesV1,
+) -> Result<(), DomainError> {
+    if context.is_some()
+        && capabilities
+            .engine_versions
+            .get(contracts::settlement::BINARY_OPTION_V2_CAPABILITY)
+            .map(String::as_str)
+            != Some("1")
+    {
+        return Err(DomainError::CapabilityUnavailable(
+            "polymarket_target_policy",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

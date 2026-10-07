@@ -19,6 +19,7 @@ fn count(n: u64) -> DbCounter {
 }
 fn report(large: bool) -> NativeExperimentEvaluationResultV1 {
     let request = NativeExperimentEvaluationRequestV1 {
+        binary_option: None,
         schema_version: SchemaV1,
         selection: NativeBarSelectionV1 {
             schema_version: SchemaV1,

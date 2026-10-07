@@ -238,6 +238,34 @@ pub(crate) fn close_events(
     Ok(closes)
 }
 
+/// Bind Store's original native context to the mounted catalog. Definition
+/// slicing uses the existing native selector; no instrument is synthesized.
+pub(crate) fn bind_target_context(
+    root: &Path,
+    market: &NativeMarketData,
+    selection: &NativeBarSelectionV1,
+    context: Option<&contracts::settlement::NativeBinaryOptionContextV1>,
+) -> Result<()> {
+    let is_binary = market.series.iter().any(|s| matches!(s.instrument, InstrumentAny::BinaryOption(_)));
+    ensure!(is_binary == context.is_some(), "POLYMARKET_TARGET_CONTEXT_REQUIRED");
+    if let Some(context) = context {
+        let instruments = context.instrument_definitions.iter().cloned()
+            .map(serde_json::from_value).collect::<std::result::Result<Vec<InstrumentAny>, _>>()?;
+        let expected = crate::catalog::select_instrument_versions(instruments, selection)?;
+        let actual = market.series.iter().map(|series| {
+            (series.instrument.id().to_string(), std::iter::once(series.instrument.clone())
+                .chain(series.instrument_updates.iter().cloned()).collect::<Vec<_>>())
+        }).collect::<BTreeMap<_, _>>();
+        ensure!(serde_json::to_value(expected)? == serde_json::to_value(actual)?,
+            "POLYMARKET_TARGET_NATIVE_SOURCE_MISMATCH");
+        // This original reader validates both siblings' native close type,
+        // payout and clocks; Store binds their Dataset metadata. The existing
+        // replay owns expiry cash movements.
+        catalog_closes(root, market, selection, &context.settlements)?;
+    }
+    Ok(())
+}
+
 /// Native instruments remain the authority for the target's usable trading window.
 pub(crate) fn target_window(
     instruments: &[InstrumentAny],

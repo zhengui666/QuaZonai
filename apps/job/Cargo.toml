@@ -96,6 +96,10 @@ wat = "=1.258.0"
 name = "browser_catalog_fixture"
 required-features = ["catalog-prepare"]
 
+[[example]]
+name = "native_client_account_snapshots"
+required-features = ["native-sandbox-test"]
+
 [[test]]
 name = "native_sandbox_observer"
 required-features = ["native-sandbox-test"]

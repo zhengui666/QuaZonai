@@ -20,6 +20,7 @@ pub mod equity_curve;
 pub mod evidence;
 pub mod execution;
 pub mod execution_assumptions;
+pub mod execution_preflight;
 pub mod experiment_summary;
 pub mod experiments;
 pub mod forward;
@@ -49,6 +50,19 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
+    execution_preflight::ExecutionPreflightScopeV1,
+    execution_preflight::PolymarketPreflightSideV1,
+    execution_preflight::PolymarketPreflightQuantityV1,
+    execution_preflight::PolymarketPreflightTimeInForceV1,
+    execution_preflight::PolymarketPreflightOrderV1,
+    execution_preflight::PolymarketExecutionPreflightV1,
+    execution_preflight::ExecutionPreflightFailureStageV1,
+    execution_preflight::PolymarketExecutionPreflightOutcomeV1,
+    execution_preflight::PolymarketExecutionPreflightReportV1,
+    account_observation::NativeClientObservationSchemaV2,
+    account_observation::AccountObservationSubmitV2,
+    account_observation::AccountObservationReceiptV2,
+    account_observation::AccountClientBindingV2,
     http::Problem,
     catalogs::RecordedFeatureFragmentV1,
     catalogs::RecordedFeatureInputsV1,

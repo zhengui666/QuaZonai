@@ -79,6 +79,40 @@ impl Store {
         actor: &Actor,
         request: &AccountObservationSubmitV1,
     ) -> Result<AccountObservationReceiptV1, StoreError> {
+        self.submit_account_observation_with_client(actor, request, None)
+            .await
+    }
+
+    /// The caller is the existing authorized Downstream producer. The service
+    /// preserves its declared original client binding; it does not attest remote
+    /// native code or establish a private venue/account connection.
+    pub async fn submit_client_account_observation(
+        &self,
+        actor: &Actor,
+        request: &AccountObservationSubmitV2,
+    ) -> Result<AccountObservationReceiptV2, StoreError> {
+        domain::account_observation::client_observation(request)?;
+        let receipt = self
+            .submit_account_observation_with_client(
+                actor,
+                &request.observation,
+                Some(&request.native_client_id),
+            )
+            .await?;
+        Ok(AccountObservationReceiptV2 {
+            schema_version: NativeClientObservationSchemaV2,
+            replayed: receipt.replayed,
+            native_client_id: request.native_client_id.clone(),
+            resource: receipt.resource,
+        })
+    }
+
+    async fn submit_account_observation_with_client(
+        &self,
+        actor: &Actor,
+        request: &AccountObservationSubmitV1,
+        native_client_id: Option<&str>,
+    ) -> Result<AccountObservationReceiptV1, StoreError> {
         domain::account_observation::observation(request)?;
         let mut tx = self.pool.begin().await?;
         let b = &request.binding;
@@ -87,12 +121,17 @@ impl Store {
             crate::forward::source_authority(&mut tx, actor, b.project_id, b.environment).await?;
         let environment = db::code(&b.environment)?;
         let source_id = Id::new();
-        sqlx::query("INSERT INTO app.native_account_sources(id,project_id,downstream_id,environment,native_trader_id,native_session_id,native_account_id,binding) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(project_id,downstream_id,environment,native_trader_id,native_session_id,native_account_id) DO NOTHING")
-            .bind(source_id.as_uuid()).bind(b.project_id.as_uuid()).bind(downstream.as_uuid()).bind(&environment).bind(&b.native_trader_id).bind(&b.native_session_id).bind(&b.native_account_id).bind(db::json(b)?).execute(&mut *tx).await?;
-        let row = sqlx::query("SELECT id,binding FROM app.native_account_sources WHERE project_id=$1 AND downstream_id=$2 AND environment=$3 AND native_trader_id=$4 AND native_session_id=$5 AND native_account_id=$6")
+        sqlx::query("INSERT INTO app.native_account_sources(id,project_id,downstream_id,environment,native_trader_id,native_session_id,native_account_id,binding,native_client_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(project_id,downstream_id,environment,native_trader_id,native_session_id,native_account_id) DO NOTHING")
+            .bind(source_id.as_uuid()).bind(b.project_id.as_uuid()).bind(downstream.as_uuid()).bind(&environment).bind(&b.native_trader_id).bind(&b.native_session_id).bind(&b.native_account_id).bind(db::json(b)?).bind(native_client_id).execute(&mut *tx).await?;
+        let row = sqlx::query("SELECT id,binding,native_client_id FROM app.native_account_sources WHERE project_id=$1 AND downstream_id=$2 AND environment=$3 AND native_trader_id=$4 AND native_session_id=$5 AND native_account_id=$6")
             .bind(b.project_id.as_uuid()).bind(downstream.as_uuid()).bind(environment).bind(&b.native_trader_id).bind(&b.native_session_id).bind(&b.native_account_id).fetch_one(&mut *tx).await?;
         let source_id = db::id(row.try_get("id")?)?;
-        if row.try_get::<serde_json::Value, _>("binding")? != db::json(b)? {
+        if row.try_get::<serde_json::Value, _>("binding")? != db::json(b)?
+            || row
+                .try_get::<Option<String>, _>("native_client_id")?
+                .as_deref()
+                != native_client_id
+        {
             return Err(StoreError::NativeIdentityConflict);
         }
         let event = request.snapshot.as_ref().map(|s| s.event_id.as_str());
@@ -144,8 +183,8 @@ impl Store {
         let gap = request.sequence.get() != last as u64 + 1
             || request.dropped_events.get() > dropped as u64;
         let id = Id::new();
-        let received_at = sqlx::query_scalar("INSERT INTO app.native_account_observations(id,source_id,sequence,native_event_id,content,gap_before) VALUES($1,$2,$3,$4,$5,$6) RETURNING received_at")
-            .bind(id.as_uuid()).bind(source_id.as_uuid()).bind(request.sequence.get() as i64).bind(event).bind(db::json(request)?).bind(gap).fetch_one(&mut *tx).await?;
+        let received_at = sqlx::query_scalar("INSERT INTO app.native_account_observations(id,source_id,sequence,native_event_id,content,gap_before,source_schema_version) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING received_at")
+            .bind(id.as_uuid()).bind(source_id.as_uuid()).bind(request.sequence.get() as i64).bind(event).bind(db::json(request)?).bind(gap).bind(if native_client_id.is_some() {2i16} else {1i16}).fetch_one(&mut *tx).await?;
         let (latest, latest_ns) = match &request.snapshot {
             Some(snapshot) if latest_ns.is_none_or(|n| snapshot.ts_init.get() >= n as u64) => {
                 (Some(id), Some(snapshot.ts_init.get() as i64))
@@ -170,6 +209,37 @@ impl Store {
                 gap_before: gap,
                 received_at,
             },
+        })
+    }
+
+    /// Additive owner read. Existing V1 views continue projecting the original
+    /// native values without implying that a legacy source has client evidence.
+    pub async fn account_client_binding(
+        &self,
+        actor: &Actor,
+        project: Id,
+        source_id: Id,
+    ) -> Result<AccountClientBindingV2, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        authorize_read(&mut tx, actor, project).await?;
+        let row = sqlx::query(
+            "SELECT native_client_id FROM app.native_account_sources WHERE id=$1 AND project_id=$2",
+        )
+        .bind(source_id.as_uuid())
+        .bind(project.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        let client = row
+            .try_get::<Option<String>, _>("native_client_id")?
+            .ok_or(StoreError::Invalid(
+                "native_account_client_binding_unavailable",
+            ))?;
+        tx.commit().await?;
+        Ok(AccountClientBindingV2 {
+            schema_version: NativeClientObservationSchemaV2,
+            source_id,
+            native_client_id: client,
         })
     }
 

@@ -380,3 +380,202 @@ async fn source_wall_clock_skew_and_rollback_preserve_observations_and_replay(po
         .unwrap();
     assert_eq!(count, 2);
 }
+
+fn client_bound(observation: AccountObservationSubmitV1) -> AccountObservationSubmitV2 {
+    AccountObservationSubmitV2 {
+        schema_version: NativeClientObservationSchemaV2,
+        native_client_id: "QZ-NATIVE-CLIENT".into(),
+        observation,
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn client_binding_is_immutable_before_replay_and_preserves_v1_read_values(pool: PgPool) {
+    let (store, owner, actor, original) = setup(&pool).await;
+    let request = client_bound(original.clone());
+    let (left, right) = tokio::join!(
+        store.submit_client_account_observation(&actor, &request),
+        store.submit_client_account_observation(&actor, &request),
+    );
+    let (left, right) = (left.unwrap(), right.unwrap());
+    assert_eq!(left.resource.id, right.resource.id);
+    assert_ne!(left.replayed, right.replayed);
+    assert_eq!(left.resource.observation, original);
+    assert_eq!(left.native_client_id, request.native_client_id);
+    let source = left.resource.source_id;
+    let binding = store
+        .account_client_binding(&owner, original.binding.project_id, source)
+        .await
+        .unwrap();
+    assert_eq!(binding.source_id, source);
+    assert_eq!(binding.native_client_id, request.native_client_id);
+    let current = store
+        .account_current(&owner, original.binding.project_id, source)
+        .await
+        .unwrap();
+    assert_eq!(
+        current.latest_snapshot.as_ref().unwrap().observation,
+        original
+    );
+
+    let mut changed = request.clone();
+    changed.native_client_id = "DIFFERENT-CLIENT".into();
+    assert!(matches!(
+        store
+            .submit_client_account_observation(&actor, &changed)
+            .await,
+        Err(StoreError::NativeIdentityConflict)
+    ));
+    assert!(matches!(
+        store.submit_account_observation(&actor, &original).await,
+        Err(StoreError::NativeIdentityConflict)
+    ));
+    assert!(matches!(
+        store
+            .account_client_binding(&actor, original.binding.project_id, source)
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    assert!(matches!(
+        store
+            .submit_client_account_observation(&owner, &request)
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.native_account_observations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    let protocol: i16 = sqlx::query_scalar(
+        "SELECT source_schema_version FROM app.native_account_observations WHERE id=$1",
+    )
+    .bind(left.resource.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(protocol, 2);
+
+    // An old server omits the new protocol column. The DB must not let it append
+    // an unbound V1 frame to the existing V2 source even after application rollback.
+    let mut heartbeat = original.clone();
+    heartbeat.sequence = DbCounter::new(2).unwrap();
+    heartbeat.snapshot = None;
+    let result = sqlx::query("INSERT INTO app.native_account_observations(id,source_id,sequence,native_event_id,content,gap_before) VALUES($1,$2,2,NULL,$3,false)")
+        .bind(Id::new().as_uuid()).bind(source.as_uuid()).bind(serde_json::to_value(&heartbeat).unwrap())
+        .execute(&pool).await;
+    assert!(result.is_err());
+    let result = store
+        .submit_client_account_observation(&actor, &client_bound(heartbeat.clone()))
+        .await
+        .unwrap();
+    assert_eq!(result.resource.observation, heartbeat);
+    let replay = store
+        .submit_client_account_observation(&actor, &request)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource.id, left.resource.id);
+    let current = store
+        .account_current(&owner, original.binding.project_id, source)
+        .await
+        .unwrap();
+    assert_eq!(current.source.last_sequence.get(), 2);
+    assert_eq!(current.latest_snapshot.unwrap().id, left.resource.id);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn legacy_source_cannot_be_backfilled_with_client_evidence(pool: PgPool) {
+    let (store, owner, actor, original) = setup(&pool).await;
+    let legacy = store
+        .submit_account_observation(&actor, &original)
+        .await
+        .unwrap();
+    let source = legacy.resource.source_id;
+    assert!(matches!(
+        store
+            .submit_client_account_observation(&actor, &client_bound(original.clone()))
+            .await,
+        Err(StoreError::NativeIdentityConflict)
+    ));
+    assert!(matches!(
+        store
+            .account_client_binding(&owner, original.binding.project_id, source)
+            .await,
+        Err(StoreError::Invalid(
+            "native_account_client_binding_unavailable"
+        ))
+    ));
+    let client: Option<String> =
+        sqlx::query_scalar("SELECT native_client_id FROM app.native_account_sources WHERE id=$1")
+            .bind(source.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(client.is_none());
+    let protocol: i16 = sqlx::query_scalar(
+        "SELECT source_schema_version FROM app.native_account_observations WHERE id=$1",
+    )
+    .bind(legacy.resource.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(protocol, 1);
+    assert!(sqlx::query(
+        "UPDATE app.native_account_sources SET native_client_id='FORGED-CLIENT' WHERE id=$1"
+    )
+    .bind(source.as_uuid())
+    .execute(&pool)
+    .await
+    .is_err());
+    let replay = store
+        .submit_account_observation(&actor, &original)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.resource.id, legacy.resource.id);
+
+    // A genuinely new producer session is a separate source, not an upgrade of
+    // the retained old record. This is a controlled persistence fixture only.
+    let mut next = original;
+    next.binding.native_session_id = "new-controlled-node-session".into();
+    let accepted = store
+        .submit_client_account_observation(&actor, &client_bound(next))
+        .await
+        .unwrap();
+    assert_ne!(accepted.resource.source_id, source);
+    assert_eq!(accepted.native_client_id, "QZ-NATIVE-CLIENT");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn concurrent_protocols_cannot_mix_the_same_original_source(pool: PgPool) {
+    let (store, owner, actor, original) = setup(&pool).await;
+    let request = client_bound(original.clone());
+    let (legacy, bound) = tokio::join!(
+        store.submit_account_observation(&actor, &original),
+        store.submit_client_account_observation(&actor, &request),
+    );
+    assert_ne!(legacy.is_ok(), bound.is_ok());
+    let sources = store
+        .account_sources(
+            &owner,
+            original.binding.project_id,
+            &ListQuery {
+                cursor: None,
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(sources.items.len(), 1);
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.native_account_observations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    match (legacy, bound) {
+        (Ok(_), Err(StoreError::NativeIdentityConflict)) => {}
+        (Err(StoreError::NativeIdentityConflict), Ok(_)) => {}
+        pair => panic!("unexpected protocol arbitration: {pair:?}"),
+    }
+}

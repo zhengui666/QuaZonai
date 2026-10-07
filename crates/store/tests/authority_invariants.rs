@@ -482,6 +482,7 @@ async fn doctor_upgrade_requires_explicit_revocation_and_preserves_original_issu
     .fetch_one(&pool)
     .await
     .unwrap();
+    assert!(before.get("lease_bound").is_none());
     let latest = sqlx::migrate!("../../migrations");
     let mut failed = pool.acquire().await.unwrap();
     match latest.run(&mut *failed).await.unwrap_err() {
@@ -510,15 +511,17 @@ async fn doctor_upgrade_requires_explicit_revocation_and_preserves_original_issu
     .unwrap();
     // Nullable Attempt/owner provenance must not fabricate authority for a
     // historical Operator-issued credential. Every original field stays exact;
-    // only the two explicitly added NULL columns are allowed by this comparison.
+    // only the added NULL provenance and false lease-bound default are allowed.
     let mut expected = before;
     for field in ["issuer_attempt_id", "issuer_owner_epoch"] {
         assert!(expected.get(field).is_none());
         expected[field] = serde_json::Value::Null;
     }
+    expected["lease_bound"] = serde_json::Value::Bool(false);
+    assert_eq!(after["lease_bound"], serde_json::Value::Bool(false));
     assert_eq!(
         expected, after,
-        "historical issuance must remain exact with only null Attempt/owner provenance added"
+        "historical issuance must remain exact with null Attempt/owner provenance and false lease binding added"
     );
     sqlstate(
         credential(&pool, delivery, "{DOCTOR_READ}", "OPERATOR", 1, 600)

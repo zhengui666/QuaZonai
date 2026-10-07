@@ -428,8 +428,25 @@ async fn continue_release(
         store.evaluation(actor, evaluation).await.unwrap().decision,
         contracts::evidence::Decision::Pass
     );
+    // Hold the failed connection before SQLx's on-return ping can flush a
+    // deferred rollback. The original concurrent retries must progress without
+    // relying on that background cleanup to release the project row lock.
+    // A lazy pool performs no setup checkout. Dropping the sender also releases
+    // the gate during panic unwinding, so a failed assertion cannot strand it.
+    let (resume_return, return_gate) = tokio::sync::watch::channel(());
+    let failed_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .after_release(move |_, _| {
+            let mut return_gate = return_gate.clone();
+            Box::pin(async move {
+                let _ = return_gate.changed().await;
+                Ok(true)
+            })
+        })
+        .connect_lazy_with((*pool.connect_options()).clone());
+    let failed_store = Store::from_pool(failed_pool.clone());
     assert!(matches!(
-        Box::pin(store.automate_rebalance_release(
+        Box::pin(failed_store.automate_rebalance_release(
             seed.project_id,
             |id, size| f.read(id, size),
             |_| async { Err(StoreError::Integrity) }
@@ -456,6 +473,8 @@ async fn continue_release(
             publish
         ))
     );
+    drop(resume_return);
+    failed_pool.close().await;
     let releases: Vec<_> = [left.unwrap(), right.unwrap()]
         .into_iter()
         .flatten()

@@ -589,6 +589,14 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             post(account_observation::submit).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
         )
         .route(
+            "/api/v2/forward/client-account-observations",
+            post(account_observation::submit_client_bound).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/account-sources/{source_id}/client-binding",
+            get(account_observation::client_binding),
+        )
+        .route(
             "/api/v2/projects/{project_id}/account-sources",
             get(account_observation::sources),
         )
@@ -788,7 +796,7 @@ research::evaluation_policies,research::evaluation_policy,research::create_evalu
 brief::list,brief::get,brief::create,brief::update,
 automation::authorize_automation,automation::revoke_automation,automation::automation_policy,automation::automation_policies,automation::automation_revocations,release::ack,release::revoke_approval,release::revocations,release::claim,release::offer,release::handoff,release::handoffs,release::create,release::get,release::list,release::approvals,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,portfolio::summary,
 execution_assumptions::list,execution_assumptions::get,execution_assumptions::create,
-account_observation::submit,account_observation::sources,account_observation::current,account_observation::observations,
+account_observation::submit,account_observation::submit_client_bound,account_observation::client_binding,account_observation::sources,account_observation::current,account_observation::observations,
 forward::weight_snapshots,forward::weights,forward::message,forward::list,forward::window,forward::observations,forward::wakes,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
 experiments::propose,experiments::list,experiments::get,experiments::evaluate,experiments::adopt_alpha,experiments::evaluation,experiments::summary,cycles::start_external,cycles::finish_external,

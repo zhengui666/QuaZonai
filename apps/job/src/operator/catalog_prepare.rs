@@ -33,12 +33,15 @@ mod bars;
 mod candles;
 #[path = "preparation/classic_zip.rs"]
 mod classic_zip;
+#[cfg(feature = "polymarket-history")]
+#[path = "preparation/polymarket_forward.rs"]
+mod polymarket_forward;
 
 #[derive(Parser)]
 #[command(
     version,
     about = "Prepare an isolated native BAR catalog without certifying its source",
-    after_help = "Native source imports: catalog-prepare ingest-candles --help; catalog-prepare ingest-archive-candles --help"
+    after_help = "Native source imports: catalog-prepare ingest-candles --help; catalog-prepare ingest-archive-candles --help; catalog-prepare prepare-forward --help"
 )]
 struct Arguments {
     /// Original local native catalog; never modified.
@@ -382,32 +385,62 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
 }
 
 pub fn run(argv: Vec<std::ffi::OsString>) {
+    let is_forward =
+        argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("prepare-forward"));
     // Preserve the original root invocation; the explicit source-import mode has
     // its own argument contract and never manufactures a registration declaration.
-    let result =
-        if argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("ingest-candles")) {
-            let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare ingest-candles"))
-                .chain(argv.into_iter().skip(2));
-            candles::run(&candles::Arguments::parse_from(argv))
-        } else if argv.get(1).map(|arg| arg.as_os_str())
-            == Some(std::ffi::OsStr::new("ingest-archive-candles"))
+    let result = if argv.get(1).map(|arg| arg.as_os_str())
+        == Some(std::ffi::OsStr::new("prepare-forward"))
+    {
+        #[cfg(feature = "polymarket-history")]
         {
-            let argv = std::iter::once(std::ffi::OsString::from(
-                "catalog-prepare ingest-archive-candles",
+            let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare prepare-forward"))
+                .chain(argv.into_iter().skip(2));
+            polymarket_forward::run(&polymarket_forward::Arguments::parse_from(argv))
+        }
+        #[cfg(not(feature = "polymarket-history"))]
+        {
+            Err(anyhow::anyhow!(
+                "FORWARD_POLYMARKET_HISTORY_CAPABILITY_REQUIRED"
             ))
+        }
+    } else if argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("ingest-candles"))
+    {
+        let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare ingest-candles"))
             .chain(argv.into_iter().skip(2));
-            archive_candles::run(&archive_candles::Arguments::parse_from(argv))
-        } else {
-            prepare(&Arguments::parse_from(argv))
-                .and_then(|metadata| Ok(serde_json::to_value(metadata)?))
-        };
+        candles::run(&candles::Arguments::parse_from(argv))
+    } else if argv.get(1).map(|arg| arg.as_os_str())
+        == Some(std::ffi::OsStr::new("ingest-archive-candles"))
+    {
+        let argv = std::iter::once(std::ffi::OsString::from(
+            "catalog-prepare ingest-archive-candles",
+        ))
+        .chain(argv.into_iter().skip(2));
+        archive_candles::run(&archive_candles::Arguments::parse_from(argv))
+    } else {
+        prepare(&Arguments::parse_from(argv))
+            .and_then(|metadata| Ok(serde_json::to_value(metadata)?))
+    };
     match result {
         Ok(metadata) => println!(
             "{}",
             serde_json::to_string(&metadata).expect("typed metadata")
         ),
-        Err(_) => {
-            eprintln!("QZ_CATALOG_PREPARATION_FAILED");
+        Err(error) => {
+            if is_forward {
+                let reason = error
+                    .chain()
+                    .map(ToString::to_string)
+                    .find(|s| {
+                        s.starts_with("FORWARD_")
+                            && s.bytes()
+                                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+                    })
+                    .unwrap_or_else(|| "QZ_FORWARD_PREPARATION_FAILED".into());
+                eprintln!("{reason}");
+            } else {
+                eprintln!("QZ_CATALOG_PREPARATION_FAILED");
+            }
             std::process::exit(1);
         }
     }

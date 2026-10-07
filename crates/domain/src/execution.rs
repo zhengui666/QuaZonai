@@ -143,13 +143,15 @@ pub fn experiment_request(
     if request.settings.leverage.as_decimal() != &bigdecimal::BigDecimal::from(1)
         || request.settings.fee_rates.len() != 1
         || request.settings.fee_rates[0].instrument_id != request.instrument_id
-        || !matches!(
+        || !(matches!(
             request.settings.fee_model,
             contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
-        )
+        ) || crate::prediction::uses_native_fee(&request.settings.fee_model))
     {
         return Err(bad("experiment_settings"));
     }
+    crate::prediction::binary_option_request(request.binary_option.as_ref(),
+        &request.selection, &request.instrument_id, &request.settings)?;
     Ok(())
 }
 fn artifact(spec: &JobSpecV1, id: Id, expected: ArtifactInputRole) -> bool {
