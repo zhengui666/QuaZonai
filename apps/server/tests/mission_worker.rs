@@ -805,6 +805,7 @@ async fn settled_scientific_protocol_inner(pool: PgPool, origin: DataOrigin) {
         )
         .await
         .is_err());
+    eprintln!("mission_test_stage=validation-publication-rejection-observed");
     assert_eq!(
         f.store.get_run(&f.actor, validation).await.unwrap().state,
         RunState::Succeeded
@@ -962,6 +963,7 @@ async fn settled_scientific_protocol_inner(pool: PgPool, origin: DataOrigin) {
     .await
     .unwrap();
     assert!(stopped_at_ack.is_err());
+    eprintln!("mission_test_stage=reviewer-admission-rejection-observed");
     assert_eq!(f.provider.request_count(), 2);
     assert!(f.provider.saw_previous_context());
     assert_eq!(
@@ -985,12 +987,14 @@ async fn settled_scientific_protocol_inner(pool: PgPool, origin: DataOrigin) {
     .execute(&pool)
     .await
     .unwrap();
+    eprintln!("mission_test_stage=concurrent-ack-start");
     let (a, b) = tokio::join!(
         f.store.acknowledge_run(&f.message),
         f.store.acknowledge_run(&f.message)
     );
     a.unwrap();
     b.unwrap();
+    eprintln!("mission_test_stage=concurrent-ack-complete");
     // Two actual competing ACKs share the same original native completion and
     // create one selection/Reviewer without another research model request.
     let cycle = f.lease.run.cycle_id.unwrap();
@@ -1085,6 +1089,7 @@ async fn settled_scientific_protocol_inner(pool: PgPool, origin: DataOrigin) {
             .unwrap(),
         2
     );
+    eprintln!("mission_test_stage=independent-review-start");
     tokio::time::timeout(
         std::time::Duration::from_secs(150),
         worker.process_mission_message(
@@ -1096,6 +1101,7 @@ async fn settled_scientific_protocol_inner(pool: PgPool, origin: DataOrigin) {
     .await
     .unwrap()
     .unwrap();
+    eprintln!("mission_test_stage=independent-review-complete");
     let reviewed_requests = f.provider.request_count();
     assert!(
         (4..=8).contains(&reviewed_requests),
