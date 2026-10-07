@@ -6,6 +6,39 @@ use utoipa::ToSchema;
 pub const NATIVE_ACCOUNT_VERSION: &str = "0.63.0";
 pub const CONNECTION_STALE_SECONDS: i64 = 120;
 
+/// Exact wire version for observations retained by the opt-in native-client producer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeClientObservationSchemaV2;
+
+impl Serialize for NativeClientObservationSchemaV2 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(2)
+    }
+}
+
+impl<'de> Deserialize<'de> for NativeClientObservationSchemaV2 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match u8::deserialize(deserializer)? {
+            2 => Ok(Self),
+            _ => Err(serde::de::Error::custom(
+                "native client observation requires version 2",
+            )),
+        }
+    }
+}
+
+impl utoipa::PartialSchema for NativeClientObservationSchemaV2 {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        utoipa::openapi::schema::ObjectBuilder::new()
+            .schema_type(utoipa::openapi::schema::Type::Integer)
+            .enum_values(Some([2]))
+            .minimum(Some(2))
+            .maximum(Some(2))
+            .into()
+    }
+}
+impl ToSchema for NativeClientObservationSchemaV2 {}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AccountMoneyV1 {
@@ -97,6 +130,18 @@ pub struct AccountObservationSubmitV1 {
     pub snapshot: Option<NativePortfolioSnapshotV1>,
 }
 
+/// Original V1 native values plus the actual client checked by the node producer.
+/// The receiving service trusts its authorized producer; a caller-supplied string
+/// is not cryptographic proof of a native client or of a venue account connection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccountObservationSubmitV2 {
+    pub schema_version: NativeClientObservationSchemaV2,
+    #[schema(min_length = 1, max_length = 200)]
+    pub native_client_id: String,
+    pub observation: AccountObservationSubmitV1,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AccountObservationV1 {
@@ -113,6 +158,25 @@ pub struct AccountObservationV1 {
 pub struct AccountObservationReceiptV1 {
     pub replayed: bool,
     pub resource: AccountObservationV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccountObservationReceiptV2 {
+    pub schema_version: NativeClientObservationSchemaV2,
+    pub replayed: bool,
+    pub native_client_id: String,
+    pub resource: AccountObservationV1,
+}
+
+/// Additive source provenance. Account values and identity remain in the original
+/// source/observation records; a V1 source has no such binding and is not upgraded.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccountClientBindingV2 {
+    pub schema_version: NativeClientObservationSchemaV2,
+    pub source_id: Id,
+    pub native_client_id: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -157,4 +221,77 @@ pub struct AccountCurrentV1 {
     /// Native flags describe valuation inputs, not current transport connectivity.
     pub valuation: AccountValuationV1,
     pub latest_snapshot: Option<AccountObservationV1>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+    use utoipa::OpenApi;
+
+    #[derive(OpenApi)]
+    #[openapi(components(schemas(
+        AccountObservationSubmitV2,
+        AccountObservationReceiptV2,
+        AccountClientBindingV2
+    )))]
+    struct ClientObservationApi;
+
+    #[test]
+    fn client_bound_schemas_are_closed_versioned_and_reference_complete() {
+        let document = serde_json::to_value(ClientObservationApi::openapi()).unwrap();
+        let schemas = &document["components"]["schemas"];
+        let version = &schemas["NativeClientObservationSchemaV2"];
+        assert_eq!(version["type"], "integer");
+        assert_eq!(version["enum"], json!([2]));
+        for name in [
+            "AccountObservationSubmitV2",
+            "AccountObservationReceiptV2",
+            "AccountClientBindingV2",
+        ] {
+            assert_eq!(schemas[name]["additionalProperties"], false);
+            assert_eq!(
+                schemas[name]["properties"]["schema_version"]["$ref"],
+                "#/components/schemas/NativeClientObservationSchemaV2"
+            );
+        }
+        let submit = &schemas["AccountObservationSubmitV2"];
+        let mut required: Vec<_> = submit["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        required.sort_unstable();
+        assert_eq!(
+            required,
+            ["native_client_id", "observation", "schema_version"]
+        );
+        assert_eq!(submit["properties"]["native_client_id"]["minLength"], 1);
+        assert_eq!(submit["properties"]["native_client_id"]["maxLength"], 200);
+        assert!(schemas["NativeAccountBindingV1"]["properties"]
+            .get("native_client_id")
+            .is_none());
+
+        fn check_refs(value: &Value, document: &Value) {
+            match value {
+                Value::Object(object) => {
+                    if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+                        assert!(reference.starts_with("#/"));
+                        assert!(document.pointer(&reference[1..]).is_some(), "{reference}");
+                    }
+                    for child in object.values() {
+                        check_refs(child, document);
+                    }
+                }
+                Value::Array(array) => {
+                    for child in array {
+                        check_refs(child, document);
+                    }
+                }
+                _ => {}
+            }
+        }
+        check_refs(&document, &document);
+    }
 }

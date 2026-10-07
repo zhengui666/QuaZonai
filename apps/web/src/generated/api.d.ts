@@ -1127,6 +1127,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/forward/client-account-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["submit_client_account_observation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/forward/messages": {
         parameters: {
             query?: never;
@@ -2008,6 +2024,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/projects/{project_id}/account-sources/{source_id}/client-binding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_account_client_binding"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/projects/{project_id}/account-sources/{source_id}/current": {
         parameters: {
             query?: never;
@@ -2274,6 +2306,15 @@ export interface components {
             experiment_id: components["schemas"]["Id"];
             report_artifact_id: components["schemas"]["Id"];
         };
+        /**
+         * @description Additive source provenance. Account values and identity remain in the original
+         *     source/observation records; a V1 source has no such binding and is not upgraded.
+         */
+        AccountClientBindingV2: {
+            native_client_id: string;
+            schema_version: components["schemas"]["NativeClientObservationSchemaV2"];
+            source_id: components["schemas"]["Id"];
+        };
         /** @enum {string} */
         AccountConnectionFreshnessV1: "UNKNOWN" | "CONNECTED" | "DISCONNECTED" | "STALE";
         /** @enum {string} */
@@ -2292,6 +2333,12 @@ export interface components {
             replayed: boolean;
             resource: components["schemas"]["AccountObservationV1"];
         };
+        AccountObservationReceiptV2: {
+            native_client_id: string;
+            replayed: boolean;
+            resource: components["schemas"]["AccountObservationV1"];
+            schema_version: components["schemas"]["NativeClientObservationSchemaV2"];
+        };
         AccountObservationSubmitV1: {
             binding: components["schemas"]["NativeAccountBindingV1"];
             connection: components["schemas"]["AccountConnectionV1"];
@@ -2302,6 +2349,16 @@ export interface components {
             /** @description Starts at one. Every attempted emission, including a dropped frame, consumes a sequence. */
             sequence: components["schemas"]["DbCounter"];
             snapshot?: null | components["schemas"]["NativePortfolioSnapshotV1"];
+        };
+        /**
+         * @description Original V1 native values plus the actual client checked by the node producer.
+         *     The receiving service trusts its authorized producer; a caller-supplied string
+         *     is not cryptographic proof of a native client or of a venue account connection.
+         */
+        AccountObservationSubmitV2: {
+            native_client_id: string;
+            observation: components["schemas"]["AccountObservationSubmitV1"];
+            schema_version: components["schemas"]["NativeClientObservationSchemaV2"];
         };
         AccountObservationV1: {
             downstream_id: components["schemas"]["Id"];
@@ -5364,6 +5421,21 @@ export interface components {
             maximum_rows: number;
             schema_version: components["schemas"]["SchemaV1"];
         };
+        /**
+         * @description Original Dataset-owned native definitions and close observations. This is a
+         *     provenance binding for the existing Nautilus adapter, not a lifecycle model.
+         */
+        NativeBinaryOptionContextV1: {
+            /**
+             * @description Original externally tagged BinaryOption versions, including native clocks,
+             *     identity, activation/expiration, collateral and the recorded fee schedule.
+             */
+            instrument_definitions: unknown[];
+            /** @description Complete two-outcome conditions; only original available closes are carried. */
+            settlements: components["schemas"]["NativeSettlementGroupV1"][];
+        };
+        /** @enum {integer} */
+        NativeClientObservationSchemaV2: 2;
         NativeExperimentDecisionV1: {
             decision_ns: components["schemas"]["DbCounter"];
             event_ns: components["schemas"]["DbCounter"];
@@ -5377,6 +5449,7 @@ export interface components {
             target_weight: components["schemas"]["DecimalValue"];
         };
         NativeExperimentEvaluationRequestV1: {
+            binary_option?: null | components["schemas"]["NativeBinaryOptionContextV1"];
             decision_output: components["schemas"]["ExperimentDecisionOutputV1"];
             feature_schema: components["schemas"]["FeatureDefinitionV1"][];
             instrument_id: string;
@@ -13727,6 +13800,71 @@ export interface operations {
             };
         };
     };
+    submit_client_account_observation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountObservationSubmitV2"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountObservationReceiptV2"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     submit_forward_message: {
         parameters: {
             query?: never;
@@ -18444,6 +18582,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_AccountSourceV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_account_client_binding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+                source_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountClientBindingV2"];
                 };
             };
             401: {

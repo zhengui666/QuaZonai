@@ -462,6 +462,7 @@ fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_a
         unreachable!()
     };
     let request = NativeExperimentEvaluationRequestV1 {
+        binary_option: None,
         schema_version: SchemaV1,
         selection: NativeBarSelectionV1 {
             schema_version: SchemaV1,

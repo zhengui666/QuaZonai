@@ -113,6 +113,9 @@ pub struct ExperimentEvaluationParametersV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeExperimentEvaluationRequestV1 {
+    /// Store-owned native evidence. Omitted for legacy non-Binary requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_option: Option<crate::settlement::NativeBinaryOptionContextV1>,
     pub schema_version: SchemaV1,
     pub selection: NativeBarSelectionV1,
     pub instrument_id: String,

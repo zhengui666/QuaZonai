@@ -18,6 +18,7 @@ use std::{fs, os::unix::fs::PermissionsExt};
 use store::authority::Actor;
 
 const SUBMIT: &str = "/api/v2/forward/account-observations";
+const SUBMIT_CLIENT: &str = "/api/v2/forward/client-account-observations";
 
 struct AccountFixture {
     http: reqwest::Client,
@@ -188,6 +189,19 @@ async fn post(a: &AccountFixture, token: &str, body: &Value) -> (StatusCode, Val
     let status = response.status();
     let body = response.json().await.unwrap();
     (status, body)
+}
+
+async fn post_client(a: &AccountFixture, token: &str, body: &Value) -> (StatusCode, Value) {
+    let response = a
+        .http
+        .post(format!("{}{SUBMIT_CLIENT}", a.origin))
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    (status, response.json().await.unwrap())
 }
 
 async fn submit(a: &AccountFixture, body: &Value) -> Value {
@@ -524,6 +538,175 @@ async fn downstream_namespaces_and_project_environment_scopes_cannot_mutate_anot
     let current = browser_get(&a, &format!("{base}/current")).await;
     assert_eq!(current["latest_snapshot"], first);
     assert_eq!(current["source"]["downstream_id"], json!(a.downstream));
+    assert_eq!(ledger(&pool).await, before);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn client_bound_http_retains_original_values_rejects_protocol_changes_and_keeps_read_scope(
+    pool: PgPool,
+) {
+    let a = fixture(&pool).await;
+    let original = observation(a.project);
+    let wrapped = json!({"schema_version":2,"native_client_id":"CONTROLLED-NATIVE-CLIENT","observation":original});
+    let (status, first) = post_client(&a, &a.token, &wrapped).await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    assert_eq!(first["schema_version"], 2);
+    assert_eq!(first["resource"]["observation"], original);
+    let before = ledger(&pool).await;
+    let (status, replay) = post_client(&a, &a.token, &wrapped).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["resource"], first["resource"]);
+    assert_eq!(ledger(&pool).await, before);
+    let base = source_path(&a, &first["resource"]);
+    let metadata = browser_get(&a, &format!("{base}/client-binding")).await;
+    assert_eq!(metadata["native_client_id"], wrapped["native_client_id"]);
+    assert_eq!(metadata["source_id"], first["resource"]["source_id"]);
+    let current = browser_get(&a, &format!("{base}/current")).await;
+    assert_eq!(current["latest_snapshot"], first["resource"]);
+    assert!(
+        current["source"]["binding"]
+            .get("native_client_id")
+            .is_none(),
+        "the old V1 read shape remains unchanged"
+    );
+
+    let mut wrong = wrapped.clone();
+    wrong["native_client_id"] = json!("OTHER-CLIENT");
+    assert_eq!(
+        post_client(&a, &a.token, &wrong).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(post(&a, &a.token, &original).await.0, StatusCode::CONFLICT);
+    assert_eq!(ledger(&pool).await, before);
+    let denied = a
+        .http
+        .get(format!("{}{base}/client-binding", a.origin))
+        .bearer_auth(&a.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    wrong = wrapped.clone();
+    wrong["observation"]["binding"]["environment"] = json!("LIVE");
+    assert_eq!(
+        post_client(&a, &a.token, &wrong).await.0,
+        StatusCode::FORBIDDEN
+    );
+    let foreign = project(&a.f, &a.cookie, "foreign-client-observation").await;
+    wrong = wrapped.clone();
+    wrong["observation"]["binding"]["project_id"] = json!(foreign);
+    assert_eq!(
+        post_client(&a, &a.token, &wrong).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let wrong_project = a
+        .http
+        .get(format!(
+            "{}/api/v2/projects/{foreign}/account-sources/{}/client-binding",
+            a.origin,
+            first["resource"]["source_id"].as_str().unwrap()
+        ))
+        .header("cookie", &a.browser_cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong_project.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn legacy_http_source_cannot_gain_client_evidence_from_a_new_wrapper(pool: PgPool) {
+    let a = fixture(&pool).await;
+    let original = observation(a.project);
+    let legacy = submit(&a, &original).await;
+    let before = ledger(&pool).await;
+    let wrapped =
+        json!({"schema_version":2,"native_client_id":"CLAIMED-CLIENT","observation":original});
+    assert_eq!(
+        post_client(&a, &a.token, &wrapped).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        post_client(&a, &a.token, &original).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        post(&a, &a.token, &wrapped).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let base = source_path(&a, &legacy);
+    let absent = a
+        .http
+        .get(format!("{}{base}/client-binding", a.origin))
+        .header("cookie", &a.browser_cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(absent.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(ledger(&pool).await, before);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires QUAZONAI_NATIVE_CLIENT_ACCOUNT_FIXTURE_BIN built with native-sandbox-test"]
+async fn actual_native_client_observations_reach_http_sql_and_original_readback(pool: PgPool) {
+    let a = fixture(&pool).await;
+    let fixture_bin = std::env::var("QUAZONAI_NATIVE_CLIENT_ACCOUNT_FIXTURE_BIN")
+        .expect("build the official no-order Sandbox fixture first");
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("native-client.ndjson");
+    let mut command = tokio::process::Command::new(fixture_bin);
+    command
+        .env_clear()
+        .current_dir(directory.path())
+        .kill_on_drop(true)
+        .arg(a.project.to_string())
+        .arg(&output);
+    let run = tokio::time::timeout(std::time::Duration::from_secs(20), command.output())
+        .await
+        .expect("bounded no-order Sandbox fixture must exit")
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let rows: Vec<Value> = fs::read_to_string(&output)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(!rows.is_empty());
+    assert!(rows
+        .iter()
+        .any(|row| !row["observation"]["snapshot"].is_null()));
+    let mut receipts = Vec::new();
+    let mut last_snapshot = None;
+    for original in &rows {
+        let (status, receipt) = post_client(&a, &a.token, original).await;
+        assert_eq!(status, StatusCode::CREATED, "{receipt}");
+        assert_eq!(receipt["native_client_id"], original["native_client_id"]);
+        assert_eq!(receipt["resource"]["observation"], original["observation"]);
+        assert_eq!(
+            receipt["resource"]["observation"]["binding"]["environment"],
+            "PAPER"
+        );
+        if !original["observation"]["snapshot"].is_null() {
+            last_snapshot = Some(receipt["resource"].clone());
+        }
+        receipts.push(receipt);
+    }
+    let base = source_path(&a, &receipts[0]["resource"]);
+    let current = browser_get(&a, &format!("{base}/current")).await;
+    assert_eq!(current["latest_snapshot"], last_snapshot.unwrap());
+    let metadata = browser_get(&a, &format!("{base}/client-binding")).await;
+    assert_eq!(metadata["native_client_id"], rows[0]["native_client_id"]);
+    let before = ledger(&pool).await;
+    for (original, receipt) in rows.iter().zip(&receipts) {
+        let (status, repeated) = post_client(&a, &a.token, original).await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(repeated["replayed"], true);
+        assert_eq!(repeated["resource"], receipt["resource"]);
+    }
     assert_eq!(ledger(&pool).await, before);
 }
 

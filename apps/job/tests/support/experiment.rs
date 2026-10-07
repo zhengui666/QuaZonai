@@ -199,6 +199,7 @@ pub fn market_fixture(
         observations,
     }];
     let request = NativeExperimentEvaluationRequestV1 {
+        binary_option: None,
         schema_version: SchemaV1,
         selection: NativeBarSelectionV1 {
             schema_version: SchemaV1,

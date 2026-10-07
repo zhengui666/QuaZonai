@@ -259,7 +259,12 @@ where
         .members
         .iter()
         .zip(&sources)
-        .map(|(member, source)| domain::execution::strategy::source(&member.policy, source))
+        .map(|(member, source)| {
+            let fold = domain::execution::strategy::source(&member.policy, source)?;
+            domain::prediction::binary_option_source(source.request.binary_option.as_ref(),
+                report.request.binary_option.as_ref(), &fold.simulation_request.selection)?;
+            Ok::<_, DomainError>(fold)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     match &report.outcome {
         StrategyCompositionOutcomeV1::HistoricalReplay {

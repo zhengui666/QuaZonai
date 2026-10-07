@@ -203,7 +203,9 @@ pub fn binding(
             .and_then(|ordinal| source_clocks.get(&ordinal))
             .is_some_and(|(_, available)| *available != fold.training_end_available_ns)
             || fold.training_end_available_ns < request.selection.event_start_ns
-            || !replay.settlements.is_empty()
+            || replay.settlements != crate::prediction::binary_option_settlements(
+                request.binary_option.as_ref(), &request.instrument_id,
+                replay.selection.decision_cutoff_ns)
             || replay.selection.bar_types != request.selection.bar_types
             || replay.selection.event_start_ns != first.event_ns
             || Some(replay.selection.event_end_ns.get())
@@ -223,6 +225,7 @@ pub fn binding(
             return Err(bad("experiment_fold.replay"));
         }
         for (point, target) in fold.decisions.iter().zip(&replay.target_points) {
+            crate::prediction::binary_option_target(request.binary_option.as_ref(), target)?;
             if point.event_ns < request.selection.event_start_ns
                 || point.event_ns >= request.selection.event_end_ns
                 || point.decision_ns > request.selection.decision_cutoff_ns

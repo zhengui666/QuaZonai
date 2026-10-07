@@ -123,6 +123,8 @@ pub fn request(value: &NativeStrategyCompositionRequestV1) -> Result<(), DomainE
     {
         return Err(bad("strategy.instrument_alignment"));
     }
+    crate::prediction::binary_option_request(value.binary_option.as_ref(),
+        &value.selection, instrument, &value.settings)?;
     for member in &value.members {
         let policy = &member.policy;
         features::schema(&policy.feature_schema)?;
@@ -473,10 +475,15 @@ pub fn result(
             if simulation_request.selection != request.selection
                 || serde_json::to_value(&simulation_request.settings).ok()
                     != serde_json::to_value(&request.settings).ok()
-                || !simulation_request.settlements.is_empty()
+                || simulation_request.settlements != crate::prediction::binary_option_settlements(
+                    request.binary_option.as_ref(), &request.members[0].policy.instrument_id,
+                    request.selection.decision_cutoff_ns)
                 || value.consumed_fuel != DbCounter::ZERO
             {
                 return Err(bad("strategy.replay_binding"));
+            }
+            for target in &simulation_request.target_points {
+                crate::prediction::binary_option_target(request.binary_option.as_ref(), target)?;
             }
             super::output::check_simulation(simulation_request, simulation)?;
             super::output::check_simulation_dataset(simulation, request.input_provenance.dataset_revision_id)?;
@@ -516,6 +523,19 @@ pub fn result(
             {
                 return Err(bad("strategy.current_binding"));
             }
+            if request.binary_option.is_some() {
+                for member in &request.members {
+                    let mut original = target.clone();
+                    original.valid_until_ns = target.asof_ns.get()
+                        .checked_add(member.policy.target_ttl_ns.get())
+                        .and_then(|n| DbCounter::new(n).ok())
+                        .ok_or_else(|| bad("strategy.current_policy_lifetime"))?;
+                    crate::prediction::binary_option_current_target(request.binary_option.as_ref(), &original,
+                        request.selection.decision_cutoff_ns)?;
+                }
+            }
+            crate::prediction::binary_option_current_target(request.binary_option.as_ref(), target,
+                request.selection.decision_cutoff_ns)?;
             constraints(
                 &request.mandate,
                 target,

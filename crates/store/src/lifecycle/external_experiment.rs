@@ -341,6 +341,9 @@ impl Store {
         .await?;
         domain::catalogs::execution_fees(&dataset.metadata, &parameters.settings)?;
         let evaluation_request = NativeExperimentEvaluationRequestV1 {
+            binary_option: domain::prediction::binary_option_context(
+                &dataset.metadata.universe.instrument_definitions, &dataset.selection.settlements,
+                &dataset.selection.selection, &parameters.instrument_id, &parameters.settings)?,
             schema_version: SchemaV1,
             selection: dataset.selection.selection.clone(),
             split_policy: serde_json::from_value(brief.try_get("split_policy")?)
@@ -361,6 +364,7 @@ impl Store {
             RunKind::PortfolioSimulate,
         )
         .await?;
+        domain::prediction::binary_option_capability(evaluation_request.binary_option.as_ref(), &cap)?;
         experiment::native_cpu(&limits.evaluation_limits, &cap)?;
         if image(&cap, RunKind::PortfolioSimulate)?
             != brief.try_get::<String, _>("engine_image_ref")?
@@ -599,6 +603,12 @@ impl Store {
             {
                 return Err(StoreError::Integrity);
             }
+            let binary_context = domain::prediction::binary_option_context(
+                &dataset.metadata.universe.instrument_definitions, &dataset.selection.settlements,
+                &dataset.selection.selection, &evaluation_request.instrument_id, &evaluation_request.settings)?;
+            if binary_context != evaluation_request.binary_option {
+                return Err(StoreError::Integrity);
+            }
             let feature_ids: Vec<Id> = serde_json::from_value(row.try_get("feature_artifact_ids")?)
                 .map_err(|_| StoreError::Integrity)?;
             let mut inputs = vec![dataset.input, model_input];
@@ -624,6 +634,7 @@ impl Store {
                 RunKind::PortfolioSimulate,
             )
             .await?;
+            domain::prediction::binary_option_capability(evaluation_request.binary_option.as_ref(), &cap)?;
             let image = image(&cap, RunKind::PortfolioSimulate)?;
             let assumptions=sqlx::query("SELECT a.engine_image_ref,s.input_set_id,s.settings FROM app.research_cycles c JOIN app.research_briefs b ON b.id=c.brief_id JOIN app.execution_assumptions a ON a.id=b.execution_assumptions_id JOIN app.execution_assumption_sources s ON s.assumptions_id=a.id AND s.project_id=c.project_id AND s.runtime_id=$2 WHERE c.id=$1")
                 .bind(cycle.as_uuid()).bind(context.runtime_id.as_uuid()).fetch_one(&mut *tx).await?;

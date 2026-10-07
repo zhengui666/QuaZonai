@@ -160,7 +160,6 @@ where
     }
     let dataset = datasets.remove(0);
     if !matches!(&dataset.input,RuntimeInputV1::Dataset{role,..} if *role==if historical{DataPartition::Validation}else{DataPartition::Forward})
-        || !dataset.selection.settlements.is_empty()
     {
         return Err(StoreError::Invalid("strategy_execution_partition"));
     }
@@ -292,6 +291,11 @@ where
         {
             return Err(StoreError::Invalid("strategy_current_warmup_catalog"));
         }
+        let execution_context = domain::prediction::binary_option_context(
+            &dataset.metadata.universe.instrument_definitions, &dataset.selection.settlements,
+            &selected, &policy.instrument_id, &settings)?;
+        domain::prediction::binary_option_source(resolved.report.request.binary_option.as_ref(),
+            execution_context.as_ref(), &fold.simulation_request.selection)?;
         let mut feature_ids = policy.feature_artifact_ids.clone();
         if let StrategyPortfolioPurposeV1::CurrentDecision { member_inputs, .. } = &build.purpose {
             feature_ids.extend(
@@ -385,6 +389,9 @@ where
         }
     }
     let request = NativeStrategyCompositionRequestV1 {
+        binary_option: domain::prediction::binary_option_context(
+            &dataset.metadata.universe.instrument_definitions, &dataset.selection.settlements,
+            &selected, &members[0].policy.instrument_id, &settings)?,
         schema_version: SchemaV1,
         selection: selected,
         mandate: mandate.clone(),
@@ -490,6 +497,7 @@ impl Store {
             &mut read,
         )
         .await?;
+        domain::prediction::binary_option_capability(resolved.request.binary_option.as_ref(), &cap)?;
         let task = NativeTaskParametersV1::ComposeStrategyTargets {
             schema_version: SchemaV1,
             dataset_revision_id: resolved.request.input_provenance.dataset_revision_id,

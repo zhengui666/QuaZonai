@@ -93,6 +93,23 @@ pub(crate) fn retain_envelope(
     Ok(())
 }
 
+/// Only the checked native-node producer calls this opt-in wrapper. The existing
+/// V1 stdin conversion and replay format remain unchanged.
+pub(crate) fn retain_client_bound_envelope(
+    output: &mut File,
+    envelope: &contracts::account_observation::AccountObservationSubmitV2,
+) -> Result<()> {
+    domain::account_observation::client_observation(envelope)?;
+    let mut bytes = serde_json::to_vec(envelope)?;
+    bytes.push(b'\n');
+    if bytes.len() > MAX_RECORD_BYTES {
+        bail!("projected envelope exceeds relay limit; retain original input and segment");
+    }
+    output.write_all(&bytes)?;
+    output.sync_data()?;
+    Ok(())
+}
+
 fn stream(
     input: &mut impl BufRead,
     output: &mut File,
