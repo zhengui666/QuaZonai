@@ -200,7 +200,10 @@ async fn setup_with_release_and_limits(
             memory_mib: f.budget.max_memory_mib,
             output_bytes: f.budget.max_output_bytes,
         });
-        sqlx::query("INSERT INTO app.run_admissions(run_id,project_id,cycle_id,command_key,normalized_request,initial_snapshot,limits,runtime_id,runtime_revision,runtime_snapshot,initial_queue_message_id) SELECT c.run_id,c.project_id,r.cycle_id,'relational-candidate-runtime','{\"schema_version\":1}','{\"schema_version\":1}',$3,$2,1,'{\"schema_version\":1}',100000 FROM app.portfolio_candidates c JOIN app.runs r ON r.id=c.run_id WHERE c.id=$1")
+        // This source is a terminal relational fixture, not queued work. Reserve
+        // its ID from the same native sequence used by PGMQ so another fixture
+        // or a later real enqueue in this database cannot reuse the identity.
+        sqlx::query("INSERT INTO app.run_admissions(run_id,project_id,cycle_id,command_key,normalized_request,initial_snapshot,limits,runtime_id,runtime_revision,runtime_snapshot,initial_queue_message_id) SELECT c.run_id,c.project_id,r.cycle_id,'relational-candidate-runtime','{\"schema_version\":1}','{\"schema_version\":1}',$3,$2,1,'{\"schema_version\":1}',nextval(pg_get_serial_sequence('pgmq.q_runs','msg_id')) FROM app.portfolio_candidates c JOIN app.runs r ON r.id=c.run_id WHERE c.id=$1")
         .bind(candidate.as_uuid()).bind(runtime.as_uuid()).bind(serde_json::to_value(source_limits).unwrap()).execute(pool).await.unwrap();
         (runtime, caps)
     };

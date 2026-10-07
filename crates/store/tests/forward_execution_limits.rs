@@ -317,6 +317,20 @@ async fn migration_103_to_104_preserves_existing_receipt_and_rejects_new_legacy_
         limits(Some(8), Some(4), 128, Some(512)),
     )
     .await;
+    let distinct_source_ids: bool = sqlx::query_scalar(
+        "SELECT count(*)=2 AND count(DISTINCT a.initial_queue_message_id)=2
+         FROM app.run_admissions a JOIN app.runs r ON r.id=a.run_id
+         WHERE a.project_id IN ($1,$2) AND r.kind='PORTFOLIO_BUILD'",
+    )
+    .bind(old.f.project.as_uuid())
+    .bind(new.f.project.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        distinct_source_ids,
+        "source fixtures must own distinct native queue identities"
+    );
     let new_run = queue(&new).await;
     reject_duplicate_admission(&pool, new_run.resource.id, original_limits, 2, None).await;
 }
