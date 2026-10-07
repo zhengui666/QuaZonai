@@ -79,15 +79,19 @@ async fn fixture_with_selection(
     fixture_with_trigger(pool, priced, candidates, origin, false, None).await
 }
 
-async fn fixture_with_trigger(
+// Allocate the native bootstrap before the calling async wrapper embeds it.
+// Polling/cancellation stay in the same task; no thread or stack-size override.
+fn fixture_with_trigger(
     pool: &PgPool,
     priced: bool,
     candidates: u16,
     origin: DataOrigin,
     wake: bool,
     speed: Option<bool>,
-) -> Fixture {
-    fixture_with_trigger_and_token_cap(pool, priced, candidates, origin, wake, speed, true).await
+) -> std::pin::Pin<Box<impl std::future::Future<Output = Fixture> + '_>> {
+    Box::pin(fixture_with_trigger_and_token_cap(
+        pool, priced, candidates, origin, wake, speed, true,
+    ))
 }
 
 async fn fixture_with_trigger_and_token_cap(
@@ -2524,4 +2528,23 @@ async fn a_passive_thread_without_native_rollout_is_not_rebuilt_on_takeover(pool
         .unwrap();
     assert_eq!(actual, original);
     assert_eq!(f.provider.request_count(), 0);
+}
+
+#[test]
+fn mission_bootstrap_future_is_heap_owned_before_async_wrappers() {
+    fn absent<T>() -> T {
+        panic!("layout-only closure must not run fixture setup")
+    }
+    fn future_bytes<F: std::future::Future>(_: impl FnOnce() -> F) -> usize {
+        std::mem::size_of::<F>()
+    }
+    // No future is created or polled, so no database or native process is used.
+    // The original PG/Mission cases still prove all runtime associations.
+    let size =
+        future_bytes(|| fixture_with_trigger(absent(), false, 1, DataOrigin::Real, false, None));
+    assert_eq!(
+        size,
+        std::mem::size_of::<usize>(),
+        "bootstrap must return its thin heap-owned future before wrapper polling"
+    );
 }

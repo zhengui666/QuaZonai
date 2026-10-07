@@ -80,7 +80,14 @@ pub(super) async fn observe(name: &str) -> Result<Observation> {
     if out.stdout.len() > 16384 {
         return Err(NativeFailure::ObservationLimit);
     }
-    let observed = parse(std::str::from_utf8(&out.stdout).map_err(|_| NativeFailure::Contract)?)?;
+    let observed = parse(std::str::from_utf8(&out.stdout).map_err(|_| NativeFailure::Contract)?);
+    #[cfg(all(test, feature = "native-codex"))]
+    if observed.is_err()
+        || (!out.status.success() && observed.as_ref().is_ok_and(|v| v.load != "not-found"))
+    {
+        native_tests::trace_show(&name, out.status.code(), &out.stdout);
+    }
+    let observed = observed?;
     if !out.status.success() && observed.load != "not-found" {
         return Err(NativeFailure::Unavailable);
     }
@@ -95,6 +102,8 @@ async fn masked(name: &str) -> Result<()> {
     // Only callers with a successful exact-name mask + reload acknowledgement
     // may accept this state; stopped transient identity remains non-pristine.
     if !matches!(out.stdout.as_slice(), b"masked\n" | b"transient\n") {
+        #[cfg(all(test, feature = "native-codex"))]
+        native_tests::trace_install_state(&name, out.status.code(), &out.stdout);
         return Err(NativeFailure::Unavailable);
     }
     Ok(())
@@ -137,9 +146,18 @@ pub(super) async fn barrier(name: &str) -> Result<()> {
     let full = unit(name)?;
     // Direct native manager methods: systemctl's offline/client-side file
     // installation fallback is not evidence that this manager is fenced.
-    manager_call("MaskUnitFiles", &["asbb", "1", &full, "false", "false"]).await?;
-    manager_call("Reload", &[]).await?;
-    masked(name).await
+    let result = manager_call("MaskUnitFiles", &["asbb", "1", &full, "false", "false"]).await;
+    #[cfg(all(test, feature = "native-codex"))]
+    native_tests::trace_error(name, "barrier.mask", &result);
+    result?;
+    let result = manager_call("Reload", &[]).await;
+    #[cfg(all(test, feature = "native-codex"))]
+    native_tests::trace_error(name, "barrier.reload", &result);
+    result?;
+    let result = masked(name).await;
+    #[cfg(all(test, feature = "native-codex"))]
+    native_tests::trace_error(name, "barrier.verify-mask", &result);
+    result
 }
 /// Only a brand-new, unpermitted identity can probe and remove its own mask.
 pub(super) async fn probe_fresh(name: &str) -> Result<()> {
@@ -170,13 +188,48 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
     let full = unit(name)?;
     // replace explicitly supersedes an earlier queued JOB_START. A mask alone
     // does not cancel a start that the native manager already accepted.
-    let stopped = command(&["stop", "--job-mode=replace", "--", &full]).await?;
-    let observed = observe(name).await?;
-    masked(name).await?;
+    let stopped = command(&["stop", "--job-mode=replace", "--", &full]).await;
+    #[cfg(all(test, feature = "native-codex"))]
+    if let Err(error) = &stopped {
+        native_tests::trace(name, "stop.command", format_args!("error={error:?}"));
+    }
+    let stopped = stopped?;
+    let observed = observe(name).await;
+    #[cfg(all(test, feature = "native-codex"))]
+    if let Err(error) = &observed {
+        native_tests::trace(
+            name,
+            "stop.observe",
+            format_args!("stop_code={:?} error={error:?}", stopped.status.code()),
+        );
+    }
+    let observed = observed?;
+    let mask = masked(name).await;
+    #[cfg(all(test, feature = "native-codex"))]
+    if mask.is_err() {
+        native_tests::trace(
+            name,
+            "stop.verify-mask",
+            format_args!(
+                "stop_code={:?} observed={observed:?} error={mask:?}",
+                stopped.status.code()
+            ),
+        );
+    }
+    mask?;
     if observed.job
         || observed.main_pid != 0
         || !matches!(observed.active.as_str(), "inactive" | "failed")
     {
+        #[cfg(all(test, feature = "native-codex"))]
+        native_tests::trace(
+            name,
+            "stop.not-terminal",
+            format_args!(
+                "stop_code={:?} observed={observed:?}",
+                stopped.status.code()
+            ),
+        );
         return Err(NativeFailure::Unavailable);
     }
     if let Some(group) = observed.group {
@@ -185,9 +238,28 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
         }
         let path = PathBuf::from("/sys/fs/cgroup").join(group.trim_start_matches('/'));
         if path.exists() {
-            let events = std::fs::read_to_string(path.join("cgroup.events"))
-                .map_err(|_| NativeFailure::Unavailable)?;
+            let events = std::fs::read_to_string(path.join("cgroup.events"));
+            #[cfg(all(test, feature = "native-codex"))]
+            if let Err(error) = &events {
+                native_tests::trace(
+                    name,
+                    "stop.cgroup-read",
+                    format_args!(
+                        "stop_code={:?} os_code={:?} kind={:?}",
+                        stopped.status.code(),
+                        error.raw_os_error(),
+                        error.kind()
+                    ),
+                );
+            }
+            let events = events.map_err(|_| NativeFailure::Unavailable)?;
             if !events.lines().any(|line| line == "populated 0") {
+                #[cfg(all(test, feature = "native-codex"))]
+                native_tests::trace(
+                    name,
+                    "stop.cgroup-populated",
+                    format_args!("populated_zero=false stop_code={:?}", stopped.status.code()),
+                );
                 return Err(NativeFailure::Unavailable);
             }
         }
@@ -197,6 +269,17 @@ pub(super) async fn stop_and_confirm(name: &str) -> Result<()> {
     let fenced = observed.load == "masked"
         || (stopped.status.success() && observed.load == "loaded" && !observed.fragment.is_empty());
     if !fenced {
+        #[cfg(all(test, feature = "native-codex"))]
+        native_tests::trace(
+            name,
+            "stop.not-fenced",
+            format_args!(
+                "stop_code={:?} load={:?} fragment={:?}",
+                stopped.status.code(),
+                observed.load,
+                observed.fragment
+            ),
+        );
         return Err(NativeFailure::Unavailable);
     }
     Ok(())
@@ -226,22 +309,156 @@ mod tests {
 #[cfg(all(test, feature = "native-codex"))]
 mod native_tests {
     use super::*;
+    use std::{
+        collections::BTreeSet,
+        fmt,
+        sync::{Mutex, OnceLock},
+    };
+
+    fn owned_units() -> &'static Mutex<BTreeSet<String>> {
+        static OWNED: OnceLock<Mutex<BTreeSet<String>>> = OnceLock::new();
+        OWNED.get_or_init(|| Mutex::new(BTreeSet::new()))
+    }
+
+    /// Only units generated by these native fixtures can emit diagnostics.
+    /// Never log environment, native stderr, service commands or other units.
+    fn trace_line(name: &str, stage: &str, detail: fmt::Arguments<'_>) -> Option<String> {
+        let name = name.strip_suffix(".service").unwrap_or(name);
+        if owned_units().lock().is_ok_and(|owned| owned.contains(name)) {
+            Some(format!(
+                "native_stop_trace unit={name} stage={stage} {detail}"
+            ))
+        } else {
+            None
+        }
+    }
+    pub(super) fn trace(name: &str, stage: &str, detail: fmt::Arguments<'_>) {
+        if let Some(line) = trace_line(name, stage, detail) {
+            eprintln!("{line}");
+        }
+    }
+    pub(super) fn trace_error(name: &str, stage: &str, result: &Result<()>) {
+        if let Err(error) = result {
+            trace(name, stage, format_args!("error={error:?}"));
+        }
+    }
+    pub(super) fn trace_show(name: &str, code: Option<i32>, bytes: &[u8]) {
+        let text = String::from_utf8_lossy(bytes);
+        let fields = observed_fields(&text);
+        trace(
+            name,
+            "show.properties",
+            format_args!("exit_code={code:?} fields={fields:?}"),
+        );
+    }
+    fn observed_fields(text: &str) -> Vec<&str> {
+        text.lines()
+            .filter(|line| {
+                [
+                    "LoadState=",
+                    "ActiveState=",
+                    "ControlGroup=",
+                    "InvocationID=",
+                    "MainPID=",
+                    "Job=",
+                    "FragmentPath=",
+                ]
+                .iter()
+                .any(|prefix| line.starts_with(*prefix))
+            })
+            .collect()
+    }
+    pub(super) fn trace_install_state(name: &str, code: Option<i32>, bytes: &[u8]) {
+        let state = std::str::from_utf8(bytes)
+            .ok()
+            .map(str::trim)
+            .filter(|state| {
+                !state.is_empty()
+                    && state.len() <= 32
+                    && state.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
+            });
+        trace(
+            name,
+            "mask.install-state",
+            format_args!("exit_code={code:?} state={state:?}"),
+        );
+    }
+
     fn name() -> String {
-        format!(
+        let name = format!(
             "quazonai-mission-{}-{}-1-{}",
             contracts::Id::new(),
             contracts::Id::new(),
             contracts::Id::new()
-        )
+        );
+        owned_units().lock().unwrap().insert(name.clone());
+        name
     }
-    async fn unmask_test_unit(name: &str) {
-        let full = unit(name).unwrap();
-        assert!(command(&["unmask", "--", &full])
-            .await
-            .unwrap()
-            .status
-            .success());
-        assert!(command(&["daemon-reload"]).await.unwrap().status.success());
+    async fn unmask_test_unit(name: &str) -> Result<()> {
+        let full = unit(name)?;
+        let unmask = command(&["unmask", "--", &full]).await?;
+        if !unmask.status.success() {
+            trace(
+                name,
+                "cleanup.unmask",
+                format_args!("exit_code={:?}", unmask.status.code()),
+            );
+            return Err(NativeFailure::Unavailable);
+        }
+        let reload = command(&["daemon-reload"]).await?;
+        if !reload.status.success() {
+            trace(
+                name,
+                "cleanup.reload",
+                format_args!("exit_code={:?}", reload.status.code()),
+            );
+            return Err(NativeFailure::Unavailable);
+        }
+        Ok(())
+    }
+    fn finish_test(phase: &str, result: Result<()>, cleanup: &[(&str, Result<()>)]) {
+        assert!(
+            result.is_ok(),
+            "native test primary phase={phase} error={result:?}; independent cleanup={cleanup:?}"
+        );
+        assert!(
+            cleanup.iter().all(|(_, outcome)| outcome.is_ok()),
+            "native test succeeded; cleanup remains unconfirmed: {cleanup:?}"
+        );
+    }
+    #[test]
+    fn diagnostics_preserve_primary_error_and_only_project_owned_unit_fields() {
+        assert!(trace_line(
+            "quazonai-mission-not-this-fixture",
+            "check",
+            format_args!("unavailable")
+        )
+        .is_none());
+        let owned = name();
+        let line = trace_line(
+            &owned,
+            "check",
+            format_args!("error={:?}", NativeFailure::Unavailable),
+        )
+        .unwrap();
+        assert!(line.contains(&owned));
+        assert!(line.contains("stage=check"));
+        let fields = observed_fields(
+            "LoadState=loaded\nEnvironment=do-not-log\nMainPID=7\nExecStart=do-not-log\nJob=31\n",
+        );
+        assert_eq!(fields, ["LoadState=loaded", "MainPID=7", "Job=31"]);
+        let panic = std::panic::catch_unwind(|| {
+            finish_test(
+                "stop-queued-start",
+                Err(NativeFailure::Unavailable),
+                &[("blocker-stop", Err(NativeFailure::Correlation))],
+            );
+        })
+        .unwrap_err();
+        let text = panic.downcast_ref::<String>().unwrap();
+        assert!(text.contains("primary phase=stop-queued-start error=Err(Unavailable)"));
+        assert!(text.contains("blocker-stop"));
+        assert!(text.contains("Err(Correlation)"));
     }
     #[tokio::test]
     async fn native_persistent_mask_rejects_a_sigstopped_late_launcher() {
@@ -313,8 +530,8 @@ mod native_tests {
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
-        unmask_test_unit(&name).await;
-        result.unwrap();
+        let unmask = unmask_test_unit(&name).await;
+        finish_test("late-launcher", result, &[("unmask", unmask)]);
     }
 
     #[tokio::test]
@@ -339,6 +556,7 @@ mod native_tests {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
+        let mut phase = "wait-existing-start";
         let result: Result<()> = async {
             tokio::time::timeout(Duration::from_secs(3), async {
                 loop {
@@ -351,11 +569,14 @@ mod native_tests {
             })
             .await
             .map_err(|_| NativeFailure::Unavailable)??;
+            phase = "stop-existing-start";
             stop_and_confirm(&name).await?;
+            phase = "wait-stopped-launcher";
             tokio::time::timeout(Duration::from_secs(5), child.wait())
                 .await
                 .map_err(|_| NativeFailure::Unavailable)?
                 .map_err(|_| NativeFailure::Unavailable)?;
+            phase = "confirm-existing-stop-replay";
             stop_and_confirm(&name).await?;
             Ok(())
         }
@@ -364,8 +585,8 @@ mod native_tests {
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
-        unmask_test_unit(&name).await;
-        result.unwrap();
+        let unmask = unmask_test_unit(&name).await;
+        finish_test(phase, result, &[("unmask", unmask)]);
     }
     #[tokio::test]
     async fn native_stop_replace_cancels_a_deterministically_queued_start() {
@@ -411,6 +632,7 @@ mod native_tests {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
+        let mut phase = "wait-queued-start";
         let result: Result<()> = async {
             tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
@@ -426,7 +648,9 @@ mod native_tests {
             })
             .await
             .map_err(|_| NativeFailure::Unavailable)??;
+            phase = "stop-queued-start";
             stop_and_confirm(&target).await?;
+            phase = "wait-queued-launcher";
             let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
                 .await
                 .map_err(|_| NativeFailure::Unavailable)?
@@ -434,6 +658,7 @@ mod native_tests {
             if status.success() || marker.exists() {
                 return Err(NativeFailure::Correlation);
             }
+            phase = "confirm-queued-stop-replay";
             stop_and_confirm(&target).await?;
             Ok(())
         }
@@ -442,9 +667,28 @@ mod native_tests {
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
-        stop_and_confirm(&blocker).await.unwrap();
-        unmask_test_unit(&target).await;
-        unmask_test_unit(&blocker).await;
-        result.unwrap();
+        let blocker_stop = stop_and_confirm(&blocker).await;
+        let mut cleanup = vec![("blocker-stop", blocker_stop)];
+        // Preserve the original stop-before-unmask prerequisite. A diagnostic
+        // must not release either identity after unconfirmed blocker cleanup.
+        if cleanup[0].1.is_ok() {
+            cleanup.push(("target-unmask", unmask_test_unit(&target).await));
+            if cleanup[1].1.is_ok() {
+                cleanup.push(("blocker-unmask", unmask_test_unit(&blocker).await));
+            } else {
+                trace(
+                    &blocker,
+                    "cleanup.unmask-not-attempted",
+                    format_args!("target_unmask_unconfirmed=true"),
+                );
+            }
+        } else {
+            trace(
+                &target,
+                "cleanup.unmask-not-attempted",
+                format_args!("blocker_stop_unconfirmed=true"),
+            );
+        }
+        finish_test(phase, result, &cleanup);
     }
 }

@@ -1954,21 +1954,44 @@ async fn optional_wall_mission_fixture(
     content.budget.max_cpu_seconds = None;
     content.budget.max_output_bytes = None;
     content.budget.max_tokens = None;
-    f.brief = store
-        .update_brief(
-            &actor,
-            "optional-wall",
-            f.brief.id,
-            &contracts::brief::BriefUpdate {
-                schema_version: SchemaV1,
-                expected_revision: f.brief.revision,
-                content,
-                bindings: f.brief.bindings.clone(),
-            },
-        )
+    let original_update = contracts::brief::BriefUpdate {
+        schema_version: SchemaV1,
+        expected_revision: f.brief.revision,
+        content,
+        bindings: f.brief.bindings.clone(),
+    };
+    let updated = store
+        .update_brief(&actor, "optional-wall", f.brief.id, &original_update)
         .await
-        .unwrap()
-        .resource;
+        .unwrap();
+    let replay = store
+        .update_brief(&actor, "optional-wall", f.brief.id, &original_update)
+        .await
+        .unwrap();
+    assert!(
+        replay.replayed,
+        "the same original command replays its receipt"
+    );
+    assert_eq!(
+        serde_json::to_value(&replay.resource).unwrap(),
+        serde_json::to_value(&updated.resource).unwrap(),
+        "replay must retain every original business field"
+    );
+    let mut changed_update = original_update.clone();
+    changed_update
+        .content
+        .hypothesis
+        .push_str("; changed fixture request");
+    assert!(
+        matches!(
+            store
+                .update_brief(&actor, "optional-wall", f.brief.id, &changed_update)
+                .await,
+            Err(StoreError::IdempotencyConflict)
+        ),
+        "an operator key must not be recycled for a different request"
+    );
+    f.brief = updated.resource;
     f.freeze.expected_revision = f.brief.revision;
     store
         .freeze_brief(
@@ -2079,57 +2102,69 @@ async fn unbounded_mission_credentials_follow_only_the_current_finite_owner_leas
     );
 }
 
-#[sqlx::test(migrations = "../../migrations")]
-async fn optional_wall_credentials_do_not_survive_cancel_revocation_or_disabled_principal(
-    pool: PgPool,
-) {
-    for action in ["cancel", "revoke", "disable"] {
-        let (store, actor, lease) = optional_wall_mission(&pool).await;
-        let token = Id::new();
-        let credential = store
-            .issue_mission_credential(lease.run.id, &lease.fence, token, Id::new())
-            .await
-            .unwrap();
-        let machine = store
-            .machine_challenge(token)
-            .await
-            .unwrap()
-            .verified_actor(None);
-        assert!(store.machine_session(&machine).await.is_ok());
-        match action {
-            "cancel" => {
-                let run = store.get_run(&actor, lease.run.id).await.unwrap();
-                store
-                    .cancel_run(
-                        &actor,
-                        "cancel-unbounded",
-                        lease.run.id,
-                        &contracts::lifecycle::RunCancelV1 {
-                            schema_version: SchemaV1,
-                            expected_revision: run.revision,
-                        },
-                    )
-                    .await
-                    .unwrap();
-            }
-            "revoke" => {
-                sqlx::query("INSERT INTO app.machine_credential_revocations(credential_id,effective_at,reason) VALUES($1,clock_timestamp(),'bounded fixture revocation')")
-                    .bind(credential.as_uuid()).execute(&pool).await.unwrap();
-            }
-            "disable" => {
-                sqlx::query("UPDATE app.machine_principals SET enabled=false WHERE run_id=$1")
-                    .bind(lease.run.id.as_uuid())
-                    .execute(&pool)
-                    .await
-                    .unwrap();
-            }
-            _ => unreachable!(),
+// Each independent authority change gets SQLx's own migrated database. Operator
+// command keys are global within that database, not scoped to a fixture's project.
+async fn assert_optional_wall_credential_denied(pool: &PgPool, action: &str) {
+    let (store, actor, lease) = optional_wall_mission(pool).await;
+    let token = Id::new();
+    let credential = store
+        .issue_mission_credential(lease.run.id, &lease.fence, token, Id::new())
+        .await
+        .unwrap();
+    let machine = store
+        .machine_challenge(token)
+        .await
+        .unwrap()
+        .verified_actor(None);
+    assert!(store.machine_session(&machine).await.is_ok());
+    match action {
+        "cancel" => {
+            let run = store.get_run(&actor, lease.run.id).await.unwrap();
+            store
+                .cancel_run(
+                    &actor,
+                    "cancel-unbounded",
+                    lease.run.id,
+                    &contracts::lifecycle::RunCancelV1 {
+                        schema_version: SchemaV1,
+                        expected_revision: run.revision,
+                    },
+                )
+                .await
+                .unwrap();
         }
-        assert!(
-            store.machine_session(&machine).await.is_err(),
-            "{action} must deny immediately"
-        );
+        "revoke" => {
+            sqlx::query("INSERT INTO app.machine_credential_revocations(credential_id,effective_at,reason) VALUES($1,clock_timestamp(),'bounded fixture revocation')")
+                .bind(credential.as_uuid()).execute(pool).await.unwrap();
+        }
+        "disable" => {
+            sqlx::query("UPDATE app.machine_principals SET enabled=false WHERE run_id=$1")
+                .bind(lease.run.id.as_uuid())
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        _ => unreachable!(),
     }
+    assert!(
+        store.machine_session(&machine).await.is_err(),
+        "{action} must deny immediately"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn optional_wall_credentials_do_not_survive_cancellation(pool: PgPool) {
+    assert_optional_wall_credential_denied(&pool, "cancel").await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn optional_wall_credentials_do_not_survive_revocation(pool: PgPool) {
+    assert_optional_wall_credential_denied(&pool, "revoke").await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn optional_wall_credentials_do_not_survive_disabled_principal(pool: PgPool) {
+    assert_optional_wall_credential_denied(&pool, "disable").await;
 }
 
 #[sqlx::test(migrations = "../../migrations")]
