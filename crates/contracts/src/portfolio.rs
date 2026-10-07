@@ -393,6 +393,12 @@ pub struct CandidateDetailV1 {
     deny_unknown_fields
 )]
 pub enum NativeModelRefV1 {
+    /// QZ-owned thin adapter through the official native FeeModel trait.
+    FrozenSpotFeeScenario {
+        schema_version: SchemaV1,
+        native_version: String,
+        parameters: crate::spot_fees::FrozenSpotFeeScenarioParametersV1,
+    },
     NautilusDefaultFill {
         schema_version: SchemaV1,
         upstream_class: String,
@@ -506,6 +512,22 @@ impl utoipa::PartialSchema for NativeModelRefV1 {
                     .required("parameters"),
             );
         }
+        schema = schema.item(
+            ObjectBuilder::new()
+                .schema_type(Type::Object)
+                .additional_properties(Some(AdditionalProperties::FreeForm(false)))
+                .property("schema_version", SchemaV1::schema())
+                .required("schema_version")
+                .property("adapter_kind", literal("FROZEN_SPOT_FEE_SCENARIO"))
+                .required("adapter_kind")
+                .property("native_version", literal(NAUTILUS_EXECUTION_VERSION))
+                .required("native_version")
+                .property(
+                    "parameters",
+                    crate::spot_fees::FrozenSpotFeeScenarioParametersV1::schema(),
+                )
+                .required("parameters"),
+        );
         schema.into()
     }
 }
@@ -517,6 +539,7 @@ impl ToSchema for NativeModelRefV1 {
         )>,
     ) {
         AllocatorSettingsV1::schemas(schemas);
+        crate::spot_fees::FrozenSpotFeeScenarioParametersV1::schemas(schemas);
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]

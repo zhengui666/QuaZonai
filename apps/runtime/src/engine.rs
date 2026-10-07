@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-pub const NATIVE_STACK: &str = "rust/1.98.1;nautilus/0.63.0;clarabel/0.11.1;wasmi/2.0.0;solow-cv/0.7.3;ndarray-stats/0.7.0;linregress/0.5.4;alpha-validation/1;alpha-sealed/1;portfolio-ensemble/1;portfolio-models/4;strategy-composition/1;portfolio-build-rolling/1;simulation-models/1;portfolio-weights/1;portfolio-variance-bound/1;portfolio-cvar/1;portfolio-risk-budget/1;portfolio-cvar-risk-budget/1;bar-notional/1;portfolio-liquidity/1;portfolio-cost-source/1;portfolio-slippage/1;candidate-simulation/2;portfolio-sequence/1;portfolio-study/6;portfolio-calendar/2;portfolio-rolling-liquidity/1;portfolio-history/1;polymarket-research/1;static-instruments/1";
+pub const NATIVE_STACK: &str = "rust/1.98.1;nautilus/0.63.0;clarabel/0.11.1;wasmi/2.0.0;solow-cv/0.7.3;ndarray-stats/0.7.0;linregress/0.5.4;alpha-validation/1;alpha-sealed/1;portfolio-ensemble/1;portfolio-models/4;strategy-composition/1;portfolio-build-rolling/1;simulation-models/1;portfolio-weights/1;portfolio-variance-bound/1;portfolio-cvar/1;portfolio-risk-budget/1;portfolio-cvar-risk-budget/1;bar-notional/1;portfolio-liquidity/1;portfolio-cost-source/1;portfolio-slippage/1;candidate-simulation/2;portfolio-sequence/1;portfolio-study/6;portfolio-calendar/2;portfolio-rolling-liquidity/1;portfolio-history/1;polymarket-research/1;static-instruments/1;optional-execution-budgets/1";
 pub const JOB_ENTRYPOINT: &str = "/usr/local/bin/job";
 
 #[derive(Clone)]
@@ -204,6 +204,9 @@ impl NativeEngine {
             id,
             versions: BTreeMap::from([
                 ("rustc".into(), "1.98.1".into()),
+                ("optional-wall-time".into(), "1".into()),
+                ("optional-cpu-budget".into(), "1".into()),
+                ("optional-output-budget".into(), "1".into()),
                 ("nautilus".into(), "0.63.0".into()),
                 ("clarabel".into(), "0.11.1".into()),
                 ("wasmi".into(), "2.0.0".into()),
@@ -261,6 +264,8 @@ impl NativeEngine {
                 .map_err(engine_error)?
                 .version
                 .ok_or(Failure::Integrity)?;
+            // Optional wall requires an absent cumulative CPU cap. A finite
+            // CPU grant without wall remains unsupported by admission.
             let mut versions = BTreeMap::from([("docker".into(), version)]);
             let mut images = Vec::new();
             let mut kinds = Vec::new();
@@ -369,10 +374,25 @@ impl NativeEngine {
     ) -> Result<ContainerCreateBody> {
         let memory = i64::from(spec.limits.memory_mib) * 1024 * 1024;
         let tmp = (memory / 4).clamp(16 * 1024 * 1024, 256 * 1024 * 1024);
-        let file_limit = i64::try_from(spec.limits.output_bytes.get().max(1024 * 1024))
+        let file_limit = spec
+            .limits
+            .output_bytes
+            .map(|bytes| i64::try_from(bytes.get().max(1024 * 1024)))
+            .transpose()
             .map_err(|_| Failure::Integrity)?;
-        let cpu_seconds =
-            i64::try_from(spec.limits.cpu_seconds.get()).map_err(|_| Failure::Integrity)?;
+        let cpu_seconds = spec
+            .limits
+            .cpu_seconds
+            .map(|cpu| i64::try_from(cpu.get()))
+            .transpose()
+            .map_err(|_| Failure::Integrity)?;
+        let mut ulimits = vec![ulimit("core", 0), ulimit("nofile", 64)];
+        if let Some(maximum) = file_limit {
+            ulimits.push(ulimit("fsize", maximum));
+        }
+        if let Some(maximum) = cpu_seconds {
+            ulimits.push(ulimit("cpu", maximum));
+        }
         let host_config = HostConfig {
             memory: Some(memory),
             memory_swap: Some(memory),
@@ -392,12 +412,7 @@ impl NativeEngine {
                 format!("rw,noexec,nosuid,nodev,size={tmp},mode=1777"),
             )])),
             shm_size: Some(1024 * 1024),
-            ulimits: Some(vec![
-                ulimit("fsize", file_limit),
-                ulimit("core", 0),
-                ulimit("nofile", 64),
-                ulimit("cpu", cpu_seconds),
-            ]),
+            ulimits: Some(ulimits),
             log_config: Some(HostConfigLogConfig {
                 typ: Some("none".into()),
                 config: None,

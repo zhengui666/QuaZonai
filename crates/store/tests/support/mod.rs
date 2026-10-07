@@ -136,13 +136,13 @@ impl Fixture {
         TurnRequest {
             command_key: key.into(),
             turn_kind: TurnKind::Research,
-            tokens: DbCounter::new(40).unwrap(),
+            tokens: Some(DbCounter::new(40).unwrap()),
             estimated_cost: Some(CostEstimate {
                 currency: "USD".into(),
                 amount: "1.25".parse().unwrap(),
             }),
             request_artifact_id: self.artifact,
-            deadline_at: self.deadline,
+            deadline_at: Some(self.deadline),
         }
     }
 }

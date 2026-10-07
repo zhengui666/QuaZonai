@@ -57,8 +57,9 @@ pub enum TurnKind {
 pub struct ModelReservation {
     pub mission_id: Id,
     pub turn_kind: TurnKind,
-    /// A bounded native model request, not an Agent-supplied usage claim.
-    pub tokens: DbCounter,
+    /// Optional application cap, not an Agent-supplied usage claim. None does
+    /// not reserve tokens; authoritative native usage is still accounted for.
+    pub tokens: Option<DbCounter>,
     pub estimated_cost: Option<CostEstimate>,
 }
 
@@ -66,10 +67,10 @@ pub struct ModelReservation {
 pub struct Reservation {
     /// Optuna jobs must reserve every internal trial, not just one job slot.
     pub experiments: u32,
-    pub cpu_seconds: DbCounter,
-    pub wall_seconds: u32,
+    pub cpu_seconds: Option<DbCounter>,
+    pub wall_seconds: Option<u32>,
     pub memory_mib: u32,
-    pub output_bytes: DbCounter,
+    pub output_bytes: Option<DbCounter>,
     /// None denotes a non-model job. The trusted dispatcher determines this.
     pub model: Option<ModelReservation>,
 }
@@ -78,10 +79,12 @@ pub fn validate_budget(budget: &BudgetV1, stop: &StopRuleV1) -> Result<(), Domai
     if budget.max_experiments == 0
         || budget.max_parallel_runs == 0
         || budget.max_turns_per_mission == 0
-        || budget.max_wall_seconds == 0
-        || budget.max_cpu_seconds.get() == 0
+        || budget.max_wall_seconds == Some(0)
+        || budget.max_cpu_seconds.is_some_and(|value| value.get() == 0)
         || budget.max_memory_mib == 0
-        || budget.max_output_bytes.get() == 0
+        || budget
+            .max_output_bytes
+            .is_some_and(|value| value.get() == 0)
         || budget.max_cycles_per_day == 0
         || budget.max_repair_turns > budget.max_turns_per_mission
         || budget.max_tokens.is_some_and(|value| value.get() == 0)
@@ -164,13 +167,13 @@ pub fn reserve_mission(
 /// Request shape, cumulative usage and the actual reservation remain separate.
 pub fn job_resource_limits(
     budget: &BudgetV1,
-    wall_seconds: u32,
+    wall_seconds: Option<u32>,
     memory_mib: u32,
-    output_bytes: DbCounter,
+    output_bytes: Option<DbCounter>,
 ) -> Result<(), DomainError> {
-    if wall_seconds > budget.max_wall_seconds
+    if crate::execution_limits::exceeds(wall_seconds, budget.max_wall_seconds)
         || memory_mib > budget.max_memory_mib
-        || output_bytes > budget.max_output_bytes
+        || crate::execution_limits::exceeds(output_bytes, budget.max_output_bytes)
     {
         return Err(DomainError::BudgetExhausted("job_resource_limit"));
     }
@@ -191,10 +194,10 @@ fn reserve_job(
         return Err(DomainError::AdmissionClosed);
     }
     if scientific_trial != (request.experiments > 0)
-        || request.cpu_seconds.get() == 0
-        || request.wall_seconds == 0
+        || request.cpu_seconds.is_some_and(|value| value.get() == 0)
+        || request.wall_seconds == Some(0)
         || request.memory_mib == 0
-        || request.output_bytes.get() == 0
+        || request.output_bytes.is_some_and(|value| value.get() == 0)
     {
         return Err(DomainError::Invalid("reservation"));
     }
@@ -215,11 +218,22 @@ fn reserve_job(
     if all_experiments > budget.max_experiments {
         return Err(DomainError::BudgetExhausted("experiments"));
     }
-    let reserved_cpu_seconds = usage
-        .reserved_cpu_seconds
-        .checked_add(request.cpu_seconds.get())
-        .ok_or(DomainError::BudgetExhausted("cpu_seconds"))?;
-    if reserved_cpu_seconds > budget.max_cpu_seconds {
+    if crate::execution_limits::exceeds(request.cpu_seconds, budget.max_cpu_seconds) {
+        return Err(DomainError::BudgetExhausted("cpu_seconds"));
+    }
+    // This ledger counts bounded grants, not actual usage. An absent grant is
+    // distinct in immutable admission JSON; it does not manufacture CPU usage.
+    let reserved_cpu_seconds = match request.cpu_seconds {
+        Some(cpu) => usage
+            .reserved_cpu_seconds
+            .checked_add(cpu.get())
+            .ok_or(DomainError::BudgetExhausted("cpu_seconds"))?,
+        None => usage.reserved_cpu_seconds,
+    };
+    if budget
+        .max_cpu_seconds
+        .is_some_and(|maximum| reserved_cpu_seconds > maximum)
+    {
         return Err(DomainError::BudgetExhausted("cpu_seconds"));
     }
     let active_runs = usage
@@ -258,20 +272,26 @@ fn reserve_model_resources(
     usage: &BudgetUsage,
     model: Option<&ModelReservation>,
 ) -> Result<BudgetUsage, DomainError> {
-    let requested_tokens = model.map_or(0, |request| request.tokens.get());
-    if model.is_some() && requested_tokens == 0 {
+    let token_cap = model.and_then(|request| request.tokens);
+    if token_cap.is_some_and(|tokens| tokens.get() == 0)
+        || (model.is_some() && token_cap.is_none() && budget.max_tokens.is_some())
+    {
         return Err(DomainError::Invalid("model_token_reservation"));
     }
     let reserved_tokens = usage
         .reserved_tokens
-        .checked_add(requested_tokens)
+        .checked_add(token_cap.map_or(0, DbCounter::get))
         .ok_or(DomainError::BudgetExhausted("tokens"))?;
-    let total_tokens = usage
-        .used_tokens
-        .checked_add(reserved_tokens.get())
-        .ok_or(DomainError::BudgetExhausted("tokens"))?;
-    if budget.max_tokens.is_some_and(|limit| total_tokens > limit) {
-        return Err(DomainError::BudgetExhausted("tokens"));
+    // Preserve bounded-request accounting, but do not create an artificial
+    // aggregate token ceiling for a request with no application token cap.
+    if budget.max_tokens.is_some() || token_cap.is_some() {
+        let total_tokens = usage
+            .used_tokens
+            .checked_add(reserved_tokens.get())
+            .ok_or(DomainError::BudgetExhausted("tokens"))?;
+        if budget.max_tokens.is_some_and(|limit| total_tokens > limit) {
+            return Err(DomainError::BudgetExhausted("tokens"));
+        }
     }
     let cost = reserve_cost(budget, usage, model)?;
     let mission = match model {

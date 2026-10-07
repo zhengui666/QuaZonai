@@ -309,9 +309,6 @@ where
             }
             _ => return Err(StoreError::Integrity),
         };
-        let observations = simulation
-            .as_ref()
-            .map_or(0, |(_, result)| result.returns.len());
         gate = if let Some((native, result)) = &simulation {
             let (values, capabilities) =
                 domain::execution::portfolio_simulation_metrics(evaluation, source, native, result)
@@ -338,6 +335,10 @@ where
                 reasons: vec!["PORTFOLIO_STUDY_ALLOCATION_UNAVAILABLE".into()],
             }
         };
+        // These records come from the binding-checked Domain projection above,
+        // not a report's caller-supplied count. Legacy native counts are unchanged;
+        // opted-in report counts use the same complete daily series as the metrics.
+        let observations = metrics.iter().map(|metric| metric.observation_count.get()).min().unwrap_or(0);
         let actual = quality.datasets[0].row_count.get();
         let registered = counter(binding.try_get("row_count")?)?.get();
         source_rows = Some(quality.datasets[0].row_count);
@@ -348,7 +349,7 @@ where
         {
             incomplete.push("REGISTERED_DATA_MISSING".into());
         }
-        if observations < policy.minimum_observations as usize {
+        if observations < u64::from(policy.minimum_observations) {
             incomplete.push("INSUFFICIENT_DAILY_OBSERVATIONS".into());
         }
         if (policy.require_real_data || matches!(request, Intent::Study(_)))

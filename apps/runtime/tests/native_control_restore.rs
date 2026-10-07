@@ -425,10 +425,10 @@ async fn checkpoint(
             limits: JobLimitsV1 {
                 schema_version: SchemaV1,
                 experiments: 0,
-                cpu_seconds: count(30),
-                wall_seconds: 120,
+                cpu_seconds: Some(count(30)),
+                wall_seconds: Some(120),
                 memory_mib: 512,
-                output_bytes: count(65_536),
+                output_bytes: Some(count(65_536)),
             },
         },
         data,

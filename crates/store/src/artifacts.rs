@@ -216,7 +216,11 @@ impl Store {
             if used < 0
                 || (used as u64)
                     .checked_add(byte_count.get())
-                    .is_none_or(|total| total > limits.output_bytes.get())
+                    .is_none_or(|total| {
+                        limits
+                            .output_bytes
+                            .is_some_and(|maximum| total > maximum.get())
+                    })
             {
                 return Err(domain::DomainError::BudgetExhausted("artifact_output_bytes").into());
             }

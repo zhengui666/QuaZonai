@@ -59,7 +59,7 @@ pub struct RunSnapshotV1 {
     pub current_attempt_no: u32,
     pub active_attempt_id: Option<Id>,
     pub last_event_seq: DbCounter,
-    pub deadline_at: DateTime<Utc>,
+    pub deadline_at: Option<DateTime<Utc>>,
     pub cancellation_requested_at: Option<DateTime<Utc>>,
     pub terminal_reason_code: Option<String>,
     pub queued_at: DateTime<Utc>,

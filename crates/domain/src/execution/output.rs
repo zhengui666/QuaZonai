@@ -26,8 +26,10 @@ pub use sealed::{
 };
 mod equity_curve;
 mod simulation;
+mod spot_cash_report;
 pub use equity_curve::{equity_curve_query, portfolio_equity_curve};
 pub(crate) use simulation::binding as check_simulation;
+pub(crate) use spot_cash_report::dataset as check_simulation_dataset;
 pub use simulation::metrics as portfolio_simulation_metrics;
 mod study;
 pub use study::binding as check_portfolio_study;
@@ -329,9 +331,10 @@ pub fn output_bindings(
             )?;
         }
         NativeTaskParametersV1::ValidateData { .. } => {}
-        NativeTaskParametersV1::StudyPortfolio { request, .. } => {
+        NativeTaskParametersV1::StudyPortfolio { dataset_revision_id, request, .. } => {
             let result = decode(body("qz.portfolio_study")?.1)?;
             study::binding(request, &result)?;
+            if let Some(simulation) = &result.simulation { spot_cash_report::dataset(simulation, *dataset_revision_id)?; }
             let original = contracts::portfolio_history::batch(request, &result)
                 .map_err(|_| bad("portfolio_history.source"))?;
             let actual = contracts::portfolio_history::read(body("qz.portfolio_history")?.1)
@@ -395,19 +398,22 @@ pub fn output_bindings(
             }
             sealed::binding(request, calibration, &decode(body("qz.alpha_sealed")?.1)?)?;
         }
-        NativeTaskParametersV1::ComposeStrategyTargets { request, .. } => {
-            super::strategy_composition_result(
-                request,
-                &decode(body("qz.strategy_portfolio")?.1)?,
-            )?;
+        NativeTaskParametersV1::ComposeStrategyTargets { dataset_revision_id, request, .. } => {
+            let result = decode(body("qz.strategy_portfolio")?.1)?;
+            super::strategy_composition_result(request, &result)?;
+            if let contracts::strategy_portfolio::StrategyCompositionOutcomeV1::HistoricalReplay { simulation, .. } = &result.outcome {
+                spot_cash_report::dataset(simulation, *dataset_revision_id)?;
+            }
         }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {
             super::portfolio_build_result(request, &decode(body("qz.native_portfolio")?.1)?)?;
         }
-        NativeTaskParametersV1::SimulatePortfolio { request, .. }
-        | NativeTaskParametersV1::SimulateCandidate { request, .. }
-        | NativeTaskParametersV1::SimulatePortfolioSequence { request, .. } => {
-            simulation::binding(request, &decode(body("qz.native_simulation")?.1)?)?;
+        NativeTaskParametersV1::SimulatePortfolio { dataset_revision_id, request, .. }
+        | NativeTaskParametersV1::SimulateCandidate { dataset_revision_id, request, .. }
+        | NativeTaskParametersV1::SimulatePortfolioSequence { dataset_revision_id, request, .. } => {
+            let result = decode(body("qz.native_simulation")?.1)?;
+            simulation::binding(request, &result)?;
+            spot_cash_report::dataset(&result, *dataset_revision_id)?;
         }
     }
     Ok(())

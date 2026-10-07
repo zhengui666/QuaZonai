@@ -179,10 +179,10 @@ async fn portfolio_admission_without_its_running_cycle_never_publishes_or_charge
         limits: contracts::lifecycle::JobLimitsV1 {
             schema_version: contracts::SchemaV1,
             experiments: 0,
-            cpu_seconds: contracts::DbCounter::new(10).unwrap(),
-            wall_seconds: 10,
+            cpu_seconds: Some(contracts::DbCounter::new(10).unwrap()),
+            wall_seconds: Some(10),
             memory_mib: 64,
-            output_bytes: contracts::DbCounter::new(1024).unwrap(),
+            output_bytes: Some(contracts::DbCounter::new(1024).unwrap()),
         },
     };
     assert!(matches!(

@@ -242,18 +242,25 @@ impl Store {
                 stage.output_bytes,
             )?;
         }
-        let remaining = budget
-            .max_cpu_seconds
-            .get()
-            .saturating_sub(counter(cycle_row.try_get("reserved_cpu_seconds")?)?.get());
-        let requested = limits
-            .compile_limits
-            .cpu_seconds
-            .get()
-            .checked_add(limits.evaluation_limits.cpu_seconds.get())
-            .ok_or(DomainError::BudgetExhausted("cpu_seconds"))?;
-        if requested > remaining {
-            return Err(DomainError::BudgetExhausted("cpu_seconds").into());
+        if let Some(maximum) = budget.max_cpu_seconds {
+            let remaining = maximum
+                .get()
+                .saturating_sub(counter(cycle_row.try_get("reserved_cpu_seconds")?)?.get());
+            let compile = limits
+                .compile_limits
+                .cpu_seconds
+                .ok_or(DomainError::BudgetExhausted("cpu_seconds"))?;
+            let evaluation = limits
+                .evaluation_limits
+                .cpu_seconds
+                .ok_or(DomainError::BudgetExhausted("cpu_seconds"))?;
+            let requested = compile
+                .get()
+                .checked_add(evaluation.get())
+                .ok_or(DomainError::BudgetExhausted("cpu_seconds"))?;
+            if requested > remaining {
+                return Err(DomainError::BudgetExhausted("cpu_seconds").into());
+            }
         }
         if limits.compile_limits.experiments != 1 || limits.evaluation_limits.experiments != 0 {
             return Err(StoreError::Invalid("external_experiment_trial_limits"));
@@ -525,12 +532,15 @@ impl Store {
                 .map_err(|_| StoreError::Integrity)?;
         let cycle = locked.run.cycle_id.ok_or(StoreError::Integrity)?;
         let budget=sqlx::query("SELECT budget_snapshot,(budget_snapshot->>'max_cpu_seconds')::bigint AS maximum,reserved_cpu_seconds,brief_id FROM app.research_cycles WHERE id=$1").bind(cycle.as_uuid()).fetch_one(&mut *tx).await?;
-        if budget
-            .try_get::<i64, _>("maximum")?
-            .saturating_sub(budget.try_get::<i64, _>("reserved_cpu_seconds")?)
-            < i64::try_from(request.evaluation_limits.cpu_seconds.get())
-                .map_err(|_| StoreError::Integrity)?
-        {
+        let remaining = budget
+            .try_get::<Option<i64>, _>("maximum")?
+            .map(|maximum| maximum.saturating_sub(budget.get::<i64, _>("reserved_cpu_seconds")));
+        if remaining.is_some_and(|remaining| {
+            request
+                .evaluation_limits
+                .cpu_seconds
+                .is_none_or(|cpu| cpu.get() > remaining.max(0) as u64)
+        }) {
             settle(
                 &mut tx,
                 experiment,

@@ -266,8 +266,8 @@ async fn elapsed_sent_deadline_records_cancel_intent_before_accepting_a_native_t
 ) {
     let f = setup(&pool).await;
     let mut request = f.request.clone();
-    request.limits.wall_seconds = 1;
-    request.limits.cpu_seconds = DbCounter::new(1).unwrap();
+    request.limits.wall_seconds = Some(1);
+    request.limits.cpu_seconds = Some(DbCounter::new(1).unwrap());
     let run = start(&f, "deadline", &request).await.unwrap().resource;
     let msg = message(&f, run.id).await;
     let lease = lease(&f, &msg, "deadline-owner", 30).await;
@@ -279,7 +279,7 @@ async fn elapsed_sent_deadline_records_cancel_intent_before_accepting_a_native_t
         .await
         .unwrap());
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        while clock(&pool).await < run.deadline_at {
+        while clock(&pool).await < run.deadline_at.unwrap() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     })

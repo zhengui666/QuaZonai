@@ -1,6 +1,7 @@
 //! Correlate observable native account and time identities with frozen inputs.
-//! Canonical encoding, pricing, fills and daily-return estimation stay in Nautilus.
-use super::{bad, instruments};
+//! Canonical encoding and fills stay native. Opt-in cash reports use the separate
+//! session-bound valuation and UTC-boundary rules, never native position fallbacks.
+use super::{bad, instruments, spot_cash_report};
 use crate::{control::text, DomainError};
 use bigdecimal::BigDecimal;
 use contracts::{
@@ -26,7 +27,31 @@ pub fn metrics(
         .ok_or_else(|| bad("native_output.simulation_period"))?;
     let period_end = chrono::DateTime::from_timestamp_micros(end as i64)
         .ok_or_else(|| bad("native_output.simulation_period"))?;
-    let period = crate::prediction::portfolio_annualization_days(&request.settings.fee_model);
+    let (statistics, returns_status, returns_reason, observation_count, period) =
+        if let Some(report) = &result.spot_cash_report {
+            let (status, reason) = spot_cash_report::returns_state(report);
+            (
+                &report.statistics,
+                status,
+                reason,
+                // A partial daily series is not a smaller stitched sample.
+                // The official report statistic receives no usable series on a gap.
+                if status == MetricStatus::Ok {
+                    report.daily_returns.days.len()
+                } else {
+                    0
+                },
+                u64::from(report.daily_returns.annualization_days),
+            )
+        } else {
+            (
+                &result.statistics,
+                result.returns_status,
+                result.returns_reason.clone(),
+                result.returns.len(),
+                crate::prediction::portfolio_annualization_days(&request.settings.fee_model) as u64,
+            )
+        };
     let volatility_key = format!("Returns Volatility ({period} days)");
     let sharpe_key = format!("Sharpe Ratio ({period} days)");
     let mut records = Vec::with_capacity(3);
@@ -57,34 +82,49 @@ pub fn metrics(
             true,
         ),
     ] {
-        let native = result
-            .statistics
+        let native = statistics
             .iter()
-            .find(|stat| stat.group == NativeStatisticGroup::Returns && stat.native_key == key)
-            .ok_or_else(|| bad("native_output.portfolio_statistic_missing"))?;
-        let (value, status, reason_code) = if result.returns_status != MetricStatus::Ok {
-            (None, result.returns_status, result.returns_reason.clone())
-        } else if native.value.is_none() {
-            (None, MetricStatus::Failed, native.reason_code.clone())
+            .find(|stat| stat.group == NativeStatisticGroup::Returns && stat.native_key == key);
+        if native.is_none()
+            && (result.spot_cash_report.is_none() || returns_status == MetricStatus::Ok)
+        {
+            return Err(bad("native_output.portfolio_statistic_missing"));
+        }
+        let (value, status, reason_code) = if returns_status != MetricStatus::Ok {
+            (None, returns_status, returns_reason.clone())
         } else {
-            (native.value, MetricStatus::Ok, None)
+            let native = native.expect("checked present statistic");
+            if native.value.is_none() {
+                (None, MetricStatus::Failed, native.reason_code.clone())
+            } else {
+                (native.value, MetricStatus::Ok, None)
+            }
         };
         let record = MetricValueV1 {
             schema_version: SchemaV1,
             evaluation_id: evaluation,
             metric_code: code.into(),
-            scope: "portfolio".into(),
+            scope: if result.spot_cash_report.is_some() {
+                "portfolio.report_currency_daily"
+            } else {
+                "portfolio"
+            }
+            .into(),
             value,
             status,
             reason_code,
             unit: unit.into(),
             period_start,
             period_end,
-            observation_count: DbCounter::new(result.returns.len() as u64)
+            observation_count: DbCounter::new(observation_count as u64)
                 .map_err(|_| bad("native_output.simulation_counts"))?,
             frequency: "UTC_DAY".into(),
             annualization_factor: annualization,
-            method_id: method.into(),
+            method_id: if result.spot_cash_report.is_some() {
+                format!("qz.spot_cash_report/{method}")
+            } else {
+                method.into()
+            },
             method_version: result.native_version.clone(),
             source_artifact_id: artifact,
             higher_is_better: Some(higher),
@@ -143,6 +183,9 @@ fn nullable(
 }
 
 pub(super) fn shape(value: &NativeSimulationResultV1) -> Result<(), DomainError> {
+    if let Some(report) = &value.spot_cash_report {
+        spot_cash_report::shape(report)?;
+    }
     if value.native_version != "0.63.0"
         || value.iterations.get() == 0
         || value.consumed_target_points.get() == 0
@@ -166,10 +209,15 @@ pub(super) fn shape(value: &NativeSimulationResultV1) -> Result<(), DomainError>
         };
         if !statistics.insert((group, &stat.native_key, &stat.currency))
             || (stat.group == NativeStatisticGroup::Pnl) != stat.currency.is_some()
-            || stat
-                .currency
-                .as_ref()
-                .is_some_and(|code| !contracts::research_currency::supported(code))
+            || stat.currency.as_ref().is_some_and(|code| {
+                !contracts::research_currency::supported(code)
+                    && !value.spot_cash_report.as_ref().is_some_and(|report| {
+                        report
+                            .instruments
+                            .iter()
+                            .any(|instrument| &instrument.base_currency == code)
+                    })
+            })
         {
             return Err(bad("native_output.simulation_statistic"));
         }
@@ -239,6 +287,9 @@ pub(crate) fn binding(
     value: &NativeSimulationResultV1,
 ) -> Result<(), DomainError> {
     shape(value)?;
+    if request.settings.multi_currency_spot_cash.is_some() != value.spot_cash_report.is_some() {
+        return Err(bad("native_output.spot_report_mode"));
+    }
     crate::portfolio::simulation_models(&request.settings)?;
     let ids = instruments(&request.selection)?;
     if request.target_points.is_empty()
@@ -288,6 +339,25 @@ pub(crate) fn binding(
         .get(variant)
         .and_then(|a| a.get("base"))
         .ok_or_else(|| bad("native_output.account"))?;
+    if let Some(report) = &value.spot_cash_report {
+        if request.settings.account_kind != NativeAccountKind::Cash
+            || account["Cash"]["allow_borrowing"].as_bool() != Some(false)
+            || base["account_type"].as_str() != Some("CASH")
+            || base.get("base_currency") != Some(&Value::Null)
+            || base["id"].as_str() != Some(report.session.account_id.as_str())
+            || base["balances_starting"].as_object().map(|o| o.len()) != Some(1)
+            || spot_cash_report::money(&base["balances_starting"][currency], currency)?
+                != request.settings.starting_capital
+            || !value.returns.is_empty()
+            || value
+                .statistics
+                .iter()
+                .any(|s| s.group == NativeStatisticGroup::Returns && s.value.is_some())
+        {
+            return Err(bad("native_output.spot_starting_account"));
+        }
+        return spot_cash_report::binding(request, value, report);
+    }
     if base["account_type"].as_str() != Some(account_type)
         || base["base_currency"].as_str() != Some(currency)
         || base["balances_starting"].as_object().map(|o| o.len()) != Some(1)

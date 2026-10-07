@@ -35,7 +35,7 @@ export function Runs({ projectId }: { projectId?: string }) {
         { title: '状态', key: 'state', render: (_, run) => <StateTag value={run.state} /> },
         { title: '尝试次数', dataIndex: 'current_attempt_no' },
         { title: '入队时间', key: 'queued', render: (_, run) => displayTime(run.queued_at) },
-        { title: '截止时间', key: 'deadline', render: (_, run) => displayTime(run.deadline_at) },
+        { title: '截止时间', key: 'deadline', render: (_, run) => run.deadline_at === null ? '不设任务总超时' : displayTime(run.deadline_at) },
       ]} />
       <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
     </QueryPanel>
@@ -56,7 +56,7 @@ export function RunDetail({ id, close }: { id: string; close: () => void }) {
           { key: 'project', label: '研究项目', children: query.data.project_id },
           { key: 'cycle', label: '所属 Cycle', children: query.data.cycle_id ?? '非 Cycle 管理任务' },
           { key: 'attempt', label: '活动尝试', children: query.data.active_attempt_id ?? '尚无活动尝试' },
-          { key: 'deadline', label: '截止时间', children: displayTime(query.data.deadline_at) },
+          { key: 'deadline', label: '截止时间', children: query.data.deadline_at === null ? '不设任务总超时' : displayTime(query.data.deadline_at) },
           { key: 'cancel', label: '取消请求时间', children: displayTime(query.data.cancellation_requested_at) },
           { key: 'reason', label: '终止原因', children: query.data.terminal_reason_code ?? '尚无终止原因' },
         ]} />

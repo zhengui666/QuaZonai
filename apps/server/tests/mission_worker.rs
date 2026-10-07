@@ -87,6 +87,18 @@ async fn fixture_with_trigger(
     wake: bool,
     speed: Option<bool>,
 ) -> Fixture {
+    fixture_with_trigger_and_token_cap(pool, priced, candidates, origin, wake, speed, true).await
+}
+
+async fn fixture_with_trigger_and_token_cap(
+    pool: &PgPool,
+    priced: bool,
+    candidates: u16,
+    origin: DataOrigin,
+    wake: bool,
+    speed: Option<bool>,
+    token_cap: bool,
+) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     for name in ["native", "workspaces", "secrets"] {
         fs::DirBuilder::new()
@@ -203,9 +215,14 @@ async fn fixture_with_trigger(
         .resource;
     data.freeze.execution_context.runtime_revision = updated.revision;
     experiment_support::probe(&store, &actor, &data).await;
-    if wake {
+    if wake || !token_cap {
         let mut content = data.brief.content.clone();
-        content.budget.min_cycle_interval_seconds = 1;
+        if wake {
+            content.budget.min_cycle_interval_seconds = 1;
+        }
+        if !token_cap {
+            content.budget.max_tokens = None;
+        }
         data.brief = store
             .update_brief(
                 &actor,
@@ -346,7 +363,7 @@ async fn wake_preparation(
             worker_owner_id: "cycle-preparation-fixture".into(),
             owner_epoch: contracts::Revision::INITIAL,
         },
-        deadline: source.deadline_at,
+        deadline: source.deadline_at.unwrap(),
     };
     let feedback =
         forward_support::setup_with_source(pool, relational, store.clone(), actor.clone()).await;
@@ -534,7 +551,7 @@ async fn daemon_cancellation_settles_unsent_turn_without_reopening_original_thre
         &f.lease,
         "never-sent",
         responses::FIRST_PROMPT,
-        f.lease.run.deadline_at,
+        f.lease.run.deadline_at.unwrap(),
     )
     .await;
     connection.client.close().await.unwrap();
@@ -1551,7 +1568,13 @@ async fn prepare(
             &TurnRequest {
                 command_key: command.into(),
                 turn_kind: domain::admission::TurnKind::Research,
-                tokens: DbCounter::new(100).unwrap(),
+                tokens: f
+                    .data
+                    .brief
+                    .content
+                    .budget
+                    .max_tokens
+                    .map(|_| DbCounter::new(100).unwrap()),
                 estimated_cost: f.data.brief.content.budget.cost_currency.as_ref().map(
                     |currency| domain::admission::CostEstimate {
                         amount: "0.01".parse().unwrap(),
@@ -1559,7 +1582,7 @@ async fn prepare(
                     },
                 ),
                 request_artifact_id: Id::new(),
-                deadline_at: deadline,
+                deadline_at: Some(deadline),
             },
             prompt,
             move |id, size| async move {
@@ -1591,7 +1614,7 @@ async fn turn(
         .await
         .unwrap();
     assert_eq!(before.accounted_tokens.get(), baseline as u64);
-    let reserved = prepare(f, lease, command, prompt, lease.run.deadline_at).await;
+    let reserved = prepare(f, lease, command, prompt, lease.run.deadline_at.unwrap()).await;
     let checkpoint = f
         .store
         .mission_turn_checkpoint(lease.run.id, &lease.fence)
@@ -1758,6 +1781,17 @@ async fn lost_native_send_ack_is_not_retried_and_expired_turn_persists_cancel(po
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_terminal_without_usage_waits_for_replayed_native_usage(pool: PgPool) {
+    replay_native_usage_through_control_connection(pool, false).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn exhausted_research_cpu_worker_reconciles_original_thread_without_probe_or_new_turn(
+    pool: PgPool,
+) {
+    replay_native_usage_through_control_connection(pool, true).await;
+}
+
+async fn replay_native_usage_through_control_connection(pool: PgPool, exhaust_cpu: bool) {
     let f = fixture(&pool).await;
     let mut connection = f
         .launcher
@@ -1769,7 +1803,7 @@ async fn native_terminal_without_usage_waits_for_replayed_native_usage(pool: PgP
         &f.lease,
         "lost-usage",
         responses::FIRST_PROMPT,
-        f.lease.run.deadline_at,
+        f.lease.run.deadline_at.unwrap(),
     )
     .await;
     let DispatchDecision::Send { rpc_request_id } = f
@@ -1877,18 +1911,53 @@ async fn native_terminal_without_usage_waits_for_replayed_native_usage(pool: PgP
         .await
         .unwrap();
     let run = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
-    f.store
-        .cancel_run(
-            &f.actor,
-            "cancel-before-native-recovery",
-            run.id,
-            &contracts::lifecycle::RunCancelV1 {
-                schema_version: SchemaV1,
-                expected_revision: run.revision,
-            },
-        )
-        .await
-        .unwrap();
+    let original_session = connection.session.clone();
+    if exhaust_cpu {
+        let (resource, prior) = f
+            .store
+            .reserve_mission_resource(run.id, &f.lease.fence, "HOST")
+            .await
+            .unwrap();
+        f.store
+            .begin_mission_resource_launch(run.id, &f.lease.fence, resource.id)
+            .await
+            .unwrap();
+        let cap = f.lease.limits.cpu_seconds.unwrap().get() * 1_000_000_000;
+        // Controlled accounting-adapter receipt, not an OS CPU measurement.
+        // Native bootstrap, persisted original thread, replay and Worker entry
+        // below are real; this models the exhausted finite research grant.
+        let remaining = cap.checked_sub(prior.unwrap()).unwrap();
+        assert!(f
+            .store
+            .checkpoint_mission_resource(
+                run.id,
+                &f.lease.fence,
+                resource.id,
+                Some(remaining),
+                true,
+                true,
+            )
+            .await
+            .unwrap());
+        assert!(f
+            .store
+            .reserve_mission_resource(run.id, &f.lease.fence, "HOST")
+            .await
+            .is_err());
+    } else {
+        f.store
+            .cancel_run(
+                &f.actor,
+                "cancel-before-native-recovery",
+                run.id,
+                &contracts::lifecycle::RunCancelV1 {
+                    schema_version: SchemaV1,
+                    expected_revision: run.revision,
+                },
+            )
+            .await
+            .unwrap();
+    }
     visible(&f, &pool).await;
     daemon(&f)
         .with_missions(f.launcher.clone())
@@ -1903,6 +1972,41 @@ async fn native_terminal_without_usage_waits_for_replayed_native_usage(pool: PgP
     let recovered: (i64, i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.machine_credentials),(SELECT count(*) FROM app.codex_sessions),(SELECT count(*) FROM app.model_turn_receipts WHERE reservation_id=$1),(SELECT count(*) FROM pgmq.a_runs WHERE msg_id=$2)")
         .bind(reserved.id.as_uuid()).bind(f.message.message_id).fetch_one(&pool).await.unwrap();
     assert_eq!(recovered, (credentials, 1, 1, 1));
+    let control: (i64, bool) = sqlx::query_as(
+        "SELECT count(*),bool_and(closed) FROM app.mission_resources WHERE run_id=$1 AND purpose='RECONCILE'"
+    ).bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        control,
+        (1, true),
+        "one closed control launch, with no probe thread"
+    );
+    let identities: (uuid::Uuid, String, serde_json::Value) = sqlx::query_as(
+        "SELECT id,thread_id,requested_settings FROM app.codex_sessions WHERE run_id=$1",
+    )
+    .bind(run.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(identities.0, original_session.id.as_uuid());
+    assert_eq!(identities.1, original_session.native.thread_id);
+    assert_eq!(
+        identities.2,
+        serde_json::to_value(original_session.requested_settings).unwrap()
+    );
+    if exhaust_cpu {
+        let (research, control, total): (i64, i64, i64) = sqlx::query_as(
+            "SELECT research_cpu_nanoseconds::bigint,reconciliation_cpu_nanoseconds::bigint,total_cpu_nanoseconds::bigint FROM app.mission_resource_accounting WHERE run_id=$1"
+        ).bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            research as u64,
+            f.lease.limits.cpu_seconds.unwrap().get() * 1_000_000_000
+        );
+        assert!(
+            control > 0,
+            "native control process usage remains accounted"
+        );
+        assert_eq!(total, research + control);
+    }
     let receipt: (String, i64, String) = sqlx::query_as(
         "SELECT outcome, actual_tokens, usage_source FROM app.model_turn_receipts WHERE reservation_id=$1",
     )
@@ -1930,7 +2034,7 @@ async fn unpriced_native_driver_refuses_cost_capped_send_without_spending(pool: 
         &f.lease,
         "unknown-cost",
         responses::FIRST_PROMPT,
-        f.lease.run.deadline_at,
+        f.lease.run.deadline_at.unwrap(),
     )
     .await;
     let (_alive, shutdown) = tokio::sync::watch::channel(false);
@@ -1972,7 +2076,7 @@ async fn partial_usage_before_failed_tool_continuation_is_not_a_final_receipt(po
         &f.lease,
         "partial-usage",
         responses::FIRST_PROMPT,
-        f.lease.run.deadline_at,
+        f.lease.run.deadline_at.unwrap(),
     )
     .await;
     let (_alive, shutdown) = tokio::sync::watch::channel(false);
@@ -2020,7 +2124,7 @@ async fn token_limit(pool: PgPool, failed_before_driver: bool) {
         &f.lease,
         "token-limit",
         responses::FIRST_PROMPT,
-        f.lease.run.deadline_at,
+        f.lease.run.deadline_at.unwrap(),
     )
     .await;
     if failed_before_driver {
@@ -2148,6 +2252,69 @@ async fn native_token_limit_commits_stop_before_interrupt_and_keeps_partial_usag
     pool: PgPool,
 ) {
     token_limit(pool, false).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn uncapped_native_turn_records_usage_without_token_stop_or_duplicate_send(pool: PgPool) {
+    let f = fixture_with_trigger_and_token_cap(
+        &pool,
+        false,
+        2,
+        DataOrigin::Fixture,
+        false,
+        None,
+        false,
+    )
+    .await;
+    let mut connection = f
+        .launcher
+        .open(&f.store, f.vault.clone(), f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    turn(
+        &f,
+        &f.lease,
+        &mut connection,
+        "uncapped",
+        responses::FIRST_PROMPT,
+        0,
+    )
+    .await;
+    let checkpoint = f
+        .store
+        .mission_turn_checkpoint(f.lease.run.id, &f.lease.fence)
+        .await
+        .unwrap();
+    let latest = checkpoint.latest.unwrap();
+    assert_eq!(latest.reservation.tokens, None);
+    assert_eq!(latest.receipt.unwrap().actual_tokens.get(), 12);
+    // Even a trusted partial-usage caller cannot invent a threshold for None.
+    assert!(matches!(
+        f.store
+            .observe_mission_token_limit(
+                f.lease.run.id,
+                &f.lease.fence,
+                latest.reservation.id,
+                DbCounter::new(i64::MAX as u64).unwrap(),
+            )
+            .await,
+        Err(store::StoreError::Invalid(
+            "native_token_limit_not_configured"
+        ))
+    ));
+    let current = f.store.get_run(&f.actor, f.lease.run.id).await.unwrap();
+    assert!(current.cancellation_requested_at.is_none());
+    let events = f
+        .store
+        .run_events(&f.actor, f.lease.run.id, DbCounter::ZERO, 100)
+        .await
+        .unwrap();
+    assert!(events
+        .events
+        .iter()
+        .all(|event| event.event_type != "mission.token_limit"));
+    assert_eq!(f.provider.request_count(), 1);
+    connection.client.close().await.unwrap();
 }
 
 #[sqlx::test(migrations = "../../migrations")]

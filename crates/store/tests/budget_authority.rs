@@ -40,7 +40,7 @@ async fn every_budget_field_is_bound_to_the_frozen_brief_before_reservation(pool
         let (run, _, fence, deadline) =
             mission(&pool, f.project, cycle, f.input_set, f.profile).await;
         let mut request = f.request(field);
-        request.deadline_at = deadline;
+        request.deadline_at = Some(deadline);
         assert!(
             matches!(
                 store.reserve_turn(run, &fence, &request).await,

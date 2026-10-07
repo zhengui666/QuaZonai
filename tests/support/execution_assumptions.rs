@@ -88,6 +88,7 @@ pub async fn prepare(
         bar_liquidity: None,
         rolling_liquidity: None,
         settings: NativeSimulationSettingsV1 {
+            multi_currency_spot_cash: None,
             schema_version: SchemaV1,
             base_currency: "USD".into(),
             starting_capital: "1000".parse().unwrap(),

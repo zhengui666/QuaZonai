@@ -70,17 +70,23 @@ fn frozen(file: &File) -> Result<()> {
 }
 struct LimitedFile {
     file: File,
-    remaining: u64,
+    remaining: Option<u64>,
     written: u64,
 }
 impl Write for LimitedFile {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() as u64 > self.remaining {
+        if self
+            .remaining
+            .is_some_and(|remaining| bytes.len() as u64 > remaining)
+        {
             return Err(std::io::Error::other("NATIVE_OUTPUT_LIMIT"));
         }
         let written = self.file.write(bytes)?;
-        self.remaining -= written as u64;
-        self.written += written as u64;
+        self.remaining = self.remaining.map(|remaining| remaining - written as u64);
+        self.written = self
+            .written
+            .checked_add(written as u64)
+            .ok_or_else(|| std::io::Error::other("NATIVE_OUTPUT_SIZE_OVERFLOW"))?;
         Ok(written)
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -90,7 +96,7 @@ impl Write for LimitedFile {
 
 struct Outputs {
     root: PathBuf,
-    remaining: u64,
+    remaining: Option<u64>,
     items: Vec<RuntimeOutputV1>,
 }
 impl Outputs {
@@ -131,7 +137,7 @@ impl Outputs {
             media_type: media.into(),
         };
         publish(&staged, &self.root.join(id.to_string()))?;
-        self.remaining -= stream.written;
+        self.remaining = self.remaining.map(|remaining| remaining - stream.written);
         self.items.push(item);
         Ok(id)
     }
@@ -174,7 +180,7 @@ impl Outputs {
         let staged = tempfile::NamedTempFile::new_in(&self.root)?;
         let mut stream = LimitedFile {
             file: staged.as_file().try_clone()?,
-            remaining: SPEC_LIMIT as u64,
+            remaining: Some(SPEC_LIMIT as u64),
             written: 0,
         };
         serde_json::to_writer(&mut stream, &index)?;
@@ -291,8 +297,11 @@ fn compile_with(
             break;
         }
         ensure!(
-            chrono::Utc::now() < spec.deadline_at
-                && began.elapsed() < Duration::from_secs(u64::from(spec.limits.wall_seconds)),
+            !domain::execution_limits::expired(spec.deadline_at, chrono::Utc::now())
+                && spec
+                    .limits
+                    .wall_seconds
+                    .is_none_or(|wall| began.elapsed() < Duration::from_secs(u64::from(wall))),
             "NATIVE_COMPILATION_DEADLINE"
         );
         std::thread::sleep(Duration::from_millis(20));
@@ -342,10 +351,13 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
         PARAMETERS_LIMIT,
     )?;
     domain::execution::task(&spec, &parameters)?;
-    ensure!(chrono::Utc::now() < spec.deadline_at, "NATIVE_JOB_DEADLINE");
+    ensure!(
+        !domain::execution_limits::expired(spec.deadline_at, chrono::Utc::now()),
+        "NATIVE_JOB_DEADLINE"
+    );
     let mut outputs = Outputs {
         root: output.to_owned(),
-        remaining: spec.limits.output_bytes.get(),
+        remaining: spec.limits.output_bytes.map(|maximum| maximum.get()),
         items: Vec::new(),
     };
     let selections = match &parameters {
@@ -607,9 +619,10 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             request,
             ..
         } => {
-            let result = crate::simulation::simulate(
+            let result = crate::simulation::simulate_explicit(
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
                 &request,
+                Some(dataset_revision_id),
             )?;
             outputs.json("qz.native_simulation", RuntimeOutputKind::Report, &result)?;
         }
@@ -681,7 +694,10 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             outputs.json("qz.native_simulation", RuntimeOutputKind::Report, &result)?;
         }
     }
-    ensure!(chrono::Utc::now() < spec.deadline_at, "NATIVE_JOB_DEADLINE");
+    ensure!(
+        !domain::execution_limits::expired(spec.deadline_at, chrono::Utc::now()),
+        "NATIVE_JOB_DEADLINE"
+    );
     outputs.seal()
 }
 
@@ -693,7 +709,7 @@ mod tests {
     fn test_outputs(root: &Path, remaining: u64) -> Outputs {
         Outputs {
             root: root.to_owned(),
-            remaining,
+            remaining: Some(remaining),
             items: Vec::new(),
         }
     }
@@ -722,6 +738,35 @@ mod tests {
     }
 
     #[test]
+    fn absent_output_budget_keeps_exact_actual_bytes_and_publication_guards() {
+        let root = tempfile::tempdir().unwrap();
+        let mut outputs = Outputs {
+            root: root.path().to_owned(),
+            remaining: None,
+            items: Vec::new(),
+        };
+        let first = outputs.compiled_model(b"first output").unwrap();
+        let second = outputs.compiled_model(b"another output").unwrap();
+        assert_eq!(outputs.remaining, None);
+        assert_eq!(outputs.items[0].byte_count.get(), 12);
+        assert_eq!(outputs.items[1].byte_count.get(), 14);
+        assert_eq!(
+            fs::read(root.path().join(first.to_string())).unwrap(),
+            b"first output"
+        );
+        assert_eq!(
+            fs::read(root.path().join(second.to_string())).unwrap(),
+            b"another output"
+        );
+        assert_eq!(
+            fs::metadata(root.path().join(first.to_string()))
+                .unwrap()
+                .nlink(),
+            1
+        );
+    }
+
+    #[test]
     fn failed_bounded_write_removes_partial_output_without_spending_budget() {
         let root = tempfile::tempdir().unwrap();
         let mut outputs = test_outputs(root.path(), 5);
@@ -745,7 +790,7 @@ mod tests {
             )
             .unwrap_err();
         assert!(error.to_string().contains("NATIVE_OUTPUT_LIMIT"));
-        assert_eq!(outputs.remaining, 5);
+        assert_eq!(outputs.remaining, Some(5));
         assert!(outputs.items.is_empty());
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
     }
@@ -769,7 +814,10 @@ mod tests {
         let metadata = fs::metadata(root.path().join(id.to_string())).unwrap();
         assert_eq!(metadata.nlink(), 1);
         assert_eq!(metadata.mode() & 0o777, 0o444);
-        assert_eq!(outputs.remaining, 100 - b"validated fixture".len() as u64);
+        assert_eq!(
+            outputs.remaining,
+            Some(100 - b"validated fixture".len() as u64)
+        );
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
     }
 
@@ -825,7 +873,7 @@ mod tests {
         let artifacts = outputs.items.clone();
         assert_eq!(
             scan_flat_output(root.path(), 16 * 1024),
-            16 * 1024 - outputs.remaining
+            16 * 1024 - outputs.remaining.unwrap()
         );
         outputs.seal().unwrap();
         let index: NativeJobOutputIndexV1 =
@@ -923,12 +971,12 @@ exit "$(cat "$fixture/exit-code")"
             parameters_artifact_id: Id::new(),
             limits: contracts::runtime_jobs::RuntimeJobLimitsV1 {
                 cpu: 1,
-                cpu_seconds: counter(10).unwrap(),
+                cpu_seconds: Some(counter(10).unwrap()),
                 memory_mib: 512,
-                wall_seconds: 10,
-                output_bytes: counter(capacity).unwrap(),
+                wall_seconds: Some(10),
+                output_bytes: Some(counter(capacity).unwrap()),
             },
-            deadline_at: chrono::Utc::now() + chrono::Duration::seconds(10),
+            deadline_at: Some(chrono::Utc::now() + chrono::Duration::seconds(10)),
             requested_output_schemas: parameters.output_schemas(),
         };
         let mut outputs = test_outputs(&output, capacity);
@@ -989,7 +1037,7 @@ exit "$(cat "$fixture/exit-code")"
         assert_eq!(report.module_bytes.get(), wasm.len() as u64);
         assert_eq!(
             scan_flat_output(&outputs.root, 8192),
-            8192 - outputs.remaining
+            8192 - outputs.remaining.unwrap()
         );
         assert!(!outputs.root.join("index.json").exists());
         outputs.seal().unwrap();
@@ -1031,7 +1079,7 @@ exit "$(cat "$fixture/exit-code")"
                 result.unwrap_err().to_string().contains(expected),
                 "{expected}"
             );
-            assert_eq!(outputs.remaining, capacity);
+            assert_eq!(outputs.remaining, Some(capacity));
             assert!(outputs.items.is_empty());
             assert_eq!(fs::read_dir(&outputs.root).unwrap().count(), 0);
         }

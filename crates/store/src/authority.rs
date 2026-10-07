@@ -82,7 +82,7 @@ impl Store {
         &self,
         public_token_id: Id,
     ) -> Result<MachineChallenge, StoreError> {
-        let row=sqlx::query("SELECT c.id,c.verifier_ref FROM app.machine_credentials c JOIN app.machine_principals p ON p.id=c.principal_id WHERE c.public_token_id=$1 AND p.enabled AND c.principal_epoch=p.credential_epoch AND c.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM app.machine_credential_revocations r WHERE r.credential_id=c.id AND r.effective_at<=clock_timestamp())")
+        let row=sqlx::query("SELECT c.id,c.verifier_ref FROM app.machine_credentials c JOIN app.machine_principals p ON p.id=c.principal_id WHERE c.public_token_id=$1 AND p.enabled AND c.principal_epoch=p.credential_epoch AND (c.expires_at>clock_timestamp() OR (c.lease_bound AND EXISTS(SELECT 1 FROM app.runs r JOIN app.run_attempts a ON a.id=r.active_attempt_id AND a.run_id=r.id WHERE r.id=p.run_id AND r.deadline_at IS NULL AND r.state IN ('DISPATCHING','RUNNING','RECONCILING') AND a.id=c.issuer_attempt_id AND a.owner_epoch=c.issuer_owner_epoch AND a.lease_expires_at>clock_timestamp()))) AND NOT EXISTS(SELECT 1 FROM app.machine_credential_revocations r WHERE r.credential_id=c.id AND r.effective_at<=clock_timestamp())")
             .bind(public_token_id.to_string()).fetch_optional(&self.pool).await?.ok_or(StoreError::InvalidCredentials)?;
         Ok(MachineChallenge {
             credential_id: db::id(row.try_get("id")?)?,
@@ -185,26 +185,27 @@ pub(crate) async fn machine(
     };
     let principal=sqlx::query(if write {"SELECT enabled,credential_epoch,downstream_id FROM app.machine_principals WHERE id=$1 FOR UPDATE"}else{"SELECT enabled,credential_epoch,downstream_id FROM app.machine_principals WHERE id=$1 FOR SHARE"})
         .bind(principal_id).fetch_one(&mut **tx).await?;
-    let credential=sqlx::query(if write {"SELECT principal_epoch,scope_codes,issued_at,expires_at,issuer_attempt_id,issuer_owner_epoch FROM app.machine_credentials WHERE id=$1 FOR UPDATE"}else{"SELECT principal_epoch,scope_codes,issued_at,expires_at,issuer_attempt_id,issuer_owner_epoch FROM app.machine_credentials WHERE id=$1 FOR SHARE"})
+    let credential=sqlx::query(if write {"SELECT principal_epoch,scope_codes,issued_at,expires_at,issuer_attempt_id,issuer_owner_epoch,lease_bound,issued_by FROM app.machine_credentials WHERE id=$1 FOR UPDATE"}else{"SELECT principal_epoch,scope_codes,issued_at,expires_at,issuer_attempt_id,issuer_owner_epoch,lease_bound,issued_by FROM app.machine_credentials WHERE id=$1 FOR SHARE"})
         .bind(credential_id.as_uuid()).fetch_one(&mut **tx).await?;
     let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&mut **tx)
         .await?;
-    let expires: DateTime<Utc> = credential.try_get("expires_at")?;
+    let mut expires: DateTime<Utc> = credential.try_get("expires_at")?;
+    let lease_bound: bool = credential.try_get("lease_bound")?;
     let revoked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.machine_credential_revocations WHERE credential_id=$1 AND effective_at<=clock_timestamp())")
         .bind(credential_id.as_uuid()).fetch_one(&mut **tx).await?;
     if !principal.try_get::<bool, _>("enabled")?
         || principal.try_get::<i64, _>("credential_epoch")?
             != credential.try_get::<i64, _>("principal_epoch")?
         || credential.try_get::<DateTime<Utc>, _>("issued_at")? > now
-        || expires <= now
+        || (!lease_bound && expires <= now)
         || revoked
     {
         return Err(StoreError::InvalidCredentials);
     }
     if let Some(mission) = mission {
         let state: String = mission.try_get("state")?;
-        let deadline: DateTime<Utc> = mission.try_get("deadline_at")?;
+        let deadline: Option<DateTime<Utc>> = mission.try_get("deadline_at")?;
         let active_attempt: Option<uuid::Uuid> = mission.try_get("active_attempt_id")?;
         let issuer_attempt: Option<uuid::Uuid> = credential.try_get("issuer_attempt_id")?;
         let issuer_owner: Option<i64> = credential.try_get("issuer_owner_epoch")?;
@@ -221,13 +222,27 @@ pub(crate) async fn machine(
         {
             return Err(StoreError::InvalidCredentials);
         }
+        if lease_bound {
+            // The immutable bearer is scoped to one attempt/owner, while the
+            // existing heartbeat lease supplies its finite current lifetime.
+            // A takeover, expiry, revocation or terminal state cannot revive it.
+            if deadline.is_some()
+                || credential.try_get::<String, _>("issued_by")? != "MISSION_SERVICE"
+            {
+                return Err(StoreError::InvalidCredentials);
+            }
+            expires = lease.try_get("lease_expires_at")?;
+        }
         if !project_active
             || !matches!(state.as_str(), "DISPATCHING" | "RUNNING" | "RECONCILING")
-            || deadline <= now
-            || expires > deadline
+            || domain::execution_limits::expired(deadline, now)
+            || deadline.is_some_and(|deadline| expires > deadline)
         {
             return Err(StoreError::InvalidCredentials);
         }
+    }
+    if lease_bound && kind != PrincipalKind::Mission {
+        return Err(StoreError::InvalidCredentials);
     }
     let codes: Vec<String> = credential.try_get("scope_codes")?;
     let scopes: Vec<MachineScope> = codes

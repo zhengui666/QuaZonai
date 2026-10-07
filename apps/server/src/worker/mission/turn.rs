@@ -151,6 +151,7 @@ impl MissionConnection {
         let mut terminal_at = None;
         let mut interrupted_at = None;
         loop {
+            self.client.enforce_cpu().await.map_err(native)?;
             if *shutdown.borrow() || shutdown.has_changed().is_err() {
                 return Err(WorkerFailure::LostAuthority);
             }
@@ -158,7 +159,7 @@ impl MissionConnection {
             // other threshold observation is still partial, including a failed
             // Turn discovered before its queued native usage notification.
             if let Some(used) = tokens.filter(|used| {
-                *used >= item.tokens
+                item.tokens.is_some_and(|limit| *used >= limit)
                     && !(confirmed_terminal
                         && actual.status == TurnStatus::Completed
                         && item.reserved_cost.is_none())

@@ -45,10 +45,10 @@ async fn setup_with_budget(
         limits: JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 1,
-            cpu_seconds: DbCounter::new(100).unwrap(),
-            wall_seconds: 3600,
+            cpu_seconds: Some(DbCounter::new(100).unwrap()),
+            wall_seconds: Some(3600),
             memory_mib: 1024,
-            output_bytes: DbCounter::new(4096).unwrap(),
+            output_bytes: Some(DbCounter::new(4096).unwrap()),
         },
     };
     (store, f, request, actor)
@@ -902,7 +902,7 @@ async fn false_terminal_receipts_and_unstructured_failure_reasons_are_rejected(p
 #[sqlx::test(migrations = "../../migrations")]
 async fn review_expired_unsent_attempt_is_finalized_without_releasing_another_lease(pool: PgPool) {
     let (store, f, mut request, actor) = setup(&pool).await;
-    request.limits.wall_seconds = 1;
+    request.limits.wall_seconds = Some(1);
     let run = store
         .enqueue_run("overdue", &request)
         .await
@@ -915,7 +915,7 @@ async fn review_expired_unsent_attempt_is_finalized_without_releasing_another_le
     sqlx::query(
         "SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM $1::timestamptz-clock_timestamp()))+0.02)",
     )
-    .bind(lease.lease_expires_at.max(run.deadline_at))
+    .bind(lease.lease_expires_at.max(run.deadline_at.unwrap()))
     .execute(&pool)
     .await
     .unwrap();

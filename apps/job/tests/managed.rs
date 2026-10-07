@@ -53,15 +53,17 @@ fn fixture(parameters: NativeTaskParametersV1, mut inputs: Vec<RuntimeInputV1>) 
         parameters_artifact_id: id,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
-            cpu_seconds: market::count(20),
+            cpu_seconds: Some(market::count(20)),
             memory_mib: 512,
-            wall_seconds: 60,
-            output_bytes: market::count(8 * 1024 * 1024),
+            wall_seconds: Some(60),
+            output_bytes: Some(market::count(8 * 1024 * 1024)),
         },
-        deadline_at: chrono::DateTime::from_timestamp_micros(
-            chrono::Utc::now().timestamp_micros() + 60_000_000,
-        )
-        .unwrap(),
+        deadline_at: Some(
+            chrono::DateTime::from_timestamp_micros(
+                chrono::Utc::now().timestamp_micros() + 60_000_000,
+            )
+            .unwrap(),
+        ),
         requested_output_schemas: parameters.output_schemas(),
     };
     fs::write(input.join("spec.json"), serde_json::to_vec(&spec).unwrap()).unwrap();
@@ -166,7 +168,7 @@ fn result<T: serde::de::DeserializeOwned>(f: &Fixture, schema: &str) -> T {
     domain::execution::output_bindings(
         &parameters,
         calibration.as_ref(),
-        f.spec.deadline_at - chrono::Duration::seconds(60),
+        f.spec.deadline_at.unwrap() - chrono::Duration::seconds(60),
         chrono::Utc::now(),
         &outputs,
     )
@@ -480,7 +482,7 @@ fn rolling_portfolio_managed_binds_original_objects_and_reports_infeasibility() 
             assert!(domain::execution::output_bindings(
                 &parameters,
                 None,
-                f.spec.deadline_at - chrono::Duration::seconds(60),
+                f.spec.deadline_at.unwrap() - chrono::Duration::seconds(60),
                 chrono::Utc::now(),
                 outputs
             )
@@ -1654,7 +1656,7 @@ fn original_native_allocation_enters_one_shared_account_without_future_build_row
 #[test]
 fn native_managed_output_limit_fails_without_a_published_index() {
     let mut f = portfolio_fixture(false, |_| {});
-    f.spec.limits.output_bytes = DbCounter::new(1).unwrap();
+    f.spec.limits.output_bytes = Some(DbCounter::new(1).unwrap());
     fs::write(
         f.input.join("spec.json"),
         serde_json::to_vec(&f.spec).unwrap(),

@@ -71,7 +71,7 @@ impl Store {
             return Err(DomainError::CapabilityUnavailable("runtime_disabled").into());
         }
         let started_at = now(&mut tx).await?;
-        if started_at >= locked.run.deadline_at {
+        if domain::execution_limits::expired(locked.run.deadline_at, started_at) {
             return Err(DomainError::AdmissionClosed.into());
         }
         if crate::runtime::latest(&mut tx, runtime_id)
@@ -127,7 +127,7 @@ impl Store {
         // The native Runtime row lock may have waited past this owner's lease.
         fence(&mut tx, &locked.run, &ticket.owner).await?;
         let clock = now(&mut tx).await?;
-        if clock >= locked.run.deadline_at {
+        if domain::execution_limits::expired(locked.run.deadline_at, clock) {
             return Err(DomainError::AdmissionClosed.into());
         }
         if let Some(latest) = crate::runtime::latest(&mut tx, ticket.runtime_id).await? {
@@ -145,7 +145,7 @@ impl Store {
         let artifact = Id::new();
         publish(artifact, bytes).await?;
         fence(&mut tx, &locked.run, &ticket.owner).await?;
-        if now(&mut tx).await? >= locked.run.deadline_at {
+        if domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?) {
             return Err(DomainError::AdmissionClosed.into());
         }
         let observed = crate::runtime::record_probe(

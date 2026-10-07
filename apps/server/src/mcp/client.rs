@@ -167,12 +167,14 @@ impl ControlClient {
                 run.state,
                 RunState::Dispatching | RunState::Running | RunState::Reconciling
             )
-            || run.deadline_at <= Utc::now()
+            || domain::execution_limits::expired(run.deadline_at, Utc::now())
             || session.expires_at <= Utc::now()
         {
             return Err(Failure::Authority);
         }
-        let expires = run.deadline_at.min(session.expires_at);
+        let expires = run.deadline_at.map_or(session.expires_at, |deadline| {
+            deadline.min(session.expires_at)
+        });
         Ok((run, expires))
     }
 

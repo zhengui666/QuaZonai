@@ -1,4 +1,5 @@
-//! Native GNU timeout owns the wall deadline even after the Runtime gateway exits.
+//! Native GNU timeout owns configured wall deadlines even after the Runtime gateway exits.
+//! Explicit absent wall limits execute directly; resource limits and cancellation remain.
 //! The OCI init/cgroup owns process-tree cleanup; there is no application watchdog daemon.
 use anyhow::{ensure, Result};
 use contracts::runtime_jobs::JobSpecV1;
@@ -17,19 +18,29 @@ pub fn run() -> Result<()> {
     ensure!(bytes.len() <= 1024 * 1024, "NATIVE_SPEC_SIZE");
     let spec: JobSpecV1 = serde_json::from_slice(&bytes)?;
     domain::runtime_jobs::spec_shape(&spec)?;
-    let remaining = (spec.deadline_at - chrono::Utc::now())
-        .num_milliseconds()
-        .min(i64::from(spec.limits.wall_seconds) * 1000);
-    ensure!(remaining > 0, "NATIVE_JOB_DEADLINE");
-    let duration = format!("{}.{:03}s", remaining / 1000, remaining % 1000);
-    let error = Command::new("/usr/bin/timeout")
-        .args([
+    let remaining = domain::execution_limits::earlier(
+        spec.deadline_at
+            .map(|deadline| (deadline - chrono::Utc::now()).num_milliseconds()),
+        spec.limits.wall_seconds.map(|wall| i64::from(wall) * 1000),
+    );
+    let mut command = if let Some(remaining) = remaining {
+        ensure!(remaining > 0, "NATIVE_JOB_DEADLINE");
+        let duration = format!("{}.{:03}s", remaining / 1000, remaining % 1000);
+        let mut command = Command::new("/usr/bin/timeout");
+        command.args([
             "--signal=TERM",
             "--kill-after=1s",
             &duration,
             "/usr/local/bin/job",
             "execute",
-        ])
+        ]);
+        command
+    } else {
+        let mut command = Command::new("/usr/local/bin/job");
+        command.arg("execute");
+        command
+    };
+    let error = command
         .env_clear()
         .env("PATH", "/opt/rust/bin:/usr/bin:/bin")
         .env("HOME", "/tmp")

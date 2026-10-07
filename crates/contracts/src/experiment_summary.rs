@@ -35,6 +35,8 @@ pub struct ExperimentSummaryV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExperimentFoldSummaryV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spot_cash: Option<crate::spot_cash_report::NativeSpotCashSummaryV1>,
     pub fold_index: u16,
     pub native_version: String,
     #[schema(min_length = 1, max_length = 200)]
@@ -67,6 +69,8 @@ pub struct ExperimentFoldSummaryV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSimulationSummaryV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spot_cash: Option<crate::spot_cash_report::NativeSpotCashSummaryV1>,
     pub native_version: String,
     #[schema(min_length = 1, max_length = 200)]
     pub account_id: String,

@@ -119,12 +119,12 @@ fn limits(run: Id, remaining: u32) -> MissionProcess {
         JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 0,
-            cpu_seconds: DbCounter::new(30).unwrap(),
-            wall_seconds: 60,
+            cpu_seconds: Some(DbCounter::new(30).unwrap()),
+            wall_seconds: Some(60),
             memory_mib: 256,
-            output_bytes: DbCounter::new(1_048_576).unwrap(),
+            output_bytes: Some(DbCounter::new(1_048_576).unwrap()),
         },
-        remaining,
+        Some(remaining),
     )
     .unwrap()
 }

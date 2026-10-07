@@ -17,6 +17,9 @@ native-paper-test = ["native-paper"]
 # Operator data preparation only; default scientific job images remain offline.
 polymarket-history = ["dep:tokio", "dep:parquet", "dep:sha2", "dep:nautilus-data", "dep:alloy-core", "dep:url"]
 catalog-prepare = ["dep:sha2", "dep:rc-zip", "dep:winnow", "dep:flate2", "dep:crc32fast", "dep:csv"]
+# Offline parsing of already supplied source files through the official adapter.
+# The upstream crate has network dependencies; QZ exposes no Hyper network caller.
+hyperliquid-offline = ["dep:nautilus-hyperliquid"]
 
 [[bin]]
 name = "catalog-prepare"
@@ -34,6 +37,7 @@ path = "src/bin/source-tools.rs"
 required-features = ["catalog-prepare", "polymarket-history"]
 
 [dependencies]
+nautilus-hyperliquid = { version = "=0.63.0", default-features = false, optional = true }
 nautilus-live = { version = "=0.63.0", default-features = false, features = ["node"], optional = true }
 nautilus-sandbox = { version = "=0.63.0", default-features = false, optional = true }
 nautilus-binance = { version = "=0.63.0", default-features = false, optional = true }

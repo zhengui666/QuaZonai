@@ -229,6 +229,7 @@ pub fn market_fixture(
         target_ttl_ns: count(10 * SECOND),
         decision_output: ExperimentDecisionOutputV1::TargetWeight,
         settings: NativeSimulationSettingsV1 {
+            multi_currency_spot_cash: None,
             schema_version: SchemaV1,
             base_currency: quote.to_string(),
             // Native whole-share / .001-coin flooring can leave almost one

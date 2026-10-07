@@ -9,7 +9,13 @@ use utoipa::{
 };
 
 pub(super) fn job_output_bytes() -> RefOr<Schema> {
-    crate::scalars::bounded_bigint_schema(MAX_JOB_OUTPUT_BYTES, true)
+    OneOfBuilder::new()
+        .item(ObjectBuilder::new().schema_type(Type::Null))
+        .item(crate::scalars::bounded_bigint_schema(
+            MAX_JOB_OUTPUT_BYTES,
+            true,
+        ))
+        .into()
 }
 
 fn strict_object() -> ObjectBuilder {
@@ -45,7 +51,10 @@ impl PartialSchema for RuntimeOutputV1 {
                     .required("storage_ref")
                     .property("storage_version", literal("1"))
                     .required("storage_version")
-                    .property("byte_count", job_output_bytes())
+                    .property(
+                        "byte_count",
+                        crate::scalars::bounded_bigint_schema(MAX_JOB_OUTPUT_BYTES, true),
+                    )
                     .required("byte_count")
                     .property("media_type", literal(contract.media_type))
                     .required("media_type"),

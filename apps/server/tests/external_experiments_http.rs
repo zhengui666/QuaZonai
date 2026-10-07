@@ -54,7 +54,7 @@ async fn cli_worker_trace(pool: PgPool, success: bool) {
         external_support::setup_with_objects(&pool, objects).await;
     if success {
         intent.request.evaluation_limits.output_bytes =
-            contracts::DbCounter::new(4 * 1024 * 1024).unwrap();
+            Some(contracts::DbCounter::new(4 * 1024 * 1024).unwrap());
     }
     let principal=client::browser(&f,&cookie,"external-cli-principal","/api/v2/machine-principals",json!({"schema_version":1,"name":"External science owner CLI","kind":"CLI","project_id":experiment.project_id,"downstream_id":null,"enabled":true})).await;
     assert_eq!(principal.status, StatusCode::CREATED);

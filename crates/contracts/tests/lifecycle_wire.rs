@@ -89,3 +89,38 @@ fn generated_event_payload_requires_an_extensible_version_one_object() {
     assert_eq!(payload["properties"]["schema_version"]["enum"], json!([1]));
     assert_eq!(payload["additionalProperties"], true);
 }
+
+#[test]
+fn absent_execution_caps_are_null_but_actual_output_observations_stay_required() {
+    use contracts::runtime_jobs::{RuntimeJobLimitsV1, RuntimeOutputV1, RuntimeResourceUsageV1};
+    use utoipa::PartialSchema;
+    let limits = json!({"cpu":1,"cpu_seconds":null,"memory_mib":1024,"wall_seconds":null,"output_bytes":null});
+    assert_eq!(
+        to_value(from_value::<RuntimeJobLimitsV1>(limits.clone()).unwrap()).unwrap(),
+        limits
+    );
+    let mut finite = limits;
+    finite["cpu_seconds"] = json!("120");
+    finite["wall_seconds"] = json!(120);
+    finite["output_bytes"] = json!("4096");
+    assert_eq!(
+        to_value(from_value::<RuntimeJobLimitsV1>(finite.clone()).unwrap()).unwrap(),
+        finite
+    );
+    let usage = json!({"cpu_nanoseconds":null,"wall_milliseconds":"12","peak_memory_bytes":null,"output_bytes":"37"});
+    assert_eq!(
+        to_value(from_value::<RuntimeResourceUsageV1>(usage.clone()).unwrap()).unwrap(),
+        usage
+    );
+    let mut missing_usage = usage;
+    missing_usage["output_bytes"] = json!(null);
+    assert!(from_value::<RuntimeResourceUsageV1>(missing_usage).is_err());
+    let schema = to_value(RuntimeOutputV1::schema()).unwrap();
+    for alternative in schema["oneOf"].as_array().unwrap() {
+        assert_eq!(alternative["properties"]["byte_count"]["type"], "string");
+        assert!(alternative["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("byte_count")));
+    }
+}

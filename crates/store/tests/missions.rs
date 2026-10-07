@@ -73,7 +73,7 @@ fn prompt_request(
     store::turns::TurnRequest {
         command_key: "native-request".into(),
         turn_kind: domain::admission::TurnKind::Research,
-        tokens: DbCounter::new(100).unwrap(),
+        tokens: Some(DbCounter::new(100).unwrap()),
         estimated_cost: f
             .brief
             .content
@@ -151,10 +151,10 @@ async fn reviewer_turn_and_summary_keep_original_role_without_general_sealed_acc
                 limits: contracts::lifecycle::JobLimitsV1 {
                     schema_version: SchemaV1,
                     experiments: 0,
-                    cpu_seconds: DbCounter::new(10).unwrap(),
-                    wall_seconds: 60,
+                    cpu_seconds: Some(DbCounter::new(10).unwrap()),
+                    wall_seconds: Some(60),
                     memory_mib: 1024,
-                    output_bytes: DbCounter::new(1048576).unwrap(),
+                    output_bytes: Some(DbCounter::new(1048576).unwrap()),
                 },
             },
         )
@@ -533,7 +533,7 @@ async fn real_turn_deadline_closes_proven_unsent_work_without_fabricated_native_
         .unwrap());
     let run = store.get_run(&actor, lease.run.id).await.unwrap();
     assert_eq!(run.state, RunState::Cancelled);
-    assert!(run.cancellation_requested_at.unwrap() >= request.deadline_at);
+    assert!(run.cancellation_requested_at.unwrap() >= request.deadline_at.unwrap());
     let facts: (i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_receipts WHERE outcome='NOT_SENT' AND actual_tokens=0),(SELECT count(*) FROM app.model_turn_bindings)")
         .fetch_one(&pool).await.unwrap();
     assert_eq!(facts, (1, 0));
@@ -871,7 +871,7 @@ async fn initial_request_uses_remaining_budget_once_and_never_replaces_unknown_s
         .unwrap();
     assert_eq!(
         original.reservation.tokens,
-        f.brief.content.budget.max_tokens.unwrap()
+        f.brief.content.budget.max_tokens
     );
     assert_eq!(original.reservation.ordinal, 1);
     assert!(!original.sent && original.receipt.is_none());
@@ -956,7 +956,12 @@ async fn native_token_stop_is_fenced_idempotent_and_does_not_settle_usage(pool: 
     // An unsent or unrelated reservation is not a native observation.
     assert!(matches!(
         store
-            .observe_mission_token_limit(lease.run.id, &lease.fence, reserved.id, reserved.tokens)
+            .observe_mission_token_limit(
+                lease.run.id,
+                &lease.fence,
+                reserved.id,
+                reserved.tokens.unwrap()
+            )
             .await,
         Err(StoreError::Conflict)
     ));
@@ -970,7 +975,12 @@ async fn native_token_stop_is_fenced_idempotent_and_does_not_settle_usage(pool: 
         .unwrap();
     assert!(matches!(
         store
-            .observe_mission_token_limit(lease.run.id, &lease.fence, Id::new(), reserved.tokens)
+            .observe_mission_token_limit(
+                lease.run.id,
+                &lease.fence,
+                Id::new(),
+                reserved.tokens.unwrap()
+            )
             .await,
         Err(StoreError::Conflict)
     ));
@@ -986,8 +996,18 @@ async fn native_token_stop_is_fenced_idempotent_and_does_not_settle_usage(pool: 
         Err(StoreError::Invalid("native_token_limit_not_reached"))
     ));
     let (a, b) = tokio::join!(
-        store.observe_mission_token_limit(lease.run.id, &lease.fence, reserved.id, reserved.tokens),
-        store.observe_mission_token_limit(lease.run.id, &lease.fence, reserved.id, reserved.tokens)
+        store.observe_mission_token_limit(
+            lease.run.id,
+            &lease.fence,
+            reserved.id,
+            reserved.tokens.unwrap()
+        ),
+        store.observe_mission_token_limit(
+            lease.run.id,
+            &lease.fence,
+            reserved.id,
+            reserved.tokens.unwrap()
+        )
     );
     a.unwrap();
     b.unwrap();
@@ -1017,7 +1037,12 @@ async fn native_token_stop_is_fenced_idempotent_and_does_not_settle_usage(pool: 
         .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
     assert!(matches!(
         store
-            .observe_mission_token_limit(run.id, &lease.fence, reserved.id, reserved.tokens)
+            .observe_mission_token_limit(
+                run.id,
+                &lease.fence,
+                reserved.id,
+                reserved.tokens.unwrap()
+            )
             .await,
         Err(StoreError::Domain(domain::DomainError::StaleAttempt))
     ));
@@ -1351,7 +1376,7 @@ async fn exhausted_cpu_admission_keeps_no_half_mission_and_finishes_the_cycle_ho
     let (store, actor) = research_support::operator(&pool).await;
     let mut f = cycle_support::setup(&pool, &store, &actor).await;
     let mut content = f.brief.content.clone();
-    content.budget.max_cpu_seconds = DbCounter::new(1).unwrap();
+    content.budget.max_cpu_seconds = Some(DbCounter::new(1).unwrap());
     f.brief = store
         .update_brief(
             &actor,
@@ -1469,7 +1494,7 @@ async fn observed_thread_survives_profile_edit_without_permitting_a_new_paid_tur
     let request = store::turns::TurnRequest {
         command_key: "forbidden-new-turn".into(),
         turn_kind: domain::admission::TurnKind::Research,
-        tokens: DbCounter::new(1).unwrap(),
+        tokens: Some(DbCounter::new(1).unwrap()),
         estimated_cost: None,
         request_artifact_id: Id::new(),
         deadline_at: lease.run.deadline_at,
@@ -1635,7 +1660,7 @@ async fn the_first_turn_is_reserved_after_native_binding_without_faking_running(
     let request = store::turns::TurnRequest {
         command_key: "first-native-turn".into(),
         turn_kind: domain::admission::TurnKind::Research,
-        tokens: DbCounter::new(1).unwrap(),
+        tokens: Some(DbCounter::new(1).unwrap()),
         estimated_cost: f
             .brief
             .content
@@ -1761,7 +1786,7 @@ async fn native_mission_issuance_is_once_per_owner_and_old_tokens_do_not_borrow_
     assert_eq!(view.kind, contracts::control::PrincipalKind::Mission);
     assert_eq!(view.run_id, Some(lease.run.id));
     assert_eq!(view.project_id, Some(lease.run.project_id));
-    assert_eq!(view.expires_at, lease.run.deadline_at);
+    assert_eq!(Some(view.expires_at), lease.run.deadline_at);
     assert_eq!(view.downstream_id, None);
     let scopes: std::collections::BTreeSet<_> =
         view.scope_codes.into_iter().map(|s| s.code()).collect();
@@ -1907,4 +1932,460 @@ async fn a_science_attempt_cannot_obtain_mission_credentials(pool: PgPool) {
     let facts:(i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM app.machine_principals),(SELECT count(*) FROM app.machine_credentials)")
         .fetch_one(&pool).await.unwrap();
     assert_eq!(facts, (0, 0));
+}
+
+async fn optional_wall_mission(pool: &PgPool) -> (Store, Actor, store::lifecycle::RunLease) {
+    let (store, actor, _, lease) = optional_wall_mission_fixture(pool).await;
+    (store, actor, lease)
+}
+
+async fn optional_wall_mission_fixture(
+    pool: &PgPool,
+) -> (
+    Store,
+    Actor,
+    cycle_support::Fixture,
+    store::lifecycle::RunLease,
+) {
+    let (store, actor) = research_support::operator(pool).await;
+    let mut f = cycle_support::setup(pool, &store, &actor).await;
+    let mut content = f.brief.content.clone();
+    content.budget.max_wall_seconds = None;
+    content.budget.max_cpu_seconds = None;
+    content.budget.max_output_bytes = None;
+    content.budget.max_tokens = None;
+    f.brief = store
+        .update_brief(
+            &actor,
+            "optional-wall",
+            f.brief.id,
+            &contracts::brief::BriefUpdate {
+                schema_version: SchemaV1,
+                expected_revision: f.brief.revision,
+                content,
+                bindings: f.brief.bindings.clone(),
+            },
+        )
+        .await
+        .unwrap()
+        .resource;
+    f.freeze.expected_revision = f.brief.revision;
+    store
+        .freeze_brief(
+            &actor,
+            "freeze-optional-wall",
+            f.brief.id,
+            &f.freeze,
+            |id, size| f.read(id, size),
+        )
+        .await
+        .unwrap();
+    let request = cycle_support::start_request(&store, &actor, &f).await;
+    let started = f
+        .start(&store, &actor, "start-optional-wall", &request)
+        .await
+        .unwrap()
+        .resource;
+    assert_eq!(started.run.deadline_at, None);
+    complete(pool, &store, &f, started.run.id, false).await;
+    assert!(store.advance_initial_cycle(started.run.id).await.unwrap());
+    let lease = mission_lease(&store).await;
+    assert_eq!(lease.run.deadline_at, None);
+    assert_eq!(lease.limits.wall_seconds, None);
+    (store, actor, f, lease)
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn unbounded_mission_credentials_follow_only_the_current_finite_owner_lease(pool: PgPool) {
+    let (store, _actor, lease) = optional_wall_mission(&pool).await;
+    // Shorten only this mutable test ownership lease, not immutable Run history.
+    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
+    let token = Id::new();
+    let verifier = Id::new();
+    let credential = store
+        .issue_mission_credential(lease.run.id, &lease.fence, token, verifier)
+        .await
+        .unwrap();
+    let original: (bool, chrono::DateTime<chrono::Utc>) =
+        sqlx::query_as("SELECT lease_bound,expires_at FROM app.machine_credentials WHERE id=$1")
+            .bind(credential.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(original.0);
+    let challenge = store.machine_challenge(token).await.unwrap();
+    let machine = challenge.verified_actor(None);
+    let first = store.machine_session(&machine).await.unwrap();
+    assert_eq!(first.expires_at, original.1);
+    let renewed = store
+        .renew_run_lease(lease.run.id, &lease.fence, 120)
+        .await
+        .unwrap();
+    assert!(renewed > original.1);
+    assert_eq!(
+        store.machine_session(&machine).await.unwrap().expires_at,
+        renewed
+    );
+    let retained: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT expires_at FROM app.machine_credentials WHERE id=$1")
+            .bind(credential.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        retained, original.1,
+        "renewal must not mutate immutable issuance"
+    );
+    let wait = (original.1 - chrono::Utc::now()).num_milliseconds().max(0) as u64 + 50;
+    tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+    let clock: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(clock > original.1);
+    assert!(store.machine_challenge(token).await.is_ok());
+    assert_eq!(
+        store.machine_session(&machine).await.unwrap().expires_at,
+        renewed
+    );
+
+    assert_eq!(
+        store
+            .issue_mission_credential(lease.run.id, &lease.fence, token, verifier)
+            .await
+            .unwrap(),
+        credential
+    );
+    assert!(store
+        .issue_mission_credential(lease.run.id, &lease.fence, Id::new(), verifier)
+        .await
+        .is_err());
+    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
+    assert!(store.machine_session(&machine).await.is_err());
+    assert!(
+        store
+            .renew_run_lease(lease.run.id, &lease.fence, 120)
+            .await
+            .is_err(),
+        "expired owner cannot revive its lease"
+    );
+    sqlx::query("UPDATE app.run_attempts SET owner_epoch=owner_epoch+1,worker_owner_id='new-owner',lease_expires_at=clock_timestamp()+interval '120 seconds' WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
+    assert!(
+        store.machine_session(&machine).await.is_err(),
+        "old bearer cannot borrow replacement ownership"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn optional_wall_credentials_do_not_survive_cancel_revocation_or_disabled_principal(
+    pool: PgPool,
+) {
+    for action in ["cancel", "revoke", "disable"] {
+        let (store, actor, lease) = optional_wall_mission(&pool).await;
+        let token = Id::new();
+        let credential = store
+            .issue_mission_credential(lease.run.id, &lease.fence, token, Id::new())
+            .await
+            .unwrap();
+        let machine = store
+            .machine_challenge(token)
+            .await
+            .unwrap()
+            .verified_actor(None);
+        assert!(store.machine_session(&machine).await.is_ok());
+        match action {
+            "cancel" => {
+                let run = store.get_run(&actor, lease.run.id).await.unwrap();
+                store
+                    .cancel_run(
+                        &actor,
+                        "cancel-unbounded",
+                        lease.run.id,
+                        &contracts::lifecycle::RunCancelV1 {
+                            schema_version: SchemaV1,
+                            expected_revision: run.revision,
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+            "revoke" => {
+                sqlx::query("INSERT INTO app.machine_credential_revocations(credential_id,effective_at,reason) VALUES($1,clock_timestamp(),'bounded fixture revocation')")
+                    .bind(credential.as_uuid()).execute(&pool).await.unwrap();
+            }
+            "disable" => {
+                sqlx::query("UPDATE app.machine_principals SET enabled=false WHERE run_id=$1")
+                    .bind(lease.run.id.as_uuid())
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            store.machine_session(&machine).await.is_err(),
+            "{action} must deny immediately"
+        );
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn completed_turn_after_owner_loss_waits_for_exact_cleanup_before_mission_terminal(
+    pool: PgPool,
+) {
+    use store::turns::{NativePublicSummary, TurnOutcome, UsageReceipt};
+    let (store, _actor, f, lease) = optional_wall_mission_fixture(&pool).await;
+    let run = lease.run.id;
+    let (resource, _) = store
+        .reserve_mission_resource(run, &lease.fence, "HOST")
+        .await
+        .unwrap();
+    store
+        .begin_mission_resource_launch(run, &lease.fence, resource.id)
+        .await
+        .unwrap();
+    store
+        .bind_mission_resource(
+            run,
+            &lease.fence,
+            resource.id,
+            "controlled-resource-identity",
+        )
+        .await
+        .unwrap();
+    store.begin_run_dispatch(run, &lease.fence).await.unwrap();
+    store
+        .bind_mission_session(run, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    prepare_initial(&store, &lease, &f).await.unwrap();
+    let reservation = store
+        .mission_turn_checkpoint(run, &lease.fence)
+        .await
+        .unwrap()
+        .latest
+        .unwrap()
+        .reservation;
+    store
+        .claim_turn_dispatch(reservation.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_native_turn(reservation.id, &lease.fence, "completed-before-owner-loss")
+        .await
+        .unwrap();
+    store
+        .observe_mission_turn_terminal(
+            reservation.id,
+            &lease.fence,
+            TurnOutcome::Succeeded,
+            "NATIVE_TURN_COMPLETED",
+        )
+        .await
+        .unwrap();
+    store
+        .settle_turn(
+            reservation.id,
+            &lease.fence,
+            &UsageReceipt {
+                outcome: TurnOutcome::Succeeded,
+                actual_tokens: DbCounter::new(12).unwrap(),
+                actual_cost: None,
+                currency: None,
+                reason_code: "NATIVE_TURN_COMPLETED".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let answer = NativePublicSummary {
+        schema_version: SchemaV1,
+        native_item_id: "completed-before-owner-loss-item".into(),
+        native_turn_id: "completed-before-owner-loss".into(),
+        text: "Controlled final answer; no scientific qualification claimed".into(),
+        phase: None,
+    };
+    summary(&store, &lease, &f, reservation.id, &answer)
+        .await
+        .unwrap();
+    assert!(!store.complete_mission(run, &lease.fence).await.unwrap());
+    let (message_id, read_count): (i64, i32) =
+        sqlx::query_as("SELECT msg_id,read_ct FROM pgmq.q_runs WHERE message->>'run_id'=$1")
+            .bind(run.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1")
+        .bind(lease.fence.attempt_id.as_uuid()).execute(&pool).await.unwrap();
+    let message = store::lifecycle::RunMessage {
+        message_id,
+        read_count,
+        run_id: run,
+    };
+    let Some(ClaimResult::Leased(replacement)) = store
+        .claim_mission(&message, "owner-after-final-answer", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("fenced takeover");
+    };
+    assert!(replacement.fence.owner_epoch > lease.fence.owner_epoch);
+    assert_eq!(
+        store
+            .mission_open_resources(run, &replacement.fence)
+            .await
+            .unwrap()[0]
+            .id,
+        resource.id
+    );
+    assert!(!store
+        .complete_mission(run, &replacement.fence)
+        .await
+        .unwrap());
+    assert!(store
+        .mission_open_resources(run, &lease.fence)
+        .await
+        .is_err());
+    // Transaction-level adapter receipt: exact resource is confirmed stopped;
+    // this test is not evidence of a real SIGKILL/cgroup/Docker recovery run.
+    store
+        .checkpoint_mission_resource(run, &replacement.fence, resource.id, None, false, true)
+        .await
+        .unwrap();
+    assert!(store
+        .complete_mission(run, &replacement.fence)
+        .await
+        .unwrap());
+    let facts: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM app.codex_sessions WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.mission_resources WHERE run_id=$1),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1)"
+    ).bind(run.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        facts,
+        (1, 1, 1, 1),
+        "cleanup adds no model session, turn or resource launch"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn exhausted_research_cpu_allows_only_one_persistent_control_allowance_for_sent_turn(
+    pool: PgPool,
+) {
+    use store::lifecycle::mission::resources::ResourcePurpose;
+    let (store, _actor, f, _, preparation) = setup(&pool).await;
+    complete(&pool, &store, &f, preparation, false).await;
+    store.advance_initial_cycle(preparation).await.unwrap();
+    let lease = mission_lease(&store).await;
+    let run = lease.run.id;
+    assert!(store
+        .prepare_mission_reconciliation(run, &lease.fence)
+        .await
+        .is_err());
+    let (research, _) = store
+        .reserve_mission_resource(run, &lease.fence, "HOST")
+        .await
+        .unwrap();
+    store
+        .begin_mission_resource_launch(run, &lease.fence, research.id)
+        .await
+        .unwrap();
+    store.begin_run_dispatch(run, &lease.fence).await.unwrap();
+    store
+        .bind_mission_session(run, &lease.fence, &native_thread())
+        .await
+        .unwrap();
+    prepare_initial(&store, &lease, &f).await.unwrap();
+    let reservation = store
+        .mission_turn_checkpoint(run, &lease.fence)
+        .await
+        .unwrap()
+        .latest
+        .unwrap()
+        .reservation;
+    store
+        .claim_turn_dispatch(reservation.id, &lease.fence)
+        .await
+        .unwrap();
+    store
+        .bind_native_turn(reservation.id, &lease.fence, "sent-before-cpu-exhaustion")
+        .await
+        .unwrap();
+    assert!(store
+        .prepare_mission_reconciliation(run, &lease.fence)
+        .await
+        .is_err());
+    let research_nanos = lease.limits.cpu_seconds.unwrap().get() * 1_000_000_000;
+    assert!(store
+        .checkpoint_mission_resource(
+            run,
+            &lease.fence,
+            research.id,
+            Some(research_nanos),
+            true,
+            true
+        )
+        .await
+        .unwrap());
+    assert!(!store.complete_mission(run, &lease.fence).await.unwrap());
+    assert!(store
+        .reserve_mission_resource(run, &lease.fence, "HOST")
+        .await
+        .is_err());
+    let permit = store
+        .prepare_mission_reconciliation(run, &lease.fence)
+        .await
+        .unwrap();
+    let (first, prior) = store
+        .reserve_mission_resource_for(run, &lease.fence, "HOST", ResourcePurpose::Reconcile)
+        .await
+        .unwrap();
+    assert_eq!(prior, Some(0));
+    assert_eq!(first.purpose, ResourcePurpose::Reconcile);
+    assert_eq!(first.deadline_at, Some(permit.deadline_at));
+    assert_eq!(first.effective_limits.cpu_seconds.unwrap().get(), 110);
+    store
+        .begin_mission_resource_launch(run, &lease.fence, first.id)
+        .await
+        .unwrap();
+    store
+        .checkpoint_mission_resource(run, &lease.fence, first.id, Some(1_000_000_000), true, true)
+        .await
+        .unwrap();
+    let again = store
+        .prepare_mission_reconciliation(run, &lease.fence)
+        .await
+        .unwrap();
+    assert_eq!(again.deadline_at, permit.deadline_at);
+    let (second, prior) = store
+        .reserve_mission_resource_for(run, &lease.fence, "HOST", ResourcePurpose::Reconcile)
+        .await
+        .unwrap();
+    assert_eq!(prior, Some(1_000_000_000));
+    assert_eq!(second.deadline_at, first.deadline_at);
+    assert!(sqlx::query("UPDATE app.mission_reconciliation_limits SET deadline_at=deadline_at+interval '110 seconds' WHERE run_id=$1")
+        .bind(run.as_uuid()).execute(&pool).await.is_err());
+    // The second resource was reserved but never launched: no fabricated use.
+    store
+        .checkpoint_mission_resource(run, &lease.fence, second.id, Some(0), true, true)
+        .await
+        .unwrap();
+    let totals: (i64, i64, i64) = sqlx::query_as("SELECT research_cpu_nanoseconds::bigint,reconciliation_cpu_nanoseconds::bigint,total_cpu_nanoseconds::bigint FROM app.mission_resource_accounting WHERE run_id=$1")
+        .bind(run.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        totals,
+        (
+            research_nanos as i64,
+            1_000_000_000,
+            research_nanos as i64 + 1_000_000_000
+        )
+    );
+    let facts: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.codex_sessions WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM app.model_turn_receipts r JOIN app.model_turn_reservations q ON q.id=r.reservation_id WHERE q.run_id=$1)")
+        .bind(run.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        facts,
+        (1, 1, 0),
+        "local cleanup does not invent upstream cancellation or usage"
+    );
+    assert!(!store.complete_mission(run, &lease.fence).await.unwrap());
 }

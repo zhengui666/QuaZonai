@@ -814,10 +814,10 @@ async fn exercise(pool: PgPool, case: Case) {
         limits: contracts::lifecycle::JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 0,
-            cpu_seconds: count(30),
-            wall_seconds: 60,
+            cpu_seconds: Some(count(30)),
+            wall_seconds: Some(60),
             memory_mib: 512,
-            output_bytes: count(1048576),
+            output_bytes: Some(count(1048576)),
         },
     };
     assert!(matches!(

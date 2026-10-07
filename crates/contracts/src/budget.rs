@@ -11,8 +11,8 @@ pub enum CostEnforcement {
     Exact,
 }
 
-// Runtime fields and serde remain unchanged. The native schema below also
-// expresses the cost tuple; structural validity does not confer capability.
+// The native schema also expresses the cost tuple and explicit absent execution
+// limits. Structural validity does not confer runtime capability.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BudgetV1 {
@@ -21,10 +21,13 @@ pub struct BudgetV1 {
     pub max_parallel_runs: u16,
     pub max_turns_per_mission: u16,
     pub max_repair_turns: u16,
-    pub max_wall_seconds: u32,
-    pub max_cpu_seconds: DbCounter,
+    /// None means no application wall-time budget; native service capability still applies.
+    pub max_wall_seconds: Option<u32>,
+    /// None means no application cumulative CPU budget; CPU rate is separate.
+    pub max_cpu_seconds: Option<DbCounter>,
     pub max_memory_mib: u32,
-    pub max_output_bytes: DbCounter,
+    /// None removes the task output budget, not transport/parser/storage safety.
+    pub max_output_bytes: Option<DbCounter>,
     pub max_cycles_per_day: u16,
     pub min_cycle_interval_seconds: u32,
     pub max_tokens: Option<DbCounter>,
@@ -88,7 +91,6 @@ impl PartialSchema for BudgetV1 {
                 KnownFormat::Int32,
             ),
             ("max_repair_turns", 0, u16::MAX as u64, KnownFormat::Int32),
-            ("max_wall_seconds", 1, u32::MAX as u64, KnownFormat::Int64),
             ("max_memory_mib", 1, u32::MAX as u64, KnownFormat::Int64),
             ("max_cycles_per_day", 1, u16::MAX as u64, KnownFormat::Int32),
             (
@@ -110,11 +112,21 @@ impl PartialSchema for BudgetV1 {
                 .required(name);
         }
         for name in ["max_cpu_seconds", "max_output_bytes"] {
-            fields = fields
-                .property(name, crate::scalars::positive_db_counter_schema())
-                .required(name);
+            fields = fields.property(name, crate::scalars::optional_positive_db_counter_schema());
         }
         fields = fields
+            .property(
+                "max_wall_seconds",
+                OneOfBuilder::new()
+                    .item(ObjectBuilder::new().schema_type(Type::Null))
+                    .item(
+                        ObjectBuilder::new()
+                            .schema_type(Type::Integer)
+                            .format(Some(SchemaFormat::KnownFormat(KnownFormat::Int64)))
+                            .minimum(Some(1_u64))
+                            .maximum(Some(u32::MAX as u64)),
+                    ),
+            )
             .property(
                 "max_tokens",
                 crate::scalars::optional_positive_db_counter_schema(),

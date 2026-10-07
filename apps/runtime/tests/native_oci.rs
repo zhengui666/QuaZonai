@@ -245,12 +245,12 @@ async fn native_rolling_study(prediction: bool) {
         parameters_artifact_id: parameters_id,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
-            cpu_seconds: count(30),
+            cpu_seconds: Some(count(30)),
             memory_mib: 512,
-            wall_seconds: 30,
-            output_bytes: count(8 * 1024 * 1024),
+            wall_seconds: Some(30),
+            output_bytes: Some(count(8 * 1024 * 1024)),
         },
-        deadline_at: runtime::now() + chrono::Duration::seconds(50),
+        deadline_at: Some(runtime::now() + chrono::Duration::seconds(50)),
         requested_output_schemas: operation.output_schemas(),
     };
     for field in ["calendar_ref", "calendar_version", "sessions"] {
@@ -567,12 +567,12 @@ async fn native_candidate_simulation(sequence: bool) {
         parameters_artifact_id: parameters_id,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
-            cpu_seconds: count(30),
+            cpu_seconds: Some(count(30)),
             memory_mib: 512,
-            wall_seconds: 30,
-            output_bytes: count(4 * 1024 * 1024),
+            wall_seconds: Some(30),
+            output_bytes: Some(count(4 * 1024 * 1024)),
         },
-        deadline_at: runtime::now() + chrono::Duration::seconds(50),
+        deadline_at: Some(runtime::now() + chrono::Duration::seconds(50)),
         requested_output_schemas: operation.output_schemas(),
     };
     if !sequence {
@@ -639,7 +639,7 @@ async fn native_candidate_simulation(sequence: bool) {
                 assert_eq!(error.to_string(), "CATALOG_ROW_LIMIT");
             }
             let mut invalid = spec.clone();
-            invalid.deadline_at = runtime::now() + chrono::Duration::seconds(50);
+            invalid.deadline_at = Some(runtime::now() + chrono::Duration::seconds(50));
             invalid.run_id = Id::new();
             invalid.external_job_id = domain::runtime_jobs::external_id(invalid.run_id, 1).unwrap();
             f.runs.push(invalid.run_id);
@@ -668,7 +668,7 @@ async fn native_candidate_simulation(sequence: bool) {
             f.assert_private_logs();
         }
         fs::write(path, original).unwrap();
-        spec.deadline_at = runtime::now() + chrono::Duration::seconds(50);
+        spec.deadline_at = Some(runtime::now() + chrono::Duration::seconds(50));
     }
     let accepted = f.submit(&spec).await;
     assert_eq!(f.terminal(&spec).await.state, RuntimeJobState::Succeeded);
@@ -1015,12 +1015,12 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         parameters_artifact_id: parameters,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
-            cpu_seconds: count(30),
+            cpu_seconds: Some(count(30)),
             memory_mib: 512,
-            wall_seconds: 30,
-            output_bytes: count(4 * 1024 * 1024),
+            wall_seconds: Some(30),
+            output_bytes: Some(count(4 * 1024 * 1024)),
         },
-        deadline_at: runtime::now() + chrono::Duration::seconds(50),
+        deadline_at: Some(runtime::now() + chrono::Duration::seconds(50)),
         requested_output_schemas: operation.output_schemas(),
     };
     let admitted = f.submit(&spec).await;
@@ -1179,7 +1179,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         quality_spec.job_kind = quality_operation.job_kind();
         quality_spec.parameters_artifact_id = Id::new();
         quality_spec.requested_output_schemas = quality_operation.output_schemas();
-        quality_spec.deadline_at = runtime::now() + chrono::Duration::seconds(50);
+        quality_spec.deadline_at = Some(runtime::now() + chrono::Duration::seconds(50));
         quality_spec
             .inputs
             .retain(|input| matches!(input, RuntimeInputV1::Dataset { .. }));
@@ -1285,7 +1285,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
             domain::runtime_jobs::external_id(liquidity_spec.run_id, 1).unwrap();
         liquidity_spec.inputs.retain(|input| !matches!(input, RuntimeInputV1::Artifact {artifact_id,..} if *artifact_id == spec.parameters_artifact_id || Some(*artifact_id) == request.mandate.constraints.liquidity_ref));
         liquidity_spec.parameters_artifact_id = Id::new();
-        liquidity_spec.deadline_at = runtime::now() + chrono::Duration::seconds(50);
+        liquidity_spec.deadline_at = Some(runtime::now() + chrono::Duration::seconds(50));
         f.object(liquidity_spec.parameters_artifact_id, &parameters)
             .await;
         for (id, size, role) in [
@@ -1495,12 +1495,12 @@ async fn real_native_sealed_job_reads_the_frozen_model_and_registered_parquet() 
         parameters_artifact_id: parameters,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
-            cpu_seconds: count(30),
+            cpu_seconds: Some(count(30)),
             memory_mib: 512,
-            wall_seconds: 30,
-            output_bytes: count(4 * 1024 * 1024),
+            wall_seconds: Some(30),
+            output_bytes: Some(count(4 * 1024 * 1024)),
         },
-        deadline_at: runtime::now() + chrono::Duration::seconds(50),
+        deadline_at: Some(runtime::now() + chrono::Duration::seconds(50)),
         requested_output_schemas: operation.output_schemas(),
     };
     let admitted = f.submit(&spec).await;
@@ -1565,7 +1565,7 @@ async fn real_native_compile_publishes_exact_model_and_concurrent_retry_has_one_
                 if container.state.as_ref().and_then(|state| state.running) == Some(true) {
                     match runtime::files::output_usage(
                         &output,
-                        spec.limits.output_bytes.get() + 1024 * 1024,
+                        Some(spec.limits.output_bytes.unwrap().get() + 1024 * 1024),
                     ) {
                         Ok(_) => {
                             // Both native observations must bound the scan while
@@ -1814,8 +1814,8 @@ async fn original_compiler_memory_observer(
     spec: &JobSpecV1,
 ) -> Result<(String, compiler_memory_observation::Observer), &'static str> {
     use bollard::query_parameters::ListContainersOptionsBuilder;
-    let deadline =
-        std::time::Instant::now() + Duration::from_secs(u64::from(spec.limits.wall_seconds));
+    let deadline = std::time::Instant::now()
+        + Duration::from_secs(u64::from(spec.limits.wall_seconds.unwrap()));
     let observe = async {
         let filters = std::collections::HashMap::from([(
             "label".to_owned(),
@@ -2098,7 +2098,7 @@ async fn isolated_probe(
     let mut fixture = Fixture::open().await;
     let mut spec = fixture.compile(SIGNAL, 10).await;
     spec.limits.memory_mib = 64;
-    spec.limits.output_bytes = count(1024 * 1024);
+    spec.limits.output_bytes = Some(count(1024 * 1024));
     fixture.crash();
     let directory = tempfile::tempdir().unwrap();
     let input = directory.path().join("input");

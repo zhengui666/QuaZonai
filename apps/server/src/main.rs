@@ -27,6 +27,14 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Internal fixed native exec bridge, with exact environment-name projection.
+    #[command(hide = true)]
+    NativeCodexExec {
+        #[arg(long)]
+        binary: PathBuf,
+        #[arg(long = "environment-name")]
+        environment_names: Vec<String>,
+    },
     /// Use the authenticated HTTP API with shared native contracts; never opens a database.
     Client(server::client::Arguments),
     /// Serve native stdio MCP for one existing Mission; no DB or Operator authority.
@@ -320,6 +328,10 @@ async fn main() {
 
 async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     match command {
+        Command::NativeCodexExec {
+            binary,
+            environment_names,
+        } => server::codex_native::service_exec(&binary, &environment_names)?,
         Command::Client(arguments) => server::client::run(arguments).await?,
         Command::Mcp {
             api_origin,

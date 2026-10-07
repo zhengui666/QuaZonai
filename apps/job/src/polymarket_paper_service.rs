@@ -34,6 +34,8 @@ struct ServiceConfig {
     dataset_revision: PathBuf,
     /// Exclusive new directory. Reuse/restart is rejected, never replayed.
     output_directory: PathBuf,
+    /// Stable private runtime volume, never the per-session output directory.
+    claim_state_directory: PathBuf,
     credential_file: PathBuf,
     bind: SocketAddr,
     max_seconds: u64,
@@ -208,7 +210,17 @@ async fn serve(config: ServiceConfig) -> Result<()> {
     let _: RuntimeCatalogMetadataV1 = serde_json::from_slice(&original_metadata)?;
     let _: DatasetView = serde_json::from_slice(&original_dataset)?;
     let credential = crate::paper_node::read_credential(&config.credential_file)?;
+    ensure!(
+        config.claim_state_directory.is_absolute(),
+        "PAPER_STABLE_CLAIM_STATE_REQUIRED"
+    );
     reserve_output(&config.output_directory)?;
+    ensure!(
+        !config
+            .claim_state_directory
+            .starts_with(std::fs::canonicalize(&config.output_directory)?),
+        "PAPER_CLAIM_STATE_MUST_BE_INDEPENDENT_OF_OUTPUT"
+    );
     let out = config.output_directory;
     let frozen_config = out.join("host-config.json");
     let frozen_metadata = out.join("frozen-metadata.json");
@@ -221,13 +233,15 @@ async fn serve(config: ServiceConfig) -> Result<()> {
         credential,
         host_config.market_capability_version,
         PaperProfile::Polymarket,
+        &config.claim_state_directory,
     )
     .await?;
     println!(
         "{}",
         json!({"state":"idle", "bind":service.local_addr,
         "environment":"PAPER", "market_data_connected":false,
-        "restart":"REFUSED_FOR_SAME_OUTPUT_DIRECTORY"})
+        "restart":"FRESH_ACCOUNT_AND_SESSION_NO_RESTORE",
+        "claim_replay_scope":"DURABLE_RUNTIME_PROJECT_ADAPTER_CLAIM"})
     );
     let signal = crate::paper_node::stop_signal();
     tokio::pin!(signal);
@@ -312,12 +326,14 @@ async fn serve(config: ServiceConfig) -> Result<()> {
         });
         Ok(())
     };
+    let journal_retained = service.retain_terminal_observation().await;
     let final_status = serde_json::to_vec(&service.status.borrow().clone())?;
     let retained = retain(&out.join("terminal-status.json"), &final_status);
     println!("{}", String::from_utf8_lossy(&final_status));
     tokio::time::sleep(Duration::from_secs(2)).await;
     service.shutdown.send_replace(true);
     service.task.await??;
+    journal_retained?;
     retained?;
     result
 }

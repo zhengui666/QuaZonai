@@ -96,6 +96,7 @@ pub(super) fn shape(value: &NativeExperimentEvaluationResultV1) -> Result<(), Do
             }
         }
         simulation::binding(&fold.simulation_request, &fold.simulation)?;
+        super::spot_cash_report::dataset(&fold.simulation, value.dataset_revision_id)?;
     }
     Ok(())
 }

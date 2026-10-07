@@ -4,12 +4,25 @@ import { costBudgetErrors } from './cost-budget';
 import { budgetRelationError } from './authoring-constraints';
 import { validateBaseCurrency } from '@quazonai/web/response-contract/base-currency';
 export type BriefContent = Schema['BriefContentV1'];
-export const initialBudget: Schema['BudgetV1'] = {
-  schema_version: 1, max_experiments: 10, max_parallel_runs: 1, max_turns_per_mission: 10,
-  max_repair_turns: 2, max_wall_seconds: 3600, max_cpu_seconds: '3600', max_memory_mib: 4096,
-  max_output_bytes: '104857600', max_cycles_per_day: 1, min_cycle_interval_seconds: 3600,
+export const relaxedResearchBudget: Schema['BudgetV1'] = {
+  schema_version: 1, max_experiments: 32, max_parallel_runs: 1, max_turns_per_mission: 64,
+  max_repair_turns: 8, max_wall_seconds: null, max_cpu_seconds: null, max_memory_mib: 1024,
+  max_output_bytes: null, max_cycles_per_day: 12, min_cycle_interval_seconds: 0,
   max_tokens: null, max_cost_decimal: null, cost_currency: null, cost_enforcement: 'UNAVAILABLE',
 };
+// Preserve an in-progress cost tuple; submission validates the complete budget.
+// Infer the draft result rather than claiming it already satisfies BudgetV1.
+export function applyRelaxedResearchBudget(current?: Partial<Schema['BudgetV1']>) {
+  const next = { ...relaxedResearchBudget, ...current, max_wall_seconds: null, max_cpu_seconds: null, max_tokens: null, max_output_bytes: null };
+  for (const field of ['max_experiments', 'max_turns_per_mission', 'max_repair_turns', 'max_cycles_per_day'] as const) {
+    next[field] = Math.max(relaxedResearchBudget[field], current?.[field] ?? 0);
+  }
+  next.min_cycle_interval_seconds = 0;
+  // Loading/applying a preset cannot silently reduce an existing memory
+  // allowance or expand host concurrency. Native capability admission remains.
+  return next;
+}
+export const initialBudget = { ...relaxedResearchBudget };
 export const initialStop: Schema['StopRuleV1'] = {
   schema_version: 1, stop_on_qualified_count: 2, stop_on_budget: true,
   stop_on_no_improvement_trials: 20, stop_on_invalid_data: true,
@@ -24,6 +37,9 @@ export function briefContent(value: BriefContent): BriefContent {
   if (costError) throw new ApiFailure('VALIDATION_ERROR', costError);
   const budget = { ...value.budget, schema_version: 1 as const };
   budget.max_tokens ||= null;
+  budget.max_wall_seconds ??= null;
+  budget.max_cpu_seconds ||= null;
+  budget.max_output_bytes ||= null;
   budget.max_cost_decimal ||= null;
   budget.cost_currency ||= null;
   const common = { ...value, benchmark_ref: value.benchmark_ref || null, budget,

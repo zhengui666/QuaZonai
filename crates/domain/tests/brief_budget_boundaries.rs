@@ -32,7 +32,7 @@ fn invalid_field(value: Value, field: &str, code: &str) {
 }
 
 #[test]
-fn every_required_positive_budget_rejects_zero_after_native_deserialization() {
+fn every_positive_budget_rejects_zero_and_only_optional_execution_caps_accept_absence() {
     let mut base = example();
     // Isolate scalar lower bounds from the two cross-field inequalities.
     base["content"]["budget"]["max_repair_turns"] = json!(0);
@@ -115,16 +115,30 @@ fn every_required_positive_budget_rejects_zero_after_native_deserialization() {
             .as_object_mut()
             .unwrap()
             .remove(field);
-        assert!(
-            serde_json::from_value::<BriefCreate>(request).is_err(),
-            "{field} missing"
-        );
+        if matches!(
+            field,
+            "max_wall_seconds" | "max_cpu_seconds" | "max_output_bytes"
+        ) {
+            valid(request);
+        } else {
+            assert!(
+                serde_json::from_value::<BriefCreate>(request).is_err(),
+                "{field} missing"
+            );
+        }
         let mut request = base.clone();
         request["content"]["budget"][field] = Value::Null;
-        assert!(
-            serde_json::from_value::<BriefCreate>(request).is_err(),
-            "{field} null"
-        );
+        if matches!(
+            field,
+            "max_wall_seconds" | "max_cpu_seconds" | "max_output_bytes"
+        ) {
+            valid(request);
+        } else {
+            assert!(
+                serde_json::from_value::<BriefCreate>(request).is_err(),
+                "{field} null"
+            );
+        }
     }
 }
 

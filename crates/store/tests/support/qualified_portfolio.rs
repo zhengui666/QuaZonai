@@ -1696,7 +1696,8 @@ async fn study_admission(
     assert!(replay.replayed);
     assert_eq!(replay.resource.id, run.id);
     let mut changed = request.clone();
-    changed.limits.cpu_seconds = DbCounter::new(changed.limits.cpu_seconds.get() + 1).unwrap();
+    changed.limits.cpu_seconds =
+        Some(DbCounter::new(changed.limits.cpu_seconds.unwrap().get() + 1).unwrap());
     assert!(matches!(
         Box::pin(store.start_portfolio_study(
             actor,

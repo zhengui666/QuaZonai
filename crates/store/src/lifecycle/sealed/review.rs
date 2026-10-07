@@ -28,7 +28,7 @@ impl Store {
         if locked.run.state.is_terminal()
             || locked.run.state == RunState::CancelRequested
             || !locked.admission_open()
-            || locked.run.deadline_at <= now(&mut tx).await?
+            || domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?)
         {
             return Err(DomainError::AdmissionClosed.into());
         }
@@ -59,7 +59,7 @@ impl Store {
                 db::id(row.try_get("alpha_version_id")?)?,
                 &request,
                 "RUNTIME",
-                Some(locked.run.deadline_at),
+                locked.run.deadline_at,
                 read,
                 publish,
             )
@@ -71,7 +71,7 @@ impl Store {
         // Reads/publication and their failures may outlast ownership. A stale
         // worker cannot commit either a new task or a Cycle rejection reason.
         fence(&mut tx, &locked.run, owner).await?;
-        if locked.run.deadline_at <= now(&mut tx).await? {
+        if domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?) {
             return Err(DomainError::AdmissionClosed.into());
         }
         match result {

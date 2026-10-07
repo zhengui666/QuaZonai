@@ -323,6 +323,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
             maximum_rows: 100,
         },
         settings: NativeSimulationSettingsV1 {
+            multi_currency_spot_cash: None,
             schema_version: SchemaV1,
             base_currency: "USD".into(),
             starting_capital: "1000".parse().unwrap(),
@@ -357,6 +358,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
         ("orders.inflight".into(), "0".into()),
     ]);
     let result = NativeSimulationResultV1 {
+        spot_cash_report: None,
         schema_version: SchemaV1,
         native_version: "0.63.0".into(),
         iterations: count(100),

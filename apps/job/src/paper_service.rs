@@ -2,7 +2,9 @@
 //!
 //! The native node stays on its owning thread. HTTP handlers only exchange typed
 //! requests and observed status; this module never submits orders or records ACKs.
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
+
+use crate::paper_claim_store::{Admission, ClaimLease, ClaimStore, StoreError};
 
 use axum::{
     extract::{rejection::JsonRejection, Request, State},
@@ -22,7 +24,7 @@ use contracts::{
     Id, SchemaV1,
 };
 use nautilus_model::identifiers::{InstrumentId, Venue};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{mpsc, oneshot, watch, Mutex},
     task::JoinHandle,
@@ -37,6 +39,13 @@ pub enum PaperProfile {
 }
 
 impl PaperProfile {
+    fn journal_adapter(self) -> &'static str {
+        match self {
+            Self::Binance => "binance",
+            Self::Polymarket => "polymarket",
+        }
+    }
+
     fn package_versions(self) -> Vec<PackageSchemaVersion> {
         match self {
             Self::Binance => vec![PackageSchemaVersion::V1, PackageSchemaVersion::V2],
@@ -66,7 +75,7 @@ impl PaperProfile {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PaperState {
     Idle,
@@ -76,27 +85,45 @@ pub enum PaperState {
     Failed,
 }
 
-/// Process-local observation, not proof of a QZ approval or execution receipt.
-#[derive(Clone, Debug, Serialize)]
+/// Observed native lifecycle, not proof of QZ approval, fills or account recovery.
+/// A completed claim can replay the original observation after process restart.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PaperStatus {
-    pub native_account_model: &'static str,
-    pub restart_policy: &'static str,
-    pub claim_replay_scope: &'static str,
+    pub schema_version: SchemaV1,
+    pub native_account_model: String,
+    pub restart_policy: String,
+    pub claim_replay_scope: String,
     /// Native strategy consumption is separate from lifecycle and fill receipts.
     pub target_points_consumed: usize,
     pub state: PaperState,
-    pub execution_environment: &'static str,
-    pub market_data_source: &'static str,
-    pub market_time_basis: &'static str,
-    pub fee_basis: &'static str,
-    pub latency_basis: &'static str,
+    pub execution_environment: String,
+    pub market_data_source: String,
+    pub market_time_basis: String,
+    pub fee_basis: String,
+    pub latency_basis: String,
+    #[serde(deserialize_with = "required_option")]
     pub handoff_id: Option<Id>,
+    #[serde(deserialize_with = "required_option")]
     pub release_id: Option<Id>,
+    #[serde(deserialize_with = "required_option")]
     pub external_claim_id: Option<String>,
+    #[serde(deserialize_with = "required_option")]
     pub native_session_id: Option<String>,
     pub stop_requested: bool,
+    #[serde(deserialize_with = "required_option")]
     pub reason_code: Option<String>,
     pub updated_at: DateTime<Utc>,
+}
+
+// Serde normally treats a missing Option field as None. Durable V1 records
+// require the key to exist; an explicit null is valid where the model allows it.
+fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 impl PaperStatus {
@@ -106,17 +133,19 @@ impl PaperStatus {
 
     pub fn idle_with_profile(profile: PaperProfile) -> Self {
         let mut status = Self {
-            native_account_model: "MARGIN_LEVERAGE_ONE",
-            restart_policy: "FRESH_ACCOUNT_AND_SESSION_NO_RESTORE",
-            claim_replay_scope: "CURRENT_PROCESS_ONLY",
+            schema_version: SchemaV1,
+            native_account_model: "MARGIN_LEVERAGE_ONE".into(),
+            restart_policy: "FRESH_ACCOUNT_AND_SESSION_NO_RESTORE".into(),
+            claim_replay_scope: "DURABLE_RUNTIME_PROJECT_ADAPTER_CLAIM".into(),
             target_points_consumed: 0,
             state: PaperState::Idle,
-            execution_environment: "PAPER_SANDBOX",
-            market_data_source: "BINANCE_SPOT_PUBLIC_JSON",
+            execution_environment: "PAPER_SANDBOX".into(),
+            market_data_source: "BINANCE_SPOT_PUBLIC_JSON".into(),
             market_time_basis:
-                "NATIVE_ADAPTER_TIMESTAMPS_WITH_RECEIVE_TIME_FALLBACK_WHEN_EXCHANGE_TIME_ABSENT",
-            fee_basis: "native default maker/taker 0.001; simulated, not account-specific",
-            latency_basis: "native wall clock; historical StaticLatencyModel not applied",
+                "NATIVE_ADAPTER_TIMESTAMPS_WITH_RECEIVE_TIME_FALLBACK_WHEN_EXCHANGE_TIME_ABSENT"
+                    .into(),
+            fee_basis: "native default maker/taker 0.001; simulated, not account-specific".into(),
+            latency_basis: "native wall clock; historical StaticLatencyModel not applied".into(),
             handoff_id: None,
             release_id: None,
             external_claim_id: None,
@@ -126,13 +155,13 @@ impl PaperStatus {
             updated_at: Utc::now(),
         };
         if profile == PaperProfile::Polymarket {
-            status.native_account_model = "CASH";
-            status.execution_environment = "PAPER_SIMULATION";
-            status.claim_replay_scope = "SINGLE_EVIDENCE_DIRECTORY_NO_RESTART";
-            status.market_data_source = "POLYMARKET_REAL_PUBLIC_DATA";
-            status.market_time_basis = "ORIGINAL_NATIVE_TS_EVENT_AND_TS_INIT";
-            status.fee_basis = "UNCHANGED_OFFICIAL_POLYMARKET_FEE_MODEL_FROM_ORIGINAL_SCHEDULE";
-            status.latency_basis = "ORIGINAL_FROZEN_STATIC_LATENCY_IN_NATIVE_EVENT_TIME";
+            status.native_account_model = "CASH".into();
+            status.execution_environment = "PAPER_SIMULATION".into();
+            status.market_data_source = "POLYMARKET_REAL_PUBLIC_DATA".into();
+            status.market_time_basis = "ORIGINAL_NATIVE_TS_EVENT_AND_TS_INIT".into();
+            status.fee_basis =
+                "UNCHANGED_OFFICIAL_POLYMARKET_FEE_MODEL_FROM_ORIGINAL_SCHEDULE".into();
+            status.latency_basis = "ORIGINAL_FROZEN_STATIC_LATENCY_IN_NATIVE_EVENT_TIME".into();
         }
         status
     }
@@ -171,6 +200,35 @@ pub struct ControlServer {
     /// callers can observe termination before the foreground process exits.
     pub shutdown: watch::Sender<bool>,
     pub task: JoinHandle<std::io::Result<()>>,
+    claim: Arc<Mutex<Option<SessionClaim>>>,
+}
+
+struct SessionClaim {
+    original: serde_json::Value,
+    lease: Option<ClaimLease>,
+    receipt: Option<Vec<u8>>,
+}
+
+impl ControlServer {
+    /// The native owner must call this after it has actually stopped/joined.
+    /// A failed write leaves the durable reservation unresolved and returns an
+    /// error; it never permits a retry of the original execution.
+    pub async fn retain_terminal_observation(&self) -> anyhow::Result<()> {
+        let mut claim = self.claim.lock().await;
+        let Some(claim) = claim.as_mut() else {
+            return Ok(());
+        };
+        let Some(lease) = claim.lease.as_ref() else {
+            return Ok(());
+        };
+        let receipt = serde_json::to_vec(&self.status.borrow().clone())?;
+        lease
+            .complete(&receipt)
+            .map_err(|error| anyhow::anyhow!(error.code()))?;
+        claim.receipt = Some(receipt);
+        claim.lease = None;
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -178,7 +236,10 @@ struct ServiceState {
     authorization: HeaderValue,
     market_capability: String,
     profile: PaperProfile,
-    claim: Arc<Mutex<Option<serde_json::Value>>>,
+    claim: Arc<Mutex<Option<SessionClaim>>>,
+    store: ClaimStore,
+    #[cfg(test)]
+    _temporary_state: Option<Arc<tempfile::TempDir>>,
     requests: mpsc::Sender<ApplyRequest>,
     status: watch::Sender<PaperStatus>,
     stop: watch::Sender<bool>,
@@ -190,8 +251,16 @@ pub async fn start_control(
     bind: SocketAddr,
     credential: Vec<u8>,
     market_capability: String,
+    claim_state_directory: &Path,
 ) -> anyhow::Result<ControlServer> {
-    start_control_with_profile(bind, credential, market_capability, PaperProfile::Binance).await
+    start_control_with_profile(
+        bind,
+        credential,
+        market_capability,
+        PaperProfile::Binance,
+        claim_state_directory,
+    )
+    .await
 }
 
 /// Bind the same authenticated controls with explicit native-owner semantics.
@@ -200,6 +269,7 @@ pub async fn start_control_with_profile(
     credential: Vec<u8>,
     market_capability: String,
     profile: PaperProfile,
+    claim_state_directory: &Path,
 ) -> anyhow::Result<ControlServer> {
     anyhow::ensure!(bind.ip().is_loopback(), "paper_control_requires_loopback");
     anyhow::ensure!(
@@ -217,6 +287,8 @@ pub async fn start_control_with_profile(
     let mut authorization = HeaderValue::from_bytes(&bearer)
         .map_err(|_| anyhow::anyhow!("paper_control_invalid_credential"))?;
     authorization.set_sensitive(true);
+    let store = ClaimStore::open(claim_state_directory, profile.journal_adapter())
+        .map_err(|error| anyhow::anyhow!(error.code()))?;
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|_| anyhow::anyhow!("paper_control_bind_failed"))?;
@@ -225,11 +297,15 @@ pub async fn start_control_with_profile(
     let (status, _) = watch::channel(PaperStatus::idle_with_profile(profile));
     let (stop_tx, stop) = watch::channel(false);
     let (shutdown, mut shutdown_rx) = watch::channel(false);
+    let claim = Arc::new(Mutex::new(None));
     let state = ServiceState {
         authorization,
         market_capability,
         profile,
-        claim: Arc::new(Mutex::new(None)),
+        claim: claim.clone(),
+        store,
+        #[cfg(test)]
+        _temporary_state: None,
         requests: requests_tx,
         status: status.clone(),
         stop: stop_tx,
@@ -259,6 +335,7 @@ pub async fn start_control_with_profile(
         stop,
         shutdown,
         task,
+        claim,
     })
 }
 
@@ -332,8 +409,12 @@ async fn apply(
         // process never admits another, even after a failure or stop.
         let mut original = state.claim.lock().await;
         if let Some(original) = original.as_ref() {
-            return if original == &value {
-                status_response(&state)
+            return if original.original == value {
+                if let Some(receipt) = &original.receipt {
+                    receipt_response(receipt.clone())
+                } else {
+                    status_response(&state)
+                }
             } else {
                 failure(StatusCode::CONFLICT, "paper_session_claim_conflict")
             };
@@ -341,9 +422,20 @@ async fn apply(
         if *state.stop.borrow() || state.status.borrow().state != PaperState::Idle {
             return failure(StatusCode::CONFLICT, "paper_session_not_idle");
         }
-        if !valid_claim(&claim, &state.market_capability, state.profile) {
-            return failure(StatusCode::UNPROCESSABLE_ENTITY, "invalid_claim");
-        }
+        let valid = valid_claim(&claim, &state.market_capability, state.profile);
+        let lease = match state.store.admit(&claim, valid) {
+            Ok(Some(Admission::Reserved(lease))) => lease,
+            Ok(Some(Admission::Replay(receipt))) => return receipt_response(receipt),
+            Ok(None) => return failure(StatusCode::UNPROCESSABLE_ENTITY, "invalid_claim"),
+            Err(error) => {
+                let code = if error == StoreError::Unavailable {
+                    StatusCode::SERVICE_UNAVAILABLE
+                } else {
+                    StatusCode::CONFLICT
+                };
+                return failure(code, error.code());
+            }
+        };
         let status = PaperStatus {
             target_points_consumed: 0,
             state: PaperState::Starting,
@@ -352,7 +444,11 @@ async fn apply(
             external_claim_id: claim.handoff.external_claim_id.clone(),
             ..PaperStatus::idle_with_profile(state.profile)
         };
-        *original = Some(value);
+        *original = Some(SessionClaim {
+            original: value,
+            lease: Some(lease),
+            receipt: None,
+        });
         state.status.send_replace(status);
         if state
             .requests
@@ -380,6 +476,23 @@ async fn apply(
         Ok(Err(_)) => failure(StatusCode::SERVICE_UNAVAILABLE, "apply_result_unavailable"),
         Err(_) => status_response(&state),
     }
+}
+
+fn receipt_response(receipt: Vec<u8>) -> Response {
+    // Exact bytes recorded by the original owner, never the new process's Idle
+    // snapshot or an invented successful execution/fill receipt.
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (
+                axum::http::HeaderName::from_static("x-paper-claim-replayed"),
+                "true",
+            ),
+        ],
+        receipt,
+    )
+        .into_response()
 }
 
 fn fail_starting(state: &ServiceState, reason: &str) {
@@ -456,11 +569,21 @@ fn failure(status: StatusCode, code: &'static str) -> Response {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
-    fn claim() -> HandoffClaimViewV2 {
+    pub(crate) fn private_state_directory() -> tempfile::TempDir {
+        let mut builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        builder.tempdir().unwrap()
+    }
+
+    pub(crate) fn claim() -> HandoffClaimViewV2 {
         let input: serde_json::Value = serde_json::from_str(include_str!(
             "../../../tests/contracts/allocation-input.json"
         ))
@@ -509,6 +632,16 @@ mod tests {
     }
 
     fn state_with_profile(profile: PaperProfile) -> (ServiceState, mpsc::Receiver<ApplyRequest>) {
+        let root = Arc::new(private_state_directory());
+        let (mut state, receiver) = state_with_store(profile, root.path());
+        state._temporary_state = Some(root);
+        (state, receiver)
+    }
+
+    fn state_with_store(
+        profile: PaperProfile,
+        root: &Path,
+    ) -> (ServiceState, mpsc::Receiver<ApplyRequest>) {
         let (requests, receiver) = mpsc::channel(1);
         let (status, _) = watch::channel(PaperStatus::idle_with_profile(profile));
         let (stop, _) = watch::channel(false);
@@ -518,6 +651,8 @@ mod tests {
                 market_capability: "service-test/1".into(),
                 profile,
                 claim: Arc::new(Mutex::new(None)),
+                store: ClaimStore::open(root, profile.journal_adapter()).unwrap(),
+                _temporary_state: None,
                 requests,
                 status,
                 stop,
@@ -668,7 +803,7 @@ mod tests {
         );
         assert_eq!(
             status.claim_replay_scope,
-            "SINGLE_EVIDENCE_DIRECTORY_NO_RESTART"
+            "DURABLE_RUNTIME_PROJECT_ADAPTER_CLAIM"
         );
         assert_eq!(status.market_data_source, "POLYMARKET_REAL_PUBLIC_DATA");
         assert_eq!(
@@ -821,9 +956,15 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn loopback_start_preserves_default_and_initializes_explicit_profile() {
         let bind = "127.0.0.1:0".parse().unwrap();
-        let default = start_control(bind, b"test-only".to_vec(), "service-test/1".into())
-            .await
-            .unwrap();
+        let root = private_state_directory();
+        let default = start_control(
+            bind,
+            b"test-only".to_vec(),
+            "service-test/1".into(),
+            root.path(),
+        )
+        .await
+        .unwrap();
         assert!(default.local_addr.ip().is_loopback());
         assert_eq!(
             default.status.borrow().native_account_model,
@@ -841,6 +982,7 @@ mod tests {
             b"test-only".to_vec(),
             "service-test/1".into(),
             PaperProfile::Polymarket,
+            root.path(),
         )
         .await
         .unwrap();
@@ -975,5 +1117,250 @@ mod tests {
             StatusCode::CONFLICT
         );
         assert!(requests.try_recv().is_err());
+    }
+
+    async fn response_bytes(response: Response) -> Vec<u8> {
+        axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024)
+            .await
+            .unwrap()
+            .to_vec()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn restarted_service_does_not_queue_incomplete_claim_with_new_output_directory() {
+        let root = private_state_directory();
+        let output_one = root.path().join("output-one");
+        let output_two = root.path().join("output-two");
+        std::fs::create_dir(&output_one).unwrap();
+        std::fs::create_dir(&output_two).unwrap();
+        let journal = root.path().join("stable-state");
+        let original = polymarket_claim();
+        let (first, mut requests) = state_with_store(PaperProfile::Polymarket, &journal);
+        let accepted = async {
+            let request = requests.recv().await.unwrap();
+            std::fs::write(
+                output_one.join("accepted-claim.json"),
+                serde_json::to_vec(&request.claim).unwrap(),
+            )
+            .unwrap();
+            request.reply.send(Ok(())).unwrap();
+        };
+        let (response, ()) = tokio::join!(
+            apply(State(first.clone()), Ok(Json(original.clone()))),
+            accepted
+        );
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        drop(first);
+        drop(requests);
+        // Evidence output changes, while the stable runtime journal does not.
+        let (second, mut requests) = state_with_store(PaperProfile::Polymarket, &journal);
+        let response = apply(State(second.clone()), Ok(Json(original))).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let failure: serde_json::Value =
+            serde_json::from_slice(&response_bytes(response).await).unwrap();
+        assert_eq!(failure["code"], "paper_claim_recovery_required");
+        assert!(requests.try_recv().is_err());
+        assert!(second.claim.lock().await.is_none());
+        assert_eq!(std::fs::read_dir(output_two).unwrap().count(), 0);
+        assert!(capabilities(State(second)).await.0.accepting_targets);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completed_replay_returns_original_status_and_does_not_consume_new_session() {
+        let root = private_state_directory();
+        let original = claim();
+        let (first, mut requests) = state_with_store(PaperProfile::Binance, root.path());
+        let accepted = async {
+            requests.recv().await.unwrap().reply.send(Ok(())).unwrap();
+        };
+        let (response, ()) = tokio::join!(
+            apply(State(first.clone()), Ok(Json(original.clone()))),
+            accepted
+        );
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        first.status.send_modify(|s| {
+            s.state = PaperState::Stopped;
+            s.native_session_id = Some("original-real-owner-session".into());
+            s.target_points_consumed = 4;
+        });
+        let bytes = serde_json::to_vec(&first.status.borrow().clone()).unwrap();
+        first
+            .claim
+            .lock()
+            .await
+            .as_ref()
+            .unwrap()
+            .lease
+            .as_ref()
+            .unwrap()
+            .complete(&bytes)
+            .unwrap();
+        drop(first);
+        drop(requests);
+        let (second, mut requests) = state_with_store(PaperProfile::Binance, root.path());
+        for _ in 0..2 {
+            let response = apply(State(second.clone()), Ok(Json(original.clone()))).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["x-paper-claim-replayed"], "true");
+            assert_eq!(response_bytes(response).await, bytes);
+            assert!(requests.try_recv().is_err());
+            assert!(second.claim.lock().await.is_none());
+            assert_eq!(second.status.borrow().state, PaperState::Idle);
+        }
+        let other = claim();
+        let accepted = async {
+            requests.recv().await.unwrap().reply.send(Ok(())).unwrap();
+        };
+        let (response, ()) = tokio::join!(apply(State(second.clone()), Ok(Json(other))), accepted);
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn concurrent_services_do_not_queue_same_claim_twice() {
+        let root = private_state_directory();
+        let original = claim();
+        let (first, mut first_requests) = state_with_store(PaperProfile::Binance, root.path());
+        let (second, mut second_requests) = state_with_store(PaperProfile::Binance, root.path());
+        let owner = async {
+            first_requests
+                .recv()
+                .await
+                .unwrap()
+                .reply
+                .send(Ok(()))
+                .unwrap();
+        };
+        let (response, ()) = tokio::join!(
+            apply(State(first.clone()), Ok(Json(original.clone()))),
+            owner
+        );
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let rejected = apply(State(second), Ok(Json(original))).await;
+        assert_eq!(rejected.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&response_bytes(rejected).await).unwrap()
+                ["code"],
+            "paper_claim_in_progress"
+        );
+        assert!(second_requests.try_recv().is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn actual_control_owner_records_only_terminal_observation_and_releases_lock() {
+        let root = private_state_directory();
+        let mut control = start_control(
+            "127.0.0.1:0".parse().unwrap(),
+            b"test-only".to_vec(),
+            "service-test/1".into(),
+            root.path(),
+        )
+        .await
+        .unwrap();
+        let original = claim();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let pending = client
+            .post(format!(
+                "http://{}/downstream/v1/targets",
+                control.local_addr
+            ))
+            .bearer_auth("test-only")
+            .json(&original)
+            .send();
+        let owner = async {
+            control
+                .requests
+                .recv()
+                .await
+                .unwrap()
+                .reply
+                .send(Ok(()))
+                .unwrap();
+        };
+        let (response, ()) = tokio::join!(pending, owner);
+        assert_eq!(response.unwrap().status(), StatusCode::ACCEPTED);
+        assert!(control.retain_terminal_observation().await.is_err());
+        control.status.send_modify(|s| {
+            s.state = PaperState::Failed;
+            s.reason_code = Some("OBSERVED_OWNER_FAILURE".into());
+        });
+        control.retain_terminal_observation().await.unwrap();
+        let bytes = serde_json::to_vec(&control.status.borrow().clone()).unwrap();
+        let response = client
+            .post(format!(
+                "http://{}/downstream/v1/targets",
+                control.local_addr
+            ))
+            .bearer_auth("test-only")
+            .json(&original)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.bytes().await.unwrap().as_ref(), bytes.as_slice());
+        let store = ClaimStore::open(root.path(), "binance").unwrap();
+        assert!(matches!(
+            store.admit(&original, false),
+            Ok(Some(Admission::Replay(_)))
+        ));
+        control.shutdown.send_replace(true);
+        control.task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn matching_identity_cannot_replay_incomplete_or_wrongly_typed_status() {
+        for incomplete in [true, false] {
+            let root = private_state_directory();
+            let original = claim();
+            let (first, mut requests) = state_with_store(PaperProfile::Binance, root.path());
+            let accepted = async {
+                requests.recv().await.unwrap().reply.send(Ok(())).unwrap();
+            };
+            let (response, ()) = tokio::join!(
+                apply(State(first.clone()), Ok(Json(original.clone()))),
+                accepted
+            );
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            first.status.send_modify(|s| s.state = PaperState::Stopped);
+            let valid = serde_json::to_vec(&first.status.borrow().clone()).unwrap();
+            first
+                .claim
+                .lock()
+                .await
+                .as_ref()
+                .unwrap()
+                .lease
+                .as_ref()
+                .unwrap()
+                .complete(&valid)
+                .unwrap();
+            drop(first);
+            drop(requests);
+            let mut corrupt: serde_json::Value = serde_json::from_slice(&valid).unwrap();
+            if incomplete {
+                corrupt.as_object_mut().unwrap().retain(|key, _| {
+                    ["state", "handoff_id", "release_id", "external_claim_id"]
+                        .contains(&key.as_str())
+                });
+            } else {
+                corrupt["target_points_consumed"] = json!("four");
+            }
+            let path = root
+                .path()
+                .join("binance")
+                .join(original.handoff.project_id.to_string())
+                .join(original.handoff.downstream_id.to_string())
+                .join(original.handoff.id.to_string())
+                .join("terminal-status.json");
+            std::fs::write(path, serde_json::to_vec(&corrupt).unwrap()).unwrap();
+            let (second, mut requests) = state_with_store(PaperProfile::Binance, root.path());
+            let response = apply(State(second), Ok(Json(original))).await;
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&response_bytes(response).await)
+                    .unwrap()["code"],
+                "paper_claim_recovery_required"
+            );
+            assert!(requests.try_recv().is_err());
+        }
     }
 }

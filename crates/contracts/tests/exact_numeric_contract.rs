@@ -42,7 +42,7 @@ fn generated_integer_bounds_match_native_wire_representations() {
             "{field}"
         );
     }
-    for field in ["max_experiments", "max_wall_seconds", "max_memory_mib"] {
+    for field in ["max_experiments", "max_memory_mib"] {
         assert_eq!(
             schemas["BudgetV1"]["allOf"][0]["properties"][field]["minimum"],
             json!(1),
@@ -54,6 +54,10 @@ fn generated_integer_bounds_match_native_wire_representations() {
             "{field}"
         );
     }
+    let optional_wall = &schemas["BudgetV1"]["allOf"][0]["properties"]["max_wall_seconds"]["oneOf"];
+    assert_eq!(optional_wall[0]["type"], json!("null"));
+    assert_eq!(optional_wall[1]["minimum"], json!(1));
+    assert_eq!(optional_wall[1]["maximum"], json!(4294967295u64));
     assert_eq!(
         schemas["BudgetV1"]["allOf"][0]["properties"]["min_cycle_interval_seconds"]["minimum"],
         json!(0)
@@ -66,18 +70,14 @@ fn generated_integer_bounds_match_native_wire_representations() {
     // covered by the shared Rust/ECMAScript corpus. Compare the complete schema
     // rather than a regex substring that could miss a weakened restriction.
     let positive = &schemas["Revision"];
-    for field in ["max_cpu_seconds", "max_output_bytes"] {
-        assert_eq!(
-            &schemas["BudgetV1"]["allOf"][0]["properties"][field], positive,
-            "{field}"
-        );
+    for field in ["max_cpu_seconds", "max_output_bytes", "max_tokens"] {
+        let alternatives = schemas["BudgetV1"]["allOf"][0]["properties"][field]["oneOf"]
+            .as_array()
+            .unwrap();
+        assert_eq!(alternatives.len(), 2, "{field}");
+        assert!(alternatives.contains(&json!({"type": "null"})), "{field}");
+        assert!(alternatives.contains(positive), "{field}");
     }
-    let max_tokens = schemas["BudgetV1"]["allOf"][0]["properties"]["max_tokens"]["oneOf"]
-        .as_array()
-        .unwrap();
-    assert_eq!(max_tokens.len(), 2);
-    assert!(max_tokens.contains(&json!({"type": "null"})));
-    assert!(max_tokens.contains(positive));
 
     let mut value = json!({"schema_version":1,"max_experiments":20,"max_parallel_runs":65535,
         "max_turns_per_mission":16,"max_repair_turns":2,"max_wall_seconds":3600,

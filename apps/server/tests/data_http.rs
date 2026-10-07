@@ -7,12 +7,12 @@ mod native;
 mod support;
 use axum::{
     body::Body,
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode, header},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use server::runtime_transport::{RuntimeTarget, RuntimeTargets};
 use sqlx::PgPool;
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::{Arc, atomic::Ordering};
 use support::{Fixture, Reply};
 
 async fn command(
@@ -450,4 +450,54 @@ async fn data_http_rejects_client_authority_missing_keys_unauthenticated_and_bad
         assert_eq!(invalid.status, StatusCode::UNPROCESSABLE_ENTITY);
     }
     assert_eq!(tls.server.requests.load(Ordering::SeqCst), 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn dataset_evidence_http_returns_typed_bound_summary_and_keeps_artifact_route_closed(
+    pool: PgPool,
+) {
+    let (f, cookie, tls, intent) = setup(pool, None).await;
+    let registration = command(
+        &f,
+        &cookie,
+        "evidence-registration",
+        "POST",
+        "/api/v2/data/revisions",
+        intent,
+    )
+    .await;
+    assert_eq!(registration.status, StatusCode::OK);
+    let dataset = registration.body["resource"]["id"].as_str().unwrap();
+    let path = format!("/api/v2/data/revisions/{dataset}/evidence");
+    let reply = support::call(&f, "GET", &path, Value::Null, Some(&cookie)).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let summary: contracts::data::DatasetEvidenceViewV1 =
+        serde_json::from_value(reply.body.clone()).unwrap();
+    assert_eq!(summary.dataset_revision_id.to_string(), dataset);
+    assert_eq!(summary.quality.row_count.get(), 3);
+    assert_eq!(reply.body["pit_status"], "UNVERIFIED");
+    assert_eq!(reply.body["origin"], "FIXTURE");
+    assert!(reply.body.get("provenance_reference").is_none());
+    assert!(reply.body["quality"].get("settlements").is_none());
+    assert_eq!(
+        tls.server.requests.load(Ordering::SeqCst),
+        1,
+        "audit read must not fetch a new native snapshot"
+    );
+    let anonymous = support::call(&f, "GET", &path, Value::Null, None).await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+    for artifact in [
+        summary.native_metadata_artifact_id,
+        summary.quality_artifact_id,
+    ] {
+        let generic = support::call(
+            &f,
+            "GET",
+            &format!("/api/v2/artifacts/{artifact}"),
+            Value::Null,
+            Some(&cookie),
+        )
+        .await;
+        assert_eq!(generic.status, StatusCode::NOT_FOUND);
+    }
 }

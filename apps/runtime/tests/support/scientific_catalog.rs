@@ -622,13 +622,13 @@ pub async fn prepare_catalog_with_paper(
     request.content.base_currency = base_currency;
     request.content.horizon_value = Some(horizon);
     if external {
-        request.content.budget.max_output_bytes = support::count(4 * 1024 * 1024);
+        request.content.budget.max_output_bytes = Some(support::count(4 * 1024 * 1024));
     }
     request.content.execution_assumptions_id = assumption;
     request.content.evaluation_policy_id = policy.id;
     // Explicitly smaller than the generic contract fixture and within this Runtime's
     // advertised bound; no production limit or failed-test threshold is relaxed.
-    request.content.budget.max_wall_seconds = 120;
+    request.content.budget.max_wall_seconds = Some(120);
     request.bindings = vec![
         BriefBindingV1 {
             dataset_revision_id: datasets[0],

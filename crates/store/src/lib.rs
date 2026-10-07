@@ -18,6 +18,7 @@ mod commands;
 pub mod control;
 pub mod cycles;
 pub mod data;
+mod dataset_evidence;
 pub mod data_registration;
 pub mod data_validation;
 mod db;

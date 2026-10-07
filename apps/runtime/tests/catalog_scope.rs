@@ -188,6 +188,7 @@ fn operation(
                 schema_version: SchemaV1,
                 selection,
                 settings: NativeSimulationSettingsV1 {
+                    multi_currency_spot_cash: None,
                     schema_version: SchemaV1,
                     base_currency: "USD".into(),
                     starting_capital: "1000".parse().unwrap(),
@@ -397,12 +398,12 @@ async fn accepts_with_settlements(
         parameters_artifact_id: parameter,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
-            cpu_seconds: count(1),
+            cpu_seconds: Some(count(1)),
             memory_mib: 64,
-            wall_seconds: 30,
-            output_bytes: count(4096),
+            wall_seconds: Some(30),
+            output_bytes: Some(count(4096)),
         },
-        deadline_at: now() + chrono::Duration::seconds(60),
+        deadline_at: Some(now() + chrono::Duration::seconds(60)),
         requested_output_schemas: parameters.output_schemas(),
     };
     let registered = RegisteredCatalog {

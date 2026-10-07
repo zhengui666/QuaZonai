@@ -55,6 +55,7 @@ fn report(large: bool) -> NativeExperimentEvaluationResultV1 {
         target_ttl_ns: count(60_000_000_000),
         decision_output: ExperimentDecisionOutputV1::TargetWeight,
         settings: NativeSimulationSettingsV1 {
+            multi_currency_spot_cash: None,
             schema_version: SchemaV1,
             base_currency: "USDT".into(),
             starting_capital: "1000".parse().unwrap(),

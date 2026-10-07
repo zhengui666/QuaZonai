@@ -66,12 +66,12 @@ async fn fixture() -> Fixture {
         parameters_artifact_id: parameter_id,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
-            cpu_seconds: DbCounter::new(1).unwrap(),
+            cpu_seconds: Some(DbCounter::new(1).unwrap()),
             memory_mib: 64,
-            wall_seconds: 30,
-            output_bytes: DbCounter::new(4096).unwrap(),
+            wall_seconds: Some(30),
+            output_bytes: Some(DbCounter::new(4096).unwrap()),
         },
-        deadline_at: now() + chrono::Duration::seconds(60),
+        deadline_at: Some(now() + chrono::Duration::seconds(60)),
         requested_output_schemas: schemas,
     };
     Fixture {
@@ -122,7 +122,7 @@ async fn repeated_materialization_reuses_one_quota_reservation_and_one_immutable
     let expected = f.parameters.len() as u64
         + CODE.len() as u64
         + serde_json::to_vec(&f.spec).unwrap().len() as u64
-        + f.spec.limits.output_bytes.get()
+        + f.spec.limits.output_bytes.unwrap().get()
         + domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES as u64;
     assert_eq!(
         f.journal
@@ -192,7 +192,7 @@ async fn repeated_materialization_reuses_one_quota_reservation_and_one_immutable
 async fn disk_quota_includes_native_copy_and_eventual_sqlite_output_without_creating_partial_files()
 {
     let mut f = fixture().await;
-    f.spec.limits.output_bytes = DbCounter::new(40 * 1024 * 1024).unwrap();
+    f.spec.limits.output_bytes = Some(DbCounter::new(40 * 1024 * 1024).unwrap());
     assert!(matches!(
         f.journal.submit(&f.spec, &f.capability).await,
         Err(Failure::Capacity)
@@ -228,7 +228,7 @@ async fn disk_quota_includes_native_copy_and_eventual_sqlite_output_without_crea
 #[tokio::test]
 async fn concurrent_admission_reserves_disk_once_and_replays_do_not_charge_again() {
     let mut f = fixture().await;
-    f.spec.limits.output_bytes = DbCounter::new(22 * 1024 * 1024).unwrap();
+    f.spec.limits.output_bytes = Some(DbCounter::new(22 * 1024 * 1024).unwrap());
     let mut other = f.spec.clone();
     other.run_id = Id::new();
     other.external_job_id = domain::runtime_jobs::external_id(other.run_id, 1).unwrap();
@@ -302,15 +302,15 @@ async fn admission_at_exact_disk_quota_succeeds_and_one_extra_byte_rolls_back() 
     let mut f = fixture().await;
     // The actual serialized request participates in the quota; do not estimate
     // its size or discard a requested input to make the job appear admissible.
-    f.spec.limits.output_bytes = DbCounter::new(32 * 1024 * 1024).unwrap();
+    f.spec.limits.output_bytes = Some(DbCounter::new(32 * 1024 * 1024).unwrap());
     let materialized = f.parameters.len() as u64
         + CODE.len() as u64
         + serde_json::to_vec(&f.spec).unwrap().len() as u64
-        + f.spec.limits.output_bytes.get()
+        + f.spec.limits.output_bytes.unwrap().get()
         + domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES as u64;
     let exact = f.parameters.len() as u64
         + CODE.len() as u64
-        + f.spec.limits.output_bytes.get()
+        + f.spec.limits.output_bytes.unwrap().get()
         + materialized;
     f.journal.close().await;
     let too_small = Journal::open(&f.root.path.join("journal.sqlite"), exact - 1, 16)

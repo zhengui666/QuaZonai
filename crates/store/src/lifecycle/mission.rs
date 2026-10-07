@@ -8,6 +8,7 @@ use sqlx::Acquire;
 
 mod credential;
 mod finish;
+pub mod resources;
 
 /// Observable native metadata only. No message text, hidden items, token or path.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -173,10 +174,11 @@ impl Store {
         if locked.run.kind != RunKind::AgentResearch || locked.run.state.is_terminal() {
             return Err(StoreError::Conflict);
         }
-        let reserved: i64 = sqlx::query_scalar("SELECT r.reserved_tokens FROM app.model_turn_reservations r JOIN app.model_turn_bindings b ON b.reservation_id=r.id WHERE r.id=$1 AND r.run_id=$2 AND r.attempt_id=$3")
+        let reserved: Option<i64> = sqlx::query_scalar("SELECT r.reserved_tokens FROM app.model_turn_reservations r JOIN app.model_turn_bindings b ON b.reservation_id=r.id WHERE r.id=$1 AND r.run_id=$2 AND r.attempt_id=$3")
             .bind(reservation.as_uuid()).bind(run.as_uuid()).bind(owner.attempt_id.as_uuid())
             .fetch_optional(&mut *tx).await?.ok_or(StoreError::Conflict)?;
-        let reserved_tokens = counter(reserved)?;
+        let reserved_tokens =
+            counter(reserved.ok_or(StoreError::Invalid("native_token_limit_not_configured"))?)?;
         if observed_tokens < reserved_tokens {
             return Err(StoreError::Invalid("native_token_limit_not_reached"));
         }
@@ -444,10 +446,16 @@ pub(super) async fn admit_role<'a>(
         limits: JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 0,
-            cpu_seconds: counter((budget.max_cpu_seconds.get() / 10).clamp(1, 300) as i64)?,
+            cpu_seconds: budget
+                .max_cpu_seconds
+                .map(|maximum| counter((maximum.get() / 10).clamp(1, 300) as i64))
+                .transpose()?,
             wall_seconds: budget.max_wall_seconds,
             memory_mib: budget.max_memory_mib.min(4096),
-            output_bytes: counter(budget.max_output_bytes.get().min(64 * 1024 * 1024) as i64)?,
+            output_bytes: budget
+                .max_output_bytes
+                .map(|maximum| counter(maximum.get().min(64 * 1024 * 1024) as i64))
+                .transpose()?,
         },
     };
     // A native savepoint permits a domain rejection to leave an honest Cycle

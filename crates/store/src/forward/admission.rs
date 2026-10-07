@@ -15,21 +15,40 @@ use contracts::{
     DbCounter, SchemaV1,
 };
 
-pub(crate) fn limits() -> JobLimitsV1 {
-    JobLimitsV1 {
-        schema_version: SchemaV1,
-        experiments: 0,
-        cpu_seconds: DbCounter::new(30).expect("fixed native limit"),
-        wall_seconds: 60,
-        memory_mib: 512,
-        output_bytes: DbCounter::new(1024 * 1024).expect("fixed native limit"),
+fn limits(row: &sqlx::postgres::PgRow) -> Result<JobLimitsV1, StoreError> {
+    let original: JobLimitsV1 = serde_json::from_value(row.try_get("candidate_limits")?)
+        .map_err(|_| StoreError::Integrity)?;
+    Ok(domain::execution_limits::forward_evaluation(&original)?)
+}
+
+/// Both trusted enqueue paths rederive the exact tuple from protected provenance.
+/// Existing command replay returns its immutable admission before this new check.
+pub(crate) async fn validate_limits(
+    tx: &mut Transaction<'_, Postgres>,
+    input: Id,
+    project: Id,
+    runtime: Id,
+    requested: &JobLimitsV1,
+) -> Result<(), StoreError> {
+    let handoff: uuid::Uuid = sqlx::query_scalar(
+        "SELECT handoff_id FROM app.forward_evaluation_inputs WHERE input_set_id=$1 AND project_id=$2 AND runtime_id=$3"
+    ).bind(input.as_uuid()).bind(project.as_uuid()).bind(runtime.as_uuid())
+        .fetch_optional(&mut **tx).await?
+        .ok_or(StoreError::Invalid("forward_native_input_required"))?;
+    let original = header(tx, db::id(handoff)?).await?;
+    if db::id(original.try_get("project_id")?)? != project
+        || db::id(original.try_get("runtime_id")?)? != runtime
+        || *requested != limits(&original)?
+    {
+        return Err(StoreError::Invalid("forward_inherited_execution_limits"));
     }
+    Ok(())
 }
 async fn header(
     tx: &mut Transaction<'_, Postgres>,
     handoff: Id,
 ) -> Result<sqlx::postgres::PgRow, StoreError> {
-    sqlx::query("SELECT h.release_id,h.downstream_id,c.project_id,c.mandate_id,a.runtime_id FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id JOIN app.run_admissions a ON a.run_id=c.run_id JOIN app.handoff_transfers transfer ON transfer.handoff_id=h.id AND transfer.downstream_id=h.downstream_id AND transfer.external_claim_id=h.external_claim_id AND transfer.claimed_at=h.claimed_at WHERE h.id=$1 AND h.state IN ('CLAIMED','ACKNOWLEDGED') AND r.environment='REAL' AND transfer.provenance='RECORDED_TRANSITION'")
+    sqlx::query("SELECT h.release_id,h.downstream_id,c.project_id,c.mandate_id,a.runtime_id,a.limits AS candidate_limits FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id JOIN app.run_admissions a ON a.run_id=c.run_id JOIN app.handoff_transfers transfer ON transfer.handoff_id=h.id AND transfer.downstream_id=h.downstream_id AND transfer.external_claim_id=h.external_claim_id AND transfer.claimed_at=h.claimed_at WHERE h.id=$1 AND h.state IN ('CLAIMED','ACKNOWLEDGED') AND r.environment='REAL' AND transfer.provenance='RECORDED_TRANSITION'")
         .bind(handoff.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)
 }
 async fn current_policy(
@@ -193,7 +212,7 @@ impl Store {
         .fetch_one(&mut *tx)
         .await?;
         let revision = db::revision(revision)?;
-        let limits = limits();
+        let limits = limits(&original)?;
         let capabilities = crate::runtime::require_capabilities(
             &mut tx,
             runtime,

@@ -21,7 +21,7 @@ features=job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/na
   --skip managed::tests::compiler_ \
   --skip operator::catalog_prepare::classic_zip::tests
 
-# Store embeds six real-PG cases in its lib target; retain its eight local rule tests.
+# Store embeds real-PG cases in its lib target; retain its local rule tests.
 "${cargo[@]}" test --locked -p store --lib -- \
   --test-threads=1 \
   --skip execution_assumptions::liquidity::tests \
@@ -37,6 +37,7 @@ features=job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/na
 "${cargo[@]}" test --locked -p job --test allocation --test signals --test feature_model --test validation -- \
   --test-threads=1 --skip native_cli_consumes_exact_json_without_issuing_delivery_authority
 "${cargo[@]}" test --locked -p job --test account_observer -- --test-threads=1
+"${cargo[@]}" test --locked -p job --test polymarket_execution_contract -- --test-threads=1
 "${cargo[@]}" test --locked -p runtime --test contracts -- --test-threads=1
 
 # Lightweight authentication/identity/publication components use temporary files.

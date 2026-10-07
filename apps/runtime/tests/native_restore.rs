@@ -82,8 +82,10 @@ fn fresh_identity(fixture: &mut Fixture, original: &JobSpecV1) -> JobSpecV1 {
     let mut spec = original.clone();
     spec.run_id = Id::new();
     spec.external_job_id = domain::runtime_jobs::external_id(spec.run_id, spec.attempt_no).unwrap();
-    spec.deadline_at =
-        runtime::now() + chrono::Duration::seconds(i64::from(spec.limits.wall_seconds) + 20);
+    spec.deadline_at = Some(
+        runtime::now()
+            + chrono::Duration::seconds(i64::from(spec.limits.wall_seconds.unwrap()) + 20),
+    );
     fixture.runs.push(spec.run_id);
     spec
 }

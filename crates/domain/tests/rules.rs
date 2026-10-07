@@ -22,10 +22,10 @@ fn budget() -> BudgetV1 {
         max_parallel_runs: 2,
         max_turns_per_mission: 16,
         max_repair_turns: 2,
-        max_wall_seconds: 3600,
-        max_cpu_seconds: count(7200),
+        max_wall_seconds: Some(3600),
+        max_cpu_seconds: Some(count(7200)),
         max_memory_mib: 4096,
-        max_output_bytes: count(67108864),
+        max_output_bytes: Some(count(67108864)),
         max_cycles_per_day: 3,
         min_cycle_interval_seconds: 120,
         max_tokens: None,
@@ -67,10 +67,10 @@ fn mission_id() -> Id {
 fn request() -> Reservation {
     Reservation {
         experiments: 3,
-        cpu_seconds: count(100),
-        wall_seconds: 60,
+        cpu_seconds: Some(count(100)),
+        wall_seconds: Some(60),
         memory_mib: 256,
-        output_bytes: count(1024),
+        output_bytes: Some(count(1024)),
         model: None,
     }
 }
@@ -87,7 +87,7 @@ fn non_trial_work_still_reserves_resources_without_consuming_an_experiment() {
     )
     .unwrap();
     assert_eq!(prepared.reserved_experiments, 0);
-    assert_eq!(prepared.reserved_cpu_seconds, job.cpu_seconds);
+    assert_eq!(prepared.reserved_cpu_seconds, job.cpu_seconds.unwrap());
     assert_eq!(prepared.active_runs, 1);
     assert!(matches!(
         reserve(
@@ -111,7 +111,7 @@ fn non_trial_work_still_reserves_resources_without_consuming_an_experiment() {
         Err(DomainError::Invalid("reservation"))
     ));
     job.experiments = 0;
-    job.cpu_seconds = budget().max_cpu_seconds.checked_add(1).unwrap();
+    job.cpu_seconds = Some(budget().max_cpu_seconds.unwrap().checked_add(1).unwrap());
     assert!(matches!(
         reserve_non_trial(
             ProjectState::Active,
@@ -208,7 +208,7 @@ fn every_resource_and_all_internal_optuna_trials_consume_budget() {
     );
     for r in [
         Reservation {
-            wall_seconds: 3601,
+            wall_seconds: Some(3601),
             ..request()
         },
         Reservation {
@@ -216,7 +216,7 @@ fn every_resource_and_all_internal_optuna_trials_consume_budget() {
             ..request()
         },
         Reservation {
-            output_bytes: count(67108865),
+            output_bytes: Some(count(67108865)),
             ..request()
         },
     ] {
@@ -250,18 +250,29 @@ fn staged_job_preflight_reuses_inclusive_limits_without_replacing_shape_validati
         Ok(())
     );
     for (wall, memory, output) in [
-        (budget.max_wall_seconds + 1, 1, count(1)),
-        (1, budget.max_memory_mib + 1, count(1)),
-        (1, 1, budget.max_output_bytes.checked_add(1).unwrap()),
+        (
+            budget.max_wall_seconds.map(|seconds| seconds + 1),
+            1,
+            count(1),
+        ),
+        (Some(1), budget.max_memory_mib + 1, count(1)),
+        (
+            Some(1),
+            1,
+            budget.max_output_bytes.unwrap().checked_add(1).unwrap(),
+        ),
     ] {
         assert_eq!(
-            job_resource_limits(&budget, wall, memory, output),
+            job_resource_limits(&budget, wall, memory, Some(output)),
             Err(DomainError::BudgetExhausted("job_resource_limit"))
         );
     }
     // This helper owns only upper bounds. Reservation keeps its earlier shape
     // check, including its original error precedence over resource exhaustion.
-    assert_eq!(job_resource_limits(&budget, 0, 0, count(0)), Ok(()));
+    assert_eq!(
+        job_resource_limits(&budget, Some(0), 0, Some(count(0))),
+        Ok(())
+    );
     assert_eq!(
         reserve(
             ProjectState::Active,
@@ -269,7 +280,7 @@ fn staged_job_preflight_reuses_inclusive_limits_without_replacing_shape_validati
             &stop(),
             &empty_usage(),
             &Reservation {
-                wall_seconds: 0,
+                wall_seconds: Some(0),
                 memory_mib: budget.max_memory_mib + 1,
                 ..request()
             },
@@ -873,7 +884,7 @@ fn model_request(tokens: u64, estimate: Option<(&str, &str)>) -> Reservation {
         model: Some(ModelReservation {
             mission_id: mission_id(),
             turn_kind: TurnKind::Research,
-            tokens: count(tokens),
+            tokens: Some(count(tokens)),
             estimated_cost: estimate.map(|(currency, amount)| CostEstimate {
                 currency: currency.into(),
                 amount: amount.parse().unwrap(),
@@ -972,6 +983,102 @@ fn token_accounting_never_wraps_even_without_a_configured_cap() {
             Err(DomainError::BudgetExhausted("tokens"))
         );
     }
+}
+
+#[test]
+fn uncapped_turn_reserves_no_fake_tokens_and_keeps_native_usage() {
+    let mut model = model_request(1, None).model.unwrap();
+    model.tokens = None;
+    let usage = BudgetUsage {
+        used_tokens: count(i64::MAX as u64),
+        reserved_tokens: count(1),
+        ..empty_usage()
+    };
+    let next =
+        reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model).unwrap();
+    assert_eq!(next.used_tokens, usage.used_tokens);
+    assert_eq!(next.reserved_tokens, usage.reserved_tokens);
+    assert_eq!(next.mission.unwrap().reserved_turns, 1);
+    assert!(next.cost.is_none());
+}
+
+#[test]
+fn absent_turn_cap_cannot_bypass_a_frozen_cycle_token_limit() {
+    let policy = BudgetV1 {
+        max_tokens: Some(count(100)),
+        ..budget()
+    };
+    let mut model = model_request(1, None).model.unwrap();
+    model.tokens = None;
+    assert_eq!(
+        reserve_model_turn(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &empty_usage(),
+            &model
+        ),
+        Err(DomainError::Invalid("model_token_reservation"))
+    );
+}
+
+#[test]
+fn uncapped_tokens_still_enforce_turn_and_repair_counts() {
+    let policy = budget();
+    let mut model = model_request(1, None).model.unwrap();
+    model.tokens = None;
+    let mut usage = empty_usage();
+    for _ in 0..policy.max_turns_per_mission {
+        usage = reserve_model_turn(ProjectState::Active, &policy, &stop(), &usage, &model).unwrap();
+        assert_eq!(usage.reserved_tokens, DbCounter::ZERO);
+    }
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &policy, &stop(), &usage, &model),
+        Err(DomainError::BudgetExhausted("mission_turns"))
+    );
+    model.turn_kind = TurnKind::Repair;
+    let mut usage = empty_usage();
+    for _ in 0..policy.max_repair_turns {
+        usage = reserve_model_turn(ProjectState::Active, &policy, &stop(), &usage, &model).unwrap();
+    }
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &policy, &stop(), &usage, &model),
+        Err(DomainError::BudgetExhausted("repair_turns"))
+    );
+}
+
+#[test]
+fn absent_token_cap_preserves_cost_accounting_and_missing_price_errors() {
+    let policy = BudgetV1 {
+        max_tokens: None,
+        ..estimated_budget()
+    };
+    let mut model = model_request(1, None).model.unwrap();
+    model.tokens = None;
+    assert_eq!(
+        reserve_model_turn(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &cost_usage("0", "0"),
+            &model
+        ),
+        Err(DomainError::CapabilityUnavailable("cost_estimate_missing"))
+    );
+    model.estimated_cost = Some(CostEstimate {
+        currency: "USD".into(),
+        amount: "0.25".parse().unwrap(),
+    });
+    let next = reserve_model_turn(
+        ProjectState::Active,
+        &policy,
+        &stop(),
+        &cost_usage("0", "0"),
+        &model,
+    )
+    .unwrap();
+    assert_eq!(next.reserved_tokens, DbCounter::ZERO);
+    assert_eq!(next.cost.unwrap().reserved, "0.25".parse().unwrap());
 }
 
 #[test]
@@ -1155,7 +1262,7 @@ fn native_turns_exhaust_the_mission_cap_even_without_token_or_cost_limits() {
     // A continuing Mission may run while every parallel slot is occupied.
     usage.active_runs = policy.max_parallel_runs;
     usage.used_experiments = policy.max_experiments;
-    usage.reserved_cpu_seconds = policy.max_cpu_seconds;
+    usage.reserved_cpu_seconds = policy.max_cpu_seconds.unwrap();
     let job_counters = (
         usage.active_runs,
         usage.used_experiments,
@@ -1456,4 +1563,31 @@ fn metric_extremes_are_compared_without_money_range_truncation() {
             decision
         );
     }
+}
+
+#[test]
+fn optional_execution_caps_do_not_bypass_finite_grants_or_erase_accounting() {
+    let mut b = budget();
+    let mut job = request();
+    job.cpu_seconds = None;
+    assert_eq!(
+        reserve(ProjectState::Active, &b, &stop(), &empty_usage(), &job),
+        Err(DomainError::BudgetExhausted("cpu_seconds"))
+    );
+    b.max_cpu_seconds = None;
+    b.max_wall_seconds = None;
+    b.max_output_bytes = None;
+    job.wall_seconds = None;
+    job.output_bytes = None;
+    let mut usage = empty_usage();
+    usage.reserved_cpu_seconds = count(123);
+    let next = reserve(ProjectState::Active, &b, &stop(), &usage, &job).unwrap();
+    assert_eq!(next.reserved_cpu_seconds, count(123));
+    assert_eq!(next.reserved_experiments, job.experiments);
+    assert_eq!(next.active_runs, 1);
+    job.memory_mib = b.max_memory_mib + 1;
+    assert_eq!(
+        reserve(ProjectState::Active, &b, &stop(), &usage, &job),
+        Err(DomainError::BudgetExhausted("job_resource_limit"))
+    );
 }

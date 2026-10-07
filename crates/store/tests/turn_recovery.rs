@@ -172,7 +172,7 @@ async fn draft_brief_cannot_authorize_a_new_model_turn(pool: PgPool) {
         .bind(serde_json::to_value(&f.budget).unwrap()).execute(&pool).await.unwrap();
     let (run, _, fence, deadline) = mission(&pool, f.project, cycle, f.input_set, f.profile).await;
     let mut request = f.request("draft");
-    request.deadline_at = deadline;
+    request.deadline_at = Some(deadline);
     let store = Store::from_pool(pool.clone());
     assert!(matches!(
         store.reserve_turn(run, &fence, &request).await,

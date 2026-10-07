@@ -49,7 +49,7 @@ impl Store {
                 return Err(StoreError::Forbidden);
             }
         }
-        if let Some(c) = sqlx::query("SELECT c.id,c.verifier_ref,c.issuer_attempt_id,c.issuer_owner_epoch,c.scope_codes,c.principal_epoch,c.expires_at,p.credential_epoch,p.run_id FROM app.machine_credentials c JOIN app.machine_principals p ON p.id=c.principal_id WHERE c.public_token_id=$1 FOR SHARE OF c")
+        if let Some(c) = sqlx::query("SELECT c.id,c.verifier_ref,c.issuer_attempt_id,c.issuer_owner_epoch,c.scope_codes,c.principal_epoch,c.expires_at,c.lease_bound,p.credential_epoch,p.run_id FROM app.machine_credentials c JOIN app.machine_principals p ON p.id=c.principal_id WHERE c.public_token_id=$1 FOR SHARE OF c")
             .bind(public_token.to_string()).fetch_optional(&mut *tx).await? {
             if c.try_get::<Option<uuid::Uuid>,_>("run_id")? != Some(run.as_uuid())
                 || c.try_get::<String,_>("verifier_ref")? != verifier.to_string()
@@ -63,7 +63,7 @@ impl Store {
             let revoked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.machine_credential_revocations WHERE credential_id=$1 AND effective_at<=$2)")
                 .bind(c.try_get::<uuid::Uuid,_>("id")?).bind(time).fetch_one(&mut *tx).await?;
             if revoked { return Err(StoreError::Conflict); }
-            if locked.run.deadline_at<=time || c.try_get::<DateTime<Utc>,_>("expires_at")?<=time { return Err(DomainError::AdmissionClosed.into()); }
+            if domain::execution_limits::expired(locked.run.deadline_at, time) || (!c.try_get::<bool,_>("lease_bound")? && c.try_get::<DateTime<Utc>,_>("expires_at")?<=time) { return Err(DomainError::AdmissionClosed.into()); }
             let id=db::id(c.try_get("id")?)?;
             tx.commit().await?;
             return Ok(id);
@@ -84,13 +84,18 @@ impl Store {
             (principal, 1)
         };
         // Read the clock after all native authority locks, including the principal.
-        fence(&mut tx, &locked.run, owner).await?;
-        if locked.run.deadline_at <= now(&mut tx).await? {
+        let attempt = fence(&mut tx, &locked.run, owner).await?;
+        if domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?) {
             return Err(DomainError::AdmissionClosed.into());
         }
-        let credential:uuid::Uuid=sqlx::query_scalar("INSERT INTO app.machine_credentials(principal_id,public_token_id,verifier_ref,principal_epoch,scope_codes,issued_at,expires_at,issued_by,issuer_attempt_id,issuer_owner_epoch) VALUES($1,$2,$3,$4,$5,clock_timestamp(),$6,'MISSION_SERVICE',$7,$8) RETURNING id")
-            .bind(principal).bind(public_token.to_string()).bind(verifier.to_string()).bind(epoch).bind(scopes).bind(locked.run.deadline_at)
-            .bind(owner.attempt_id.as_uuid()).bind(owner.owner_epoch.get() as i64).fetch_one(&mut *tx).await?;
+        let lease_bound = locked.run.deadline_at.is_none();
+        let expires = locked
+            .run
+            .deadline_at
+            .unwrap_or(attempt.try_get("lease_expires_at")?);
+        let credential:uuid::Uuid=sqlx::query_scalar("INSERT INTO app.machine_credentials(principal_id,public_token_id,verifier_ref,principal_epoch,scope_codes,issued_at,expires_at,issued_by,issuer_attempt_id,issuer_owner_epoch,lease_bound) VALUES($1,$2,$3,$4,$5,clock_timestamp(),$6,'MISSION_SERVICE',$7,$8,$9) RETURNING id")
+            .bind(principal).bind(public_token.to_string()).bind(verifier.to_string()).bind(epoch).bind(scopes).bind(expires)
+            .bind(owner.attempt_id.as_uuid()).bind(owner.owner_epoch.get() as i64).bind(lease_bound).fetch_one(&mut *tx).await?;
         let credential = db::id(credential)?;
         tx.commit().await?;
         Ok(credential)

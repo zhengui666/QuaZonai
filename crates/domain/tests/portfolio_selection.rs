@@ -20,7 +20,7 @@ fn build_selection_keeps_exact_qualifications_weights_and_bounded_limits() {
             2 => {
                 bad.members.pop();
             }
-            3 => bad.limits.cpu_seconds = contracts::DbCounter::ZERO,
+            3 => bad.limits.cpu_seconds = Some(contracts::DbCounter::ZERO),
             _ => bad.members[0].ensemble_weight = "-0.25".parse().unwrap(),
         }
         assert!(domain::portfolio::build_selection(&bad).is_err());

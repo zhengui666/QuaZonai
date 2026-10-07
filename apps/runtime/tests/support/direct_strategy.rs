@@ -400,8 +400,8 @@ pub(super) fn research_to_claim<'a>(
             .resource;
         let mut limits = experiment_support::limits();
         limits.experiments = 0;
-        limits.cpu_seconds = oci::count(60);
-        limits.output_bytes = oci::count(4 * 1024 * 1024);
+        limits.cpu_seconds = Some(oci::count(60));
+        limits.output_bytes = Some(oci::count(4 * 1024 * 1024));
         let mut build = StrategyPortfolioBuildV1 {
             schema_version: SchemaV1,
             source_kind: StrategyPortfolioSourceV1::StrategyAlpha,

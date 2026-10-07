@@ -29,16 +29,10 @@ pub(super) fn native_cpu(
     capabilities: &contracts::runtime::RuntimeCapabilitiesV1,
 ) -> Result<u16, StoreError> {
     domain::runtime::job_limits(capabilities, limits)?;
-    if limits.wall_seconds == 0 {
+    if limits.wall_seconds == Some(0) {
         return Err(DomainError::BudgetExhausted("wall_seconds").into());
     }
-    let cpu = u16::try_from(
-        limits
-            .cpu_seconds
-            .get()
-            .div_ceil(u64::from(limits.wall_seconds)),
-    )
-    .map_err(|_| DomainError::CapabilityUnavailable("native_cpu_capacity"))?;
+    let cpu = domain::execution_limits::native_cpu_rate(limits.cpu_seconds, limits.wall_seconds)?;
     if cpu == 0 || cpu > capabilities.max_cpu {
         return Err(DomainError::CapabilityUnavailable("native_cpu_capacity").into());
     }
@@ -61,15 +55,15 @@ fn cpu_capacity_uses_the_actual_bounded_wall_allocation() {
     let mut limits = JobLimitsV1 {
         schema_version: SchemaV1,
         experiments: 0,
-        cpu_seconds: DbCounter::new(10).unwrap(),
-        wall_seconds: 5,
+        cpu_seconds: Some(DbCounter::new(10).unwrap()),
+        wall_seconds: Some(5),
         memory_mib: 1024,
-        output_bytes: DbCounter::new(1024).unwrap(),
+        output_bytes: Some(DbCounter::new(1024).unwrap()),
     };
     assert_eq!(native_cpu(&limits, &capabilities).unwrap(), 2);
-    limits.wall_seconds = 4;
+    limits.wall_seconds = Some(4);
     assert!(native_cpu(&limits, &capabilities).is_err());
-    limits.wall_seconds = 0;
+    limits.wall_seconds = Some(0);
     assert!(native_cpu(&limits, &capabilities).is_err());
 }
 
@@ -98,7 +92,7 @@ impl Store {
                 locked.run.state,
                 RunState::Dispatching | RunState::Running | RunState::Reconciling
             )
-            || now(&mut tx).await? >= locked.run.deadline_at
+            || domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?)
             || row.try_get::<String, _>("outcome")? != "PENDING"
         {
             return Err(DomainError::AdmissionClosed.into());
@@ -151,7 +145,7 @@ impl Store {
                 locked.run.state,
                 RunState::Dispatching | RunState::Running | RunState::Reconciling
             )
-            || now(&mut tx).await? >= locked.run.deadline_at
+            || domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?)
         {
             return Ok(None);
         }
@@ -275,15 +269,15 @@ impl Store {
         if !matches!(
             locked.run.state,
             RunState::Dispatching | RunState::Running | RunState::Reconciling
-        ) || now(&mut tx).await? >= locked.run.deadline_at
+        ) || domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?)
             || e.try_get::<String, _>("outcome")? != "PENDING"
             || (!validation && db::optional_id(&e, "run_id")?.is_some())
         {
             return Err(DomainError::AdmissionClosed.into());
         }
         if limits.experiments != 0
-            || limits.wall_seconds == 0
-            || limits.cpu_seconds == DbCounter::ZERO
+            || limits.wall_seconds == Some(0)
+            || limits.cpu_seconds == Some(DbCounter::ZERO)
         {
             return Err(StoreError::Invalid("forecast_limits"));
         }
@@ -497,7 +491,7 @@ impl Store {
             &format!("experiment/{experiment}/{stage_name}"),
             &submission,
             false,
-            Some(locked.run.deadline_at),
+            locked.run.deadline_at,
         )
         .await?;
         if admitted.replayed {
@@ -594,15 +588,15 @@ impl Store {
         if !matches!(
             locked.run.state,
             RunState::Dispatching | RunState::Running | RunState::Reconciling
-        ) || now(&mut tx).await? >= locked.run.deadline_at
+        ) || domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?)
             || e.try_get::<String, _>("outcome")? != "PENDING"
             || db::optional_id(&e, "run_id")?.is_some()
         {
             return Err(DomainError::AdmissionClosed.into());
         }
         if limits.experiments != 1
-            || limits.wall_seconds == 0
-            || limits.cpu_seconds == DbCounter::ZERO
+            || limits.wall_seconds == Some(0)
+            || limits.cpu_seconds == Some(DbCounter::ZERO)
         {
             return Err(StoreError::Invalid("compilation_limits"));
         }
@@ -708,7 +702,7 @@ impl Store {
             &format!("experiment/{experiment}/compile"),
             &request,
             true,
-            Some(locked.run.deadline_at),
+            locked.run.deadline_at,
         )
         .await?;
         if admitted.replayed {

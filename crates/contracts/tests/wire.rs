@@ -298,7 +298,6 @@ fn all_unsigned_numeric_fields_publish_the_native_upper_bound() {
             "BudgetV1",
             vec![
                 "max_experiments",
-                "max_wall_seconds",
                 "max_memory_mib",
                 "min_cycle_interval_seconds",
             ],

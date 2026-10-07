@@ -33,10 +33,10 @@ async fn setup(pool: &PgPool) -> (support::Fixture, RunSubmission) {
         limits: JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 1,
-            cpu_seconds: DbCounter::new(100).unwrap(),
-            wall_seconds: 3600,
+            cpu_seconds: Some(DbCounter::new(100).unwrap()),
+            wall_seconds: Some(3600),
             memory_mib: 1024,
-            output_bytes: DbCounter::new(4096).unwrap(),
+            output_bytes: Some(DbCounter::new(4096).unwrap()),
         },
     };
     (fixture, request)

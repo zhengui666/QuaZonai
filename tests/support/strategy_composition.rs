@@ -14,6 +14,7 @@ pub fn count(value: u64) -> DbCounter {
 }
 pub fn settings() -> NativeSimulationSettingsV1 {
     NativeSimulationSettingsV1 {
+        multi_currency_spot_cash: None,
         schema_version: SchemaV1,
         base_currency: "USD".into(),
         starting_capital: "1000000".parse().unwrap(),

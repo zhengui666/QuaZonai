@@ -1,10 +1,10 @@
 //! Operator-managed data sources, explicit licenses and immutable native registrations.
 //! Client requests never assign origin, PIT status, row counts or scientific qualification.
 use crate::{
+    DbCounter, Id, Revision, SchemaV1,
     catalogs::DataRevisionPolicy,
     research::{DataOrigin, DataPartition, DataUse, PitStatus},
     runtime::RuntimeDataKind,
-    DbCounter, Id, Revision, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -170,6 +170,48 @@ pub struct DatasetView {
     pub checked_at: DateTime<Utc>,
 }
 
+/// Owner-only audit projection of the two immutable registration documents.
+/// Reading this summary does not revalidate the native snapshot, attest historical
+/// availability, extend its license, or change the registered origin/PIT labels.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetEvidenceViewV1 {
+    pub schema_version: SchemaV1,
+    pub dataset_revision_id: Id,
+    pub source_id: Id,
+    pub data_use_grant_id: Id,
+    pub native_metadata_artifact_id: Id,
+    pub quality_artifact_id: Id,
+    pub registration_observed_at: DateTime<Utc>,
+    pub provider_kind: DataProviderKind,
+    pub partition: DataPartition,
+    pub origin: DataOrigin,
+    /// The persisted label, not a new historical-availability attestation.
+    pub pit_status: PitStatus,
+    pub revision_policy: DataRevisionPolicy,
+    pub source_enabled: bool,
+    pub runtime_enabled: bool,
+    pub license_state: DataLicenseState,
+    /// Read-time license observation only; does not authorize new data use.
+    pub checked_at: DateTime<Utc>,
+    pub quality: DatasetQualitySummaryV1,
+}
+
+/// Original registration-time measurements only. No prices, quantities,
+/// instruments, settlements, samples, or raw native documents are returned.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetQualitySummaryV1 {
+    pub native_version: String,
+    pub checked_at: DateTime<Utc>,
+    pub row_count: DbCounter,
+    #[schema(minimum = 1, maximum = 256)]
+    pub instrument_count: u16,
+    pub first_event_ns: DbCounter,
+    pub last_event_ns: DbCounter,
+    pub available_through_ns: DbCounter,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UniverseRegistrationState {
@@ -211,11 +253,11 @@ pub struct DataValidateRequest {
     pub limits: crate::lifecycle::JobLimitsV1,
 }
 
-pub(crate) fn bounded_native_limits_schema(
-) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+pub(crate) fn bounded_native_limits_schema()
+-> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     use utoipa::{
-        openapi::schema::{AllOfBuilder, ObjectBuilder, Type},
         PartialSchema,
+        openapi::schema::{AllOfBuilder, ObjectBuilder, OneOfBuilder, Type},
     };
     AllOfBuilder::new()
         .item(crate::lifecycle::JobLimitsV1::schema())
@@ -228,13 +270,20 @@ pub(crate) fn bounded_native_limits_schema(
                         .schema_type(Type::Integer)
                         .enum_values(Some([0])),
                 )
-                .property("cpu_seconds", crate::scalars::positive_db_counter_schema())
+                .property(
+                    "cpu_seconds",
+                    crate::scalars::optional_positive_db_counter_schema(),
+                )
                 .property(
                     "wall_seconds",
-                    ObjectBuilder::new()
-                        .schema_type(Type::Integer)
-                        .minimum(Some(1.0))
-                        .maximum(Some(86400.0)),
+                    OneOfBuilder::new()
+                        .item(ObjectBuilder::new().schema_type(Type::Null))
+                        .item(
+                            ObjectBuilder::new()
+                                .schema_type(Type::Integer)
+                                .minimum(Some(1.0))
+                                .maximum(Some(86400.0)),
+                        ),
                 )
                 .property(
                     "memory_mib",
@@ -245,10 +294,12 @@ pub(crate) fn bounded_native_limits_schema(
                 )
                 .property(
                     "output_bytes",
-                    crate::scalars::bounded_bigint_schema(
-                        crate::runtime_jobs::MAX_JOB_OUTPUT_BYTES,
-                        true,
-                    ),
+                    OneOfBuilder::new()
+                        .item(ObjectBuilder::new().schema_type(Type::Null))
+                        .item(crate::scalars::bounded_bigint_schema(
+                            crate::runtime_jobs::MAX_JOB_OUTPUT_BYTES,
+                            true,
+                        )),
                 ),
         )
         .into()

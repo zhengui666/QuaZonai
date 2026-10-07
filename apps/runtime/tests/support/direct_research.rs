@@ -913,8 +913,8 @@ async fn scenario(
         .unwrap()
         .resource;
     let mut compile_limits = experiment_support::limits();
-    compile_limits.cpu_seconds = oci::count(60);
-    compile_limits.output_bytes = oci::count(4 * 1024 * 1024);
+    compile_limits.cpu_seconds = Some(oci::count(60));
+    compile_limits.output_bytes = Some(oci::count(4 * 1024 * 1024));
     let mut evaluation_limits = compile_limits.clone();
     evaluation_limits.experiments = 0;
     let intent = ExperimentEvaluateIntent {
@@ -1208,8 +1208,8 @@ async fn scenario(
     assert_eq!(accounting.used_experiments, 1);
     assert_eq!(
         accounting.reserved_cpu_seconds.get(),
-        intent.request.compile_limits.cpu_seconds.get()
-            + intent.request.evaluation_limits.cpu_seconds.get()
+        intent.request.compile_limits.cpu_seconds.unwrap().get()
+            + intent.request.evaluation_limits.cpu_seconds.unwrap().get()
     );
     let before: Value =
         sqlx::query_scalar("SELECT to_jsonb(c) FROM app.research_cycles c WHERE id=$1")
