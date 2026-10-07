@@ -1,8 +1,8 @@
 //! Offline operator preparation; original provenance is declared, native facts are measured.
 use crate::catalog::{
-    measure_catalog, quality_report, select_instrument_versions, NativeMarketData,
+    NativeMarketData, measure_catalog, quality_report, select_instrument_versions,
 };
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use clap::Parser;
 use contracts::{
     catalogs::RuntimeCatalogMetadataV1, execution::NativeDatasetSelectionV1,
@@ -293,6 +293,24 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
             "REGISTRATION_MICROSECOND_PRECISION_REQUIRED"
         );
     }
+    let spot_source = match fs::symlink_metadata(
+        args.catalog
+            .join(contracts::spot_cash_source::SPOT_CANDLE_SOURCE_FILE),
+    ) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    if spot_source {
+        ensure!(
+            metadata.pit_status == contracts::research::PitStatus::Unverified,
+            "SPOT_REST_HISTORICAL_PIT_MUST_REMAIN_UNVERIFIED"
+        );
+        #[cfg(feature = "hyperliquid-offline")]
+        crate::spot_cash_source::load_closed_rows(&args.catalog, &selected.selection)?;
+        #[cfg(not(feature = "hyperliquid-offline"))]
+        anyhow::bail!("SPOT_SOURCE_CAPABILITY_NOT_BUILT: hyperliquid-offline");
+    }
     domain::catalogs::metadata(&metadata, chrono::Utc::now())?;
     domain::data::registry_key(&metadata.registered_ref)?;
     let source = args.catalog.canonicalize()?;
@@ -335,6 +353,10 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
                 .all(|(a, b)| a.bars == b.bars),
         "CATALOG_READBACK_MISMATCH"
     );
+    #[cfg(feature = "hyperliquid-offline")]
+    if spot_source {
+        crate::spot_cash_source::preserve_for_selection(&source, &root, &selected.selection)?;
+    }
     let (readback_instruments, readback_closes) = originals(&root, &readback, &selected)?;
     ensure!(
         serde_json::to_value(readback_instruments)? == serde_json::to_value(instruments)?

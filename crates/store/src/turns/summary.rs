@@ -84,7 +84,11 @@ impl Store {
         if count(used)?
             .get()
             .checked_add(bytes.len() as u64)
-            .is_none_or(|total| total > limits.output_bytes.get())
+            .is_none_or(|total| {
+                limits
+                    .output_bytes
+                    .is_some_and(|maximum| total > maximum.get())
+            })
         {
             return Err(DomainError::BudgetExhausted("output_bytes").into());
         }

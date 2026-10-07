@@ -89,10 +89,10 @@ async fn operator_http_admits_original_calibrated_sealed_run_without_another_tri
     let mut limits = JobLimitsV1 {
         schema_version: SchemaV1,
         experiments: 1,
-        cpu_seconds: DbCounter::new(10).unwrap(),
-        wall_seconds: 60,
+        cpu_seconds: Some(DbCounter::new(10).unwrap()),
+        wall_seconds: Some(60),
         memory_mib: 1024,
-        output_bytes: DbCounter::new(1024 * 1024).unwrap(),
+        output_bytes: Some(DbCounter::new(1024 * 1024).unwrap()),
     };
     let publish = |object: NativeObjectPublication| {
         let objects = data.objects.clone();

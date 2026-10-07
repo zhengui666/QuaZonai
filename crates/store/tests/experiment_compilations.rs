@@ -320,7 +320,7 @@ async fn wait_for_ledger_read(pool: &PgPool) {
 async fn admission_lock_wait_does_not_extend_the_parent_deadline(pool: PgPool) {
     let (store, actor, f, lease, experiment) = setup(&pool).await;
     let mut allocation = limits();
-    allocation.wall_seconds = 3600;
+    allocation.wall_seconds = Some(3600);
     let mut blocker = pool.begin().await.unwrap();
     sqlx::query("LOCK TABLE app.model_turn_receipts IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *blocker)
@@ -351,7 +351,7 @@ async fn admission_lock_wait_does_not_extend_the_parent_deadline(pool: PgPool) {
     let (admitted, ()) = tokio::join!(admit, release);
     let admitted = admitted.expect("a database wait must not exhaust the Mission wall budget");
     assert!(admitted.resource.deadline_at <= lease.run.deadline_at);
-    assert!(admitted.resource.deadline_at > admitted.resource.queued_at);
+    assert!(admitted.resource.deadline_at.unwrap() > admitted.resource.queued_at);
     assert_eq!(
         store.get_run(&actor, admitted.resource.id).await.unwrap(),
         admitted.resource
@@ -371,8 +371,8 @@ async fn delayed_resource_fit(
     let (store, actor) = research_support::operator(&pool).await;
     let mut f = cycle_support::setup(&pool, &store, &actor).await;
     let mut content = f.brief.content.clone();
-    content.budget.max_wall_seconds = 15;
-    content.budget.max_cpu_seconds = DbCounter::new(100).unwrap();
+    content.budget.max_wall_seconds = Some(15);
+    content.budget.max_cpu_seconds = Some(DbCounter::new(100).unwrap());
     f.brief = store
         .update_brief(
             &actor,
@@ -410,8 +410,8 @@ async fn delayed_resource_fit(
         .await
         .unwrap();
     let mut allocation = limits();
-    allocation.wall_seconds = 15;
-    allocation.cpu_seconds = DbCounter::new(cpu_seconds).unwrap();
+    allocation.wall_seconds = Some(15);
+    allocation.cpu_seconds = Some(DbCounter::new(cpu_seconds).unwrap());
     let mut blocker = pool.begin().await.unwrap();
     sqlx::query("LOCK TABLE app.model_turn_receipts IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *blocker)
@@ -449,8 +449,8 @@ async fn delayed_resource_fit(
             "CPU must fit the post-wait parent window"
         );
         assert_eq!(
-            i64::from(effective.wall_seconds),
-            (run.deadline_at - run.queued_at).num_seconds()
+            i64::from(effective.wall_seconds.unwrap()),
+            (run.deadline_at.unwrap() - run.queued_at).num_seconds()
         );
         assert!(effective.wall_seconds < allocation.wall_seconds);
         let message = validation_publication::message(&pool, run.id).await;

@@ -85,6 +85,9 @@ enum Operation {
     Simulate {
         #[arg(long)]
         catalog: PathBuf,
+        /// Existing DatasetRevision ID; required only by the explicit spot CASH mode.
+        #[arg(long, value_parser = parse_id)]
+        dataset_revision_id: Option<contracts::Id>,
     },
     /// Recompute rolling portfolio targets inside one native simulated account.
     StudyPortfolio {
@@ -233,7 +236,7 @@ fn run(operation: Operation) -> Result<()> {
                 calibration.as_ref(),
             )?)
         }
-        Operation::Simulate { catalog } => output(&job::simulation::simulate(&catalog, &input()?)?),
+        Operation::Simulate { catalog, dataset_revision_id } => output(&job::simulation::simulate_explicit(&catalog, &input()?, dataset_revision_id)?),
         Operation::StudyPortfolio { catalog, objects } => {
             output(&job::study::evaluate(&catalog, &input()?, |id| {
                 model_bytes(&objects.join(id.to_string()), 8 * 1024 * 1024)
@@ -302,6 +305,16 @@ fn main() {
 mod tests {
     use super::{public_error_code, public_failure, Arguments, Operation};
     use clap::Parser;
+
+    #[test]
+    fn hyper_network_collection_is_not_a_cli_operation() {
+        for command in ["capture-spot-candles", "hyperliquid-public"] {
+            let error = Arguments::try_parse_from(["job", command])
+                .err()
+                .expect("Hyper network collection must not be exposed");
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        }
+    }
 
     #[test]
     fn only_typed_compiler_memory_evidence_selects_the_resource_exit() {

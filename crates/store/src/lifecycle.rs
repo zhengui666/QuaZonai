@@ -222,15 +222,13 @@ async fn expire_sent_run(
     let deadline = if locked.run.kind == contracts::runs::RunKind::AgentResearch {
         let turn: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT min(r.deadline_at)::timestamptz FROM app.model_turn_reservations r WHERE r.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.model_turn_receipts t WHERE t.reservation_id=r.id)")
             .bind(locked.run.id.as_uuid()).fetch_one(&mut **tx).await?;
-        turn.map_or(locked.run.deadline_at, |turn| {
-            turn.min(locked.run.deadline_at)
-        })
+        domain::execution_limits::earlier(turn, locked.run.deadline_at)
     } else {
         locked.run.deadline_at
     };
     if attempt.try_get::<String, _>("dispatch_state")? != "NOT_SENT"
         && locked.run.state != RunState::CancelRequested
-        && deadline <= now(tx).await?
+        && domain::execution_limits::expired(deadline, now(tx).await?)
     {
         let state = runs::request_cancel(locked.run.state)?;
         sqlx::query(
@@ -650,11 +648,14 @@ impl Store {
         let time = now(&mut tx).await?;
         let mut limits = request.limits.clone();
         if let Some(parent) = parent_deadline {
-            limits.wall_seconds = limits.wall_seconds.min(
-                u32::try_from((parent - time).num_seconds())
-                    .map_err(|_| DomainError::BudgetExhausted("wall_seconds"))?,
+            limits.wall_seconds = domain::execution_limits::earlier(
+                limits.wall_seconds,
+                Some(
+                    u32::try_from((parent - time).num_seconds())
+                        .map_err(|_| DomainError::BudgetExhausted("wall_seconds"))?,
+                ),
             );
-            if limits.wall_seconds == 0 {
+            if limits.wall_seconds == Some(0) {
                 return Err(DomainError::BudgetExhausted("wall_seconds").into());
             }
         }
@@ -682,9 +683,7 @@ impl Store {
                 model: None,
             },
         )?;
-        let deadline = time
-            .checked_add_signed(Duration::seconds(i64::from(l.wall_seconds)))
-            .ok_or(StoreError::Invalid("deadline"))?;
+        let deadline = domain::execution_limits::deadline(time, l.wall_seconds)?;
         let id = Id::new();
         sqlx::query("UPDATE app.research_cycles SET reserved_experiments=$2,reserved_cpu_seconds=$3 WHERE id=$1").bind(request.cycle_id.as_uuid()).bind(i64::from(reserved.reserved_experiments)).bind(reserved.reserved_cpu_seconds.get() as i64).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,deadline_at,queued_at) VALUES($1,$2,$3,$4,$5,'QUEUED',$6,$7)")
@@ -730,14 +729,12 @@ impl Store {
         commands::key(key)?;
         let l = &request.limits;
         if !standalone_kind(request.kind)
-            || (request.kind == RunKind::ForwardEvaluate
-                && (request.limits != crate::forward::evaluation_limits()
-                    || request.max_parallel_runs != 2))
+            || (request.kind == RunKind::ForwardEvaluate && request.max_parallel_runs != 2)
             || l.experiments != 0
-            || l.cpu_seconds.get() == 0
-            || l.wall_seconds == 0
+            || l.cpu_seconds.is_some_and(|cpu| cpu.get() == 0)
+            || l.wall_seconds == Some(0)
             || l.memory_mib == 0
-            || l.output_bytes.get() == 0
+            || l.output_bytes.is_some_and(|output| output.get() == 0)
             || request.max_parallel_runs == 0
         {
             return Err(StoreError::Invalid("standalone_run_limits_or_kind"));
@@ -772,6 +769,16 @@ impl Store {
             request.runtime_id,
         )
         .await?;
+        if request.kind == RunKind::ForwardEvaluate {
+            crate::forward::validate_evaluation_limits(
+                &mut tx,
+                request.input_set_id,
+                request.project_id,
+                request.runtime_id,
+                l,
+            )
+            .await?;
+        }
         let r = sqlx::query("SELECT * FROM app.runtime_integrations WHERE id=$1 FOR SHARE")
             .bind(request.runtime_id.as_uuid())
             .fetch_optional(&mut *tx)
@@ -802,9 +809,7 @@ impl Store {
             allowed_capabilities: caps,
         };
         let time = now(&mut tx).await?;
-        let deadline = time
-            .checked_add_signed(Duration::seconds(i64::from(l.wall_seconds)))
-            .ok_or(StoreError::Invalid("deadline"))?;
+        let deadline = domain::execution_limits::deadline(time, l.wall_seconds)?;
         let id = Id::new();
         sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,deadline_at,queued_at) VALUES($1,$2,NULL,$3,$4,'QUEUED',$5,$6)")
             .bind(id.as_uuid()).bind(request.project_id.as_uuid()).bind(db::code(&request.kind)?).bind(request.input_set_id.as_uuid())
@@ -885,7 +890,7 @@ impl Store {
         let time = now(&mut tx).await?;
         let expiry = time + Duration::seconds(i64::from(lease_seconds));
         if locked.run.active_attempt_id.is_none() {
-            if locked.run.deadline_at <= time {
+            if domain::execution_limits::expired(locked.run.deadline_at, time) {
                 let run=finish(&mut tx,&mut locked,RunState::Failed,RunReason::DeadlineExceeded,json!({"schema_version":1,"source":"NOT_DISPATCHED","reason":"DEADLINE_EXCEEDED"})).await?;
                 tx.commit().await?;
                 return Ok(ClaimResult::Terminal(run));
@@ -921,8 +926,19 @@ impl Store {
                 tx.commit().await?;
                 return Ok(ClaimResult::Leased(Box::new(lease)));
             }
-            if locked.run.deadline_at <= time
+            // Native Mission bootstrap can own a process tree before the first
+            // thread-send permit. Give its replacement a fenced cleanup lease;
+            // NOT_SENT alone is not evidence that no native resource exists.
+            let mission_resources_open = if locked.run.kind == RunKind::AgentResearch {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM app.mission_resources WHERE run_id=$1 AND NOT closed)"
+                ).bind(locked.run.id.as_uuid()).fetch_one(&mut *tx).await?
+            } else {
+                false
+            };
+            if domain::execution_limits::expired(locked.run.deadline_at, time)
                 && old.try_get::<String, _>("dispatch_state")? == "NOT_SENT"
+                && !mission_resources_open
             {
                 // This identity was never authorized for a wire write. Close the
                 // local attempt without inventing an observed remote failure.
@@ -977,7 +993,9 @@ impl Store {
             tx.commit().await?;
             return Ok(false);
         }
-        if !locked.admission_open() || locked.run.deadline_at <= now(&mut tx).await? {
+        if !locked.admission_open()
+            || domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?)
+        {
             return Err(DomainError::AdmissionClosed.into());
         }
         native::revalidate_dispatch_inputs(
@@ -1012,7 +1030,7 @@ impl Store {
         )
         .await?;
         fence(&mut tx, &locked.run, owner).await?;
-        if locked.run.deadline_at <= now(&mut tx).await? {
+        if domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?) {
             return Err(DomainError::AdmissionClosed.into());
         }
         sqlx::query("UPDATE app.run_attempts SET dispatch_state='SENT_UNKNOWN' WHERE id=$1")

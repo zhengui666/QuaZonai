@@ -329,6 +329,7 @@ async fn setup_plan(
             dataset_revision_id: data.discovery,
             settlement_rule_ref: "controlled-spot-settlement".into(),
             settings: NativeSimulationSettingsV1 {
+                multi_currency_spot_cash: None,
                 schema_version: SchemaV1,
                 base_currency: "USD".into(),
                 starting_capital: "1000".parse().unwrap(),
@@ -445,8 +446,8 @@ async fn setup_plan(
         serde_json::from_str(include_str!("../contracts/research-brief.json")).unwrap();
     if !profiles {
         // Explicit external protocol-test allocation, including a >1 MiB report.
-        request.content.budget.max_output_bytes = DbCounter::new(4 * 1024 * 1024).unwrap();
-        request.content.budget.max_wall_seconds = 1800;
+        request.content.budget.max_output_bytes = Some(DbCounter::new(4 * 1024 * 1024).unwrap());
+        request.content.budget.max_wall_seconds = Some(1800);
     }
     request.content.universe_version_id = data.universe;
     request.content.execution_assumptions_id = data.assumptions;

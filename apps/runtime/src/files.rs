@@ -144,7 +144,7 @@ pub fn publish_directory(staging: &Path, destination: &Path) -> Result<()> {
 }
 
 /// Only a job's own writable bind mount is inspected. This does not follow children.
-pub fn output_usage(root: &Path, maximum: u64) -> Result<u64> {
+pub fn output_usage(root: &Path, maximum: Option<u64>) -> Result<u64> {
     let directory = directory_handle(root)?;
     let _metadata = directory.metadata()?;
     let mut total = 0u64;
@@ -157,7 +157,7 @@ pub fn output_usage(root: &Path, maximum: u64) -> Result<u64> {
             return Err(Failure::Invalid("native_output_entry"));
         }
         total = total.checked_add(metadata.len()).ok_or(Failure::Capacity)?;
-        if total > maximum {
+        if maximum.is_some_and(|maximum| total > maximum) {
             return Err(Failure::Capacity);
         }
     }
@@ -176,4 +176,20 @@ pub fn writable_output(path: &Path) -> Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o1777))?;
     File::open(path)?.sync_all()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod optional_output_tests {
+    use super::*;
+    #[test]
+    fn no_cumulative_output_cap_still_measures_and_rejects_unsafe_entries() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a"), b"123456").unwrap();
+        fs::write(root.path().join("b"), b"7890").unwrap();
+        assert_eq!(output_usage(root.path(), None).unwrap(), 10);
+        assert!(output_usage(root.path(), Some(9)).is_err());
+        assert_eq!(output_usage(root.path(), Some(10)).unwrap(), 10);
+        std::os::unix::fs::symlink(root.path().join("a"), root.path().join("link")).unwrap();
+        assert!(output_usage(root.path(), None).is_err());
+    }
 }

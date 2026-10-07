@@ -197,7 +197,11 @@ async fn external_limits_and_changed_idempotent_intent_do_not_duplicate_trials(p
     assert_eq!(count, 0);
     let compiled = evaluate(&store, &actor, &f, &request).await.unwrap();
     let mut changed = request.clone();
-    changed.request.evaluation_limits.wall_seconds += 1;
+    changed.request.evaluation_limits.wall_seconds = changed
+        .request
+        .evaluation_limits
+        .wall_seconds
+        .map(|seconds| seconds + 1);
     assert!(matches!(
         evaluate(&store, &actor, &f, &changed).await,
         Err(StoreError::IdempotencyConflict)
@@ -365,16 +369,26 @@ async fn impossible_stage_allocations_are_rejected_before_any_trial_or_run(pool:
                 &mut invalid.request.evaluation_limits
             };
             match dimension {
-                0 => limits.wall_seconds = f.brief.content.budget.max_wall_seconds + 1,
+                0 => {
+                    limits.wall_seconds = f
+                        .brief
+                        .content
+                        .budget
+                        .max_wall_seconds
+                        .map(|seconds| seconds + 1)
+                }
                 1 => limits.memory_mib = f.brief.content.budget.max_memory_mib + 1,
                 2 => {
-                    limits.output_bytes =
-                        contracts::DbCounter::new(f.brief.content.budget.max_output_bytes.get() + 1)
-                            .unwrap()
+                    limits.output_bytes = Some(
+                        contracts::DbCounter::new(
+                            f.brief.content.budget.max_output_bytes.unwrap().get() + 1,
+                        )
+                        .unwrap(),
+                    )
                 }
                 _ => {
-                    limits.wall_seconds = 1;
-                    limits.cpu_seconds = contracts::DbCounter::new(3).unwrap();
+                    limits.wall_seconds = Some(1);
+                    limits.cpu_seconds = Some(contracts::DbCounter::new(3).unwrap());
                 }
             }
             let error = evaluate(&store, &actor, &f, &invalid).await.unwrap_err();
@@ -947,13 +961,15 @@ async fn competing_paid_trials_exhausting_remaining_cpu_settle_instead_of_poison
     let mut competing = request.clone();
     competing.experiment_id = other.id;
     competing.request.expected_revision = other.revision;
-    competing.request.compile_limits.cpu_seconds = contracts::DbCounter::new(
-        f.brief.content.budget.max_cpu_seconds.get()
-            - request.request.compile_limits.cpu_seconds.get()
-            - request.request.evaluation_limits.cpu_seconds.get(),
-    )
-    .unwrap();
-    competing.request.compile_limits.wall_seconds = 300;
+    competing.request.compile_limits.cpu_seconds = Some(
+        contracts::DbCounter::new(
+            f.brief.content.budget.max_cpu_seconds.unwrap().get()
+                - request.request.compile_limits.cpu_seconds.unwrap().get()
+                - request.request.evaluation_limits.cpu_seconds.unwrap().get(),
+        )
+        .unwrap(),
+    );
+    competing.request.compile_limits.wall_seconds = Some(300);
     let objects = &f.objects;
     let second = store
         .evaluate_experiment(

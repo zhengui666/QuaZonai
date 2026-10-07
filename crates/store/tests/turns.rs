@@ -72,7 +72,7 @@ async fn concurrent_retries_reserve_once_and_publish_one_native_queue_message(po
         .unwrap();
     assert_eq!((rows, messages), (1, 1));
     let mut changed = a;
-    changed.tokens = DbCounter::new(41).unwrap();
+    changed.tokens = Some(DbCounter::new(41).unwrap());
     assert!(matches!(
         store.reserve_turn(f.run, &f.fence, &changed).await,
         Err(StoreError::Conflict)
@@ -185,7 +185,7 @@ async fn concurrent_missions_share_the_frozen_cycle_budget(pool: PgPool) {
     let s = Store::from_pool(pool.clone());
     let a = f.request("one");
     let mut b = f.request("other");
-    b.deadline_at = deadline;
+    b.deadline_at = Some(deadline);
     let (a, b) = tokio::join!(
         s.reserve_turn(f.run, &f.fence, &a),
         s.reserve_turn(other, &fence, &b)
@@ -374,12 +374,12 @@ async fn per_turn_overrun_below_cycle_cap_blocks_new_reservations_and_prepared_s
         let (other, _, fence, deadline) =
             mission(&pool, f.project, f.cycle, f.input_set, f.profile).await;
         let mut pending = f.request("already-reserved");
-        pending.deadline_at = deadline;
+        pending.deadline_at = Some(deadline);
         let pending = s.reserve_turn(other, &fence, &pending).await.unwrap();
         complete(&s, &f, first.id, TurnOutcome::Succeeded, tokens, cost).await;
 
         let mut next = f.request("next");
-        next.tokens = DbCounter::new(1).unwrap();
+        next.tokens = Some(DbCounter::new(1).unwrap());
         // Used+reserved+requested tokens (<=82) and cost (<4) are under 100/USD10.
         // The immutable original per-turn promise, not the Cycle cap, is exceeded.
         assert!(matches!(s.reserve_turn(f.run, &f.fence, &next).await,
@@ -442,14 +442,14 @@ async fn pending_native_limit_observation_blocks_other_missions_until_authoritat
     let (other, _, fence, deadline) =
         mission(&pool, f.project, f.cycle, f.input_set, f.profile).await;
     let mut pending = f.request("already-reserved");
-    pending.deadline_at = deadline;
+    pending.deadline_at = Some(deadline);
     let pending = s.reserve_turn(other, &fence, &pending).await.unwrap();
     // Controlled protocol observation; the separate formal Mission test covers
     // fenced producer insertion and cancellation in the same transaction.
     sqlx::query("INSERT INTO app.run_events(run_id,seq,attempt_id,event_type,schema_version,payload,occurred_at) SELECT id,last_event_seq+1,active_attempt_id,'mission.token_limit',1,$2,clock_timestamp() FROM app.runs WHERE id=$1")
         .bind(f.run.as_uuid()).bind(serde_json::json!({"schema_version":1,"reservation_id":first.id,"observed_tokens":"40","reserved_tokens":"40"})).execute(&pool).await.unwrap();
     let mut next = f.request("next");
-    next.tokens = DbCounter::new(1).unwrap();
+    next.tokens = Some(DbCounter::new(1).unwrap());
     assert!(matches!(
         s.reserve_turn(f.run, &f.fence, &next).await,
         Err(StoreError::Domain(DomainError::BudgetExhausted("tokens")))
@@ -720,7 +720,7 @@ async fn submicrosecond_deadlines_are_rejected_before_persistence(pool: PgPool) 
     let f = fixture(&pool, budget()).await;
     let s = Store::from_pool(pool.clone());
     let mut q = f.request("precision");
-    q.deadline_at += Duration::nanoseconds(1);
+    q.deadline_at = q.deadline_at.map(|time| time + Duration::nanoseconds(1));
     assert!(matches!(
         s.reserve_turn(f.run, &f.fence, &q).await,
         Err(StoreError::Invalid("timestamp_precision"))

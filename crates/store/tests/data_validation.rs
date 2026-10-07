@@ -71,7 +71,7 @@ async fn native_validation_commits_parameters_definition_run_queue_and_one_origi
         .fetch_one(&pool).await.unwrap();
     assert_eq!(empty, (0, 0, 0));
     let mut different = f.request.clone();
-    different.limits.cpu_seconds = DbCounter::new(11).unwrap();
+    different.limits.cpu_seconds = Some(DbCounter::new(11).unwrap());
     assert!(matches!(
         start(&f, "validate-once", &different).await,
         Err(StoreError::IdempotencyConflict)
@@ -232,10 +232,13 @@ async fn cpu_shape_and_native_capacity_are_checked_before_parameter_publication_
 ) {
     let f = setup(&pool).await;
     let mut too_large = f.request.clone();
-    too_large.limits.cpu_seconds = DbCounter::new(
-        u64::from(f.capabilities.max_cpu + 1) * u64::from(too_large.limits.wall_seconds),
-    )
-    .unwrap();
+    too_large.limits.cpu_seconds = Some(
+        DbCounter::new(
+            u64::from(f.capabilities.max_cpu + 1)
+                * u64::from(too_large.limits.wall_seconds.unwrap()),
+        )
+        .unwrap(),
+    );
     assert!(matches!(
         start(&f, "cpu-capacity", &too_large).await,
         Err(StoreError::Domain(
@@ -244,7 +247,7 @@ async fn cpu_shape_and_native_capacity_are_checked_before_parameter_publication_
     ));
     assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0));
     let mut two_cpus = f.request.clone();
-    two_cpus.limits.cpu_seconds = DbCounter::new(61).unwrap();
+    two_cpus.limits.cpu_seconds = Some(DbCounter::new(61).unwrap());
     let run = start(&f, "cpu-capacity", &two_cpus).await.unwrap().resource;
     let msg = message(&f, run.id).await;
     let lease = lease(&f, &msg, "two-cpu-owner", 30).await;

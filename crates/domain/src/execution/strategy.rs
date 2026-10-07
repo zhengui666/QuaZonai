@@ -479,6 +479,7 @@ pub fn result(
                 return Err(bad("strategy.replay_binding"));
             }
             super::output::check_simulation(simulation_request, simulation)?;
+            super::output::check_simulation_dataset(simulation, request.input_provenance.dataset_revision_id)?;
         }
         (
             StrategyPortfolioPurposeV1::CurrentDecision { account_start, .. },

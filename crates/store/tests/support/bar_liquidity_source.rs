@@ -174,10 +174,10 @@ async fn portfolio_reads_original_research_partitions_only_when_explicitly_reque
         limits: contracts::lifecycle::JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 0,
-            cpu_seconds: contracts::DbCounter::new(10).unwrap(),
-            wall_seconds: 60,
+            cpu_seconds: Some(contracts::DbCounter::new(10).unwrap()),
+            wall_seconds: Some(60),
             memory_mib: 512,
-            output_bytes: contracts::DbCounter::new(65_536).unwrap(),
+            output_bytes: Some(contracts::DbCounter::new(65_536).unwrap()),
         },
     };
     assert!(f

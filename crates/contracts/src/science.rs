@@ -111,6 +111,9 @@ pub struct NativeFeeRateV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSimulationSettingsV1 {
+    /// Explicit opt-in; absent fields preserve legacy single-currency wire data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multi_currency_spot_cash: Option<crate::spot_cash::NativeSpotCashPolicyV1>,
     pub schema_version: SchemaV1,
     #[schema(schema_with = crate::research_currency::schema)]
     pub base_currency: String,
@@ -197,6 +200,8 @@ pub enum NativeReturnsKind {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSimulationResultV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spot_cash_report: Option<crate::spot_cash_report::NativeSpotCashReportV1>,
     pub schema_version: SchemaV1,
     pub native_version: String,
     pub iterations: DbCounter,

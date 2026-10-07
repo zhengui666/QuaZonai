@@ -42,9 +42,13 @@ impl Journal {
             || exit_code == i64::from(boundary::NATIVE_MEMORY_LIMIT_EXIT_CODE)
         {
             Some(RuntimeFailureCode::MemoryLimit)
-        } else if exit_code == 124
-            || finished > spec.deadline_at
-            || finished - started > chrono::Duration::seconds(i64::from(spec.limits.wall_seconds))
+        } else if (exit_code == 124
+            && (spec.deadline_at.is_some() || spec.limits.wall_seconds.is_some()))
+            || spec.deadline_at.is_some_and(|deadline| finished > deadline)
+            || spec
+                .limits
+                .wall_seconds
+                .is_some_and(|wall| finished - started > chrono::Duration::seconds(i64::from(wall)))
         {
             Some(RuntimeFailureCode::DeadlineExceeded)
         } else if exit_code != 0 {

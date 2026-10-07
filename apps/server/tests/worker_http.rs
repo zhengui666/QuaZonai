@@ -291,7 +291,7 @@ async fn killed_worker_process_reconciles_original_job_without_resubmission(pool
     harness.hold_results(true);
     let f = &harness.fixture;
     let mut request = f.request.clone();
-    request.limits.wall_seconds = 180;
+    request.limits.wall_seconds = Some(180);
     let run = tasks::start(f, "killed-worker", &request)
         .await
         .unwrap()
@@ -602,8 +602,8 @@ async fn worker_deadline_commits_database_cancellation_before_its_native_rpc(poo
     let harness = native::setup(&pool, Behavior::MissingUntilCancelled).await;
     let f = &harness.fixture;
     let mut request = f.request.clone();
-    request.limits.wall_seconds = 2;
-    request.limits.cpu_seconds = contracts::DbCounter::new(1).unwrap();
+    request.limits.wall_seconds = Some(2);
+    request.limits.cpu_seconds = Some(contracts::DbCounter::new(1).unwrap());
     let run = tasks::start(f, "native-deadline-intent", &request)
         .await
         .unwrap()

@@ -602,6 +602,14 @@ impl Store {
         if brief.project_id != request.project_id || brief.state != BriefState::Frozen {
             return Err(invalid("brief_id", "OWNED_FROZEN_BRIEF_REQUIRED").into());
         }
+        // A finite cumulative CPU grant without a wall deadline needs an
+        // independently surviving CPU enforcer, which this backend cannot attest.
+        // Explicitly absent CPU + wall budgets use fenced resource recovery.
+        if brief.content.budget.max_wall_seconds.is_none()
+            && brief.content.budget.max_cpu_seconds.is_some()
+        {
+            return Err(DomainError::CapabilityUnavailable("independent_cpu_enforcement").into());
+        }
         let context = execution_context(&mut tx, brief.id).await?;
         let caps = validate_execution_context(&mut tx, &brief, &context, &mut read).await?;
         crate::runtime::require_capabilities(
@@ -633,21 +641,32 @@ impl Store {
             .bind(if wake.is_some() { "DEGRADATION" } else { "OPERATOR" })
             .bind(wake.map(Id::as_uuid)).execute(&mut *tx).await?;
         // Reserve a bounded preparation slice, not all remaining research CPU.
-        let cpu = (budget.max_cpu_seconds.get() / 10).clamp(1, 300);
+        let cpu = budget
+            .max_cpu_seconds
+            .map(|maximum| (maximum.get() / 10).clamp(1, 300));
         let limits = JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 0,
-            cpu_seconds: DbCounter::new(cpu).map_err(|_| StoreError::Integrity)?,
-            wall_seconds: budget.max_wall_seconds.min(caps.max_wall_seconds).min(300),
+            cpu_seconds: cpu
+                .map(DbCounter::new)
+                .transpose()
+                .map_err(|_| StoreError::Integrity)?,
+            wall_seconds: budget
+                .max_wall_seconds
+                .map(|seconds| seconds.min(caps.max_wall_seconds).min(300)),
             memory_mib: budget.max_memory_mib.min(caps.max_memory_mib).min(2048),
-            output_bytes: DbCounter::new(
-                budget
-                    .max_output_bytes
-                    .get()
-                    .min(caps.max_output_bytes.get())
-                    .min(2 * 1024 * 1024),
-            )
-            .map_err(|_| StoreError::Integrity)?,
+            output_bytes: budget
+                .max_output_bytes
+                .map(|maximum| {
+                    DbCounter::new(
+                        maximum
+                            .get()
+                            .min(caps.max_output_bytes.get())
+                            .min(2 * 1024 * 1024),
+                    )
+                })
+                .transpose()
+                .map_err(|_| StoreError::Integrity)?,
         };
         let definition = crate::data_validation::prepare_validation(
             &mut tx,

@@ -21,14 +21,14 @@ pub const MAX_INPUT_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
 pub struct RuntimeJobLimitsV1 {
     #[schema(minimum = 1, maximum = 1024)]
     pub cpu: u16,
-    #[schema(schema_with = crate::scalars::positive_db_counter_schema)]
-    pub cpu_seconds: DbCounter,
+    #[schema(schema_with = crate::scalars::optional_positive_db_counter_schema)]
+    pub cpu_seconds: Option<DbCounter>,
     #[schema(minimum = 1, maximum = 4294967295u64, format = Int64)]
     pub memory_mib: u32,
     #[schema(minimum = 1, maximum = 4294967295u64, format = Int64)]
-    pub wall_seconds: u32,
+    pub wall_seconds: Option<u32>,
     #[schema(schema_with = schema::job_output_bytes)]
-    pub output_bytes: DbCounter,
+    pub output_bytes: Option<DbCounter>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -74,7 +74,7 @@ pub struct JobSpecV1 {
     /// It does not change frozen InputSet membership or provide arbitrary commands.
     pub parameters_artifact_id: Id,
     pub limits: RuntimeJobLimitsV1,
-    pub deadline_at: DateTime<Utc>,
+    pub deadline_at: Option<DateTime<Utc>>,
     #[schema(min_items = 1, max_items = 64)]
     pub requested_output_schemas: Vec<RuntimeArtifactSchemaV1>,
 }

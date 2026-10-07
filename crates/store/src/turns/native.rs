@@ -135,7 +135,11 @@ where
         if count(used)?
             .get()
             .checked_add(bytes.len() as u64)
-            .is_none_or(|total| total > limits.output_bytes.get())
+            .is_none_or(|total| {
+                limits
+                    .output_bytes
+                    .is_some_and(|maximum| total > maximum.get())
+            })
         {
             return Err(DomainError::BudgetExhausted("output_bytes").into());
         }
@@ -203,20 +207,11 @@ impl Store {
         let cycle = id(row.try_get("cycle_id")?)?;
         let family = id(row.try_get("family_id")?)?;
         let usage = mission.usage(&mut tx).await?;
-        let limit = mission
-            .budget
-            .max_tokens
-            .map_or(i64::MAX as u64, DbCounter::get);
-        let remaining = limit
-            .saturating_sub(usage.used_tokens.get())
-            .saturating_sub(usage.reserved_tokens.get());
-        if remaining == 0 {
-            return Err(DomainError::BudgetExhausted("tokens").into());
-        }
+        let tokens = remaining_token_cap(mission.budget.max_tokens, &usage)?;
         let request = TurnRequest {
             command_key: "mission/initial".into(),
             turn_kind: TurnKind::Research,
-            tokens: count(remaining as i64)?,
+            tokens,
             estimated_cost: None,
             request_artifact_id: Id::new(),
             deadline_at: mission.run_deadline,

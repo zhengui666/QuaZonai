@@ -1,7 +1,7 @@
 //! Allocation ownership and publication bounds, independent of the numerical solver.
-use crate::{control, DomainError};
+use crate::{DomainError, control};
 use bigdecimal::{BigDecimal, ToPrimitive};
-use contracts::{portfolio::*, DecimalValue};
+use contracts::{DecimalValue, portfolio::*};
 use std::collections::{BTreeMap, BTreeSet};
 mod covariance;
 pub use covariance::sample_covariance;
@@ -35,6 +35,13 @@ pub fn build_selection(request: &PortfolioBuildRequestV1) -> Result<(), DomainEr
 pub fn simulation_settings(
     settings: &contracts::science::NativeSimulationSettingsV1,
 ) -> Result<(), DomainError> {
+    // Fail closed until the native adapter, fees and result consumers are wired.
+    // Never silently execute the new mode through the legacy single-currency path.
+    if settings.multi_currency_spot_cash.is_some() {
+        return Err(DomainError::CapabilityUnavailable(
+            "multi_currency_spot_cash_not_integrated",
+        ));
+    }
     simulation_models(settings)?;
     if !settings.starting_capital.is_positive()
         || !settings.leverage.is_positive()
@@ -78,6 +85,11 @@ pub fn simulation_models(
         _ => return Err(unavailable()),
     };
     match &settings.fee_model {
+        NativeModelRefV1::FrozenSpotFeeScenario { native_version, parameters, .. }
+            if native_version == NAUTILUS_EXECUTION_VERSION
+                && settings.multi_currency_spot_cash.is_some()
+                && parameters.schedule.source.status == contracts::spot_fees::SpotFeeEvidenceStatusV1::PublicRateScenarioUnverifiedApplicability
+                && matches!(parameters.acceptance, contracts::spot_fees::SpotCashFeeAcceptanceV1::PublicRateScenarioUnverifiedApplicability) => {}
         NativeModelRefV1::NautilusMakerTaker {
             upstream_class,
             upstream_version,
@@ -309,7 +321,7 @@ pub fn fixed_ensemble(model: &NativeModelRefV1) -> Result<(), DomainError> {
         _ => {
             return Err(DomainError::CapabilityUnavailable(
                 "portfolio_ensemble_model",
-            ))
+            ));
         }
     }
     Ok(())

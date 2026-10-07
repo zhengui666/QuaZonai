@@ -12,12 +12,28 @@ Table entries follow `quazonai client` with the saved login or original scoped c
 | Read registered original feature parts | `data features list DATASET_REVISION_ID --project-id PROJECT_ID` |
 | Inspect frozen inputs and policy | `input-set list --project-id PROJECT_ID --limit 20`; `input-set show ID`; `policy show ID` |
 | Inspect registered source metadata | `data source show ID`; `data revision list --source-id ID --limit 20`; `data revision show ID` |
+| Inspect registered evidence summary (owner, non-Sealed) | `data revision evidence ID` |
 | Check execution readiness | `runtime readiness ID`; `codex models ID`; `codex account ID` |
 | Find existing work | `cycle list PROJECT_ID --limit 20`; `cycle show ID`; `experiment list --project-id PROJECT_ID --limit 20` |
 
 Follow IDs from the Brief/InputSet rather than scanning all sources. Registration and prior readiness observations do not prove data quality, PIT, account usability or current eligibility. Report missing/stale prerequisites. Inspection does not authorize probes, login, permission changes or access to raw Sealed data/native storage paths.
 
 For dataset suitability, report the selected project/InputSet/revision and observed origin, licensing/PIT, coverage and readiness limitations; a provider name alone proves no compatibility.
+
+`data revision evidence DATASET_REVISION_ID` reads only that Dataset's registered
+metadata and quality documents, validates their stored associations, and returns
+a typed registration/quality summary. Use the saved owner login; scoped Machine,
+Mission and diagnostic CLI credentials cannot use this route. Sealed evidence is
+not exposed (`DATASET_EVIDENCE_SEALED_UNSUPPORTED`); use `data revision show ID`
+for its existing registration labels.
+The summary includes fixed source/partition types, immutable UUID references,
+counts and timestamps. It excludes free-text source explanations, URLs, native
+paths, raw documents, instruments, BAR values and settlements. It retains the registered PIT/origin labels and current license
+state, including expired or revoked licenses for historical audit. It does not
+reopen the native snapshot, establish historical availability, extend a license,
+or constitute fresh DATA_VALIDATE/PASS evidence. An artifact-route 404 alone
+never proves that registered evidence bytes are missing. Report failed evidence
+reads without re-registering or changing PIT labels.
 
 ## Prepare a research operation
 

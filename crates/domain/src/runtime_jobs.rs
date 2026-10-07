@@ -64,16 +64,24 @@ pub fn spec_shape(value: &JobSpecV1) -> Result<(), DomainError> {
     if !runtime::pinned_image(&value.image_ref) {
         return Err(bad("image_ref"));
     }
-    time(value.deadline_at)?;
+    if let Some(deadline) = value.deadline_at {
+        time(deadline)?;
+    }
     let limits = &value.limits;
     if !(1..=1024).contains(&limits.cpu)
-        || limits.cpu_seconds.get() == 0
+        || limits.cpu_seconds.is_some_and(|value| value.get() == 0)
         || limits.memory_mib == 0
-        || limits.wall_seconds == 0
-        || limits.output_bytes.get() == 0
-        || limits.output_bytes.get() > MAX_JOB_OUTPUT_BYTES
-        || u128::from(limits.cpu_seconds.get())
-            > u128::from(limits.cpu) * u128::from(limits.wall_seconds)
+        || limits.wall_seconds == Some(0)
+        || limits.output_bytes.is_some_and(|value| value.get() == 0)
+        || limits
+            .output_bytes
+            .is_some_and(|value| value.get() > MAX_JOB_OUTPUT_BYTES)
+        || limits
+            .wall_seconds
+            .zip(limits.cpu_seconds)
+            .is_some_and(|(wall, cpu)| {
+                u128::from(cpu.get()) > u128::from(limits.cpu) * u128::from(wall)
+            })
     {
         return Err(bad("limits"));
     }
@@ -148,7 +156,7 @@ pub fn admit_spec(
     spec_shape(value)?;
     runtime::capabilities(capability, now)?;
     let limits = &value.limits;
-    if value.deadline_at <= now
+    if crate::execution_limits::expired(value.deadline_at, now)
         || !capability.job_kinds.contains(&value.job_kind)
         || !capability
             .image_refs
@@ -156,8 +164,31 @@ pub fn admit_spec(
             .any(|image| image.job_kind == value.job_kind && image.image_ref == value.image_ref)
         || limits.cpu > capability.max_cpu
         || limits.memory_mib > capability.max_memory_mib
-        || limits.wall_seconds > capability.max_wall_seconds
-        || limits.output_bytes > capability.max_output_bytes
+        || limits
+            .wall_seconds
+            .is_some_and(|wall| wall > capability.max_wall_seconds)
+        || ((limits.wall_seconds.is_none() || value.deadline_at.is_none())
+            && capability
+                .engine_versions
+                .get("optional-wall-time")
+                .map(String::as_str)
+                != Some("1"))
+        || limits
+            .output_bytes
+            .is_some_and(|output| output > capability.max_output_bytes)
+        || (limits.cpu_seconds.is_none()
+            && capability
+                .engine_versions
+                .get("optional-cpu-budget")
+                .map(String::as_str)
+                != Some("1"))
+        || (limits.output_bytes.is_none()
+            && capability
+                .engine_versions
+                .get("optional-output-budget")
+                .map(String::as_str)
+                != Some("1"))
+        || (limits.wall_seconds.is_none() && limits.cpu_seconds.is_some())
         || value.requested_output_schemas.iter().any(|requested| {
             !capability.artifact_schemas.iter().any(|available| {
                 requested.name == available.name && requested.version == available.version
@@ -288,7 +319,10 @@ pub fn manifest(
         if output.storage_version.get() != 1
             || !objects.insert(output.storage_ref)
             || output.byte_count.get() == 0
-            || output.byte_count.get() > spec.limits.output_bytes.get()
+            || spec
+                .limits
+                .output_bytes
+                .is_some_and(|maximum| output.byte_count > maximum)
             || !media_type(output)
             || !spec.requested_output_schemas.iter().any(|requested| {
                 requested.name == output.schema.name && requested.version == output.schema.version
@@ -301,21 +335,33 @@ pub fn manifest(
             .ok_or_else(|| bad("result_manifest.artifacts"))?;
         produced_schemas.insert((&output.schema.name, &output.schema.version));
     }
-    if total != value.resource_usage.output_bytes.get() || total > spec.limits.output_bytes.get() {
+    if total != value.resource_usage.output_bytes.get()
+        || spec
+            .limits
+            .output_bytes
+            .is_some_and(|maximum| total > maximum.get())
+    {
         return Err(bad("result_manifest.resource_usage"));
     }
     if value.state == RuntimeResultState::Succeeded
         && (value.started_at.is_none()
-            || value.finished_at > spec.deadline_at
+            || spec
+                .deadline_at
+                .is_some_and(|deadline| value.finished_at > deadline)
             || value.artifacts.is_empty()
             || spec.requested_output_schemas.iter().any(|requested| {
                 !produced_schemas.contains(&(&requested.name, &requested.version))
             })
-            || value.resource_usage.wall_milliseconds.get()
-                > u64::from(spec.limits.wall_seconds) * 1000
-            || value.resource_usage.cpu_nanoseconds.is_some_and(|cpu| {
-                u128::from(cpu.get()) > u128::from(spec.limits.cpu_seconds.get()) * 1_000_000_000
+            || spec.limits.wall_seconds.is_some_and(|wall| {
+                value.resource_usage.wall_milliseconds.get() > u64::from(wall) * 1000
             })
+            || value
+                .resource_usage
+                .cpu_nanoseconds
+                .zip(spec.limits.cpu_seconds)
+                .is_some_and(|(cpu, maximum)| {
+                    u128::from(cpu.get()) > u128::from(maximum.get()) * 1_000_000_000
+                })
             || value
                 .resource_usage
                 .peak_memory_bytes

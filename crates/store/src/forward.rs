@@ -14,7 +14,7 @@ use contracts::{
 use sqlx::{Postgres, Row, Transaction};
 
 mod admission;
-pub(crate) use admission::{limits as evaluation_limits, revalidate};
+pub(crate) use admission::{revalidate, validate_limits as validate_evaluation_limits};
 mod messages;
 mod observations;
 mod schedule;

@@ -49,6 +49,7 @@ fn simulation(request: &NativeSimulationRequestV1, row_count: u64) -> NativeSimu
         "balances_starting":BTreeMap::from([(settings.base_currency.clone(), balance)])});
     let account = BTreeMap::from([(variant, json!({"base":base}))]);
     NativeSimulationResultV1 {
+        spot_cash_report: None,
         schema_version: SchemaV1,
         native_version: "0.63.0".into(),
         iterations: count(row_count),

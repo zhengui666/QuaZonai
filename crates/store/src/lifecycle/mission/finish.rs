@@ -27,6 +27,39 @@ impl Store {
             return Ok(true);
         }
         let attempt = fence(&mut tx, &locked.run, owner).await?;
+        // Run authority serializes reserve/checkpoint and terminal commitment.
+        // Receipts alone cannot prove the owned native process tree is stopped.
+        let resources_open: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM app.mission_resources WHERE run_id=$1 AND NOT closed)",
+        )
+        .bind(run.as_uuid())
+        .fetch_one(&mut *tx)
+        .await?;
+        if resources_open {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        // Expired bootstrap is failed only after its exact resources are closed.
+        // This is the same proven-unsent outcome as claim_run's shortcut, and
+        // does not open a new native thread to discover an already-known fact.
+        if attempt.try_get::<String, _>("dispatch_state")? == "NOT_SENT"
+            && domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?)
+        {
+            sqlx::query("UPDATE app.run_attempts SET dispatch_state='TERMINAL' WHERE id=$1")
+                .bind(owner.attempt_id.as_uuid())
+                .execute(&mut *tx)
+                .await?;
+            finish(
+                &mut tx,
+                &mut locked,
+                RunState::Failed,
+                RunReason::DeadlineExceeded,
+                json!({"schema_version":1,"source":"NOT_DISPATCHED","reason":"DEADLINE_EXCEEDED"}),
+            )
+            .await?;
+            tx.commit().await?;
+            return Ok(true);
+        }
         expire_sent_run(&mut tx, &mut locked, &attempt).await?;
         let stopping = locked.run.state == RunState::CancelRequested;
         if stopping {

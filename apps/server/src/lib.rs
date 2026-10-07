@@ -467,6 +467,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             get(data::revisions).post(data::register),
         )
         .route("/api/v2/data/revisions/{id}", get(data::revision))
+        .route("/api/v2/data/revisions/{id}/evidence", get(data::evidence::get))
         .route(
             "/api/v2/data/revisions/{id}/features",
             get(data::recorded_features::list)
@@ -801,7 +802,7 @@ codex_profiles::account::login_start,codex_profiles::account::logout,codex_profi
 codex_profiles::account::login_operation,codex_profiles::account::latest_operation,
 data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
-data::revisions,data::revision,data::register,data::universes,data::universe,data::validate,
+data::revisions,data::revision,data::evidence::get,data::register,data::universes,data::universe,data::validate,
 data::recorded_features::list,data::recorded_features::register,
 artifacts::list,artifacts::get,artifacts::create,artifacts::content,artifacts::agent_evaluation),components(schemas(error::Problem)),tags((name="Authentication",description="Password browser sessions and revocable CLI devices")))]
 struct HttpContracts;

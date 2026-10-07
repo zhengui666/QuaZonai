@@ -92,15 +92,7 @@ impl Store {
             });
         }
         let usage = mission.usage(&mut tx).await?;
-        let remaining = mission
-            .budget
-            .max_tokens
-            .map_or(i64::MAX as u64, DbCounter::get)
-            .saturating_sub(usage.used_tokens.get())
-            .saturating_sub(usage.reserved_tokens.get());
-        if remaining == 0 {
-            return Err(DomainError::BudgetExhausted("tokens").into());
-        }
+        let tokens = remaining_token_cap(mission.budget.max_tokens, &usage)?;
         let request = TurnRequest {
             command_key: format!("mission/result/{scientific_run}"),
             turn_kind: if state == "SUCCEEDED" {
@@ -108,7 +100,7 @@ impl Store {
             } else {
                 TurnKind::Repair
             },
-            tokens: count(remaining as i64)?,
+            tokens,
             estimated_cost: None,
             request_artifact_id: Id::new(),
             deadline_at: mission.run_deadline,

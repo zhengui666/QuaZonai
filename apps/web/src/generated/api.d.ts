@@ -773,6 +773,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/data/revisions/{id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["dataset_evidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/data/revisions/{id}/features": {
         parameters: {
             query?: never;
@@ -2403,7 +2419,7 @@ export interface components {
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
@@ -2411,19 +2427,17 @@ export interface components {
                 experiments: number;
                 /** Format: int64 */
                 memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
                 memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             policy_id: components["schemas"]["Id"];
             runtime_id: components["schemas"]["Id"];
@@ -2603,16 +2617,14 @@ export interface components {
                 cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
                 cost_enforcement: components["schemas"]["CostEnforcement"];
                 max_cost_decimal?: null | string;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_cpu_seconds: string;
+                max_cpu_seconds?: null | string;
                 /** Format: int32 */
                 max_cycles_per_day: number;
                 /** Format: int64 */
                 max_experiments: number;
                 /** Format: int64 */
                 max_memory_mib: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_output_bytes: string;
+                max_output_bytes?: null | string;
                 /** Format: int32 */
                 max_parallel_runs: number;
                 /** Format: int32 */
@@ -2620,8 +2632,7 @@ export interface components {
                 max_tokens?: null | string;
                 /** Format: int32 */
                 max_turns_per_mission: number;
-                /** Format: int64 */
-                max_wall_seconds: number;
+                max_wall_seconds?: null | number;
                 /** Format: int64 */
                 min_cycle_interval_seconds: number;
                 /** @enum {integer} */
@@ -2674,16 +2685,14 @@ export interface components {
                 cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
                 cost_enforcement: components["schemas"]["CostEnforcement"];
                 max_cost_decimal?: null | string;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_cpu_seconds: string;
+                max_cpu_seconds?: null | string;
                 /** Format: int32 */
                 max_cycles_per_day: number;
                 /** Format: int64 */
                 max_experiments: number;
                 /** Format: int64 */
                 max_memory_mib: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_output_bytes: string;
+                max_output_bytes?: null | string;
                 /** Format: int32 */
                 max_parallel_runs: number;
                 /** Format: int32 */
@@ -2691,8 +2700,7 @@ export interface components {
                 max_tokens?: null | string;
                 /** Format: int32 */
                 max_turns_per_mission: number;
-                /** Format: int64 */
-                max_wall_seconds: number;
+                max_wall_seconds?: null | number;
                 /** Format: int64 */
                 min_cycle_interval_seconds: number;
                 /** @enum {integer} */
@@ -2745,16 +2753,14 @@ export interface components {
                 cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
                 cost_enforcement: components["schemas"]["CostEnforcement"];
                 max_cost_decimal?: null | string;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_cpu_seconds: string;
+                max_cpu_seconds?: null | string;
                 /** Format: int32 */
                 max_cycles_per_day: number;
                 /** Format: int64 */
                 max_experiments: number;
                 /** Format: int64 */
                 max_memory_mib: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_output_bytes: string;
+                max_output_bytes?: null | string;
                 /** Format: int32 */
                 max_parallel_runs: number;
                 /** Format: int32 */
@@ -2762,8 +2768,7 @@ export interface components {
                 max_tokens?: null | string;
                 /** Format: int32 */
                 max_turns_per_mission: number;
-                /** Format: int64 */
-                max_wall_seconds: number;
+                max_wall_seconds?: null | number;
                 /** Format: int64 */
                 min_cycle_interval_seconds: number;
                 /** @enum {integer} */
@@ -2869,16 +2874,14 @@ export interface components {
             cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
             cost_enforcement: components["schemas"]["CostEnforcement"];
             max_cost_decimal?: null | string;
-            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-            max_cpu_seconds: string;
+            max_cpu_seconds?: null | string;
             /** Format: int32 */
             max_cycles_per_day: number;
             /** Format: int64 */
             max_experiments: number;
             /** Format: int64 */
             max_memory_mib: number;
-            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-            max_output_bytes: string;
+            max_output_bytes?: null | string;
             /** Format: int32 */
             max_parallel_runs: number;
             /** Format: int32 */
@@ -2886,8 +2889,7 @@ export interface components {
             max_tokens?: null | string;
             /** Format: int32 */
             max_turns_per_mission: number;
-            /** Format: int64 */
-            max_wall_seconds: number;
+            max_wall_seconds?: null | number;
             /** Format: int64 */
             min_cycle_interval_seconds: number;
             /** @enum {integer} */
@@ -2950,7 +2952,7 @@ export interface components {
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
@@ -2958,19 +2960,17 @@ export interface components {
                 experiments: number;
                 /** Format: int64 */
                 memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
                 memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             runtime_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -3860,7 +3860,7 @@ export interface components {
                 current_attempt_no: number;
                 cycle_id?: null | components["schemas"]["Id"];
                 /** Format: date-time */
-                deadline_at: string;
+                deadline_at?: string | null;
                 /** Format: date-time */
                 finished_at?: string | null;
                 id: components["schemas"]["Id"];
@@ -4182,7 +4182,7 @@ export interface components {
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
@@ -4190,23 +4190,66 @@ export interface components {
                 experiments: number;
                 /** Format: int64 */
                 memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
                 memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             project_id: components["schemas"]["Id"];
             runtime_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Owner-only audit projection of the two immutable registration documents.
+         *     Reading this summary does not revalidate the native snapshot, attest historical
+         *     availability, extend its license, or change the registered origin/PIT labels.
+         */
+        DatasetEvidenceViewV1: {
+            /**
+             * Format: date-time
+             * @description Read-time license observation only; does not authorize new data use.
+             */
+            checked_at: string;
+            data_use_grant_id: components["schemas"]["Id"];
+            dataset_revision_id: components["schemas"]["Id"];
+            license_state: components["schemas"]["DataLicenseState"];
+            native_metadata_artifact_id: components["schemas"]["Id"];
+            origin: components["schemas"]["DataOrigin"];
+            partition: components["schemas"]["DataPartition"];
+            /** @description The persisted label, not a new historical-availability attestation. */
+            pit_status: components["schemas"]["PitStatus"];
+            provider_kind: components["schemas"]["DataProviderKind"];
+            quality: components["schemas"]["DatasetQualitySummaryV1"];
+            quality_artifact_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            registration_observed_at: string;
+            revision_policy: components["schemas"]["DataRevisionPolicy"];
+            runtime_enabled: boolean;
+            schema_version: components["schemas"]["SchemaV1"];
+            source_enabled: boolean;
+            source_id: components["schemas"]["Id"];
+        };
+        /**
+         * @description Original registration-time measurements only. No prices, quantities,
+         *     instruments, settlements, samples, or raw native documents are returned.
+         */
+        DatasetQualitySummaryV1: {
+            available_through_ns: components["schemas"]["DbCounter"];
+            /** Format: date-time */
+            checked_at: string;
+            first_event_ns: components["schemas"]["DbCounter"];
+            /** Format: int32 */
+            instrument_count: number;
+            last_event_ns: components["schemas"]["DbCounter"];
+            native_version: string;
+            row_count: components["schemas"]["DbCounter"];
         };
         DatasetRegister: {
             existing_universe_version_id?: null | components["schemas"]["Id"];
@@ -4561,6 +4604,7 @@ export interface components {
             return_frequency: string;
             /** @description Native UTC daily portfolio returns, zero risk-free rate, frozen annualization. */
             sharpe_ratio: components["schemas"]["ExperimentSummaryStatisticV1"];
+            spot_cash?: null | components["schemas"]["NativeSpotCashSummaryV1"];
             starting_capital: components["schemas"]["DecimalValue"];
         };
         /** @enum {string} */
@@ -4800,6 +4844,44 @@ export interface components {
             brief: components["schemas"]["BriefView"];
             execution_context: components["schemas"]["BriefExecutionContextV1"];
             schema_version: components["schemas"]["SchemaV1"];
+        };
+        FrozenSpotFeeRuleV1: {
+            basis: components["schemas"]["SpotFeeBasisV1"];
+            /** @description Bind to the untouched native currency definition, including precision. */
+            currency_code: string;
+            /** Format: int32 */
+            currency_precision: number;
+            fee_currency: components["schemas"]["SpotFeeCurrencyV1"];
+            instrument_id: string;
+            liquidity: components["schemas"]["SpotFeeLiquidityV1"];
+            order_side: components["schemas"]["SpotFeeOrderSideV1"];
+            /** @description Signed fraction, not percentage points: 0.0007 means 0.070%. */
+            rate: components["schemas"]["DecimalValue"];
+            rounding: components["schemas"]["SpotFeeRoundingV1"];
+        };
+        FrozenSpotFeeScheduleV1: {
+            /** @description Exactly four rules per admitted instrument: Buy/Sell x Maker/Taker. */
+            rules: components["schemas"]["FrozenSpotFeeRuleV1"][];
+            schema_version: components["schemas"]["SchemaV1"];
+            source: components["schemas"]["FrozenSpotFeeSourceV1"];
+            /**
+             * @description Declared half-open scenario window; source applicability is NOT verified.
+             *     Containment here is never evidence of historical, present or future fees.
+             */
+            valid_from_ns: components["schemas"]["DbCounter"];
+            valid_until_ns: components["schemas"]["DbCounter"];
+        };
+        FrozenSpotFeeSourceV1: {
+            /** @description State unverified tier, discounts, fee-currency and rounding assumptions. */
+            assumptions: string;
+            observed_at_ns: components["schemas"]["DbCounter"];
+            /**
+             * @description Source/capture identity for traceability, not proof of applicable-window coverage.
+             *     A settings copy's artifact ID does not establish independent fee evidence.
+             */
+            source_ref: string;
+            source_uri: string;
+            status: components["schemas"]["SpotFeeEvidenceStatusV1"];
         };
         /**
          * @description A fresh instance replays every decision from the original fold start. It
@@ -5131,7 +5213,7 @@ export interface components {
         /** @enum {string} */
         IsolationProfile: "OCI_RESEARCH_V1";
         JobLimitsV1: {
-            cpu_seconds: components["schemas"]["DbCounter"];
+            cpu_seconds?: null | components["schemas"]["DbCounter"];
             /**
              * Format: int64
              * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
@@ -5139,10 +5221,10 @@ export interface components {
             experiments: number;
             /** Format: int64 */
             memory_mib: number;
-            output_bytes: components["schemas"]["DbCounter"];
+            output_bytes?: null | components["schemas"]["DbCounter"];
             schema_version: components["schemas"]["SchemaV1"];
             /** Format: int64 */
-            wall_seconds: number;
+            wall_seconds?: number | null;
         };
         LabelIntervalSupportV1: {
             fixed_bars: boolean;
@@ -5431,6 +5513,17 @@ export interface components {
             upstream_class: "ndarray_stats::CorrelationExt::cov";
             /** @enum {string} */
             upstream_version: "0.7.0";
+        } | {
+            /** @enum {string} */
+            adapter_kind: "FROZEN_SPOT_FEE_SCENARIO";
+            /** @enum {string} */
+            native_version: "0.63.0";
+            parameters: {
+                acceptance: components["schemas"]["SpotCashFeeAcceptanceV1"];
+                schedule: components["schemas"]["FrozenSpotFeeScheduleV1"];
+            };
+            /** @enum {integer} */
+            schema_version: 1;
         };
         /** @description Lossless public field projection; no equity or PnL arithmetic occurs in Q. */
         NativePortfolioSnapshotV1: {
@@ -5502,6 +5595,7 @@ export interface components {
             returns_reason?: string | null;
             returns_status: components["schemas"]["MetricStatus"];
             schema_version: components["schemas"]["SchemaV1"];
+            spot_cash_report?: null | components["schemas"]["NativeSpotCashReportV1"];
             statistics: components["schemas"]["NativeStatisticV1"][];
             summary: {
                 [key: string]: string;
@@ -5516,6 +5610,7 @@ export interface components {
             fill_model: components["schemas"]["NativeModelRefV1"];
             latency_model: components["schemas"]["NativeModelRefV1"];
             leverage: components["schemas"]["DecimalValue"];
+            multi_currency_spot_cash?: null | components["schemas"]["NativeSpotCashPolicyV1"];
             schema_version: components["schemas"]["SchemaV1"];
             /** Format: int32 */
             snapshot_interval_ms: number;
@@ -5549,7 +5644,229 @@ export interface components {
             return_frequency: string;
             /** @description Native UTC daily portfolio returns, zero risk-free rate, frozen annualization. */
             sharpe_ratio: components["schemas"]["ExperimentSummaryStatisticV1"];
+            spot_cash?: null | components["schemas"]["NativeSpotCashSummaryV1"];
             starting_capital: components["schemas"]["DecimalValue"];
+        };
+        /**
+         * @description Actual native observation path. Both variants retain the untouched snapshot.
+         *     The source adapter states which original native event clock the Bar uses.
+         *     Its complete Bar stays unchanged; valuation uses the source-bound close.
+         * @enum {string}
+         */
+        NativeSpotBarEventTimeV1: "OPEN" | "CLOSE_EXCLUSIVE";
+        /** @description A row from one unchanged native account snapshot. Total already includes locked. */
+        NativeSpotCashBalanceV1: {
+            currency: string;
+            free: components["schemas"]["DecimalValue"];
+            locked: components["schemas"]["DecimalValue"];
+            total: components["schemas"]["DecimalValue"];
+        };
+        /**
+         * @description Runtime facts projected only by the owner of a completed fresh one-shot run.
+         *     The owner must establish closed engine ownership and inspect the actual run
+         *     receipt and complete native event stream. A generic snapshot observer cannot
+         *     produce this evidence. These wire fields bind that proof; they do not
+         *     authenticate it, and a caller-supplied count is not itself proof of no flows.
+         */
+        NativeSpotCashFlowEvidenceV1: {
+            account_id: string;
+            closing_snapshot: components["schemas"]["NativeSpotSnapshotBindingV1"];
+            dataset_revision_id: components["schemas"]["Id"];
+            external_flow_count: null | components["schemas"]["DbCounter"];
+            native_instance_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            /**
+             * @description The actual official run ID from the completed engine receipt, not an ID
+             *     reserved before the engine has publicly supplied it.
+             */
+            native_run_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            observed_snapshot_count: components["schemas"]["DbCounter"];
+            opening_snapshot: components["schemas"]["NativeSpotSnapshotBindingV1"];
+            period_end_ns: components["schemas"]["DbCounter"];
+            period_start_ns: components["schemas"]["DbCounter"];
+            session_id: components["schemas"]["Id"];
+            venue: string;
+        };
+        /** @enum {string} */
+        NativeSpotCashModeV1: "MULTI_CURRENCY_CASH";
+        NativeSpotCashMoneyV1: {
+            amount: components["schemas"]["DecimalValue"];
+            currency: string;
+        };
+        NativeSpotCashObservationKindV1: {
+            bar_close_ns: components["schemas"]["DbCounter"];
+            bar_open_ns: components["schemas"]["DbCounter"];
+            event_time: components["schemas"]["NativeSpotBarEventTimeV1"];
+            /** @enum {string} */
+            kind: "BAR";
+            /** @description Original serialization of the complete official Bar, including precision. */
+            native: unknown;
+            source_row_key: string;
+        } | {
+            frame: components["schemas"]["NativeSpotValuationFrameV1"];
+            /** @enum {string} */
+            kind: "SNAPSHOT";
+            /** @description Original complete PortfolioSnapshot, with its actual native event UUID. */
+            native: unknown;
+            origin: components["schemas"]["NativeSpotSnapshotOriginV1"];
+            valuation: components["schemas"]["ReportCurrencyValuationV1"];
+        };
+        NativeSpotCashObservationV1: components["schemas"]["NativeSpotCashObservationKindV1"] & {
+            native_clock_ns: components["schemas"]["DbCounter"];
+            sequence: components["schemas"]["DbCounter"];
+        };
+        NativeSpotCashPolicyV1: {
+            allowed_instrument_ids: string[];
+            /**
+             * @description Native intraday timers emit only while positions are open; never infer a
+             *     complete intraday grid from snapshot_interval_ms.
+             */
+            daily_sampling: components["schemas"]["NativeSpotDailySamplingV1"];
+            /** @description Frozen maximum age. Never use a current/live price for historical equity. */
+            maximum_price_age_ns: components["schemas"]["DbCounter"];
+            mode: components["schemas"]["NativeSpotCashModeV1"];
+            price_method: components["schemas"]["NativeSpotPriceMethodV1"];
+            report_currency: string;
+            returns_policy: components["schemas"]["ReportCurrencyDailyPolicyV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        NativeSpotCashReportV1: {
+            daily_returns: components["schemas"]["ReportCurrencyDailyReturnsV1"];
+            fee_acceptance: components["schemas"]["SpotCashFeeAcceptanceV1"];
+            fee_schedule: components["schemas"]["FrozenSpotFeeScheduleV1"];
+            flow_evidence: components["schemas"]["NativeSpotCashFlowEvidenceV1"];
+            instruments: components["schemas"]["NativeSpotInstrumentV1"][];
+            /**
+             * @description Original serialization of the official completed BacktestResult. Its
+             *     instance/run UUIDs are not present in deterministic canonical_result.
+             */
+            native_run_receipt: unknown;
+            /** @description Complete ordered observer tape, including official decision-time snapshots. */
+            observations: components["schemas"]["NativeSpotCashObservationV1"][];
+            schema_version: components["schemas"]["SchemaV1"];
+            session: components["schemas"]["NativeSpotCashSessionV1"];
+            source_evidence?: null | components["schemas"]["NativeSpotCashSourceEvidenceV1"];
+            /**
+             * @description Official statistics evaluated only on complete report-currency daily returns.
+             *     They are separate from the engine's native-currency statistics.
+             */
+            statistics: components["schemas"]["NativeStatisticV1"][];
+        };
+        /**
+         * @description Execution-local facts for one fresh, exclusively owned observer session.
+         *     The native run identity is available only in its eventual completion receipt.
+         */
+        NativeSpotCashSessionV1: {
+            account_id: string;
+            dataset_revision_id: components["schemas"]["Id"];
+            native_instance_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            period_end_ns: components["schemas"]["DbCounter"];
+            period_start_ns: components["schemas"]["DbCounter"];
+            /** @description QZ observer session UUIDv7; not the official native run or instance ID. */
+            session_id: components["schemas"]["Id"];
+            venue: string;
+        };
+        NativeSpotCashSnapshotV1: {
+            account_kind: components["schemas"]["NativeAccountKind"];
+            balances: components["schemas"]["NativeSpotCashBalanceV1"][];
+            /** @description Adapter must establish that every native currency row was retained. */
+            balances_complete: boolean;
+            binding: components["schemas"]["NativeSpotSnapshotBindingV1"];
+            native_base_currency: string | null;
+        };
+        /**
+         * @description Kept separately from valuation completeness, native receipts and fee policy.
+         *     Actual retrieval clocks cannot certify when old candles were first public.
+         */
+        NativeSpotCashSourceEvidenceV1: {
+            capture_id: components["schemas"]["Id"];
+            first_received_ns: components["schemas"]["DbCounter"];
+            historical_availability: components["schemas"]["SpotCashHistoricalAvailabilityV1"];
+            last_received_ns: components["schemas"]["DbCounter"];
+            method: components["schemas"]["SpotCashSourceMethodV1"];
+            native_version: string;
+            network: components["schemas"]["SpotCashSourceNetworkV1"];
+            response_count: components["schemas"]["DbCounter"];
+            schema_version: components["schemas"]["SchemaV1"];
+            selected_row_count: components["schemas"]["DbCounter"];
+        };
+        /** @description Read-only report projection. Balance mark changes are not native account PnL. */
+        NativeSpotCashSummaryV1: {
+            /** @description All original native fee currencies; never aggregated at an assumed FX rate. */
+            commissions_by_currency: components["schemas"]["NativeSpotCashMoneyV1"][];
+            commissions_reason?: string | null;
+            fee_acceptance: components["schemas"]["SpotCashFeeAcceptanceV1"];
+            native_pnl_by_currency: components["schemas"]["NativeStatisticV1"][];
+            report_currency: string;
+            source_evidence?: null | components["schemas"]["NativeSpotCashSourceEvidenceV1"];
+            valuation_basis: string;
+            valuation_change?: null | components["schemas"]["DecimalValue"];
+            valuation_change_reason?: string | null;
+        };
+        /** @enum {string} */
+        NativeSpotDailySamplingV1: "NATIVE_UTC_MIDNIGHT_BOUNDARIES";
+        /** @description Narrow projection of an authoritative native instrument, never a symbol guess. */
+        NativeSpotInstrumentV1: {
+            base_currency: string;
+            has_expiration: boolean;
+            instrument_id: string;
+            is_inverse: boolean;
+            multiplier: components["schemas"]["DecimalValue"];
+            /** @description Adapter must copy the native enum variant; only CurrencyPair is admitted. */
+            native_kind: string;
+            quote_currency: string;
+            venue: string;
+        };
+        /** @enum {string} */
+        NativeSpotPriceMethodV1: "CLOSED_BAR_CLOSE";
+        /** @description Exact source binding and both clocks for a known direct spot close price. */
+        NativeSpotPriceV1: {
+            available_ns: components["schemas"]["DbCounter"];
+            bar_open_ns: components["schemas"]["DbCounter"];
+            dataset_revision_id: components["schemas"]["Id"];
+            /** @description Closed-bar end, not the candle's opening timestamp. */
+            event_ns: components["schemas"]["DbCounter"];
+            instrument_id: string;
+            method: components["schemas"]["NativeSpotPriceMethodV1"];
+            native_instance_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            /** @description Global replay ordering within this session, copied by the native adapter. */
+            observed_sequence: components["schemas"]["DbCounter"];
+            price: components["schemas"]["DecimalValue"];
+            session_id: components["schemas"]["Id"];
+            /**
+             * @description Exact row in the frozen dataset revision. The adapter must establish
+             *     native Bar equality with that row; a supplied key alone proves nothing.
+             */
+            source_row_key: string;
+        };
+        /**
+         * Format: uuid
+         * @description An identity copied from the official engine, never a generated QZ Id (UUIDv7).
+         *     Deliberately has no constructor that generates or reserves an identity.
+         */
+        NativeSpotRuntimeIdV1: string;
+        /** @description Identity of the original snapshot, retained in every valuation observation. */
+        NativeSpotSnapshotBindingV1: {
+            account_id: string;
+            asof_ns: components["schemas"]["DbCounter"];
+            dataset_revision_id: components["schemas"]["Id"];
+            /** @description Copy snapshot.event_id directly from the official PortfolioSnapshot. */
+            event_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            native_instance_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            origin: components["schemas"]["NativeSpotSnapshotOriginV1"];
+            session_id: components["schemas"]["Id"];
+            /** @description Global replay sequence at capture, in the same ordering as price observations. */
+            snapshot_sequence: components["schemas"]["DbCounter"];
+            venue: string;
+        };
+        /** @enum {string} */
+        NativeSpotSnapshotOriginV1: "NATIVE_PUBLICATION" | "DECISION_BUILD";
+        NativeSpotValuationFrameV1: {
+            /**
+             * @description At most one already selected as-of price per instrument. The adapter must
+             *     select from the frozen catalog, not accept arbitrary user-asserted marks.
+             */
+            prices: components["schemas"]["NativeSpotPriceV1"][];
+            snapshot: components["schemas"]["NativeSpotCashSnapshotV1"];
         };
         /** @enum {string} */
         NativeStatisticGroup: "PNL" | "RETURNS" | "GENERAL";
@@ -6557,7 +6874,7 @@ export interface components {
                 current_attempt_no: number;
                 cycle_id?: null | components["schemas"]["Id"];
                 /** Format: date-time */
-                deadline_at: string;
+                deadline_at?: string | null;
                 /** Format: date-time */
                 finished_at?: string | null;
                 id: components["schemas"]["Id"];
@@ -6678,7 +6995,7 @@ export interface components {
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
@@ -6686,19 +7003,17 @@ export interface components {
                 experiments: number;
                 /** Format: int64 */
                 memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
                 memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             mandate_id: components["schemas"]["Id"];
             members: components["schemas"]["PortfolioMemberSelectionV1"][];
@@ -6763,7 +7078,7 @@ export interface components {
             cycle_id: components["schemas"]["Id"];
             expected_runtime_revision: components["schemas"]["Revision"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
@@ -6771,19 +7086,17 @@ export interface components {
                 experiments: number;
                 /** Format: int64 */
                 memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
                 memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             runtime_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -7069,6 +7382,65 @@ export interface components {
             valid_until: string;
         };
         /** @enum {string} */
+        ReportCurrencyDailyPolicyV1: "FRESH_SIMULATION_NO_EXTERNAL_FLOWS";
+        ReportCurrencyDailyReturnV1: {
+            closing_snapshot?: null | components["schemas"]["NativeSpotSnapshotBindingV1"];
+            day_end_ns: components["schemas"]["DbCounter"];
+            day_start_ns: components["schemas"]["DbCounter"];
+            opening_snapshot?: null | components["schemas"]["NativeSpotSnapshotBindingV1"];
+            reason?: null | components["schemas"]["ReportCurrencyReturnFailureV1"];
+            /** Format: double */
+            value: number | null;
+        };
+        ReportCurrencyDailyReturnsV1: {
+            /** Format: int32 */
+            annualization_days: number;
+            /**
+             * @description Only complete UTC calendar days inside the requested window. Missing
+             *     observations remain None with a reason, never zero or carried forward.
+             */
+            days: components["schemas"]["ReportCurrencyDailyReturnV1"][];
+            flow_evidence: components["schemas"]["NativeSpotCashFlowEvidenceV1"];
+            kind: components["schemas"]["ReportCurrencyReturnsKindV1"];
+            policy: components["schemas"]["NativeSpotCashPolicyV1"];
+            report_currency: string;
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        ReportCurrencyReturnFailureV1: "SNAPSHOT_GAP" | "VALUATION_UNAVAILABLE" | "NON_POSITIVE_OPENING_EQUITY" | "ARITHMETIC_OUT_OF_RANGE";
+        /** @enum {string} */
+        ReportCurrencyReturnsKindV1: "REPORT_CURRENCY_DAILY";
+        ReportCurrencyValuationLegV1: {
+            currency: string;
+            native_total: components["schemas"]["DecimalValue"];
+            price?: null | components["schemas"]["NativeSpotPriceV1"];
+            report_value: components["schemas"]["DecimalValue"];
+        };
+        /**
+         * @description A separate QZ derived artifact. Never embed this in nativeSnapshot or pretend
+         *     it is the official engine's single-currency portfolio equity.
+         */
+        ReportCurrencyValuationOutcomeV1: {
+            legs: components["schemas"]["ReportCurrencyValuationLegV1"][];
+            /** @enum {string} */
+            status: "COMPLETE";
+            total: components["schemas"]["DecimalValue"];
+        } | {
+            reason: components["schemas"]["ReportValuationFailureV1"];
+            /** @enum {string} */
+            status: "UNAVAILABLE";
+        };
+        ReportCurrencyValuationV1: {
+            outcome: components["schemas"]["ReportCurrencyValuationOutcomeV1"];
+            /** @description Copied from the same immutable simulation settings used by this context. */
+            policy: components["schemas"]["NativeSpotCashPolicyV1"];
+            report_currency: string;
+            schema_version: components["schemas"]["SchemaV1"];
+            snapshot: components["schemas"]["NativeSpotSnapshotBindingV1"];
+        };
+        /** @enum {string} */
+        ReportValuationFailureV1: "INVALID_SNAPSHOT_BINDING" | "UNSUPPORTED_ACCOUNT" | "INCOMPLETE_BALANCES" | "INVALID_BALANCE" | "DUPLICATE_CURRENCY" | "UNKNOWN_CURRENCY" | "INVALID_PRICE_SOURCE" | "UNKNOWN_PRICE_INSTRUMENT" | "DUPLICATE_PRICE" | "MISSING_PRICE" | "FUTURE_PRICE" | "AMBIGUOUS_PRICE_ORDER" | "PRICE_METHOD_MISMATCH" | "REPLAY_SEQUENCE_CONFLICT" | "REPLAY_CLOCK_CONFLICT" | "PRICE_SOURCE_CONFLICT" | "STALE_PRICE" | "NON_POSITIVE_PRICE" | "ARITHMETIC_OUT_OF_RANGE";
+        /** @enum {string} */
         ResearchArtifactKind: "CODE" | "PARAMETERS" | "REPORT";
         /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
         Revision: string;
@@ -7132,7 +7504,7 @@ export interface components {
             current_attempt_no: number;
             cycle_id?: null | components["schemas"]["Id"];
             /** Format: date-time */
-            deadline_at: string;
+            deadline_at?: string | null;
             /** Format: date-time */
             finished_at?: string | null;
             id: components["schemas"]["Id"];
@@ -7388,6 +7760,33 @@ export interface components {
             test_size: components["schemas"]["DbCounter"];
             train_size: components["schemas"]["DbCounter"];
         };
+        /**
+         * @description Explicit frozen research-policy acceptance, never an applicability assertion.
+         * @enum {string}
+         */
+        SpotCashFeeAcceptanceV1: "PUBLIC_RATE_SCENARIO_UNVERIFIED_APPLICABILITY";
+        /** @enum {string} */
+        SpotCashHistoricalAvailabilityV1: "UNVERIFIED";
+        /** @enum {string} */
+        SpotCashSourceMethodV1: "HYPERLIQUID_PUBLIC_REST_CANDLE_SNAPSHOT";
+        /** @enum {string} */
+        SpotCashSourceNetworkV1: "MAINNET";
+        /** @enum {string} */
+        SpotFeeBasisV1: "BASE_QUANTITY" | "QUOTE_NOTIONAL";
+        /** @enum {string} */
+        SpotFeeCurrencyV1: "BASE" | "QUOTE";
+        /** @enum {string} */
+        SpotFeeEvidenceStatusV1: "CONSERVATIVE_ASSUMPTION" | "PUBLIC_RATE_SCENARIO_UNVERIFIED_APPLICABILITY" | "SYNTHETIC" | "DATA_BACKED";
+        /** @enum {string} */
+        SpotFeeLiquidityV1: "MAKER" | "TAKER";
+        /** @enum {string} */
+        SpotFeeOrderSideV1: "BUY" | "SELL";
+        /**
+         * @description Exact decimal arithmetic, rounded once per fill before native Money construction.
+         *     This is an explicit research convention, not a verified exchange rounding rule.
+         * @enum {string}
+         */
+        SpotFeeRoundingV1: "HALF_EVEN_CURRENCY_PRECISION";
         StopRuleV1: {
             schema_version: components["schemas"]["SchemaV1"];
             stop_on_budget: boolean;
@@ -7492,7 +7891,7 @@ export interface components {
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
@@ -7500,19 +7899,17 @@ export interface components {
                 experiments: number;
                 /** Format: int64 */
                 memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
                 memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             mandate_id: components["schemas"]["Id"];
             members: components["schemas"]["StrategyMemberSelectionV1"][];
@@ -11184,6 +11581,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DatasetView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    dataset_evidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetEvidenceViewV1"];
                 };
             };
             401: {

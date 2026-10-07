@@ -219,14 +219,10 @@ where
     )
     .await?;
     domain::runtime::job_limits(&capabilities, &request.limits)?;
-    let cpu = u16::try_from(
-        request
-            .limits
-            .cpu_seconds
-            .get()
-            .div_ceil(u64::from(request.limits.wall_seconds)),
-    )
-    .map_err(|_| domain::DomainError::CapabilityUnavailable("native_cpu_capacity"))?;
+    let cpu = domain::execution_limits::native_cpu_rate(
+        request.limits.cpu_seconds,
+        request.limits.wall_seconds,
+    )?;
     if cpu == 0 || cpu > capabilities.max_cpu {
         return Err(domain::DomainError::CapabilityUnavailable("native_cpu_capacity").into());
     }

@@ -11,15 +11,15 @@ fn runtime_capacity_is_separate_from_cumulative_cpu_accounting() {
     let limits = JobLimitsV1 {
         schema_version: SchemaV1,
         experiments: 1,
-        cpu_seconds: DbCounter::new(1_000_000).unwrap(),
-        wall_seconds: capabilities.max_wall_seconds,
+        cpu_seconds: Some(DbCounter::new(1_000_000).unwrap()),
+        wall_seconds: Some(capabilities.max_wall_seconds),
         memory_mib: capabilities.max_memory_mib,
-        output_bytes: capabilities.max_output_bytes,
+        output_bytes: Some(capabilities.max_output_bytes),
     };
     assert!(runtime::job_limits(&capabilities, &limits).is_ok());
     for value in [0, capabilities.max_wall_seconds + 1] {
         let invalid = JobLimitsV1 {
-            wall_seconds: value,
+            wall_seconds: Some(value),
             ..limits.clone()
         };
         assert!(matches!(
@@ -39,7 +39,7 @@ fn runtime_capacity_is_separate_from_cumulative_cpu_accounting() {
     }
     for value in [0, capabilities.max_output_bytes.get() + 1] {
         let invalid = JobLimitsV1 {
-            output_bytes: DbCounter::new(value).unwrap(),
+            output_bytes: Some(DbCounter::new(value).unwrap()),
             ..limits.clone()
         };
         assert!(matches!(

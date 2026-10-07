@@ -10,13 +10,38 @@ pub fn job_limits(
     capabilities: &RuntimeCapabilitiesV1,
     limits: &contracts::lifecycle::JobLimitsV1,
 ) -> Result<(), DomainError> {
-    let failure = if limits.wall_seconds == 0 || limits.wall_seconds > capabilities.max_wall_seconds
+    let failure = if limits
+        .wall_seconds
+        .is_some_and(|seconds| seconds == 0 || seconds > capabilities.max_wall_seconds)
+        || (limits.wall_seconds.is_none()
+            && capabilities
+                .engine_versions
+                .get("optional-wall-time")
+                .map(String::as_str)
+                != Some("1"))
     {
         Some("runtime_wall_seconds")
     } else if limits.memory_mib == 0 || limits.memory_mib > capabilities.max_memory_mib {
         Some("runtime_memory_mib")
-    } else if limits.output_bytes.get() == 0
-        || limits.output_bytes.get() > capabilities.max_output_bytes.get()
+    } else if limits.cpu_seconds.is_none()
+        && capabilities
+            .engine_versions
+            .get("optional-cpu-budget")
+            .map(String::as_str)
+            != Some("1")
+    {
+        Some("runtime_cpu_budget")
+    } else if limits.wall_seconds.is_none() && limits.cpu_seconds.is_some() {
+        Some("independent_cpu_enforcement")
+    } else if limits
+        .output_bytes
+        .is_some_and(|bytes| bytes.get() == 0 || bytes > capabilities.max_output_bytes)
+        || (limits.output_bytes.is_none()
+            && capabilities
+                .engine_versions
+                .get("optional-output-budget")
+                .map(String::as_str)
+                != Some("1"))
     {
         Some("runtime_output_bytes")
     } else {

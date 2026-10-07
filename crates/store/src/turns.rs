@@ -40,10 +40,11 @@ pub struct WorkerFence {
 pub struct TurnRequest {
     pub command_key: String,
     pub turn_kind: TurnKind,
-    pub tokens: DbCounter,
+    /// None leaves application token spending uncapped, without a fake grant.
+    pub tokens: Option<DbCounter>,
     pub estimated_cost: Option<CostEstimate>,
     pub request_artifact_id: Id,
-    pub deadline_at: DateTime<Utc>,
+    pub deadline_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,10 +58,10 @@ pub struct Reservation {
     pub profile_revision: Revision,
     pub ordinal: u16,
     pub turn_kind: TurnKind,
-    pub tokens: DbCounter,
+    pub tokens: Option<DbCounter>,
     pub reserved_cost: Option<DecimalValue>,
     pub cost_currency: Option<String>,
-    pub deadline_at: DateTime<Utc>,
+    pub deadline_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,7 +129,7 @@ struct Mission {
     brief_state: String,
     run_state: String,
     dispatch_state: String,
-    run_deadline: DateTime<Utc>,
+    run_deadline: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
 }
 
@@ -160,6 +161,70 @@ fn kind_name(value: TurnKind) -> &'static str {
 }
 fn bounded(text: &str, limit: usize) -> bool {
     !text.trim().is_empty() && text.len() <= limit
+}
+
+/// Only an explicit cap creates a reservation amount. Used tokens are settled
+/// native observations; a missing cap must never become an i64::MAX grant.
+fn remaining_token_cap(
+    limit: Option<DbCounter>,
+    usage: &BudgetUsage,
+) -> Result<Option<DbCounter>, StoreError> {
+    limit
+        .map(|limit| {
+            let remaining = limit
+                .get()
+                .saturating_sub(usage.used_tokens.get())
+                .saturating_sub(usage.reserved_tokens.get());
+            if remaining == 0 {
+                return Err(DomainError::BudgetExhausted("tokens").into());
+            }
+            count(remaining as i64)
+        })
+        .transpose()
+}
+
+#[cfg(test)]
+mod token_cap_tests {
+    use super::*;
+
+    fn usage(used: u64, reserved: u64) -> BudgetUsage {
+        BudgetUsage {
+            reserved_experiments: 0,
+            used_experiments: 0,
+            reserved_cpu_seconds: DbCounter::ZERO,
+            active_runs: 0,
+            reserved_tokens: DbCounter::new(reserved).unwrap(),
+            used_tokens: DbCounter::new(used).unwrap(),
+            cost: None,
+            mission: None,
+        }
+    }
+
+    #[test]
+    fn missing_cap_stays_absent_even_at_the_counter_boundary() {
+        assert_eq!(
+            remaining_token_cap(None, &usage(i64::MAX as u64, 1)).unwrap(),
+            None,
+        );
+    }
+
+    #[test]
+    fn finite_cap_subtracts_settled_and_outstanding_tokens() {
+        assert_eq!(
+            remaining_token_cap(Some(DbCounter::new(100).unwrap()), &usage(60, 10)).unwrap(),
+            Some(DbCounter::new(30).unwrap()),
+        );
+    }
+
+    #[test]
+    fn finite_cap_exhaustion_never_becomes_uncapped() {
+        for observed in [usage(100, 0), usage(99, 1), usage(120, 0)] {
+            assert!(matches!(
+                remaining_token_cap(Some(DbCounter::new(100).unwrap()), &observed),
+                Err(StoreError::Domain(DomainError::BudgetExhausted("tokens"))),
+            ));
+        }
+    }
 }
 
 // Domain identities are immutable, so the first lookup can determine lock order
@@ -266,7 +331,7 @@ impl Mission {
         // Never call this on reconciliation/settlement: retain the real usage.
         // A threshold stop with unknown final usage also closes admission; a
         // later authoritative receipt replaces that uncertainty, not the event.
-        let (tokens, cost): (bool, bool) = sqlx::query_as("SELECT coalesce(bool_or(t.actual_tokens > r.reserved_tokens OR (t.reservation_id IS NULL AND EXISTS(SELECT 1 FROM app.run_events e WHERE e.run_id=r.run_id AND e.event_type='mission.token_limit' AND e.payload->>'reservation_id'=r.id::text))),false),coalesce(bool_or(t.actual_cost > r.reserved_cost),false) FROM app.model_turn_reservations r LEFT JOIN app.model_turn_receipts t ON t.reservation_id=r.id WHERE r.cycle_id=$1")
+        let (tokens, cost): (bool, bool) = sqlx::query_as("SELECT coalesce(bool_or(r.reserved_tokens IS NOT NULL AND (t.actual_tokens > r.reserved_tokens OR (t.reservation_id IS NULL AND EXISTS(SELECT 1 FROM app.run_events e WHERE e.run_id=r.run_id AND e.event_type='mission.token_limit' AND e.payload->>'reservation_id'=r.id::text)))),false),coalesce(bool_or(t.actual_cost > r.reserved_cost),false) FROM app.model_turn_reservations r LEFT JOIN app.model_turn_receipts t ON t.reservation_id=r.id WHERE r.cycle_id=$1")
             .bind(self.cycle_id).fetch_one(&mut **tx).await?;
         if tokens {
             return Err(DomainError::BudgetExhausted("tokens").into());
@@ -287,7 +352,7 @@ impl Mission {
         Ok(())
     }
 
-    fn admit(&self, deadline: DateTime<Utc>) -> Result<(), StoreError> {
+    fn admit(&self, deadline: Option<DateTime<Utc>>) -> Result<(), StoreError> {
         if self.project_state != ProjectState::Active
             || self.cycle_state != "RUNNING"
             || self.brief_state != "FROZEN"
@@ -308,7 +373,9 @@ impl Mission {
         if !self.budget_matches_brief {
             return Err(StoreError::Invalid("frozen_budget_snapshot_mismatch"));
         }
-        if deadline <= self.now || deadline > self.run_deadline {
+        if domain::execution_limits::expired(deadline, self.now)
+            || domain::execution_limits::exceeds(deadline, self.run_deadline)
+        {
             return Err(StoreError::Invalid("turn_deadline"));
         }
         Ok(())
@@ -373,7 +440,10 @@ fn reservation(row: PgRow) -> Result<Reservation, StoreError> {
         ordinal: u16::try_from(row.try_get::<i32, _>("ordinal")?)
             .map_err(|_| StoreError::Invalid("turn_ordinal"))?,
         turn_kind: kind(&row.try_get::<String, _>("turn_kind")?)?,
-        tokens: count(row.try_get("reserved_tokens")?)?,
+        tokens: row
+            .try_get::<Option<i64>, _>("reserved_tokens")?
+            .map(count)
+            .transpose()?,
         reserved_cost: row
             .try_get::<Option<BigDecimal>, _>("reserved_cost")?
             .map(decimal)
@@ -692,10 +762,9 @@ async fn reserve_in_transaction(
     if !bounded(&request.command_key, 200) {
         return Err(StoreError::Invalid("command_key"));
     }
-    if !request
+    if request
         .deadline_at
-        .timestamp_subsec_nanos()
-        .is_multiple_of(1000)
+        .is_some_and(|deadline| !deadline.timestamp_subsec_nanos().is_multiple_of(1000))
     {
         return Err(StoreError::Invalid("timestamp_precision"));
     }
@@ -765,7 +834,7 @@ async fn reserve_in_transaction(
     let new_id = Id::new();
     sqlx::query("INSERT INTO app.model_turn_reservations(id,project_id,cycle_id,run_id,session_id,attempt_id,command_key,turn_kind,reserved_tokens,reserved_cost,cost_currency,request_artifact_id,deadline_at,owner_epoch,profile_revision,ordinal) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
         .bind(new_id.as_uuid()).bind(mission.project_id).bind(mission.cycle_id).bind(run_id.as_uuid()).bind(mission.session_id)
-        .bind(fence.attempt_id.as_uuid()).bind(&request.command_key).bind(kind_name(request.turn_kind)).bind(request.tokens.get() as i64)
+        .bind(fence.attempt_id.as_uuid()).bind(&request.command_key).bind(kind_name(request.turn_kind)).bind(request.tokens.map(|tokens| tokens.get() as i64))
         .bind(request.estimated_cost.as_ref().map(|c|c.amount.as_decimal())).bind(request.estimated_cost.as_ref().map(|c|c.currency.as_str()))
         .bind(request.request_artifact_id.as_uuid()).bind(request.deadline_at)
         .bind(fence.owner_epoch.get() as i64).bind(mission.profile_revision).bind(ordinal).execute(&mut **tx).await?;

@@ -1,4 +1,5 @@
-//! Select existing observations only. Pricing, returns and fees stay in Nautilus.
+//! Select recorded native equity or verified separate report-currency valuations.
+//! Display sampling never calculates returns, prices or fees.
 use super::{bad, simulation};
 use crate::{research::invalid, DomainError};
 use chrono::Datelike;
@@ -59,6 +60,62 @@ fn indices(points: &[EquityPointV1], resolution: EquityResolution) -> Option<Vec
     (selected.len() <= MAX_EQUITY_POINTS).then_some(selected)
 }
 
+/// Preserve both ends of every recorded unavailable interval. Dropping the
+/// only null in a bucket would reconnect a chart across an unknown valuation.
+pub(super) fn gap_boundaries(points: &[EquityPointV1]) -> Vec<usize> {
+    points
+        .iter()
+        .enumerate()
+        .filter_map(|(index, point)| {
+            (point.value.is_none()
+                && (index == 0
+                    || index + 1 == points.len()
+                    || points[index - 1].value.is_some()
+                    || points[index + 1].value.is_some()))
+            .then_some(index)
+        })
+        .collect()
+}
+
+fn report_indices(points: &[EquityPointV1], resolution: EquityResolution) -> Option<Vec<usize>> {
+    let mut selected: std::collections::BTreeSet<_> =
+        indices(points, resolution)?.into_iter().collect();
+    selected.extend(gap_boundaries(points));
+    (selected.len() <= MAX_EQUITY_POINTS).then(|| selected.into_iter().collect())
+}
+
+/// Bounded preview indices, preserving real endpoints and unavailable intervals
+/// before spending the remaining budget on evenly distributed existing points.
+pub(super) fn report_preview_indices(
+    points: &[EquityPointV1],
+    maximum: usize,
+) -> Result<Vec<usize>, DomainError> {
+    if points.len() <= maximum {
+        return Ok((0..points.len()).collect());
+    }
+    let mut required: std::collections::BTreeSet<_> = gap_boundaries(points).into_iter().collect();
+    required.extend([0, points.len() - 1]);
+    if required.len() > maximum {
+        return Err(invalid(
+            "experiment_summary.preview",
+            "EXPERIMENT_PREVIEW_TOO_MANY_VALUATION_GAPS",
+        ));
+    }
+    let available: Vec<_> = (0..points.len())
+        .filter(|index| !required.contains(index))
+        .collect();
+    let remaining = (maximum - required.len()).min(available.len());
+    for index in 0..remaining {
+        let selected = if remaining == 1 {
+            available.len() / 2
+        } else {
+            index * (available.len() - 1) / (remaining - 1)
+        };
+        required.insert(available[selected]);
+    }
+    Ok(required.into_iter().collect())
+}
+
 pub fn portfolio_equity_curve(
     request: &NativeSimulationRequestV1,
     result: &NativeSimulationResultV1,
@@ -73,32 +130,74 @@ pub fn portfolio_equity_curve(
     let end = count(simulation::native_count(
         &canonical["run"]["backtest_end_ns"],
     )?)?;
-    let source = canonical["portfolio_snapshots"]
-        .as_array()
-        .ok_or_else(|| bad("equity_curve.snapshots"))?;
-    let mut points = Vec::with_capacity(source.len());
-    for snapshot in source {
-        let timestamp_ns = count(simulation::native_count(&snapshot["ts_event"])?)?;
-        let value: DecimalValue = simulation::money(
-            &snapshot["total_equity"][0],
-            &request.settings.base_currency,
-        )?
-        .to_plain_string()
-        .parse()
-        .map_err(|_| bad("equity_curve.money_range"))?;
-        points.push(EquityPointV1 {
-            timestamp_ns,
-            value: Some(value),
-            reason_code: None,
-        });
-    }
-    points.sort_unstable_by_key(|point| point.timestamp_ns);
-    for pair in points.windows(2) {
-        if pair[0].timestamp_ns == pair[1].timestamp_ns && pair[0].value != pair[1].value {
-            return Err(bad("equity_curve.conflicting_timestamp"));
+    let (mut points, source_point_count) = if let Some(report) = &result.spot_cash_report {
+        use contracts::{
+            spot_cash::ReportCurrencyValuationOutcomeV1,
+            spot_cash_report::NativeSpotCashObservationKindV1,
+        };
+        let mut points = std::collections::BTreeMap::new();
+        let mut source_count = 0;
+        // One display point per clock, selecting the last actually observed state.
+        // Statistical daily boundaries are separately recorded, never derived here.
+        for observation in &report.observations {
+            if let NativeSpotCashObservationKindV1::Snapshot { valuation, .. } = &observation.record
+            {
+                source_count += 1;
+                let (value, reason_code) = match &valuation.outcome {
+                    ReportCurrencyValuationOutcomeV1::Complete { total, .. } => {
+                        (Some(total.clone()), None)
+                    }
+                    ReportCurrencyValuationOutcomeV1::Unavailable { reason } => (
+                        None,
+                        Some(format!(
+                            "REPORT_CURRENCY_VALUATION_{}",
+                            serde_json::to_value(reason)
+                                .map_err(|_| bad("equity_curve.reason"))?
+                                .as_str()
+                                .ok_or_else(|| bad("equity_curve.reason"))?
+                        )),
+                    ),
+                };
+                points.insert(
+                    observation.native_clock_ns,
+                    EquityPointV1 {
+                        timestamp_ns: observation.native_clock_ns,
+                        value,
+                        reason_code,
+                    },
+                );
+            }
         }
-    }
-    points.dedup_by(|a, b| a.timestamp_ns == b.timestamp_ns);
+        (points.into_values().collect::<Vec<_>>(), source_count)
+    } else {
+        let source = canonical["portfolio_snapshots"]
+            .as_array()
+            .ok_or_else(|| bad("equity_curve.snapshots"))?;
+        let mut points = Vec::with_capacity(source.len());
+        for snapshot in source {
+            let timestamp_ns = count(simulation::native_count(&snapshot["ts_event"])?)?;
+            let value: DecimalValue = simulation::money(
+                &snapshot["total_equity"][0],
+                &request.settings.base_currency,
+            )?
+            .to_plain_string()
+            .parse()
+            .map_err(|_| bad("equity_curve.money_range"))?;
+            points.push(EquityPointV1 {
+                timestamp_ns,
+                value: Some(value),
+                reason_code: None,
+            });
+        }
+        points.sort_unstable_by_key(|point| point.timestamp_ns);
+        for pair in points.windows(2) {
+            if pair[0].timestamp_ns == pair[1].timestamp_ns && pair[0].value != pair[1].value {
+                return Err(bad("equity_curve.conflicting_timestamp"));
+            }
+        }
+        points.dedup_by(|a, b| a.timestamp_ns == b.timestamp_ns);
+        (points, source.len() as u64)
+    };
     points.retain(|point| {
         query
             .start_ns
@@ -118,8 +217,17 @@ pub fn portfolio_equity_curve(
     };
     let (resolution, selected) = choices
         .iter()
-        .find_map(|&resolution| indices(&points, resolution).map(|selected| (resolution, selected)))
+        .find_map(|&resolution| {
+            let selected = if result.spot_cash_report.is_some() {
+                report_indices(&points, resolution)
+            } else {
+                indices(&points, resolution)
+            };
+            selected.map(|selected| (resolution, selected))
+        })
         .ok_or_else(|| invalid("equity_curve.resolution", "EQUITY_CURVE_TOO_MANY_POINTS"))?;
+    // Preserve the existing chart contract: sampled describes only downsampling
+    // within the distinct-clock query window, not duplicate-clock selection.
     let sampled = selected.len() < points.len();
     let points = selected
         .into_iter()
@@ -131,7 +239,7 @@ pub fn portfolio_equity_curve(
         starting_capital: request.settings.starting_capital.clone(),
         period_start_ns: start,
         period_end_ns: end,
-        source_point_count: count(source.len() as u64)?,
+        source_point_count: count(source_point_count)?,
         window_point_count,
         resolution,
         sampled,
@@ -211,5 +319,60 @@ mod tests {
             serde_json::from_str::<EquityCurveQuery>(r#"{"resolution":"AUTO","unknown":1}"#)
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod report_gap_tests {
+    use super::*;
+    fn observation(time: u64, value: Option<&str>) -> EquityPointV1 {
+        EquityPointV1 {
+            timestamp_ns: count(time).unwrap(),
+            value: value.map(|v| v.parse().unwrap()),
+            reason_code: value
+                .is_none()
+                .then(|| "REPORT_CURRENCY_VALUATION_STALE_PRICE".into()),
+        }
+    }
+    #[test]
+    fn day_downsampling_preserves_a_gap_before_same_day_recovery() {
+        const DAY: u64 = 86_400_000_000_000;
+        let points = vec![
+            observation(DAY, Some("100")),
+            observation(DAY + 5, None),
+            observation(DAY + 6, Some("110")),
+            observation(2 * DAY, Some("120")),
+        ];
+        assert_eq!(
+            indices(&points, EquityResolution::Day).unwrap(),
+            vec![0, 2, 3],
+            "legacy selection is unchanged"
+        );
+        let selected = report_indices(&points, EquityResolution::Day).unwrap();
+        assert_eq!(selected, vec![0, 1, 2, 3]);
+        assert!(points[selected[1]].value.is_none());
+    }
+    #[test]
+    fn bounded_preview_retains_the_null_old_uniform_sampling_would_erase() {
+        let points: Vec<_> = (0..65)
+            .map(|index| observation(index, if index == 63 { None } else { Some("100") }))
+            .collect();
+        let selected = report_preview_indices(&points, 64).unwrap();
+        assert_eq!(selected.len(), 64);
+        assert_eq!(selected.first(), Some(&0));
+        assert_eq!(selected.last(), Some(&64));
+        assert!(selected.contains(&63));
+        assert!(points[63].value.is_none());
+    }
+    #[test]
+    fn excessive_gap_boundaries_are_refused_instead_of_reconnected() {
+        let points: Vec<_> = (0..130)
+            .map(|index| observation(index, if index % 2 == 1 { None } else { Some("100") }))
+            .collect();
+        assert!(report_preview_indices(&points, 64).is_err());
+        let points: Vec<_> = (0..25_000)
+            .map(|index| observation(index, if index % 2 == 1 { None } else { Some("100") }))
+            .collect();
+        assert!(report_indices(&points, EquityResolution::Day).is_none());
     }
 }

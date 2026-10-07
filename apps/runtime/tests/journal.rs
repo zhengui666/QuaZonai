@@ -51,12 +51,12 @@ async fn fixture() -> (tempfile::TempDir, Journal, JobSpecV1, RuntimeCapabilitie
         parameters_artifact_id: parameter,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
-            cpu_seconds: count(1),
+            cpu_seconds: Some(count(1)),
             memory_mib: 64,
-            wall_seconds: 30,
-            output_bytes: count(4096),
+            wall_seconds: Some(30),
+            output_bytes: Some(count(4096)),
         },
-        deadline_at: now() + chrono::Duration::seconds(60),
+        deadline_at: Some(now() + chrono::Duration::seconds(60)),
         requested_output_schemas: vec![contracts::runtime::RuntimeArtifactSchemaV1 {
             name: "qz.data_quality".into(),
             version: "1".into(),
@@ -542,5 +542,60 @@ async fn native_full_filesystem_rolls_back_new_work_and_preserves_original_journ
     assert!(replay);
     assert_eq!(again, accepted);
     assert_eq!(reopened.pending(4).await.unwrap().len(), 2);
+    reopened.close().await;
+}
+
+#[tokio::test]
+async fn absent_execution_caps_survive_native_journal_reopen_and_remain_cancellable() {
+    let (directory, journal, mut spec, capability) = fixture().await;
+    spec.deadline_at = None;
+    spec.limits.wall_seconds = None;
+    spec.limits.cpu_seconds = None;
+    spec.limits.output_bytes = None;
+    let (first, replay) = journal.submit(&spec, &capability).await.unwrap();
+    assert!(!replay);
+    assert_eq!(
+        journal
+            .get(&spec.external_job_id)
+            .await
+            .unwrap()
+            .deadline_us,
+        None
+    );
+    let (same, replay) = journal.submit(&spec, &capability).await.unwrap();
+    assert!(replay);
+    assert_eq!(same, first);
+    let mut changed = spec.clone();
+    changed.deadline_at = Some(now() + chrono::Duration::seconds(30));
+    assert!(matches!(
+        journal.submit(&changed, &capability).await,
+        Err(Failure::Conflict)
+    ));
+    journal.close().await;
+    let reopened = Journal::open(
+        &directory.path().join("journal.sqlite"),
+        64 * 1024 * 1024,
+        4,
+    )
+    .await
+    .unwrap();
+    let original = reopened.get(&spec.external_job_id).await.unwrap();
+    assert_eq!(original.deadline_us, None);
+    // No reserved storage grant is not a zero-byte task output cap.
+    assert_eq!(original.output_reservation, 0);
+    assert_eq!(
+        original.spec_json.as_deref(),
+        Some(serde_json::to_string(&spec).unwrap().as_str())
+    );
+    reopened
+        .cancel(&spec.external_job_id, &cancellation(&spec))
+        .await
+        .unwrap();
+    assert!(reopened
+        .get(&spec.external_job_id)
+        .await
+        .unwrap()
+        .cancel_requested_us
+        .is_some());
     reopened.close().await;
 }

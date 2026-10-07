@@ -21,6 +21,7 @@ The service configuration contains exactly:
 - `frozen_metadata`: path to its original RuntimeCatalogMetadataV1
 - `dataset_revision`: path to the exact original DatasetView
 - `output_directory`: a new private directory under an approved parent
+- `claim_state_directory`: an absolute canonical private directory on the stable runtime volume, reused across restarts and output-directory changes; it must not be inside `output_directory`
 - `credential_file`: an existing owner-private control-service bearer file
 - `bind`: a literal loopback socket address
 - `max_seconds`: the bounded observation period, 1 through 300
@@ -35,11 +36,16 @@ proxy is a separate approved operation, not this implementation.
 
 The service retains byte-original input files and exclusively reserves its
 output directory before advertising capabilities. An existing directory fails;
-restart never resumes or repeats execution. Once a claim is admitted, the
-original claim is retained before the native owner starts. Exact same-process
-replay returns observed status without another owner; a different claim conflicts.
-Choosing a new evidence directory is a new explicit invocation, not cross-process
-claim replay or restoration.
+restart never restores a native account or repeats an admitted claim. The stable
+`claim_state_directory` protects claim identity independently of that output
+reservation. The original claim is durably reserved before the native owner is
+queued. A completed claim replays its original versioned lifecycle status across
+processes, byte-for-byte, without starting another owner. An incomplete or corrupt
+record requires recovery and is never silently retried. A different claim conflicts
+within the same session; a different legitimate claim has a separate durable key.
+Choosing a new evidence directory does not bypass protection in the same runtime
+state root. Preserve that root; do not create a new state root to retry old work.
+See [durability and recovery boundaries](../paper-claim-journal/task.md).
 
 The Polymarket profile advertises PAPER and package version 2 only. It rejects
 V1, another venue/account kind and leverage before reservation. Complete original
@@ -57,8 +63,12 @@ cleanup remains Failed, not an asserted clean stop.
 
 After native completion, a compact in-memory summary supplies terminal status;
 large original report/snapshot evidence is not reread through an input-size cap.
-`terminal-status.json` is retained, followed by the existing two-second final
-HTTP observation drain. The foreground service then exits. Loss of an HTTP
+The complete versioned `terminal-status.json` is retained in the stable claim
+journal only after the owner joins, and the original output directory keeps its
+terminal observation as well. A replay validates the complete schema and identity
+but returns the original bytes with `X-Paper-Claim-Replayed: true`; it is not a fill
+receipt or account restoration. The existing two-second final HTTP observation
+drain follows. The foreground service then exits. Loss of an HTTP
 connection is not proof of native termination: use the actual retained status
 and process outcome. No ACK or account relay is performed automatically.
 

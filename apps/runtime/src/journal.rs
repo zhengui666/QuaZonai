@@ -29,7 +29,7 @@ pub struct NativeJob {
     pub owner_epoch: i64,
     pub spec_json: Option<String>,
     pub submitted_us: i64,
-    pub deadline_us: i64,
+    pub deadline_us: Option<i64>,
     pub phase: String,
     pub launch_json: Option<String>,
     pub container_id: Option<String>,
@@ -275,17 +275,23 @@ impl Journal {
         }
         let materialization =
             materialization::required_bytes(&mut tx, spec, document.len()).await?;
-        let total = materialization
-            .checked_add(spec.limits.output_bytes.get())
-            .and_then(|bytes| i64::try_from(bytes).ok())
-            .ok_or(Failure::Capacity)?;
+        // None means no output-capacity reservation, not zero actual output.
+        // The exact absent task cap stays in immutable spec_json; actual bytes
+        // are charged when published and real storage capacity can still fail.
+        let total = match spec.limits.output_bytes {
+            Some(output) => materialization
+                .checked_add(output.get())
+                .ok_or(Failure::Capacity)?,
+            None => materialization,
+        };
+        let total = i64::try_from(total).map_err(|_| Failure::Capacity)?;
         // Admission owns both the final SQLite output and its predictable native
         // filesystem copies. No ACCEPTED receipt may precede this reservation.
         self.capacity(&mut tx, total).await?;
         sqlx::query("INSERT INTO runtime_jobs(external_id,run_id,attempt_no,owner_epoch,spec_json,submitted_us,deadline_us,phase,output_reservation) VALUES(?,?,?,?,?,?,?,'QUEUED',?)")
             .bind(identity).bind(spec.run_id.to_string()).bind(i64::from(spec.attempt_no))
             .bind(spec.owner_epoch.get() as i64).bind(document).bind(submitted.timestamp_micros())
-            .bind(spec.deadline_at.timestamp_micros()).bind(spec.limits.output_bytes.get() as i64).execute(&mut *tx).await?;
+            .bind(spec.deadline_at.map(|deadline| deadline.timestamp_micros())).bind(spec.limits.output_bytes.map_or(0, |maximum| maximum.get() as i64)).execute(&mut *tx).await?;
         materialization::insert(&mut tx, identity, materialization).await?;
         let result = Self::find(&mut tx, identity)
             .await?
@@ -313,7 +319,7 @@ impl Journal {
     }
     /// Read only bounded scheduling metadata; do not load thousands of 1 MiB specs.
     pub async fn scheduling(&self) -> Result<Vec<(String, String, bool)>> {
-        Ok(sqlx::query_as("SELECT external_id,phase,(cancel_requested_us IS NOT NULL OR stop_code IS NOT NULL OR deadline_us<=?) FROM runtime_jobs WHERE phase!='TERMINAL' ORDER BY 3 DESC,(phase!='QUEUED') DESC,submitted_us,external_id LIMIT 4096")
+        Ok(sqlx::query_as("SELECT external_id,phase,(cancel_requested_us IS NOT NULL OR stop_code IS NOT NULL OR (deadline_us IS NOT NULL AND deadline_us<=?)) FROM runtime_jobs WHERE phase!='TERMINAL' ORDER BY 3 DESC,(phase!='QUEUED') DESC,submitted_us,external_id LIMIT 4096")
             .bind(now().timestamp_micros()).fetch_all(&self.pool).await?)
     }
 

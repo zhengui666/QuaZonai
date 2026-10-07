@@ -83,7 +83,9 @@ pub struct Arguments {
 
 #[derive(clap::Subcommand)]
 enum Operation {
-    /// Serve one bounded Polymarket Cash simulation using original frozen inputs.
+    /// Serve one bounded Polymarket Cash simulation with durable lifecycle replay.
+    /// Reuse the persistent claim_state_directory; incomplete claims require recovery.
+    /// Fresh session only, without position or account restoration.
     Serve {
         #[arg(long)]
         config: PathBuf,

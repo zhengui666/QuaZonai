@@ -49,12 +49,12 @@ fn spec() -> JobSpecV1 {
         parameters_artifact_id: Id::new(),
         limits: RuntimeJobLimitsV1 {
             cpu: 2,
-            cpu_seconds: count(30),
+            cpu_seconds: Some(count(30)),
             memory_mib: 128,
-            wall_seconds: 60,
-            output_bytes: count(4096),
+            wall_seconds: Some(60),
+            output_bytes: Some(count(4096)),
         },
-        deadline_at: now() + Duration::seconds(60),
+        deadline_at: Some(now() + Duration::seconds(60)),
         requested_output_schemas: vec![schema()],
     }
 }
@@ -174,10 +174,10 @@ fn native_admission_requires_exact_observed_image_schema_and_limits() {
             2 => changed.job_kind = RunKind::AgentResearch,
             3 => changed.limits.cpu = 3,
             4 => changed.limits.memory_mib = 129,
-            5 => changed.limits.output_bytes = count(4097),
-            6 => changed.limits.wall_seconds = 61,
+            5 => changed.limits.output_bytes = Some(count(4097)),
+            6 => changed.limits.wall_seconds = Some(61),
             7 => changed.requested_output_schemas[0].version = "2".into(),
-            _ => changed.deadline_at = now(),
+            _ => changed.deadline_at = Some(now()),
         }
         assert!(admit_spec(&changed, &caps, now()).is_err());
     }
@@ -185,7 +185,7 @@ fn native_admission_requires_exact_observed_image_schema_and_limits() {
     old.checked_at = now() - Duration::minutes(6);
     assert!(admit_spec(&original, &old, now()).is_err());
     spec_shape(&original).unwrap();
-    assert!(admit_spec(&original, &capabilities(), original.deadline_at).is_err());
+    assert!(admit_spec(&original, &capabilities(), original.deadline_at.unwrap()).is_err());
 }
 
 #[test]
@@ -196,9 +196,13 @@ fn duplicate_inputs_schemas_and_excessive_resources_are_rejected() {
         match index {
             0 => changed.inputs.push(changed.inputs[0].clone()),
             1 => changed.requested_output_schemas.push(schema()),
-            2 => changed.limits.cpu_seconds = count(121),
-            3 => changed.limits.output_bytes = count(MAX_INPUT_OBJECT_BYTES + 1),
-            4 => changed.deadline_at += Duration::nanoseconds(1),
+            2 => changed.limits.cpu_seconds = Some(count(121)),
+            3 => changed.limits.output_bytes = Some(count(MAX_INPUT_OBJECT_BYTES + 1)),
+            4 => {
+                changed.deadline_at = changed
+                    .deadline_at
+                    .map(|deadline| deadline + Duration::nanoseconds(1))
+            }
             5 => changed.inputs.clear(),
             6 => changed.inputs.push(RuntimeInputV1::Artifact {
                 artifact_id: changed.parameters_artifact_id,
@@ -212,7 +216,7 @@ fn duplicate_inputs_schemas_and_excessive_resources_are_rejected() {
                 storage_version: "1".into(),
                 role: DataPartition::Discovery,
             }),
-            _ => changed.limits.cpu_seconds = DbCounter::ZERO,
+            _ => changed.limits.cpu_seconds = Some(DbCounter::ZERO),
         }
         assert!(spec_shape(&changed).is_err());
     }
@@ -303,7 +307,7 @@ fn result_identity_resources_and_immutable_output_contract_are_all_required() {
             1 => changed.attempt_no = 2,
             2 => changed.external_job_id = external_id(Id::new(), 1).unwrap(),
             3 => changed.input_set_id = Id::new(),
-            4 => changed.finished_at = spec.deadline_at + Duration::seconds(1),
+            4 => changed.finished_at = spec.deadline_at.unwrap() + Duration::seconds(1),
             5 => changed.started_at = None,
             6 => changed.artifacts.clear(),
             7 => changed.artifacts[0].storage_version = Revision::INITIAL.next().unwrap(),
@@ -392,4 +396,37 @@ fn native_storage_versions_are_exact_single_header_values() {
     }
     assert!(storage_version(&"v".repeat(121)).is_err());
     storage_version(&"v".repeat(120)).unwrap();
+}
+
+#[test]
+fn absent_runtime_deadlines_require_an_explicit_native_capability() {
+    let mut original = spec();
+    original.deadline_at = None;
+    original.limits.wall_seconds = None;
+    original.limits.cpu_seconds = None;
+    original.limits.output_bytes = None;
+    spec_shape(&original).unwrap();
+    let mut caps = capabilities();
+    assert!(admit_spec(&original, &caps, now()).is_err());
+    caps.engine_versions
+        .insert("optional-wall-time".into(), "1".into());
+    assert!(admit_spec(&original, &caps, now()).is_err());
+    caps.engine_versions
+        .insert("optional-cpu-budget".into(), "1".into());
+    caps.engine_versions
+        .insert("optional-output-budget".into(), "1".into());
+    admit_spec(&original, &caps, now()).unwrap();
+    original.limits.cpu_seconds = Some(count(30));
+    assert!(admit_spec(&original, &caps, now()).is_err());
+    original.limits.cpu_seconds = None;
+    assert_eq!(
+        serde_json::to_value(&original).unwrap()["deadline_at"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        serde_json::to_value(&original).unwrap()["limits"]["wall_seconds"],
+        serde_json::Value::Null
+    );
+    original.limits.wall_seconds = Some(0);
+    assert!(spec_shape(&original).is_err());
 }

@@ -142,12 +142,12 @@ async fn compile_spec(f: &Fixture) -> JobSpecV1 {
         parameters_artifact_id: parameters,
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
-            cpu_seconds: DbCounter::new(10).unwrap(),
+            cpu_seconds: Some(DbCounter::new(10).unwrap()),
             memory_mib: 64,
-            wall_seconds: 30,
-            output_bytes: DbCounter::new(4096).unwrap(),
+            wall_seconds: Some(30),
+            output_bytes: Some(DbCounter::new(4096).unwrap()),
         },
-        deadline_at: runtime::now() + chrono::Duration::seconds(60),
+        deadline_at: Some(runtime::now() + chrono::Duration::seconds(60)),
         requested_output_schemas: value.output_schemas(),
     }
 }

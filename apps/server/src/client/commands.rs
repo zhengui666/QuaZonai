@@ -2,6 +2,7 @@
 use super::{Failure, Result};
 use clap::{Args, Subcommand};
 use contracts::{
+    Id,
     artifacts::{ArtifactCreate, ArtifactView},
     brief::{BriefCreate, BriefUpdate, BriefView},
     codex::{
@@ -37,10 +38,9 @@ use contracts::{
         PortfolioBuildEnvelopeV2, PortfolioCandidateEnvelopeV2, PortfolioCandidateListEnvelopeV2,
         StrategyAlphaAdoptV1, StrategyAlphaVersionV1,
     },
-    Id,
 };
 use reqwest::Method;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::io::Read;
 
 #[derive(Args)]
@@ -523,6 +523,10 @@ pub enum Revision {
         page: List,
     },
     Show {
+        id: String,
+    },
+    /// Read owner-only registration evidence summary for a non-Sealed Dataset.
+    Evidence {
         id: String,
     },
     Register,
@@ -1515,6 +1519,11 @@ impl Command {
                 Revision::Show { id } => {
                     Request::get::<DatasetView>(item("/api/v2/data/revisions", id)?)
                 }
+                Revision::Evidence { id } => Request::get::<DatasetEvidenceViewV1>(action(
+                    "/api/v2/data/revisions",
+                    id,
+                    "evidence",
+                )?),
                 Revision::Register => {
                     Request::write::<DatasetRegister, CommandResult<DatasetView>>(
                         POST,
@@ -1930,7 +1939,7 @@ impl Command {
 mod brief_read_tests {
     use super::*;
     use clap::Parser;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     const BRIEF: &str = "018fc823-8e40-7000-8000-000000000001";
     const PROJECT: &str = "018fc823-8e40-7000-8000-000000000002";
@@ -2038,5 +2047,68 @@ mod brief_read_tests {
             decode(&serde_json::to_vec(&response).unwrap()),
             Err(Failure::Contract)
         ));
+    }
+}
+
+#[cfg(test)]
+mod dataset_evidence_tests {
+    use super::*;
+    use clap::Parser;
+    const ID: &str = "018fc823-8e40-7000-8000-000000000001";
+    #[derive(Parser)]
+    struct Arguments {
+        #[command(subcommand)]
+        command: Command,
+    }
+    fn request(id: &str) -> Result<Request> {
+        Arguments::try_parse_from(["client", "data", "revision", "evidence", id])
+            .map_err(|_| Failure::Input)?
+            .command
+            .request()
+    }
+    #[test]
+    fn dataset_evidence_routes_only_a_revision_id_with_no_write_or_artifact_fallback() {
+        let request = request(ID).unwrap();
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(
+            request.route,
+            format!("/api/v2/data/revisions/{ID}/evidence")
+        );
+        assert_eq!(request.status, 200);
+        assert!(!request.operator);
+        assert!(!request.requires_idempotency_key());
+        assert!(request.query.is_empty());
+        assert!(request.body.is_none());
+        assert!(super::dataset_evidence_tests::request("../artifacts/other").is_err());
+    }
+    #[test]
+    fn dataset_evidence_decodes_strict_typed_summary_and_preserves_labels_and_integer_strings() {
+        let Output::Json(decode) = request(ID).unwrap().output else {
+            panic!("JSON response")
+        };
+        let value: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/contracts/dataset-evidence.json"
+        ))
+        .unwrap();
+        assert_eq!(decode(&serde_json::to_vec(&value).unwrap()).unwrap(), value);
+        for field in [
+            "native_metadata_artifact_id",
+            "license_state",
+            "pit_status",
+            "quality",
+        ] {
+            let mut missing = value.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(decode(&serde_json::to_vec(&missing).unwrap()).is_err());
+        }
+        let mut raw = value.clone();
+        raw["provenance_reference"] = serde_json::json!("https://must-not-leak.example");
+        assert!(decode(&serde_json::to_vec(&raw).unwrap()).is_err());
+        let mut wrong_version = value.clone();
+        wrong_version["schema_version"] = serde_json::json!(2);
+        assert!(decode(&serde_json::to_vec(&wrong_version).unwrap()).is_err());
+        let mut number = value;
+        number["quality"]["row_count"] = serde_json::json!(9007199254740993_u64);
+        assert!(decode(&serde_json::to_vec(&number).unwrap()).is_err());
     }
 }

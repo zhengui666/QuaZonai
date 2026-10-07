@@ -37,6 +37,10 @@ pub mod scalars;
 pub mod science;
 pub mod settings;
 pub mod settlement;
+pub mod spot_cash;
+pub mod spot_cash_report;
+pub mod spot_cash_source;
+pub mod spot_fees;
 pub mod strategy_portfolio;
 
 pub use scalars::{DbCounter, DecimalValue, Id, Revision, SchemaV1, Timestamp};
@@ -154,6 +158,8 @@ use utoipa::OpenApi;
     data::DataGrantRevocationView,
     data::DatasetRegister,
     data::DatasetView,
+    data::DatasetEvidenceViewV1,
+    data::DatasetQualitySummaryV1,
     data::UniverseView,
     data::DataListQuery,
     data::DataLicenseState,
@@ -276,6 +282,12 @@ use utoipa::OpenApi;
     science::NativeFrozenCalibrationV1,
     science::NativeSimulationRequestV1,
     science::NativeSimulationResultV1,
+    spot_cash::ReportCurrencyValuationV1,
+    spot_cash::ReportCurrencyDailyReturnsV1,
+    spot_cash_report::NativeSpotCashReportV1,
+    spot_cash_source::FrozenSpotCandleSourceV1,
+    spot_cash_source::NativeSpotCashSourceEvidenceV1,
+    spot_cash_report::NativeSpotCashSummaryV1,
     science::NativePortfolioStudyRequestV1,
     science::NativePortfolioStudyResultV1,
     forward::NativeForwardResultV1

@@ -84,6 +84,8 @@ pub struct PaperConfig {
     pub paper_latency: PaperLatencyModel,
     /// A new segment for this invocation. Existing files are never overwritten.
     pub observations_file: PathBuf,
+    /// Stable private runtime volume; must be reused across invocations and outputs.
+    pub claim_state_directory: PathBuf,
     /// Existing local downstream authentication; this command creates no token.
     pub credential_file: PathBuf,
     /// Existing trusted reverse proxy exposes the configured downstream endpoint.
@@ -114,6 +116,10 @@ pub struct PaperPreflight {
 impl PaperConfig {
     pub fn validate(&self) -> Result<()> {
         ensure!(self.bind.ip().is_loopback(), "PAPER_BIND_LOOPBACK_REQUIRED");
+        ensure!(
+            self.claim_state_directory.is_absolute(),
+            "PAPER_STABLE_CLAIM_STATE_REQUIRED"
+        );
         ensure!(
             self.execution_assumptions.project_id == self.project_id,
             "PAPER_ASSUMPTIONS_PROJECT"
@@ -301,7 +307,7 @@ pub fn preflight_envelope(
         execution_environment: "PAPER_SANDBOX",
         native_account_model: "MARGIN_LEVERAGE_ONE",
         restart_policy: "FRESH_ACCOUNT_AND_SESSION_NO_RESTORE",
-        claim_replay_scope: "CURRENT_PROCESS_ONLY",
+        claim_replay_scope: "DURABLE_RUNTIME_PROJECT_ADAPTER_CLAIM",
         market_data_source: "BINANCE_SPOT_PUBLIC_JSON",
         market_time_basis:
             "NATIVE_ADAPTER_TIMESTAMPS_WITH_RECEIVE_TIME_FALLBACK_WHEN_EXCHANGE_TIME_ABSENT",
@@ -692,8 +698,9 @@ enum Operation {
         #[arg(long)]
         claim: PathBuf,
     },
-    /// Serve one fresh Paper account/session; no position restore or cross-process claim replay.
-    /// Apply explicitly starts public market data, using the declared starting capital.
+    /// Serve one fresh Paper account/session with durable cross-process lifecycle replay.
+    /// No position restore. New claims start public market data with declared capital.
+    /// Configuration requires the same persistent claim_state_directory on every restart.
     Serve {
         #[arg(long)]
         config: PathBuf,
@@ -771,6 +778,7 @@ async fn serve(config: PaperConfig) -> Result<()> {
         config.bind,
         read_credential(&config.credential_file)?,
         config.market_capability_version.clone(),
+        &config.claim_state_directory,
     )
     .await?;
     output(&serde_json::json!({
@@ -813,12 +821,14 @@ async fn serve(config: PaperConfig) -> Result<()> {
             Some("PAPER_NATIVE_FAILED"),
         );
     }
+    let retained = control.retain_terminal_observation().await;
     output(&control.status.borrow().clone())?;
     // Final observation is also retained by the native observer. The short
     // bounded drain lets an already-issued status/stop request see final state.
     tokio::time::sleep(Duration::from_secs(2)).await;
     control.shutdown.send_replace(true);
     control.task.await??;
+    retained?;
     native_result
 }
 

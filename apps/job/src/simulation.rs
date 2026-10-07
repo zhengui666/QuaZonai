@@ -1,8 +1,8 @@
 //! Apply frozen targets in one native Nautilus simulated account, in replay or Paper.
-use crate::catalog::{load_catalog, NativeBarSeries, NativeMarketData};
-use anyhow::{ensure, Result};
+use crate::catalog::{NativeBarSeries, NativeMarketData, load_catalog};
+use anyhow::{Result, ensure};
 use bigdecimal::{BigDecimal, ToPrimitive};
-use contracts::{science::*, DbCounter, DecimalValue, SchemaV1};
+use contracts::{DbCounter, DecimalValue, SchemaV1, science::*};
 use nautilus_analysis::{
     analyzer::{PortfolioAnalyzer, Statistic},
     statistics::{
@@ -68,6 +68,7 @@ pub(crate) struct ReplayStatus {
     submitted_after_ns: u64,
     study_infeasible: bool,
     frames: Vec<NativePortfolioStudyFrameV1>,
+    spot_fills: Vec<OrderFilled>,
 }
 
 impl ReplayStatus {
@@ -110,6 +111,7 @@ pub(crate) struct TargetReplay {
         DecimalValue,
     )>,
     settings: NativeSimulationSettingsV1,
+    spot_cash: Option<crate::spot_cash_capture::SpotCashCaptureHandle>,
     currency: Currency,
     venue: Venue,
     tolerance: Decimal,
@@ -183,6 +185,13 @@ nautilus_strategy!(TargetReplay, {
         if now <= self.status.borrow().submitted_after_ns || now >= self.active_expiry_ns {
             self.status.borrow_mut().failure = Some("NATIVE_NONCAUSAL_OR_EXPIRED_FILL");
             return;
+        }
+        if self.spot_cash.is_some() {
+            if self.status.borrow().spot_fills.len() >= 1_000_000 {
+                self.status.borrow_mut().failure = Some("SPOT_NATIVE_FILL_LIMIT");
+                return;
+            }
+            self.status.borrow_mut().spot_fills.push(event.clone());
         }
         let fully_filled = self
             .cache()
@@ -385,6 +394,27 @@ impl TargetReplay {
         }
     }
 
+    fn execution_price(
+        &self,
+        instrument_id: &InstrumentId,
+        snapshot: Option<&crate::spot_cash_capture::SpotCashDecisionSnapshot>,
+    ) -> Result<Decimal> {
+        let bar = self
+            .latest
+            .get(instrument_id)
+            .ok_or_else(|| anyhow::anyhow!("SIMULATION_MISSING_PRICE"))?;
+        if let Some(snapshot) = snapshot {
+            let policy = self
+                .settings
+                .multi_currency_spot_cash
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("SPOT_EXECUTION_POLICY_MISSING"))?;
+            crate::spot_cash_runtime::execution_price(snapshot, policy, bar)
+        } else {
+            Ok(bar.close.as_decimal())
+        }
+    }
+
     fn submit_deferred(&mut self, now: u64) -> Result<()> {
         let now = if self.paper.is_some() {
             self.clock().timestamp_ns().as_u64()
@@ -400,6 +430,23 @@ impl TargetReplay {
                 .is_some_and(|n| n < self.active_expiry_ns),
             "SIMULATION_TARGET_EXPIRES_BEFORE_INSERT"
         );
+        if let Some(capture) = &self.spot_cash {
+            let snapshot = capture.decision_snapshot()?;
+            let free = crate::spot_cash_runtime::native_balance(&snapshot, self.currency, true)?;
+            let mut requested = Decimal::ZERO;
+            for order in &self.deferred_orders {
+                ensure!(
+                    order.order_side() == OrderSide::Buy,
+                    "SPOT_INCREASE_MUST_BUY"
+                );
+                let price = self.execution_price(&order.instrument_id(), Some(&snapshot))?;
+                requested = checked(
+                    requested
+                        .checked_add(checked(order.quantity().as_decimal().checked_mul(price))?),
+                )?;
+            }
+            ensure!(requested <= free, "SPOT_INSUFFICIENT_NATIVE_QUOTE_CASH");
+        }
         self.status.borrow_mut().submitted_after_ns = now;
         for order in std::mem::take(&mut self.deferred_orders) {
             self.outstanding_orders.insert(order.client_order_id());
@@ -485,13 +532,21 @@ impl TargetReplay {
         if next == 0 {
             self.verify_fresh_paper_account()?;
         }
-        let equity = self
-            .portfolio()
-            .equity(&self.venue, None)
-            .get(&self.currency)
-            .copied()
-            .ok_or_else(|| anyhow::anyhow!("SIMULATION_EQUITY_UNAVAILABLE"))?
-            .as_decimal();
+        let spot_snapshot = self
+            .spot_cash
+            .as_ref()
+            .map(|capture| capture.decision_snapshot())
+            .transpose()?;
+        let equity = if let Some(snapshot) = &spot_snapshot {
+            native_decimal(&snapshot.total)?
+        } else {
+            self.portfolio()
+                .equity(&self.venue, None)
+                .get(&self.currency)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("SIMULATION_EQUITY_UNAVAILABLE"))?
+                .as_decimal()
+        };
         ensure!(equity > Decimal::ZERO, "SIMULATION_NONPOSITIVE_EQUITY");
         if let Some(planned) = self.study_inputs.get(next) {
             let mut input = planned.input.clone();
@@ -507,12 +562,15 @@ impl TargetReplay {
             input.capital_assumption = equity.to_string().parse().map_err(anyhow::Error::msg)?;
             let mut cash = Decimal::ONE;
             for (asset, instrument) in input.assets.iter_mut().zip(&self.instruments) {
-                let price = self.latest[&instrument.id()].close.as_decimal();
+                let price = self.execution_price(&instrument.id(), spot_snapshot.as_ref())?;
                 let notional = checked(
                     checked(
-                        self.portfolio()
-                            .net_position(&instrument.id())
-                            .checked_mul(price),
+                        crate::spot_cash_runtime::inventory_quantity(
+                            spot_snapshot.as_ref(),
+                            instrument,
+                            || self.portfolio().net_position(&instrument.id()),
+                        )?
+                        .checked_mul(price),
                     )?
                     .checked_mul(instrument.multiplier().as_decimal()),
                 )?;
@@ -549,12 +607,15 @@ impl TargetReplay {
                 .instruments
                 .iter()
                 .map(|instrument| {
-                    let price = self.latest[&instrument.id()].close.as_decimal();
+                    let price = self.execution_price(&instrument.id(), spot_snapshot.as_ref())?;
                     let notional = checked(
                         checked(
-                            self.portfolio()
-                                .net_position(&instrument.id())
-                                .checked_mul(price),
+                            crate::spot_cash_runtime::inventory_quantity(
+                                spot_snapshot.as_ref(),
+                                instrument,
+                                || self.portfolio().net_position(&instrument.id()),
+                            )?
+                            .checked_mul(price),
                         )?
                         .checked_mul(instrument.multiplier().as_decimal()),
                     )?;
@@ -577,19 +638,23 @@ impl TargetReplay {
         let mut increases = Vec::<OrderAny>::new();
         for (instrument, target) in self.instruments.iter().zip(&point.targets) {
             let id = instrument.id();
-            let price = self
-                .latest
-                .get(&id)
-                .ok_or_else(|| anyhow::anyhow!("SIMULATION_MISSING_PRICE"))?
-                .close
-                .as_decimal();
+            let current = crate::spot_cash_runtime::inventory_quantity(
+                spot_snapshot.as_ref(),
+                instrument,
+                || self.portfolio().net_position(&id),
+            )?;
+            // A cash-only valuation and unchanged zero exposure require no
+            // asset mark. Any sizing of a held or requested exposure does.
+            if spot_snapshot.is_some() && current.is_zero() && !target.weight.is_positive() {
+                continue;
+            }
+            let price = self.execution_price(&id, spot_snapshot.as_ref())?;
             let unit_value = checked(price.checked_mul(instrument.multiplier().as_decimal()))?;
             ensure!(unit_value > Decimal::ZERO, "SIMULATION_INVALID_UNIT_VALUE");
             let desired = checked(
                 checked(native_decimal(&target.weight)?.checked_mul(equity))?
                     .checked_div(unit_value),
             )?;
-            let current = self.portfolio().net_position(&id);
             let delta = checked(desired.checked_sub(current))?;
             if delta.is_zero() {
                 continue;
@@ -616,6 +681,17 @@ impl TargetReplay {
             } else {
                 OrderSide::Buy
             };
+            if let Some(snapshot) = &spot_snapshot {
+                if side == OrderSide::Sell {
+                    let base = instrument
+                        .base_currency()
+                        .ok_or_else(|| anyhow::anyhow!("SPOT_BASE_CURRENCY_MISSING"))?;
+                    ensure!(
+                        units <= crate::spot_cash_runtime::native_balance(snapshot, base, true)?,
+                        "SPOT_INSUFFICIENT_NATIVE_BASE_CASH"
+                    );
+                }
+            }
             let reducing = if (current > Decimal::ZERO && delta < Decimal::ZERO)
                 || (current < Decimal::ZERO && delta > Decimal::ZERO)
             {
@@ -770,6 +846,7 @@ pub(crate) fn paper_target_strategy(
         points: vec![point],
         study_inputs: Vec::new(),
         settings,
+        spot_cash: None,
         currency,
         venue,
         tolerance,
@@ -918,8 +995,22 @@ fn validate_settings(
             .all(|series| series.instrument_updates.is_empty()),
         "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
     );
+    let currency = execution_market(data, &request.settings)?;
+    validate_settings_with_currency(data, request, currency)
+}
+
+fn validate_settings_with_currency(
+    data: &NativeMarketData,
+    request: &NativeSimulationRequestV1,
+    currency: Currency,
+) -> Result<Currency> {
+    ensure!(
+        data.series
+            .iter()
+            .all(|series| series.instrument_updates.is_empty()),
+        "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
+    );
     let settings = &request.settings;
-    let currency = execution_market(data, settings)?;
     let instruments = data
         .series
         .iter()
@@ -1034,6 +1125,40 @@ fn portfolio_return_analysis(
     Ok(analyzer)
 }
 
+/// Explicit managed/CLI simulation dispatch. The ID names app.dataset_revisions,
+/// and the source proof stays in the same registered catalog snapshot.
+pub fn simulate_explicit(
+    root: &Path,
+    request: &NativeSimulationRequestV1,
+    dataset_revision_id: Option<contracts::Id>,
+) -> Result<NativeSimulationResultV1> {
+    if request.settings.multi_currency_spot_cash.is_none() {
+        return simulate(root, request);
+    }
+    let dataset_revision_id =
+        dataset_revision_id.ok_or_else(|| anyhow::anyhow!("SPOT_DATASET_REVISION_ID_REQUIRED"))?;
+    domain::spot_cash::execution_settings(&request.settings)?;
+    #[cfg(feature = "hyperliquid-offline")]
+    {
+        let source = crate::spot_cash_source::load_closed_rows(root, &request.selection)?;
+        let mut result =
+            simulate_spot_cash_candidate(root, request, dataset_revision_id, source.rows)?;
+        result
+            .spot_cash_report
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("SPOT_NATIVE_REPORT_MISSING"))?
+            .source_evidence = Some(source.evidence);
+        Ok(result)
+    }
+    #[cfg(not(feature = "hyperliquid-offline"))]
+    {
+        let _ = dataset_revision_id;
+        Err(anyhow::anyhow!(
+            "SPOT_SOURCE_CAPABILITY_NOT_BUILT: hyperliquid-offline"
+        ))
+    }
+}
+
 /// The only filesystem path is a trusted registered read-only runtime mount.
 pub fn simulate(
     root: &Path,
@@ -1074,6 +1199,33 @@ pub fn simulate_strategy(
     .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
 }
 
+/// Explicit research-candidate entry. Source rows must come from the trusted
+/// frozen-data adapter; existing CLI/managed entrypoints do not select it yet.
+pub fn simulate_spot_cash_candidate(
+    root: &Path,
+    request: &NativeSimulationRequestV1,
+    dataset_revision_id: contracts::Id,
+    closed_rows: Vec<crate::spot_cash_capture::ClosedBarSourceRow>,
+) -> Result<NativeSimulationResultV1> {
+    domain::spot_cash::execution_settings(&request.settings)?;
+    ensure!(
+        request.settlements.is_empty(),
+        "SPOT_SETTLEMENT_INPUT_UNSUPPORTED"
+    );
+    run_with_strategy_and_spot(
+        root,
+        request,
+        Vec::new(),
+        None,
+        Some(crate::spot_cash_runtime::SpotReplayInputs {
+            dataset_revision_id,
+            closed_rows,
+        }),
+    )?
+    .0
+    .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
+}
+
 fn run_with_strategy(
     root: &Path,
     request: &NativeSimulationRequestV1,
@@ -1087,13 +1239,37 @@ fn run_with_strategy(
     Option<NativeSimulationResultV1>,
     Vec<NativePortfolioStudyFrameV1>,
 )> {
+    run_with_strategy_and_spot(root, request, study_inputs, strategy_constraints, None)
+}
+
+fn run_with_strategy_and_spot(
+    root: &Path,
+    request: &NativeSimulationRequestV1,
+    study_inputs: Vec<StudyInput>,
+    strategy_constraints: Option<(
+        contracts::portfolio::PortfolioConstraintsV1,
+        String,
+        DecimalValue,
+    )>,
+    mut spot_inputs: Option<crate::spot_cash_runtime::SpotReplayInputs>,
+) -> Result<(
+    Option<NativeSimulationResultV1>,
+    Vec<NativePortfolioStudyFrameV1>,
+)> {
     ensure!(
         study_inputs.is_empty() || study_inputs.len() == request.target_points.len(),
         "STUDY_FRAME_COUNT"
     );
     let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
     let market = load_catalog(root, &request.selection)?;
-    let currency = validate_settings(&market, request)?;
+    let is_spot = spot_inputs.is_some();
+    let currency = if is_spot {
+        domain::spot_cash::execution_settings(&request.settings)?;
+        let currency = Currency::from_str(&request.settings.base_currency)?;
+        validate_settings_with_currency(&market, request, currency)?
+    } else {
+        validate_settings(&market, request)?
+    };
     let closes =
         crate::prediction::close_events(root, &market, &request.selection, &request.settlements)?;
     let settlement_events = closes
@@ -1103,7 +1279,7 @@ fn run_with_strategy(
     let settled_ids = settlement_events.keys().copied().collect::<Vec<_>>();
     let venue = market.series[0].instrument.venue();
     let status = Rc::new(RefCell::new(ReplayStatus::default()));
-    let strategy = TargetReplay {
+    let mut strategy = TargetReplay {
         core: StrategyCore::new_checked(
             StrategyConfig::builder()
                 .strategy_id(StrategyId::from("TARGET-001"))
@@ -1120,6 +1296,7 @@ fn run_with_strategy(
         study_inputs,
         strategy_constraints,
         settings: request.settings.clone(),
+        spot_cash: None,
         currency,
         venue,
         tolerance: native_decimal(&request.settings.exposure_tolerance)?,
@@ -1153,6 +1330,11 @@ fn run_with_strategy(
     let mut engine = BacktestEngine::new(config)?;
     let result = (|| -> Result<Option<NativeSimulationResultV1>> {
         let settings = &request.settings;
+        let fee = if is_spot {
+            crate::spot_cash_runtime::fee_model(request, &market)?
+        } else {
+            crate::prediction::fee_model(settings)
+        };
         engine.add_venue(
             SimulatedVenueConfig::builder()
                 .venue(venue)
@@ -1162,15 +1344,18 @@ fn run_with_strategy(
                     NativeAccountKind::Margin => AccountType::Margin,
                 })
                 .book_type(BookType::L1_MBP)
-                .base_currency(currency)
-                .starting_balances(vec![Money::from_str(&format!(
-                    "{} {}",
-                    settings.starting_capital.as_decimal().to_plain_string(),
-                    settings.base_currency
-                ))
-                .map_err(anyhow::Error::msg)?])
+                .maybe_base_currency((!is_spot).then_some(currency))
+                .allow_cash_borrowing(false)
+                .starting_balances(vec![
+                    Money::from_str(&format!(
+                        "{} {}",
+                        settings.starting_capital.as_decimal().to_plain_string(),
+                        settings.base_currency
+                    ))
+                    .map_err(anyhow::Error::msg)?,
+                ])
                 .default_leverage(native_decimal(&settings.leverage)?)
-                .fee_model(crate::prediction::fee_model(settings))
+                .fee_model(fee)
                 .fill_model(FillModelHandle::new(DefaultFillModel::new(
                     fill.prob_fill_on_limit
                         .as_decimal()
@@ -1207,9 +1392,27 @@ fn run_with_strategy(
                 .all(|series| series.instrument.ts_init() <= first_event),
             "SIMULATION_BASELINE_FROM_FUTURE"
         );
+        for series in &market.series {
+            engine.add_instrument(&series.instrument)?;
+        }
+        let mut spot_capture = if let Some(input) = spot_inputs.take() {
+            ensure!(closes.is_empty(), "SPOT_EXTERNAL_SETTLEMENT_UNSUPPORTED");
+            let capture = crate::spot_cash_capture::Capture::prepare(
+                &engine,
+                settings,
+                input.dataset_revision_id,
+                &market,
+                input.closed_rows,
+                1_000_000,
+                Some(crate::spot_cash_runtime::execution_horizon(request)?),
+            )?;
+            strategy.spot_cash = Some(capture.handle(&engine)?);
+            Some(capture)
+        } else {
+            None
+        };
         let mut events = Vec::with_capacity(market.rows);
         for series in market.series {
-            engine.add_instrument(&series.instrument)?;
             events.extend(series.bars.into_iter().map(Data::Bar));
         }
         events.extend(closes.into_iter().map(Data::InstrumentClose));
@@ -1242,6 +1445,17 @@ fn run_with_strategy(
                 && native.summary.get("orders.inflight").map(String::as_str) == Some("0"),
             "NATIVE_ORDERS_NOT_SETTLED"
         );
+        let spot_cash_report = if let Some(capture) = spot_capture.take() {
+            let tape = capture.finish(&engine)?;
+            Some(crate::spot_cash_runtime::finish_report(
+                &engine,
+                request,
+                tape,
+                &observed.spot_fills,
+            )?)
+        } else {
+            None
+        };
         let mut statistics = Vec::new();
         let statistic = |group, native_key, currency, value: f64| NativeStatisticV1 {
             group,
@@ -1260,11 +1474,19 @@ fn run_with_strategy(
                 ));
             }
         }
-        let daily = portfolio_return_analysis(&engine, &request.settings)?;
+        let daily = if is_spot {
+            PortfolioAnalyzer::default()
+        } else {
+            portfolio_return_analysis(&engine, &request.settings)?
+        };
         for (group, values) in [
             (
                 NativeStatisticGroup::Returns,
-                daily.get_performance_stats_returns(),
+                if is_spot {
+                    Default::default()
+                } else {
+                    daily.get_performance_stats_returns()
+                },
             ),
             (NativeStatisticGroup::General, native.stats_general),
         ] {
@@ -1298,6 +1520,7 @@ fn run_with_strategy(
             (contracts::evidence::MetricStatus::Ok, None)
         };
         Ok(Some(NativeSimulationResultV1 {
+            spot_cash_report,
             schema_version: SchemaV1,
             native_version: "0.63.0".into(),
             iterations: count(native.iterations)?,

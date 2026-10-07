@@ -180,12 +180,12 @@ fn spec() -> JobSpecV1 {
         parameters_artifact_id: Id::new(),
         limits: RuntimeJobLimitsV1 {
             cpu: 1,
-            cpu_seconds: count(10),
+            cpu_seconds: Some(count(10)),
             memory_mib: 64,
-            wall_seconds: 30,
-            output_bytes: count(4096),
+            wall_seconds: Some(30),
+            output_bytes: Some(count(4096)),
         },
-        deadline_at: instant() + Duration::seconds(30),
+        deadline_at: Some(instant() + Duration::seconds(30)),
         requested_output_schemas: vec![RuntimeArtifactSchemaV1 {
             name: "qz.data_quality".into(),
             version: "1".into(),

@@ -202,7 +202,9 @@ impl RuntimeService {
             return Ok(());
         }
         let spec = row.spec()?;
-        if now() >= spec.deadline_at && row.stop_code.is_none() && row.cancel_requested_us.is_none()
+        if domain::execution_limits::expired(spec.deadline_at, now())
+            && row.stop_code.is_none()
+            && row.cancel_requested_us.is_none()
         {
             // Gateway downtime does not invalidate a process that actually finished
             // within its native deadline. Inspect first, without restarting anything.
@@ -215,9 +217,9 @@ impl RuntimeService {
                     if observed.role == "JOB"
                         && !observed.running
                         && !observed.created_only
-                        && observed
-                            .finished_at
-                            .is_some_and(|finished| finished <= spec.deadline_at)
+                        && observed.finished_at.is_some_and(|finished| {
+                            spec.deadline_at.is_none_or(|deadline| finished <= deadline)
+                        })
                     {
                         if let Some(started) = observed.started_at {
                             self.journal.observe_started(id, started).await?;
@@ -313,7 +315,9 @@ impl RuntimeService {
         }
         if observed.running {
             if observed.started_at.is_some_and(|started| {
-                now() >= started + chrono::Duration::seconds(i64::from(spec.limits.wall_seconds))
+                spec.limits.wall_seconds.is_some_and(|wall| {
+                    now() >= started + chrono::Duration::seconds(i64::from(wall))
+                })
             }) {
                 self.journal
                     .request_stop(id, RuntimeFailureCode::DeadlineExceeded)
@@ -321,27 +325,41 @@ impl RuntimeService {
                 return Ok(());
             }
             let usage = self.engine.usage(&observed.id).await?;
-            if usage.cpu_nanoseconds.is_some_and(|used| {
-                u128::from(used) > u128::from(spec.limits.cpu_seconds.get()) * 1_000_000_000
-            }) {
+            if usage
+                .cpu_nanoseconds
+                .zip(spec.limits.cpu_seconds)
+                .is_some_and(|(used, maximum)| {
+                    u128::from(used) > u128::from(maximum.get()) * 1_000_000_000
+                })
+            {
                 self.journal
                     .request_stop(id, RuntimeFailureCode::CpuLimit)
                     .await?;
                 return Ok(());
             }
+            let bounded_output = spec.limits.output_bytes.is_some();
             let root = self.root.clone();
             let spec = spec.clone();
             let usage = tokio::task::spawn_blocking(move || {
                 files::output_usage(
                     &root.job(spec.run_id, spec.attempt_no).join("output"),
-                    spec.limits.output_bytes.get() + 1024 * 1024,
+                    spec.limits
+                        .output_bytes
+                        .map(|maximum| maximum.get() + 1024 * 1024),
                 )
             })
             .await
             .map_err(|_| Failure::Integrity)?;
             if matches!(usage, Err(Failure::Capacity | Failure::Invalid(_))) {
                 self.journal
-                    .request_stop(id, RuntimeFailureCode::OutputLimit)
+                    .request_stop(
+                        id,
+                        if bounded_output {
+                            RuntimeFailureCode::OutputLimit
+                        } else {
+                            RuntimeFailureCode::InvalidOutput
+                        },
+                    )
                     .await?;
             } else {
                 usage?;

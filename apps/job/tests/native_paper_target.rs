@@ -315,6 +315,7 @@ fn fixture(directory: &Path) -> (PaperConfig, HandoffClaimViewV1) {
         source: PaperDataSource::BinanceSpotPublic {
             bar_interval_seconds: 1,
         },
+        claim_state_directory: directory.join("claim-state"),
         observations_file: directory.join("paper.ndjson"),
         credential_file: directory.join("not-created.test-token"),
         bind: "127.0.0.1:0".parse().unwrap(),
@@ -455,7 +456,10 @@ fn source_contract(config: &PaperConfig, claim: &HandoffClaimViewV1) {
         checked.restart_policy,
         "FRESH_ACCOUNT_AND_SESSION_NO_RESTORE"
     );
-    assert_eq!(checked.claim_replay_scope, "CURRENT_PROCESS_ONLY");
+    assert_eq!(
+        checked.claim_replay_scope,
+        "DURABLE_RUNTIME_PROJECT_ADAPTER_CLAIM"
+    );
     assert_eq!(checked.market_data_source, "BINANCE_SPOT_PUBLIC_JSON");
     assert_eq!(
         checked.market_time_basis,
@@ -603,6 +607,7 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
         config.bind,
         TOKEN.as_bytes().to_vec(),
         config.market_capability_version.clone(),
+        &config.claim_state_directory,
     )
     .await
     .unwrap();

@@ -61,7 +61,7 @@ impl Launch {
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
-                .kill_on_drop(true);
+                .kill_on_drop(resources.account.is_none());
         }
         command.spawn().map_err(|_| NativeFailure::Unavailable)
     }

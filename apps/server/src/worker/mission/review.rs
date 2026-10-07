@@ -8,7 +8,7 @@ fn materialize(
     objects: &ArtifactStore,
     workspace: &Path,
     work: &ReviewWork,
-    maximum: u64,
+    maximum: Option<u64>,
 ) -> Result<(), WorkerFailure> {
     let context = serde_json::to_vec(&work.context).map_err(|_| WorkerFailure::Contract)?;
     if context.len() > 256 * 1024
@@ -17,7 +17,7 @@ fn materialize(
             .get()
             .checked_add(work.parameter_bytes.get())
             .and_then(|n| n.checked_add(context.len() as u64))
-            .is_none_or(|n| n > maximum)
+            .is_none_or(|n| maximum.is_some_and(|maximum| n > maximum))
     {
         return Err(WorkerFailure::Contract);
     }
@@ -55,6 +55,7 @@ impl Worker {
         launcher: &MissionLauncher,
         lease: &RunLease,
         shutdown: &watch::Receiver<bool>,
+        resource_sender: &watch::Sender<Option<native::ResourceMonitor>>,
     ) -> Result<bool, WorkerFailure> {
         let run = lease.run.id;
         let fence = &lease.fence;
@@ -92,12 +93,18 @@ impl Worker {
         let experiment = work.experiment_id;
         let workspace = launcher.workspace(run).await?;
         let objects = self.objects.clone();
-        let maximum = lease.limits.output_bytes.get();
+        let maximum = lease.limits.output_bytes.map(|bytes| bytes.get());
         tokio::task::spawn_blocking(move || materialize(&objects, &workspace, &work, maximum))
             .await
             .map_err(|_| WorkerFailure::Contract)??;
         let mut connection = launcher
-            .open(&self.store, self.vault.clone(), run, fence)
+            .open_with_monitor(
+                &self.store,
+                self.vault.clone(),
+                run,
+                fence,
+                Some(resource_sender.clone()),
+            )
             .await?;
         let result: Result<(), WorkerFailure> = async {
             let reading = self.objects.clone();
@@ -159,11 +166,12 @@ mod tests {
             parameter_bytes: contracts::DbCounter::new(20).unwrap(),
             context: serde_json::json!({"schema_version":1,"qualification":"NOT_GRANTED"}),
         };
-        assert!(materialize(&objects, &workspace, &work, 10).is_err());
-        materialize(&objects, &workspace, &work, 4096).unwrap();
-        materialize(&objects, &workspace, &work, 4096).unwrap();
+        assert!(materialize(&objects, &workspace, &work, Some(10)).is_err());
+        materialize(&objects, &workspace, &work, Some(4096)).unwrap();
+        materialize(&objects, &workspace, &work, Some(4096)).unwrap();
+        materialize(&objects, &workspace, &work, None).unwrap();
         work.context["qualification"] = serde_json::json!("CHANGED");
-        assert!(materialize(&objects, &workspace, &work, 4096).is_err());
+        assert!(materialize(&objects, &workspace, &work, Some(4096)).is_err());
         let copies =
             ArtifactStore::open(&workspace.join(format!("review-{}", work.experiment_id))).unwrap();
         assert_eq!(

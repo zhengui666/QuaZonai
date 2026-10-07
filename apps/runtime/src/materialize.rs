@@ -433,8 +433,15 @@ pub fn outputs(root: &RuntimeRoot, spec: &JobSpecV1) -> Result<Vec<(RuntimeOutpu
         total = total
             .checked_add(output.byte_count.get())
             .ok_or(Failure::Capacity)?;
-        if total > spec.limits.output_bytes.get() {
+        if spec
+            .limits
+            .output_bytes
+            .is_some_and(|maximum| total > maximum.get())
+        {
             return Err(Failure::Capacity);
+        }
+        if output.byte_count.get() > contracts::runtime_jobs::MAX_INPUT_OBJECT_BYTES {
+            return Err(Failure::Invalid("native_output_transport_size"));
         }
         let maximum = usize::try_from(output.byte_count.get()).map_err(|_| Failure::Capacity)?;
         let bytes = files::read_child(&directory, &output.storage_ref.to_string(), maximum)?;

@@ -13,6 +13,7 @@ use std::{
 };
 use store::{
     codex_profiles::{CodexBindingCheck, CodexProfileSnapshot},
+    lifecycle::mission::MissionSession,
     StoreError,
 };
 use tokio::sync::Mutex;
@@ -298,12 +299,49 @@ impl CodexDeployment {
 
     /// No paid request. Reuse the actual account/catalog/settings observation;
     /// the caller still needs a durable Run send permit and scoped MCP binding.
+    /// Cleanup does not need an account, profile probe, workspace or new thread.
+    pub(crate) async fn recover_mission_resources(
+        &self,
+        store: &store::Store,
+        run: contracts::Id,
+        fence: &store::turns::WorkerFence,
+    ) -> Result<(), native::NativeFailure> {
+        native::MissionProcess::recover_previous(store, run, fence, self.container.as_ref()).await
+    }
+
     pub(crate) async fn mission_connection(
         &self,
         snapshot: &CodexProfileSnapshot,
         workspace: &Path,
         server_binary: &Path,
         resources: native::MissionProcess,
+    ) -> Result<(Client, ThreadOptions), CodexProbeFailureV1> {
+        self.mission_connection_inner(snapshot, workspace, server_binary, resources, None)
+            .await
+    }
+
+    /// Reopen only the original session. Catalog inspection probes a new thread,
+    /// so reconciliation restores the immutable original request instead. The
+    /// caller must resume that exact thread and validate its native receipt.
+    pub(crate) async fn mission_reconciliation_connection(
+        &self,
+        snapshot: &CodexProfileSnapshot,
+        session: &MissionSession,
+        workspace: &Path,
+        server_binary: &Path,
+        resources: native::MissionProcess,
+    ) -> Result<(Client, ThreadOptions), CodexProbeFailureV1> {
+        self.mission_connection_inner(snapshot, workspace, server_binary, resources, Some(session))
+            .await
+    }
+
+    async fn mission_connection_inner(
+        &self,
+        snapshot: &CodexProfileSnapshot,
+        workspace: &Path,
+        server_binary: &Path,
+        resources: native::MissionProcess,
+        reconciliation: Option<&MissionSession>,
     ) -> Result<(Client, ThreadOptions), CodexProbeFailureV1> {
         let profile = &snapshot.profile;
         let binding = profile
@@ -327,7 +365,24 @@ impl CodexDeployment {
         let mut client = Client::start_mission(launch, resources)
             .await
             .map_err(native_failure)?;
-        let (_, mut options) = inspect(&mut client, profile, &workspace).await?;
+        let mut options = if let Some(session) = reconciliation {
+            let request = &session.requested_settings;
+            if request.profile_id != profile.id
+                || request.profile_revision != profile.revision
+                || request.profile_origin != profile.profile_origin
+                || request.connection_mode != profile.connection_mode
+            {
+                return Err(CodexProbeFailureV1::ModelSettingsUnsupported);
+            }
+            let mut options = ThreadOptions::read_only(workspace);
+            options.model = request.model.clone();
+            options.reasoning_effort = request.reasoning_effort.clone();
+            options.service_tier = request.service_tier.clone();
+            options.expected_provider = Some(session.native.effective.provider.clone());
+            options
+        } else {
+            inspect(&mut client, profile, &workspace).await?.1
+        };
         options.ephemeral = false;
         Ok((client, options))
     }

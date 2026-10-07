@@ -361,7 +361,7 @@ impl Store {
             return Ok(None);
         }
         let unavailable = if locked.run.state != RunState::CancelRequested
-            && locked.run.deadline_at > now(&mut tx).await?
+            && !domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?)
         {
             sealed::unavailable(&mut tx, run, owner.attempt_id).await?
         } else {
@@ -371,7 +371,7 @@ impl Store {
         fence(&mut tx, &locked.run, owner).await?;
         let (state, reason) = if locked.run.state == RunState::CancelRequested {
             (RunState::Cancelled, RunReason::CancelledBeforeDispatch)
-        } else if locked.run.deadline_at <= now(&mut tx).await? {
+        } else if domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?) {
             (RunState::Failed, RunReason::DeadlineExceeded)
         } else if unavailable {
             (RunState::Failed, RunReason::SealedOpportunityUnavailable)
@@ -442,7 +442,7 @@ impl Store {
         )
         .await?;
         fence(&mut tx, &locked.run, owner).await?;
-        if locked.run.deadline_at <= now(&mut tx).await? {
+        if domain::execution_limits::expired(locked.run.deadline_at, now(&mut tx).await?) {
             return Err(DomainError::AdmissionClosed.into());
         }
         tx.commit().await?;
@@ -615,7 +615,11 @@ impl Store {
             total = total
                 .checked_add(bytes.len() as u64)
                 .ok_or(StoreError::Integrity)?;
-            if total > spec.limits.output_bytes.get() {
+            if spec
+                .limits
+                .output_bytes
+                .is_some_and(|maximum| total > maximum.get())
+            {
                 return Err(StoreError::Invalid("native_output_bytes"));
             }
         }

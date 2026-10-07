@@ -16,6 +16,8 @@ mod optimization;
 #[cfg(feature = "native-paper")]
 pub mod paper_node;
 #[cfg(feature = "native-paper")]
+mod paper_claim_store;
+#[cfg(feature = "native-paper")]
 pub mod paper_service;
 #[cfg(feature = "native-node-observer")]
 pub mod polymarket_data_probe;
@@ -33,6 +35,11 @@ mod report;
 pub use report::write_probe_report;
 pub mod signals;
 pub mod simulation;
+pub mod spot_cash_capture;
+#[cfg(feature = "hyperliquid-offline")]
+pub mod spot_cash_source;
+mod spot_cash_runtime;
+pub mod spot_fees;
 pub mod strategy;
 pub mod study;
 pub mod validation;

@@ -49,7 +49,10 @@ pub(super) async fn required_bytes(
     }
     copied
         .checked_add(document_bytes as u64)
-        .and_then(|bytes| bytes.checked_add(spec.limits.output_bytes.get()))
+        .and_then(|bytes| match spec.limits.output_bytes {
+            Some(output) => bytes.checked_add(output.get()),
+            None => Some(bytes),
+        })
         .and_then(|bytes| bytes.checked_add(boundary::MAX_RESULT_MANIFEST_BYTES as u64))
         .ok_or(Failure::Capacity)
 }

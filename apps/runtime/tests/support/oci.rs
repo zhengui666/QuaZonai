@@ -316,12 +316,12 @@ impl Fixture {
             parameters_artifact_id: parameters,
             limits: RuntimeJobLimitsV1 {
                 cpu: 1,
-                cpu_seconds: count(u64::from(wall_seconds)),
+                cpu_seconds: Some(count(u64::from(wall_seconds))),
                 memory_mib: 512,
-                wall_seconds,
-                output_bytes: count(4 * 1024 * 1024),
+                wall_seconds: Some(wall_seconds),
+                output_bytes: Some(count(4 * 1024 * 1024)),
             },
-            deadline_at: now() + chrono::Duration::seconds(i64::from(wall_seconds) + 20),
+            deadline_at: Some(now() + chrono::Duration::seconds(i64::from(wall_seconds) + 20)),
             requested_output_schemas: operation.output_schemas(),
         }
     }
@@ -345,7 +345,7 @@ impl Fixture {
     }
     pub async fn terminal(&self, spec: &JobSpecV1) -> RuntimeJobStatusV1 {
         tokio::time::timeout(
-            Duration::from_secs(u64::from(spec.limits.wall_seconds) + 40),
+            Duration::from_secs(u64::from(spec.limits.wall_seconds.unwrap()) + 40),
             async {
                 loop {
                     let status = self.status(spec).await;

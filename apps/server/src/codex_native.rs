@@ -6,7 +6,13 @@ mod projection;
 #[cfg(test)]
 mod projection_tests;
 mod requests;
+mod resource_account;
+mod resource_monitor;
+pub use resource_monitor::ResourceMonitor;
 mod resources;
+mod service;
+mod service_exec;
+pub use service_exec::exec as service_exec;
 mod wire;
 
 pub use container::ContainerBackend;
@@ -42,10 +48,16 @@ pub enum NativeFailure {
     Rejected(i64),
     ModelUnavailable,
     ProfileInstructions,
+    CpuBudgetExceeded,
+    ReconciliationOnly,
+    UnboundedMissionLifecycleUnavailable,
 }
 impl fmt::Display for NativeFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::UnboundedMissionLifecycleUnavailable => "finite Mission CPU caps without wall limits lack verified owner-independent enforcement",
+            Self::ReconciliationOnly => "native reconciliation cannot start a session or model turn",
+            Self::CpuBudgetExceeded => "native Mission cumulative CPU grant is exhausted",
             Self::Configuration => "native Codex deployment configuration is invalid",
             Self::Version => "native Codex did not identify a valid version",
             Self::Unavailable => {
@@ -75,6 +87,7 @@ pub struct Client {
     codex_home: std::path::PathBuf,
     version: String,
     rpc_timeout: Duration,
+    reconciliation_thread: Option<String>,
 }
 
 impl Client {
@@ -86,9 +99,12 @@ impl Client {
         Self::start_process(launch, Some(limits)).await
     }
 
-    async fn start_process(launch: Launch, limits: Option<MissionProcess>) -> Result<Self> {
+    async fn start_process(launch: Launch, mut limits: Option<MissionProcess>) -> Result<Self> {
         let codex_home = launch.codex_home.clone();
         let mission = limits.is_some();
+        let reconciliation_thread = limits
+            .as_ref()
+            .and_then(|limits| limits.reconciliation_thread_id.clone());
         let (binary, child, container, input, output, native_limits) = if launch.container.is_some()
         {
             let (container, output, input) = container::start(launch, limits).await?;
@@ -103,10 +119,22 @@ impl Client {
         } else {
             let binary =
                 std::fs::canonicalize(&launch.binary).map_err(|_| NativeFailure::Configuration)?;
-            if let Some(limits) = &limits {
+            if let Some(limits) = &mut limits {
+                limits.prepare(None).await?;
                 limits.wait_released().await?;
             }
-            let mut child = launch.spawn(limits.as_ref())?;
+            if let Some(limits) = &limits {
+                limits.begin_launch().await?;
+            }
+            let mut child = match launch.spawn(limits.as_ref()) {
+                Ok(child) => child,
+                Err(error) => {
+                    if let Some(limits) = &limits {
+                        limits.abort_before_spawn().await?;
+                    }
+                    return Err(error);
+                }
+            };
             let input: container::Writer =
                 Box::pin(child.stdin.take().ok_or(NativeFailure::Unavailable)?);
             let output: container::Reader =
@@ -121,28 +149,31 @@ impl Client {
             binary,
             codex_home,
             version: String::new(),
+            reconciliation_thread,
             rpc_timeout: if mission {
                 Duration::from_secs(60)
             } else {
                 RPC_TIMEOUT
             },
         };
+        if let Some(limits) = native_limits {
+            client.group = Some(
+                limits
+                    .capture_bound(
+                        client
+                            .child
+                            .as_ref()
+                            .and_then(Child::id)
+                            .ok_or(NativeFailure::Unavailable)?,
+                    )
+                    .await?,
+            );
+        }
         let initialized: projection::Initialized =
             client.call("initialize", requests::initialize()).await?;
         client.version = domain::codex::verified_codex_version(&initialized.user_agent, CLIENT)
             .map_err(|_| NativeFailure::Version)?
             .to_owned();
-        if let Some(limits) = native_limits {
-            client.group = Some(
-                limits.capture(
-                    client
-                        .child
-                        .as_ref()
-                        .and_then(Child::id)
-                        .ok_or(NativeFailure::Unavailable)?,
-                )?,
-            );
-        }
         client.wire.notify("initialized").await?;
         Ok(client)
     }
@@ -171,10 +202,28 @@ impl Client {
         params: Value,
     ) -> Result<T> {
         projection::text(&id, 200)?;
-        let response = self
-            .wire
-            .request(RequestId::Text(id), method, params, self.rpc_timeout)
-            .await?;
+        if self
+            .reconciliation_thread
+            .as_ref()
+            .is_some_and(|thread| !reconciliation_call_allowed(thread, method, &params))
+        {
+            return Err(NativeFailure::ReconciliationOnly);
+        }
+        self.enforce_cpu().await?;
+        let response = {
+            let request = self
+                .wire
+                .request(RequestId::Text(id), method, params, self.rpc_timeout);
+            tokio::pin!(request);
+            loop {
+                tokio::select! {
+                    result=&mut request=>break result?,
+                    _=tokio::time::sleep(Duration::from_millis(200))=>{
+                        check_cpu(&mut self.group,&mut self.container).await?;
+                    }
+                }
+            }
+        };
         match serde_json::from_str(response.get()) {
             Ok(value) => Ok(value),
             Err(_) => {
@@ -355,6 +404,7 @@ impl Client {
         if wait > Duration::from_secs(30) {
             return Err(NativeFailure::Configuration);
         }
+        self.enforce_cpu().await?;
         self.wire.poll(wait).await
     }
 
@@ -400,7 +450,19 @@ impl Client {
 
     /// Kill-on-drop remains the failure fallback. Closing this transport never
     /// claims that an upstream model turn or a scientific Runtime job did not run.
+    pub async fn enforce_cpu(&mut self) -> Result<()> {
+        check_cpu(&mut self.group, &mut self.container).await
+    }
+
     pub async fn close(mut self) -> Result<()> {
+        // Freeze and commit final CPU before EOF can let the native leader exit
+        // and systemd/Docker discard its process-tree accounting.
+        if let Some(group) = &mut self.group {
+            group.close().await?;
+        }
+        if let Some(container) = &mut self.container {
+            container.close().await?;
+        }
         self.wire.shutdown().await;
         if let Some(container) = &mut self.container {
             return container.close().await;
@@ -411,9 +473,56 @@ impl Client {
             Ok(Err(_)) => Err(NativeFailure::Unavailable),
             Err(_) => child.kill().await.map_err(|_| NativeFailure::Unavailable),
         };
-        if let Some(group) = &mut self.group {
-            group.close().await?;
-        }
+
         result
+    }
+}
+
+async fn check_cpu(
+    group: &mut Option<resources::ProcessGroup>,
+    container: &mut Option<container::Container>,
+) -> Result<()> {
+    if let Some(group) = group {
+        group.check_cpu().await?;
+    }
+    if let Some(container) = container {
+        container.check_cpu().await?;
+    }
+    Ok(())
+}
+
+fn reconciliation_call_allowed(thread: &str, method: &str, params: &Value) -> bool {
+    match method {
+        "initialize" | "account/read" | "model/list" | "config/read" => true,
+        "thread/resume" | "thread/read" | "thread/turns/list" | "turn/interrupt" => {
+            params.get("threadId").and_then(Value::as_str) == Some(thread)
+        }
+        _ => false,
+    }
+}
+#[cfg(test)]
+mod reconciliation_tests {
+    use super::*;
+    #[test]
+    fn control_client_cannot_start_or_borrow_another_native_session() {
+        let own = json!({"threadId":"original","turnId":"already-sent"});
+        for method in [
+            "thread/resume",
+            "thread/read",
+            "thread/turns/list",
+            "turn/interrupt",
+        ] {
+            assert!(reconciliation_call_allowed("original", method, &own));
+            assert!(!reconciliation_call_allowed("other", method, &own));
+        }
+        for method in [
+            "thread/start",
+            "turn/start",
+            "account/login/start",
+            "account/logout",
+            "mcpServer/oauth/login",
+        ] {
+            assert!(!reconciliation_call_allowed("original", method, &own));
+        }
     }
 }

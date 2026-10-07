@@ -34,10 +34,10 @@ async fn prepared(pool: &PgPool, objects: &ArtifactStore, cancel: bool) -> (stor
     let limits = JobLimitsV1 {
         schema_version: SchemaV1,
         experiments: 0,
-        cpu_seconds: DbCounter::new(100).unwrap(),
-        wall_seconds: 300,
+        cpu_seconds: Some(DbCounter::new(100).unwrap()),
+        wall_seconds: Some(300),
         memory_mib: 1024,
-        output_bytes: DbCounter::new(65_536).unwrap(),
+        output_bytes: Some(DbCounter::new(65_536).unwrap()),
     };
     let run = store
         .enqueue_run(

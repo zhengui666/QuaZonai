@@ -83,13 +83,15 @@ impl Worker {
                 }
             };
             let observed = shutdown.clone();
+            let (resource_sender, resource_receiver) = watch::channel(None);
             // Dropping this finite driver also drops/kills its owned native process.
             // Neither shutdown nor a lost renewal fabricates a Turn/Run receipt.
             tokio::select! {
                 biased;
                 _ = shutdown.changed() => Err(WorkerFailure::LostAuthority),
                 _ = heartbeat => Err(WorkerFailure::LostAuthority),
-                result = Box::pin(self.drive_mission(launcher, &lease, &observed)) => {
+                result = native::ResourceMonitor::watch(resource_receiver) => Err(WorkerFailure::Codex("CPU_MONITOR",result.err().unwrap_or(native::NativeFailure::Unavailable))),
+                result = Box::pin(self.drive_mission(launcher, &lease, &observed, &resource_sender)) => {
                     if result? {
                         self.store.acknowledge_run(&message).await?;
                     }
@@ -104,16 +106,31 @@ impl Worker {
         launcher: &MissionLauncher,
         lease: &RunLease,
         shutdown: &watch::Receiver<bool>,
+        resource_sender: &watch::Sender<Option<native::ResourceMonitor>>,
     ) -> Result<bool, WorkerFailure> {
         let run = lease.run.id;
         let fence = &lease.fence;
+        // A committed final answer is not evidence that a SIGKILLed owner's
+        // native process tree stopped. Reclaim before every terminal/advance
+        // shortcut without opening a new native thread or spending model usage.
+        launcher
+            .deployment
+            .recover_mission_resources(&self.store, run, fence)
+            .await
+            .map_err(|reason| WorkerFailure::Codex("RECOVER_MISSION_RESOURCES", reason))?;
         if self.store.complete_mission(run, fence).await? {
             return Ok(true);
         }
         let job = self.store.mission_job(run, fence).await?;
         if job.lease.action == NextRuntimeAction::Cancel {
             let mut connection = launcher
-                .open(&self.store, self.vault.clone(), run, fence)
+                .open_with_monitor(
+                    &self.store,
+                    self.vault.clone(),
+                    run,
+                    fence,
+                    Some(resource_sender.clone()),
+                )
                 .await?;
             let result = tokio::time::timeout(Duration::from_secs(110), async {
                 connection
@@ -130,7 +147,9 @@ impl Worker {
             return Ok(self.store.complete_mission(run, fence).await?);
         }
         if job.role == "INDEPENDENT_REVIEWER" {
-            return self.drive_review(launcher, lease, shutdown).await;
+            return self
+                .drive_review(launcher, lease, shutdown, resource_sender)
+                .await;
         }
         if job.session.is_some()
             && self
@@ -148,7 +167,13 @@ impl Worker {
             return self.advance_mission_experiment(lease).await;
         }
         let mut connection = launcher
-            .open(&self.store, self.vault.clone(), run, fence)
+            .open_with_monitor(
+                &self.store,
+                self.vault.clone(),
+                run,
+                fence,
+                Some(resource_sender.clone()),
+            )
             .await?;
         let result: Result<(), WorkerFailure> = async {
             let reading = self.objects.clone();
@@ -453,9 +478,20 @@ impl MissionLauncher {
         run: Id,
         fence: &WorkerFence,
     ) -> Result<MissionConnection, WorkerFailure> {
+        self.open_with_monitor(store, vault, run, fence, None).await
+    }
+
+    async fn open_with_monitor(
+        &self,
+        store: &Store,
+        vault: Arc<SecretVault>,
+        run: Id,
+        fence: &WorkerFence,
+        monitor_sender: Option<watch::Sender<Option<native::ResourceMonitor>>>,
+    ) -> Result<MissionConnection, WorkerFailure> {
         tokio::time::timeout(
             Duration::from_secs(110),
-            self.open_inner(store, vault, run, fence),
+            self.open_inner(store, vault, run, fence, monitor_sender),
         )
         .await
         .map_err(|_| {
@@ -469,6 +505,7 @@ impl MissionLauncher {
         vault: Arc<SecretVault>,
         run: Id,
         fence: &WorkerFence,
+        monitor_sender: Option<watch::Sender<Option<native::ResourceMonitor>>>,
     ) -> Result<MissionConnection, WorkerFailure> {
         let job = store.mission_job(run, fence).await?;
         let reconciling = job.lease.action == NextRuntimeAction::Cancel;
@@ -479,26 +516,60 @@ impl MissionLauncher {
                 native::NativeFailure::Correlation,
             ));
         }
-        let resources = native::MissionProcess::new(
+        let control = if reconciling {
+            Some(store.prepare_mission_reconciliation(run, fence).await?)
+        } else {
+            None
+        };
+        let effective_limits = control
+            .as_ref()
+            .map_or_else(|| job.lease.limits.clone(), |permit| permit.limits.clone());
+        let effective_deadline = control
+            .as_ref()
+            .map(|permit| permit.deadline_at)
+            .or(job.lease.run.deadline_at);
+        let remaining = effective_deadline
+            .map(|deadline| {
+                u32::try_from((deadline - job.observed_at).num_seconds())
+                    .map_err(|_| WorkerFailure::Contract)
+            })
+            .transpose()?;
+        let mut resources = native::MissionProcess::new(
             run,
-            job.lease.limits.clone(),
-            if reconciling {
-                110
-            } else {
-                u32::try_from((job.lease.run.deadline_at - job.observed_at).num_seconds())
-                    .map_err(|_| WorkerFailure::Contract)?
-            }
-            .min(job.lease.limits.wall_seconds),
+            effective_limits.clone(),
+            domain::execution_limits::earlier(remaining, effective_limits.wall_seconds),
         )
         .map_err(|reason| WorkerFailure::Codex("RESOURCE_BOUNDS", reason))?;
+        if reconciling
+            || store
+                .mission_resource_accounting_required(run, fence)
+                .await?
+        {
+            resources = resources.with_authority(store, fence);
+        }
+        if let Some(control) = control {
+            resources = resources.for_reconciliation(control.thread_id);
+        }
+        resources.set_monitor(monitor_sender);
         let workspace = self.workspace(run).await?;
-        let (mut client, mut options) = self
-            .deployment
-            .mission_connection(&job.profile, &workspace, &self.server_binary, resources)
-            .await
-            .map_err(|_| {
-                WorkerFailure::Codex("PROFILE_CONNECTION", native::NativeFailure::Unavailable)
-            })?;
+        let connection = if reconciling {
+            self.deployment
+                .mission_reconciliation_connection(
+                    &job.profile,
+                    job.session.as_ref().ok_or(WorkerFailure::Contract)?,
+                    &workspace,
+                    &self.server_binary,
+                    resources,
+                )
+                .await
+        } else {
+            self.deployment
+                .mission_connection(&job.profile, &workspace, &self.server_binary, resources)
+                .await
+        };
+        let (mut client, mut options) = connection.map_err(|_| {
+            WorkerFailure::Codex("PROFILE_CONNECTION", native::NativeFailure::Unavailable)
+        })?;
         if let Some(session) = &job.session {
             let requested = &session.requested_settings;
             if session.native.codex_version != client.version()
