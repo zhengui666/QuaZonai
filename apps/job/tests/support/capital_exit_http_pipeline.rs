@@ -161,6 +161,24 @@ async fn post_latest(
     Ok(first.resource)
 }
 
+#[test]
+fn native_bridge_transport_keeps_numeric_loopback_boundary() {
+    let credential = b"synthetic-transport-boundary-only-no-real-authority";
+    for origin in ["http://127.0.0.1:32123", "https://qz.example"] {
+        assert!(CapitalExitOwnerTransport::new(origin, credential).is_ok());
+    }
+    for origin in [
+        "http://localhost:32123",
+        "http://192.0.2.1:32123",
+        "http://127.0.0.1:32123/not-an-origin",
+        "http://user@127.0.0.1:32123",
+        "http://127.0.0.1:32123?token=synthetic",
+        "http://127.0.0.1:32123#fragment",
+    ] {
+        assert!(CapitalExitOwnerTransport::new(origin, credential).is_err());
+    }
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires the explicitly selected disposable Server/PG fixture on stdin"]
 async fn real_http_capital_exit_uses_original_sandbox_events() {

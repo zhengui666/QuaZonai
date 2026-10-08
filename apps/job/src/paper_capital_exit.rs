@@ -2,7 +2,7 @@
 //! transport never receives a native handle; the native side never waits on HTTP.
 use anyhow::{Result, anyhow, ensure};
 use contracts::{
-    DbCounter, Id, SchemaV1, account_observation::*, capital_exit::*,
+    DbCounter, Id, Revision, SchemaV1, account_observation::*, capital_exit::*,
     strategy_portfolio::HandoffClaimViewV2,
 };
 use nautilus_backtest::engine::BacktestEngine;
@@ -334,8 +334,9 @@ pub(crate) struct Poller {
     progress_ready_command: Option<Id>,
     stopped_command: Option<Id>,
     assessment_due: bool,
-    assessed_previews: Vec<Id>,
+    assessed_requests: Vec<(Revision, CapitalExitPreviewRequestV1, chrono::DateTime<chrono::Utc>)>,
     observation_at: Option<std::time::Instant>,
+    observation_required: bool,
 }
 
 impl Poller {
@@ -356,8 +357,9 @@ impl Poller {
             progress_ready_command: None,
             stopped_command: None,
             assessment_due: false,
-            assessed_previews: Vec::new(),
+            assessed_requests: Vec::new(),
             observation_at: None,
+            observation_required: false,
         }
     }
 
@@ -375,17 +377,25 @@ impl Poller {
                 };
                 self.source = Some(source);
                 if self.receipt.as_ref().is_none_or(|old| old.resource.id != receipt.resource.id) {
-                    self.assessed_previews.clear();
+                    self.assessed_requests.clear();
                 }
                 self.receipt = Some(receipt);
                 self.observation_at = Some(std::time::Instant::now());
+                self.observation_required = false;
                 Ok(())
             }
-            Pending::Assessment(preview_id, request) => {
+            Pending::Assessment(_preview_id, request) => {
                 self.transport.submit_assessment(request).await?;
-                // The immutable blocked preview remains in discovery after its
-                // assessment succeeds. Do not let that receipt starve Observe.
-                self.assessed_previews.push(*preview_id);
+                // Different immutable preview/plan receipts can contain the
+                // same request. Store reuses an assessment by this full request
+                // and control revision, not by the preview's receipt identity.
+                // Reassessing its frozen reference at a later quote conflicts
+                // and lets duplicate discovery receipts starve Observe.
+                self.assessed_requests.push((
+                    request.expected_account_control_revision,
+                    request.request.clone(),
+                    request.valid_until,
+                ));
                 Ok(())
             }
             Pending::Claim(id, key, request) => {
@@ -459,6 +469,20 @@ impl Poller {
         self.send_pending().await
     }
 
+    fn acknowledged_assessment_is_fresh(
+        &self,
+        request: &CapitalExitPreviewRequestV1,
+        revision: Option<Revision>,
+        checked: chrono::DateTime<chrono::Utc>,
+    ) -> Option<bool> {
+        self.assessed_requests
+            .iter()
+            .find(|(seen_revision, seen_request, _)| {
+                Some(*seen_revision) == revision && seen_request == request
+            })
+            .map(|(_, _, valid_until)| *valid_until > checked)
+    }
+
     async fn assessments(&mut self) -> Result<bool> {
         let Some(source) = self.source else {
             return Ok(false);
@@ -468,7 +492,6 @@ impl Poller {
             let page = self.transport.pending_assessments(cursor).await?;
             for preview in page.items {
                 if preview.account_source_id == source
-                    && !self.assessed_previews.contains(&preview.id)
                     && self
                         .receipt
                         .as_ref()
@@ -487,6 +510,21 @@ impl Poller {
                         scope: preview.scope.clone(),
                         policy: preview.policy.clone(),
                     };
+                    if let Some(fresh) = self.acknowledged_assessment_is_fresh(
+                        &request,
+                        preview.expected_account_control_revision,
+                        chrono::Utc::now(),
+                    ) {
+                        if !fresh {
+                            // The successful native assessment's own deadline,
+                            // never the BLOCKED discovery receipt's TTL, decides
+                            // reuse. Expiry requires a real new observation;
+                            // never rebind the old reference to a newer quote.
+                            self.queue_native(NativeRequest::Observe).await?;
+                            return Ok(true);
+                        }
+                        continue;
+                    }
                     if domain::capital_exit::preview_request(&request, chrono::Utc::now()).is_err() {
                         continue;
                     }
@@ -538,6 +576,12 @@ impl Poller {
             return self.send_pending().await;
         }
         let Some(view) = self.intent().await? else {
+            // A definitely rejected assessment cannot monopolize discovery.
+            // Obtain a real new observation before retrying admission; unknown
+            // replies keep their original pending body and never reach here.
+            if self.observation_required {
+                return self.queue_native(NativeRequest::Observe).await;
+            }
             // Assess against the request's exact original observation before
             // publishing a newer one. Controls always take priority over this.
             if self.assessments().await? {
@@ -602,9 +646,10 @@ impl Poller {
                 .queue_native(NativeRequest::Fence(Box::new(view)))
                 .await;
         }
-        if self
-            .observation_at
-            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(1))
+        if self.observation_required
+            || self
+                .observation_at
+                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(1))
         {
             return self.queue_native(NativeRequest::Observe).await;
         }
@@ -645,6 +690,19 @@ impl Poller {
         }
     }
 
+    fn reject_definite_write(&mut self, code: &str) {
+        // A definite rejection permits obtaining a new original native
+        // observation/report. Ambiguous writes retain their exact body/key.
+        if code.starts_with("capital_exit_transport_write_status:4")
+            && !matches!(self.pending, Some(Pending::Observation(_)))
+        {
+            if matches!(self.pending, Some(Pending::Assessment(..))) {
+                self.observation_required = true;
+            }
+            self.pending = None;
+        }
+    }
+
     pub(crate) async fn run(
         mut self,
         status: tokio::sync::watch::Sender<crate::paper_service::PaperStatus>,
@@ -653,13 +711,7 @@ impl Poller {
             let result = self.step().await;
             if let Err(error) = &result {
                 let code = error.to_string();
-                // A definite rejection permits obtaining a new original native
-                // observation/report. Ambiguous writes retain their exact body/key.
-                if code.starts_with("capital_exit_transport_write_status:4")
-                    && !matches!(self.pending, Some(Pending::Observation(_)))
-                {
-                    self.pending = None;
-                }
+                self.reject_definite_write(&code);
                 status.send_modify(|value| {
                     if value
                         .reason_code
@@ -683,5 +735,220 @@ impl Poller {
             }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> (Poller, CapitalExitPreviewRequestV1) {
+        // Identity-only unit fixture: no receipt, native execution or HTTP call.
+        let root = std::path::PathBuf::new();
+        let (_inbox, sender) = channel(root.clone());
+        let transport = crate::capital_exit_transport::CapitalExitOwnerTransport::new(
+            "http://127.0.0.1:1/",
+            b"synthetic-identity-unit-test-no-authority",
+        )
+        .unwrap();
+        let poller = Poller::new(transport, sender, root);
+        let observation = Id::new();
+        let request = CapitalExitPreviewRequestV1 {
+            schema_version: SchemaV1,
+            account_source_id: Id::new(),
+            expected_source_observation_id: observation,
+            scope: CapitalExitScopeV1::Amount {
+                amount: "850".parse().unwrap(),
+                currency: "pUSD".into(),
+            },
+            policy: CapitalExitPolicyV1::BoundedLimit {
+                deadline: "2026-10-08T01:40:00Z".parse().unwrap(),
+                legs: vec![CapitalExitReductionLegV1 {
+                    instrument_id: "fixture-event-101.POLYMARKET".into(),
+                    maximum_reduction_quantity: "200".parse().unwrap(),
+                    minimum_sell_price: "0.49".parse().unwrap(),
+                }],
+                max_execution_cost: CapitalExitCostLimitV1 {
+                    amount: "5".parse().unwrap(),
+                    currency: "pUSD".into(),
+                    reference_evidence_id: observation,
+                },
+            },
+        };
+        (poller, request)
+    }
+
+    #[test]
+    fn assessment_dedup_uses_full_request_and_control_revision() {
+        let (mut poller, request) = fixture();
+        let revision = Revision::INITIAL;
+        let checked: chrono::DateTime<chrono::Utc> = "2026-10-08T01:39:00Z".parse().unwrap();
+        assert!(
+            poller
+                .acknowledged_assessment_is_fresh(&request, Some(revision), checked)
+                .is_none()
+        );
+        let native_deadline: chrono::DateTime<chrono::Utc> =
+            "2026-10-08T01:39:05Z".parse().unwrap();
+        poller
+            .assessed_requests
+            .push((revision, request.clone(), native_deadline));
+        assert_eq!(
+            poller.acknowledged_assessment_is_fresh(&request, Some(revision), checked),
+            Some(true)
+        );
+        assert!(
+            poller
+                .acknowledged_assessment_is_fresh(&request, None, checked)
+                .is_none()
+        );
+        assert!(
+            poller
+                .acknowledged_assessment_is_fresh(&request, revision.next(), checked)
+                .is_none()
+        );
+        // Store admits only valid_until > checked. The ACK keeps that exact
+        // native boundary, without borrowing an expired discovery-preview TTL.
+        for (at, fresh) in [
+            (native_deadline - chrono::Duration::nanoseconds(1), true),
+            (native_deadline, false),
+            (native_deadline + chrono::Duration::nanoseconds(1), false),
+        ] {
+            assert_eq!(
+                poller.acknowledged_assessment_is_fresh(&request, Some(revision), at),
+                Some(fresh)
+            );
+        }
+
+        let original = serde_json::to_value(&request).unwrap();
+        for (pointer, replacement) in [
+            ("/account_source_id", serde_json::json!(Id::new())),
+            (
+                "/expected_source_observation_id",
+                serde_json::json!(Id::new()),
+            ),
+            ("/scope/amount", serde_json::json!("851")),
+            ("/scope/currency", serde_json::json!("USD")),
+            (
+                "/policy/deadline",
+                serde_json::json!("2026-10-08T01:40:01Z"),
+            ),
+            (
+                "/policy/legs/0/instrument_id",
+                serde_json::json!("fixture-event-102.POLYMARKET"),
+            ),
+            (
+                "/policy/legs/0/maximum_reduction_quantity",
+                serde_json::json!("201"),
+            ),
+            (
+                "/policy/legs/0/minimum_sell_price",
+                serde_json::json!("0.48"),
+            ),
+            ("/policy/max_execution_cost/amount", serde_json::json!("6")),
+            (
+                "/policy/max_execution_cost/currency",
+                serde_json::json!("USD"),
+            ),
+            (
+                "/policy/max_execution_cost/reference_evidence_id",
+                serde_json::json!(Id::new()),
+            ),
+            ("/policy", serde_json::json!({"kind":"CASH_ONLY"})),
+            (
+                "/scope",
+                serde_json::json!({"kind":"PORTFOLIO_SCOPE", "stream_ids":[], "release_ids":[], "amount":"850", "currency":"pUSD"}),
+            ),
+        ] {
+            let mut changed = original.clone();
+            *changed.pointer_mut(pointer).unwrap() = replacement;
+            let changed: CapitalExitPreviewRequestV1 = serde_json::from_value(changed).unwrap();
+            assert!(
+                poller
+                    .acknowledged_assessment_is_fresh(&changed, Some(revision), checked)
+                    .is_none(),
+                "changed request field was incorrectly coalesced: {pointer}"
+            );
+        }
+        // A new authenticated observation clears only this Poller's local ACKs.
+        poller.assessed_requests.clear();
+        assert!(
+            poller
+                .acknowledged_assessment_is_fresh(&request, Some(revision), checked)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn rejected_assessment_yields_observation_but_unknown_reply_retains_original() {
+        let (mut poller, request) = fixture();
+        let assessment = CapitalExitOwnerAssessmentV1 {
+            schema_version: SchemaV1,
+            account_source_id: request.account_source_id,
+            owner_binding_ref: "synthetic-identity-unit-test".into(),
+            expected_account_control_revision: Revision::INITIAL,
+            external_message_id: "synthetic-unit-assessment-1".into(),
+            sequence: DbCounter::new(1).unwrap(),
+            asof: "2026-10-08T01:39:00Z".parse().unwrap(),
+            valid_until: "2026-10-08T01:39:05Z".parse().unwrap(),
+            funds: CapitalExitPreviewFundsV1 {
+                requested: request.scope.money(),
+                native_total_cash: None,
+                native_free_cash: None,
+                native_locked_cash: None,
+                verified_idle_cash: None,
+                estimated_release: None,
+                native_equity: None,
+                managed_capital_before: None,
+                remaining_managed_capital: None,
+                estimated_execution_cost: None,
+                existing_unrealized_pnl: None,
+            },
+            request: request.clone(),
+            proposed_cancellations: vec![],
+            retained_protective_orders: vec![],
+            reduction_legs: vec![],
+            evidence_refs: vec![],
+            remaining_risk_evidence_id: None,
+            native_report_ref: "synthetic-identity-unit-test".into(),
+            native_evidence: serde_json::json!({"synthetic_identity_only":true}),
+            capability: CapitalExitCapabilityV1::Blocked,
+            reason_codes: vec!["synthetic_identity_only".into()],
+        };
+        let original_body = serde_json::to_vec(&assessment).unwrap();
+        poller.pending = Some(Pending::Assessment(Id::new(), assessment));
+        for code in [
+            "capital_exit_transport_write_status:500",
+            "capital_exit_transport_outcome_unknown_reconcile_original_identity",
+        ] {
+            poller.reject_definite_write(code);
+            let Some(Pending::Assessment(_, retained)) = &poller.pending else {
+                panic!("unknown reply lost its original assessment");
+            };
+            assert_eq!(serde_json::to_vec(retained).unwrap(), original_body);
+            assert_eq!(retained.external_message_id, "synthetic-unit-assessment-1");
+            assert!(!poller.observation_required);
+            assert!(
+                poller
+                    .acknowledged_assessment_is_fresh(
+                        &request,
+                        Some(Revision::INITIAL),
+                        chrono::Utc::now()
+                    )
+                    .is_none()
+            );
+        }
+        poller.reject_definite_write("capital_exit_transport_write_status:409");
+        assert!(poller.pending.is_none());
+        assert!(poller.observation_required);
+        assert!(
+            poller
+                .acknowledged_assessment_is_fresh(
+                    &request,
+                    Some(Revision::INITIAL),
+                    chrono::Utc::now()
+                )
+                .is_none()
+        );
     }
 }

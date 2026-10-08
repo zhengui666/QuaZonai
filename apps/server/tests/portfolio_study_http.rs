@@ -1092,6 +1092,7 @@ async fn paper_initial_execution_http_authenticates_original_claim_and_replays_o
                 );
                 let key = request.owner_instance_id.to_string();
                 let send = |authorization: Option<String>,
+                            origin: Option<&'static str>,
                             key: Option<String>,
                             body: serde_json::Value| {
                     let app = fixture.app.clone();
@@ -1102,6 +1103,9 @@ async fn paper_initial_execution_http_authenticates_original_claim_and_replays_o
                             .uri(path)
                             .header("host", "localhost")
                             .header("content-type", "application/json");
+                        if let Some(value) = origin {
+                            builder = builder.header("origin", value);
+                        }
                         if let Some(value) = authorization {
                             builder = builder.header("authorization", format!("Bearer {value}"));
                         }
@@ -1127,22 +1131,55 @@ async fn paper_initial_execution_http_authenticates_original_claim_and_replays_o
                     }
                 };
                 let body = serde_json::to_value(&request).unwrap();
+                // Without a bearer, a mutation must pass the browser Origin
+                // boundary before the authority extractor can reject the session.
+                let (status, problem) = send(None, None, Some(key.clone()), body.clone()).await;
+                assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+                assert_eq!(problem["code"], "INVALID_ORIGIN", "{problem}");
+                let (status, problem) = send(
+                    None,
+                    Some("https://localhost"),
+                    Some(key.clone()),
+                    body.clone(),
+                )
+                .await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "{problem}");
+                assert_eq!(problem["code"], "AUTH_REQUIRED", "{problem}");
+                let (status, problem) = send(
+                    Some("invalid-machine-token".into()),
+                    None,
+                    Some(key.clone()),
+                    body.clone(),
+                )
+                .await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "{problem}");
+                assert_eq!(problem["code"], "AUTH_REQUIRED", "{problem}");
+                // A valid original bearer with a different downstream binding
+                // reaches authorization and must remain forbidden, not unauthenticated.
+                let mut wrong_scope = body.clone();
+                wrong_scope["paper_initialization"]["downstream_id"] =
+                    serde_json::json!(Id::new());
+                let (status, problem) = send(
+                    Some(token.clone()),
+                    None,
+                    Some(key.clone()),
+                    wrong_scope,
+                )
+                .await;
+                assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+                assert_eq!(problem["code"], "FORBIDDEN", "{problem}");
                 assert_eq!(
-                    send(None, Some(key.clone()), body.clone()).await.0,
-                    StatusCode::UNAUTHORIZED
-                );
-                assert_eq!(
-                    send(Some(token.clone()), None, body.clone()).await.0,
+                    send(Some(token.clone()), None, None, body.clone()).await.0,
                     StatusCode::UNPROCESSABLE_ENTITY
                 );
                 let mut extra = body.clone();
                 extra["targets"] = serde_json::json!([]);
                 assert_eq!(
-                    send(Some(token.clone()), Some(key.clone()), extra).await.0,
+                    send(Some(token.clone()), None, Some(key.clone()), extra).await.0,
                     StatusCode::UNPROCESSABLE_ENTITY
                 );
                 let (status, first) =
-                    send(Some(token.clone()), Some(key.clone()), body.clone()).await;
+                    send(Some(token.clone()), None, Some(key.clone()), body.clone()).await;
                 assert_eq!(status, StatusCode::OK, "{first}");
                 let first: CommandResult<PaperInitialExecutionViewV1> =
                     serde_json::from_value(first).unwrap();
@@ -1151,13 +1188,14 @@ async fn paper_initial_execution_http_authenticates_original_claim_and_replays_o
                     serde_json::to_value(&first.resource.claim).unwrap(),
                     serde_json::to_value(&claim).unwrap()
                 );
-                let (status, replay) = send(Some(token.clone()), Some(key), body.clone()).await;
+                let (status, replay) = send(Some(token.clone()), None, Some(key), body.clone()).await;
                 assert_eq!(status, StatusCode::OK);
                 assert_eq!(replay["replayed"], true);
                 let mut restarted = body;
                 restarted["owner_instance_id"] = serde_json::json!(Id::new());
                 let (status, _) = send(
                     Some(token),
+                    None,
                     Some("different-process-journal".into()),
                     restarted,
                 )

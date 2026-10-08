@@ -651,7 +651,23 @@ async fn run(input: Input) -> Result<()> {
             // must not be emitted forever from its still-discoverable receipt.
             trace(&proxy, json!({"event":"await_observation_after_assessment", "at":chrono::Utc::now(), "preview_id":bootstrap.id, "original_observation_id":bootstrap.original_observation_id}));
             wait("assessed_preview_must_not_starve_original_observation", || latest_receipt(&proxy).is_some_and(|r|r.resource.id != bootstrap.original_observation_id)).await?;
+            // Browser retries create distinct immutable preview/plan receipts.
+            // They must consume one original assessment for the exact request
+            // and revision, never rebind its reference to later source quotes.
+            let bootstrap_assessments = proxy.attempts.lock().unwrap().iter().filter(|attempt| {
+                attempt.method == "POST" && attempt.path.ends_with("/capital-exit-assessments")
+                    && (200..300).contains(&attempt.status) && attempt.withheld.is_none()
+                    && serde_json::from_slice::<CapitalExitOwnerAssessmentV1>(&attempt.body).is_ok_and(|value|
+                        value.request.account_source_id == bootstrap.account_source_id
+                            && value.request.expected_source_observation_id == bootstrap.original_observation_id
+                            && value.request.scope == bootstrap.scope && value.request.policy == bootstrap.policy
+                            && Some(value.expected_account_control_revision) == bootstrap.expected_account_control_revision)
+            }).count();
+            ensure!(bootstrap_assessments == 1, "same_request_reassessed_from_distinct_preview_receipts:{bootstrap_assessments}");
             let preview = supported_preview(&input, &http, &proxy, "start-fresh").await?;
+            ensure!(preview.account_source_id == bootstrap.account_source_id
+                && preview.original_observation_id != bootstrap.original_observation_id,
+                "new_original_observation_was_not_reassessed_for_same_source");
             ensure!(preview.funds.estimated_execution_cost.as_ref().is_some_and(|m| m.amount.is_positive()), "official_fee_bound_missing");
             let start = CapitalExitStartV1 {
                 schema_version: SchemaV1, preview_id: preview.id,
