@@ -442,7 +442,10 @@ impl Poller {
                     } else {
                         None
                     };
-                    self.assessment_due = true;
+                    // Complete the accepted release before scanning immutable
+                    // preview history. Its first Availability attempt below
+                    // reopens discovery, including when native evidence fails.
+                    self.assessment_due = *phase != CapitalExitStateV1::WaitingEvidence;
                 }
                 Ok(())
             }
@@ -682,6 +685,10 @@ impl Poller {
         ) && view.state == CapitalExitStateV1::WaitingEvidence
             && self.progress_ready_command == Some(view.command_id)
         {
+            // Priority is one attempt, not an indefinite discovery embargo.
+            // A native failure or definite rejection yields to later previews.
+            // An unknown write remains pending and is replayed first in step().
+            self.assessment_due = true;
             self.queue_native(NativeRequest::Availability(Box::new(view)))
                 .await
         } else {
@@ -776,6 +783,245 @@ mod tests {
             },
         };
         (poller, request)
+    }
+
+    #[derive(Clone)]
+    struct ScheduleProbe {
+        view: CapitalExitViewV1,
+        mode: std::sync::Arc<std::sync::atomic::AtomicU8>,
+        attempts: std::sync::Arc<std::sync::Mutex<Vec<(String, Option<String>, Vec<u8>)>>>,
+    }
+
+    async fn schedule_endpoint(
+        axum::extract::State(probe): axum::extract::State<ScheduleProbe>,
+        request: axum::extract::Request,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let path = request.uri().path().to_owned();
+        let key = request
+            .headers()
+            .get("idempotency-key")
+            .map(|value| value.to_str().unwrap().to_owned());
+        let bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        probe
+            .attempts
+            .lock()
+            .unwrap()
+            .push((path.clone(), key, bytes.to_vec()));
+        match path.as_str() {
+            "/api/v2/downstream/capital-exits" => axum::Json(serde_json::json!({
+                "schema_version": 1, "items": [probe.view], "next_cursor": null
+            }))
+            .into_response(),
+            "/api/v2/downstream/capital-exit-assessments" => axum::Json(serde_json::json!({
+                "schema_version": 1, "items": [], "next_cursor": null
+            }))
+            .into_response(),
+            _ if path.ends_with("/evidence") => {
+                match probe.mode.load(std::sync::atomic::Ordering::SeqCst) {
+                    2 => (
+                        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                        "synthetic definite rejection",
+                    )
+                        .into_response(),
+                    3 => (
+                        axum::http::StatusCode::CREATED,
+                        [("content-type", "application/json")],
+                        "{",
+                    )
+                        .into_response(),
+                    _ => (
+                        axum::http::StatusCode::CREATED,
+                        axum::Json(serde_json::json!({
+                            "schema_version": 1, "resource": probe.view, "replayed": false
+                        })),
+                    )
+                        .into_response(),
+                }
+            }
+            _ => panic!("unexpected synthetic schedule endpoint: {path}"),
+        }
+    }
+
+    async fn availability_step(
+        poller: &mut Poller,
+        inbox: &NativeInbox,
+        evidence: &CapitalExitOwnerEvidenceV1,
+        native_failure: bool,
+    ) -> Result<()> {
+        // Keep this protocol-only test independent of elapsed wall-clock time.
+        poller.observation_at = Some(std::time::Instant::now());
+        let service = async {
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    match inbox.receiver.try_recv() {
+                        Ok(envelope) => break envelope,
+                        Err(mpsc::TryRecvError::Empty) => tokio::task::yield_now().await,
+                        Err(error) => panic!("synthetic native inbox closed: {error}"),
+                    }
+                }
+            })
+            .await
+            .expect("Poller did not request native Availability");
+            let NativeRequest::Availability(view) = envelope.request else {
+                panic!(
+                    "accepted release must request Availability, never another native reduction"
+                );
+            };
+            assert_eq!(view.command_id, evidence.command_id);
+            assert_eq!(view.account_control_epoch, evidence.account_control_epoch);
+            let response = if native_failure {
+                Err("synthetic_native_availability_unavailable".into())
+            } else {
+                Ok(NativeResponse::Evidence(evidence.clone()))
+            };
+            assert!(envelope.reply.send(response).is_ok());
+        };
+        let (result, ()) = tokio::join!(poller.step(), service);
+        result
+    }
+
+    async fn availability_priority_case(mode: u8) {
+        // Synthetic protocol/state-machine test only. The preserved JSON supplies
+        // DTO identities; no frozen report is represented as fresh native proof.
+        // Real engine/HTTP/PG evidence remains in paper_service_acceptance.
+        let original: CapitalExitOwnerEvidenceV1 = serde_json::from_str(include_str!(
+            "../../../tests/contracts/paper-capital-resume-progress-original.json"
+        ))
+        .unwrap();
+        let mut view: CapitalExitViewV1 = serde_json::from_value(
+            original.native_evidence["owner_control_report"]["control"].clone(),
+        )
+        .unwrap();
+        view.state = CapitalExitStateV1::WaitingEvidence;
+        let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let response_mode = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
+        let probe = ScheduleProbe {
+            view: view.clone(),
+            mode: response_mode.clone(),
+            attempts: attempts.clone(),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}/", listener.local_addr().unwrap());
+        let router = axum::Router::new()
+            .fallback(schedule_endpoint)
+            .with_state(probe);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let (inbox, sender) = channel(std::path::PathBuf::new());
+        let transport = crate::capital_exit_transport::CapitalExitOwnerTransport::new(
+            &origin,
+            b"synthetic-scheduling-only-no-authority",
+        )
+        .unwrap();
+        let mut poller = Poller::new(transport, sender, std::path::PathBuf::new());
+        poller.source = Some(original.account_source_id);
+        poller.acknowledged_command = Some(original.command_id);
+        poller.fence_attempted = Some(original.command_id);
+        poller.assessment_due = true;
+        poller.pending = Some(Pending::Evidence(original.clone()));
+        poller.send_pending().await.unwrap();
+        assert_eq!(poller.progress_ready_command, Some(original.command_id));
+        assert!(
+            !poller.assessment_due,
+            "accepted release must win one turn before discovery"
+        );
+        attempts.lock().unwrap().clear();
+
+        let mut availability = original.clone();
+        availability.external_message_id = "synthetic-first-availability".into();
+        availability.evidence = CapitalExitEvidenceKindV1::WithdrawabilityObserved {
+            available_cash: AccountMoneyV1 {
+                amount: "850".parse().unwrap(),
+                currency: "pUSD".into(),
+            },
+            basis: CapitalExitAvailabilityBasisV1::ControlledSandbox,
+            venue: "SYNTHETIC".into(),
+            native_availability_report_ref: "synthetic".into(),
+            settlement_report_ref: "synthetic".into(),
+            margin_report_ref: "synthetic".into(),
+            open_orders_report_ref: "synthetic".into(),
+        };
+        response_mode.store(mode, std::sync::atomic::Ordering::SeqCst);
+        let result = availability_step(&mut poller, &inbox, &availability, mode == 1).await;
+        assert_eq!(result.is_ok(), mode == 0);
+        assert!(
+            poller.assessment_due,
+            "first attempt must restore later Resume discovery even on failure"
+        );
+        assert!(
+            attempts
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(path, _, _)| !path.ends_with("/capital-exit-assessments")),
+            "discovery delayed the first Availability attempt"
+        );
+        if let Err(error) = result {
+            poller.reject_definite_write(&error.to_string());
+        }
+        if mode == 3 {
+            let Some(Pending::Evidence(retained)) = &poller.pending else {
+                panic!("unknown Availability reply lost its original pending evidence");
+            };
+            assert_eq!(retained, &availability);
+            let before_retry = attempts.lock().unwrap().len();
+            response_mode.store(0, std::sync::atomic::Ordering::SeqCst);
+            poller.step().await.unwrap();
+            let calls = attempts.lock().unwrap();
+            assert_eq!(
+                calls.len(),
+                before_retry + 1,
+                "unknown write must replay before any read/discovery"
+            );
+            assert_eq!(
+                calls[before_retry - 1],
+                calls[before_retry],
+                "unknown replay changed path, key or original bytes"
+            );
+        }
+        assert!(
+            poller.pending.is_none(),
+            "successful/definite/nonqueued outcome must allow discovery"
+        );
+        response_mode.store(0, std::sync::atomic::Ordering::SeqCst);
+        attempts.lock().unwrap().clear();
+        availability_step(&mut poller, &inbox, &availability, false)
+            .await
+            .unwrap();
+        assert!(
+            attempts
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(path, _, _)| path.ends_with("/capital-exit-assessments")),
+            "late Resume discovery remained starved after the first Availability attempt"
+        );
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn accepted_release_prioritizes_first_availability_then_late_resume_discovery() {
+        availability_priority_case(0).await;
+    }
+
+    #[tokio::test]
+    async fn native_availability_failure_restores_late_resume_discovery() {
+        availability_priority_case(1).await;
+    }
+
+    #[tokio::test]
+    async fn rejected_availability_restores_late_resume_discovery() {
+        availability_priority_case(2).await;
+    }
+
+    #[tokio::test]
+    async fn unknown_availability_replays_original_before_late_resume_discovery() {
+        availability_priority_case(3).await;
     }
 
     #[test]
