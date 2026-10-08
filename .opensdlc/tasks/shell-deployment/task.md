@@ -28,6 +28,11 @@ no Python file is shipped in the 13-file deployment bundle.
 
 Run `node --test deploy/install.test.mjs deploy/docker/manage_shell.test.mjs` and
 `bash deploy/docker/codex-shell.test.sh` for isolated command-boundary checks.
+On macOS, the CLI release job supplies `QUAZONAI_TEST_LINUX_BASH` from Homebrew
+for Linux-stack dispatch fixtures only. Native CLI, catalog and documented
+bootstrap fixtures remain on `/bin/bash` 3.2 with the host awk; this is not a
+Mac installer dependency. Catalog checks reject raw and escaped NUL before
+BSD awk can erase bytes or confuse property names.
 The Container acceptance harness invokes the shipped shell implementation for
 real installation, upgrade, interruption and recovery checks.
 

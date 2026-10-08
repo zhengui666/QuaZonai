@@ -653,38 +653,92 @@ fn strict_lock_and_index_contracts_reject_unknown_fields() {
 
 #[test]
 fn duplicate_identities_reject_but_complete_case_and_assertion_sets_are_preserved() {
+    for count in [2, 500] {
+        let mut pack = Pack::new();
+        let case = pack.suite["tuning"]["cases"][0].clone();
+        pack.suite["tuning"]["cases"] = json!(vec![case; count]);
+        pack.save_suite();
+        assert!(freeze(&pack.input, &pack.frozen).is_err());
+        assert!(!pack.frozen.exists());
+    }
+    for count in [2, 101] {
+        let mut pack = Pack::new();
+        let assertion = pack.suite["tuning"]["cases"][0]["assertions"][0].clone();
+        pack.suite["tuning"]["cases"][0]["assertions"] = json!(vec![assertion; count]);
+        pack.save_suite();
+        assert!(freeze(&pack.input, &pack.frozen).is_err());
+        assert!(!pack.frozen.exists());
+    }
+
     let mut pack = Pack::new();
     let case = pack.suite["tuning"]["cases"][0].clone();
-    pack.suite["tuning"]["cases"] = json!(vec![case.clone(); 500]);
-    pack.save_suite();
-    assert!(freeze(&pack.input, &pack.frozen).is_err());
-
-    let mut pack = Pack::new();
-    let assertion = pack.suite["tuning"]["cases"][0]["assertions"][0].clone();
-    pack.suite["tuning"]["cases"][0]["assertions"] = json!(vec![assertion.clone(); 101]);
-    pack.save_suite();
-    assert!(freeze(&pack.input, &pack.frozen).is_err());
-
-    let mut pack = Pack::new();
+    let assertion = case["assertions"][0].clone();
     let mut cases = Vec::new();
     for n in 0..501 {
         let mut case = case.clone();
         case["id"] = json!(format!("many-{n}"));
-        case["assertions"] = json!((0..101)
-            .map(|n| {
-                let mut assertion = assertion.clone();
-                assertion["id"] = json!(format!("assertion-{n}"));
-                assertion
-            })
-            .collect::<Vec<_>>());
+        case["assertions"] = json!(
+            (0..101)
+                .map(|n| {
+                    let mut assertion = assertion.clone();
+                    assertion["id"] = json!(format!("assertion-{n}"));
+                    assertion
+                })
+                .collect::<Vec<_>>()
+        );
         cases.push(case);
     }
     pack.suite["tuning"]["cases"] = json!(cases);
     pack.save_suite();
     freeze(&pack.input, &pack.frozen).unwrap();
     let report = read(&pack.frozen.join("report.json"));
-    assert_eq!(report["cases"].as_array().unwrap().len(), 502);
-    assert_eq!(report["cases"][0]["required_assertions"].as_array().unwrap().len(), 101);
+    let reported = report["cases"].as_array().unwrap();
+    let lock = read(&pack.frozen.join("lock.json"));
+    let scenarios = lock["scenarios"].as_array().unwrap();
+    let mut offset = 0;
+    for (split, filename, label) in [
+        ("tuning", "tuning.manifest.json", "TUNING"),
+        ("held_out", "held-out.manifest.json", "HELD_OUT"),
+    ] {
+        let expected = pack.suite[split]["cases"].as_array().unwrap();
+        let manifest = read(&pack.frozen.join(filename));
+        let frozen = manifest["cases"].as_array().unwrap();
+        assert_eq!(frozen.len(), expected.len());
+        assert_eq!(manifest["id"], pack.suite[split]["id"]);
+        assert_eq!(manifest["split"], label);
+        assert_eq!(
+            report[split]["case_ids"],
+            json!(expected.iter().map(|case| &case["id"]).collect::<Vec<_>>())
+        );
+        for (index, case) in expected.iter().enumerate() {
+            let actual = &reported[offset + index];
+            let scenario = &scenarios[offset + index];
+            assert_eq!(actual["id"], case["id"]);
+            assert_eq!(actual["split"], label);
+            assert_eq!(actual["status"], "UNRUN");
+            assert_eq!(
+                actual["required_assertions"],
+                json!(
+                    case["assertions"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|assertion| &assertion["id"])
+                        .collect::<Vec<_>>()
+                )
+            );
+            assert_eq!(frozen[index]["id"], case["id"]);
+            assert_eq!(frozen[index]["assertions"], case["assertions"]);
+            assert_eq!(frozen[index]["scenario_sha256"], actual["scenario_sha256"]);
+            assert_eq!(scenario["case_id"], case["id"]);
+            assert_eq!(scenario["sha256"], actual["scenario_sha256"]);
+        }
+        offset += expected.len();
+    }
+    // Keep every tuning and held-out case, rather than assuming a fixture split size.
+    assert_eq!(reported.len(), offset);
+    assert_eq!(scenarios.len(), offset);
+    domain::agent_evaluation::parse(&serde_json::to_vec(&report).unwrap()).unwrap();
 }
 
 #[test]
