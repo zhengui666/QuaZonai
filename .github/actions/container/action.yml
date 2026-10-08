@@ -45,7 +45,7 @@ runs:
         set -euo pipefail
         test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
         test -f deploy/docker/runtime.sh
-        for script in deploy/docker/entrypoint.sh deploy/docker/deploy.sh deploy/docker/update.sh deploy/docker/codex-update.sh deploy/docker/codex-login.sh deploy/docker/runtime.sh; do
+        for script in deploy/docker/entrypoint.sh deploy/docker/manage.sh deploy/docker/codex.sh deploy/docker/deploy.sh deploy/docker/update.sh deploy/docker/codex-update.sh deploy/docker/codex-login.sh deploy/docker/runtime.sh; do
           bash -n "$script"
         done
         python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v

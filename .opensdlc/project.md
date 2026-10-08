@@ -18,7 +18,7 @@ npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 | Change | Check from the repository root | Required result / prerequisite |
 | --- | --- | --- |
 | Markdown and CLI/Skill documentation | `make check-docs` | Links, native help and Skill contracts pass; requires the CI-pinned lychee and Rust dependencies |
-| README or Docker deployment guide | `make check-links` and `node --test deploy/install.test.mjs` | Run both: the latter checks Bash examples and native helper help with Node, Bash and Python; it does not install services and is not included in `make check-docs` |
+| README or Docker deployment guide | `make check-links` and `node --test deploy/install.test.mjs` | Run both: the latter checks Bash examples and shell helper help with Node and Bash; it does not install services and is not included in `make check-docs` |
 | Markdown links only | `make check-links` | All tracked Markdown, including `.opensdlc`, resolves; this does not run CLI checks |
 | Package ownership and upstream sources | `make check-architecture` | Allowed dependency directions and official source packages; Cargo fetches missing locked packages when the cache is cold |
 | Portable CLI and release assets | `cargo test --locked -p quazonai-cli` and `python3 -B -m unittest discover -s deploy -p '*_test.py'` | Native Windows/macOS/Linux jobs in the CLI workflow execute the actual binaries; installer checks use `node --test deploy/install.test.mjs` |
@@ -32,6 +32,7 @@ npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 | Browser/PWA | `CADDY_BIN=/path/to/caddy npm --prefix apps/web run test:e2e` | Real API, Worker, PostgreSQL, Caddy and systemd user manager; use the Web workflow setup |
 | Data acquisition/Worker/browser closure | [Native data browser workflow](../.github/workflows/native-data-browser.yml) | Original synthetic candle clocks, real preparation/registration/Worker/OCI, exact artifact downloads and restart identity; optional manually dispatched acceptance |
 | Scientific/OCI boundaries | [Native Runtime workflow](../.github/workflows/native-runtime.yml) | Built native image, Docker/cgroup prerequisites, actual execution/cancellation/restore tests |
+| Shell deployment state and Codex helpers | `node --test deploy/docker/manage_shell.test.mjs` and `bash deploy/docker/codex-shell.test.sh` | Isolated files and fake command boundaries only; requires Linux Bash 4.4+, Node and standard host utilities; does not run Docker or install services |
 | Container installer | [Container action](../.github/actions/container/action.yml) | Real installation, upgrade and recovery against disposable resources |
 
 Routine PR and main/dev push validation runs only [Rust CI](../.github/workflows/ci.yml). It checks the entire workspace with all targets/features, links production lib/bin targets with the existing optional Job/Server feature set, and executes classified rule/local component tests. This retains Contracts/Domain rules located in Cargo integration targets, non-PG Store lib tests, the offline Polymarket order-format contract and default-feature Server rules. CLI HTTP/FIFO/subprocess, compiler/ZIP subprocess, architecture-process, full-filesystem and native system probes are outside this routine group. See [the command plan](../tests/native/rust_unit.sh) for the exact selectors.

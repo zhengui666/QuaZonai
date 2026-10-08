@@ -5,7 +5,7 @@ The release bundle runs Web/API/Caddy and PostgreSQL 18/PGMQ with Docker Compose
 <a id="prerequisites"></a>
 ## Prerequisites
 
-Use a non-root Linux x86_64 owner with local Docker Engine, Compose 2.20+, Python 3.10+, Git, systemd (including `systemd-analyze`) and cgroup v2. The host Worker requires glibc 2.36+ and OpenSSL 3. Rust, Node.js and Codex are not needed on the host. The host needs access to GHCR for image downloads.
+Use a non-root Linux x86_64 owner with local Docker Engine, Compose 2.20+, Bash 4.4+, curl, tar, awk, Git, GNU coreutils, util-linux, systemd (including `systemd-analyze` and `systemd-socket-activate`) and cgroup v2. The host Worker requires glibc 2.36+ and OpenSSL 3. Python, jq, Rust, Node.js and Codex are not needed on the host. Standard Unix tools and the Linux host tools required by the manager must already be installed; no packages or sudo actions are run automatically. The host needs access to GHCR for image downloads.
 
 Docker must use a local Unix socket and a rootful daemon without `userns-remap`. Docker Desktop, remote contexts and rootless/remapped daemons are unsupported. API and Worker use the owner's Docker access; Codex containers do not receive the socket. Keep the application on its default local interface.
 
@@ -23,15 +23,15 @@ Run deployment scripts as this owner, not with `sudo`. For a private GHCR packag
 Install or update this exact release, including the native CLI, in one command:
 
 ```sh
-curl -fsSL https://github.com/zhengui666/QuaZonai/releases/download/@QUAZONAI_VERSION@/install.sh | bash
+sh -c 'f=$(mktemp) || exit; cleanup() { rm -f -- "$f"; }; trap cleanup 0; trap "exit 1" 1 2 3 15; curl --fail --location --proto "=https" --proto-redir "=https" --tlsv1.2 --output "$f" https://github.com/zhengui666/QuaZonai/releases/download/@QUAZONAI_VERSION@/install.sh && bash "$f" "$@"' sh
 ```
 
 The producer substitutes the tagged version above in every published bundle.
-For a Linux CLI-only host, use `bash -s -- --cli-only` in place of `bash`.
+CLI-only installation on Linux/macOS supports Bash 3.2+; full Linux management requires Bash 4.4+. For a Linux CLI-only host, append `--cli-only` to the command. Downloads finish successfully before any script executes; a failed transfer is cleaned up.
 The same Release's generated README contains native Windows and macOS commands.
-Each release includes SHA256SUMS, all four CLI archives and application, database,
+Each release includes all four CLI archives and application, database,
 scientific Runtime and Codex image archives. The installer downloads prebuilt
-artifacts and verifies checksums; it never checks out source or builds binaries or
+artifacts, checks their version and archive structure, and does not perform file checksum verification; it never checks out source or builds binaries or
 images. `--bin-dir` selects the CLI directory; `--directory` selects the cluster.
 The existing installation/upgrade recovery and prerequisites below still apply.
 
@@ -88,18 +88,7 @@ These commands require idle Runs/sessions and hold the deployment lock. Credenti
 The installer extracts the scientific gateway from the application image and pulls the matching job image. Configure its catalogs, credential and resource limits before starting the gateway. From this bundle directory, print the setup, configuration-apply and recovery guides pinned to the exact `release.json.revision`:
 
 ```sh
-python3 - <<'PY'
-import json, re
-from pathlib import Path
-revision = json.loads(Path('release.json').read_text())['revision']
-if not re.fullmatch(r'[0-9a-f]{40}', revision):
-    raise ValueError('Invalid release revision')
-base = f'https://github.com/zhengui666/QuaZonai/blob/{revision}/.opensdlc'
-for path in ('operations.md#scientific-runtime',
-             'operations.md#runtime-targets', 'operations.md#runtime-recovery',
-             'operations.md#access-cutover'):
-    print(f'{base}/{path}')
-PY
+bash manage.sh runtime-guides
 ```
 
 For an installed copy, its bundle is `<installation>/current/deployment`. Open the printed revision-specific configuration guide; use `runtime.sh` from that installed bundle and its `release.json.runtime_image` digest. The gateway is a separate host process; scientific jobs run in its registered Docker image. Its loopback listener needs an existing trusted HTTPS reverse proxy reachable from both the API container and host Worker. Container-local `127.0.0.1` does not reach the host.
@@ -113,14 +102,14 @@ manager and application image; a source-checkout build does not add them to an
 older installation. Check the active release's help and plugin inventory first.
 The examples below only inspect help, capabilities and an offline HTTP plan;
 Coinbase live research acceptance remains subject to the [source-use block](../../runtimes/data/source-plugins.md#source-rights-and-acceptance).
-Use the installed manager as the installation owner; no checkout, Python package
+Use the installed manager as the installation owner; no checkout, host Python, package
 installation or Cargo build is needed:
 
 ```sh
 installation="$HOME/.local/share/quazonai"
-python3 "$installation/current/deployment/manage.py" source --help
-python3 "$installation/current/deployment/manage.py" source -- plugins
-python3 "$installation/current/deployment/manage.py" source -- \
+bash "$installation/current/deployment/manage.sh" source --help
+bash "$installation/current/deployment/manage.sh" source -- plugins
+bash "$installation/current/deployment/manage.sh" source -- \
   plan coinbase-candles --instrument BTC-USD --start-seconds 1788220800 \
   --end-seconds 1788220980 --interval-seconds 60
 ```
@@ -142,7 +131,7 @@ For example, after a supported native conversion and after supplying the origina
 explicit declaration and native selection:
 
 ```sh
-python3 "$installation/current/deployment/manage.py" source \
+bash "$installation/current/deployment/manage.sh" source \
   --read-only /absolute/native/lokima-selection \
   --read-only /absolute/declarations --output-parent /absolute/prepared -- \
   prepare polymarket-capture --native-output /absolute/native/lokima-selection \
@@ -212,22 +201,22 @@ bash "$HOME/.local/share/quazonai/current/deployment/update.sh" "$version"
 
 The updater downloads the target bundle/image, checks compatibility and idle state, stops this installation, creates a recovery point, explicitly migrates, and activates after API/Worker checks. It preserves PostgreSQL, data, credentials and Codex version. Older versions are rejected; same-version installation is idempotent. Timestamped `v<core>-dev.<UTC timestamp>.<run ID>` Releases are installable here. The separate manual `dev-<sha>-...` image-only channel has no bundle and cannot be used here. Set the stopped gateway configuration to the target manifest's `runtime_image`, restart it using the target `runtime.sh`, and probe capabilities before new research; keep its original state and catalogs.
 
-For the first upgrade from a deployment bundle with `release.json.schema_version=1`, use the freshly extracted **target** bundle and run inside that directory:
+For the first upgrade from any Python-based deployment, including schema-version 1 or 2, use the target release’s one-line installer above. It invokes the new shell manager, bypassing the old updater’s fixed bundle file list, while preserving installation state. Alternatively, extract the target bundle into an empty directory and run:
 
 ```sh
-python3 manage.py apply-update --directory "$HOME/.local/share/quazonai"
+bash manage.sh apply-update --directory "$HOME/.local/share/quazonai"
 ```
 
-The old updater does not accept the version-2 file set. Subsequent updates use the installed `update.sh` above.
+The old updater does not accept the shell bundle file set; do not invoke it for this transition. Subsequent updates use the installed `update.sh` above.
 
 <a id="status"></a>
 ## Status and configuration
 
 ```sh
-python3 "$HOME/.local/share/quazonai/current/deployment/manage.py" status
+bash "$HOME/.local/share/quazonai/current/deployment/manage.sh" status
 ```
 
-Before `current` exists, use the extracted bundle's `manage.py status`. Commands accept `--directory /absolute/installation/path` for a non-default installation.
+Before `current` exists, use the extracted bundle's `manage.sh status`. Commands accept `--directory /absolute/installation/path` for a non-default installation.
 
 Keep `installation.json`, the data directory, `master.key`, `.env`, original ports and Compose project identity. Runtime/downstream settings use the manifest's `runtime_targets` and `downstream_targets`; a local `compose.override.yaml` survives updates. Runtime targets must be reachable through their configured HTTP transport as described [above](#scientific-runtime); the native gateway does not listen on a Unix HTTP socket. Empty target lists do not create a Runtime.
 
@@ -248,41 +237,7 @@ Use your actual host and port. `CLI_HTTP_ORIGIN` contains only an HTTP origin, w
 Finish/reconcile all Runs and Codex operations, then apply the override using the installed manager's existing maintenance operations:
 
 ```sh
-python3 - "$HOME/.local/share/quazonai" <<'PY'
-import sys
-from pathlib import Path
-root = Path(sys.argv[1]).resolve()
-sys.path.insert(0, str(root / 'current/deployment'))
-import manage as m
-import codex
-m.preflight()
-with m.locked(root):
-    if (root / 'pending.json').exists():
-        raise ValueError('Complete the recorded installation/update first')
-    config = m.configuration(root)
-    m.compose(config, 'config', '--quiet')
-    m.require_idle(config)
-    codex.require_stopped(config, recover_created=True)
-    try:
-        m.configure_app_restarts(config, False)
-        m.compose(config, 'stop', 'app')
-        m.require_idle(config)
-        codex.require_stopped(config, recover_created=True)
-        m.run(['systemctl', '--user', 'disable', '--now', m.unit(config)])
-        m.require_idle(config)
-    except Exception:
-        m.resume_existing_services(config)
-        m.configure_app_restarts(config, True)
-        raise
-    m.compose(config, 'up', '--no-start', '--no-deps', 'app')
-    m.configure_app_restarts(config, False)
-    print('Configuration prepared; starting the original installation', flush=True)
-    m.resume_existing_services(config, enable_boot=False)
-    m.verify_worker(config)
-    m.verify_console(config)
-    m.run(['systemctl', '--user', 'enable', m.unit(config)])
-    m.configure_app_restarts(config, True)
-PY
+bash "$HOME/.local/share/quazonai/current/deployment/manage.sh" apply-config
 ```
 
 This uses the existing image, database, state and Worker; it performs no build or migration. The installation-root override survives application updates and rollback/retry because every manager Compose call loads it. A startup/check failure remains a failed apply: correct or restore the saved override and repeat after idle checks. If interrupted after the prepared message and either process may be running, use the revision-pinned `runtime-targets` recovery command above to resume without recreation before applying another change.

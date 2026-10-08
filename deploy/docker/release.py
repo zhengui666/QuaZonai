@@ -17,9 +17,8 @@ import tarfile
 import tempfile
 import time
 
-import codex
 
-from manage import BUNDLE, BUNDLE_FILES, DATABASE_IMAGE, REPOSITORY, run, validate_manifest, version, version_precedence
+from release_support import BUNDLE, BUNDLE_FILES, DATABASE_IMAGE, REPOSITORY, run, validate_manifest, version, version_precedence
 
 # Routine source validation is the Rust workflow. Image/CLI production and
 # installation remain in release-version.yml after this prerequisite succeeds.
@@ -281,6 +280,7 @@ def docker_configuration() -> dict:
 
 
 def build_codex(target: str, image: str) -> str:
+    import codex  # CI image producer only; not needed by cold-runner bundle assembly.
     # CI-only producer. Neither this file nor the Dockerfile enters the deploy bundle.
     target = codex.exact_version(target)
     with tempfile.TemporaryDirectory(prefix="quazonai-codex-context-") as temporary:
@@ -307,6 +307,7 @@ def push_image(image: str, repository: str, tag: str) -> str:
 
 
 def published_codex_image(target: str) -> str | None:
+    import codex
     # Main and standalone publishers share the workflow concurrency group; dev only reads this tag.
     # Reuse an existing exact version even when a local rebuild has a new ID.
     reference = CODEX_REPOSITORY + ":" + codex.exact_version(target)
@@ -327,6 +328,7 @@ def published_codex_image(target: str) -> str | None:
 
 
 def advance_codex_latest(image: str, target: str) -> None:
+    import codex
     target = codex.exact_version(target)
     if "-" in target:
         return
@@ -381,6 +383,7 @@ def main() -> None:
         selected = validate_manifest(json.loads((args.output / "release.json").read_text()), published=True)
         advance_codex_latest(selected["codex_image"], selected["codex_version"])
     elif args.command == "publish-codex":
+        import codex
         target = codex.exact_version(args.codex_version)
         codex.verify_candidate(docker_configuration(), target, args.image)
         digest = published_codex_image(target)
@@ -389,6 +392,7 @@ def main() -> None:
         advance_codex_latest(digest, target)
         print(digest)
     elif args.command == "push-images":
+        import codex
         verify(args.version, args.revision)
         images = (("image", args.image, "quazonai"),
                   ("runtime_image", args.runtime_image, "quazonai-runtime"))

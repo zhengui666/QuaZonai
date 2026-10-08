@@ -255,7 +255,7 @@ python3 -B runtimes/data/source_plugins.py prepare binance-vision-spot-klines \
 `freeze` in the source registry accepts the same explicit selection/file flags
 as the standalone example above. Registry `verify` uses `--acquisition` pointing
 to the final `archive.json`. Installed commands use the same operation arguments
-through `manage.py source`, explicit read-only input mounts and a distinct
+through `manage.sh source`, explicit read-only input mounts and a distinct
 output-parent mount, without `--native-bin` or host Cargo. All six operations
 remain offline.
 

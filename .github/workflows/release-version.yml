@@ -77,7 +77,7 @@ jobs:
             --image "$LOCAL_IMAGE" --runtime-image "$RUNTIME_IMAGE" --codex-image "$CODEX_IMAGE" \
             --codex-version "$CODEX_VERSION" --output "$RUNNER_TEMP/release-assets"
           # Test drivers are sidecars, never part of the user deployment archive.
-          cp deploy/docker/smoke.py deploy/docker/release.py "$RUNNER_TEMP/release-assets/"
+          cp deploy/docker/smoke.py deploy/docker/smoke_shell.py deploy/docker/release.py deploy/docker/release_support.py "$RUNNER_TEMP/release-assets/"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: prebuilt-${{ inputs.version }}-${{ inputs.revision }}
@@ -149,11 +149,14 @@ jobs:
           set -euo pipefail
           mkdir "$RUNNER_TEMP/deployment-only"
           tar -xzf "$RUNNER_TEMP/release-assets/quazonai-deploy.tar.gz" -C "$RUNNER_TEMP/deployment-only"
-          cp "$RUNNER_TEMP/release-assets/smoke.py" "$RUNNER_TEMP/release-assets/release.py" "$RUNNER_TEMP/deployment-only/"
+          cp "$RUNNER_TEMP/release-assets/smoke.py" "$RUNNER_TEMP/release-assets/smoke_shell.py" "$RUNNER_TEMP/release-assets/release.py" "$RUNNER_TEMP/release-assets/release_support.py" "$RUNNER_TEMP/deployment-only/"
           cd "$RUNNER_TEMP/deployment-only"
           test ! -e Cargo.toml
           test ! -d .git
           test ! -e Codex.Dockerfile
+          # These come from the shipped archive; Python remains a CI sidecar only.
+          test -f manage.sh && test -f codex.sh && test -f json.awk
+          test ! -e manage.py && test ! -e codex.py
           sudo apparmor_parser -r codex.apparmor
           trap 'sudo apparmor_parser -R codex.apparmor' EXIT
           uid=$(id -u)

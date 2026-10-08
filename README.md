@@ -11,13 +11,15 @@
 <a id="quickstart"></a>
 ## 安装
 
-需要 Linux x86_64、本机 Docker Engine、Docker Compose 2.20+、Python 3.10+、Git、systemd 和 cgroup v2。Worker 需要 glibc 2.36+、OpenSSL 3；不支持 Docker Desktop、远程 Docker、rootless 或 userns-remap。完整前提见[部署手册](deploy/docker/README.md#prerequisites)。
+需要 Linux x86_64、本机 Docker Engine、Docker Compose 2.20+、Bash 4.4+、curl、tar、awk、Git、GNU coreutils、util-linux、systemd（含 systemd-socket-activate） 和 cgroup v2。Worker 需要 glibc 2.36+、OpenSSL 3；不支持 Docker Desktop、远程 Docker、rootless 或 userns-remap。完整前提见[部署手册](deploy/docker/README.md#prerequisites)。
 
 安装或更新最新**已完整发布的 dev 版本**，一行执行：
 
 ```sh
-python3 -c 'import json,re,urllib.request,subprocess; releases=json.load(urllib.request.urlopen("https://api.github.com/repos/zhengui666/QuaZonai/releases?per_page=100")); r=max((r for r in releases if not r["draft"] and re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*",r["tag_name"]) and any(a["name"]=="install.sh" for a in r["assets"])),key=lambda r:tuple(map(int,re.findall(r"[0-9]+",r["tag_name"])))); subprocess.run(["bash"],input=urllib.request.urlopen("https://github.com/zhengui666/QuaZonai/releases/download/"+r["tag_name"]+"/install.sh").read(),check=True)'
+sh -c 'f=$(mktemp) || exit; cleanup() { rm -f -- "$f"; }; trap cleanup 0; trap "exit 1" 1 2 3 15; curl --fail --location --proto "=https" --proto-redir "=https" --tlsv1.2 --output "$f" https://raw.githubusercontent.com/zhengui666/QuaZonai/dev/deploy/install.sh && bash "$f" "$@"' sh
 ```
+
+这条命令先完整下载脚本，下载失败时不会执行残留内容；源脚本从 GitHub Releases 选择最新、非草稿且完整上传的 dev 版本。指定版本可在末尾加 `--version v<版本>`；指定已有目录加 `--directory /绝对路径`。此 shell 入口需随新版本发布后才可使用；旧的已发布安装器不会自动变更。
 
 首次安装前执行一次 `loginctl enable-linger "$USER"`。更新前完成运行并停止独立 Runtime；安装器保留原有数据、凭据、端口和恢复记录。
 
@@ -25,7 +27,7 @@ python3 -c 'import json,re,urllib.request,subprocess; releases=json.load(urllib.
 
 打开 **http://localhost:8081**。默认安装目录为 `$HOME/.local/share/quazonai`。
 
-部署包按版本清单从 GHCR 拉取应用、科学计算、Codex 和数据库镜像，并安装同源 Worker 与 Runtime 网关。宿主机无需安装 Rust、Node.js 或 Codex，不运行任何编译或镜像构建。Release 同时提供全部四类 Docker 镜像归档、SHA-256 校验和，以及 Windows x86_64、macOS Intel/Apple Silicon、Linux x86_64 的原生 CLI 包。[科学 Runtime 与数据目录](deploy/docker/README.md#scientific-runtime)需要另外配置。
+部署包按版本清单从 GHCR 拉取应用、科学计算、Codex 和数据库镜像，并安装同源 Worker 与 Runtime 网关。安装和更新在宿主机仅使用 shell 与标准工具，无需 Python、jq、Rust、Node.js 或 Codex，不运行任何编译或镜像构建。Release 同时提供全部四类 Docker 镜像归档，以及 Windows x86_64、macOS Intel/Apple Silicon、Linux x86_64 的原生 CLI 包。安装器不做文件哈希校验，不自动安装软件或执行 sudo；它检查版本清单、平台与归档结构，并只拉取 GHCR 已构建镜像。[科学 Runtime 与数据目录](deploy/docker/README.md#scientific-runtime)需要另外配置。
 
 CLI 安装至 Linux/macOS 的 `$HOME/.local/bin` 或 Windows 的 `%LOCALAPPDATA%\QuaZonai\bin`。macOS/Windows 在 Release 中复制对应的一行命令；Linux 仅安装远程客户端时在该版本命令后加 `--cli-only`。Docker 集群运行于上述 Linux 主机。CLI 可直接连接明确指定的 HTTP 或 HTTPS 地址：
 

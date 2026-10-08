@@ -22,7 +22,7 @@ Release selection/waiting requires successful current-source [Rust CI](../.githu
 Push the chosen immutable tag only within release authorization. Reconcile an existing tag/draft before retrying. Verify the published revision, image digest, package visibility and `quazonai-deploy.tar.gz`; repository visibility alone does not set GHCR visibility. Deployment uses the [versioned bundle](../deploy/docker/README.md), not a developer checkout.
 
 Installed source preparation uses the same application image digest through
-`manage.py source`; it adds no service, fifth image or deployment archive member.
+`manage.sh source`; it adds no service, fifth image or deployment archive member.
 The source tools stay outside `/opt/quazonai/bin`, which the installer extracts
 onto the host. The existing no-checkout smoke executes real packaged candle
 conversion/preparation and preserves explicit fixture/unverified status before
@@ -164,77 +164,18 @@ The gateway accepts only a loopback listener. Expose it through an existing same
 Editing the manifest alone, restarting only the Worker, or rerunning the same release's installer does not apply both environments. Finish all Runs and login sessions. As the installation owner, run the following maintenance command from the directory containing `runtime-targets.json`. It uses the **installed** manager, holds its deployment lock, preserves the old manifest, closes admissions and rechecks idle state before rewriting either environment. It recreates only the app container; it does not migrate, change images or touch the database volume.
 
 ```sh
-python3 - "$HOME/.local/share/quazonai" "$PWD/runtime-targets.json" <<'PY'
-import json, os, sys, tempfile
-from pathlib import Path
-root, source = (Path(value).resolve() for value in sys.argv[1:])
-sys.path.insert(0, str(root / 'current/deployment'))
-import manage as m
-import codex
-os.umask(0o077)
-targets = json.loads(source.read_text())
-if not isinstance(targets, list):
-    raise ValueError('runtime-targets.json must contain an array')
-m.preflight()
-with m.locked(root):
-    if (root / 'pending.json').exists():
-        raise ValueError('Complete the recorded installation/update first')
-    old = m.configuration(root)
-    candidate = {**old, 'runtime_targets': targets}
-    m.require_idle(old)
-    codex.require_stopped(old, recover_created=True)
-    m.durable_directory(root / 'backups')
-    checkpoint = Path(tempfile.mkdtemp(prefix='runtime-config-', dir=root / 'backups'))
-    m.save(checkpoint / 'installation.json', old)
-    m.sync_directory(root / 'backups')
-    print('Configuration checkpoint:', checkpoint, flush=True)
-    try:
-        m.configure_app_restarts(old, False)
-        m.compose(old, 'stop', 'app')
-        m.require_idle(old)
-        codex.require_stopped(old, recover_created=True)
-        m.run(['systemctl', '--user', 'disable', '--now', m.unit(old)])
-        m.require_idle(old)
-    except Exception:
-        m.resume_existing_services(old)
-        m.configure_app_restarts(old, True)
-        raise
-    m.save(root / 'installation.json', candidate)
-    m.configure_worker(candidate)
-    m.compose(candidate, 'up', '--no-start', '--no-deps', 'app')
-    m.configure_app_restarts(candidate, False)
-    print('Configuration prepared; starting the original installation', flush=True)
-    m.resume_existing_services(candidate, enable_boot=False)
-    m.verify_worker(candidate)
-    m.verify_console(candidate)
-    m.run(['systemctl', '--user', 'enable', m.unit(candidate)])
-    m.configure_app_restarts(candidate, True)
-PY
+bash "$HOME/.local/share/quazonai/current/deployment/manage.sh" apply-config \
+  --runtime-targets "$PWD/runtime-targets.json"
 ```
 
-Change the first argument for a non-default installation. Native server startup validates the target entries; a startup failure is not a successful apply. Do not edit other installation fields or use a Compose override that replaces `RUNTIME_TARGETS` with different values. After both processes start, register the same endpoint and credential through Runtime settings, run its probe, and register the real catalogs.
+Add `--directory /absolute/installation` for a non-default installation. Native server startup validates the target entries; a startup failure is not a successful apply. Do not edit other installation fields or use a Compose override that replaces `RUNTIME_TARGETS` with different values. After both processes start, register the same endpoint and credential through Runtime settings, run its probe, and register the real catalogs.
 
 If interrupted **before** the prepared message, correct the cause and rerun the same apply command; its idle check prevents replacing processors that acquired work. To undo the target edit, use the selected checkpoint's `runtime_targets` array as the next input and repeat the idle maintenance procedure. When the original manifest omits `runtime_targets`, the rollback input is `[]`, not `null`; that restores the default empty allowlist. This is configuration recovery, not a database restore.
 
 If either prepared processor may already be running, resume without recreating containers or rewriting files. This also restores boot recovery after the checks succeed:
 
 ```sh
-python3 - "$HOME/.local/share/quazonai" <<'PY'
-import sys
-from pathlib import Path
-root = Path(sys.argv[1]).resolve()
-sys.path.insert(0, str(root / 'current/deployment'))
-import manage as m
-with m.locked(root):
-    if (root / 'pending.json').exists():
-        raise ValueError('Use the recorded installation/update recovery instead')
-    config = m.configuration(root)
-    m.resume_existing_services(config, enable_boot=False)
-    m.verify_worker(config)
-    m.verify_console(config)
-    m.run(['systemctl', '--user', 'enable', m.unit(config)])
-    m.configure_app_restarts(config, True)
-PY
+bash "$HOME/.local/share/quazonai/current/deployment/manage.sh" resume-config
 ```
 
 <a id="recovery"></a>
@@ -252,50 +193,8 @@ After restoring the control database, keep API/Worker stopped and end old transa
 The command below uses `<installation>/releases/<restored-version>/bin/server`, selected from the restored `installation.json`, not a binary on PATH or a newer `current` target. The restored manifest's `bundle` must point to that same preserved release. Install a util-linux `uuidgen` that supports `--time-v7`; the command calls it only when creating a new operation record. Select an unused record filename inside an existing mode-0700 owner directory for each distinct restore; retries use the same file. Replace `/absolute/restore-record.json` before running:
 
 ```sh
-python3 - "$HOME/.local/share/quazonai" /absolute/restore-record.json <<'PY'
-import getpass, json, os, subprocess, sys, uuid
-from pathlib import Path
-root, record = (Path(value).resolve() for value in sys.argv[1:])
-config = json.loads((root / 'installation.json').read_text())
-sys.path.insert(0, config['bundle'])
-import manage as m
-os.umask(0o077)
-with m.locked(root):
-    config = m.configuration(root)
-    binary = root / 'releases' / config['version'] / 'bin/server'
-    if not binary.is_file():
-        raise ValueError('Restore the matching release binary first')
-    binding = {'root': str(root), 'version': config['version'], 'revision': config['revision']}
-    if record.exists():
-        saved = json.loads(record.read_text())
-        if any(saved.get(key) != value for key, value in binding.items()):
-            raise ValueError('Recovery record belongs to a different installation or release')
-        recovery_id = saved['recovery_id']
-    else:
-        recovery_id = subprocess.check_output(['uuidgen', '--time-v7'], text=True).strip()
-        if uuid.UUID(recovery_id).version != 7:
-            raise ValueError('uuidgen must produce a UUIDv7')
-        m.save(record, {**binding, 'recovery_id': recovery_id})
-    database_url = getpass.getpass('Restored migration-owner DATABASE_URL (hidden): ')
-    if not database_url:
-        raise ValueError('A migration-owner connection is required')
-    result = subprocess.run(
-        [str(binary), 'recover-access', '--recovery-id', recovery_id],
-        env={**os.environ, 'DATABASE_URL': database_url},
-        capture_output=True, text=True)
-    if result.returncode != 0:
-        m.atomic_text(record.with_suffix('.error.log'), result.stderr)
-        raise RuntimeError('Cutover not confirmed; inspect the private error file and retry this record')
-    receipt = json.loads(result.stdout)
-    if (receipt.get('schema_version') != 1 or receipt.get('recovery_id') != recovery_id
-            or int(receipt['new_epoch']) <= int(receipt['previous_epoch'])):
-        raise ValueError('Unexpected receipt; retain this recovery record for reconciliation')
-    receipt_path = record.with_suffix('.receipt.json')
-    if receipt_path.exists() and json.loads(receipt_path.read_text()) != receipt:
-        raise ValueError('Receipt differs from the saved outcome; do not create a replacement ID')
-    m.save(receipt_path, receipt)
-    print('Access cutover receipt:', receipt_path)
-PY
+bash "$HOME/.local/share/quazonai/current/deployment/manage.sh" recover-access \
+  /absolute/restore-record.json
 ```
 
 The URL is read without echo and passed only in the child environment, not command arguments, saved records or printed output. Keep the recovery record and receipt: verify `schema_version`, the original `recovery_id`, increasing `previous_epoch`/`new_epoch` and decimal-string `revoked_machine_credentials`. A timeout, nonzero exit or missing receipt is an unknown/failed outcome, not completed recovery; replay the same command and record. A separate database restore needs a new record/ID, even if it restores the same backup.

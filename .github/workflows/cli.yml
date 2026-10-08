@@ -78,6 +78,11 @@ jobs:
       - name: Verify Unix installation and update without builds
         if: runner.os != 'Windows'
         run: node --test deploy/install.test.mjs
+      - name: Verify Linux shell deployment recovery boundaries
+        if: runner.os == 'Linux'
+        run: |
+          node --test deploy/docker/manage_shell.test.mjs
+          bash deploy/docker/codex-shell.test.sh
       - name: Verify native Windows installation and update without builds
         if: runner.os == 'Windows'
         shell: pwsh

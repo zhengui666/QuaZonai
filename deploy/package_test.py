@@ -2,7 +2,6 @@
 import io
 import json
 from pathlib import Path
-import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -31,29 +30,30 @@ def checksums(root):
 
 
 class PackageTests(unittest.TestCase):
-    def test_readme_selects_newest_complete_dev_tag_despite_publication_order(self):
+    def test_readme_bootstrap_downloads_fully_before_execution(self):
         command = next(line for line in (package.ROOT / "README.md").read_text(encoding="utf-8").splitlines()
-                       if line.startswith("python3 -c '"))
-        program = shlex.split(command)[2]
-        newest = "v2.0.0-dev.20260928123456.100"
-        def release(tag, *, draft=False, complete=True):
-            return {"tag_name": tag, "draft": draft,
-                    "assets": [{"name": "install.sh"}] if complete else []}
-        candidates = [
-            release("v2.0.0-dev.20260927123456.999"),
-            release("v2.0.0-dev.20260929123456.101", draft=True),
-            release("v2.0.0-dev.20260929123456.102", complete=False),
-            release("v2.0.0-dev.999"), release("v2.0.0"),
-            release(newest), release("v2.0.0-dev.20260928123456.99"),
-        ]
-        for releases in (candidates, list(reversed(candidates))):
-            with patch("urllib.request.urlopen", side_effect=[io.BytesIO(json.dumps(releases).encode()),
-                                                               io.BytesIO(b"installer")]) as download, \
-                    patch("subprocess.run") as install:
-                exec(program, {})
-                self.assertEqual(download.call_args.args[0],
-                                 f"https://github.com/{package.REPOSITORY}/releases/download/{newest}/install.sh")
-                install.assert_called_once_with(["bash"], input=b"installer", check=True)
+                       if line.startswith("sh -c '") and "curl" in line)
+        self.assertNotIn("python", command)
+        self.assertNotIn("| bash", command)
+        self.assertIn('&& bash "$f" "$@"', command)
+        self.assertIn("trap cleanup 0", command)
+        subprocess.run(["sh", "-n", "-c", command], check=True)
+
+    def test_shell_bundle_file_contract(self):
+        files = {name: b"fixture\n" for name in package.DEPLOY_FILES}
+        files["release.json"] = json.dumps(self.manifest).encode()
+        files["README.md"] = VERSION.encode()
+        archive = self.root / "bundle.tar.gz"
+        tar(archive, files)
+        package.check_tar(archive, manifest=self.manifest)
+        for extra in ("manage.py", "codex.py", "unexpected.sh"):
+            tar(archive, {**files, extra: b"unexpected\n"})
+            with self.assertRaisesRegex(ValueError, "exact shell bundle"):
+                package.check_tar(archive, manifest=self.manifest)
+        for missing in package.DEPLOY_FILES:
+            tar(archive, {name: data for name, data in files.items() if name != missing})
+            with self.assertRaisesRegex(ValueError, "exact shell bundle"):
+                package.check_tar(archive, manifest=self.manifest)
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -68,8 +68,8 @@ class PackageTests(unittest.TestCase):
     def payloads(self):
         (self.assets / "release.json").write_text(json.dumps(self.manifest), encoding="utf-8")
         tar(self.assets / "quazonai-deploy.tar.gz", {
+            **{name: b"fixture\n" for name in package.DEPLOY_FILES},
             "release.json": json.dumps(self.manifest).encode(), "README.md": VERSION.encode(),
-            "deploy.sh": b"#!/bin/sh\nexit 0\n",
         })
         for platform in package.CLI_ARCHIVES:
             package.pack_cli(self.binary, platform, self.assets, VERSION, REVISION)
@@ -164,7 +164,8 @@ class PackageTests(unittest.TestCase):
         path = self.assets / "bundle.tar.gz"
         for metadata, guide in (({**self.manifest, "revision": "b" * 40}, VERSION),
                                 (self.manifest, package.MARKER)):
-            tar(path, {"release.json": json.dumps(metadata).encode(), "README.md": guide.encode()})
+            tar(path, {**{name: b"fixture\n" for name in package.DEPLOY_FILES},
+                       "release.json": json.dumps(metadata).encode(), "README.md": guide.encode()})
             with self.subTest(metadata=metadata, guide=guide), self.assertRaises(ValueError):
                 package.check_tar(path, manifest=self.manifest)
 

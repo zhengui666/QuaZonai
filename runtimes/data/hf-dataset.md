@@ -143,13 +143,13 @@ Keep the stable cache inside its owner-managed `--output-parent` writable mount,
 and use a new request handoff even when resuming earlier partial cache bytes:
 
 ```sh
-python3 /path/to/installed-bundle/manage.py source \
+bash /path/to/installed-bundle/manage.sh source \
   --directory /path/to/quazonai-installation --output-parent /data/hf \
   -- download hf-dataset --dataset OWNER/DATASET \
   --include 'data/2026-09-01.parquet' --max-bytes 2147483648 \
   --cache-dir /data/hf/cache --output /data/hf/request-02
 
-python3 /path/to/installed-bundle/manage.py source \
+bash /path/to/installed-bundle/manage.sh source \
   --directory /path/to/quazonai-installation --read-only /data/hf \
   -- verify hf-dataset --selection /data/hf/request-02/selection.json
 ```
@@ -203,7 +203,7 @@ infer historical fees, ticks, precision, instruments or point-in-time status.
 For installed execution, use separate owned output parents and literal inputs:
 
 ```sh
-python3 /path/to/installed-bundle/manage.py source \
+bash /path/to/installed-bundle/manage.sh source \
   --directory /path/to/quazonai-installation \
   --read-only /data/hf --read-only /data/native-inputs \
   --output-parent /data/native-output \
@@ -212,7 +212,7 @@ python3 /path/to/installed-bundle/manage.py source \
   --start-seconds 1788220800 --end-seconds 1788307200 --bar-seconds 60 \
   --output /data/native-output/converted-01
 
-python3 /path/to/installed-bundle/manage.py source \
+bash /path/to/installed-bundle/manage.sh source \
   --directory /path/to/quazonai-installation \
   --read-only /data/native-output --read-only /data/native-inputs \
   --output-parent /data/prepared-output \
