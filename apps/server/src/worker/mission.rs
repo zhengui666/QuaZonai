@@ -47,23 +47,29 @@ pub struct MissionConnection {
 /// Pending RPCs have no artificial elapsed-time budget. A committed stop still
 /// aborts the local wait; a possibly sent request retains its original identity
 /// and unknown outcome for reconciliation, never a second send or refund.
-async fn await_mission_operation<T>(
-    store: &Store,
+fn await_mission_operation<'a, T: 'a>(
+    store: &'a Store,
     run: Id,
-    fence: &WorkerFence,
+    fence: &'a WorkerFence,
     reconciling: bool,
-    operation: impl std::future::Future<Output = Result<T, WorkerFailure>>,
-) -> Result<T, WorkerFailure> {
-    if reconciling {
-        return operation.await;
-    }
-    tokio::pin!(operation);
-    loop {
-        tokio::select! {
-            result = &mut operation => return result,
-            _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                if store.mission_job(run, fence).await?.lease.action == NextRuntimeAction::Cancel {
-                    return Err(WorkerFailure::LostAuthority);
+    operation: impl std::future::Future<Output = Result<T, WorkerFailure>> + 'a,
+) -> impl std::future::Future<Output = Result<T, WorkerFailure>> + 'a {
+    // Allocate before constructing the guard future: otherwise the native
+    // bootstrap is embedded in both the initial and awaiting async states,
+    // multiplying the callers' poll frames even when their futures are boxed.
+    // Ownership, polling and cancellation stay in this task.
+    let mut operation = Box::pin(operation);
+    async move {
+        if reconciling {
+            return operation.await;
+        }
+        loop {
+            tokio::select! {
+                result = &mut operation => return result,
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                    if store.mission_job(run, fence).await?.lease.action == NextRuntimeAction::Cancel {
+                        return Err(WorkerFailure::LostAuthority);
+                    }
                 }
             }
         }
@@ -722,6 +728,31 @@ async fn issue(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mission_bootstrap_guard_does_not_inline_the_native_operation() {
+        // Inspect the actual guarded bootstrap state without constructing it,
+        // opening a database or starting the native process. The outer dispatch
+        // guard alone cannot detect growth inside this nested pipeline.
+        fn inline_size<'a, F: std::future::Future>(
+            _: impl FnOnce(
+                &'a MissionLauncher,
+                &'a Store,
+                Arc<SecretVault>,
+                Id,
+                &'a WorkerFence,
+                Option<watch::Sender<Option<native::ResourceMonitor>>>,
+            ) -> F,
+        ) -> usize {
+            std::mem::size_of::<F>()
+        }
+
+        let bytes = inline_size(MissionLauncher::open_with_monitor);
+        assert!(
+            bytes <= 64 * 1024,
+            "Mission bootstrap guard embeds {bytes} bytes; pin the native operation before constructing the guard future"
+        );
+    }
 
     #[test]
     fn mission_dispatch_does_not_inline_the_nested_pipeline() {

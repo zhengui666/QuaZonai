@@ -756,11 +756,39 @@ async fn constraint_probe(
         // Probe the same CHECK on UPDATE as well as INSERT, without weakening
         // the production table's independent immutable UPDATE prohibition.
         let update = format!("UPDATE qz_evidence_constraint_probe SET {field}=$1");
-        sqlx::query(sqlx::AssertSqlSafe(update))
-            .bind(&value)
-            .execute(&mut *tx)
-            .await
-            .unwrap();
+        // jsonb_populate_record maps a JSON null field to SQL NULL on INSERT.
+        // Match that on UPDATE: binding Value::Null directly stores JSONB null,
+        // which is not an allowed nullable nonempty array.
+        let update_value = (!value.is_null()).then_some(&value);
+        assert_eq!(
+            sqlx::query(sqlx::AssertSqlSafe(update.as_str()))
+                .bind(update_value)
+                .execute(&mut *tx)
+                .await
+                .unwrap()
+                .rows_affected(),
+            1
+        );
+        if value.is_null() {
+            let is_null = format!("SELECT {field} IS NULL FROM qz_evidence_constraint_probe");
+            assert!(
+                sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(is_null))
+                    .fetch_one(&mut *tx)
+                    .await
+                    .unwrap()
+            );
+            // SQL NULL remains permitted, but a JSONB null must still fail the
+            // shape CHECK both before and after removing the collection cap.
+            sqlstate(
+                sqlx::query(sqlx::AssertSqlSafe(update.as_str()))
+                    .bind(&value)
+                    .execute(&mut *tx)
+                    .await
+                    .unwrap_err(),
+                "23514",
+                None,
+            );
+        }
     }
     tx.rollback().await.unwrap();
 }

@@ -857,12 +857,29 @@ mod tests {
         assert_eq!(fs::read(root.path().join("index.json")).unwrap(), expected);
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
 
-        fs::write(root.path().join("index.json"), b"original index").unwrap();
-        assert!(test_outputs(root.path(), 1024).seal().is_err());
+        // Retry publication against the actual immutable index. Rewriting this
+        // 0444 file would fail for non-root users before exercising NOREPLACE.
+        let original = fs::symlink_metadata(root.path().join("index.json")).unwrap();
+        assert!(original.is_file());
+        assert_eq!(original.nlink(), 1);
+        assert_eq!(original.mode() & 0o777, 0o444);
+        let error = test_outputs(root.path(), 1024).seal().unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
         assert_eq!(
             fs::read(root.path().join("index.json")).unwrap(),
-            b"original index"
+            expected
         );
+        let preserved = fs::symlink_metadata(root.path().join("index.json")).unwrap();
+        assert!(preserved.is_file());
+        assert_eq!(
+            (preserved.dev(), preserved.ino()),
+            (original.dev(), original.ino())
+        );
+        assert_eq!(preserved.nlink(), 1);
+        assert_eq!(preserved.mode() & 0o777, 0o444);
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
     }
 

@@ -745,7 +745,21 @@ mod tests {
     fn source_decimal_lexemes_and_native_precision_are_separate() {
         assert!(amount("123456789012345678901234567890.00000000000001", false).is_ok());
         assert!(exact("123456789012345678901234567890.00000000000001").is_err());
-        for value in ["", "00", "01", "1.", ".1", "-1", "+1", "1e2", "1 0", "1\t0"] {
+        for value in [
+            "",
+            "00",
+            "01",
+            "1.",
+            ".1",
+            "-1",
+            "+1",
+            "1e2",
+            "1 0",
+            "1\t0",
+            "NaN",
+            "Infinity",
+            "-Infinity",
+        ] {
             assert!(amount(value, false).is_err(), "{value}");
         }
         assert!(amount(&"1".repeat(101), false).is_ok());
@@ -771,6 +785,57 @@ mod tests {
         assert!(record["historical_available_at"].is_null());
     }
     #[test]
+    fn csv_preserves_valid_fields_beyond_legacy_size_limits() {
+        let s = spec("2025-01-01", "1m");
+        let valid = row(&s, 0);
+        let mut fields: Vec<_> = valid.split(',').map(str::to_owned).collect();
+        for ignored_length in [130, 4097] {
+            // The ignored field is printable source text, not a numeric value.
+            // Neither it nor a valid row has an arbitrary byte-length limit.
+            fields[11] = "0".repeat(ignored_length);
+            if ignored_length == 4097 {
+                fields[7] = format!("1{}.00000000000001", "0".repeat(129));
+            }
+            let csv = fields.join(",");
+            let (bytes, candles, counts) = parse(csv.as_bytes(), &s).unwrap();
+            let record: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(record["quote_volume"], fields[7]);
+            assert_eq!(record["source_ignored"], fields[11]);
+            assert_eq!(candles.len(), 1);
+            assert_eq!(counts["rows"], "1");
+            assert!(record["observed_at"].is_null());
+            assert!(record["historical_available_at"].is_null());
+
+            // Long content still has to obey ASCII/decimal syntax and the
+            // ancillary-volume relationship; size acceptance is no exemption.
+            for suffix in ["\t", "é", "\""] {
+                let malformed = format!("{csv}{suffix}");
+                assert_eq!(
+                    parse(malformed.as_bytes(), &s).err().unwrap().to_string(),
+                    "SOURCE_CSV_BYTES"
+                );
+            }
+            let mut forged = fields.clone();
+            forged[7].push('x');
+            assert_eq!(
+                parse(forged.join(",").as_bytes(), &s)
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                "SOURCE_DECIMAL_LEXEME"
+            );
+            forged = fields.clone();
+            forged[10] = format!("9{}", fields[7]);
+            assert_eq!(
+                parse(forged.join(",").as_bytes(), &s)
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                "SOURCE_CSV_VALUES"
+            );
+        }
+    }
+    #[test]
     fn csv_refuses_field_line_ascii_decimal_and_ancillary_forgery() {
         let s = spec("2025-01-01", "1m");
         let valid = row(&s, 0);
@@ -789,7 +854,6 @@ mod tests {
                 1,
             ),
             valid.replacen(",1,0.01", ",01,0.01", 1),
-            format!("{valid}{}", "0".repeat(129)),
             format!("{valid}\t"),
             format!("{valid}é"),
         ];
