@@ -540,12 +540,91 @@ fn projected_native_metrics_preserve_every_fold_and_feed_the_existing_threshold_
     assert!(policy(selection.clone(), &[requirement.clone(), unknown.clone()]).is_err());
     unknown.required = false;
     policy(selection, &[requirement.clone(), unknown]).unwrap();
-    let mut oversized = request.split_policy.clone();
-    oversized.kind = contracts::research::SplitKind::CpcvFixedHorizon;
-    oversized.step_size = None;
-    oversized.group_count = Some(16);
-    oversized.test_group_count = Some(8);
-    assert!(domain::execution::validation::policy_parameters(&oversized, 2).is_err());
+    use domain::execution::validation::{policy_parameters, validation_folds};
+    let mut combinatorial = request.split_policy.clone();
+    combinatorial.kind = SplitKind::CpcvFixedHorizon;
+    combinatorial.step_size = None;
+    combinatorial.group_count = Some(16);
+    combinatorial.test_group_count = Some(8);
+    // The original 16-choose-8 policy exceeds the removed 256-fold cap, but
+    // every one of its 12,870 folds has a representable u16 ordinal.
+    let frozen_policy = serde_json::to_value(&combinatorial).unwrap();
+    policy_parameters(&combinatorial, 2).unwrap();
+    let folds = validation_folds(&combinatorial, 160).unwrap();
+    assert_eq!(folds.len(), 12_870);
+    let mut actual_combinations = std::collections::BTreeSet::new();
+    for (index, fold) in folds.iter().enumerate() {
+        assert!(u16::try_from(index).is_ok());
+        assert_eq!(fold.test.len(), 80);
+        let groups: Vec<_> = fold
+            .test
+            .chunks_exact(10)
+            .map(|block| block[0] / 10)
+            .collect();
+        assert_eq!(groups.len(), 8);
+        assert!(actual_combinations.insert(groups.clone()));
+        let expected_test: Vec<_> = groups
+            .iter()
+            .flat_map(|&group| group * 10..(group + 1) * 10)
+            .collect();
+        assert_eq!(fold.test, expected_test);
+        // Independent row-by-row reference keeps the original two-row purge
+        // on each edge and the one-row trailing embargo for every test block.
+        let expected_train: Vec<_> = (0..160)
+            .filter(|&row| {
+                groups
+                    .iter()
+                    .all(|&group| row + 2 < group * 10 || row >= (group + 1) * 10 + 3)
+            })
+            .collect();
+        assert_eq!(fold.train, expected_train);
+        assert!(fold.train.len() >= combinatorial.train_size.get() as usize);
+        assert!(
+            fold.train
+                .iter()
+                .all(|row| fold.test.binary_search(row).is_err())
+        );
+    }
+    // Enumerate all eight-bit subsets independently of the native recurrence:
+    // no missing, duplicate, truncated or substituted combinations may pass.
+    let expected_combinations: std::collections::BTreeSet<Vec<usize>> = (0_u16..=u16::MAX)
+        .filter(|mask| mask.count_ones() == 8)
+        .map(|mask| (0..16).filter(|group| mask & (1 << group) != 0).collect())
+        .collect();
+    assert_eq!(actual_combinations, expected_combinations);
+    assert_eq!(serde_json::to_value(&combinatorial).unwrap(), frozen_policy);
+    // Parameter admission cannot certify enough observed samples for every fold.
+    assert!(validation_folds(&combinatorial, 16).is_err());
+    assert!(policy_parameters(&combinatorial, 0).is_err());
+    assert!(policy_parameters(&combinatorial, 3).is_err());
+    for (field, value) in [
+        ("interval_validation_required", serde_json::json!(false)),
+        ("label_horizon_observations", serde_json::Value::Null),
+        ("label_horizon_observations", serde_json::json!(count(0))),
+        ("label_horizon_observations", serde_json::json!(count(1))),
+        ("purge_observations", serde_json::json!(count(1))),
+        ("train_size", serde_json::json!(count(2))),
+        ("test_size", serde_json::json!(count(0))),
+        ("step_size", serde_json::json!(count(1))),
+        ("group_count", serde_json::Value::Null),
+        ("group_count", serde_json::json!(1)),
+        ("test_group_count", serde_json::Value::Null),
+        ("test_group_count", serde_json::json!(0)),
+        ("test_group_count", serde_json::json!(16)),
+        ("test_group_count", serde_json::json!(17)),
+    ] {
+        let mut changed = frozen_policy.clone();
+        changed[field] = value;
+        let changed = serde_json::from_value(changed).unwrap();
+        assert!(policy_parameters(&changed, 2).is_err(), "{field}");
+    }
+    // The real output representation boundary is retained before allocation;
+    // it is not an anti-overfitting budget or permission to omit folds.
+    let mut unrepresentable = combinatorial;
+    unrepresentable.group_count = Some(34);
+    unrepresentable.test_group_count = Some(17);
+    assert!(policy_parameters(&unrepresentable, 2).is_err());
+    assert!(validation_folds(&unrepresentable, 340).is_err());
     // Only a numeric threshold check. Fixture provenance still forbids qualification.
     let gate = evaluate_metrics(
         evaluation,
@@ -555,6 +634,17 @@ fn projected_native_metrics_preserve_every_fold_and_feed_the_existing_threshold_
     )
     .unwrap();
     assert_eq!(gate.decision, Decision::Pass);
+    assert_eq!(gate.evidence_status, EvidenceStatus::Valid);
+    let mut above_threshold = metrics.clone();
+    above_threshold[1].value = Some("2".parse().unwrap());
+    let gate = evaluate_metrics(
+        evaluation,
+        std::slice::from_ref(&requirement),
+        &above_threshold,
+        &capabilities,
+    )
+    .unwrap();
+    assert_eq!(gate.decision, Decision::Reject);
     assert_eq!(gate.evidence_status, EvidenceStatus::Valid);
     let mut wrong_unit = metrics.clone();
     wrong_unit[1].unit = "UNITLESS_SCORE".into();

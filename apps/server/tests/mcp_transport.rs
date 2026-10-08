@@ -5,7 +5,7 @@ mod mcp_contract;
 use axum::{
     body::Body,
     extract::State,
-    http::{header, Request, Response, StatusCode},
+    http::{header, Method, Request, Response, StatusCode},
     Router,
 };
 use chrono::{Duration as ChronoDuration, Utc};
@@ -15,13 +15,10 @@ use rmcp::{model::CallToolRequestParams, service::RunningService, RoleClient, Se
 use serde_json::{json, Value};
 use server::mcp::{Failure, MissionBinding, MissionMcp};
 use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
 struct Responses {
     identity: Value,
@@ -33,12 +30,26 @@ struct Responses {
     padding_bytes: usize,
     redirect: bool,
     hits: usize,
+    requests: Vec<(Method, String)>,
     raw: Option<(StatusCode, &'static str, String)>,
 }
 struct TestState {
     credential: String,
     responses: Mutex<Responses>,
-    delay_ms: AtomicU64,
+    identity_gate: Mutex<Option<Arc<IdentityGate>>>,
+}
+// Explicit test-side admission observation, not a product concurrency quota.
+struct IdentityGate {
+    entered: Semaphore,
+    release: Semaphore,
+}
+impl IdentityGate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entered: Semaphore::new(0),
+            release: Semaphore::new(0),
+        })
+    }
 }
 struct Api {
     origin: String,
@@ -52,12 +63,23 @@ impl Drop for Api {
     }
 }
 async fn reply(State(state): State<Arc<TestState>>, request: Request<Body>) -> Response<Body> {
-    let delay = state.delay_ms.load(Ordering::SeqCst);
-    if delay != 0 {
-        tokio::time::sleep(Duration::from_millis(delay)).await;
+    {
+        let mut values = state.responses.lock().unwrap();
+        values.hits += 1;
+        values
+            .requests
+            .push((request.method().clone(), request.uri().path().to_owned()));
     }
-    let mut values = state.responses.lock().unwrap();
-    values.hits += 1;
+    let gate = if request.uri().path() == "/api/v2/auth/machine" {
+        state.identity_gate.lock().unwrap().clone()
+    } else {
+        None
+    };
+    if let Some(gate) = gate {
+        gate.entered.add_permits(1);
+        gate.release.acquire().await.unwrap().forget();
+    }
+    let values = state.responses.lock().unwrap();
     assert_eq!(request.method(), "GET");
     assert_eq!(
         request.headers()[header::AUTHORIZATION],
@@ -124,7 +146,7 @@ async fn api() -> Api {
         serde_json::from_str(include_str!("../../../tests/contracts/research-brief.json")).unwrap();
     let state = Arc::new(TestState {
         credential: format_machine_token(Id::new(), &random_capability()).unwrap(),
-        delay_ms: AtomicU64::new(0),
+        identity_gate: Mutex::new(None),
         responses: Mutex::new(Responses {
             cycle: json!({"schema_version":1,"id":binding.cycle_id,"project_id":binding.project_id,
                 "brief_id":binding.brief_id,"ordinal":1,"revision":"1","trigger":"OPERATOR",
@@ -149,6 +171,7 @@ async fn api() -> Api {
             padding_bytes: 0,
             redirect: false,
             hits: 0,
+            requests: Vec::new(),
             raw: None,
         }),
     });
@@ -181,8 +204,17 @@ async fn connected(
     RunningService<RoleClient, ()>,
     JoinHandle<Result<(), Failure>>,
 ) {
+    connected_with_capacity(api, 64 * 1024).await
+}
+async fn connected_with_capacity(
+    api: &Api,
+    capacity: usize,
+) -> (
+    RunningService<RoleClient, ()>,
+    JoinHandle<Result<(), Failure>>,
+) {
     let mcp = bridge(api).await.unwrap();
-    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let (server_io, client_io) = tokio::io::duplex(capacity);
     let (read, write) = tokio::io::split(server_io);
     let task = tokio::spawn(mcp.serve_io(read, write));
     (().serve(client_io).await.unwrap(), task)
@@ -325,21 +357,62 @@ async fn redirects_and_invalid_chunked_json_never_become_tool_data() {
 }
 
 #[tokio::test]
-async fn native_concurrent_requests_are_bounded_without_a_waiting_queue() {
-    let api = api().await;
-    let (client, task) = connected(&api).await;
-    api.state.delay_ms.store(150, Ordering::SeqCst);
-    let results = futures_util::future::join_all((0..5).map(|_| run(&client))).await;
-    assert_eq!(results.iter().filter(|r| r["isError"] != true).count(), 4);
-    assert_eq!(
-        results
-            .iter()
-            .filter(|r| body(r)["code"] == "MCP_CONCURRENCY_LIMIT")
-            .count(),
-        1
-    );
-    client.cancel().await.unwrap();
-    assert!(task.await.unwrap().is_ok());
+async fn native_concurrent_requests_preserve_complete_results_under_transport_backpressure() {
+    // Both are real finite native pipe buffers. Neither is a tool admission quota.
+    for capacity in [64, 64 * 1024] {
+        let api = api().await;
+        let (client, task) = connected_with_capacity(&api, capacity).await;
+        let original = api.state.responses.lock().unwrap().run.clone();
+        const REQUESTS: u32 = 32;
+        for _ in 0..3 {
+            let gate = IdentityGate::new();
+            *api.state.identity_gate.lock().unwrap() = Some(gate.clone());
+            let before = api.state.responses.lock().unwrap().hits;
+            let calls = futures_util::future::join_all((0..REQUESTS).map(|_| run(&client)));
+            let release = async {
+                // A restored four-call cap or serialized admission cannot reach
+                // this barrier: every call must be pending in real HTTP first.
+                gate.entered.acquire_many(REQUESTS).await.unwrap().forget();
+                assert_eq!(
+                    api.state.responses.lock().unwrap().hits,
+                    before + REQUESTS as usize
+                );
+                for arguments in [
+                    json!({"unknown":true}),
+                    json!({"run_id":api.binding.run_id}),
+                ] {
+                    let result = client.call_tool(request("run.get", arguments)).await;
+                    assert!(
+                        result.is_err()
+                            || serde_json::to_value(result.unwrap()).unwrap()["isError"] == true
+                    );
+                }
+                // Invalid arguments must not create HTTP work even under load.
+                assert_eq!(
+                    api.state.responses.lock().unwrap().hits,
+                    before + REQUESTS as usize
+                );
+                *api.state.identity_gate.lock().unwrap() = None;
+                gate.release.add_permits(REQUESTS as usize);
+            };
+            let (results, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::join!(calls, release)
+            })
+            .await
+            .expect("all native requests must reach and leave the HTTP barrier");
+            assert_eq!(results.len(), REQUESTS as usize);
+            for result in results {
+                assert_ne!(result["isError"], true, "{result}");
+                assert_eq!(body(&result), original);
+            }
+            assert_eq!(
+                api.state.responses.lock().unwrap().hits,
+                before + 2 * REQUESTS as usize
+            );
+        }
+        client.cancel().await.unwrap();
+        assert!(task.await.unwrap().is_ok());
+    }
 }
 
 #[tokio::test]

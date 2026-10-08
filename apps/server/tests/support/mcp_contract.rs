@@ -76,15 +76,46 @@ async fn runtime_attempt_takeover_or_expiry_revokes_the_next_native_tool_call() 
 #[tokio::test]
 async fn mission_deadline_ends_native_transport_without_remote_cancellation() {
     let api = api().await;
-    api.state.responses.lock().unwrap().run["deadline_at"] =
-        json!(Utc::now() + ChronoDuration::seconds(10));
+    let deadline = Utc::now() + ChronoDuration::seconds(10);
+    api.state.responses.lock().unwrap().run["deadline_at"] = json!(deadline);
+    let original = api.state.responses.lock().unwrap().run.clone();
     let (client, task) = connected(&api).await;
-    let result = tokio::time::timeout(Duration::from_secs(15), task)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(matches!(result, Err(Failure::Deadline)));
-    let _ = client.cancel().await;
-    // Only startup's identity and Run reads; no cancellation or polling request.
-    assert_eq!(api.state.responses.lock().unwrap().hits, 2);
+    let requests = tokio::time::timeout(Duration::from_secs(15), async {
+        let result = task.await.unwrap();
+        assert!(matches!(result, Err(Failure::Deadline)));
+        assert!(
+            Utc::now() >= deadline,
+            "transport must not expire before server authority"
+        );
+        assert!(
+            client
+                .call_tool(request("run.get", json!({})))
+                .await
+                .is_err()
+        );
+        let requests = api.state.responses.lock().unwrap().requests.clone();
+        let _ = client.cancel().await;
+        requests
+    })
+    .await
+    .unwrap();
+    let values = api.state.responses.lock().unwrap();
+    assert_eq!(values.requests, requests);
+    assert_eq!(values.run, original);
+    // Startup and renewal only read the original identity and bound Run. The
+    // renewal cadence is not a fixed request budget; an expiry may interrupt
+    // the last read pair. No cancellation or other mutation may be sent.
+    assert!(
+        requests.len() > 2,
+        "the live lease must have been rechecked"
+    );
+    for (index, (method, path)) in requests.iter().enumerate() {
+        assert_eq!(method, &Method::GET);
+        let expected = if index % 2 == 0 {
+            "/api/v2/auth/machine".to_owned()
+        } else {
+            format!("/api/v2/runs/{}", api.binding.run_id)
+        };
+        assert_eq!(path, &expected);
+    }
 }

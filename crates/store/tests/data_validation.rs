@@ -376,20 +376,85 @@ async fn receipt_failure_rolls_back_all_native_admission_and_only_unreferenced_p
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn three_concurrent_administrative_validations_cannot_exceed_two_native_slots(pool: PgPool) {
+async fn concurrent_administrative_validations_preserve_all_admissions_without_a_fixed_slot_cap(
+    pool: PgPool,
+) {
     let f = setup(&pool).await;
     let (a, b, c) = tokio::join!(
         start(&f, "slot-a", &f.request),
         start(&f, "slot-b", &f.request),
         start(&f, "slot-c", &f.request)
     );
-    let results = [a, b, c];
-    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 2);
+    let results = [
+        ("slot-a", a.unwrap()),
+        ("slot-b", b.unwrap()),
+        ("slot-c", c.unwrap()),
+    ];
+    for (index, (key, result)) in results.iter().enumerate() {
+        assert!(!result.replayed);
+        assert_eq!(result.resource.state, RunState::Queued);
+        assert_eq!(result.resource.kind, RunKind::DataValidate);
+        assert!(result.resource.cycle_id.is_none());
+        assert!(
+            results[..index]
+                .iter()
+                .all(|(_, prior)| prior.resource.id != result.resource.id)
+        );
+        let normalized: serde_json::Value =
+            sqlx::query_scalar("SELECT normalized_request FROM app.run_admissions WHERE run_id=$1")
+                .bind(result.resource.id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            normalized,
+            serde_json::json!({
+                "schema_version": 1,
+                "project_id": f.request.project_id,
+                "input_set_id": f.request.input_set_id,
+                "runtime_id": f.request.runtime_id,
+                "runtime_revision": f.request.expected_runtime_revision,
+                "kind": "DATA_VALIDATE",
+                "limits": f.request.limits,
+                "max_parallel_runs": null,
+            })
+        );
+        let replay = start(&f, key, &f.request).await.unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.resource, result.resource);
+    }
+    assert_eq!(counts(&pool).await, (3, 3, 3, 3, 3));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn three_concurrent_administrative_validations_cannot_exceed_two_native_slots(pool: PgPool) {
+    let f = setup(&pool).await;
+    // The same transactional admission helper still enforces an explicit choice.
+    // This is an application admission cap, not the Runtime's execution capacity.
+    let submission = store::lifecycle::StandaloneRunSubmission {
+        project_id: f.request.project_id,
+        input_set_id: f.request.input_set_id,
+        runtime_id: f.request.runtime_id,
+        runtime_revision: f.request.expected_runtime_revision,
+        kind: RunKind::DataValidate,
+        limits: f.request.limits.clone(),
+        max_parallel_runs: Some(2),
+    };
+    let (a, b, c) = tokio::join!(
+        f.data.store.enqueue_standalone_run("finite-a", &submission),
+        f.data.store.enqueue_standalone_run("finite-b", &submission),
+        f.data.store.enqueue_standalone_run("finite-c", &submission)
+    );
+    let results = [("finite-a", a), ("finite-b", b), ("finite-c", c)];
+    assert_eq!(
+        results.iter().filter(|(_, result)| result.is_ok()).count(),
+        2
+    );
     assert_eq!(
         results
             .iter()
-            .filter(|r| matches!(
-                r,
+            .filter(|(_, result)| matches!(
+                result,
                 Err(StoreError::Domain(domain::DomainError::BudgetExhausted(
                     "standalone_parallel_runs"
                 )))
@@ -397,5 +462,29 @@ async fn three_concurrent_administrative_validations_cannot_exceed_two_native_sl
             .count(),
         1
     );
-    assert_eq!(counts(&pool).await, (2, 2, 2, 2, 2));
+    for (key, result) in &results {
+        if let Ok(result) = result {
+            let replay = f
+                .data
+                .store
+                .enqueue_standalone_run(key, &submission)
+                .await
+                .unwrap();
+            assert!(replay.replayed);
+            assert_eq!(replay.resource, result.resource);
+            let mut changed = submission.clone();
+            changed.max_parallel_runs = None;
+            assert!(matches!(
+                f.data.store.enqueue_standalone_run(key, &changed).await,
+                Err(StoreError::IdempotencyConflict)
+            ));
+        }
+    }
+    let admissions: i64 = sqlx::query_scalar("SELECT count(*) FROM app.run_admissions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(admissions, 2);
+    // Direct trusted admission has no public DATA_VALIDATE receipt or parameters.
+    assert_eq!(counts(&pool).await, (2, 0, 2, 0, 0));
 }
