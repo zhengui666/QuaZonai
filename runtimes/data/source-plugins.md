@@ -308,10 +308,11 @@ catalog mount, and use paths that exist verbatim on that Runtime's host.
 ## Failure and evidence boundaries
 
 Native conversion and preparation require a new output directory. They use a fixed argv list,
-closed stdin, no shell, and a one-hour process bound. Missing/invalid publication,
+closed stdin and no shell. There is no default cumulative process timeout. Missing/invalid publication,
 changed inputs, unexpected admission flags, incomplete artifacts or nonzero exit
-are failures. Report, declaration, selection and final metadata reads are bounded
-to 1 MiB; detached evidence reads are bounded to 128 MiB. Preparation rechecks the
+are failures. Reports, declarations, selections, final metadata and detached
+evidence are read completely without application-imposed byte or count caps.
+Preparation rechecks the
 exact declaration, selection and source publication bytes around native execution.
 Exit zero alone is insufficient: the final `catalog-metadata.json` and native
 catalog must exist, and a partial metadata file does not count. Failed outputs and raw evidence

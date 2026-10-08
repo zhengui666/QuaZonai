@@ -87,7 +87,7 @@ fn output_cannot_change_account_purpose_or_original_request() {
                     .initialization
                     .first_ordinal = 0
             }
-            _ => altered.consumed_fuel = contracts::DbCounter::ZERO,
+            _ => altered.consumed_fuel = Some(contracts::DbCounter::ZERO),
         }
         assert!(strategy::result(&original.request, &altered).is_err());
     }
@@ -97,4 +97,15 @@ fn output_cannot_change_account_purpose_or_original_request() {
     let mut mixed = original.request.clone();
     mixed.purpose = StrategyPortfolioPurposeV1::HistoricalReplay {};
     assert!(strategy::result(&mixed, &original).is_err());
+}
+
+#[test]
+fn current_strategy_unmetered_output_cannot_disguise_explicit_fuel_exhaustion() {
+    let mut report = fixture::current_report();
+    report.consumed_fuel = None;
+    assert!(strategy::result(&report.request, &report).is_err());
+    report.request.total_fuel = None;
+    strategy::result(&report.request, &report).unwrap();
+    report.consumed_fuel = Some(contracts::DbCounter::new(1).unwrap());
+    assert!(strategy::result(&report.request, &report).is_err());
 }

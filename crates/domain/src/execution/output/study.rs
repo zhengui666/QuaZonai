@@ -1,10 +1,10 @@
 //! Original rolling inputs and generated targets; never a qualification decision.
 use super::{bad, simulation};
 use crate::DomainError;
-use contracts::{science::*, DbCounter};
+use contracts::{DbCounter, science::*};
 
 pub fn shape(value: &NativePortfolioStudyResultV1) -> Result<(), DomainError> {
-    if !(1..=256).contains(&value.frames.len()) || value.consumed_fuel == DbCounter::ZERO {
+    if value.frames.len() < 1 || value.consumed_fuel == Some(DbCounter::ZERO) {
         return Err(bad("study.frames"));
     }
     for (index, frame) in value.frames.iter().enumerate() {
@@ -36,18 +36,16 @@ pub fn binding(
     let maximum_fuel = request
         .members
         .iter()
-        .map(|m| m.parameters.total_fuel.get() / cutoffs.len() as u64)
-        .sum::<u64>()
-        * cutoffs.len() as u64;
+        .map(|m| m.parameters.total_fuel.map(|fuel| u128::from(fuel.get())))
+        .sum::<Option<u128>>();
     if value.frames.len() > cutoffs.len()
-        || value.consumed_fuel.get() > maximum_fuel
+        || !crate::execution::fuel_within_budget(value.consumed_fuel, maximum_fuel)
         || value.simulation.is_some() && value.frames.len() != cutoffs.len()
     {
         return Err(bad("study.execution_count"));
     }
     let mandate = &request.mandate;
     let ttl = u64::from(mandate.rebalance_schedule.target_ttl_seconds) * 1_000_000_000;
-    let mut return_values = 0_usize;
     for (index, frame) in value.frames.iter().enumerate() {
         let input = &frame.input;
         let forecasts = &input.forecasts;
@@ -75,11 +73,7 @@ pub fn binding(
         for (asset, actual) in expected.iter_mut().zip(&input.assets) {
             asset.current_weight = actual.current_weight.clone();
         }
-        return_values = return_values
-            .checked_add(input.return_history.end_ns.len() * input.assets.len())
-            .ok_or_else(|| bad("study.input_limit"))?;
         if frame.cutoff_ns != cutoff
-            || return_values > contracts::portfolio::MAX_RETURN_VALUES
             || input.objective != mandate.objective
             || input.risk != mandate.risk_measure
             || input.base_currency != mandate.base_currency

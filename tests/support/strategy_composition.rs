@@ -182,14 +182,14 @@ pub fn current_report() -> NativeStrategyCompositionResultV1 {
                 policy,
                 feature_artifact_ids: vec![old, new],
             }],
-            total_fuel: count(100_000),
+            total_fuel: Some(count(100_000)),
         },
         native_versions: BTreeMap::from([
             ("nautilus-backtest".into(), "0.63.0".into()),
             ("wasmi".into(), "2.0.0".into()),
             ("strategy-composition".into(), "1".into()),
         ]),
-        consumed_fuel: count(1000),
+        consumed_fuel: Some(count(1000)),
         outcome: StrategyCompositionOutcomeV1::CurrentDecision {
             account_start: Box::new(account),
             target: NativeTargetPointV1 {

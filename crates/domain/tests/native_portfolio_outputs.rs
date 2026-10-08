@@ -227,7 +227,7 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
                 slippage_references: Vec::new(),
                 input: request.clone(),
                 allocation: allocation.clone(),
-                consumed_fuel: DbCounter::new(1).unwrap(),
+                consumed_fuel: Some(DbCounter::new(1).unwrap()),
             },
         )
     };
@@ -495,7 +495,7 @@ fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_a
             sealed_revision_id: Id::new(),
         },
         label_horizon_observations: 1,
-        total_fuel: count(100_000),
+        total_fuel: Some(count(100_000)),
         target_ttl_ns: count(200),
         decision_output: ExperimentDecisionOutputV1::TargetWeight,
         settings: template.settings.clone(),
@@ -586,7 +586,7 @@ fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_a
         request: request.clone(),
         feature_artifact_ids: feature_artifact_ids.clone(),
         instrument_id: request.instrument_id.clone(),
-        consumed_fuel: count(1),
+        consumed_fuel: Some(count(1)),
         source_row_count: count(10),
         feature_count: 1,
         folds,
@@ -668,4 +668,48 @@ fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_a
             "reassociated request dimension {dimension}"
         );
     }
+}
+
+#[test]
+fn complete_native_snapshot_collection_crosses_the_old_million_point_gate() {
+    let (parameters, mut result) = simulation();
+    let first = result.canonical_result["portfolio_snapshots"][0].clone();
+    let start = result.canonical_result["run"]["backtest_start_ns"]
+        .as_str().unwrap().parse::<u64>().unwrap();
+    let snapshots: Vec<_> = (0..1_000_003)
+        .map(|index| {
+            let mut snapshot = first.clone();
+            snapshot["ts_event"] = json!((start + index).to_string());
+            snapshot
+        })
+        .collect();
+    result.canonical_result["portfolio_snapshots"] = snapshots.into();
+    assert!(accepts(&parameters, "qz.native_simulation", &result));
+    result.canonical_result["portfolio_snapshots"][1_000_002]["account_id"] = json!("FOREIGN");
+    assert!(!accepts(&parameters, "qz.native_simulation", &result));
+}
+
+#[test]
+fn full_native_statistic_and_summary_collections_keep_binding_and_duplicate_checks() {
+    let (parameters, mut result) = simulation();
+    result.statistics = (0..4097)
+        .map(|index| NativeStatisticV1 {
+            group: NativeStatisticGroup::General,
+            native_key: format!("native-statistic-{index}"),
+            currency: None,
+            value: Some(1.0),
+            reason_code: None,
+        })
+        .collect();
+    for index in 0..8190 {
+        result.summary.insert(format!("native-summary-{index}"), "recorded".into());
+    }
+    result.canonical_result["summary"] = serde_json::to_value(&result.summary).unwrap();
+    assert_eq!(result.summary.len(), 8193);
+    assert!(accepts(&parameters, "qz.native_simulation", &result));
+    result.statistics.push(result.statistics[0].clone());
+    assert!(!accepts(&parameters, "qz.native_simulation", &result));
+    result.statistics.pop();
+    result.canonical_result["summary"]["native-summary-0"] = json!("foreign");
+    assert!(!accepts(&parameters, "qz.native_simulation", &result));
 }

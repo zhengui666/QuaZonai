@@ -51,19 +51,16 @@ where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
 {
-    let rows=sqlx::query("SELECT m.*,c.project_id,h.release_id,h.environment AS forward_environment,h.claimed_at AS forward_claimed_at,h.external_claim_id AS forward_claim_id,a.byte_count,EXISTS(SELECT 1 FROM app.command_receipts receipt WHERE receipt.operation='FORWARD_SUBMIT' AND receipt.idempotency_key=m.external_message_id AND receipt.resource_id=m.id AND receipt.principal_scope='DOWNSTREAM:'||m.downstream_id::text AND receipt.normalized_nonsecret_request->>'schema_version'='1' AND receipt.normalized_nonsecret_request->>'project_id'=c.project_id::text AND receipt.normalized_nonsecret_request->>'handoff_id'=h.id::text AND receipt.normalized_nonsecret_request->>'report_artifact_id'=a.id::text AND receipt.response_nonsecret_body->>'schema_version'='1' AND receipt.response_nonsecret_body->'resource'->>'id'=m.id::text) AS native FROM app.forward_messages m JOIN app.handoff_offers h ON h.id=m.handoff_id JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id JOIN app.artifacts a ON a.id=m.report_artifact_id WHERE h.id=$1 AND m.stream_id=$2 ORDER BY m.sequence,m.message_revision LIMIT 10001")
+    let rows=sqlx::query("SELECT m.*,c.project_id,h.release_id,h.environment AS forward_environment,h.claimed_at AS forward_claimed_at,h.external_claim_id AS forward_claim_id,a.byte_count,EXISTS(SELECT 1 FROM app.command_receipts receipt WHERE receipt.operation='FORWARD_SUBMIT' AND receipt.idempotency_key=m.external_message_id AND receipt.resource_id=m.id AND receipt.principal_scope='DOWNSTREAM:'||m.downstream_id::text AND receipt.normalized_nonsecret_request->>'schema_version'='1' AND receipt.normalized_nonsecret_request->>'project_id'=c.project_id::text AND receipt.normalized_nonsecret_request->>'handoff_id'=h.id::text AND receipt.normalized_nonsecret_request->>'report_artifact_id'=a.id::text AND receipt.response_nonsecret_body->>'schema_version'='1' AND receipt.response_nonsecret_body->'resource'->>'id'=m.id::text) AS native FROM app.forward_messages m JOIN app.handoff_offers h ON h.id=m.handoff_id JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id JOIN app.artifacts a ON a.id=m.report_artifact_id WHERE h.id=$1 AND m.stream_id=$2 ORDER BY m.sequence,m.message_revision")
         .bind(handoff.as_uuid()).bind(stream).fetch_all(&mut **tx).await?;
     let mut total = 0u64;
     for row in &rows {
         let size = u64::try_from(row.try_get::<i64, _>("byte_count")?)
             .map_err(|_| StoreError::Integrity)?;
-        if size == 0 || size > 2 * 1024 * 1024 || !row.try_get::<bool, _>("native")? {
+        if size == 0 || !row.try_get::<bool, _>("native")? {
             return Err(StoreError::Invalid("forward_source_provenance"));
         }
         total = total.checked_add(size).ok_or(StoreError::Integrity)?;
-    }
-    if rows.len() > 10000 || total > 64 * 1024 * 1024 {
-        return Err(domain::DomainError::CapabilityUnavailable("forward_window_limit").into());
     }
     let mut sources = Vec::new();
     let mut points = 0usize;
@@ -92,9 +89,6 @@ where
         points = points
             .checked_add(report.content.returns.len())
             .ok_or(StoreError::Integrity)?;
-        if points > 1000000 {
-            return Err(domain::DomainError::CapabilityUnavailable("forward_window_limit").into());
-        }
         sources.push(domain::forward::ForwardWindowSource { message, report });
     }
     let window = domain::forward::window(handoff, stream, &sources)?.view;

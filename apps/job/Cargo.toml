@@ -12,7 +12,7 @@ publish = false
 # Optional official node observer and controlled Sandbox Paper host.
 native-node-observer = ["dep:nautilus-live", "dep:tokio", "tokio/time"]
 native-sandbox-test = ["native-node-observer", "dep:nautilus-sandbox"]
-native-paper = ["native-node-observer", "dep:nautilus-sandbox", "dep:nautilus-binance", "dep:axum", "dep:reqwest", "tokio/net", "tokio/sync", "tokio/signal"]
+native-paper = ["native-node-observer", "dep:integrations", "dep:nautilus-sandbox", "dep:nautilus-binance", "dep:axum", "dep:reqwest", "tokio/net", "tokio/sync", "tokio/signal"]
 native-paper-test = ["native-paper"]
 # Operator data preparation only; default scientific job images remain offline.
 polymarket-history = ["dep:tokio", "dep:parquet", "dep:sha2", "dep:nautilus-data", "dep:alloy-core", "dep:url"]
@@ -75,6 +75,7 @@ nautilus-trading = { version = "=0.63.0", default-features = false }
 anyhow = "=1.0.104"
 clap = { version = "=4.5.46", features = ["derive"] }
 contracts = { path = "../../crates/contracts" }
+integrations = { path = "../../crates/integrations", optional = true }
 domain = { path = "../../crates/domain" }
 bigdecimal = "=0.4.8"
 iso_currency = "=0.7.0"
@@ -107,3 +108,7 @@ required-features = ["native-sandbox-test"]
 [[test]]
 name = "native_paper_target"
 required-features = ["native-paper-test"]
+
+[[test]]
+name = "native_capital_exit"
+required-features = ["native-sandbox-test"]

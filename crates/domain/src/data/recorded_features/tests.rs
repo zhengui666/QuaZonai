@@ -163,10 +163,10 @@ fn rejects_unbounded_descriptors_unobserved_clocks_and_unsafe_part_keys() {
     assert!(check(&descriptor).is_err());
     descriptor.fragments[1].part_key = "features-0002".into();
     descriptor.fragments[0].observations = n(100_000);
-    assert!(check(&descriptor).is_err());
+    assert!(check(&descriptor).is_ok());
     descriptor.fragments.pop();
-    descriptor.fragments[0].byte_count = n(MAX_UPLOAD_BYTES as u64 + 1);
-    assert!(check(&descriptor).is_err());
+    descriptor.fragments[0].byte_count = n(2 * 1024 * 1024 + 1);
+    assert!(check(&descriptor).is_ok());
     for key in [
         "",
         "../x",

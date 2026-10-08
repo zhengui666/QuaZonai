@@ -50,15 +50,15 @@ fn every_positive_budget_rejects_zero_and_only_optional_execution_caps_accept_ab
             "max_parallel_runs",
             json!(0),
             json!(1),
-            json!(u16::MAX),
-            json!(u32::from(u16::MAX) + 1),
+            json!(u32::MAX),
+            json!(u64::from(u32::MAX) + 1),
         ),
         (
             "max_turns_per_mission",
             json!(0),
             json!(1),
-            json!(u16::MAX),
-            json!(u32::from(u16::MAX) + 1),
+            json!(u32::MAX),
+            json!(u64::from(u32::MAX) + 1),
         ),
         (
             "max_wall_seconds",
@@ -78,8 +78,8 @@ fn every_positive_budget_rejects_zero_and_only_optional_execution_caps_accept_ab
             "max_cycles_per_day",
             json!(0),
             json!(1),
-            json!(u16::MAX),
-            json!(u32::from(u16::MAX) + 1),
+            json!(u32::MAX),
+            json!(u64::from(u32::MAX) + 1),
         ),
         (
             "max_cpu_seconds",
@@ -117,7 +117,8 @@ fn every_positive_budget_rejects_zero_and_only_optional_execution_caps_accept_ab
             .remove(field);
         if matches!(
             field,
-            "max_wall_seconds" | "max_cpu_seconds" | "max_output_bytes"
+            "max_parallel_runs" | "max_wall_seconds" | "max_cpu_seconds" | "max_output_bytes"
+                | "max_turns_per_mission" | "max_cycles_per_day" | "max_memory_mib"
         ) {
             valid(request);
         } else {
@@ -130,7 +131,8 @@ fn every_positive_budget_rejects_zero_and_only_optional_execution_caps_accept_ab
         request["content"]["budget"][field] = Value::Null;
         if matches!(
             field,
-            "max_wall_seconds" | "max_cpu_seconds" | "max_output_bytes"
+            "max_parallel_runs" | "max_wall_seconds" | "max_cpu_seconds" | "max_output_bytes"
+                | "max_turns_per_mission" | "max_cycles_per_day" | "max_memory_mib"
         ) {
             valid(request);
         } else {

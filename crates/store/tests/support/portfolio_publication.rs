@@ -36,7 +36,7 @@ async fn prepared(pool: &PgPool, objects: &ArtifactStore, cancel: bool) -> (stor
         experiments: 0,
         cpu_seconds: Some(DbCounter::new(100).unwrap()),
         wall_seconds: Some(300),
-        memory_mib: 1024,
+        memory_mib: Some(1024),
         output_bytes: Some(DbCounter::new(65_536).unwrap()),
     };
     let run = store
@@ -87,7 +87,7 @@ async fn prepared(pool: &PgPool, objects: &ArtifactStore, cancel: bool) -> (stor
         .bind(mandate.as_uuid()).bind(f.project.as_uuid()).bind(&m.base_currency).bind(m.capital_assumption.as_decimal()).bind(universe)
         .bind(json!(m.covariance_estimator)).bind(json!(m.alpha_ensemble)).bind(json!(m.optimizer)).bind(json!(m.constraints)).bind(json!(m.rebalance_schedule)).bind(policy).bind(assumptions).bind(m.exposure_tolerance.as_decimal()).execute(pool).await.unwrap();
     let downstream = Id::new();
-    sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'controlled paper source','https://downstream.example','fixture',ARRAY['1'],'PAPER',true)")
+    sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'controlled paper source','https://downstream.example','fixture',ARRAY['2'],'PAPER',true)")
         .bind(downstream.as_uuid()).execute(pool).await.unwrap();
     let snapshot = Id::new();
     native.current_weights.source = PortfolioWeightsSourceV1::ForwardSnapshot {
@@ -369,7 +369,7 @@ async fn successful_original_report_with_expired_target_retains_solver_but_canno
         inputs: serde_json::from_value(definition.get("input_bindings")).unwrap(),
         parameters_artifact_id: parameter.to_string().try_into().unwrap(),
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: limits.cpu_seconds,
             memory_mib: limits.memory_mib,
             wall_seconds: limits.wall_seconds,
@@ -434,7 +434,7 @@ async fn successful_original_report_with_expired_target_retains_solver_but_canno
             dual_residual: Some(0.0),
         },
         input,
-        consumed_fuel: DbCounter::ZERO,
+        consumed_fuel: Some(DbCounter::ZERO),
     };
     domain::execution::portfolio_build_result(&request, &report).unwrap();
     assert!(store.begin_run_dispatch(run, &lease.fence).await.unwrap());

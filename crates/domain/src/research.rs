@@ -1,5 +1,5 @@
 //! QZ preparation invariants only. No split algorithm, estimator or capability registry.
-use crate::{control::text, evidence::thresholds, DomainError};
+use crate::{DomainError, control::text, evidence::thresholds};
 use contracts::{
     evidence::{Comparator, MetricRequirementV1},
     research::*,
@@ -34,7 +34,7 @@ pub fn portfolio_study_plan(plan: &PortfolioStudyPlanV1) -> Result<(), DomainErr
         ));
     }
     if let Some(cutoffs) = &plan.manual_cutoffs {
-        if !(2..=256).contains(&cutoffs.len())
+        if cutoffs.len() < 2
             || cutoffs.first() != Some(&plan.evaluation_start)
             || cutoffs.iter().any(|time| !valid_time(time))
             || cutoffs.windows(2).any(|pair| pair[0] >= pair[1])
@@ -68,7 +68,9 @@ pub fn input_set(request: &InputSetCreate) -> Result<(), DomainError> {
     {
         return Err(invalid("decision_cutoff", "DATABASE_TIME_PRECISION"));
     }
-    if !(1..=256).contains(&request.items.len()) {
+    // Each persisted InputItemView ordinal is u16; reject an unrepresentable
+    // complete list before admission rather than truncating it on readback.
+    if request.items.is_empty() || u16::try_from(request.items.len() - 1).is_err() {
         return Err(invalid("items", "ITEM_COUNT"));
     }
     let mut seen = BTreeSet::new();
@@ -201,9 +203,6 @@ pub fn evaluation_policy(request: &EvaluationPolicyCreate) -> Result<(), DomainE
     if !request.maximum_missing_fraction.is_fraction() {
         return Err(invalid("maximum_missing_fraction", "FRACTION_RANGE"));
     }
-    if request.required_capabilities.len() > 64 {
-        return Err(invalid("required_capabilities", "CAPABILITY_COUNT"));
-    }
     let mut capabilities = BTreeSet::new();
     for (index, c) in request.required_capabilities.iter().enumerate() {
         bounded_text(format!("required_capabilities.{index}"), c, 120, false)?;
@@ -247,7 +246,7 @@ pub(crate) fn metric_requirements(
     requirements: &[MetricRequirementV1],
     prefix: &str,
 ) -> Result<(), DomainError> {
-    if !(1..=64).contains(&requirements.len()) {
+    if requirements.is_empty() {
         return Err(invalid(prefix, "METRIC_COUNT"));
     }
     let mut metrics = BTreeSet::new();
@@ -259,7 +258,7 @@ pub(crate) fn metric_requirements(
             return Err(invalid(field, "DUPLICATE_METRIC"));
         }
         metric_thresholds(m, &field)?;
-        if !(1..=64).contains(&m.method_allowlist.len()) {
+        if m.method_allowlist.is_empty() {
             return Err(invalid(format!("{field}.method_allowlist"), "METHOD_COUNT"));
         }
         let mut methods = BTreeSet::new();

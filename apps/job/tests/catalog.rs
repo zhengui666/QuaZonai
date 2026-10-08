@@ -1,9 +1,9 @@
 //! Actual native Parquet catalog round trips. Synthetic fixtures are never delivery evidence.
-use contracts::{science::NativeBarSelectionV1, DbCounter, SchemaV1};
+use contracts::{DbCounter, SchemaV1, science::NativeBarSelectionV1};
 use job::catalog::{load_catalog, validate_native};
 use nautilus_model::{
     data::{Bar, BarType},
-    instruments::{stubs::audusd_sim, Instrument, InstrumentAny},
+    instruments::{Instrument, InstrumentAny, stubs::audusd_sim},
     types::{Price, Quantity},
 };
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
@@ -134,11 +134,13 @@ fn parquet_boundary_update_keeps_its_baseline_and_rejects_a_tied_bar() {
         catalog.write_to_parquet(&bars, None, None, None).unwrap();
         let result = load_catalog(directory.path(), &selection);
         if earlier_definition && delay == 0 {
-            assert!(result
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("CATALOG_AMBIGUOUS_INSTRUMENT_UPDATE"));
+            assert!(
+                result
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("CATALOG_AMBIGUOUS_INSTRUMENT_UPDATE")
+            );
             continue;
         }
         let data = result.unwrap();
@@ -179,9 +181,11 @@ fn tick_history_rejects_missing_baseline_ambiguous_ties_and_crossing_invalid_ohl
     )
     .err()
     .unwrap();
-    assert!(error
-        .to_string()
-        .contains("CATALOG_AMBIGUOUS_INSTRUMENT_UPDATE"));
+    assert!(
+        error
+            .to_string()
+            .contains("CATALOG_AMBIGUOUS_INSTRUMENT_UPDATE")
+    );
     assert!(validate_native(vec![update], bars.clone(), &selection).is_err());
     let update = definition(&original, "0.00010", 100_000_000_000, 110_000_000_000);
     let mut crossing = bars.clone();
@@ -299,7 +303,7 @@ fn time_identity_duplicates_and_missing_definitions_fail_closed() {
 }
 
 #[test]
-fn unrequested_aggregation_duplicate_assets_and_oversized_queries_are_rejected() {
+fn unrequested_aggregation_and_duplicate_assets_fail_but_large_explicit_queries_work() {
     let (instrument, bars, selection) = fixture();
     for kind in [
         format!("{}-1-MINUTE-MID-EXTERNAL", instrument.id()),
@@ -315,7 +319,7 @@ fn unrequested_aggregation_duplicate_assets_and_oversized_queries_are_rejected()
     assert!(validate_native(vec![instrument.clone()], bars.clone(), &duplicate).is_err());
     let mut large = selection;
     large.maximum_rows = 1_000_001;
-    assert!(validate_native(vec![instrument], bars, &large).is_err());
+    assert!(validate_native(vec![instrument], bars, &large).is_ok());
 }
 
 #[test]

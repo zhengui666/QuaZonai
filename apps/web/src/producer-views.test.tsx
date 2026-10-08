@@ -11,7 +11,7 @@ import { ApprovalRevocations, ReleaseApprovals, ReleaseDecisionHistory, ReleaseD
 import { PortfolioBuild } from './portfolio-build';
 import { PortfolioStudy } from './portfolio-study';
 import { ReleaseCreate } from './release-create';
-import { isForecastAlphaVersion, isForecastCandidate, isForecastCandidateDetail, isForecastMandate, isForecastRelease } from './producer-views';
+import { isForecastAlphaVersion, isForecastCandidate, isForecastCandidateDetail, isForecastMandate, isForecastRelease, activeTargetVersions, downstreamTargetStatus, targetDownstreamConfiguration, targetReleaseProtocol } from './producer-views';
 
 // The real views, tables, queries and buttons render here. Only the portal shell
 // is inlined: Ant Design Drawers intentionally render no contents during SSR.
@@ -115,6 +115,7 @@ const forecastRelease: Schema['ReleaseViewV1'] = {
   package_artifact_id: 'forecast-package', package_schema_version: '1', market_capability_version: '1', environment: 'REAL',
   asof: time, valid_from: time, valid_until: time, created_at: time,
 };
+const forecastReleaseV2: Schema['ReleaseViewV1'] = { ...forecastRelease, id: 'forecast-release-v2', package_schema_version: '2' };
 const strategyRelease: Schema['StrategyReleaseViewV1'] = {
   schema_version: 1, id: 'strategy-release', project_id: 'project', candidate_id: currentCandidate.id, mandate_id: strategyMandate.id,
   package_artifact_id: 'strategy-package', package_schema_version: '2', market_capability_version: '1', source_kind: 'NATIVE_TARGET_DECISION',
@@ -164,9 +165,15 @@ describe('producer envelopes remain distinct read-only records', () => {
       expect(native).toContain('UNVERIFIED'); expect(native).not.toContain('qualification'); expect(native).not.toContain('预测单位');
     }
   });
-  it.each([forecastRelease, strategyRelease])('keeps source and download access for $id without approval or offer commands', release => {
+  it.each([forecastRelease, forecastReleaseV2, strategyRelease])('keeps source and download access for $id without approval or offer commands', release => {
     const html = render(<ReleaseDetail id={release.id} project="project" close={close} />, [[['release', 'project', release.id], release]]);
     expect(html).toContain(release.package_artifact_id); expect(html).toContain('下载原始目标包');
+    if (release.package_schema_version === '1') {
+      expect(html).toContain('历史不可交付'); expect(html).toContain('不得改写为 V2');
+    } else {
+      expect(html).toContain(isForecastRelease(release) ? 'V2 · Forecast 评估' : 'V2 · 原生目标决策');
+      expect(html).not.toContain('V1 历史目标包');
+    }
     if (isForecastRelease(release)) expect(html).toContain(evaluation.id);
     else { expect(html).toContain('NATIVE_TARGET_DECISION'); expect(html).toContain('PAPER'); expect(html).toContain('FIXTURE'); expect(html).not.toContain('原审批历史'); }
   });
@@ -196,5 +203,40 @@ describe('producer envelopes remain distinct read-only records', () => {
       [['evaluation-metrics', evaluation.id, undefined], empty],
     ]);
     expect(freeze).toContain(evaluation.report_artifact_id);
+  });
+});
+
+
+describe('target delivery V2 configuration and historical boundaries', () => {
+  const original: Schema['DownstreamConfigurationV1'] = {
+    name: 'Original downstream', endpoint: 'https://downstream.example', accepted_package_versions: ['1'],
+    environments: 'PAPER', enabled: true, development_http: false,
+  };
+  it('labels the historical Forecast record separately from both genuine V2 release kinds', () => {
+    expect(targetReleaseProtocol(forecastRelease)).toBe('V1 · 历史不可交付');
+    expect(targetReleaseProtocol(forecastReleaseV2)).toBe('V2 · Forecast 评估');
+    expect(targetReleaseProtocol(strategyRelease)).toBe('V2 · 原生目标决策');
+    expect(forecastRelease.package_schema_version).toBe('1');
+    expect(forecastReleaseV2.evaluation_id).toBe(evaluation.id);
+    expect(strategyRelease).not.toHaveProperty('evaluation_id');
+  });
+  it.each([[], ['1'], ['1', '2'], ['2', '1'], ['2', '2']].map(versions => ({ versions })))('does not serialize historical or ambiguous settings $versions into a V2 capability', ({ versions }) => {
+    expect(activeTargetVersions(versions)).toBe(false);
+    const configuration = { ...original, accepted_package_versions: versions as Schema['PackageSchemaVersion'][] };
+    const before = structuredClone(configuration);
+    expect(() => targetDownstreamConfiguration(configuration)).toThrow('明确选择目标包 V2');
+    expect(configuration).toEqual(before);
+  });
+  it('accepts only an explicit V2 selection while preserving the original settings', () => {
+    const selected = { ...original, accepted_package_versions: ['2'] as const };
+    const configuration = { ...selected, accepted_package_versions: [...selected.accepted_package_versions] };
+    expect(activeTargetVersions(configuration.accepted_package_versions)).toBe(true);
+    expect(targetDownstreamConfiguration(configuration)).toEqual(configuration);
+    expect(targetDownstreamConfiguration(configuration)).not.toBe(configuration);
+    expect(original.accepted_package_versions).toEqual(['1']);
+    expect(downstreamTargetStatus(original)).toBe('历史 V1 配置，不可交付');
+    expect(downstreamTargetStatus({ ...original, accepted_package_versions: ['1', '2'] })).toContain('含历史 V1');
+    expect(downstreamTargetStatus(configuration)).toContain('仍须原生就绪探测');
+    expect(downstreamTargetStatus({ ...configuration, enabled: false })).toBe('已停用');
   });
 });

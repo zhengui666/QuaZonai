@@ -39,7 +39,7 @@ fn catalog_features_produce_causal_predictions_and_separate_completed_labels() {
         Some(ForecastMissingReason::LabelNotComplete)
     );
     assert!(result.points[19].forecast.is_some());
-    assert!(result.consumed_fuel.get() > 0);
+    assert!(result.consumed_fuel.unwrap().get() > 0);
 }
 
 #[test]
@@ -97,4 +97,18 @@ fn invalid_warmup_parameters_traps_and_nonfinite_predictions_are_not_published()
     ] {
         assert!(forecast(directory.path(), &request, &module(code)).is_err());
     }
+}
+
+#[test]
+fn unmetered_forecast_keeps_complete_predictions_labels_and_instrument_isolation() {
+    let (directory, simulation) = market("0", 20);
+    let mut request = forecast_request(&simulation);
+    let wasm = module("local.get 0 local.get 1 f64.div f64.const 1 f64.sub");
+    let mut metered = forecast(directory.path(), &request, &wasm).unwrap();
+    assert!(metered.consumed_fuel.unwrap().get() > 0);
+    request.parameters.total_fuel = None;
+    let actual = forecast(directory.path(), &request, &wasm).unwrap();
+    assert_eq!(actual.consumed_fuel, None);
+    metered.consumed_fuel = None;
+    assert_eq!(serde_json::to_value(actual).unwrap(), serde_json::to_value(metered).unwrap());
 }

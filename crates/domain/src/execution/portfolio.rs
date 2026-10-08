@@ -55,7 +55,7 @@ fn target_source(
         || point.valid_until_ns != until
         || point.targets != target.targets
         || point.cash_weight != target.cash_weight
-        || !(1..=256).contains(&target.targets.len())
+        || target.targets.len() < 1
         || target
             .targets
             .iter()
@@ -173,6 +173,7 @@ pub fn portfolio_costs(
 }
 
 pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Result<(), DomainError> {
+    crate::portfolio::paper_weights_source(request)?;
     selection(&request.selection)?;
     portfolio_settings(
         &request.mandate,
@@ -283,7 +284,7 @@ fn portfolio_members(
     assets: &[contracts::portfolio::AllocationAssetV1],
     members: &[NativePortfolioAlphaV1],
 ) -> Result<(), DomainError> {
-    if !(2..=256).contains(&members.len()) || assets.len() != selected.bar_types.len() {
+    if members.len() < 2 || assets.len() != selected.bar_types.len() {
         return Err(bad("portfolio.members"));
     }
     crate::portfolio::ensemble_weights(members.iter().map(|v| &v.ensemble_weight))?;
@@ -376,7 +377,7 @@ pub fn portfolio_study_cutoffs(
                 - 1)
                 / step
                 + 1;
-            if !(2..=256).contains(&n) {
+            if n < 2 {
                 return Err(bad("portfolio_study.limits"));
             }
             (0..n)
@@ -390,14 +391,8 @@ pub fn portfolio_study_cutoffs(
     };
     let ttl = u64::from(schedule.target_ttl_seconds) * 1_000_000_000;
     let n = cutoffs.len() as u64;
-    if !(2..=256).contains(&n)
+    if n < 2
         || cutoffs.first() != Some(&request.evaluation_start_ns)
-        || request
-            .members
-            .iter()
-            .any(|m| m.parameters.total_fuel.get() < n)
-        || (request.assets.len() as u64) * (request.members.len() as u64) * n
-            > contracts::portfolio::MAX_RETURN_VALUES as u64
     {
         return Err(bad("portfolio_study.limits"));
     }
@@ -587,8 +582,8 @@ pub fn portfolio_build_result(
     let maximum_fuel = request
         .members
         .iter()
-        .map(|m| m.parameters.total_fuel.get())
-        .sum::<u64>();
+        .map(|m| m.parameters.total_fuel.map(|fuel| u128::from(fuel.get())))
+        .sum::<Option<u128>>();
     if input.objective != m.objective
         || input.risk != m.risk_measure
         || input.base_currency != m.base_currency
@@ -617,7 +612,7 @@ pub fn portfolio_build_result(
         || forecasts.forecast_asof_ns >= request.selection.event_end_ns
         || forecasts.max_input_age_seconds != m.rebalance_schedule.max_input_age_seconds
         || forecasts.members.len() != request.members.len()
-        || result.consumed_fuel.get() > maximum_fuel
+        || !super::fuel_within_budget(result.consumed_fuel, maximum_fuel)
         || result.allocation.iterations
             > crate::portfolio::optimizer_settings(&m.optimizer)?.max_iterations
     {

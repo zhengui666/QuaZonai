@@ -126,11 +126,24 @@ impl Store {
         .await?;
         let handoff=sqlx::query("SELECT h.*,r.environment AS release_environment,c.project_id FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE h.id=$1 AND h.downstream_id=$2 AND c.project_id=$3 FOR SHARE OF h")
             .bind(report.handoff_id.as_uuid()).bind(downstream.as_uuid()).bind(report.project_id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        let release_origin: String = handoff.try_get("release_environment")?;
+        let origin = if release_origin == "REAL" {
+            "REAL"
+        } else {
+            let origin: Option<String> =
+                sqlx::query_scalar("SELECT app.forward_delivery_origin($1)")
+                    .bind(report.handoff_id.as_uuid())
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if origin.as_deref() != Some("SYNTHETIC") {
+                return Err(StoreError::Invalid("forward_transfer"));
+            }
+            "SYNTHETIC"
+        };
         if handoff
             .try_get::<Option<String>, _>("external_claim_id")?
             .as_deref()
             != Some(report.external_claim_id.as_str())
-            || handoff.try_get::<String, _>("release_environment")? != "REAL"
         {
             return Err(StoreError::Invalid("forward_transfer"));
         }
@@ -142,9 +155,6 @@ impl Store {
             content: report.clone(),
         };
         let bytes = serde_json::to_vec(&original).map_err(|_| StoreError::Integrity)?;
-        if bytes.len() > 2 * 1024 * 1024 {
-            return Err(StoreError::Invalid("forward_report_size"));
-        }
         let scope = format!("DOWNSTREAM:{downstream}");
         let alias:Option<uuid::Uuid>=sqlx::query_scalar("SELECT resource_id FROM app.command_receipts WHERE principal_scope=$1 AND operation='FORWARD_SUBMIT' AND idempotency_key=$2")
             .bind(&scope).bind(&request.external_message_id).fetch_optional(&mut *tx).await?;
@@ -244,8 +254,8 @@ impl Store {
             bytes,
         })
         .await?;
-        sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'REPORT','application/json','qz.forward_report','1','LOCAL',$3,'1',$4,'EVALUATOR_ONLY','REAL','IMPORT','AUDIT')")
-            .bind(artifact.as_uuid()).bind(report.project_id.as_uuid()).bind(artifact.to_string()).bind(size).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'REPORT','application/json','qz.forward_report','1','LOCAL',$3,'1',$4,'EVALUATOR_ONLY',$5,'IMPORT','AUDIT')")
+            .bind(artifact.as_uuid()).bind(report.project_id.as_uuid()).bind(artifact.to_string()).bind(size).bind(origin).execute(&mut *tx).await?;
         let coverage = if report.supersedes_message_id.is_some() {
             ForwardCoverageV1::Correction
         } else if report.complete {

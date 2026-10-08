@@ -226,7 +226,7 @@ pub fn market_fixture(
             sealed_revision_id: Id::new(),
         },
         label_horizon_observations: 2,
-        total_fuel: count(10_000_000),
+        total_fuel: Some(count(10_000_000)),
         target_ttl_ns: count(10 * SECOND),
         decision_output: ExperimentDecisionOutputV1::TargetWeight,
         settings: NativeSimulationSettingsV1 {

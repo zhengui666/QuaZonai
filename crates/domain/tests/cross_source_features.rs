@@ -1,4 +1,4 @@
-use contracts::{research::DataPartition, science::*, DbCounter, SchemaV1};
+use contracts::{DbCounter, SchemaV1, research::DataPartition, science::*};
 use domain::execution::features::*;
 
 fn count(value: u64) -> DbCounter {
@@ -102,18 +102,22 @@ fn fragments_require_identical_schema_partition_and_global_unique_rows() {
     let first = part(vec![row(10, 12, 1, Some(0.0))]);
     let second = part(vec![row(12, 14, 2, Some(1.0))]);
     let schema = first.feature_schema.clone();
-    assert!(bind_observations(
-        &[first.clone(), second.clone()],
-        &schema,
-        DataPartition::Validation
-    )
-    .is_ok());
-    assert!(bind_observations(
-        &[first.clone(), first.clone()],
-        &schema,
-        DataPartition::Validation
-    )
-    .is_err());
+    assert!(
+        bind_observations(
+            &[first.clone(), second.clone()],
+            &schema,
+            DataPartition::Validation
+        )
+        .is_ok()
+    );
+    assert!(
+        bind_observations(
+            &[first.clone(), first.clone()],
+            &schema,
+            DataPartition::Validation
+        )
+        .is_err()
+    );
     let mut wrong = second.clone();
     wrong.partition = DataPartition::Discovery;
     assert!(
@@ -165,4 +169,39 @@ fn invalid_values_clocks_and_duplicate_schema_fail_closed() {
     let mut invalid = part(vec![row(10, 12, 1, Some(0.0))]);
     invalid.partition = DataPartition::Sealed;
     assert!(observations(&invalid).is_err());
+}
+
+#[test]
+fn large_feature_history_and_fragment_lists_keep_all_observations() {
+    let data = part((0..100_001).map(|n| row(n, n + 1, n, Some(0.0))).collect());
+    observations(&data).unwrap();
+    assert_eq!(data.observations.len(), 100_001);
+    let parts: Vec<_> = (0..17)
+        .map(|n| part(vec![row(n, n + 1, n, Some(0.0))]))
+        .collect();
+    bind_observations(&parts, &[definition()], DataPartition::Validation).unwrap();
+    let mut duplicate = parts.clone();
+    duplicate.push(parts[0].clone());
+    assert!(bind_observations(&duplicate, &[definition()], DataPartition::Validation).is_err());
+}
+
+#[test]
+fn feature_schema_uses_the_wire_integer_boundary_instead_of_sixty_four() {
+    let definitions: Vec<_> = (0..65)
+        .map(|n| {
+            let mut value = definition();
+            value.feature_key = format!("feature-{n}");
+            value
+        })
+        .collect();
+    schema(&definitions).unwrap();
+    let mut observed = row(1, 2, 1, Some(0.0));
+    observed.feature_index = 64;
+    observations(&FeatureObservationsV1 {
+        schema_version: SchemaV1,
+        partition: DataPartition::Validation,
+        feature_schema: definitions,
+        observations: vec![observed],
+    })
+    .unwrap();
 }

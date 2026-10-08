@@ -1,7 +1,7 @@
 //! Original EVM evidence stays outside scientific jobs and never supplies PIT clocks.
 use super::*;
 use alloy_core::{
-    primitives::{Address, Bytes, B256, U256},
+    primitives::{Address, B256, Bytes, U256},
     sol,
     sol_types::SolEvent,
 };
@@ -165,7 +165,6 @@ fn checked_block(
         "DUPLICATE_CHAIN_TRANSACTION"
     );
     let mut logs: Vec<Log> = result(&block.logs)?;
-    ensure!(logs.len() <= MAX_ROWS, "CHAIN_LOG_LIMIT");
     let mut indices = BTreeSet::new();
     for log in &mut logs {
         let index = quantity(&log.log_index)?;
@@ -398,8 +397,8 @@ impl Evidence {
         ensure!(
             snapshot.chain_id == 137
                 && snapshot.retrieved_at <= Utc::now()
-                && (2..=4).contains(&snapshot.observations.len())
-                && (1..=4096).contains(&snapshot.query.blocks.len())
+                && snapshot.observations.len() >= 2
+                && !snapshot.query.blocks.is_empty()
                 && snapshot.query.blocks.windows(2).all(|w| w[0] < w[1]),
             "CHAIN_SNAPSHOT_SCOPE"
         );
@@ -433,15 +432,12 @@ impl Evidence {
                 observation.blocks.len() == snapshot.query.blocks.len(),
                 "CHAIN_BLOCK_COVERAGE"
             );
-            let mut total = 0;
             for (position, block) in observation.blocks.iter().enumerate() {
                 ensure!(
                     block.number == snapshot.query.blocks[position],
                     "CHAIN_BLOCK_COVERAGE"
                 );
                 let checked = checked_block(block, &snapshot.query, snapshot.retrieved_at)?;
-                total += checked.1.len();
-                ensure!(total <= MAX_ROWS, "CHAIN_LOG_LIMIT");
                 if index == 0 {
                     if let Some((previous, _)) = canonical.last() {
                         let previous: &Header = previous;
@@ -755,17 +751,21 @@ mod tests {
         let mut disagree = snapshot.clone();
         disagree["observations"][1]["blocks"][0]["logs"]["result"][0]["logIndex"] = "0x306".into();
         fs::write(&args.snapshot, serde_json::to_vec(&disagree).unwrap()).unwrap();
-        assert!(Evidence::load(&args.snapshot)
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("RPC_EVIDENCE_DISAGREEMENT"));
+        assert!(
+            Evidence::load(&args.snapshot)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("RPC_EVIDENCE_DISAGREEMENT")
+        );
         fs::write(&args.snapshot, serde_json::to_vec(&snapshot).unwrap()).unwrap();
         let evidence = Evidence::load(&args.snapshot).unwrap();
         let (_, instruments) = load_instruments(&args.instruments).unwrap();
-        assert!(evidence
-            .check_archive_selection(&instruments, 0, 120, &BTreeMap::new())
-            .is_err());
+        assert!(
+            evidence
+                .check_archive_selection(&instruments, 0, 120, &BTreeMap::new())
+                .is_err()
+        );
         assert!(evidence.matching("137_100_774").is_err());
         assert!(evidence.matching("137_101_774").unwrap().is_none());
         for name in [

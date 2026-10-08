@@ -1,4 +1,4 @@
-//! Bounded classic single-member ZIP profile; unsupported containers fail closed.
+//! Classic single-member ZIP profile; unsupported containers fail closed.
 //! ZIP byte fields are parsed only by official rc-zip public parsers.
 use flate2::{Decompress, FlushDecompress, Status};
 use rc_zip::{
@@ -11,34 +11,35 @@ use rc_zip::{
 
 use winnow::Partial;
 
-const ARCHIVE_LIMIT: usize = 1024 * 1024;
-const CSV_LIMIT: usize = 4 * 1024 * 1024;
 type Result<T> = std::result::Result<T, &'static str>;
 fn require(ok: bool, why: &'static str) -> Result<()> {
-    if ok {
-        Ok(())
-    } else {
-        Err(why)
-    }
+    if ok { Ok(()) } else { Err(why) }
 }
 
-fn inflate(input: &[u8]) -> Result<Vec<u8>> {
+fn inflate(input: &[u8], expected_size: usize) -> Result<Vec<u8>> {
     let mut decoder = Decompress::new(false);
     let mut output = Vec::new();
     let mut chunk = [0u8; 8192];
     loop {
         let before_in = decoder.total_in();
         let before_out = decoder.total_out();
-        let allowance = (CSV_LIMIT + 1 - output.len()).min(chunk.len());
         let status = decoder
             .decompress(
                 &input[before_in as usize..],
-                &mut chunk[..allowance],
+                &mut chunk,
                 FlushDecompress::Finish,
             )
             .map_err(|_| "invalid deflate")?;
         let emitted = (decoder.total_out() - before_out) as usize;
-        require(output.len() + emitted <= CSV_LIMIT, "decoded byte limit")?;
+        // The ZIP member's declared size is part of its format identity, not an
+        // application budget. Reject forged expansion before retaining it.
+        require(
+            output
+                .len()
+                .checked_add(emitted)
+                .is_some_and(|n| n <= expected_size),
+            "decoded size mismatch",
+        )?;
         output.extend_from_slice(&chunk[..emitted]);
         if status == Status::StreamEnd {
             require(
@@ -55,7 +56,6 @@ fn inflate(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 pub(super) fn decode_zip(bytes: &[u8], expected: &[u8]) -> Result<Vec<u8>> {
-    require(bytes.len() <= ARCHIVE_LIMIT, "archive byte limit")?;
     let window = bytes.len().saturating_sub(65 * 1024);
     let end = EndOfCentralDirectoryRecord::find_in_block(&bytes[window..]).ok_or("missing EOCD")?;
     let end_offset = window
@@ -108,14 +108,6 @@ pub(super) fn decode_zip(bytes: &[u8], expected: &[u8]) -> Result<Vec<u8>> {
     require(
         central.external_attrs & 0x10 == 0 && (mode == 0 || mode == 0o100000),
         "special file",
-    )?;
-    require(
-        central.uncompressed_size as usize <= CSV_LIMIT,
-        "declared decoded byte limit",
-    )?;
-    require(
-        central.compressed_size as usize <= ARCHIVE_LIMIT,
-        "declared compressed byte limit",
     )?;
     // The official parser validates extra fields. The classic profile cannot
     // admit extra fields that override the original central size or offset.
@@ -192,7 +184,7 @@ pub(super) fn decode_zip(bytes: &[u8], expected: &[u8]) -> Result<Vec<u8>> {
     let output = if central.method == Method::Store {
         compressed.to_vec()
     } else {
-        inflate(compressed)?
+        inflate(compressed, central.uncompressed_size as usize)?
     };
     require(
         output.len() == central.uncompressed_size as usize,
@@ -267,7 +259,7 @@ save('unknown_extra',archive(extra=b'\xfe\xca\x03\x00xyz'),True)
 save('malformed_extra',archive(extra=b'\xfe\xca\x03\x00x'),False)
 save('noop_zip64_extra',archive(extra=b'\x01\x00\x00\x00'),False)
 save('exact_decoded_limit',archive(body=b'a'*(4*1024*1024)),True,b'a'*(4*1024*1024))
-save('over_decoded_limit',archive(body=b'a'*(4*1024*1024+1)),False)
+save('over_previous_decoded_limit',archive(body=b'a'*(4*1024*1024+1)),True,b'a'*(4*1024*1024+1))
 bomb=bytearray(archive(body=b'a'*(64*1024*1024)));central=bomb.index(b'PK\x01\x02')
 for at in [14,central+16,22,central+24]:struct.pack_into('<I',bomb,at,0)
 save('false_zero_bomb',bomb,False)
@@ -275,7 +267,7 @@ save('false_zero_bomb',bomb,False)
 "#;
 
     #[test]
-    fn typed_classic_zip_refuses_hidden_members_truncation_bombs_and_unsupported_containers() {
+    fn typed_classic_zip_checks_declared_sizes_crc_and_unsupported_containers() {
         let directory = tempfile::tempdir().unwrap();
         let result = Command::new("python3")
             .args(["-B", "-c", FIXTURES])

@@ -2,12 +2,12 @@
 //! Canonical encoding and fills stay native. Opt-in cash reports use the separate
 //! session-bound valuation and UTC-boundary rules, never native position fallbacks.
 use super::{bad, instruments, spot_cash_report};
-use crate::{control::text, DomainError};
+use crate::{DomainError, control::text};
 use bigdecimal::BigDecimal;
 use contracts::{
+    DbCounter, Id, SchemaV1,
     evidence::{MetricStatus, MetricValueV1},
     science::*,
-    DbCounter, Id, SchemaV1,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -190,9 +190,6 @@ pub(super) fn shape(value: &NativeSimulationResultV1) -> Result<(), DomainError>
         || value.iterations.get() == 0
         || value.consumed_target_points.get() == 0
         || value.returns_kind != NativeReturnsKind::PortfolioDaily
-        || value.returns.len() > 1_000_002
-        || value.statistics.len() > 4096
-        || value.summary.len() > 8192
         || value.summary.get("venues.total").map(String::as_str) != Some("1")
         || value.summary.get("orders.open").map(String::as_str) != Some("0")
         || value.summary.get("orders.inflight").map(String::as_str) != Some("0")
@@ -265,7 +262,7 @@ pub(super) fn shape(value: &NativeSimulationResultV1) -> Result<(), DomainError>
         || canonical
             .get("portfolio_snapshots")
             .and_then(Value::as_array)
-            .is_none_or(|rows| rows.is_empty() || rows.len() > 1_000_002)
+            .is_none_or(Vec::is_empty)
     {
         return Err(bad("native_output.canonical_binding"));
     }
@@ -293,7 +290,6 @@ pub(crate) fn binding(
     crate::portfolio::simulation_models(&request.settings)?;
     let ids = instruments(&request.selection)?;
     if request.target_points.is_empty()
-        || request.target_points.len() > 10_000
         || value.consumed_target_points.get() != request.target_points.len() as u64
         || !request.settings.starting_capital.is_positive()
     {

@@ -19,8 +19,10 @@ QZ 只交付目标，不连接券商账户或执行真实订单。任务执行�
 | [quazonai-cli](../apps/cli) | 跨平台 HTTP/HTTPS 所有者 CLI、离线合同查询 | contracts、integrations |
 | [server](../apps/server/src) | HTTP/CLI/MCP、API 与 Worker 编排 | contracts、domain、store、integrations |
 | [runtime](../apps/runtime/src) | 科学任务网关、OCI 生命周期、持久 journal | contracts、domain、integrations |
-| [job](../apps/job/src) | 类型化科学计算与原生结果文件 | contracts、domain |
+| [job](../apps/job/src) | 类型化科学计算与原生结果文件 | contracts、domain；仅 native-paper 可选依赖 integrations |
 | [web](../apps/web/src) | React、Ant Design、生成客户端、PWA | 公开 API 合同 |
+
+Job 仅在 `native-paper` 入口通过普通可选依赖复用 `integrations` 的认证和严格 JSON 辅助；`native-paper-test` 只能经该入口启用，默认、离线科学与无关 feature 均不得直接或传递启用此依赖。
 
 依赖方向由 [architecture 测试](../crates/contracts/tests/architecture.rs)检查。测试辅助跨层复用不改变生产依赖；领域层不执行 SQL、HTTP 或容器操作。
 
@@ -143,7 +145,7 @@ Nautilus 在一个共享资金账户内执行目标序列，保留原生成交�
 Web/API/Caddy 同镜像，PostgreSQL/PGMQ 独立 Compose 服务，Worker 从同镜像提取 server 并由宿主 systemd user manager 运行。应用镜像同时提供匹配的 Runtime 网关二进制；科学 job 与 Codex 由 CI 制作独立 GHCR 镜像。安装器按 manifest 拉取已有镜像。原生资源、数据目录、journal 与登录目录分别保持原身份。
 
 应用镜像在独立目录中携带版本匹配的公开数据 Operator 工具，由已安装的
-`manage.py source` 一次性运行；不进入宿主提取的 `bin`、离线科学 job 或其缓存。
+`manage.sh source` 一次性运行；不进入宿主提取的 `bin`、离线科学 job 或其缓存。
 原有 source registry 声明各操作网络需求，管理器用只读输入和独立输出父目录映射
 同名绝对路径，禁止覆盖镜像工具路径或暴露安装状态。准备仍调用原生
 `catalog-prepare`，只返回原始元数据字节摘要、Runtime 路径和登记身份提示；

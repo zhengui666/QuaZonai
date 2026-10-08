@@ -1,4 +1,4 @@
-//! Native catalog -> causal features -> bounded Wasm predictions, with separate labels.
+//! Native catalog -> causal features -> Wasm predictions, with separate labels.
 //! Labels in this result are restricted evaluation evidence, not a public Agent response.
 use crate::{
     catalog::{load_catalog, NativeBarSeries, NativeMarketData},
@@ -82,7 +82,7 @@ pub(crate) fn forecast_latest_market(
     market: &NativeMarketData,
     request: &NativeForecastRequestV1,
     module: &[u8],
-) -> Result<(DbCounter, Vec<NativeForecastPointV1>)> {
+) -> Result<(Option<DbCounter>, Vec<NativeForecastPointV1>)> {
     forecast_points(market, request, module, true)
 }
 
@@ -91,11 +91,11 @@ fn forecast_points(
     request: &NativeForecastRequestV1,
     module: &[u8],
     latest_only: bool,
-) -> Result<(DbCounter, Vec<NativeForecastPointV1>)> {
+) -> Result<(Option<DbCounter>, Vec<NativeForecastPointV1>)> {
     domain::execution::forecast_request(request)?;
     let parameters = &request.parameters;
-    let module = SignalModule::new(module)?;
-    let mut remaining = parameters.total_fuel.get();
+    let module = SignalModule::new(module, parameters.total_fuel.is_some())?;
+    let mut remaining = parameters.total_fuel.map(|fuel| fuel.get());
     let mut points = Vec::with_capacity(if latest_only {
         market.series.len()
     } else {
@@ -107,7 +107,7 @@ fn forecast_points(
             series.bars.len() >= parameters.slow_period as usize,
             "FORECAST_INSUFFICIENT_WARMUP"
         );
-        let mut model = module.instantiate(u32::try_from(series.bars.len())?, remaining)?;
+        let mut model = module.instantiate(u64::try_from(series.bars.len())?, remaining)?;
         let instrument_id = series.instrument.id().to_string();
         for (index, (bar, features)) in series
             .bars
@@ -168,7 +168,7 @@ fn forecast_points(
         remaining = model.remaining_fuel();
     }
     ensure!(prediction_count > 0, "FORECAST_NO_PREDICTIONS");
-    Ok((counter(parameters.total_fuel.get() - remaining)?, points))
+    Ok((parameters.total_fuel.zip(remaining).map(|(total, left)| counter(total.get() - left)).transpose()?, points))
 }
 
 #[cfg(test)]

@@ -9,28 +9,30 @@ pub(super) fn staging(root: &RuntimeRoot, spec: &JobSpecV1) -> PathBuf {
         .join(format!("{}-{}", spec.run_id, spec.attempt_no))
 }
 
-fn remove_tree(path: &Path, remaining: &mut usize, depth: u8) -> Result<()> {
-    if *remaining == 0 || depth > 32 {
-        return Err(Failure::Invalid("materialization_cleanup_limit"));
-    }
-    *remaining -= 1;
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    if metadata.is_dir() {
-        // Only derived, stopped-job directories reach this routine. The retained
-        // descriptor owns permission changes; links are unlinked, never followed.
-        let directory = files::directory_handle(path)?;
-        directory.set_permissions(fs::Permissions::from_mode(0o700))?;
-        for child in fs::read_dir(path)? {
-            remove_tree(&child?.path(), remaining, depth + 1)?;
+fn remove_tree(path: &Path) -> Result<()> {
+    let mut pending = vec![(path.to_owned(), false)];
+    while let Some((path, children_removed)) = pending.pop() {
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.is_dir() {
+            // Derived stopped-job paths only. Native handles do not follow links.
+            let directory = files::directory_handle(&path)?;
+            directory.set_permissions(fs::Permissions::from_mode(0o700))?;
+            if children_removed {
+                directory.sync_all()?;
+                fs::remove_dir(path)?;
+            } else {
+                pending.push((path.clone(), true));
+                for child in fs::read_dir(&path)? {
+                    pending.push((child?.path(), false));
+                }
+            }
+        } else {
+            fs::remove_file(path)?;
         }
-        directory.sync_all()?;
-        fs::remove_dir(path)?;
-    } else {
-        fs::remove_file(path)?;
     }
     Ok(())
 }
@@ -39,8 +41,7 @@ pub(super) fn discard_staging(root: &RuntimeRoot, spec: &JobSpecV1) -> Result<()
     let path = staging(root, spec);
     // The caller owns this canonical slot's durable reservation and the exclusive
     // Runtime file lock. It is never an OCI mount or a caller-provided filename.
-    let mut remaining = 4096;
-    remove_tree(&path, &mut remaining, 0)?;
+    remove_tree(&path)?;
     File::open(root.path.join("staging"))?.sync_all()?;
     Ok(())
 }
@@ -51,7 +52,7 @@ fn exact_spec(directory: &Path) -> Result<JobSpecV1> {
     let bytes = files::read_child(
         &input,
         "spec.json",
-        domain::runtime_jobs::MAX_JOB_REQUEST_BYTES,
+        usize::MAX,
     )?;
     serde_json::from_slice(&bytes).map_err(|_| Failure::Invalid("materialization_spec"))
 }
@@ -121,9 +122,6 @@ pub async fn recover(root: Arc<RuntimeRoot>, journal: &Journal) -> Result<()> {
         let mut entries = Vec::new();
         for category in ["staging", "jobs"] {
             for entry in fs::read_dir(directory.path.join(category))? {
-                if entries.len() >= 16384 {
-                    return Err(Failure::Invalid("materialization_inventory_limit"));
-                }
                 entries.push((category == "staging", entry?.path()));
             }
         }
@@ -186,8 +184,7 @@ pub async fn recover(root: Arc<RuntimeRoot>, journal: &Journal) -> Result<()> {
             }
             let parent = root.path.join("staging");
             tokio::task::spawn_blocking(move || {
-                let mut remaining = 4096;
-                remove_tree(&path, &mut remaining, 0)?;
+                remove_tree(&path)?;
                 File::open(parent)?.sync_all()?;
                 Ok::<(), Failure>(())
             })

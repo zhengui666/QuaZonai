@@ -1,7 +1,7 @@
 //! Native Clarabel solves, checked against independent small analytical answers.
 //! Example instruments and assumptions are SYNTHETIC, not qualification evidence.
 use bigdecimal::ToPrimitive;
-use contracts::{portfolio::*, DecimalValue, Id};
+use contracts::{DecimalValue, Id, portfolio::*};
 
 fn input() -> AllocationInputV1 {
     serde_json::from_str(include_str!(
@@ -14,7 +14,7 @@ fn decimal(value: &str) -> DecimalValue {
 }
 
 fn forecast_input() -> PortfolioForecastInputV1 {
-    use contracts::{brief::HorizonKind, evidence::ForecastUnit, DbCounter, SchemaV1};
+    use contracts::{DbCounter, SchemaV1, brief::HorizonKind, evidence::ForecastUnit};
     let instruments: Vec<_> = input()
         .assets
         .into_iter()
@@ -167,7 +167,7 @@ fn actual_fixed_mixture_predictions_feed_one_native_utility_problem() {
 
 #[test]
 fn incompatible_original_forecasts_never_reach_native_aggregation() {
-    use contracts::{brief::HorizonKind, evidence::ForecastUnit, DbCounter};
+    use contracts::{DbCounter, brief::HorizonKind, evidence::ForecastUnit};
     let mutations: &[fn(&mut PortfolioForecastInputV1)] = &[
         |r| r.members[1].alpha_id = r.members[0].alpha_id,
         |r| r.members[1].alpha_version_id = r.members[0].alpha_version_id,
@@ -244,11 +244,13 @@ fn native_mixture_rejects_missing_predictions_and_never_repairs_weights() {
         vec!["-1", "2"],
         vec!["0.5", "0.500000000000000001"],
     ] {
-        assert!(mix(
-            &forecasts,
-            &weights.into_iter().map(decimal).collect::<Vec<_>>()
-        )
-        .is_err());
+        assert!(
+            mix(
+                &forecasts,
+                &weights.into_iter().map(decimal).collect::<Vec<_>>()
+            )
+            .is_err()
+        );
     }
     let weights = [decimal("0.5"), decimal("0.5")];
     for forecasts in [
@@ -258,11 +260,14 @@ fn native_mixture_rejects_missing_predictions_and_never_repairs_weights() {
         vec![vec![1.0], vec![1.0, 2.0]],
         vec![vec![f64::NAN], vec![0.0]],
         vec![vec![1.0], vec![f64::INFINITY]],
-        vec![vec![1.0; MAX_ALLOCATION_ASSETS + 1]; 2],
     ] {
         assert!(mix(&forecasts, &weights).is_err());
     }
-    let rows = vec![vec![0.1]; MAX_ALLOCATION_ASSETS + 1];
+    assert_eq!(
+        mix(&vec![vec![1.0; 257]; 2], &weights).unwrap(),
+        vec![1.0; 257]
+    );
+    let rows = vec![vec![0.1]; 257];
     assert!(mix(&rows, &vec![decimal("0.5"); rows.len()]).is_err());
 }
 

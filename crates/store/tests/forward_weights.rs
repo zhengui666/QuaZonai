@@ -1,4 +1,5 @@
-//! Actual PostgreSQL receipt/identity transactions. All observations are PAPER fixtures.
+//! Actual PostgreSQL receipt/identity transactions. Origin labels below are
+//! controlled protocol fixtures, not evidence of native account observations.
 #[path = "../../../tests/support/research.rs"]
 mod research;
 use contracts::{
@@ -34,7 +35,7 @@ async fn setup(pool: &PgPool) -> (Store, Actor, Actor, DownstreamWeightsSubmitV1
                 configuration: DownstreamConfigurationV1 {
                     name: "Paper fixture".into(),
                     endpoint: "https://downstream.example".into(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: DownstreamEnvironments::Paper,
                     enabled: true,
                     development_http: false,
@@ -97,6 +98,7 @@ async fn setup(pool: &PgPool) -> (Store, Actor, Actor, DownstreamWeightsSubmitV1
         .unwrap();
     let nanos = now.timestamp_nanos_opt().unwrap() as u64;
     let request = DownstreamWeightsSubmitV1 {
+        paper_initialization: None,
         schema_version: SchemaV1,
         project_id: project,
         environment: ForwardEnvironmentV1::Paper,
@@ -113,6 +115,61 @@ async fn setup(pool: &PgPool) -> (Store, Actor, Actor, DownstreamWeightsSubmitV1
         }],
     };
     (store, operator, actor, request)
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn uninitialized_destinations_keep_rootless_paper_and_live_writes_and_replay(pool: PgPool) {
+    let (store, operator, actor, request) = setup(&pool).await;
+    let id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM app.downstream_integrations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let id: Id = id.to_string().try_into().unwrap();
+    let down = store.downstream(&operator, id).await.unwrap();
+    let mut configuration = down.configuration;
+    configuration.environments = DownstreamEnvironments::Both;
+    store
+        .update_downstream(
+            &operator,
+            "both-original-environments",
+            id,
+            &DownstreamUpdate {
+                schema_version: SchemaV1,
+                expected_revision: down.revision,
+                configuration,
+                credential_ref: None,
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap();
+    for (environment, origin) in [
+        (ForwardEnvironmentV1::Paper, "SYNTHETIC"),
+        (ForwardEnvironmentV1::Live, "REAL"),
+    ] {
+        let mut request = request.clone();
+        request.environment = environment;
+        request.external_message_id = format!("uninitialized-{environment:?}");
+        assert!(request.paper_initialization.is_none());
+        let first = store
+            .submit_downstream_weights(&actor, &request, |_| async { Ok(()) })
+            .await
+            .unwrap();
+        let observed: String = sqlx::query_scalar("SELECT origin FROM app.artifacts WHERE id=$1")
+            .bind(first.resource.report_artifact_id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(observed, origin);
+        let replay = store
+            .submit_downstream_weights(&actor, &request, |_| async {
+                panic!("exact replay cannot publish")
+            })
+            .await
+            .unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.resource.id, first.resource.id);
+    }
 }
 
 #[sqlx::test(migrations = "../../migrations")]

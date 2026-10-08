@@ -1,7 +1,6 @@
 //! A read-only value projection, not a general restricted-artifact download.
 use crate::{
     access::Authority,
-    artifacts::ArtifactCapacity,
     error::{ApiError, Problem},
     AppState,
 };
@@ -33,7 +32,6 @@ use store::StoreError;
 pub async fn get(
     State(state): State<AppState>,
     Authority(actor): Authority,
-    capacity: ArtifactCapacity,
     id: Result<Path<Id>, PathRejection>,
     query: Result<Query<EquityCurveQuery>, QueryRejection>,
 ) -> Result<Json<EquityCurveV1>, ApiError> {
@@ -46,10 +44,9 @@ pub async fn get(
             "产物存储不可用。",
         )
     })?;
-    // Retain the existing capacity permit while non-abortable native reads or
-    // JSON projection finish, even when the browser disconnects mid-request.
+    // Keep the original authorized projection alive while native reads finish,
+    // even when the browser disconnects mid-request.
     let result = tokio::spawn(async move {
-        let _capacity = capacity;
         state
             .store
             .evaluation_equity_curve(&actor, id, &query, move |id, size| {

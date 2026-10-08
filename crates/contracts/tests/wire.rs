@@ -1,5 +1,5 @@
 use contracts::{
-    budget::BudgetV1, evidence::MetricValueV1, DbCounter, DecimalValue, Id, Revision, SchemaV1,
+    DbCounter, DecimalValue, Id, Revision, SchemaV1, budget::BudgetV1, evidence::MetricValueV1,
 };
 use serde_json::{from_value, json, to_value};
 
@@ -135,7 +135,7 @@ fn command_objects_reject_unknown_fields_missing_booleans_and_null_integers() {
     missing.as_object_mut().unwrap().remove("schema_version");
     assert!(from_value::<BudgetV1>(missing).is_err());
     let mut invalid = valid;
-    invalid["max_parallel_runs"] = json!(null);
+    invalid["max_experiments"] = json!(null);
     assert!(from_value::<BudgetV1>(invalid).is_err());
     for invalid in [
         json!({"schema_version":1,"saved_model":null,"saved_reasoning_effort":null,"saved_fast_mode":false}),
@@ -280,27 +280,13 @@ fn all_unsigned_numeric_fields_publish_the_native_upper_bound() {
         serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
     for (name, fields, maximum) in [
         (
-            "BudgetV1",
-            vec![
-                "max_parallel_runs",
-                "max_turns_per_mission",
-                "max_repair_turns",
-                "max_cycles_per_day",
-            ],
-            65535u64,
-        ),
-        (
             "StopRuleV1",
             vec!["stop_on_qualified_count", "stop_on_no_improvement_trials"],
             65535u64,
         ),
         (
             "BudgetV1",
-            vec![
-                "max_experiments",
-                "max_memory_mib",
-                "min_cycle_interval_seconds",
-            ],
+            vec!["max_experiments", "min_cycle_interval_seconds"],
             4294967295u64,
         ),
         ("RunSnapshotV1", vec!["current_attempt_no"], 4294967295u64),
@@ -323,16 +309,23 @@ fn all_unsigned_numeric_fields_publish_the_native_upper_bound() {
         "max_cpu_seconds":"7200","max_memory_mib":4096,"max_output_bytes":"67108864",
         "max_cycles_per_day":3,"min_cycle_interval_seconds":120,"max_tokens":null,
         "max_cost_decimal":null,"cost_currency":null,"cost_enforcement":"UNAVAILABLE"});
+    let mut parallel = valid.clone();
+    parallel["max_parallel_runs"] = json!(u64::from(u32::MAX) + 1);
+    assert!(from_value::<BudgetV1>(parallel).is_err());
     for field in [
         "max_parallel_runs",
         "max_turns_per_mission",
         "max_repair_turns",
         "max_cycles_per_day",
+        "max_memory_mib",
     ] {
+        let optional =
+            &schema["components"]["schemas"]["BudgetV1"]["allOf"][0]["properties"][field]["oneOf"];
+        assert_eq!(optional[1]["maximum"], json!(u32::MAX));
         let mut value = valid.clone();
-        value[field] = json!(65535);
+        value[field] = json!(u32::MAX);
         assert!(from_value::<BudgetV1>(value.clone()).is_ok());
-        value[field] = json!(65536);
+        value[field] = json!(u64::from(u32::MAX) + 1);
         assert!(from_value::<BudgetV1>(value).is_err());
     }
 }

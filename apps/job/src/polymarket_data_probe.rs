@@ -40,9 +40,10 @@ pub struct Arguments {
     /// New local evidence file. An existing file is never overwritten.
     #[arg(long)]
     output: PathBuf,
-    /// Bounds run/connect after construction; shutdown has a separate 15-second bound.
-    #[arg(long, default_value_t = 30)]
-    max_seconds: u64,
+    /// Optional observation duration; omission runs until native exit or client stop.
+    /// Shutdown has a separate 15-second drain bound.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    max_seconds: Option<u64>,
     /// In-memory event bound. Dropped events make the observation incomplete.
     #[arg(long, default_value_t = 4096)]
     max_events: usize,
@@ -55,7 +56,7 @@ pub struct Arguments {
 fn selection(arguments: &Arguments) -> Result<Vec<InstrumentId>> {
     ensure!(
         (1..=8).contains(&arguments.instrument_id.len())
-            && (1..=300).contains(&arguments.max_seconds)
+            && arguments.max_seconds != Some(0)
             && (1..=50_000).contains(&arguments.max_events),
         "POLYMARKET_PROBE_BOUNDS"
     );
@@ -344,9 +345,16 @@ async fn observe(arguments: &Arguments, ids: Vec<InstrumentId>) -> Result<Value>
     let (native_failure, shutdown_timed_out) = {
         let native = node.run_with_mode(NodeRunMode::Hosted);
         tokio::pin!(native);
+        let observation_deadline = async {
+            match arguments.max_seconds {
+                Some(seconds) => tokio::time::sleep(Duration::from_secs(seconds)).await,
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::pin!(observation_deadline);
         tokio::select! {
             result = &mut native => (result.err().map(|error| public_transport_error(&error, configured_proxy)), false),
-            _ = tokio::time::sleep(Duration::from_secs(arguments.max_seconds)) => {
+            _ = &mut observation_deadline => {
                 handle.stop();
                 match tokio::time::timeout(Duration::from_secs(15), &mut native).await {
                     Ok(result) => (result.err().map(|error| public_transport_error(&error, configured_proxy)), false),
@@ -547,7 +555,7 @@ mod tests {
         Arguments {
             instrument_id: ids.iter().map(|v| (*v).to_owned()).collect(),
             output: PathBuf::from("never-opened-in-unit-tests.json"),
-            max_seconds: 1,
+            max_seconds: Some(1),
             max_events: 8,
             proxy_env: None,
         }
@@ -559,7 +567,11 @@ mod tests {
         assert!(selection(&args(&["BTCUSDT.BINANCE"])).is_err());
         assert!(selection(&args(&["condition-1.POLYMARKET", "condition-1.POLYMARKET"])).is_err());
         let mut value = args(&["condition-1.POLYMARKET"]);
-        value.max_seconds = 301;
+        value.max_seconds = Some(301);
+        assert!(selection(&value).is_ok());
+        value.max_seconds = None;
+        assert!(selection(&value).is_ok());
+        value.max_seconds = Some(0);
         assert!(selection(&value).is_err());
     }
 

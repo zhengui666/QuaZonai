@@ -645,7 +645,7 @@ async fn daily_cycle_quota_and_paused_project_are_checked_in_the_start_transacti
         .await
         .unwrap();
     let mut request = cycle_support::start_request(&store, &actor, &f).await;
-    for number in 0..f.brief.content.budget.max_cycles_per_day {
+    for number in 0..f.brief.content.budget.max_cycles_per_day.unwrap() {
         f.start(&store, &actor, &format!("daily-{number}"), &request)
             .await
             .unwrap();
@@ -707,4 +707,38 @@ fn public_start_and_freeze_contracts_do_not_accept_success_or_runtime_override_f
     let mut injected = freeze;
     injected["capabilities"] = json!({"status":"AVAILABLE"});
     assert!(serde_json::from_value::<BriefFreezeV1>(injected).is_err());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn absent_daily_cycle_quota_allows_more_than_the_old_default_without_rewriting_briefs(pool: PgPool) {
+    let (store, actor) = research_support::operator(&pool).await;
+    let mut f = cycle_support::setup(&pool, &store, &actor).await;
+    let original = f.brief.content.budget.clone();
+    let mut content = f.brief.content.clone();
+    content.budget.max_cycles_per_day = None;
+    let changed = store.update_brief(&actor, "uncapped-cycle-draft", f.brief.id, &BriefUpdate {
+        schema_version: SchemaV1, expected_revision: f.brief.revision,
+        content, bindings: f.brief.bindings.clone(),
+    }).await.unwrap();
+    f.brief = changed.resource;
+    f.freeze.expected_revision = f.brief.revision;
+    let frozen = store.freeze_brief(&actor, "freeze-uncapped", f.brief.id, &f.freeze,
+        |id, size| f.read(id, size)).await.unwrap().resource;
+    let request = cycle_support::start_request(&store, &actor, &f).await;
+    for index in 0..13 {
+        f.start(&store, &actor, &format!("uncapped-cycle-{index}"), &request).await.unwrap();
+    }
+    let read = store.brief(&actor, f.brief.id).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&read.content).unwrap(),
+        serde_json::to_value(&frozen.brief.content).unwrap()
+    );
+    assert_eq!(read.content.budget.max_cycles_per_day, None);
+    assert_eq!(read.content.budget.max_experiments, original.max_experiments);
+    let snapshots: Vec<serde_json::Value> = sqlx::query_scalar("SELECT budget_snapshot FROM app.research_cycles WHERE project_id=$1")
+        .bind(f.data.project.as_uuid()).fetch_all(&pool).await.unwrap();
+    assert_eq!(snapshots.len(), 13);
+    for snapshot in snapshots {
+        assert_eq!(snapshot, serde_json::to_value(&read.content.budget).unwrap());
+    }
 }

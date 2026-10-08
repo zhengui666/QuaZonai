@@ -4,7 +4,7 @@ use crate::{authority::Actor, db, Store, StoreError};
 use contracts::{
     equity_curve::{EquityCurveDataV1, EquityCurveQuery, EquityCurveV1, EquityUnavailableReason},
     evidence::{EvaluationKind, EvidenceStatus},
-    runtime_jobs::{RuntimeResultState, MAX_JOB_OUTPUT_BYTES},
+    runtime_jobs::RuntimeResultState,
     science::NativePortfolioStudyResultV1,
     DbCounter, Id, SchemaV1,
 };
@@ -78,7 +78,7 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await?;
         let report_size = count(report_size)?;
-        if report_size.get() == 0 || report_size.get() > 8 * 1024 * 1024 {
+        if report_size.get() == 0 {
             return Err(StoreError::Integrity);
         }
         let sources = sqlx::query("SELECT a.id,a.byte_count FROM app.runs r JOIN app.run_attempts t ON t.id=r.active_attempt_id AND t.run_id=r.id AND t.dispatch_state='TERMINAL' AND t.accepted_at IS NOT NULL JOIN app.run_native_outputs o ON o.attempt_id=t.id JOIN app.artifacts a ON a.id=o.artifact_id AND a.producer_run_id=r.id AND a.producer_attempt_id=t.id AND a.project_id=r.project_id WHERE r.id=$1 AND r.project_id=$2 AND a.schema_name='qz.portfolio_study' AND a.schema_version='1' AND a.access_class='EVALUATOR_ONLY' AND a.media_type='application/json' AND a.origin=$3")
@@ -143,7 +143,7 @@ impl Store {
             }
             _ => return Err(StoreError::Integrity),
         };
-        if source_size.get() == 0 || source_size.get() > MAX_JOB_OUTPUT_BYTES {
+        if source_size.get() == 0 {
             return Err(StoreError::Integrity);
         }
         let bytes = read(source_id, source_size).await?;

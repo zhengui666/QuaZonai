@@ -16,6 +16,8 @@ pub(super) async fn check(
     current: &ApprovalViewV1,
     renewed: &ReleaseApproveV1,
 ) {
+    // Finish Offer checks before polling the original Claim scenarios.
+    let (first, second, next) = Box::pin(async {
     let mut request = HandoffOfferV1 {
         schema_version: SchemaV1,
         release_id: release.id,
@@ -228,6 +230,9 @@ pub(super) async fn check(
             .unwrap(),
         0
     );
+        (first, second, next)
+    })
+    .await;
     let other: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM app.downstream_integrations WHERE id<>$1 LIMIT 1")
             .bind(current.downstream_id.as_uuid())
@@ -242,49 +247,56 @@ pub(super) async fn check(
             false,
         ),
     ] {
-        let principal = store
-            .create_principal(
-                actor,
-                name,
-                &PrincipalCreate {
-                    schema_version: SchemaV1,
-                    name: name.into(),
-                    kind: AssignablePrincipalKind::Downstream,
-                    project_id: Some(release.project_id),
-                    downstream_id: Some(downstream),
-                    enabled: true,
-                },
-            )
-            .await
-            .unwrap()
-            .resource;
-        let store::control::CredentialPreparation::New(prepared) = store
-            .prepare_credential_issuance(
-                actor,
-                name,
-                principal.id,
-                &CredentialIssue {
-                    schema_version: SchemaV1,
-                    scope_codes: vec![MachineScope::DownstreamClaim, MachineScope::DownstreamAck],
-                    expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
-                },
-            )
-            .await
-            .unwrap()
-        else {
-            panic!("new reader");
-        };
-        let verifier = Id::new();
-        let credential = prepared
-            .publish(Id::new(), verifier)
-            .await
-            .unwrap()
-            .resource;
-        let machine = store::authority::Actor::Machine {
-            credential_id: credential.id,
-            verifier_ref: verifier,
-            operator_grant: None,
-        };
+        let machine = Box::pin(async {
+            let principal = store
+                .create_principal(
+                    actor,
+                    name,
+                    &PrincipalCreate {
+                        schema_version: SchemaV1,
+                        name: name.into(),
+                        kind: AssignablePrincipalKind::Downstream,
+                        project_id: Some(release.project_id),
+                        downstream_id: Some(downstream),
+                        enabled: true,
+                    },
+                )
+                .await
+                .unwrap()
+                .resource;
+            let store::control::CredentialPreparation::New(prepared) = store
+                .prepare_credential_issuance(
+                    actor,
+                    name,
+                    principal.id,
+                    &CredentialIssue {
+                        schema_version: SchemaV1,
+                        scope_codes: vec![
+                            MachineScope::DownstreamClaim,
+                            MachineScope::DownstreamAck,
+                        ],
+                        expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                    },
+                )
+                .await
+                .unwrap()
+            else {
+                panic!("new reader");
+            };
+            let verifier = Id::new();
+            let credential = prepared
+                .publish(Id::new(), verifier)
+                .await
+                .unwrap()
+                .resource;
+            let machine = store::authority::Actor::Machine {
+                credential_id: credential.id,
+                verifier_ref: verifier,
+                operator_grant: None,
+            };
+            machine
+        })
+        .await;
         let read = store.handoff(&machine, second.id).await;
         if allowed {
             assert_eq!(read.unwrap().id, second.id);
@@ -312,7 +324,7 @@ pub(super) async fn check(
             let request = HandoffClaimV1 {
                 schema_version: SchemaV1,
                 external_claim_id: "claim-original".into(),
-                package_schema_version: PackageSchemaVersion::V1,
+                package_schema_version: PackageSchemaVersion::V2,
             };
             assert!(matches!(
                 Box::pin(store.claim_handoff(

@@ -15,6 +15,8 @@ pub(super) mod automatic_rebalance;
 
 #[path = "portfolio_inputs.rs"]
 mod inputs;
+#[path = "paper_initial_checks.rs"]
+pub(super) mod paper_initial_checks;
 #[path = "portfolio_result.rs"]
 mod result;
 #[path = "candidate_simulation_result.rs"]
@@ -963,7 +965,8 @@ async fn build_qualified_chain(
         .resource
         .header
         .id;
-    let mut next = request;
+    // Keep the original request paired with the original Candidate returned below.
+    let mut next = request.clone();
     next.input_set_id = input;
     next.current_weights_source = PortfolioBuildWeightsV1::LastTarget {
         candidate_id: candidate,
@@ -1495,7 +1498,7 @@ async fn build_qualified_chain(
         )
     );
     store.acknowledge_run(&message).await.unwrap();
-    Some((store, actor, f, next, candidate, directory))
+    Some((store, actor, f, request, candidate, directory))
 }
 
 async fn study_admission(
@@ -2414,7 +2417,7 @@ pub(super) async fn original_releases(
         .fetch_one(pool)
         .await
         .unwrap();
-    let package: contracts::delivery::TargetPackageV1 = serde_json::from_slice(
+    let package: contracts::delivery::ForecastTargetPackageV2 = serde_json::from_slice(
         &f.read(
             view.package_artifact_id,
             DbCounter::new(size as u64).unwrap(),
@@ -2424,8 +2427,130 @@ pub(super) async fn original_releases(
     )
     .unwrap();
     assert_eq!(package.release_id, view.id);
+    assert_eq!(
+        view.package_schema_version,
+        contracts::settings::PackageSchemaVersion::V2
+    );
+    assert_eq!(
+        package.package_schema_version,
+        contracts::strategy_portfolio::TargetPackageVersionV2::V2
+    );
+    assert_eq!(
+        package.source_kind,
+        contracts::delivery::ForecastReleaseSourceV2::ForecastEvaluation
+    );
     assert_eq!(package.evaluation_refs, vec![intent.evaluation_id]);
     assert_eq!(package.valid_until, view.valid_until);
+    let artifact_version: String =
+        sqlx::query_scalar("SELECT schema_version FROM app.artifacts WHERE id=$1")
+            .bind(view.package_artifact_id.as_uuid())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(artifact_version, "2");
+    let source = &package.source;
+    let (run, attempt, parameters, report): (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT c.run_id,r.active_attempt_id,t.parameters_artifact_id,a.id FROM app.portfolio_candidates c JOIN app.runs r ON r.id=c.run_id JOIN app.run_native_tasks t ON t.run_id=r.id JOIN app.run_native_outputs o ON o.attempt_id=r.active_attempt_id JOIN app.artifacts a ON a.id=o.artifact_id AND a.schema_name='qz.native_portfolio' WHERE c.id=$1",
+    ).bind(candidate.as_uuid()).fetch_one(pool).await.unwrap();
+    assert_eq!(source.build_run_id.as_uuid(), run);
+    assert_eq!(source.build_accepted_attempt_id.as_uuid(), attempt);
+    assert_eq!(source.build_parameters_artifact_id.as_uuid(), parameters);
+    assert_eq!(source.build_report_artifact_id.as_uuid(), report);
+    assert_eq!(source.build_environment, build.environment);
+    assert_eq!(source.build_input_set_id, build.input_set_id);
+    let parameter_size: i64 =
+        sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1")
+            .bind(parameters)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let frozen: NativeTaskParametersV1 = serde_json::from_slice(
+        &f.read(
+            source.build_parameters_artifact_id,
+            DbCounter::new(parameter_size as u64).unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    let NativeTaskParametersV1::BuildPortfolio {
+        dataset_revision_id,
+        request: frozen,
+        ..
+    } = frozen
+    else {
+        panic!("original forecast build parameters");
+    };
+    assert_eq!(source.forward_dataset_revision_id, dataset_revision_id);
+    assert_eq!(
+        source.current_weights_artifact_id,
+        frozen.current_weights_artifact_id
+    );
+    assert_eq!(package.current_weights, frozen.current_weights);
+    let weights_size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1")
+        .bind(source.current_weights_artifact_id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let weights: contracts::science::PortfolioCurrentWeightsV1 = serde_json::from_slice(
+        &f.read(
+            source.current_weights_artifact_id,
+            DbCounter::new(weights_size as u64).unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(package.current_weights, weights);
+    assert_eq!(
+        serde_json::to_value(&package.execution_settings).unwrap(),
+        serde_json::to_value(&frozen.execution_settings).unwrap()
+    );
+    let (metadata_id, metadata_size): (uuid::Uuid, i64) = sqlx::query_as(
+        "SELECT e.native_metadata_artifact_id,a.byte_count FROM app.dataset_registration_evidence e JOIN app.artifacts a ON a.id=e.native_metadata_artifact_id WHERE e.dataset_revision_id=$1",
+    ).bind(dataset_revision_id.as_uuid()).fetch_one(pool).await.unwrap();
+    assert_eq!(source.forward_metadata_artifact_id.as_uuid(), metadata_id);
+    let metadata: contracts::catalogs::RuntimeCatalogMetadataV1 = serde_json::from_slice(
+        &f.read(
+            source.forward_metadata_artifact_id,
+            DbCounter::new(metadata_size as u64).unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    let instruments: std::collections::BTreeSet<String> = frozen
+        .assets
+        .iter()
+        .map(|a| a.instrument_id.clone())
+        .chain(
+            frozen
+                .current_weights
+                .weights
+                .iter()
+                .map(|w| w.instrument_id.clone()),
+        )
+        .chain(package.targets.iter().map(|t| t.instrument_id.clone()))
+        .collect();
+    let projection = domain::delivery::freeze_forward_dataset(
+        dataset_revision_id,
+        source.forward_metadata_artifact_id,
+        &frozen.selection,
+        &metadata,
+        &instruments.into_iter().collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&package.forward_dataset).unwrap(),
+        serde_json::to_value(projection).unwrap()
+    );
+    let wire = serde_json::to_value(&package).unwrap();
+    assert!(
+        wire.get("account_start").is_none(),
+        "Forecast keeps its original weights source"
+    );
+    assert!(wire["forward_dataset"].get("registered_ref").is_none());
+    assert!(wire["forward_dataset"].get("native_snapshot_ref").is_none());
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.releases")
             .fetch_one(pool)
@@ -2557,7 +2682,7 @@ async fn release_check(
         &intent,
         |id, size| f.read(id, size),
         |object| async move {
-            let package: contracts::delivery::TargetPackageV1 =
+            let package: contracts::delivery::ForecastTargetPackageV2 =
                 serde_json::from_slice(&object.bytes).unwrap();
             assert!(package.valid_until <= deadline);
             f.objects.put(object.id, &object.bytes).unwrap();

@@ -1,6 +1,7 @@
 //! Wire/domain boundary tests, not a substitute for native OCI acceptance.
 use chrono::{DateTime, Duration, Utc};
 use contracts::{
+    DbCounter, Id, Revision, SchemaV1,
     research::{ArtifactInputRole, DataPartition},
     runs::RunKind,
     runtime::{
@@ -8,7 +9,6 @@ use contracts::{
         RuntimeDataKind, RuntimeImageV1,
     },
     runtime_jobs::*,
-    DbCounter, Id, Revision, SchemaV1,
 };
 use domain::runtime_jobs::*;
 use serde_json::json;
@@ -48,9 +48,9 @@ fn spec() -> JobSpecV1 {
         }],
         parameters_artifact_id: Id::new(),
         limits: RuntimeJobLimitsV1 {
-            cpu: 2,
+            cpu: Some(2),
             cpu_seconds: Some(count(30)),
-            memory_mib: 128,
+            memory_mib: Some(128),
             wall_seconds: Some(60),
             output_bytes: Some(count(4096)),
         },
@@ -80,8 +80,8 @@ fn capabilities() -> RuntimeCapabilitiesV1 {
         solver_capabilities: vec![],
         max_cpu: 2,
         max_memory_mib: 128,
-        max_output_bytes: count(4096),
-        max_wall_seconds: 60,
+        max_output_bytes: Some(count(4096)),
+        max_wall_seconds: Some(60),
         isolation_profile: IsolationProfile::OciResearchV1,
         checked_at: now(),
     }
@@ -172,8 +172,8 @@ fn native_admission_requires_exact_observed_image_schema_and_limits() {
             0 => changed.image_ref = "localhost/science:latest".into(),
             1 => changed.image_ref = image().replace('a', "b"),
             2 => changed.job_kind = RunKind::AgentResearch,
-            3 => changed.limits.cpu = 3,
-            4 => changed.limits.memory_mib = 129,
+            3 => changed.limits.cpu = Some(3),
+            4 => changed.limits.memory_mib = Some(129),
             5 => changed.limits.output_bytes = Some(count(4097)),
             6 => changed.limits.wall_seconds = Some(61),
             7 => changed.requested_output_schemas[0].version = "2".into(),
@@ -197,7 +197,7 @@ fn duplicate_inputs_schemas_and_excessive_resources_are_rejected() {
             0 => changed.inputs.push(changed.inputs[0].clone()),
             1 => changed.requested_output_schemas.push(schema()),
             2 => changed.limits.cpu_seconds = Some(count(121)),
-            3 => changed.limits.output_bytes = Some(count(MAX_INPUT_OBJECT_BYTES + 1)),
+            3 => changed.limits.output_bytes = Some(DbCounter::ZERO),
             4 => {
                 changed.deadline_at = changed
                     .deadline_at
@@ -225,11 +225,12 @@ fn duplicate_inputs_schemas_and_excessive_resources_are_rejected() {
         changed.inputs.push(RuntimeInputV1::Artifact {
             artifact_id: Id::new(),
             storage_version: "1".into(),
-            byte_count: count(MAX_INPUT_OBJECT_BYTES),
+            byte_count: count(64 * 1024 * 1024 + 1),
             role: ArtifactInputRole::Report,
         });
     }
-    assert!(spec_shape(&changed).is_err());
+    changed.limits.output_bytes = Some(count(256 * 1024 * 1024 + 1));
+    assert!(spec_shape(&changed).is_ok());
 }
 
 #[test]
@@ -407,6 +408,7 @@ fn absent_runtime_deadlines_require_an_explicit_native_capability() {
     original.limits.output_bytes = None;
     spec_shape(&original).unwrap();
     let mut caps = capabilities();
+    caps.max_wall_seconds = None;
     assert!(admit_spec(&original, &caps, now()).is_err());
     caps.engine_versions
         .insert("optional-wall-time".into(), "1".into());
@@ -415,6 +417,8 @@ fn absent_runtime_deadlines_require_an_explicit_native_capability() {
         .insert("optional-cpu-budget".into(), "1".into());
     caps.engine_versions
         .insert("optional-output-budget".into(), "1".into());
+    admit_spec(&original, &caps, now()).unwrap();
+    caps.max_output_bytes = None;
     admit_spec(&original, &caps, now()).unwrap();
     original.limits.cpu_seconds = Some(count(30));
     assert!(admit_spec(&original, &caps, now()).is_err());
@@ -429,4 +433,63 @@ fn absent_runtime_deadlines_require_an_explicit_native_capability() {
     );
     original.limits.wall_seconds = Some(0);
     assert!(spec_shape(&original).is_err());
+}
+
+#[test]
+fn native_cpu_grants_are_positive_u32_without_the_old_1024_ceiling() {
+    for cpu in [1025, u32::MAX] {
+        let mut job = spec();
+        job.limits.cpu = Some(cpu);
+        spec_shape(&job).unwrap();
+        let mut caps = capabilities();
+        caps.max_cpu = cpu;
+        admit_spec(&job, &caps, now()).unwrap();
+        caps.max_cpu = cpu - 1;
+        assert!(admit_spec(&job, &caps, now()).is_err());
+    }
+    let mut job = spec();
+    job.limits.cpu = Some(0);
+    assert!(spec_shape(&job).is_err());
+}
+
+#[test]
+fn cpu_and_memory_none_require_native_capabilities_without_rewriting_legacy_rates() {
+    let mut job = spec();
+    let mut caps = capabilities();
+    job.limits.cpu_seconds = None;
+    caps.engine_versions
+        .insert("optional-cpu-budget".into(), "1".into());
+    // Historical rates remain valid even if the corresponding CPU budget was null.
+    job.limits.cpu = Some(1);
+    admit_spec(&job, &caps, now()).unwrap();
+    job.limits.cpu = None;
+    spec_shape(&job).unwrap();
+    assert!(admit_spec(&job, &caps, now()).is_err());
+    caps.engine_versions
+        .insert("optional-cpu-rate".into(), "1".into());
+    admit_spec(&job, &caps, now()).unwrap();
+    job.limits.memory_mib = None;
+    spec_shape(&job).unwrap();
+    assert!(admit_spec(&job, &caps, now()).is_err());
+    caps.engine_versions
+        .insert("optional-memory-limit".into(), "1".into());
+    admit_spec(&job, &caps, now()).unwrap();
+    job.limits.cpu_seconds = Some(count(1));
+    assert!(spec_shape(&job).is_err());
+    job.limits.cpu_seconds = None;
+    job.limits.memory_mib = Some(0);
+    assert!(spec_shape(&job).is_err());
+}
+
+#[test]
+fn absent_memory_quota_keeps_actual_usage_without_a_manufactured_limit() {
+    let mut job = spec();
+    job.limits.memory_mib = None;
+    let mut output = result(&job);
+    output.resource_usage.peak_memory_bytes = Some(count(512 * 1024 * 1024));
+    // Existing result validation keeps the full observation. No comparison is
+    // invented against an absent quota; finite requests still enforce theirs.
+    manifest(&output, &job, now(), now()).unwrap();
+    job.limits.memory_mib = Some(128);
+    assert!(manifest(&output, &job, now(), now()).is_err());
 }

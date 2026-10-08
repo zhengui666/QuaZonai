@@ -61,6 +61,23 @@ describe('standalone DATA_VALIDATE request', () => {
     expect(request.expected_runtime_revision).toBe('9007199254740993');
     expect(request.limits.cpu_seconds).toBe('9007199254740993'); expect(request.limits.experiments).toBe(0);
     expect(request.input_set_id).toBe('input'); expect(input.items[0]?.origin).toBe('FIXTURE');
+    expect(request.limits.memory_mib).toBe(512);
+    expect(limits.memory_mib).toBe(512);
+  });
+  it.each([null, 1, 512, 1048577, 4294967295])('preserves optional memory quota %s through request serialization', memory_mib => {
+    const original = Object.freeze({ ...limits, memory_mib });
+    const request = validationRequest(input, 'project', runtime, [selection], original);
+    const reloaded = JSON.parse(JSON.stringify(request)) as Schema['DataValidateRequest'];
+    expect(request.limits.memory_mib).toBe(memory_mib);
+    expect(reloaded.limits.memory_mib).toBe(memory_mib);
+    expect(original.memory_mib).toBe(memory_mib);
+  });
+  it('unsets memory only in the explicitly edited request without replacing it with zero', () => {
+    const saved = validationRequest(input, 'project', runtime, [selection], limits);
+    const edited = validationRequest(input, 'project', runtime, [selection], { ...limits, memory_mib: null });
+    expect(saved.limits.memory_mib).toBe(512);
+    expect(JSON.parse(JSON.stringify(edited)).limits.memory_mib).toBeNull();
+    expect(limits.memory_mib).toBe(512);
   });
   it('never admits SEALED, mixed/artifact input, wrong project, missing binding, or cross-Runtime data', () => {
     for (const purpose of ['SEALED', 'FORWARD', 'PORTFOLIO'] as const) expect(validationInputIssue({ ...input, header: { ...input.header, purpose } }, 'project')).toBeTruthy();
@@ -71,7 +88,8 @@ describe('standalone DATA_VALIDATE request', () => {
   });
   it('checks native general bounds without unsafe number coercion', () => {
     for (const change of [{ cpu_seconds: '0' }, { cpu_seconds: '9223372036854775808' }, { cpu_seconds: '1e3' },
-      { output_bytes: '67108865' }, { output_bytes: '0' }, { wall_seconds: 86401 }, { wall_seconds: 1.5 }, { memory_mib: 1048577 }]) {
+      { output_bytes: '67108865' }, { output_bytes: '0' }, { wall_seconds: 86401 }, { wall_seconds: 1.5 },
+      ...[0, -1, 1.5, NaN, Infinity, 4294967296].map(memory_mib => ({ memory_mib }))]) {
       expect(() => validationRequest(input, 'project', runtime, [selection], { ...limits, ...change })).toThrow('限额');
     }
   });

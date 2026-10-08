@@ -120,11 +120,101 @@ pub enum DownstreamEnvironments {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+/// Persisted release/configuration history may contain V1. Only V2 is deliverable.
 pub enum PackageSchemaVersion {
     #[serde(rename = "1")]
     V1,
     #[serde(rename = "2")]
     V2,
+}
+
+impl PackageSchemaVersion {
+    pub const fn is_deliverable(self) -> bool {
+        matches!(self, Self::V2)
+    }
+}
+
+pub(crate) fn serialize_active_package_version<S: serde::Serializer>(
+    version: &PackageSchemaVersion,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if !version.is_deliverable() {
+        return Err(serde::ser::Error::custom(
+            "historical target package version is not deliverable",
+        ));
+    }
+    version.serialize(serializer)
+}
+
+pub(crate) fn deserialize_active_package_version<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<PackageSchemaVersion, D::Error> {
+    let version = PackageSchemaVersion::deserialize(deserializer)?;
+    if !version.is_deliverable() {
+        return Err(serde::de::Error::custom(
+            "historical target package version is not deliverable",
+        ));
+    }
+    Ok(version)
+}
+
+pub(crate) fn active_package_versions_schema(
+) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
+    ArrayBuilder::new()
+        .min_items(Some(1))
+        .max_items(Some(1))
+        .unique_items(true)
+        .items(
+            ObjectBuilder::new()
+                .schema_type(Type::String)
+                .enum_values(Some(["2"])),
+        )
+        .into()
+}
+
+fn active_downstream_configuration_schema(
+) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::{
+        openapi::{schema::Schema, RefOr},
+        PartialSchema,
+    };
+    let RefOr::T(Schema::Object(mut object)) = DownstreamConfigurationV1::schema() else {
+        unreachable!("downstream configuration is an object schema");
+    };
+    object.properties.insert(
+        "accepted_package_versions".into(),
+        active_package_versions_schema(),
+    );
+    RefOr::T(Schema::Object(object))
+}
+
+fn active_configuration(configuration: &DownstreamConfigurationV1) -> bool {
+    configuration.accepted_package_versions == [PackageSchemaVersion::V2]
+}
+
+fn serialize_active_configuration<S: serde::Serializer>(
+    configuration: &DownstreamConfigurationV1,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if !active_configuration(configuration) {
+        return Err(serde::ser::Error::custom(
+            "new downstream configuration requires only target package version 2",
+        ));
+    }
+    configuration.serialize(serializer)
+}
+
+fn deserialize_active_configuration<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<DownstreamConfigurationV1, D::Error> {
+    let configuration = DownstreamConfigurationV1::deserialize(deserializer)?;
+    if !active_configuration(&configuration) {
+        return Err(serde::de::Error::custom(
+            "new downstream configuration requires only target package version 2",
+        ));
+    }
+    Ok(configuration)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -145,6 +235,11 @@ pub struct DownstreamConfigurationV1 {
 #[serde(deny_unknown_fields)]
 pub struct DownstreamCreate {
     pub schema_version: SchemaV1,
+    #[serde(
+        serialize_with = "serialize_active_configuration",
+        deserialize_with = "deserialize_active_configuration"
+    )]
+    #[schema(schema_with = active_downstream_configuration_schema)]
     pub configuration: DownstreamConfigurationV1,
     pub credential_ref: Id,
 }
@@ -154,6 +249,11 @@ pub struct DownstreamCreate {
 pub struct DownstreamUpdate {
     pub schema_version: SchemaV1,
     pub expected_revision: Revision,
+    #[serde(
+        serialize_with = "serialize_active_configuration",
+        deserialize_with = "deserialize_active_configuration"
+    )]
+    #[schema(schema_with = active_downstream_configuration_schema)]
     pub configuration: DownstreamConfigurationV1,
     /// None retains the current native credential version.
     pub credential_ref: Option<Id>,

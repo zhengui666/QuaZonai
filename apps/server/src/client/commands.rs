@@ -2,7 +2,6 @@
 use super::{Failure, Result};
 use clap::{Args, Subcommand};
 use contracts::{
-    Id,
     artifacts::{ArtifactCreate, ArtifactView},
     brief::{BriefCreate, BriefUpdate, BriefView},
     codex::{
@@ -38,9 +37,10 @@ use contracts::{
         PortfolioBuildEnvelopeV2, PortfolioCandidateEnvelopeV2, PortfolioCandidateListEnvelopeV2,
         StrategyAlphaAdoptV1, StrategyAlphaVersionV1,
     },
+    Id,
 };
 use reqwest::Method;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 use std::io::Read;
 
 #[derive(Args)]
@@ -213,6 +213,9 @@ pub enum Forward {
 
 #[derive(Subcommand)]
 pub enum ForwardAccounts {
+    /// Preview and control managed-capital exits; this never withdraws funds.
+    #[command(subcommand)]
+    Exits(CapitalExits),
     /// Relay retained native envelopes in order, preserving original bytes and replay identity.
     Relay(super::account_transport::Arguments),
     /// Submit one original native snapshot/heartbeat envelope from stdin. Retry unchanged.
@@ -232,6 +235,53 @@ pub enum ForwardAccounts {
         #[command(flatten)]
         page: List,
     },
+}
+
+#[derive(Subcommand)]
+pub enum CapitalExits {
+    /// Request an evidence-bound server preview from stdin (no execution).
+    /// The generic --preview only validates local transport syntax and sends nothing.
+    Preview { #[arg(long)] project_id: String },
+    /// Start the exact approved preview from stdin; may activate native reductions.
+    /// A 202 receipt means requested, not cash released or withdrawal completed.
+    Start { #[arg(long)] project_id: String },
+    List(ProjectList),
+    Show { id: String },
+    /// Pause new reductions and resolve exit-owned pending orders; reserve remains.
+    Pause { id: String },
+    /// Cancel only future exit work; filled trades remain and reserve is not reinvested.
+    Cancel { id: String },
+    /// Continue remaining reductions using a fresh approved preview; never buy back.
+    Resume { id: String },
+    /// Report your own withdrawal for native verification; never performs a transfer.
+    Reconcile { id: String },
+}
+
+impl CapitalExits {
+    fn request(self) -> Result<Request> {
+        use contracts::capital_exit::*;
+        match self {
+            Self::Preview { project_id } => Request::write::<CapitalExitPreviewRequestV1, CommandResult<CapitalExitPreviewV1>>(
+                Method::POST, action("/api/v2/projects", project_id, "capital-exit-previews")?, 201, true),
+            Self::Start { project_id } => Request::write::<CapitalExitStartV1, CommandResult<CapitalExitViewV1>>(
+                Method::POST, action("/api/v2/projects", project_id, "capital-exits")?, 202, true),
+            Self::List(list) => Request::get::<Page<CapitalExitViewV1>>(action("/api/v2/projects", list.project_id, "capital-exits")?).page(list.page),
+            Self::Show { id } => Ok(Request::get::<CapitalExitViewV1>(item("/api/v2/capital-exits", id)?)),
+            Self::Pause { id } => Self::action_input(id, "pause", "PAUSE", std::io::stdin().lock()),
+            Self::Cancel { id } => Self::action_input(id, "cancel", "CANCEL", std::io::stdin().lock()),
+            Self::Resume { id } => Self::action_input(id, "resume", "RESUME", std::io::stdin().lock()),
+            Self::Reconcile { id } => Self::action_input(id, "reconcile-withdrawal", "RECONCILE_WITHDRAWAL", std::io::stdin().lock()),
+        }
+    }
+    fn action_input(id: String, suffix: &str, expected_action: &str, input: impl Read) -> Result<Request> {
+        use contracts::capital_exit::{CapitalExitActionV1, CapitalExitViewV1};
+        let request = Request::write_input::<CapitalExitActionV1, CommandResult<CapitalExitViewV1>>(
+            Method::POST, action("/api/v2/capital-exits", id, suffix)?, 202, true, input)?;
+        let body: CapitalExitActionV1 = serde_json::from_slice(request.body.as_deref().ok_or(Failure::Input)?)
+            .map_err(|_| Failure::Input)?;
+        if body.action() != expected_action { return Err(Failure::Input); }
+        Ok(request)
+    }
 }
 
 #[derive(Subcommand)]
@@ -262,6 +312,7 @@ pub enum Handoff {
     Ack {
         id: String,
     },
+    /// Claim only target package version 2; the response identifies its Forecast or Native source.
     Claim {
         id: String,
     },
@@ -667,10 +718,10 @@ pub enum Run {
         id: String,
         #[arg(long)]
         after: Option<String>,
-        #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u32).range(1..=3600))]
-        max_seconds: u32,
-        #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..=10000))]
-        max_events: u32,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        max_seconds: Option<u32>,
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        max_events: Option<u64>,
     },
 }
 
@@ -684,8 +735,8 @@ pub(super) enum Output {
     Events {
         run: Id,
         after: Option<String>,
-        seconds: u32,
-        events: u32,
+        seconds: Option<u32>,
+        events: Option<u64>,
     },
 }
 #[derive(Subcommand)]
@@ -751,14 +802,12 @@ fn decode<T: DeserializeOwned + Serialize>(bytes: &[u8]) -> Result<serde_json::V
     let value: T = serde_json::from_slice(bytes).map_err(|_| Failure::Contract)?;
     serde_json::to_value(value).map_err(|_| Failure::Contract)
 }
-fn read_input<T: DeserializeOwned + Serialize>() -> Result<Vec<u8>> {
+fn read_input<T: DeserializeOwned + Serialize>(mut input: impl Read) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    std::io::stdin()
-        .lock()
-        .take(16 * 1024 * 1024 + 1)
+    input
         .read_to_end(&mut bytes)
         .map_err(|_| Failure::Input)?;
-    if bytes.is_empty() || bytes.len() > 16 * 1024 * 1024 {
+    if bytes.is_empty() {
         return Err(Failure::Input);
     }
     let value: T = serde_json::from_slice(&bytes).map_err(|_| Failure::Input)?;
@@ -827,11 +876,22 @@ impl Request {
         status: u16,
         operator: bool,
     ) -> Result<Self> {
+        Self::write_input::<T, R>(method, route, status, operator, std::io::stdin().lock())
+    }
+    // The same typed input gate is used before previews and real sends.
+    // In particular, historical target versions cannot become a Request body.
+    fn write_input<T: DeserializeOwned + Serialize, R: DeserializeOwned + Serialize>(
+        method: Method,
+        route: impl Into<String>,
+        status: u16,
+        operator: bool,
+        input: impl Read,
+    ) -> Result<Self> {
         Ok(Self {
             method,
             route: route.into(),
             query: vec![],
-            body: Some(read_input::<T>()?),
+            body: Some(read_input::<T>(input)?),
             status,
             operator,
             output: Output::Json(decode::<R>),
@@ -855,6 +915,7 @@ impl ForwardAccounts {
     fn request(self) -> Result<Request> {
         use contracts::account_observation::*;
         Ok(match self {
+            Self::Exits(command) => return command.request(),
             Self::Relay(_) => return Err(Failure::Input),
             Self::Submit => {
                 Request::write::<AccountObservationSubmitV1, AccountObservationReceiptV1>(
@@ -1939,7 +2000,7 @@ impl Command {
 mod brief_read_tests {
     use super::*;
     use clap::Parser;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     const BRIEF: &str = "018fc823-8e40-7000-8000-000000000001";
     const PROJECT: &str = "018fc823-8e40-7000-8000-000000000002";
@@ -2110,5 +2171,364 @@ mod dataset_evidence_tests {
         let mut number = value;
         number["quality"]["row_count"] = serde_json::json!(9007199254740993_u64);
         assert!(decode(&serde_json::to_vec(&number).unwrap()).is_err());
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../../tests/support/execution_models.rs"]
+mod target_delivery_execution_models;
+
+#[cfg(test)]
+mod target_delivery_v2_tests {
+    use super::target_delivery_execution_models as execution_models;
+    use super::*;
+    use contracts::{delivery::HandoffClaimV1, strategy_portfolio::HandoffClaimViewV2};
+    use serde_json::{json, Value};
+
+    const ID: &str = "018fc823-8e40-7000-8000-000000000001";
+    const TIME: &str = "2026-10-03T00:00:00Z";
+
+    // Controlled wire fixtures only; these do not establish publication eligibility.
+    fn cash() -> Value {
+        json!({"downstream_id":Id::new(),"trader_id":"TRADER-001","account_id":"BINANCE-001",
+        "base_currency":"USDT","starting_capital":"1000","execution_assumptions_id":Id::new()})
+    }
+
+    fn v1_package() -> Value {
+        let input: Value = serde_json::from_str(include_str!(
+            "../../../../tests/contracts/allocation-input.json"
+        ))
+        .unwrap();
+        json!({
+            "release_id":Id::new(),"package_schema_version":"1","environment_origin":"DEMO",
+            "project_id":Id::new(),"candidate_id":Id::new(),"mandate_id":Id::new(),
+            "qualification_refs":[Id::new(),Id::new()],"evaluation_refs":[Id::new()],"input_revision_refs":[Id::new()],
+            "engine_versions":{"nautilus":"0.63.0"},"asof":"2026-10-03T00:00:00Z",
+            "valid_from":"2026-10-03T00:00:00Z","valid_until":"2026-10-03T00:01:00Z",
+            "base_currency":"USD","capital_assumption":"1000","current_weights_source":"NONE",
+            "targets":[{"instrument_id":"EXAMPLE.SIM","target_weight":"0.25","currency":"USD"}],
+            "cash_weight":"0.75","constraints_summary":input["constraints"],"exposure_tolerance":"0.01",
+            "cost_assumption_ref":Id::new(),"compatible_market_capabilities":["fixture/1"],
+            "limitations":["synthetic wire fixture"],"provenance_artifact_refs":[Id::new()]
+        })
+    }
+
+    fn forecast_v2_package() -> Value {
+        let mut package = v1_package();
+        package["package_schema_version"] = json!("2");
+        package["source_kind"] = json!("FORECAST_EVALUATION");
+        let dataset = Id::new();
+        let metadata = Id::new();
+        package["source"] = json!({
+            "build_run_id":Id::new(), "build_accepted_attempt_id":Id::new(),
+            "build_parameters_artifact_id":Id::new(), "build_report_artifact_id":Id::new(),
+            "build_input_set_id":Id::new(), "build_environment":"LIVE",
+            "forward_dataset_revision_id":dataset, "forward_metadata_artifact_id":metadata,
+            "current_weights_artifact_id":Id::new()
+        });
+        package["current_weights"] = json!({
+            "schema_version":1, "source":{"kind":"LAST_TARGET", "candidate_id":Id::new()},
+            "asof_ns":"9007199254740993", "available_ns":"9007199254740994",
+            "valid_until_ns":"9007199254740995", "base_currency":"USD", "cash_weight":"0.75",
+            "weights":[{"instrument_id":"EXAMPLE.SIM","weight":"0.25","currency":"USD"}]
+        });
+        package["execution_settings"] = v2_package()["execution_settings"].clone();
+        package["forward_dataset"] = json!({
+            "dataset_revision_id":dataset,"native_metadata_artifact_id":metadata,
+            "storage_version":"original-version", "data_kind":"BAR", "partition":"FORWARD",
+            "origin":"SYNTHETIC","pit_status":"UNVERIFIED","revision_policy":"UNKNOWN",
+            "event_start":"2026-10-02T23:00:00Z","event_end":"2026-10-03T00:00:00Z",
+            "available_through":"2026-10-03T00:00:00Z","row_count":"1",
+            "selection":{"schema_version":1,"bar_types":["EXAMPLE.SIM-1-MINUTE-LAST-EXTERNAL"],
+                "event_start_ns":"1","event_end_ns":"9007199254740993",
+                "decision_cutoff_ns":"9007199254740993","maximum_rows":1},
+            "instrument_definitions":[{"CurrencyPair":{"id":"EXAMPLE.SIM","ts_event":0,"ts_init":0,"price_increment":"0.01"}}]
+        });
+        package
+    }
+
+    fn v2_package() -> Value {
+        let mut package = v1_package();
+        let object = package.as_object_mut().unwrap();
+        for name in [
+            "environment_origin",
+            "qualification_refs",
+            "evaluation_refs",
+            "current_weights_source",
+        ] {
+            object.remove(name);
+        }
+        object.insert("package_schema_version".into(), json!("2"));
+        object.insert("source_kind".into(), json!("NATIVE_TARGET_DECISION"));
+        object.insert("execution_environment".into(), json!("PAPER"));
+        object.insert("account_start".into(), cash());
+        object.insert("execution_settings".into(), json!({
+        "schema_version":1,"base_currency":"USDT","starting_capital":"1000",
+        "account_kind":"MARGIN","leverage":"1","fee_model":execution_models::fee(),
+        "fill_model":execution_models::fill(),"latency_model":execution_models::latency(1000000),
+        "snapshot_interval_ms":1000,"exposure_tolerance":"0.01",
+        "fee_rates":[{"instrument_id":"BTCUSDT.BINANCE","maker":"0","taker":"0.001"}]
+    }));
+        object.insert(
+            "source".into(),
+            json!({"run_id":Id::new(),"accepted_attempt_id":Id::new(),
+        "report_artifact_id":Id::new(),"alpha_version_ids":[Id::new()],
+        "input_provenance":{"dataset_revision_id":Id::new(),"market_data_origin":"REAL",
+            "pit_status":"UNVERIFIED","revision_policy":"UNKNOWN","feature_artifact_origins":{}}}),
+        );
+        package
+    }
+
+    fn claim(version: Value) -> Result<Request> {
+        let body = serde_json::to_vec(&json!({
+            "schema_version":1, "external_claim_id":"original-claim", "package_schema_version":version
+        })).unwrap();
+        Request::write_input::<HandoffClaimV1, CommandResult<HandoffClaimViewV2>>(
+            Method::POST,
+            action("/api/v2/handoffs", ID.into(), "claim")?,
+            200,
+            false,
+            body.as_slice(),
+        )
+    }
+
+    fn handoff() -> Value {
+        json!({"id":ID,"project_id":ID,"candidate_id":ID,"mandate_id":ID,"release_id":ID,
+            "approval_id":ID,"downstream_id":ID,"environment":"PAPER","delivery_sequence":"1",
+            "revision":"1","state":"CLAIMED","supersedes_handoff_id":null,
+            "offered_at":TIME,"expires_at":TIME,"claimed_at":TIME,
+            "external_claim_id":"original-claim","acknowledged_at":null})
+    }
+
+    fn configuration(versions: Value) -> Value {
+        json!({"name":"Original downstream","endpoint":"https://downstream.example",
+            "accepted_package_versions":versions,"environments":"PAPER","enabled":true,"development_http":false})
+    }
+
+    #[test]
+    fn target_v2_input_gate_rejects_legacy_claim_before_request_or_preview() {
+        for version in [json!("1"), json!(1), json!(2), json!("3"), Value::Null] {
+            assert!(matches!(claim(version), Err(Failure::Input)));
+        }
+        let request = claim(json!("2")).unwrap();
+        assert_eq!(request.method, Method::POST);
+        assert_eq!(request.route, format!("/api/v2/handoffs/{ID}/claim"));
+        assert_eq!(request.status, 200);
+        assert!(!request.operator);
+        assert!(request.requires_idempotency_key());
+        assert_eq!(
+            serde_json::from_slice::<Value>(request.body.as_ref().unwrap()).unwrap()
+                ["package_schema_version"],
+            "2"
+        );
+        assert!(matches!(
+            super::super::preview::inspect(&request, "https://api.example", false, None, None),
+            Err(Failure::IdempotencyRequired)
+        ));
+        let preview = super::super::preview::inspect(
+            &request,
+            "https://api.example",
+            false,
+            Some("claim-v2"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(preview["request_sent"], false);
+        assert_eq!(preview["authorization_checked"], false);
+        assert_eq!(preview["requires_idempotency_key"], true);
+        assert_eq!(preview["requires_operator_grant"], false);
+        assert_eq!(preview["body_redacted"], true);
+        assert!(preview.get("body").is_none());
+    }
+
+    #[test]
+    fn target_v2_cli_claim_keeps_frozen_forecast_and_native_bodies_distinct() {
+        let Output::Json(decode) = claim(json!("2")).unwrap().output else {
+            panic!("typed claim response")
+        };
+        for package in [forecast_v2_package(), v2_package()] {
+            let response = json!({"schema_version":1,"replayed":true,"resource":{"handoff":handoff(),"package":package}});
+            let parsed = decode(&serde_json::to_vec(&response).unwrap()).unwrap();
+            assert_eq!(parsed, response);
+            assert_eq!(parsed["resource"]["package"]["package_schema_version"], "2");
+        }
+        let forecast = forecast_v2_package();
+        assert_eq!(forecast["source"]["build_environment"], "LIVE");
+        assert_eq!(forecast["current_weights"]["asof_ns"], "9007199254740993");
+        assert!(forecast.get("account_start").is_none());
+        let mut malformed = Vec::from([v1_package()]);
+        for source in [
+            Value::Null,
+            json!("UNKNOWN"),
+            json!("NATIVE_TARGET_DECISION"),
+        ] {
+            let mut crossed = forecast.clone();
+            crossed["source_kind"] = source;
+            malformed.push(crossed);
+        }
+        for field in [
+            "source_kind",
+            "source",
+            "forward_dataset",
+            "current_weights",
+            "execution_settings",
+        ] {
+            let mut missing = forecast.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            malformed.push(missing);
+        }
+        for package in malformed {
+            let response = json!({"schema_version":1,"replayed":false,"resource":{"handoff":handoff(),"package":package}});
+            assert!(matches!(
+                decode(&serde_json::to_vec(&response).unwrap()),
+                Err(Failure::Contract)
+            ));
+        }
+    }
+
+    #[test]
+    fn target_v2_cli_historical_downstream_reads_never_become_write_defaults() {
+        let request = Command::Downstream(Downstream::Show { id: ID.into() })
+            .request()
+            .unwrap();
+        assert_eq!(request.method, Method::GET);
+        assert!(!request.requires_idempotency_key());
+        let Output::Json(decode) = request.output else {
+            panic!("typed historical view")
+        };
+        for versions in [json!(["1"]), json!(["1", "2"])] {
+            let original = configuration(versions);
+            let view = json!({"id":ID,"configuration":original,"credential_configured":true,
+                "revision":"9007199254740993","created_at":TIME,"updated_at":TIME});
+            assert_eq!(decode(&serde_json::to_vec(&view).unwrap()).unwrap(), view);
+            let create = serde_json::to_vec(
+                &json!({"schema_version":1,"configuration":original,"credential_ref":ID}),
+            )
+            .unwrap();
+            assert!(matches!(
+                Request::write_input::<DownstreamCreate, CommandResult<DownstreamView>>(
+                    Method::POST,
+                    "/api/v2/integrations/downstreams",
+                    201,
+                    true,
+                    create.as_slice()
+                ),
+                Err(Failure::Input)
+            ));
+            let update = serde_json::to_vec(&json!({"schema_version":1,"configuration":original,"credential_ref":null,"expected_revision":"9007199254740993"})).unwrap();
+            assert!(matches!(
+                Request::write_input::<DownstreamUpdate, CommandResult<DownstreamView>>(
+                    Method::PATCH,
+                    format!("/api/v2/integrations/downstreams/{ID}"),
+                    200,
+                    true,
+                    update.as_slice()
+                ),
+                Err(Failure::Input)
+            ));
+        }
+        let create = serde_json::to_vec(&json!({"schema_version":1,"configuration":configuration(json!(["2"])),"credential_ref":ID})).unwrap();
+        let active = Request::write_input::<DownstreamCreate, CommandResult<DownstreamView>>(
+            Method::POST,
+            "/api/v2/integrations/downstreams",
+            201,
+            true,
+            create.as_slice(),
+        )
+        .unwrap();
+        assert!(active.operator);
+        assert!(active.requires_idempotency_key());
+    }
+
+    #[test]
+    fn target_v2_cli_release_history_keeps_original_v1_read_only() {
+        let request = Command::Release(Release::Show { id: ID.into() })
+            .request()
+            .unwrap();
+        assert_eq!(request.method, Method::GET);
+        assert!(!request.requires_idempotency_key());
+        assert!(!request.operator);
+        assert!(request.body.is_none());
+        let Output::Json(decode) = request.output else {
+            panic!("typed release view")
+        };
+        let original = json!({"id":ID,"project_id":ID,"candidate_id":ID,"mandate_id":ID,"evaluation_id":ID,
+            "package_artifact_id":ID,"package_schema_version":"1","market_capability_version":"original/1",
+            "asof":TIME,"valid_from":TIME,"valid_until":TIME,"environment":"REAL","created_at":TIME});
+        assert_eq!(
+            decode(&serde_json::to_vec(&original).unwrap()).unwrap(),
+            original
+        );
+        assert!(!PackageSchemaVersion::V1.is_deliverable());
+    }
+}
+
+#[cfg(test)]
+mod capital_exit_cli_tests {
+    use super::*;
+    const ID: &str = "018fc823-8e40-7000-8000-000000000001";
+    #[test]
+    fn capital_exit_reads_use_original_paginated_routes() {
+        let request = CapitalExits::List(ProjectList { project_id: ID.into(), page: List { cursor: None, limit: 25 } }).request().unwrap();
+        assert_eq!(request.route, format!("/api/v2/projects/{ID}/capital-exits"));
+        assert_eq!(request.query, [("limit".into(), "25".into())]);
+        assert_eq!(request.method, Method::GET);
+        assert!(!request.requires_idempotency_key());
+        assert_eq!(CapitalExits::Show { id: ID.into() }.request().unwrap().route, format!("/api/v2/capital-exits/{ID}"));
+    }
+    #[test]
+    fn capital_exit_actions_require_typed_matching_tag_and_preserve_exact_scalars() {
+        for (suffix, action) in [("pause", "PAUSE"), ("cancel", "CANCEL"), ("resume", "RESUME"), ("reconcile-withdrawal", "RECONCILE_WITHDRAWAL")] {
+            let mut body = serde_json::json!({"schema_version":1,"expected_revision":"9007199254740993","action":action});
+            if action == "RESUME" { body["preview_id"] = ID.into(); }
+            if action == "RECONCILE_WITHDRAWAL" {
+                body["user_reported_amount"] = "1234567890.123456789012345678".into(); body["currency"] = "USD".into();
+                body["external_transfer_ref"] = "original-transfer".into();
+            }
+            let bytes = serde_json::to_vec(&body).unwrap();
+            let request = CapitalExits::action_input(ID.into(), suffix, action, bytes.as_slice()).unwrap();
+            assert_eq!(request.route, format!("/api/v2/capital-exits/{ID}/{suffix}"));
+            assert_eq!(request.status, 202); assert!(request.operator); assert!(request.requires_idempotency_key());
+            assert_eq!(serde_json::from_slice::<serde_json::Value>(request.body.as_ref().unwrap()).unwrap(), body);
+            assert!(CapitalExits::action_input(ID.into(), suffix, "WRONG_ACTION", bytes.as_slice()).is_err());
+            body["unknown_field"] = true.into();
+            assert!(CapitalExits::action_input(ID.into(), suffix, action, serde_json::to_vec(&body).unwrap().as_slice()).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod complete_input_tests {
+    use super::*;
+
+    #[test]
+    fn typed_input_crosses_the_former_transport_limit_without_truncation() {
+        let expected = serde_json::json!({"original": "a".repeat(16 * 1024 * 1024 + 1)});
+        let raw = serde_json::to_vec(&expected).unwrap();
+        let parsed = read_input::<serde_json::Value>(raw.as_slice()).unwrap();
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&parsed).unwrap(), expected);
+        let mut incomplete = raw;
+        incomplete.pop();
+        assert!(read_input::<serde_json::Value>(incomplete.as_slice()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod uncapped_watch_tests {
+    use super::*;
+    use clap::Parser;
+    #[derive(Parser)]
+    struct Arguments { #[command(subcommand)] command: Command }
+    const RUN: &str = "018fc823-8e40-7000-8000-000000000001";
+
+    #[test]
+    fn watch_has_no_default_time_or_event_ceiling_and_preserves_explicit_values() {
+        let request = Arguments::try_parse_from(["client", "run", "watch", RUN]).unwrap().command.request().unwrap();
+        assert!(matches!(request.output, Output::Events { seconds: None, events: None, .. }));
+        let request = Arguments::try_parse_from(["client", "run", "watch", RUN, "--max-seconds", "3601", "--max-events", "10001"]).unwrap().command.request().unwrap();
+        assert!(matches!(request.output, Output::Events { seconds: Some(3601), events: Some(10001), .. }));
+        for field in ["--max-seconds", "--max-events"] {
+            assert!(Arguments::try_parse_from(["client", "run", "watch", RUN, field, "0"]).is_err());
+        }
     }
 }

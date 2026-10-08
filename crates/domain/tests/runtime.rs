@@ -26,7 +26,7 @@ fn only_complete_bounded_current_native_observations_are_accepted() {
     value.image_refs[0].image_ref = "registry.example/job:latest".into();
     assert!(capabilities(&value, now).is_err());
     value = baseline.clone();
-    value.max_output_bytes = DbCounter::new(0).unwrap();
+    value.max_output_bytes = Some(DbCounter::new(0).unwrap());
     assert!(capabilities(&value, now).is_err());
     value = baseline.clone();
     value.engine_versions.clear();

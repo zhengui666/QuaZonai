@@ -333,7 +333,7 @@ async fn accept_with(
             ("wasmi".into(), "2.0.0".into()),
             ("strategy-composition".into(), "1".into()),
         ]),
-        consumed_fuel: DbCounter::new(if current { 1000 } else { 0 }).unwrap(),
+        consumed_fuel: if current { None } else { Some(DbCounter::ZERO) },
         outcome,
     };
     alter(&mut report);

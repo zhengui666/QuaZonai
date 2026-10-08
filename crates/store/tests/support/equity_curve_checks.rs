@@ -83,7 +83,8 @@ pub(crate) async fn check_projection(
         } => {
             assert!(!infeasible);
             assert!(!series.points.is_empty());
-            assert!(series.points.len() <= MAX_EQUITY_POINTS);
+            assert_eq!(series.points.len() as u64, series.source_point_count.get());
+            assert_eq!(series.resolution, EquityResolution::Native);
             assert!(series.points.iter().all(|point| point.value.is_some()));
             // Metadata of the native report remains restricted; only its projection
             // is readable. A normal artifact download cannot replace this endpoint.

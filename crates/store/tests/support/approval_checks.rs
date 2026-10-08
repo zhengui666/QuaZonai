@@ -13,78 +13,131 @@ pub(super) async fn check(
     release: &ReleaseViewV1,
     sibling: &ReleaseViewV1,
 ) {
-    let down = store
-        .create_downstream(
-            actor,
-            "approval-downstream",
-            &DownstreamCreate {
-                schema_version: SchemaV1,
-                credential_ref: Id::new(),
-                configuration: DownstreamConfigurationV1 {
-                    name: "Approval protocol fixture".into(),
-                    endpoint: "https://approval.example".into(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
-                    environments: DownstreamEnvironments::Both,
-                    enabled: true,
-                    development_http: false,
-                },
-            },
-            |_| async { Ok(()) },
-        )
-        .await
-        .unwrap()
-        .resource;
-    let request = ReleaseApproveV1 {
-        schema_version: SchemaV1,
-        downstream_id: down.id,
-        environment: ForwardEnvironmentV1::Paper,
-        expected_downstream_revision: down.revision,
-        expected_latest_decision_id: None,
-        valid_until: release.valid_until,
-    };
-    assert!(Box::pin(store.approve_release(
-        actor,
-        "no-readiness",
-        release.id,
-        &request,
-        |id, size| f.read(id, size)
-    ))
-    .await
-    .is_err());
-    let store::downstream::ProbePreparation::Pending(ticket) = store
-        .prepare_downstream_probe(
-            actor,
-            "approval-probe",
-            down.id,
-            &DownstreamProbeRequestV1 {
-                schema_version: SchemaV1,
-                expected_revision: down.revision,
-            },
-        )
-        .await
-        .unwrap()
-    else {
-        panic!("new probe")
-    };
-    let probe = store
-        .complete_downstream_probe(
-            *ticket,
-            DownstreamProbeOutcomeV1::Available {
-                capabilities: DownstreamCapabilitiesV1 {
+    // Separate poll frames before entering the nested Offer/Claim scenarios.
+    let (down, request, probe) = Box::pin(async {
+        let down = store
+            .create_downstream(
+                actor,
+                "approval-downstream",
+                &DownstreamCreate {
                     schema_version: SchemaV1,
-                    delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
-                    environments: vec![ForwardEnvironmentV1::Paper, ForwardEnvironmentV1::Live],
-                    market_capability_versions: vec![release.market_capability_version.clone()],
-                    accepting_targets: true,
-                    checked_at: chrono::Utc::now(),
+                    credential_ref: Id::new(),
+                    configuration: DownstreamConfigurationV1 {
+                        name: "Approval protocol fixture".into(),
+                        endpoint: "https://approval.example".into(),
+                        accepted_package_versions: vec![PackageSchemaVersion::V2],
+                        environments: DownstreamEnvironments::Both,
+                        enabled: true,
+                        development_http: false,
+                    },
                 },
-            },
-            |id, bytes| async move { f.objects.put(id, &bytes).map_err(|_| StoreError::Integrity) },
-        )
+                |_| async { Ok(()) },
+            )
+            .await
+            .unwrap()
+            .resource;
+        let request = ReleaseApproveV1 {
+            schema_version: SchemaV1,
+            downstream_id: down.id,
+            environment: ForwardEnvironmentV1::Paper,
+            expected_downstream_revision: down.revision,
+            expected_latest_decision_id: None,
+            valid_until: release.valid_until,
+        };
+        assert!(Box::pin(store.approve_release(
+            actor,
+            "no-readiness",
+            release.id,
+            &request,
+            |id, size| f.read(id, size)
+        ))
         .await
-        .unwrap()
-        .resource;
+        .is_err());
+        let store::downstream::ProbePreparation::Pending(ticket) = store
+            .prepare_downstream_probe(
+                actor,
+                "approval-probe",
+                down.id,
+                &DownstreamProbeRequestV1 {
+                    schema_version: SchemaV1,
+                    expected_revision: down.revision,
+                },
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("new probe")
+        };
+        let probe =
+            store
+                .complete_downstream_probe(
+                    *ticket,
+                    DownstreamProbeOutcomeV1::Available {
+                        capabilities: DownstreamCapabilitiesV1 {
+                            schema_version: SchemaV1,
+                            delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
+                            accepted_package_versions: vec![PackageSchemaVersion::V2],
+                            environments: vec![
+                                ForwardEnvironmentV1::Paper,
+                                ForwardEnvironmentV1::Live,
+                            ],
+                            market_capability_versions: vec![release
+                                .market_capability_version
+                                .clone()],
+                            accepting_targets: true,
+                            checked_at: chrono::Utc::now(),
+                        },
+                    },
+                    |id, bytes| async move {
+                        f.objects.put(id, &bytes).map_err(|_| StoreError::Integrity)
+                    },
+                )
+                .await
+                .unwrap()
+                .resource;
+        (down, request, probe)
+    })
+    .await;
+    let (approval, second, renewed) = Box::pin(async {
+    for case in ["source", "dataset", "version"] {
+        let rejected = Box::pin(store.approve_release(
+            actor,
+            &format!("approval-v2-tampered-{case}"),
+            release.id,
+            &request,
+            |id, size| async move {
+                let bytes = f.read(id, size).await?;
+                if id != release.package_artifact_id {
+                    return Ok(bytes);
+                }
+                let mut package: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                match case {
+                    "source" => {
+                        package["source"]["forward_dataset_revision_id"] =
+                            serde_json::json!(Id::new())
+                    }
+                    "dataset" => {
+                        package["forward_dataset"]["native_metadata_artifact_id"] =
+                            serde_json::json!(Id::new())
+                    }
+                    "version" => package["package_schema_version"] = serde_json::json!("1"),
+                    _ => unreachable!(),
+                }
+                let changed = serde_json::to_vec(&package).unwrap();
+                assert_eq!(
+                    changed.len(),
+                    bytes.len(),
+                    "read-size check is not the rejection under test"
+                );
+                Ok(changed)
+            },
+        ))
+        .await;
+        assert!(
+            matches!(rejected, Err(StoreError::Integrity)),
+            "{case}: {rejected:?}"
+        );
+    }
     let mut live = request.clone();
     live.environment = ForwardEnvironmentV1::Live;
     let rejected = Box::pin(store.approve_release(
@@ -319,54 +372,60 @@ pub(super) async fn check(
     .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.resource.decision_ordinal, Some(0));
+        (approval, second, renewed)
+    })
+    .await;
     Box::pin(handoffs::check(
         pool, store, actor, f, release, sibling, &approval, &second, &renewed,
     ))
     .await;
-    let mut expired = renewed.clone();
-    expired.valid_until = chrono::Utc::now() - chrono::Duration::seconds(1);
-    assert!(Box::pin(store.approve_release(
-        actor,
-        "expired-approval",
-        release.id,
-        &expired,
-        |id, size| f.read(id, size)
-    ))
-    .await
-    .is_err());
-    let mut changed = down.configuration.clone();
-    changed.name = "Updated downstream".into();
-    store
-        .update_downstream(
+    Box::pin(async {
+        let mut expired = renewed.clone();
+        expired.valid_until = chrono::Utc::now() - chrono::Duration::seconds(1);
+        assert!(Box::pin(store.approve_release(
             actor,
-            "change-approved-downstream",
-            down.id,
-            &DownstreamUpdate {
-                schema_version: SchemaV1,
-                expected_revision: down.revision,
-                configuration: changed,
-                credential_ref: None,
-            },
-            |_| async { Ok(()) },
-        )
-        .await
-        .unwrap();
-    assert!(matches!(
-        Box::pin(store.approve_release(
-            actor,
-            "old-downstream",
+            "expired-approval",
             release.id,
-            &renewed,
+            &expired,
             |id, size| f.read(id, size)
         ))
-        .await,
-        Err(StoreError::RevisionConflict { .. })
-    ));
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.handoff_offers")
-            .fetch_one(pool)
+        .await
+        .is_err());
+        let mut changed = down.configuration.clone();
+        changed.name = "Updated downstream".into();
+        store
+            .update_downstream(
+                actor,
+                "change-approved-downstream",
+                down.id,
+                &DownstreamUpdate {
+                    schema_version: SchemaV1,
+                    expected_revision: down.revision,
+                    configuration: changed,
+                    credential_ref: None,
+                },
+                |_| async { Ok(()) },
+            )
             .await
-            .unwrap(),
-        7 // Two original offers plus five independent claim scenarios.
-    );
+            .unwrap();
+        assert!(matches!(
+            Box::pin(store.approve_release(
+                actor,
+                "old-downstream",
+                release.id,
+                &renewed,
+                |id, size| f.read(id, size)
+            ))
+            .await,
+            Err(StoreError::RevisionConflict { .. })
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.handoff_offers")
+                .fetch_one(pool)
+                .await
+                .unwrap(),
+            7 // Two original offers plus five independent claim scenarios.
+        );
+    })
+    .await;
 }

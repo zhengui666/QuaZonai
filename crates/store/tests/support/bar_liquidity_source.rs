@@ -176,7 +176,7 @@ async fn portfolio_reads_original_research_partitions_only_when_explicitly_reque
             experiments: 0,
             cpu_seconds: Some(contracts::DbCounter::new(10).unwrap()),
             wall_seconds: Some(60),
-            memory_mib: 512,
+            memory_mib: Some(512),
             output_bytes: Some(contracts::DbCounter::new(65_536).unwrap()),
         },
     };

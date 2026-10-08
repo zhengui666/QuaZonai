@@ -42,28 +42,14 @@ fn development(state: &AppState, requested: bool) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Keep ownership of an admitted, bounded command after client disconnection.
+/// Keep ownership of an admitted command after client disconnection.
 /// This is not a queue or retry engine: the same original transaction runs once.
-pub(crate) async fn command<T, F>(state: &AppState, operation: F) -> Result<T, ApiError>
+pub(crate) async fn command<T, F>(_state: &AppState, operation: F) -> Result<T, ApiError>
 where
     T: Send + 'static,
     F: Future<Output = Result<T, StoreError>> + Send + 'static,
 {
-    let permit = state
-        .integration_slots
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::TOO_MANY_REQUESTS,
-                "INTEGRATION_CAPACITY",
-                "集成配置操作已满，请稍后重试。",
-            )
-        })?;
-    tokio::spawn(async move {
-        let _permit = permit;
-        operation.await
-    })
+    tokio::spawn(operation)
     .await
     .map_err(|_| ApiError::internal())?
     .map_err(Into::into)
@@ -77,7 +63,7 @@ fn material(purpose: IntegrationSecretPurpose, value: &[u8]) -> Result<(), Store
         let invalid = || domain::research::invalid("value", "INVALID_CA_CERTIFICATE");
         let certificates =
             reqwest::Certificate::from_pem_bundle(value.as_bytes()).map_err(|_| invalid())?;
-        if certificates.is_empty() || certificates.len() > 16 {
+        if certificates.is_empty() {
             return Err(invalid().into());
         }
         // rustls validates each DER trust anchor during native Client construction.
@@ -91,6 +77,24 @@ fn material(purpose: IntegrationSecretPurpose, value: &[u8]) -> Result<(), Store
         builder.build().map_err(|_| invalid())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod certificate_capacity_tests {
+    use super::*;
+
+    #[test]
+    fn native_ca_material_crosses_former_certificate_count_limit() {
+        // Public test root only. No private key or system trust store is used.
+        let certificate = include_str!("../tests/fixtures/capacity-ca.pem");
+        let bundle = certificate.repeat(17);
+        assert!(bundle.len() < 65536);
+        assert_eq!(reqwest::Certificate::from_pem_bundle(bundle.as_bytes()).unwrap().len(), 17);
+        material(IntegrationSecretPurpose::TlsCa, bundle.as_bytes()).unwrap();
+        for invalid in [b"".as_slice(), b"not a PEM certificate", b"-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----"] {
+            assert!(material(IntegrationSecretPurpose::TlsCa, invalid).is_err());
+        }
+    }
 }
 
 async fn native_references(
@@ -305,4 +309,51 @@ pub async fn update_downstream(
         })
         .await?,
     ))
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn five_admitted_commands_keep_ownership_when_a_waiter_disconnects() {
+        let root = tempfile::tempdir().unwrap();
+        let secrets = root.path().join("secrets");
+        std::fs::create_dir(&secrets).unwrap();
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let key = root.path().join("key");
+        SecretVault::initialize_key(&key).unwrap();
+        // No database operation occurs in this deterministic ownership test.
+        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy("postgres://fixture:fixture@localhost/unused").unwrap();
+        let state = AppState::new(store::Store::from_pool(pool), SecretVault::open(&secrets, &key).unwrap(),
+            crate::WebPolicy::new("https://localhost", "127.0.0.1:8080".parse().unwrap(), false).unwrap());
+        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut waiters = Vec::new();
+        let mut releases = Vec::new();
+        for _ in 0..5 {
+            let state = state.clone();
+            let completed = completed.clone();
+            let (entered, observed) = tokio::sync::oneshot::channel();
+            let (release, released) = tokio::sync::oneshot::channel();
+            waiters.push(tokio::spawn(async move {
+                command(&state, async move {
+                    entered.send(()).unwrap();
+                    released.await.unwrap();
+                    completed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok::<_, StoreError>(())
+                }).await
+            }));
+            tokio::time::timeout(std::time::Duration::from_secs(3), observed).await.unwrap().unwrap();
+            releases.push(release);
+        }
+        let disconnected = waiters.pop().unwrap();
+        disconnected.abort();
+        assert!(disconnected.await.unwrap_err().is_cancelled());
+        for release in releases { release.send(()).unwrap(); }
+        for waiter in waiters { waiter.await.unwrap().unwrap(); }
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while completed.load(std::sync::atomic::Ordering::SeqCst) != 5 { tokio::task::yield_now().await; }
+        }).await.unwrap();
+    }
 }

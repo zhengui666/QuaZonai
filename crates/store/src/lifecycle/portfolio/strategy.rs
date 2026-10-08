@@ -22,12 +22,7 @@ async fn artifact(
     let row=sqlx::query("SELECT byte_count,storage_version,origin FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind=$3 AND schema_name=$4 AND schema_version='1' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND access_class IN ('RESEARCH','EVALUATOR_ONLY')")
         .bind(id.as_uuid()).bind(project.as_uuid()).bind(role.code()).bind(schema).fetch_optional(&mut **tx).await?.ok_or(StoreError::Invalid("strategy_artifact_source"))?;
     let size = counter(row.try_get("byte_count")?)?;
-    let maximum = if role == ArtifactInputRole::Report {
-        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES
-    } else {
-        2 * 1024 * 1024
-    };
-    if size == DbCounter::ZERO || size.get() > maximum {
+    if size == DbCounter::ZERO {
         return Err(StoreError::Invalid("strategy_artifact_size"));
     }
     Ok((
@@ -407,7 +402,7 @@ where
             feature_artifact_origins,
         },
         members,
-        total_fuel: DbCounter::new(1_000_000_000).map_err(|_| StoreError::Integrity)?,
+        total_fuel: None,
     };
     domain::execution::strategy_composition_request(&request)?;
     let mut seen = BTreeSet::new();

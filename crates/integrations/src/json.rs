@@ -6,7 +6,6 @@ use std::{collections::BTreeSet, fmt};
 #[derive(Clone, Copy)]
 struct Guard<'a> {
     credential: &'a str,
-    depth: u16,
 }
 impl Guard<'_> {
     fn text<E: Error>(&self, value: &str) -> Result<(), E> {
@@ -14,15 +13,6 @@ impl Guard<'_> {
             return Err(E::custom("runtime JSON boundary rejected"));
         }
         Ok(())
-    }
-    fn child<E: Error>(&self) -> Result<Self, E> {
-        if self.depth >= 64 {
-            return Err(E::custom("runtime JSON boundary rejected"));
-        }
-        Ok(Self {
-            credential: self.credential,
-            depth: self.depth + 1,
-        })
     }
 }
 impl<'de> DeserializeSeed<'de> for Guard<'_> {
@@ -67,19 +57,17 @@ impl<'de> Visitor<'de> for Guard<'_> {
         self.text(&value)
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut values: A) -> Result<(), A::Error> {
-        let child = self.child()?;
-        while values.next_element_seed(child)?.is_some() {}
+        while values.next_element_seed(self)?.is_some() {}
         Ok(())
     }
     fn visit_map<A: MapAccess<'de>>(self, mut values: A) -> Result<(), A::Error> {
-        let child = self.child()?;
         let mut keys = BTreeSet::new();
         while let Some(key) = values.next_key::<String>()? {
             self.text::<A::Error>(&key)?;
             if !keys.insert(key) {
                 return Err(A::Error::custom("runtime JSON boundary rejected"));
             }
-            values.next_value_seed(child)?;
+            values.next_value_seed(self)?;
         }
         Ok(())
     }
@@ -89,13 +77,13 @@ pub fn verify(bytes: &[u8], credential: &str) -> Result<(), RuntimeProbeFailure>
     if credential.is_empty() {
         return Err(RuntimeProbeFailure::Authentication);
     }
+    // Keep Serde JSON's native 128-level recursion budget. It checks each
+    // container before entering this visitor, including every seeded child.
+    // No separate application nesting quota or unchecked recursion is added.
     let mut parser = serde_json::Deserializer::from_slice(bytes);
-    Guard {
-        credential,
-        depth: 0,
-    }
-    .deserialize(&mut parser)
-    .map_err(|_| RuntimeProbeFailure::ContractUnsupported)?;
+    Guard { credential }
+        .deserialize(&mut parser)
+        .map_err(|_| RuntimeProbeFailure::ContractUnsupported)?;
     parser
         .end()
         .map_err(|_| RuntimeProbeFailure::ContractUnsupported)
@@ -138,7 +126,6 @@ mod tests {
             format!(r#"{{"{SECRET}":1}}"#),
             format!(r#"{{"nested":[null,{{"value":"prefix-{SECRET}-suffix"}}]}}"#),
             "{}{}".into(),
-            format!("{}0{}", "[".repeat(66), "]".repeat(66)),
         ] {
             assert!(verify(payload.as_bytes(), SECRET).is_err());
         }
@@ -148,5 +135,45 @@ mod tests {
         )
         .unwrap();
         assert!(verify(b"{}", "").is_err());
+    }
+
+    fn nested(depth: usize, value: &str) -> String {
+        format!("{}{value}{}", "[".repeat(depth), "]".repeat(depth))
+    }
+
+    #[test]
+    fn native_parser_is_the_only_nesting_boundary() {
+        for depth in [65, 100, 127] {
+            let payload = nested(depth, "0");
+            assert!(serde_json::from_str::<serde_json::Value>(&payload).is_ok());
+            verify(payload.as_bytes(), SECRET).unwrap();
+        }
+        for depth in [128, 10_000] {
+            let payload = nested(depth, "0");
+            let error = serde_json::from_str::<serde_json::Value>(&payload).unwrap_err();
+            assert!(error.to_string().contains("recursion limit exceeded"));
+            assert!(verify(payload.as_bytes(), SECRET).is_err());
+        }
+    }
+
+    #[test]
+    fn complete_deep_documents_keep_duplicate_secret_and_finite_checks() {
+        let escaped = SECRET
+            .chars()
+            .map(|value| format!("\\u{:04x}", value as u32))
+            .collect::<String>();
+        for value in [
+            r#"{"x":1,"\u0078":2}"#.to_owned(),
+            format!(r#"{{"{escaped}":1}}"#),
+            format!(r#"{{"value":"prefix-{escaped}-suffix"}}"#),
+            "1e400".to_owned(),
+            r#"{"x":}"#.to_owned(),
+        ] {
+            assert!(verify(nested(100, &value).as_bytes(), SECRET).is_err());
+        }
+        let complete = nested(100, r#"{"value":"complete"}"#);
+        verify(complete.as_bytes(), SECRET).unwrap();
+        assert!(verify(format!("{complete}{{}}").as_bytes(), SECRET).is_err());
+        assert!(verify(complete[..complete.len() - 1].as_bytes(), SECRET).is_err());
     }
 }

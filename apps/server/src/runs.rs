@@ -27,7 +27,6 @@ use contracts::{
 use futures_util::{stream, Stream};
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
 use store::authority::Actor;
-use tokio::{sync::OwnedSemaphorePermit, time::Instant};
 
 fn id(path: Result<Path<Id>, PathRejection>) -> Result<Id, ApiError> {
     path.map(|Path(id)| id).map_err(|_| ApiError::validation())
@@ -93,8 +92,6 @@ struct Reading {
     cursor: DbCounter,
     pending: VecDeque<RunEventV1>,
     terminal: bool,
-    expires: Instant,
-    _permit: OwnedSemaphorePermit,
 }
 #[utoipa::path(get,path="/api/v2/runs/{id}/events",tag="Runs",params(("id"=Id,Path),("Last-Event-ID"=Option<String>,Header,description="Exact run UUID, colon, canonical decimal sequence; omitted starts at zero.")),responses((status=200,description="Durable RunEventV1 frames. Disconnect never cancels a run. Reconnect with the last emitted event ID.",content_type="text/event-stream",body=RunEventV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=410,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem)))]
 pub async fn events(
@@ -105,17 +102,6 @@ pub async fn events(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let run = id(path)?;
     let cursor = cursor(&headers, run)?;
-    let permit = state
-        .run_stream_slots
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::TOO_MANY_REQUESTS,
-                "STREAM_LIMIT",
-                "运行事件连接数量已达上限。",
-            )
-        })?;
     // Fail before HTTP streaming begins, including expired cursor and authority.
     let first = state.store.run_events(&actor, run, cursor, 16).await?;
     let complete = first.state.is_terminal()
@@ -127,15 +113,10 @@ pub async fn events(
         cursor,
         pending: first.events.into(),
         terminal: complete,
-        expires: Instant::now() + Duration::from_secs(60),
-        _permit: permit,
     };
     let stream = stream::unfold(Some(reading), |context| async move {
         let mut context = context?;
         loop {
-            if Instant::now() >= context.expires {
-                return None;
-            }
             if let Some(item) = context.pending.pop_front() {
                 let frame = Event::default()
                     .id(format!("{}:{}", item.run_id, item.seq.get()))
@@ -165,8 +146,10 @@ pub async fn events(
                     .state
                     .store
                     .run_events(&context.actor, context.run, context.cursor, 16);
-            match tokio::time::timeout_at(context.expires, query).await {
-                Ok(Ok(batch)) => {
+            // Every durable batch revalidates the original credential, login
+            // or lease in Store. Connection age is not authorization expiry.
+            match query.await {
+                Ok(batch) => {
                     context.terminal = batch.state.is_terminal()
                         && batch
                             .events
@@ -175,8 +158,7 @@ pub async fn events(
                             == batch.last_event_seq;
                     context.pending = batch.events.into();
                 }
-                Err(_) => return None,
-                Ok(Err(_)) => {
+                Err(_) => {
                     // No raw Store/SQL/provider errors or new cursor is exposed.
                     return Some((
                         Ok(Event::default()

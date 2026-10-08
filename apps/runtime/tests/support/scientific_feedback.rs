@@ -497,7 +497,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
     )
     .await;
     let forecast: NativeForecastResultV1 = serde_json::from_slice(&forecast_output.bytes).unwrap();
-    assert!(forecast.consumed_fuel.get() > 0);
+    assert!(forecast.consumed_fuel.unwrap().get() > 0);
     let task = task_parameters(&data.objects, &prediction_spec);
     let NativeTaskParametersV1::EvaluateAlpha { request, .. } = task else {
         panic!("native forecast task required");
@@ -557,7 +557,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
     let raw = validation_output.bytes;
     let measured: NativeAlphaValidationResultV1 = serde_json::from_slice(&raw).unwrap();
     assert!(
-        measured.consumed_fuel.get() > 0
+        measured.consumed_fuel.unwrap().get() > 0
             && measured.unique_test_observations.get() > 0
             && !measured.folds.is_empty()
     );
@@ -1169,7 +1169,7 @@ async fn scenario(pool: PgPool, independent: Option<Decision>) {
             .await;
             let sealed_result: NativeAlphaSealedResultV1 =
                 serde_json::from_slice(&sealed_output.bytes).unwrap();
-            assert!(sealed_result.forecast.consumed_fuel.get() > 0);
+            assert!(sealed_result.forecast.consumed_fuel.unwrap().get() > 0);
             assert!(!sealed_result.assets.is_empty());
             assert_eq!(
                 sealed_result.calibration_source_report_artifact_id,

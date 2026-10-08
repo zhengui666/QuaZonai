@@ -10,7 +10,6 @@ use contracts::{
 use std::collections::{BTreeMap, BTreeSet};
 
 const DAY_NS: u64 = 86_400_000_000_000;
-const MAX_FRAMES: usize = 1_000_000;
 
 fn invalid(field: &'static str) -> DomainError {
     DomainError::Invalid(field)
@@ -86,7 +85,7 @@ pub fn account_plan(
         || policy.report_currency != settings.base_currency
         || !contracts::research_currency::supported(&policy.report_currency)
         || policy.maximum_price_age_ns.get() == 0
-        || !(1..=256).contains(&policy.allowed_instrument_ids.len())
+        || policy.allowed_instrument_ids.len() < 1
         || !(1..=86_400_000).contains(&settings.snapshot_interval_ms)
     {
         return Err(invalid("spot_cash_settings"));
@@ -401,9 +400,6 @@ impl SpotCashContext {
         {
             return Err(invalid("spot_cash_external_flows_unavailable"));
         }
-        if frames.len() > MAX_FRAMES {
-            return Err(invalid("spot_cash_frame_count"));
-        }
         let mut observations = BTreeMap::new();
         let mut previous: Option<&NativeSpotSnapshotBindingV1> = None;
         let mut snapshot_ids = BTreeSet::new();
@@ -437,9 +433,6 @@ impl SpotCashContext {
         let end = self.session.period_end_ns.get();
         let first_day = start.div_ceil(DAY_NS) * DAY_NS;
         let last_boundary = end / DAY_NS * DAY_NS;
-        if last_boundary.saturating_sub(first_day) / DAY_NS > 10_000 {
-            return Err(invalid("spot_cash_day_count"));
-        }
         let mut days = Vec::new();
         let mut day = first_day;
         while day < last_boundary {

@@ -4806,6 +4806,7 @@ dependencies = [
  "csv",
  "domain",
  "flate2",
+ "integrations",
  "iso_currency",
  "linregress",
  "nalgebra 0.35.0",

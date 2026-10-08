@@ -635,7 +635,7 @@ async fn queue_ack_requires_exact_committed_receipt_and_is_idempotent(pool: PgPo
 #[sqlx::test(migrations = "../../migrations")]
 async fn absent_cost_cap_does_not_disable_the_mission_turn_cap(pool: PgPool) {
     let mut b = budget();
-    b.max_turns_per_mission = 2;
+    b.max_turns_per_mission = Some(2);
     b.max_tokens = None;
     b.max_cost_decimal = None;
     b.cost_currency = None;
@@ -730,4 +730,41 @@ async fn submicrosecond_deadlines_are_rejected_before_persistence(pool: PgPool) 
         .await
         .unwrap();
     assert_eq!(count, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn absent_turn_caps_keep_bigint_ordinals_and_exact_retry_identity(pool: PgPool) {
+    let mut b = budget();
+    b.max_turns_per_mission = None;
+    b.max_repair_turns = None;
+    b.max_cycles_per_day = None;
+    b.max_tokens = None;
+    b.max_cost_decimal = None;
+    b.cost_currency = None;
+    b.cost_enforcement = contracts::budget::CostEnforcement::Unavailable;
+    let f = fixture(&pool, b).await;
+    let store = Store::from_pool(pool.clone());
+    let original = Id::new();
+    // A historical positive ordinal beyond u16 is admissible after the real
+    // migration. This is relational fixture setup, not fabricated native usage.
+    sqlx::query("INSERT INTO app.model_turn_reservations(id,project_id,cycle_id,run_id,session_id,attempt_id,command_key,turn_kind,reserved_tokens,reserved_cost,cost_currency,request_artifact_id,deadline_at,owner_epoch,profile_revision,ordinal) SELECT $1,s.project_id,s.cycle_id,s.run_id,s.id,$2,'historical-unsent','RESEARCH',NULL,NULL,NULL,$3,$4,$5,s.profile_revision,65536 FROM app.codex_sessions s WHERE s.id=$6")
+        .bind(original.as_uuid()).bind(f.fence.attempt_id.as_uuid()).bind(f.artifact.as_uuid())
+        .bind(f.deadline).bind(f.fence.owner_epoch.get() as i64).bind(f.session.as_uuid())
+        .execute(&pool).await.unwrap();
+    store.settle_turn(original, &f.fence, &UsageReceipt {
+        outcome: TurnOutcome::NotSent, actual_tokens: DbCounter::ZERO,
+        actual_cost: None, currency: None, reason_code: "CONFIRMED_UNSENT_FIXTURE".into(),
+    }).await.unwrap();
+    let mut request = f.request("next-after-u16");
+    request.tokens = None;
+    request.estimated_cost = None;
+    let next = store.reserve_turn(f.run, &f.fence, &request).await.unwrap();
+    assert_eq!(next.ordinal, 65537);
+    assert_eq!(store.reserve_turn(f.run, &f.fence, &request).await.unwrap(), next);
+    let ledger: (i64, i64) = sqlx::query_as("SELECT count(*),max(ordinal) FROM app.model_turn_reservations WHERE session_id=$1")
+        .bind(f.session.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(ledger, (2, 65537));
+    let frozen: serde_json::Value = sqlx::query_scalar("SELECT budget_snapshot FROM app.research_cycles WHERE id=$1")
+        .bind(f.cycle.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(frozen, serde_json::to_value(&f.budget).unwrap());
 }

@@ -20,7 +20,7 @@ import urllib.request
 
 
 HUB = "https://huggingface.co"
-DEFAULT_MAX_BYTES = 128 * 1024 * 1024
+DEFAULT_MAX_BYTES = None  # No implicit total byte budget.
 CHUNK = 1024 * 1024
 
 
@@ -33,17 +33,17 @@ def checked_path(path):
 
 
 def fetch_json(url):
-    body = fetch_bytes(url, 32 * CHUNK)
+    body = fetch_bytes(url)
     value = json.loads(body)
     if not isinstance(value, dict):
         raise ValueError("repository metadata must be an object")
     return value
 
 
-def fetch_bytes(url, limit):
+def fetch_bytes(url, limit=None):
     with urllib.request.urlopen(url, timeout=60) as response:
-        body = response.read(limit + 1)
-    if len(body) > limit:
+        body = response.read() if limit is None else response.read(limit + 1)
+    if limit is not None and len(body) > limit:
         raise ValueError("repository metadata exceeds its byte limit")
     return body
 
@@ -84,8 +84,10 @@ def repository_file_url(dataset, revision, path):
 
 
 def plan(dataset, includes, revision=None, max_bytes=DEFAULT_MAX_BYTES, license=None):
-    if not includes or max_bytes <= 0:
-        raise ValueError("explicit --include and positive --max-bytes are required")
+    if not includes:
+        raise ValueError("explicit --include is required")
+    if max_bytes is not None and (type(max_bytes) is not int or max_bytes <= 0):
+        raise ValueError("explicit --max-bytes must be positive")
     for pattern in includes:
         checked_path(pattern)
     commit, available, metadata, metadata_url = repository_metadata(dataset, revision)
@@ -117,7 +119,7 @@ def plan(dataset, includes, revision=None, max_bytes=DEFAULT_MAX_BYTES, license=
                       "git_blob": blob_id if lfs is None else None,
                       "url": f"{HUB}/datasets/{dataset}/resolve/{commit}/{urllib.parse.quote(path)}"})
     total = sum(item["size"] for item in files)
-    if total > max_bytes:
+    if max_bytes is not None and total > max_bytes:
         raise ValueError(f"selection requires {total} bytes, exceeding --max-bytes={max_bytes}")
     card = metadata.get("cardData") or {}
     if not isinstance(card, dict):
@@ -244,9 +246,7 @@ def download(selection, output):
 
 def fetch_local_manifest(path):
     with path.open("rb") as stream:
-        body = stream.read(32 * CHUNK + 1)
-    if len(body) > 32 * CHUNK:
-        raise ValueError("existing snapshot manifest exceeds 32 MiB")
+        body = stream.read()
     result = json.loads(body)
     if not isinstance(result, dict):
         raise ValueError("existing snapshot manifest must be an object")
@@ -386,7 +386,8 @@ def main(argv=None):
     parser.add_argument("--dataset", required=True, help="public Hugging Face dataset ID")
     parser.add_argument("--include", action="append", required=True, help="explicit repository glob (repeatable)")
     parser.add_argument("--revision", help="branch, tag or immutable commit; resolved before file selection")
-    parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
+    parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES,
+                        help="optional explicit total file byte budget; default unlimited")
     parser.add_argument("--license", help="verified source terms, only when dataset card omits a license")
     parser.add_argument("--output", type=Path, help="snapshot directory (required for download)")
     args = parser.parse_args(argv)

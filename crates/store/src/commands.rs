@@ -476,3 +476,29 @@ pub(crate) async fn handoff_command(
         replay: previous.map(|p| p.response),
     })
 }
+
+/// Capital controls reuse immutable command receipts and the original authority
+/// locks. The caller has already checked the owner or scoped downstream actor.
+pub(crate) async fn capital_exit(
+    tx: &mut Transaction<'_, Postgres>,
+    scope: String,
+    operation: &'static str,
+    idempotency_key: &str,
+    target: Option<Id>,
+    request: Value,
+) -> Result<Prepared, StoreError> {
+    key(idempotency_key)?;
+    let previous = prior(tx, &scope, operation, idempotency_key, &request).await?;
+    if previous.as_ref().is_some_and(|p| target.is_some_and(|id| id != p.target)) {
+        return Err(StoreError::IdempotencyConflict);
+    }
+    Ok(Prepared {
+        target: previous.as_ref().map(|p| p.target).or(target).unwrap_or_default(),
+        scope,
+        operation,
+        key: idempotency_key.into(),
+        request,
+        grant: None,
+        replay: previous.map(|p| p.response),
+    })
+}

@@ -153,7 +153,7 @@ async fn reviewer_turn_and_summary_keep_original_role_without_general_sealed_acc
                     experiments: 0,
                     cpu_seconds: Some(DbCounter::new(10).unwrap()),
                     wall_seconds: Some(60),
-                    memory_mib: 1024,
+                    memory_mib: Some(1024),
                     output_bytes: Some(DbCounter::new(1048576).unwrap()),
                 },
             },
@@ -680,9 +680,11 @@ async fn native_public_summary_requires_original_success_and_is_immutable_budget
             .is_err()
     );
     message.text = "x".repeat(64 * 1024 + 1);
+    // Size is no longer a rejection rule; changing an already adopted summary
+    // still conflicts with the original reservation and immutable output.
     assert!(matches!(
         summary(&store, &lease, &f, reserved.id, &message).await,
-        Err(StoreError::Invalid("native_public_summary"))
+        Err(StoreError::Conflict)
     ));
     message.text = "within bounds".into();
     let mut stale = lease.clone();

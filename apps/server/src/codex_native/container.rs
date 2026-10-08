@@ -1,6 +1,7 @@
 //! Docker supplies the process boundary; the existing native JSONL wire owns RPC.
-use super::{resource_account::ResourceAccount, Launch, MissionProcess, NativeFailure, Result};
+use super::{Launch, MissionProcess, NativeFailure, Result, resource_account::ResourceAccount};
 use bollard::{
+    API_DEFAULT_VERSION, Docker,
     errors::Error,
     models::{
         ContainerCreateBody, HostConfig, HostConfigLogConfig, Mount, MountType, ResourcesUlimits,
@@ -9,7 +10,6 @@ use bollard::{
         AttachContainerOptionsBuilder, CreateContainerOptionsBuilder, KillContainerOptionsBuilder,
         ListContainersOptionsBuilder, RemoveContainerOptionsBuilder, StatsOptionsBuilder,
     },
-    Docker, API_DEFAULT_VERSION,
 };
 use futures_util::StreamExt;
 use std::{
@@ -89,10 +89,10 @@ impl ContainerBackend {
         Ok(())
     }
 
-    async fn lock(&self, deadline: Instant) -> Result<File> {
+    async fn lock(&self, deadline: Option<Instant>) -> Result<File> {
         let file = File::open(&self.lock_file).map_err(|_| NativeFailure::Configuration)?;
         loop {
-            if Instant::now() >= deadline {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 return Err(NativeFailure::Unavailable);
             }
             // Only startup holds this lock. It also lets recovery distinguish
@@ -196,20 +196,48 @@ fn configuration(
         let quota = limits
             .cpu_seconds
             .zip(limits.wall_seconds)
-            .map_or(1_000_000, |(cpu, wall)| {
-                u128::from(cpu.get()) * 1_000_000 / u128::from(wall.max(1))
-            });
+            .map(|(cpu, wall)| u128::from(cpu.get()) * 1_000_000 / u128::from(wall.max(1)));
         if limits.wall_seconds == Some(0)
-            || limits.memory_mib == 0
+            || limits.memory_mib == Some(0)
             || limits.output_bytes.is_some_and(|bytes| bytes.get() == 0)
-            || !(1_000..=10_000_000_000).contains(&quota)
+            || quota.is_some_and(|quota| quota < 1_000 || i64::try_from(quota).is_err())
         {
             return Err(NativeFailure::Configuration);
         }
-        host.cpu_period = Some(1_000_000);
-        host.cpu_quota = Some(i64::try_from(quota).map_err(|_| NativeFailure::Configuration)?);
-        host.memory = Some(i64::from(limits.memory_mib) * 1024 * 1024);
+        // Research no longer inherits the account-login process ceiling.
+        host.pids_limit = None;
+        if let Some(quota) = quota {
+            host.cpu_period = Some(1_000_000);
+            host.cpu_quota = Some(i64::try_from(quota).map_err(|_| NativeFailure::Configuration)?);
+        }
+        host.memory = limits
+            .memory_mib
+            .map(|memory| i64::from(memory) * 1024 * 1024);
         host.memory_swap = host.memory;
+        // Linux tmpfs's documented zero syntax removes only mount-specific
+        // ceilings; it is never a budget sentinel and parent cgroups still apply.
+        let quota = host.memory.map_or_else(
+            || "size=0,nr_inodes=0".to_owned(),
+            |memory| format!("size={memory}"),
+        );
+        let mut tmpfs = HashMap::from([
+            ("/tmp".into(), format!("rw,nosuid,nodev,{quota},mode=1777")),
+            (
+                "/home/codex".into(),
+                format!("rw,nosuid,nodev,{quota},uid={uid},gid={gid},mode=700"),
+            ),
+        ]);
+        if host.memory.is_none() {
+            // ShmSize=0 falls back to Docker's finite default. Override the
+            // private /dev/shm mount explicitly instead of joining host IPC.
+            tmpfs.insert(
+                "/dev/shm".into(),
+                "rw,noexec,nosuid,nodev,size=0,nr_inodes=0,mode=1777".into(),
+            );
+            host.ipc_mode = Some("private".into());
+        }
+        host.tmpfs = Some(tmpfs);
+        host.shm_size = host.memory;
         let mut ulimits = vec![ResourcesUlimits {
             name: Some("core".into()),
             soft: Some(0),
@@ -221,13 +249,6 @@ fn configuration(
                 name: Some("cpu".into()),
                 soft: Some(value),
                 hard: Some(value),
-            });
-        }
-        if limits.output_bytes.is_some() {
-            ulimits.push(ResourcesUlimits {
-                name: Some("fsize".into()),
-                soft: Some(64 * 1024 * 1024),
-                hard: Some(64 * 1024 * 1024),
             });
         }
         host.ulimits = Some(ulimits);
@@ -338,28 +359,36 @@ pub(super) async fn start(
     launch: Launch,
     limits: Option<MissionProcess>,
 ) -> Result<(Container, Reader, Writer)> {
-    // Keep create/start alive when a request deadline drops its caller. The task
-    // retains cleanup ownership even before Docker returns the actual ID.
-    let startup_deadline = Instant::now() + Duration::from_secs(20);
-    let deadline = limits.as_ref().map_or(startup_deadline, |limits| {
-        limits
-            .deadline
-            .map_or(startup_deadline, |deadline| startup_deadline.min(deadline))
-    });
-    tokio::spawn(async move {
-        // Bollard's request timeout covers headers, not every body/upgrade read.
-        tokio::time::timeout_at(deadline.into(), start_owned(launch, limits, deadline))
-            .await
-            .map_err(|_| NativeFailure::Unavailable)?
-    })
-    .await
-    .map_err(|_| NativeFailure::Unavailable)?
+    // The startup task retains cleanup ownership while Docker may have accepted
+    // create without returning an ID. Dropping the caller explicitly cancels
+    // that owner task rather than leaving an unbounded detached startup lock.
+    let deadline = limits.as_ref().and_then(|limits| limits.deadline);
+    let (owner, mut cancellation) = tokio::sync::watch::channel(());
+    let ownership = cancellation.clone();
+    let result = tokio::spawn(async move {
+        let operation = start_owned(launch, limits, deadline, &ownership);
+        let bounded = async {
+            match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline.into(), operation)
+                    .await.map_err(|_| NativeFailure::Unavailable)?,
+                None => operation.await,
+            }
+        };
+        tokio::select! {
+            biased;
+            _ = cancellation.changed() => Err(NativeFailure::Closed),
+            result = bounded => result,
+        }
+    }).await.map_err(|_| NativeFailure::Unavailable)?;
+    drop(owner);
+    result
 }
 
 async fn start_owned(
     launch: Launch,
     mut limits: Option<MissionProcess>,
-    deadline: Instant,
+    deadline: Option<Instant>,
+    ownership: &tokio::sync::watch::Receiver<()>,
 ) -> Result<(Container, Reader, Writer)> {
     let backend = launch
         .container
@@ -536,11 +565,14 @@ async fn start_owned(
         .await
         .map_err(unavailable)?;
     // Do not start a Mission whose authorization deadline expired during create.
-    if Instant::now() >= deadline {
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
         return Err(NativeFailure::Unavailable);
     }
     if let Some(account) = &owned.account {
         account.begin_execution().await?;
+    }
+    if ownership.has_changed().is_err() {
+        return Err(NativeFailure::Closed);
     }
     owned
         .docker
@@ -962,6 +994,69 @@ pub(super) async fn recover(backend: &ContainerBackend, account: ResourceAccount
 #[cfg(test)]
 mod cpu_tests {
     use super::*;
+    #[test]
+    fn absent_mission_cpu_budget_omits_quota_without_changing_login_isolation() {
+        let root = tempfile::tempdir().unwrap();
+        let launch = Launch {
+            container: None, binary: std::env::current_exe().unwrap(),
+            home: root.path().to_owned(), codex_home: root.path().to_owned(),
+            working_directory: root.path().to_owned(), executable_path: PATH.into(),
+            native_environment: std::collections::BTreeMap::new(),
+        };
+        let backend = ContainerBackend {
+            image: "configuration-only-fixture".into(),
+            socket: root.path().join("docker.sock"), lock_file: root.path().join("lock"),
+        };
+        let limits = serde_json::from_value(serde_json::json!({"schema_version":1,
+            "experiments":0,"cpu_seconds":null,"wall_seconds":null,
+            "memory_mib":64,"output_bytes":null})).unwrap();
+        let process = MissionProcess::new(contracts::Id::new(), limits, None).unwrap();
+        let research = configuration(
+            &launch,
+            &backend,
+            Some(&process),
+            backend.image.clone(),
+            "fixture",
+        )
+        .unwrap()
+        .host_config
+        .unwrap();
+        assert_eq!(research.cpu_quota, None);
+        assert_eq!(research.cpu_period, None);
+        assert_eq!(research.pids_limit, None);
+        assert_eq!(research.memory, Some(64 * 1024 * 1024));
+        assert!(research.ulimits.unwrap().iter().all(|limit| limit.name.as_deref() == Some("core")));
+        let login = configuration(&launch, &backend, None, backend.image.clone(), "fixture").unwrap().host_config.unwrap();
+        assert_eq!(login.pids_limit, Some(128));
+        assert_eq!(login.readonly_rootfs, research.readonly_rootfs);
+        assert_eq!(login.security_opt, research.security_opt);
+        let mut absent = process.limits.clone();
+        absent.memory_mib = None;
+        let process = MissionProcess::new(contracts::Id::new(), absent, None).unwrap();
+        let unlimited = configuration(
+            &launch,
+            &backend,
+            Some(&process),
+            backend.image.clone(),
+            "fixture",
+        )
+        .unwrap()
+        .host_config
+        .unwrap();
+        assert_eq!(unlimited.memory, None);
+        assert_eq!(unlimited.memory_swap, None);
+        assert_eq!(unlimited.shm_size, None);
+        assert_eq!(unlimited.ipc_mode.as_deref(), Some("private"));
+        assert_eq!(unlimited.readonly_rootfs, login.readonly_rootfs);
+        assert_eq!(unlimited.security_opt, login.security_opt);
+        for path in ["/tmp", "/home/codex", "/dev/shm"] {
+            let options = &unlimited.tmpfs.as_ref().unwrap()[path];
+            assert!(options.contains("size=0,nr_inodes=0"), "{path}: {options}");
+            assert!(options.contains("nosuid,nodev"));
+        }
+        assert!(!login.tmpfs.as_ref().unwrap()["/tmp"].contains("size=0"));
+    }
+
     #[test]
     fn stale_container_matching_requires_every_identity_label() {
         let r = store::lifecycle::mission::resources::MissionResource {

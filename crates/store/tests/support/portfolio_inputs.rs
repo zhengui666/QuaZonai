@@ -153,7 +153,7 @@ pub(super) async fn request(
                 configuration: DownstreamConfigurationV1 {
                     name: "Controlled weights source".into(),
                     endpoint: "https://downstream.example".into(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: if interval.is_some() || calendar.is_some() {
                         DownstreamEnvironments::Both
                     } else {
@@ -220,6 +220,7 @@ pub(super) async fn request(
                 operator_grant: None,
             },
             &DownstreamWeightsSubmitV1 {
+                paper_initialization: None,
                 schema_version: SchemaV1,
                 project_id: f.data.project,
                 environment,

@@ -1,5 +1,5 @@
 //! Run transport contracts. These DTOs confer no execution or approval authority.
-use crate::{runs::RunState, DbCounter, Id, Revision, SchemaV1};
+use crate::{DbCounter, Id, Revision, SchemaV1, runs::RunState};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -15,7 +15,7 @@ pub struct JobLimitsV1 {
     #[schema(minimum=1, maximum=4294967295u64, format=Int64)]
     pub wall_seconds: Option<u32>,
     #[schema(minimum=1, maximum=4294967295u64, format=Int64)]
-    pub memory_mib: u32,
+    pub memory_mib: Option<u32>,
     pub output_bytes: Option<DbCounter>,
 }
 
@@ -148,10 +148,6 @@ impl RunEventV1 {
         }
         if !self.payload.is_object()
             || self.payload.get("schema_version") != Some(&serde_json::json!(1))
-            || serde_json::to_vec(&self.payload)
-                .map_err(|_| "invalid event payload")?
-                .len()
-                > 65_536
         {
             return Err("unsupported event payload");
         }
@@ -177,12 +173,12 @@ pub struct RunEventBatchV1 {
 
 fn event_payload_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     use utoipa::{
-        openapi::schema::{AdditionalProperties, ObjectBuilder, Type},
         PartialSchema,
+        openapi::schema::{AdditionalProperties, ObjectBuilder, Type},
     };
     ObjectBuilder::new().schema_type(Type::Object)
         .property("schema_version",SchemaV1::schema()).required("schema_version")
         .additional_properties(Some(AdditionalProperties::FreeForm(true)))
-        .description(Some("Public extensible schema-v1 JSON object; serialized UTF-8 is limited to 65536 bytes. Known event types additionally validate their specific payload contract."))
+        .description(Some("Public extensible schema-v1 JSON object. Known event types additionally validate their specific payload contract."))
         .into()
 }

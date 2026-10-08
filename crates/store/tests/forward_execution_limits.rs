@@ -2,22 +2,24 @@
 //! No execution or qualified scientific result is inferred from these fixtures.
 #[path = "../../../tests/support/cycles.rs"]
 mod cycle_support;
+#[path = "../../../tests/support/forward_legacy_receipt.rs"]
+mod forward_legacy_receipt;
 #[path = "../../../tests/support/forward.rs"]
 mod forward_support;
-use contracts::{lifecycle::JobLimitsV1, DbCounter, Id, SchemaV1};
+use contracts::{DbCounter, Id, SchemaV1, lifecycle::JobLimitsV1};
 use forward_support::{
     research as research_support, runtime_observation::protocol_fixture as runtime_support,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::PgPool;
-use store::{lifecycle::ClaimResult, StoreError};
+use store::{StoreError, lifecycle::ClaimResult};
 fn limits(cpu: Option<u64>, wall: Option<u32>, memory: u32, output: Option<u64>) -> JobLimitsV1 {
     JobLimitsV1 {
         schema_version: SchemaV1,
         experiments: 0,
         cpu_seconds: cpu.map(|n| DbCounter::new(n).unwrap()),
         wall_seconds: wall,
-        memory_mib: memory,
+        memory_mib: Some(memory),
         output_bytes: output.map(|n| DbCounter::new(n).unwrap()),
     }
 }
@@ -89,6 +91,14 @@ async fn absent_candidate_caps_reach_original_native_job_and_replay_without_read
         forward_support::setup_with_candidate_limits(&pool, limits(None, None, 1024, None)).await;
     let queued = queue(&f).await;
     assert_eq!(queued.resource.deadline_at, None);
+    let parallel: Value = sqlx::query_scalar(
+        "SELECT normalized_request->'max_parallel_runs' FROM app.run_admissions WHERE run_id=$1",
+    )
+    .bind(queued.resource.id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(parallel, Value::Null);
     let original: Value =
         sqlx::query_scalar("SELECT limits FROM app.run_admissions WHERE run_id=$1")
             .bind(queued.resource.id.as_uuid())
@@ -97,7 +107,7 @@ async fn absent_candidate_caps_reach_original_native_job_and_replay_without_read
             .unwrap();
     assert_eq!(
         original,
-        serde_json::to_value(limits(None, None, 512, None)).unwrap()
+        serde_json::to_value(limits(None, None, 1024, None)).unwrap()
     );
     let message = f
         .store
@@ -120,7 +130,8 @@ async fn absent_candidate_caps_reach_original_native_job_and_replay_without_read
         .native_job(queued.resource.id, &lease.fence)
         .await
         .unwrap();
-    assert_eq!(job.spec.limits.cpu, 1);
+    assert_eq!(job.spec.limits.cpu, None);
+    assert_eq!(job.spec.limits.memory_mib, Some(1024));
     assert_eq!(job.spec.limits.cpu_seconds, None);
     assert_eq!(job.spec.limits.wall_seconds, None);
     assert_eq!(job.spec.limits.output_bytes, None);
@@ -172,13 +183,16 @@ async fn finite_source_cannot_be_bypassed_by_null_old_tuple_or_wrong_runtime(poo
     )
     .await;
     let queued = queue(&f).await;
-    let expected = limits(Some(4), Some(4), 128, Some(512));
+    let expected = limits(Some(8), Some(4), 128, Some(512));
     let actual: Value = sqlx::query_scalar("SELECT limits FROM app.run_admissions WHERE run_id=$1")
         .bind(queued.resource.id.as_uuid())
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(actual, serde_json::to_value(&expected).unwrap());
+    let cpu: i64 = sqlx::query_scalar("SELECT cpu FROM app.run_native_tasks WHERE run_id=$1")
+        .bind(queued.resource.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(cpu, 2);
     for forged in [
         limits(None, None, 128, None),
         limits(Some(30), Some(60), 512, Some(1048576)),
@@ -198,7 +212,7 @@ async fn finite_source_cannot_be_bypassed_by_null_old_tuple_or_wrong_runtime(poo
             runtime_revision: contracts::Revision::INITIAL,
             kind: contracts::runs::RunKind::ForwardEvaluate,
             limits: forged,
-            max_parallel_runs: 2,
+            max_parallel_runs: Some(2),
         };
         assert!(matches!(
             f.store
@@ -207,14 +221,14 @@ async fn finite_source_cannot_be_bypassed_by_null_old_tuple_or_wrong_runtime(poo
             Err(StoreError::Invalid("forward_inherited_execution_limits"))
         ));
     }
-    reject_duplicate_admission(&pool, queued.resource.id, actual.clone(), 3, None).await;
+    reject_duplicate_admission(&pool, queued.resource.id, actual.clone(), 0, None).await;
     reject_duplicate_admission(&pool, queued.resource.id, actual, 2, Some(Id::new())).await;
     let replay = queue(&f).await;
     assert!(replay.replayed);
     assert_eq!(replay.resource, queued.resource);
 }
 #[sqlx::test(migrations = "../../migrations")]
-async fn finite_fixed_tuple_and_snapshot_remain_immutable_on_replay(pool: PgPool) {
+async fn finite_inherited_tuple_and_snapshot_remain_immutable_on_replay(pool: PgPool) {
     let f = forward_support::setup(&pool).await;
     let queued = queue(&f).await;
     let before: (Value, Value) =
@@ -225,7 +239,7 @@ async fn finite_fixed_tuple_and_snapshot_remain_immutable_on_replay(pool: PgPool
             .unwrap();
     assert_eq!(
         before.0,
-        serde_json::to_value(limits(Some(30), Some(60), 512, Some(1048576))).unwrap()
+        serde_json::to_value(limits(Some(7200), Some(3600), 4096, Some(67108864))).unwrap()
     );
     let replay = queue(&f).await;
     assert!(replay.replayed);
@@ -256,7 +270,7 @@ async fn migration_103_to_104_preserves_existing_receipt_and_rejects_new_legacy_
             .unwrap();
     assert_eq!(version, 202610060103);
     let old = forward_support::setup(&pool).await;
-    let queued = queue(&old).await;
+    let queued = forward_legacy_receipt::insert(&pool, &old).await;
     let original_limits: Value =
         sqlx::query_scalar("SELECT limits FROM app.run_admissions WHERE run_id=$1")
             .bind(queued.resource.id.as_uuid())
@@ -347,4 +361,32 @@ async fn migration_103_to_104_preserves_existing_receipt_and_rejects_new_legacy_
     );
     let new_run = queue(&new).await;
     reject_duplicate_admission(&pool, new_run.resource.id, original_limits, 2, None).await;
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn forward_parallel_choice_preserves_normalized_identity_without_fixed_two(pool: PgPool) {
+    let f = forward_support::setup(&pool).await;
+    let queued = queue(&f).await;
+    for parallel in [Value::Null, json!(1), json!(3), json!(u32::MAX)] {
+        // A valid alternate explicit ceiling reaches the immutable run's unique
+        // constraint; the BEFORE guard must no longer require the value two.
+        let error = sqlx::query("INSERT INTO app.run_admissions SELECT (jsonb_populate_record(NULL::app.run_admissions, to_jsonb(a) || jsonb_build_object('normalized_request', jsonb_set(a.normalized_request,'{max_parallel_runs}',$2)))).* FROM app.run_admissions a WHERE a.run_id=$1")
+            .bind(queued.resource.id.as_uuid()).bind(parallel).execute(&pool).await.unwrap_err();
+        assert_eq!(error.as_database_error().unwrap().code().as_deref(), Some("23505"));
+    }
+    for malformed in [
+        json!(0),
+        json!(-1),
+        json!("3"),
+        json!(u64::from(u32::MAX) + 1),
+    ] {
+        let error = sqlx::query("INSERT INTO app.run_admissions SELECT (jsonb_populate_record(NULL::app.run_admissions, to_jsonb(a) || jsonb_build_object('normalized_request', jsonb_set(a.normalized_request,'{max_parallel_runs}',$2)))).* FROM app.run_admissions a WHERE a.run_id=$1")
+            .bind(queued.resource.id.as_uuid()).bind(malformed).execute(&pool).await.unwrap_err();
+        assert_eq!(error.as_database_error().unwrap().code().as_deref(), Some("23514"));
+    }
+    for field in ["project_id", "input_set_id", "runtime_id"] {
+        let error = sqlx::query("INSERT INTO app.run_admissions SELECT (jsonb_populate_record(NULL::app.run_admissions, to_jsonb(a) || jsonb_build_object('normalized_request', jsonb_set(a.normalized_request,ARRAY[$2::text],to_jsonb($3::text))))).* FROM app.run_admissions a WHERE a.run_id=$1")
+            .bind(queued.resource.id.as_uuid()).bind(field).bind(Id::new().to_string()).execute(&pool).await.unwrap_err();
+        assert_eq!(error.as_database_error().unwrap().code().as_deref(), Some("23514"));
+    }
 }

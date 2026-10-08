@@ -164,6 +164,12 @@ impl From<StoreError> for ApiError {
                 "REVISION_CONFLICT",
                 "记录或不可变请求发生冲突，请重新载入后检查。",
             ),
+            StoreError::Invalid("capital_exit_preview_stale" | "capital_exit_resume_plan_mismatch")
+            | StoreError::Domain(domain::DomainError::Invalid("capital_exit_preview_expired")) => Self::new(
+                StatusCode::CONFLICT,
+                "CAPITAL_EXIT_PREVIEW_STALE",
+                "账户、价格或资金保留证据已变化；请刷新预览并重新确认原退出约束，不要自动换键执行。",
+            ),
             StoreError::Invalid(_) => Self::validation(),
             StoreError::TurnPending => Self::new(
                 StatusCode::CONFLICT,

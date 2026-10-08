@@ -21,13 +21,17 @@ pub struct DownstreamWeightsSubmitV1 {
     pub environment: ForwardEnvironmentV1,
     #[schema(min_length = 1, max_length = 200)]
     pub external_message_id: String,
+    /// Reference only, never caller-granted initialization authority. Store must
+    /// resolve its original scope and claimed Paper handoff before accepting it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_initialization: Option<crate::science::PaperInitializationRefV1>,
     pub asof_ns: DbCounter,
     pub available_ns: DbCounter,
     pub valid_until_ns: DbCounter,
     #[schema(schema_with = crate::research_currency::schema)]
     pub base_currency: String,
     pub cash_weight: DecimalValue,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub weights: Vec<AllocationTargetV1>,
 }
 
@@ -70,7 +74,6 @@ pub struct ForwardReportContentV1 {
     /// Missing metadata never implies daily or independent observations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub returns_frequency: Option<ForwardReturnsFrequencyV1>,
-    #[schema(max_items = 10000)]
     pub returns: Vec<crate::science::NativeReturnV1>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -154,7 +157,7 @@ pub struct ForwardWindowViewV1 {
 #[serde(deny_unknown_fields)]
 pub struct NativeForwardRequestV1 {
     pub window: ForwardWindowViewV1,
-    #[schema(min_items = 1, max_items = 255)]
+    #[schema(min_items = 1)]
     pub sources: Vec<ForwardMessageViewV1>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

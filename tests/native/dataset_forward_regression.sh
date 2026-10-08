@@ -65,7 +65,16 @@ run_required evidence-http dataset_evidence_http_returns_typed_bound_summary_and
 run_required forward-derivation database_derivation_matches_rust_for_null_finite_and_short_wall -p store --test forward_execution_limits
 run_required forward-absent absent_candidate_caps_reach_original_native_job_and_replay_without_reading -p store --test forward_execution_limits
 run_required forward-finite finite_source_cannot_be_bypassed_by_null_old_tuple_or_wrong_runtime -p store --test forward_execution_limits
-run_required forward-replay finite_fixed_tuple_and_snapshot_remain_immutable_on_replay -p store --test forward_execution_limits
+run_required forward-replay finite_inherited_tuple_and_snapshot_remain_immutable_on_replay -p store --test forward_execution_limits
 run_required forward-upgrade migration_103_to_104_preserves_existing_receipt_and_rejects_new_legacy_bypass -p store --test forward_execution_limits
+# Real pre-080002 upgrade and latest additive collection constraints.
+run_required evidence-upgrade-sources upgrade_080002_preserves_frozen_sources_and_large_original_feature_bytes -p store --test unbounded_evidence_upgrade
+run_required evidence-upgrade-roles upgrade_080002_keeps_turn_roles_and_historical_readability_guards -p store --test unbounded_evidence_upgrade
+run_required evidence-upgrade-collections upgrade_080002_and_later_collection_checks_remove_only_upper_bounds -p store --test unbounded_evidence_upgrade
+# Preserve the original native task, receipts and authority through quota upgrade.
+run_required quota-upgrade-legacy upgrade_080005_preserves_historical_numeric_cpu_receipt_and_exact_launch_json -p store --test optional_execution_quotas_upgrade
+run_required quota-upgrade-bindings new_optional_quotas_bind_exact_json_and_preserve_native_authority_guards -p store --test optional_execution_quotas_upgrade
+run_required quota-upgrade-wire upgrade_080005_accepts_only_explicit_null_or_positive_typed_execution_limits -p store --test optional_execution_quotas_upgrade
+run_required quota-upgrade-column upgrade_080005_cpu_column_keeps_positive_u32_bounds_and_old_rows -p store --test optional_execution_quotas_upgrade
 printf 'cases=%s\nfailed=%s\n' "$cases" "$failed" >> "$evidence/dataset-forward-combined-status.txt"
-((cases == 12 && failed == 0))
+((cases == 19 && failed == 0))

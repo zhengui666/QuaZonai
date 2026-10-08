@@ -7,7 +7,7 @@ mod promotion;
 pub(super) async fn policy_authority(
     tx: &mut Tx<'_>,
     id: Id,
-    package: &TargetPackageV1,
+    package: &ForecastTargetPackageV2,
     downstream: Id,
     environment: ForwardEnvironmentV1,
     observations: Option<&[Id]>,
@@ -117,7 +117,7 @@ impl Store {
             return Ok(None);
         }
         let environment_code = db::code(&environment)?;
-        let latest=sqlx::query("SELECT r.id,r.candidate_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND c.mandate_id=$2 ORDER BY r.id DESC LIMIT 1").bind(project.as_uuid()).bind(policy.content.mandate_id.as_uuid()).fetch_optional(&mut *tx).await?;
+        let latest=sqlx::query("SELECT r.id,r.candidate_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND c.mandate_id=$2 AND r.source_kind='FORECAST_EVALUATION' AND r.package_schema_version='2' ORDER BY r.id DESC LIMIT 1").bind(project.as_uuid()).bind(policy.content.mandate_id.as_uuid()).fetch_optional(&mut *tx).await?;
         let Some(latest) = latest else {
             tx.commit().await?;
             return Ok(None);

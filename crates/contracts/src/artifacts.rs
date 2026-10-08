@@ -3,9 +3,6 @@ use crate::{research::DataOrigin, DbCounter, Id, SchemaV1, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-pub const MAX_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
-pub const MAX_UPLOAD_BODY_BYTES: usize = MAX_UPLOAD_BYTES * 6 + 16 * 1024;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ResearchArtifactKind {
@@ -43,9 +40,7 @@ pub struct ArtifactCreate {
     pub schema_version: SchemaV1,
     pub project_id: Id,
     pub kind: ResearchArtifactKind,
-    /// The server enforces at most 2097152 UTF-8 bytes, including JSON whitespace,
-    /// and preserves the original bytes. JSON Schema string length counts characters,
-    /// so clients must check encoded UTF-8 byte length separately before submission.
+    /// Original UTF-8 bytes, including JSON whitespace, are preserved.
     #[schema(min_length = 1)]
     pub content: String,
 }

@@ -1,11 +1,11 @@
 //! Native splitter/estimator regression with independent, explicit small references.
 use contracts::{
+    DbCounter, Id, SchemaV1,
     portfolio::*,
     research::{SplitKind, SplitPolicyV1},
-    DbCounter, Id, SchemaV1,
 };
 use domain::portfolio::sample_covariance;
-use job::validation::{validation_folds, ScoreCalibration};
+use job::validation::{ScoreCalibration, validation_folds};
 
 fn count(value: u64) -> DbCounter {
     DbCounter::new(value).unwrap()
@@ -98,8 +98,8 @@ fn invalid_horizons_budgets_and_combinatorial_bombs_are_rejected() {
     request = policy();
     request.label_horizon_observations = Some(count(2));
     assert!(validation_folds(&request, 100).is_err());
-    request = cpcv(8);
-    request.group_count = Some(16);
+    request = cpcv(17);
+    request.group_count = Some(34);
     assert!(validation_folds(&request, 1000).is_err());
     request = cpcv(2);
     request.group_count = Some(u16::MAX);
@@ -197,4 +197,48 @@ fn calibration_rejects_nonfinite_constant_and_insufficient_inputs() {
     let model = ScoreCalibration::fit(&[1.0, 2.0, 3.0, 4.0], &[2.0, 4.0, 6.0, 8.0]).unwrap();
     assert!(model.predict(&[]).is_err());
     assert!(model.predict(&[f64::NAN]).is_err());
+}
+
+#[test]
+fn large_training_sample_keeps_the_frozen_gap_and_complete_test_window() {
+    let mut request = policy();
+    request.train_size = count(1_000_001);
+    let folds = validation_folds(&request, 1_000_005).unwrap();
+    assert_eq!(folds.len(), 1);
+    assert_eq!(folds[0].train.len(), 1_000_001);
+    assert_eq!(folds[0].train.first(), Some(&0));
+    assert_eq!(folds[0].train.last(), Some(&1_000_000));
+    assert_eq!(folds[0].test, vec![1_000_003, 1_000_004]);
+    assert!(
+        folds[0]
+            .train
+            .iter()
+            .all(|&index| index + 2 < folds[0].test[0])
+    );
+}
+
+#[test]
+fn covariance_accepts_more_than_256_assets_without_changing_sample_semantics() {
+    let source = vec![vec![-1.0, 0.0, 1.0]; 257];
+    let actual = sample_covariance(&covariance_model(), &source).unwrap();
+    assert_eq!(actual.len(), 257);
+    assert!(
+        actual
+            .iter()
+            .all(|row| row.len() == 257 && row.iter().all(|&value| value == 1.0))
+    );
+    assert!(sample_covariance(&covariance_model(), &vec![vec![1.0]; 257]).is_err());
+}
+
+#[test]
+fn validation_keeps_every_fold_above_the_old_256_and_16_group_caps() {
+    let folds = validation_folds(&policy(), 526).unwrap();
+    assert_eq!(folds.len(), 258);
+    assert_eq!(folds.last().unwrap().test, vec![524, 525]);
+    let mut request = cpcv(1);
+    request.group_count = Some(17);
+    let folds = validation_folds(&request, 51).unwrap();
+    assert_eq!(folds.len(), 17);
+    assert_eq!(folds[0].test, vec![0, 1, 2]);
+    assert_eq!(folds[16].test, vec![48, 49, 50]);
 }

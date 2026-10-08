@@ -73,9 +73,6 @@ impl RuntimeTargets {
         entries: Vec<RuntimeTarget>,
         development_http: bool,
     ) -> Result<Self, RuntimeProbeFailure> {
-        if entries.len() > 64 {
-            return Err(RuntimeProbeFailure::EndpointDenied);
-        }
         let mut result = Self {
             entries: BTreeMap::new(),
             development_http,
@@ -89,7 +86,7 @@ impl RuntimeTargets {
             let port = url
                 .port_or_known_default()
                 .ok_or(RuntimeProbeFailure::EndpointDenied)?;
-            if !(1..=16).contains(&entry.addresses.len()) {
+            if entry.addresses.is_empty() {
                 return Err(RuntimeProbeFailure::EndpointDenied);
             }
             for (index, address) in entry.addresses.iter().enumerate() {
@@ -219,7 +216,6 @@ impl RuntimeTransport {
             .no_zstd()
             .default_headers(headers)
             .connect_timeout(Duration::from_secs(3))
-            .timeout(Duration::from_secs(10))
             .pool_max_idle_per_host(1)
             .connection_verbose(false);
         match configuration.tls_policy {
@@ -228,7 +224,7 @@ impl RuntimeTransport {
                 let ca = ca.ok_or(RuntimeProbeFailure::TlsConfiguration)?;
                 let certificates = reqwest::Certificate::from_pem_bundle(ca)
                     .map_err(|_| RuntimeProbeFailure::TlsConfiguration)?;
-                if certificates.is_empty() || certificates.len() > 16 {
+                if certificates.is_empty() {
                     return Err(RuntimeProbeFailure::TlsConfiguration);
                 }
                 builder = builder.tls_built_in_root_certs(false);
@@ -258,15 +254,58 @@ impl RuntimeTransport {
             .await
             .map_err(|_| RuntimeProbeFailure::Unavailable)?;
         let (capabilities, _) = self
-            .json_response(
-                response,
-                &[StatusCode::OK],
-                domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES,
-            )
+            .json_response(response, &[StatusCode::OK])
             .await
             .map_err(RuntimeRequestError::probe)?;
         domain::runtime::capabilities(&capabilities, chrono::Utc::now())
             .map_err(|_| RuntimeProbeFailure::ContractUnsupported)?;
         Ok(capabilities)
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    fn entries() -> Vec<RuntimeTarget> {
+        (0..65)
+            .map(|index| RuntimeTarget {
+                origin: format!("https://runtime-{index}.example"),
+                addresses: (1..=17)
+                    .map(|address| format!("10.0.0.{address}:443").parse().unwrap())
+                    .collect(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn complete_deployment_targets_cross_former_count_limits() {
+        let input = entries();
+        let targets = RuntimeTargets::new(input.clone(), false).unwrap();
+        assert_eq!(targets.entries.len(), input.len());
+        for entry in &input {
+            let (_, addresses) = targets.target(&entry.origin, false).unwrap();
+            assert_eq!(addresses, entry.addresses);
+        }
+        assert!(targets.target("https://not-registered.example", false).is_err());
+    }
+
+    #[test]
+    fn large_target_configuration_retains_pinning_and_identity_checks() {
+        let input = entries();
+        let mut duplicate_origin = input.clone();
+        duplicate_origin.push(input[0].clone());
+        assert!(RuntimeTargets::new(duplicate_origin, false).is_err());
+        for replacement in ["10.0.0.1:443", "10.0.0.18:8443", "169.254.169.254:443"] {
+            let mut invalid = input.clone();
+            invalid.last_mut().unwrap().addresses.push(replacement.parse().unwrap());
+            assert!(RuntimeTargets::new(invalid, false).is_err());
+        }
+        let mut empty = input.clone();
+        empty.last_mut().unwrap().addresses.clear();
+        assert!(RuntimeTargets::new(empty, false).is_err());
+        let mut literal_mismatch = input;
+        literal_mismatch.last_mut().unwrap().origin = "https://10.0.0.1".into();
+        assert!(RuntimeTargets::new(literal_mismatch, false).is_err());
     }
 }

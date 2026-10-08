@@ -695,7 +695,7 @@ fn scientific_assertions(report: &NativeExperimentEvaluationResultV1, evaluation
         .any(|d| d.features[0].missing_reason == Some(FeatureMissingReasonV1::SourceMissing)));
     assert_eq!(report.source_row_count.get(), 40);
     assert_eq!(report.feature_count, 3);
-    assert!(report.consumed_fuel.get() > 0);
+    assert!(report.consumed_fuel.unwrap().get() > 0);
     assert_eq!(report.native_versions["nautilus-backtest"], "0.63.0");
     assert!(report.folds.len() > 1);
     for fold in &report.folds {

@@ -1,6 +1,6 @@
 // Field relationships mirror domain authoring rules, never grant authority.
 export type BudgetRelations = {
-  budget?: { max_turns_per_mission?: number; max_repair_turns?: number; max_experiments?: number };
+  budget?: { max_turns_per_mission?: number | null; max_repair_turns?: number | null; max_experiments?: number };
   stop_rule?: { stop_on_qualified_count?: number };
 };
 export function budgetRelationError(value: BudgetRelations, relation: 'turns' | 'experiments'): string | undefined {

@@ -211,12 +211,31 @@ async fn release_metadata(
     let id = Id::new();
     let package = Id::new();
     let mut tx = pool.begin().await?;
-    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PACKAGE','application/json','qz.target_package','1','LOCAL',$3,'1',1,'DELIVERY',$4,'OPERATOR','AUDIT')")
+    // Relational fixtures have no executable object bytes. Use the current
+    // writer shape only after the real upgrade; historical migration tests
+    // create genuine old rows before that migration, never disable its guards.
+    let v2: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=202610070002 AND success)",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PACKAGE','application/json','qz.target_package',$5,'LOCAL',$3,'1',1,'DELIVERY',$4,'OPERATOR','AUDIT')")
         .bind(package.as_uuid()).bind(f.project.as_uuid()).bind(format!("isolated-relational-test/{package}"))
-        .bind(origin).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO app.releases(id,candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment) VALUES($1,$2,$3,'1',$4,$5,'fixture',now(),now(),now()+interval '1 hour',$6)")
-        .bind(id.as_uuid()).bind(candidate.as_uuid()).bind(package.as_uuid()).bind(mandate.as_uuid())
-        .bind(evaluation.as_uuid()).bind(environment).execute(&mut *tx).await?;
+        .bind(origin).bind(if v2 { "2" } else { "1" }).execute(&mut *tx).await?;
+    let statement = if v2 {
+        "INSERT INTO app.releases(id,candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment,execution_environment) VALUES($1,$2,$3,'2',$4,$5,'fixture',now(),now(),now()+interval '1 hour',$6,'PAPER')"
+    } else {
+        "INSERT INTO app.releases(id,candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment) VALUES($1,$2,$3,'1',$4,$5,'fixture',now(),now(),now()+interval '1 hour',$6)"
+    };
+    sqlx::query(statement)
+        .bind(id.as_uuid())
+        .bind(candidate.as_uuid())
+        .bind(package.as_uuid())
+        .bind(mandate.as_uuid())
+        .bind(evaluation.as_uuid())
+        .bind(environment)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(id)
 }

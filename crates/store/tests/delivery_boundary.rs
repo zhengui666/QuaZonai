@@ -6,7 +6,7 @@ use support::{budget, delivery_release_metadata, fixture, portfolio, release, sq
 
 async fn package(pool: &PgPool, project: Id, kind: &str, origin: &str, access: &str) -> Id {
     let id = Id::new();
-    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,'application/json','qz.target_package','1','LOCAL',$4,'1',32,$5,$6,'OPERATOR','AUDIT')")
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,'application/json','qz.target_package','2','LOCAL',$4,'1',32,$5,$6,'OPERATOR','AUDIT')")
         .bind(id.as_uuid()).bind(project.as_uuid()).bind(kind).bind(id.to_string()).bind(access).bind(origin).execute(pool).await.unwrap();
     id
 }
@@ -18,7 +18,7 @@ async fn copy_release(
     environment: &str,
 ) -> Result<Id, sqlx::Error> {
     let id = Id::new();
-    sqlx::query("INSERT INTO app.releases(id,candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment) SELECT $1,candidate_id,$2,$3,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,$4 FROM app.releases WHERE id=$5")
+    sqlx::query("INSERT INTO app.releases(id,candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment,execution_environment) SELECT $1,candidate_id,$2,$3,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,$4,'PAPER' FROM app.releases WHERE id=$5")
         .bind(id.as_uuid()).bind(artifact.as_uuid()).bind(version).bind(environment).bind(base.as_uuid()).execute(pool).await?;
     Ok(id)
 }
@@ -88,16 +88,16 @@ async fn packages_require_exact_project_kind_schema_and_real_origin(pool: PgPool
         package(&pool, f.project, "PACKAGE", "REAL", "RESEARCH").await,
     ] {
         sqlstate(
-            copy_release(&pool, r, p, "1", "REAL").await.unwrap_err(),
+            copy_release(&pool, r, p, "2", "REAL").await.unwrap_err(),
             "23503",
         );
     }
     let p = package(&pool, f.project, "PACKAGE", "REAL", "DELIVERY").await;
     sqlstate(
-        copy_release(&pool, r, p, "2", "REAL").await.unwrap_err(),
+        copy_release(&pool, r, p, "1", "REAL").await.unwrap_err(),
         "23503",
     );
-    copy_release(&pool, r, p, "1", "REAL").await.unwrap();
+    copy_release(&pool, r, p, "2", "REAL").await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.releases")
             .fetch_one(&pool)

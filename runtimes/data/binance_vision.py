@@ -34,11 +34,10 @@ SPEC_REVISION = "bd110bb04caad6ad964a0098809f18343b1e104b"
 INTERVALS = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
              "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600,
              "8h": 28800, "12h": 43200, "1d": 86400}
-LIMITS = {"archive_bytes": 1024 * 1024, "checksum_bytes": 4096,
-          "csv_bytes": 4 * 1024 * 1024, "row_bytes": 4096, "field_bytes": 128,
-          "decimal_digits": 100, "rows": 1440, "provenance_bytes": 4096,
-          "evidence_bytes_each": 2 * 1024 * 1024, "manifest_bytes": 256 * 1024,
-          "records_bytes": 4 * 1024 * 1024}
+# Preserve manifest keys without imposing artificial data/metadata ceilings.
+LIMITS = dict.fromkeys(("archive_bytes", "checksum_bytes", "csv_bytes", "row_bytes", "field_bytes",
+                        "decimal_digits", "rows", "provenance_bytes", "evidence_bytes_each",
+                        "manifest_bytes", "records_bytes"))
 ADMISSION = {"coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
              "research_qualified": False, "registered_in_quazonai": False,
              "permission_status": "REQUIRES_INDEPENDENT_REVIEW"}
@@ -58,7 +57,7 @@ class Selection:
 
     def validate(self):
         for value in (self.symbol, self.base_asset, self.quote_asset):
-            if not isinstance(value, str) or not re.fullmatch(r"[A-Z0-9]{1,32}", value):
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Z0-9]+", value):
                 raise ValueError("selection requires explicit uppercase ASCII symbol/base/quote")
         if self.base_asset == self.quote_asset or self.symbol != self.base_asset + self.quote_asset:
             raise ValueError("symbol must match the explicitly declared distinct base and quote")
@@ -96,22 +95,22 @@ def plan(selection):
             "limits": dict(LIMITS), "admission": dict(ADMISSION)}
 
 
-def local_bytes(path, limit):
-    """Bounded regular-file read, refusing symlinks and nonblocking special files."""
+def local_bytes(path, limit=None):
+    """Complete regular-file read, refusing symlinks and nonblocking special files."""
     path = Path(os.path.abspath(path))
     safe_local(path.parent, path.name)
     flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
              | getattr(os, "O_BINARY", 0))
     with os.fdopen(os.open(path, flags), "rb") as stream:
         before = os.fstat(stream.fileno())
-        if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
-            raise ValueError("input must be a bounded regular file")
-        body = stream.read(limit + 1)
+        if not stat.S_ISREG(before.st_mode) or (limit is not None and before.st_size > limit):
+            raise ValueError("input must be a regular file within any explicit byte limit")
+        body = stream.read() if limit is None else stream.read(limit + 1)
         after = os.fstat(stream.fileno())
     safe_local(path.parent, path.name)
     current = path.stat()
     identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
-    if (len(body) > limit or len(body) != before.st_size
+    if ((limit is not None and len(body) > limit) or len(body) != before.st_size
             or identity(before) != identity(after) or identity(after) != identity(current)):
         raise ValueError("input changed during read or exceeds byte limit")
     return body
@@ -121,14 +120,13 @@ def unsigned(value, label, maximum=MAX_NS):
     if not isinstance(value, str) or not re.fullmatch(r"(?:0|[1-9][0-9]{0,19})", value):
         raise ValueError(f"invalid {label}")
     number = int(value)
-    if number > maximum:
+    if maximum is not None and number > maximum:
         raise ValueError(f"{label} exceeds its bound")
     return number
 
 
 def amount(value, positive=False):
-    if (not re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", value)
-            or sum(c.isdigit() for c in value) > LIMITS["decimal_digits"]):
+    if not re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", value):
         raise ValueError("invalid decimal lexeme")
     result = Decimal(value)  # Construction and comparison do not round to context precision.
     if positive and result == 0:
@@ -138,8 +136,6 @@ def amount(value, positive=False):
 
 def decode_csv(body, selection):
     spec = plan(selection)
-    if len(body) > LIMITS["csv_bytes"]:
-        raise ValueError("CSV exceeds byte limit")
     try:
         text = body.decode("ascii")
     except UnicodeDecodeError:
@@ -153,17 +149,19 @@ def decode_csv(body, selection):
     if lines[-1] == "":
         lines.pop()
     expected = 86400 // spec["interval_seconds"]
-    if len(lines) > expected or len(lines) > LIMITS["rows"]:
+    if len(lines) > expected:
         raise ValueError("CSV row count exceeds selection")
-    if any(not line.removesuffix("\r") or len(line) > LIMITS["row_bytes"] for line in lines):
-        raise ValueError("CSV has a blank or oversized row")
+    if any(not line.removesuffix("\r") for line in lines):
+        raise ValueError("CSV has a blank row")
     scale = 1000 if spec["source_timestamp_unit"] == "us" else 1_000_000
     width = spec["interval_seconds"] * 1_000_000_000
     start, end = int(spec["start_ns"]), int(spec["end_ns"])
     rows, present = [], set()
-    for index, fields in enumerate(csv.reader(io.StringIO(text, newline=""), strict=True)):
-        if len(fields) != 12 or any(len(field) > LIMITS["field_bytes"] for field in fields):
-            raise ValueError("CSV requires twelve bounded fields")
+    # Quotes are forbidden above, so split directly without csv.field_size_limit.
+    for index, line in enumerate(lines):
+        fields = line.removesuffix("\r").split(",")
+        if len(fields) != 12:
+            raise ValueError("CSV requires twelve fields")
         opened = unsigned(fields[0], "source open", MAX_NS // scale) * scale
         closed = unsigned(fields[6], "source close", MAX_NS // scale) * scale
         if (not start <= opened < end or (opened - start) % width
@@ -178,7 +176,7 @@ def decode_csv(body, selection):
             raise ValueError("taker volume exceeds total volume")
         unsigned(fields[8], "trade count")
         if not fields[11] or any(ord(c) < 32 or ord(c) > 126 for c in fields[11]):
-            raise ValueError("ignored source field must be bounded printable ASCII")
+            raise ValueError("ignored source field must be printable ASCII")
         rows.append({"kind": "OHLCV_CANDLE", "symbol": selection.symbol,
                      "bucket_open_ns": str(opened), "event_end_ns": str(opened + width),
                      "source_open": fields[0], "source_close_inclusive": fields[6],
@@ -197,10 +195,8 @@ def decode_csv(body, selection):
 
 
 def decode(archive, checksum, selection):
-    """Validate bounded original bytes and reproduce source rows without extraction."""
+    """Validate complete original bytes and reproduce source rows without extraction."""
     spec = plan(selection)
-    if len(archive) > LIMITS["archive_bytes"] or len(checksum) > LIMITS["checksum_bytes"]:
-        raise ValueError("archive or checksum exceeds byte limit")
     expected = re.escape(spec["archive_name"].encode("ascii"))
     match = re.fullmatch(rb"([0-9a-fA-F]{64}) [ *]" + expected + rb"(?:\r?\n)?", checksum)
     if not match or hashlib.sha256(archive).hexdigest() != match[1].decode().lower():
@@ -217,9 +213,7 @@ def decode(archive, checksum, selection):
                     or stat.S_IFMT(mode) not in (0, stat.S_IFREG)
                     or member.flag_bits & (1 | 0x40)
                     or member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
-                    or member.header_offset != 0
-                    or member.file_size > LIMITS["csv_bytes"]
-                    or member.compress_size > LIMITS["archive_bytes"]):
+                    or member.header_offset != 0):
                 raise ValueError("unsafe or unsupported ZIP member, prefix, compression or size")
             # ZipInfo.filename can normalize a NUL suffix. Ask zipfile to check
             # the local name against a canonical, publicly constructed ZipInfo;
@@ -229,16 +223,15 @@ def decode(archive, checksum, selection):
                 setattr(canonical, attribute, getattr(member, attribute))
             with container.open(canonical):
                 pass
-            # ZipExtFile clips output at ZipInfo.file_size. Read with our own
-            # budget so a forged size/CRC cannot hide a valid trailing row.
-            # Copy the member to retain ZipFile's associated structural checks;
-            # the original declaration stays unchanged for comparison below.
-            bounded_member = copy(member)
-            bounded_member.file_size = LIMITS["csv_bytes"] + 1
-            with container.open(bounded_member) as stream:
-                body = stream.read(LIMITS["csv_bytes"] + 1)
-                if len(body) > LIMITS["csv_bytes"] or stream.read(1) or len(body) != member.file_size:
-                    raise ValueError("decoded ZIP member exceeds limit or declared size")
+            # ZipExtFile clips output at ZipInfo.file_size. Allow one byte past
+            # the declared size so a forged size/CRC cannot hide trailing rows.
+            # This is a source-integrity boundary, not an application size cap.
+            checked_member = copy(member)
+            checked_member.file_size = member.file_size + 1
+            with container.open(checked_member) as stream:
+                body = stream.read()
+                if len(body) != member.file_size:
+                    raise ValueError("decoded ZIP member differs from declared size")
             # Reading to EOF invokes zipfile's CRC/local-header/overlap checks.
             if zlib.crc32(body) & 0xFFFFFFFF != member.CRC:
                 raise ValueError("ZIP CRC mismatch")
@@ -305,8 +298,6 @@ def _bundle(selection, archive, checksum, provenance, evidence, imported_at, pub
         row["declared_observed_at"] = (declaration["retrieval"]["archive"]["completed_at"]
                                        if declaration["retrieval"] else None)
     records = b"".join(json_bytes(row) for row in decoded["rows"])
-    if len(records) > LIMITS["records_bytes"]:
-        raise ValueError("normalized records exceed byte limit")
     blobs = {"raw/archive.zip": archive, "raw/archive.CHECKSUM": checksum,
              "records.jsonl": records}
     if provenance is not None:
@@ -317,8 +308,6 @@ def _bundle(selection, archive, checksum, provenance, evidence, imported_at, pub
     for role in EVIDENCE_ROLES:
         body = evidence.get(role)
         if body is not None:
-            if len(body) > LIMITS["evidence_bytes_each"]:
-                raise ValueError("evidence exceeds byte limit")
             blobs[f"evidence/{role}.bin"] = body
         evidence_records[role] = {"status": "OPERATOR_SUPPLIED_UNVERIFIED" if body is not None else "NOT_SUPPLIED",
                                   "source_url": None, "revision": None}
@@ -334,8 +323,6 @@ def _bundle(selection, archive, checksum, provenance, evidence, imported_at, pub
                 "evidence": evidence_records, "imported_at": imported_at, "published_at": published_at,
                 "counts": decoded["counts"],
                 "status": "OBSERVATIONS" if decoded["rows"] else "NO_OBSERVATIONS"}
-    if len(json_bytes(manifest)) > LIMITS["manifest_bytes"]:
-        raise ValueError("manifest exceeds byte limit")
     return manifest, blobs
 
 
@@ -358,7 +345,7 @@ def freeze(selection, archive_path, checksum_path, output, *, provenance_path=No
     archive, checksum = originals[0][2], originals[1][2]
     provenance = originals[2][2] if provenance_path is not None else None
     evidence = dict(zip(evidence_paths, [item[2] for item in originals[3 if provenance_path is not None else 2:]]))
-    implementation = hashlib.sha256(local_bytes(__file__, 1024 * 1024)).hexdigest()
+    implementation = hashlib.sha256(local_bytes(__file__)).hexdigest()
     manifest, blobs = _bundle(selection, archive, checksum, provenance, evidence,
                               imported_at, now(), implementation)
     root = Path(os.path.abspath(output))
@@ -389,6 +376,17 @@ def verify(output):
     try:
         selection = Selection(**manifest["selection"])
         expected_plan = plan(selection)
+        recorded_limits = manifest["limits"]
+        # Exact legacy metadata is recognized only for immutable v1 readback;
+        # these values do not cap source bytes, output or parser capacities.
+        legacy_limits = {"archive_bytes": 1024 * 1024, "checksum_bytes": 4096,
+                         "csv_bytes": 4 * 1024 * 1024, "row_bytes": 4096, "field_bytes": 128,
+                         "decimal_digits": 100, "rows": 1440, "provenance_bytes": 4096,
+                         "evidence_bytes_each": 2 * 1024 * 1024, "manifest_bytes": 256 * 1024,
+                         "records_bytes": 4 * 1024 * 1024}
+        if json_bytes(recorded_limits) not in (json_bytes(LIMITS), json_bytes(legacy_limits)):
+            raise ValueError("invalid archive limit metadata")
+        expected_plan["limits"] = recorded_limits
         for key, value in expected_plan.items():
             if json_bytes(manifest[key]) != json_bytes(value):
                 raise ValueError("unsupported schema, provider, parser or selection plan")
@@ -406,6 +404,7 @@ def verify(output):
                                           blobs.get("provenance.json"), evidence,
                                           manifest["imported_at"], manifest["published_at"],
                                           manifest["implementation_sha256"])
+        rebuilt["limits"] = recorded_limits
         if json_bytes(rebuilt) != json_bytes(manifest) or blobs != expected_blobs:
             raise ValueError("archive envelope or normalized records do not reproduce")
         for name, body in blobs.items():

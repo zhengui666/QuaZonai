@@ -1,9 +1,9 @@
 //! Fixed native job operations. No caller-selected process, environment, mount or host path.
 use crate::{
+    DbCounter, Id, SchemaV1,
     runtime::RuntimeArtifactSchemaV1,
     runtime_jobs::RuntimeOutputV1,
     science::{NativeBarSelectionV1, NativeForecastRequestV1, NativeSimulationRequestV1},
-    DbCounter, Id, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,6 @@ use utoipa::ToSchema;
 pub struct NativeDatasetSelectionV1 {
     /// Complete original condition payouts; not inferred from a last bar or expiry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schema(max_items = 256)]
     pub settlements: Vec<crate::settlement::NativeSettlementGroupV1>,
     pub dataset_revision_id: Id,
     pub selection: NativeBarSelectionV1,
@@ -41,13 +40,13 @@ pub enum NativeTaskParametersV1 {
         schema_version: SchemaV1,
         dataset_revision_id: Id,
         model_artifact_id: Id,
-        #[schema(min_items = 1, max_items = 16)]
+        #[schema(min_items = 1)]
         feature_artifact_ids: Vec<Id>,
         request: Box<crate::science::NativeExperimentEvaluationRequestV1>,
     },
     ValidateData {
         schema_version: SchemaV1,
-        #[schema(min_items = 1, max_items = 256)]
+        #[schema(min_items = 1)]
         selections: Vec<NativeDatasetSelectionV1>,
     },
     EvaluateAlpha {
@@ -181,18 +180,17 @@ pub struct NativeJobOutputIndexV1 {
 pub struct NativeDatasetQualityV1 {
     /// Complete original condition payouts; not inferred from a last bar or expiry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schema(max_items = 256)]
     pub settlements: Vec<crate::settlement::NativeSettlementGroupV1>,
     pub dataset_revision_id: Id,
     pub selection: NativeBarSelectionV1,
     pub row_count: DbCounter,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub instrument_ids: Vec<String>,
     pub first_event_ns: DbCounter,
     pub last_event_ns: DbCounter,
     pub available_through_ns: DbCounter,
     /// None means not measured, never zero liquidity or a future capacity claim.
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub last_bar_notionals: Option<Vec<NativeBarNotionalV1>>,
 }
 
@@ -217,7 +215,7 @@ pub struct NativeDataQualityReportV1 {
     pub schema_version: SchemaV1,
     pub native_version: String,
     pub checked_at: DateTime<Utc>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub datasets: Vec<NativeDatasetQualityV1>,
 }
 

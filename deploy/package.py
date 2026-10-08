@@ -24,6 +24,9 @@ CLI_ARCHIVES = {
 IMAGE_ARCHIVES = {name: f"quazonai-image-{name}.tar.gz"
                   for name in ("application", "runtime", "codex", "database")}
 NOTICES = {"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
+DEPLOY_FILES = frozenset({"manage.sh", "json.awk", "codex.sh", "deploy.sh", "update.sh",
+                         "compose.yaml", "release.json", "README.md", "codex-update.sh",
+                         "codex-login.sh", "runtime.sh", "codex.apparmor", ".env.example"})
 REQUIRED_ASSETS = frozenset({"release.json", "quazonai-deploy.tar.gz", "README.md",
                             "install.sh", "install.ps1", "SHA256SUMS"}
                            | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))
@@ -173,6 +176,8 @@ def check_tar(path: Path, *, manifest: dict | None = None) -> None:
                     raise ValueError("Invalid deployment guide.")
                 readme_text = archive.extractfile(member).read().decode("utf-8")
     if manifest is not None:
+        if files != DEPLOY_FILES or regular_files != DEPLOY_FILES:
+            raise ValueError("Deployment archive must contain the exact shell bundle file set.")
         if metadata != manifest:
             raise ValueError("Deployment archive must contain the exact release.json.")
         if not readme_text or MARKER in readme_text or manifest["version"] not in readme_text:
@@ -202,20 +207,21 @@ release using prebuilt binaries and images; no local compilation or image build.
 
 ## Install or update
 
-Linux x86_64: install/update the Docker cluster and native CLI. Requires Bash,
-curl, Python 3, rootful Docker with Compose v2, and a working systemd user manager.
+Linux x86_64: install/update the Docker cluster and native CLI. Requires Bash 4.4+,
+curl, tar, awk, GNU coreutils, util-linux, rootful Docker with Compose v2, and
+a working systemd user manager (including systemd-socket-activate).
 Run as the installation owner; preserve the installation directory when updating.
 
 ```sh
-curl -fsSL {base}/install.sh | bash
+sh -c 'f=$(mktemp) || exit; cleanup() {{ rm -f -- "$f"; }}; trap cleanup 0; trap "exit 1" 1 2 3 15; curl --fail --location --proto "=https" --proto-redir "=https" --tlsv1.2 --output "$f" {base}/install.sh && bash "$f" "$@"' sh
 ```
 
 macOS Intel or Apple Silicon: install/update the native CLI for a remote QuaZonai
-service (requires Bash and curl; the Docker cluster runs on Linux x86_64).
+service (requires Bash 3.2+, curl, tar and standard Unix tools; the Docker cluster runs on Linux x86_64).
 The same CLI-only command also works on Linux x86_64:
 
 ```sh
-curl -fsSL {base}/install.sh | bash -s -- --cli-only
+sh -c 'f=$(mktemp) || exit; cleanup() {{ rm -f -- "$f"; }}; trap cleanup 0; trap "exit 1" 1 2 3 15; curl --fail --location --proto "=https" --proto-redir "=https" --tlsv1.2 --output "$f" {base}/install.sh && bash "$f" "$@"' sh --cli-only
 ```
 
 Windows x86_64, PowerShell: install/update the native CLI for a remote service.
@@ -234,7 +240,9 @@ The release includes four native CLI archives, application/scientific Runtime/
 Codex/PostgreSQL images, the deployment bundle, manifest and installers. CLI
 archives contain the binary and LICENSE, NOTICE and THIRD_PARTY_NOTICES.md.
 `SHA256SUMS` verifies every downloadable asset except the checksum file itself.
-Installers verify downloaded archives before installing or loading images.
+The shell installer validates versions and archive structure without a file checksum check.
+It needs no Python, Node.js or jq and performs no automatic package installation or sudo.
+The complete script is downloaded before execution; failed downloads are cleaned up.
 
 Read the [deployment guide](https://github.com/{REPOSITORY}/blob/{version}/deploy/docker/README.md)
 for prerequisites, custom directories, backup and recovery. For an existing

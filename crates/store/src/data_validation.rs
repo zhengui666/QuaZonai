@@ -1,16 +1,17 @@
 //! Formal native DATA_VALIDATE. Cycle preparation and standalone validation use
 //! the same exact metadata/parameter adapter and existing transactional admission.
 use crate::{
+    Store, StoreError,
     authority::Actor,
     commands, db,
     lifecycle::{
-        native::{bind_task, NativeObjectPublication, NativeTaskDefinition},
         StandaloneRunSubmission,
+        native::{NativeObjectPublication, NativeTaskDefinition, bind_task},
     },
-    Store, StoreError,
 };
 use chrono::{DateTime, Utc};
 use contracts::{
+    DbCounter, Id, SchemaV1,
     artifacts::ArtifactAccess,
     catalogs::RuntimeCatalogMetadataV1,
     control::{CommandResult, OperatorOperation},
@@ -19,7 +20,6 @@ use contracts::{
     research::{ArtifactInputRole, DataOrigin, DataPartition, InputPurpose},
     runs::{RunKind, RunSnapshotV1},
     runtime_jobs::RuntimeInputV1,
-    DbCounter, Id, SchemaV1,
 };
 use sqlx::{Postgres, Row, Transaction};
 
@@ -77,9 +77,9 @@ where
             .ok_or_else(|| input("decision_cutoff"))?,
     )
     .map_err(|_| input("decision_cutoff"))?;
-    let rows = sqlx::query("SELECT i.ordinal,i.role,i.artifact_id,d.*,s.runtime_id,s.native_catalog_ref,e.native_metadata_artifact_id,a.byte_count AS metadata_bytes FROM app.input_set_items i LEFT JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id LEFT JOIN app.data_sources s ON s.id=d.source_id LEFT JOIN app.dataset_registration_evidence e ON e.dataset_revision_id=d.id LEFT JOIN app.artifacts a ON a.id=e.native_metadata_artifact_id WHERE i.input_set_id=$1 AND i.dataset_revision_id IS NOT NULL ORDER BY i.ordinal LIMIT 256")
+    let rows = sqlx::query("SELECT i.ordinal,i.role,i.artifact_id,d.*,s.runtime_id,s.native_catalog_ref,e.native_metadata_artifact_id,a.byte_count AS metadata_bytes FROM app.input_set_items i LEFT JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id LEFT JOIN app.data_sources s ON s.id=d.source_id LEFT JOIN app.dataset_registration_evidence e ON e.dataset_revision_id=d.id LEFT JOIN app.artifacts a ON a.id=e.native_metadata_artifact_id WHERE i.input_set_id=$1 AND i.dataset_revision_id IS NOT NULL ORDER BY i.ordinal")
         .bind(input_set.as_uuid()).fetch_all(&mut **tx).await?;
-    if rows.is_empty() || rows.len() > 255 {
+    if rows.is_empty() {
         return Err(input("input_set_id"));
     }
     let mut bindings = Vec::with_capacity(rows.len());
@@ -96,7 +96,7 @@ where
             row.try_get::<Option<i64>, _>("metadata_bytes")?
                 .ok_or(StoreError::Integrity)?,
         )?;
-        if bytes.get() == 0 || bytes.get() > 1024 * 1024 {
+        if bytes.get() == 0 {
             return Err(StoreError::Integrity);
         }
         let raw = read(metadata_id, bytes).await?;
@@ -200,9 +200,6 @@ where
         selections,
     };
     let bytes = serde_json::to_vec(&parameters).map_err(|_| StoreError::Integrity)?;
-    if bytes.len() > 8 * 1024 * 1024 {
-        return Err(input("input_set_id"));
-    }
     let parameter_id = Id::new();
     let parameter_bytes = bytes.len() as i64;
     inputs.push(RuntimeInputV1::Artifact {
@@ -223,7 +220,7 @@ where
         request.limits.cpu_seconds,
         request.limits.wall_seconds,
     )?;
-    if cpu == 0 || cpu > capabilities.max_cpu {
+    if cpu.is_some_and(|cpu| cpu == 0 || cpu > capabilities.max_cpu) {
         return Err(domain::DomainError::CapabilityUnavailable("native_cpu_capacity").into());
     }
     let image_ref = capabilities
@@ -311,7 +308,7 @@ impl Store {
             runtime_revision: request.expected_runtime_revision,
             kind: RunKind::DataValidate,
             limits: request.limits.clone(),
-            max_parallel_runs: 2,
+            max_parallel_runs: None,
         };
         // Only the original public Operator command owns replay authority.
         let internal_key = format!("data-validate/{}", Id::new());

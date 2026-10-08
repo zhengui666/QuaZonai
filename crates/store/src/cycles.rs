@@ -625,7 +625,7 @@ impl Store {
         let today: i64 = sqlx::query_scalar("SELECT count(*) FROM app.research_cycles WHERE project_id=$1 AND created_at>=date_trunc('day',$2::timestamptz,'UTC') AND created_at<date_trunc('day',$2::timestamptz,'UTC')+interval '1 day'")
             .bind(request.project_id.as_uuid()).bind(now).fetch_one(&mut *tx).await?;
         let budget = &brief.content.budget;
-        if today >= i64::from(budget.max_cycles_per_day) {
+        if budget.max_cycles_per_day.is_some_and(|limit| today >= i64::from(limit)) {
             return Err(DomainError::BudgetExhausted("cycles_per_day").into());
         }
         let previous: i32 = sqlx::query_scalar(
@@ -643,7 +643,7 @@ impl Store {
         // Reserve a bounded preparation slice, not all remaining research CPU.
         let cpu = budget
             .max_cpu_seconds
-            .map(|maximum| (maximum.get() / 10).clamp(1, 300));
+            .map(|maximum| (maximum.get() / 10).max(1));
         let limits = JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 0,
@@ -653,20 +653,11 @@ impl Store {
                 .map_err(|_| StoreError::Integrity)?,
             wall_seconds: budget
                 .max_wall_seconds
-                .map(|seconds| seconds.min(caps.max_wall_seconds).min(300)),
-            memory_mib: budget.max_memory_mib.min(caps.max_memory_mib).min(2048),
-            output_bytes: budget
-                .max_output_bytes
-                .map(|maximum| {
-                    DbCounter::new(
-                        maximum
-                            .get()
-                            .min(caps.max_output_bytes.get())
-                            .min(2 * 1024 * 1024),
-                    )
-                })
-                .transpose()
-                .map_err(|_| StoreError::Integrity)?,
+                .map(|seconds| caps.max_wall_seconds.map_or(seconds, |capacity| seconds.min(capacity))),
+            memory_mib: budget.max_memory_mib,
+            output_bytes: budget.max_output_bytes.map(|maximum| {
+                caps.max_output_bytes.map_or(maximum, |capacity| maximum.min(capacity))
+            }),
         };
         let definition = crate::data_validation::prepare_validation(
             &mut tx,

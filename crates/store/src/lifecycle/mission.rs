@@ -448,14 +448,11 @@ pub(super) async fn admit_role<'a>(
             experiments: 0,
             cpu_seconds: budget
                 .max_cpu_seconds
-                .map(|maximum| counter((maximum.get() / 10).clamp(1, 300) as i64))
+                .map(|maximum| counter((maximum.get() / 10).max(1) as i64))
                 .transpose()?,
             wall_seconds: budget.max_wall_seconds,
-            memory_mib: budget.max_memory_mib.min(4096),
-            output_bytes: budget
-                .max_output_bytes
-                .map(|maximum| counter(maximum.get().min(64 * 1024 * 1024) as i64))
-                .transpose()?,
+            memory_mib: budget.max_memory_mib,
+            output_bytes: budget.max_output_bytes,
         },
     };
     // A native savepoint permits a domain rejection to leave an honest Cycle

@@ -62,6 +62,7 @@ pub fn request(input: &AllocationInputV1) -> NativePortfolioBuildRequestV1 {
         },
         current_weights_artifact_id: Id::new(),
         current_weights: PortfolioCurrentWeightsV1 {
+            paper_initialization: None,
             schema_version: SchemaV1,
             source: PortfolioWeightsSourceV1::LastTarget {
                 candidate_id: Id::new(),
@@ -101,7 +102,7 @@ pub fn request(input: &AllocationInputV1) -> NativePortfolioBuildRequestV1 {
                     fast_period: 2,
                     slow_period: 3,
                     label_horizon_observations: m.horizon_value.get() as u32,
-                    total_fuel: contracts::DbCounter::new(100_000_000).unwrap(),
+                    total_fuel: Some(contracts::DbCounter::new(100_000_000).unwrap()),
                 },
             })
             .collect(),

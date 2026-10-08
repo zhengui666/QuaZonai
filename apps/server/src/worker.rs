@@ -29,7 +29,7 @@ pub struct Worker {
     vault: Arc<SecretVault>,
     objects: Arc<ArtifactStore>,
     targets: Arc<RuntimeTargets>,
-    parallelism: usize,
+    parallelism: Option<usize>,
     downstream_targets: Arc<RuntimeTargets>,
     missions: Option<Arc<mission::MissionLauncher>>,
 }
@@ -75,9 +75,10 @@ impl Worker {
         vault: SecretVault,
         objects: ArtifactStore,
         targets: RuntimeTargets,
-        parallelism: usize,
+        parallelism: impl Into<Option<usize>>,
     ) -> Result<Self, WorkerFailure> {
-        if !(1..=32).contains(&parallelism) {
+        let parallelism = parallelism.into();
+        if parallelism == Some(0) {
             return Err(WorkerFailure::Contract);
         }
         Ok(Self {
@@ -155,8 +156,9 @@ impl Worker {
                 let cursor = automation_cursor;
                 automation.spawn(async move { worker.process_automation(cursor).await });
             }
-            if jobs.len() < self.parallelism {
-                let remaining = (self.parallelism - jobs.len()).min(32) as i32;
+            if self.parallelism.is_none_or(|maximum| jobs.len() < maximum) {
+                // PGMQ batch width, not a total execution/concurrency ceiling.
+                let remaining = self.parallelism.map_or(32, |maximum| (maximum - jobs.len()).min(32)) as i32;
                 match self.store.read_native_run_messages(60, remaining).await {
                     Ok(messages) => {
                         for message in messages {
@@ -175,8 +177,8 @@ impl Worker {
                     ),
                 }
             }
-            if self.missions.is_some() && missions.len() < self.parallelism {
-                let remaining = (self.parallelism - missions.len()) as i32;
+            if self.missions.is_some() && self.parallelism.is_none_or(|maximum| missions.len() < maximum) {
+                let remaining = self.parallelism.map_or(32, |maximum| (maximum - missions.len()).min(32)) as i32;
                 match self.store.read_mission_messages(60, remaining).await {
                     Ok(messages) => {
                         for message in messages {

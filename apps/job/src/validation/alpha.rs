@@ -1,13 +1,13 @@
 //! Actual native fold/model/estimator execution. No database or policy authority.
-use super::{validation_folds, ScoreCalibration, MAX_VALIDATION_FOLDS, MAX_VALIDATION_INDICES};
+use super::{ScoreCalibration, validation_folds};
 use crate::{
-    catalog::{load_catalog, NativeBarSeries},
+    catalog::{NativeBarSeries, load_catalog},
     forecast::features,
     signals::SignalModule,
 };
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use contracts::{
-    brief::TargetKind, evidence::MetricStatus, research::SplitKind, science::*, DbCounter, SchemaV1,
+    DbCounter, SchemaV1, brief::TargetKind, evidence::MetricStatus, research::SplitKind, science::*,
 };
 use nautilus_model::instruments::Instrument;
 use ndarray::{Array2, ArrayView1};
@@ -26,11 +26,11 @@ fn predict(
     module: &SignalModule,
     features: &[Option<[f64; 8]>],
     indices: &[usize],
-    remaining: &mut u64,
+    remaining: &mut Option<u64>,
 ) -> Result<Vec<f64>> {
     let mut result = Vec::with_capacity(indices.len());
     for block in indices.chunk_by(|a, b| *b == *a + 1) {
-        let mut model = module.instantiate(u32::try_from(block.len())?, *remaining)?;
+        let mut model = module.instantiate(u64::try_from(block.len())?, *remaining)?;
         for &ordinal in block {
             let input = features
                 .get(ordinal)
@@ -123,10 +123,9 @@ pub fn validate_alpha(
     let parameters = &forecast.parameters;
     let horizon = parameters.label_horizon_observations as usize;
     let market = load_catalog(root, &forecast.selection)?;
-    let module = SignalModule::new(module)?;
-    let mut remaining = parameters.total_fuel.get();
+    let module = SignalModule::new(module, parameters.total_fuel.is_some())?;
+    let mut remaining = parameters.total_fuel.map(|fuel| fuel.get());
     let mut folds = Vec::new();
-    let mut index_count = 0_usize;
     let mut unique_test_observations = 0_usize;
     for series in market.series {
         let mut unique = BTreeSet::new();
@@ -143,19 +142,6 @@ pub fn validate_alpha(
             "VALIDATION_NONCONTIGUOUS_OBSERVATIONS"
         );
         let native = validation_folds(&request.split_policy, eligible.len())?;
-        ensure!(
-            folds.len() + native.len() <= MAX_VALIDATION_FOLDS,
-            "VALIDATION_FOLD_LIMIT"
-        );
-        for fold in &native {
-            index_count = index_count
-                .checked_add(fold.train.len() + fold.test.len())
-                .ok_or_else(|| anyhow::anyhow!("VALIDATION_INDEX_LIMIT"))?;
-            ensure!(
-                index_count <= MAX_VALIDATION_INDICES,
-                "VALIDATION_INDEX_LIMIT"
-            );
-        }
         let instrument_id = series.instrument.id().to_string();
         for (fold_index, fold) in native.into_iter().enumerate() {
             let train = fold.train.iter().map(|&i| eligible[i]).collect::<Vec<_>>();
@@ -279,8 +265,7 @@ pub fn validate_alpha(
             ("linregress".into(), "0.5.4".into()),
             ("ndarray-stats".into(), "0.7.0".into()),
         ]),
-        consumed_fuel: DbCounter::new(parameters.total_fuel.get() - remaining)
-            .map_err(anyhow::Error::msg)?,
+        consumed_fuel: parameters.total_fuel.zip(remaining).map(|(total, left)| DbCounter::new(total.get() - left).map_err(anyhow::Error::msg)).transpose()?,
         unique_test_observations: count(unique_test_observations)?,
         folds,
     })

@@ -282,24 +282,25 @@ pub(crate) fn bounded_native_limits_schema()
                             ObjectBuilder::new()
                                 .schema_type(Type::Integer)
                                 .minimum(Some(1.0))
-                                .maximum(Some(86400.0)),
+                                .maximum(Some(u32::MAX as f64)),
                         ),
                 )
                 .property(
                     "memory_mib",
-                    ObjectBuilder::new()
-                        .schema_type(Type::Integer)
-                        .minimum(Some(1.0))
-                        .maximum(Some(1048576.0)),
+                    OneOfBuilder::new()
+                        .item(ObjectBuilder::new().schema_type(Type::Null))
+                        .item(
+                            ObjectBuilder::new()
+                                .schema_type(Type::Integer)
+                                .minimum(Some(1.0))
+                                .maximum(Some(u32::MAX as f64)),
+                        ),
                 )
                 .property(
                     "output_bytes",
                     OneOfBuilder::new()
                         .item(ObjectBuilder::new().schema_type(Type::Null))
-                        .item(crate::scalars::bounded_bigint_schema(
-                            crate::runtime_jobs::MAX_JOB_OUTPUT_BYTES,
-                            true,
-                        )),
+                        .item(crate::scalars::positive_db_counter_schema()),
                 ),
         )
         .into()
@@ -349,7 +350,7 @@ pub struct RecordedFeatureRegisterV1 {
         pattern = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}(?![\s\S])"
     )]
     pub feature_part_key: String,
-    /// 1..=2097152 encoded UTF-8 bytes; whitespace and final newline are retained.
+    /// Original UTF-8 bytes; whitespace and final newline are retained.
     /// This is a string, never a parsed JSON Value to be reserialized for storage.
     #[schema(min_length = 1)]
     pub content: String,
@@ -432,6 +433,5 @@ pub struct RecordedFeatureListQuery {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecordedFeatureListV1 {
-    #[schema(max_items = 16)]
     pub items: Vec<RecordedFeatureViewV1>,
 }

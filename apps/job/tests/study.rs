@@ -121,7 +121,7 @@ fn rolling_original_models_use_one_native_account_and_observed_weights() {
     let result: NativePortfolioStudyResultV1 = serde_json::from_slice(&output.stdout).unwrap();
     assert!(output.stdout.len() < 8 * 1024 * 1024);
     assert_eq!(result.frames.len(), 3);
-    assert!(result.consumed_fuel.get() > 0 && result.consumed_fuel.get() <= 200_000_000);
+    assert!(result.consumed_fuel.unwrap().get() > 0 && result.consumed_fuel.unwrap().get() <= 200_000_000);
     domain::execution::check_portfolio_study(&request, &result).unwrap();
     let mut manual = request.clone();
     let mut cutoffs = domain::execution::portfolio_study_cutoffs(&request).unwrap();
@@ -246,7 +246,7 @@ fn rolling_original_models_use_one_native_account_and_observed_weights() {
     changed.frames[0].input.return_history.available_ns[0] = request.source_selection.event_end_ns;
     rejects(changed);
     let mut changed = result.clone();
-    changed.consumed_fuel = market::count(200_000_001);
+    changed.consumed_fuel = Some(market::count(200_000_001));
     rejects(changed);
     let mut changed = result.clone();
     changed

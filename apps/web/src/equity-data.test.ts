@@ -52,6 +52,27 @@ describe('native equity display boundaries', () => {
     }
     expect(() => checkedEquity({ ...data, origin: 'REAL' }, evaluation)).toThrow();
   });
+  it('preserves every native point above the former display cap and still validates the tail', () => {
+    const data = response();
+    if (data.curve.status !== 'READY') throw new Error('fixture');
+    const series = data.curve.series;
+    const count = 20_001;
+    const first = BigInt(series.period_start_ns);
+    series.points = Array.from({ length: count }, (_, index) => ({
+      timestamp_ns: (first + BigInt(index)).toString(),
+      value: index === 10_000 ? null : index.toString(),
+      reason_code: index === 10_000 ? 'MISSING_OBSERVATION' : null,
+    }));
+    series.source_point_count = count.toString();
+    series.window_point_count = count.toString();
+    series.period_end_ns = series.points[count - 1]!.timestamp_ns;
+    expect(checkedEquity(data, evaluation)).toBe(data);
+    expect(series.points).toHaveLength(count);
+    expect(series.points[10_000]).toMatchObject({ value: null, reason_code: 'MISSING_OBSERVATION' });
+    expect(series.points[count - 1]!.value).toBe('20000');
+    series.points[count - 1]!.timestamp_ns = series.points[count - 2]!.timestamp_ns;
+    expect(() => checkedEquity(data, evaluation)).toThrow('顺序');
+  });
   it('preserves explicit gaps and rejects duplicate times, incorrect counts and fabricated zeroes', () => {
     const data = response();
     if (data.curve.status !== 'READY') throw new Error('fixture');

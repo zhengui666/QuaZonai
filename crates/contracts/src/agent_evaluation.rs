@@ -83,7 +83,7 @@ pub struct AgentEvaluationDatasetV1 {
     #[schema(min_length = 1, max_length = 200)]
     pub id: String,
     pub sha256: EvaluationSha256,
-    #[schema(min_items = 1, max_items = 500)]
+    #[schema(min_items = 1)]
     pub case_ids: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -126,9 +126,8 @@ pub struct AgentEvaluationCaseV1 {
     pub observed: Option<AgentEvaluationObservedV1>,
     pub measurements: AgentEvaluationMeasurementsV1,
     /// IDs fixed by the suite before execution; PASS requires every one with evidence.
-    #[schema(min_items = 1, max_items = 100)]
+    #[schema(min_items = 1)]
     pub required_assertions: Vec<String>,
-    #[schema(max_items = 100)]
     pub assertions: Vec<AgentEvaluationAssertionV1>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -151,6 +150,6 @@ pub struct AgentEvaluationReportV1 {
     pub suite_sha256: EvaluationSha256,
     pub tuning: AgentEvaluationDatasetV1,
     pub held_out: AgentEvaluationDatasetV1,
-    #[schema(min_items = 2, max_items = 500)]
+    #[schema(min_items = 2)]
     pub cases: Vec<AgentEvaluationCaseV1>,
 }

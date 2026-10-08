@@ -121,7 +121,7 @@ fn limits(run: Id, remaining: u32) -> MissionProcess {
             experiments: 0,
             cpu_seconds: Some(DbCounter::new(30).unwrap()),
             wall_seconds: Some(60),
-            memory_mib: 256,
+            memory_mib: Some(256),
             output_bytes: Some(DbCounter::new(1_048_576).unwrap()),
         },
         Some(remaining),
@@ -276,11 +276,13 @@ async fn mission_limits_duplicate_fence_and_close_or_drop_stop_every_process() {
     assert_eq!(host.cpu_quota, Some(500_000));
     assert_eq!(host.memory, Some(256 * 1024 * 1024));
     assert_eq!(host.memory_swap, host.memory);
-    assert_eq!(host.pids_limit, Some(128));
+    assert!(host.pids_limit.is_none() || host.pids_limit == Some(0));
     assert_eq!(host.init, Some(true));
     assert_eq!(host.network_mode.as_deref(), Some("host"));
+    assert_eq!(host.shm_size, host.memory);
     let ulimits = host.ulimits.unwrap();
-    for (name, value) in [("core", 0), ("fsize", 67_108_864)] {
+    assert!(ulimits.iter().all(|limit| limit.name.as_deref() != Some("fsize")));
+    for (name, value) in [("core", 0)] {
         assert!(ulimits
             .iter()
             .any(|limit| limit.name.as_deref() == Some(name)
@@ -293,9 +295,7 @@ async fn mission_limits_duplicate_fence_and_close_or_drop_stop_every_process() {
         r#"set -e
 test "$(cat /sys/fs/cgroup/memory.max)" = 268435456
 test "$(cat /sys/fs/cgroup/memory.swap.max)" = 0
-test "$(cat /sys/fs/cgroup/pids.max)" = 128
 test "$(cat /sys/fs/cgroup/cpu.max)" = '500000 1000000'
-grep -Eq '^Max file size[[:space:]]+67108864[[:space:]]+67108864[[:space:]]+bytes' /proc/self/limits
 grep -Eq '^Max core file size[[:space:]]+0[[:space:]]+0[[:space:]]+bytes' /proc/self/limits"#,
         false,
     )

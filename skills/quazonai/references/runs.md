@@ -10,6 +10,10 @@ Use a Run ID from the original accepted command receipt or `cycle show`. If the 
 quazonai client run watch "$RUN_ID" --max-seconds 30 --max-events 100
 ```
 
+The time and event limits above are explicit observation budgets. Both flags are
+optional; omitting one leaves that dimension uncapped. Omit both only when the
+user has requested ongoing observation.
+
 Add `--development-http` only for an explicitly configured HTTP connection. After a bounded observation, persist the last verified event ID and explicitly resume when the task still requires it:
 
 ```sh

@@ -56,7 +56,7 @@ pub struct Reservation {
     pub request_artifact_id: Id,
     pub owner_epoch: Revision,
     pub profile_revision: Revision,
-    pub ordinal: u16,
+    pub ordinal: u64,
     pub turn_kind: TurnKind,
     pub tokens: Option<DbCounter>,
     pub reserved_cost: Option<DecimalValue>,
@@ -390,8 +390,8 @@ impl Mission {
             .bind(self.cycle_id).fetch_one(&mut **tx).await?;
         let turns=sqlx::query("SELECT coalesce(sum(used_turns),0)::bigint used_turns,coalesce(sum(reserved_turns),0)::bigint reserved_turns,coalesce(sum(used_repair_turns),0)::bigint used_repair_turns,coalesce(sum(reserved_repair_turns),0)::bigint reserved_repair_turns FROM app.model_turn_accounting WHERE session_id=$1")
             .bind(self.session_id).fetch_one(&mut **tx).await?;
-        let turn_count = |field: &str| -> Result<u16, StoreError> {
-            u16::try_from(turns.try_get::<i64, _>(field)?)
+        let turn_count = |field: &str| -> Result<u64, StoreError> {
+            u64::try_from(turns.try_get::<i64, _>(field)?)
                 .map_err(|_| StoreError::Invalid("turn_count_overflow"))
         };
         let cost = match &self.budget.cost_currency {
@@ -437,7 +437,7 @@ fn reservation(row: PgRow) -> Result<Reservation, StoreError> {
             row.try_get::<i64, _>("profile_revision")?.to_string(),
         )
         .map_err(|_| StoreError::Invalid("profile_revision"))?,
-        ordinal: u16::try_from(row.try_get::<i32, _>("ordinal")?)
+        ordinal: u64::try_from(row.try_get::<i64, _>("ordinal")?)
             .map_err(|_| StoreError::Invalid("turn_ordinal"))?,
         turn_kind: kind(&row.try_get::<String, _>("turn_kind")?)?,
         tokens: row
@@ -822,15 +822,12 @@ async fn reserve_in_transaction(
     )?;
     // The session lock makes ordinal allocation deterministic, including
     // refunded reservations. A refund cannot erase audit identities.
-    let ordinal: i32 = sqlx::query_scalar(
+    let ordinal: i64 = sqlx::query_scalar(
         "SELECT coalesce(max(ordinal),0)+1 FROM app.model_turn_reservations WHERE session_id=$1",
     )
     .bind(mission.session_id)
     .fetch_one(&mut **tx)
     .await?;
-    if ordinal > i32::from(u16::MAX) {
-        return Err(StoreError::Invalid("turn_ordinal_exhausted"));
-    }
     let new_id = Id::new();
     sqlx::query("INSERT INTO app.model_turn_reservations(id,project_id,cycle_id,run_id,session_id,attempt_id,command_key,turn_kind,reserved_tokens,reserved_cost,cost_currency,request_artifact_id,deadline_at,owner_epoch,profile_revision,ordinal) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
         .bind(new_id.as_uuid()).bind(mission.project_id).bind(mission.cycle_id).bind(run_id.as_uuid()).bind(mission.session_id)

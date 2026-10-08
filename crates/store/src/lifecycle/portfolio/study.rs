@@ -11,7 +11,7 @@ struct Sources {
     dataset: Id,
     policy: Id,
     image: String,
-    cpu: u16,
+    cpu: Option<u32>,
     capability: Id,
 }
 
@@ -231,7 +231,6 @@ where
         db::id(row.try_get("parameters_artifact_id")?)?,
         None,
         "qz.native_task",
-        8 * 1024 * 1024,
         read,
     )
     .await?;
@@ -389,7 +388,6 @@ where
         project,
         costs,
         "qz.native_simulation_settings",
-        1024 * 1024,
         read,
     )
     .await?;
@@ -521,15 +519,12 @@ where
         return Err(DomainError::CapabilityUnavailable("portfolio_study_outputs").into());
     }
     // Shared models can appear in more than one original member. Native inputs
-    // have unique object identities and the existing 256-input ceiling.
+    // retain unique object identities without limiting complete membership.
     let mut seen = BTreeSet::new();
     inputs.retain(|input| match input {
         RuntimeInputV1::Artifact { artifact_id, .. } => seen.insert(*artifact_id),
         _ => true,
     });
-    if inputs.len() >= 256 {
-        return Err(StoreError::Invalid("portfolio_study_inputs"));
-    }
     for input in &input_sets {
         crate::research::revalidate_frozen_inputs(tx, *input, project, request.runtime_id).await?;
     }

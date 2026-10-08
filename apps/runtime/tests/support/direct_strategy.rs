@@ -438,7 +438,7 @@ pub(super) fn research_to_claim<'a>(
             serde_json::to_value(&report.request.members[0].policy).unwrap(),
             serde_json::to_value(&alpha.policy).unwrap()
         );
-        assert_eq!(report.consumed_fuel.get(), 0);
+        assert_eq!(report.consumed_fuel.unwrap().get(), 0);
         assert_eq!(
             serde_json::to_value(&simulation_request.target_points).unwrap(),
             serde_json::to_value(&source.folds[0].simulation_request.target_points).unwrap()
@@ -556,7 +556,8 @@ pub(super) fn research_to_claim<'a>(
             serde_json::to_value(&report.request.members[0].policy).unwrap(),
             serde_json::to_value(&alpha.policy).unwrap()
         );
-        assert!(report.consumed_fuel.get() > 0);
+        assert_eq!(report.request.total_fuel, None);
+        assert_eq!(report.consumed_fuel, None);
         assert_eq!(
             predictions_per_member[&alpha.id].get(),
             30,

@@ -79,7 +79,7 @@ class ArchivePluginTest(unittest.TestCase):
             self.assertEqual(argv, [str(self.binary), 'ingest-archive-candles', '--acquisition', str(self.args.acquisition),
                                    '--instruments', str(self.instruments), '--output', str(self.output)])
             self.assertFalse(kwargs['shell'])
-            self.assertEqual(kwargs['timeout'], 3600)
+            self.assertNotIn('timeout', kwargs)
             self.publish_stub(report or expected_report, evidence or expected_evidence)
             if change:
                 change()

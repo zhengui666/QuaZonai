@@ -47,7 +47,7 @@ async fn setup_with_budget(
             experiments: 1,
             cpu_seconds: Some(DbCounter::new(100).unwrap()),
             wall_seconds: Some(3600),
-            memory_mib: 1024,
+            memory_mib: Some(1024),
             output_bytes: Some(DbCounter::new(4096).unwrap()),
         },
     };
@@ -58,7 +58,7 @@ async fn mission_admission_preserves_the_only_science_slot_and_charges_both_cpu_
     pool: PgPool,
 ) {
     let mut budget = support::budget();
-    budget.max_parallel_runs = 1;
+    budget.max_parallel_runs = Some(1);
     let (store, fixture, science, _) = setup_with_budget(&pool, budget).await;
     let mut mission = science.clone();
     mission.kind = RunKind::AgentResearch;
@@ -1261,7 +1261,7 @@ async fn review_standalone_work_uses_no_cycle_and_cannot_hide_research_trials(po
         runtime_revision: request.runtime_revision,
         kind: RunKind::DataValidate,
         limits,
-        max_parallel_runs: 1,
+        max_parallel_runs: Some(1),
     };
     let (a, b) = tokio::join!(
         store.enqueue_standalone_run("admin", &admin),

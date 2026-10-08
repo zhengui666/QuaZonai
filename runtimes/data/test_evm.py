@@ -127,7 +127,7 @@ class EvmTest(unittest.TestCase):
         self.assertEqual(len(network.requests), 10)
         self.assertEqual(list(self.output.parent.iterdir()), [self.output])
 
-    def test_preflight_rejects_unbounded_selection_private_or_authenticated_urls(self):
+    def test_preflight_rejects_invalid_selection_private_or_authenticated_urls(self):
         invalid = ["http://first.example", "https://user:secret@first.example", "https://first.example/?key=secret",
                    "https://first.example/#secret", "https://localhost", "https://127.0.0.1", "https://[::1]"]
         for url in invalid:
@@ -135,17 +135,16 @@ class EvmTest(unittest.TestCase):
                 evm.endpoint_host(url)
         for options in ({"endpoints": [ENDPOINTS[0], ENDPOINTS[0] + "/again"]},
                         {"endpoints": ENDPOINTS + [ENDPOINTS[0]]},
-                        {"endpoints": [f"https://rpc{i}.example" for i in range(5)]},
                         {"endpoints": ENDPOINTS[:1]},
-                        {"blocks": []}, {"blocks": list(range(4097))}, {"chain_id": True},
-                        {"addresses": []}, {"addresses": [ADDRESS] * 257},
+                        {"blocks": []}, {"chain_id": True},
+                        {"addresses": []},
                         {"topic0": "0x01"}, {"max_bytes": 0}):
             network = Network()
             with self.subTest(options=list(options)), self.assertRaises(ValueError):
                 self.acquire(network, **options)
             self.assertEqual(network.requests, [])
         self.assertEqual(evm.select_blocks(first=11, last=12), [11, 12])
-        for args in ((None, 0, 4096), (None, 12, 11), ([11], None, 12), (None, 11, None)):
+        for args in ((None, 12, 11), ([11], None, 12), (None, 11, None)):
             with self.subTest(args=args), self.assertRaises(ValueError):
                 evm.select_blocks(*args)
         self.assertFalse(self.output.exists())
@@ -159,9 +158,9 @@ class EvmTest(unittest.TestCase):
         self.assertFalse(self.output.exists())
         for declared in (True, False):
             response = Response(b"x" * 65, declared=declared)
-            with self.subTest(declared=declared), patch.object(evm, "MAX_RESPONSE_BYTES", 64):
+            with self.subTest(declared=declared):
                 with patch.object(evm.OPENER, "open", return_value=response), self.assertRaises(ValueError):
-                    evm.rpc_call(ENDPOINTS[0], "eth_chainId", [], 1000)
+                    evm.rpc_call(ENDPOINTS[0], "eth_chainId", [], 64)
                 self.assertLessEqual(response.consumed, 64)
         response = Response(json.dumps(reply("0x89")).encode())
         response.headers["Content-Length"] = str(len(response.getvalue()) + 1)

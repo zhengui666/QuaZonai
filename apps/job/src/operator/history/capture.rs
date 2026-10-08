@@ -53,10 +53,6 @@ fn event_ns(value: &serde_json::Value) -> Result<u64> {
 
 fn for_rows(path: &Path, mut visit: impl FnMut(Row) -> Result<()>) -> Result<()> {
     let reader = SerializedFileReader::new(fs::File::open(path)?)?;
-    ensure!(
-        reader.metadata().file_metadata().num_rows() <= MAX_ROWS as i64,
-        "CAPTURE_ROW_LIMIT"
-    );
     for row in reader.get_row_iter(None)? {
         visit(row?)?;
     }
@@ -263,7 +259,6 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
             _ => bail!("CAPTURE_RECORD_TYPE"),
         }
         let raw = text(&row, "payload_raw")?;
-        ensure!(raw.len() <= 1024 * 1024, "CAPTURE_FRAME_LIMIT");
         if matches!(raw, "PONG" | "PING" | "pong" | "ping") {
             return Ok(());
         }
@@ -401,10 +396,6 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
                         serde_json::to_value(&updated)?,
                     ])?;
                     keys.push(key);
-                    ensure!(
-                        instrument_updates.len() + def.instruments.len() < 256,
-                        "INSTRUMENT_LIMIT"
-                    );
                     instrument_updates.push(updated.clone());
                     instruments.insert(token.to_owned(), updated);
                 }
@@ -442,10 +433,7 @@ fn capture(path: &Path, def: &Definition, args: &Arguments, leg: &str) -> Result
             && disruptions.iter().all(|&at| at > resolved_at),
         "CAPTURE_INTERRUPTED"
     );
-    ensure!(
-        !trades.is_empty() && trades.len() <= MAX_ROWS,
-        "CAPTURE_EMPTY_OR_TOO_LARGE"
-    );
+    ensure!(!trades.is_empty(), "CAPTURE_EMPTY_OR_TOO_LARGE");
     Ok(Capture {
         trades,
         print_keys,
@@ -983,10 +971,12 @@ mod tests {
             START * 1_000_000_000 + 2_005_000_000
         );
         assert_eq!(archive.closes.len(), 2);
-        assert!(archive
-            .closes
-            .iter()
-            .all(|c| c.ts_init.as_u64() == START * 1_000_000_000 + 65_005_000_000));
+        assert!(
+            archive
+                .closes
+                .iter()
+                .all(|c| c.ts_init.as_u64() == START * 1_000_000_000 + 65_005_000_000)
+        );
         assert_eq!(
             archive.instruments[0].ts_init().as_u64(),
             (START - 10) * 1_000_000_000

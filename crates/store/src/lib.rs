@@ -8,6 +8,7 @@
 extern crate self as store;
 
 mod account_observation;
+pub mod capital_exit;
 pub mod artifacts;
 pub mod auth;
 pub mod authority;

@@ -2,10 +2,10 @@
 use super::support;
 use axum::{
     body::Body,
-    http::{header, Request},
+    http::{Request, header},
 };
 use integrations::secrets::SecretVault;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -49,15 +49,61 @@ pub async fn listen_with_resources(
     objects: integrations::artifacts::ArtifactStore,
     targets: server::runtime_transport::RuntimeTargets,
 ) -> (String, Listener) {
+    listen_with_resources_and_paper_owners(
+        store,
+        vault,
+        objects,
+        targets,
+        server::paper_capital_exit::PaperCapitalExitOwners::default(),
+        false,
+    )
+    .await
+}
+
+pub async fn listen_with_paper_owners(
+    f: &support::Fixture,
+    owners: server::paper_capital_exit::PaperCapitalExitOwners,
+) -> (String, Listener) {
+    listen_with_resources_and_paper_owners(
+        f.store.clone(),
+        SecretVault::open(
+            &f._state.path().join("secrets"),
+            &f._state.path().join("master.key"),
+        )
+        .unwrap(),
+        integrations::artifacts::ArtifactStore::open(&f._state.path().join("artifacts")).unwrap(),
+        server::runtime_transport::RuntimeTargets::default(),
+        owners,
+        true,
+    )
+    .await
+}
+
+pub async fn listen_with_resources_and_paper_owners(
+    store: store::Store,
+    vault: SecretVault,
+    objects: integrations::artifacts::ArtifactStore,
+    targets: server::runtime_transport::RuntimeTargets,
+    owners: server::paper_capital_exit::PaperCapitalExitOwners,
+    numeric_loopback_origin: bool,
+) -> (String, Listener) {
     let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = socket.local_addr().unwrap();
-    let origin = format!("http://localhost:{}", address.port());
+    // Paper owner fixtures reuse the transport's existing numeric-loopback HTTP
+    // boundary. Keep the actual listener, WebPolicy and browser origin identical;
+    // production transport policy and other fixtures' localhost origin stay put.
+    let origin = if numeric_loopback_origin {
+        format!("http://{address}")
+    } else {
+        format!("http://localhost:{}", address.port())
+    };
     let state = server::AppState::new(
         store,
         vault,
         server::WebPolicy::new(&origin, address, true).unwrap(),
     );
     let state = state
+        .with_paper_capital_exit_owners(owners)
         .with_downstream_targets(targets)
         .with_artifact_store(objects);
     let app = server::router(state, tower_sessions::cookie::Key::generate());

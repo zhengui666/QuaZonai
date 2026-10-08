@@ -1,7 +1,7 @@
 //! Restricted native fold evidence, not a policy decision or qualification.
 use super::{NativeForecastPointV1, NativeForecastRequestV1};
 use crate::{
-    brief::TargetKind, evidence::MetricStatus, research::SplitPolicyV1, DbCounter, SchemaV1,
+    DbCounter, SchemaV1, brief::TargetKind, evidence::MetricStatus, research::SplitPolicyV1,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -75,13 +75,13 @@ pub struct NativeValidationFoldV1 {
     pub instrument_id: String,
     pub bar_type: String,
     pub source_row_count: DbCounter,
-    #[schema(minimum = 0, maximum = 255)]
+    #[schema(minimum = 0)]
     pub fold_index: u16,
-    #[schema(min_items = 3, max_items = 1000000)]
+    #[schema(min_items = 3)]
     pub training_ordinals: Vec<u32>,
     /// Actual availability of the last complete training label, not event time.
     pub training_end_available_ns: DbCounter,
-    #[schema(min_items = 1, max_items = 1000000)]
+    #[schema(min_items = 1)]
     pub test_points: Vec<NativeValidationPointV1>,
     /// No calibration is fitted for a model already declaring expected returns.
     pub calibration: Option<NativeCalibrationV1>,
@@ -94,10 +94,13 @@ pub struct NativeValidationFoldV1 {
 pub struct NativeAlphaValidationResultV1 {
     pub schema_version: SchemaV1,
     pub native_versions: BTreeMap<String, String>,
-    pub consumed_fuel: DbCounter,
+    /// None means some execution was unmetered, not a measured zero.
+    #[serde(deserialize_with = "crate::science::deserialize_consumed_fuel")]
+    #[schema(required = true)]
+    pub consumed_fuel: Option<DbCounter>,
     /// Distinct asset/ordinal pairs, NOT a claim of statistical independence.
     pub unique_test_observations: DbCounter,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub folds: Vec<NativeValidationFoldV1>,
 }
 
@@ -112,7 +115,7 @@ pub struct NativeFrozenCalibrationV1 {
     pub selection_rule: String,
     pub horizon_observations: DbCounter,
     pub fit_end_available_ns: DbCounter,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub assets: Vec<NativeAssetCalibrationV1>,
 }
 
@@ -122,7 +125,7 @@ pub struct NativeAssetCalibrationV1 {
     pub instrument_id: String,
     pub bar_type: String,
     pub fold_index: u16,
-    #[schema(min_items = 3, max_items = 1000000)]
+    #[schema(min_items = 3)]
     pub training_ordinals: Vec<u32>,
     pub training_end_available_ns: DbCounter,
     pub calibration: NativeCalibrationV1,

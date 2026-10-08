@@ -23,7 +23,6 @@ use std::{
     rc::Rc,
 };
 
-const MAX_RECORDS: usize = 1_000_000;
 fn count(value: u64) -> Result<DbCounter> {
     DbCounter::new(value).map_err(anyhow::Error::msg)
 }
@@ -111,7 +110,7 @@ struct State {
     expected_initial_balance: Option<NativeSpotCashMoneyV1>,
     sequence: u64,
     last_clock: Option<u64>,
-    capacity: usize,
+    capacity: Option<usize>,
     records: Vec<ObservedSpotCashRecord>,
     failure: Option<String>,
 }
@@ -123,15 +122,15 @@ impl State {
         dataset: Id,
         market: &NativeMarketData,
         rows: Vec<ClosedBarSourceRow>,
-        capacity: usize,
+        capacity: Option<usize>,
     ) -> Result<Self> {
         domain::spot_cash::account_plan(settings)?;
         ensure!(
-            (1..=MAX_RECORDS).contains(&capacity),
+            capacity.is_none_or(|value| value > 0),
             "SPOT_CAPTURE_CAPACITY"
         );
         ensure!(
-            !market.series.is_empty() && market.rows > 0 && market.rows <= MAX_RECORDS,
+            !market.series.is_empty() && market.rows > 0,
             "SPOT_CAPTURE_MARKET_EMPTY"
         );
         let venue = market.series[0].instrument.venue().to_string();
@@ -237,7 +236,8 @@ impl State {
 
     fn next(&mut self, clock: u64) -> Result<DbCounter> {
         ensure!(
-            self.records.len() < self.capacity,
+            self.capacity
+                .is_none_or(|maximum| self.records.len() < maximum),
             "SPOT_CAPTURE_RECORD_LIMIT"
         );
         ensure!(
@@ -595,7 +595,7 @@ impl Capture {
         dataset_revision_id: Id,
         market: &NativeMarketData,
         closed_rows: Vec<ClosedBarSourceRow>,
-        maximum_records: usize,
+        maximum_records: Option<usize>,
         horizon_end_ns: Option<DbCounter>,
     ) -> Result<Self> {
         ensure!(
@@ -806,7 +806,7 @@ pub fn record_native_run(
         dataset_revision_id,
         market,
         closed_rows,
-        maximum_records,
+        Some(maximum_records),
         None,
     )?;
     let result = engine.run(None, None, None, false);

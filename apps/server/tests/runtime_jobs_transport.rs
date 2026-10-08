@@ -121,7 +121,7 @@ async fn exchange(
                 .get("x-qz-storage-version")
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned);
-            let body = to_bytes(request.into_body(), 1024 * 1024)
+            let body = to_bytes(request.into_body(), usize::MAX)
                 .await
                 .unwrap()
                 .to_vec();
@@ -179,9 +179,9 @@ fn spec() -> JobSpecV1 {
         }],
         parameters_artifact_id: Id::new(),
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: Some(count(10)),
-            memory_mib: 64,
+            memory_mib: Some(64),
             wall_seconds: Some(30),
             output_bytes: Some(count(4096)),
         },
@@ -363,9 +363,11 @@ async fn native_object_copy_checks_immutable_version_and_exact_receipt() {
         storage_version: "native-version_7".into(),
         byte_count: count(bytes.len() as u64),
     };
+    let mut raw_receipt = serde_json::to_vec(&receipt).unwrap();
+    raw_receipt.resize(4097, b' ');
     let server = exchange(
         StatusCode::CREATED,
-        serde_json::to_vec(&receipt).unwrap(),
+        raw_receipt,
         "application/json",
         HeaderMap::new(),
         false,
@@ -418,7 +420,8 @@ async fn validated_manifest_retains_the_exact_original_bytes_and_rejects_foreign
         artifacts: vec![output(b"{}")],
         error: None,
     };
-    let raw = serde_json::to_vec_pretty(&manifest).unwrap();
+    let mut raw = serde_json::to_vec_pretty(&manifest).unwrap();
+    raw.resize(1024 * 1024 + 1, b' ');
     let server = exchange(
         StatusCode::OK,
         raw.clone(),
@@ -605,7 +608,7 @@ async fn redirect_compression_duplicate_headers_and_large_chunks_are_rejected_wi
     .await;
     assert_eq!(
         large.client.job_status(&spec.external_job_id).await.err(),
-        Some(RuntimeRequestError::ResponseLimit)
+        Some(RuntimeRequestError::Contract)
     );
     large.assert_count(1);
     let unavailable = exchange(
@@ -625,4 +628,42 @@ async fn redirect_compression_duplicate_headers_and_large_chunks_are_rejected_wi
         Some(RuntimeRequestError::Unavailable)
     );
     unavailable.assert_count(1);
+}
+
+#[tokio::test]
+async fn complete_job_status_crosses_the_former_json_limit() {
+    for chunked in [false, true] {
+        let spec = spec();
+        let expected = status(&spec);
+        let mut raw = serde_json::to_vec(&expected).unwrap();
+        raw.resize(1024 * 1024 + 1, b' ');
+        let server = exchange(StatusCode::OK, raw, "application/json", HeaderMap::new(), chunked).await;
+        assert_eq!(server.client.job_status(&spec.external_job_id).await.unwrap(), expected);
+        server.assert_count(1);
+    }
+}
+
+#[tokio::test]
+async fn native_objects_above_the_former_byte_cap_keep_exact_receipts_and_content() {
+    let id = Id::new();
+    let mut bytes = b"{}".to_vec();
+    bytes.resize(64 * 1024 * 1024 + 1, b' ');
+    let receipt = RuntimeObjectReceiptV1 {
+        schema_version: SchemaV1,
+        artifact_id: id,
+        storage_version: "original-version".into(),
+        byte_count: count(bytes.len() as u64),
+    };
+    let upload = exchange(StatusCode::CREATED, serde_json::to_vec(&receipt).unwrap(),
+        "application/json", HeaderMap::new(), false).await;
+    assert_eq!(upload.client.upload_object(id, &receipt.storage_version, bytes.clone()).await.unwrap(), receipt);
+    upload.assert_count(1);
+    assert!(upload.seen.lock().unwrap()[0].body == bytes);
+    drop(upload);
+    let spec = spec();
+    let metadata = output(&bytes);
+    let download = exchange(StatusCode::OK, bytes.clone(), "application/json", HeaderMap::new(), true).await;
+    let received = download.client.job_artifact(&spec.external_job_id, &metadata).await.unwrap();
+    assert!(received == bytes);
+    download.assert_count(1);
 }

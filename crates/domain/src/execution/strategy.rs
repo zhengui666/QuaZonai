@@ -3,11 +3,11 @@ use super::{artifact, bad, features, selection};
 use crate::DomainError;
 use bigdecimal::BigDecimal;
 use contracts::{
+    DbCounter, DecimalValue, Id, SchemaV1,
     research::{ArtifactInputRole, DataPartition},
     runtime_jobs::{JobSpecV1, RuntimeInputV1},
     science::*,
     strategy_portfolio::*,
-    DbCounter, DecimalValue, Id, SchemaV1,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,7 +38,7 @@ pub fn mandate(value: &StrategyMandateContentV1) -> Result<(), DomainError> {
 
 pub fn build(value: &StrategyPortfolioBuildV1) -> Result<(), DomainError> {
     crate::data::bounded_native_limits(&value.limits)?;
-    if !(1..=256).contains(&value.members.len())
+    if value.members.len() < 1
         || value
             .members
             .iter()
@@ -101,8 +101,8 @@ pub fn request(value: &NativeStrategyCompositionRequestV1) -> Result<(), DomainE
     selection(&value.selection)?;
     mandate(&value.mandate)?;
     crate::portfolio::simulation_settings(&value.settings)?;
-    if !(1..=256).contains(&value.members.len())
-        || !(1..=1_000_000_000).contains(&value.total_fuel.get())
+    if value.members.len() < 1
+        || value.total_fuel == Some(contracts::DbCounter::ZERO)
         || value.settings.base_currency != value.mandate.base_currency
         || value.settings.starting_capital != value.mandate.capital_assumption
         || value.settings.leverage.as_decimal() != &BigDecimal::from(1)
@@ -123,13 +123,17 @@ pub fn request(value: &NativeStrategyCompositionRequestV1) -> Result<(), DomainE
     {
         return Err(bad("strategy.instrument_alignment"));
     }
-    crate::prediction::binary_option_request(value.binary_option.as_ref(),
-        &value.selection, instrument, &value.settings)?;
+    crate::prediction::binary_option_request(
+        value.binary_option.as_ref(),
+        &value.selection,
+        instrument,
+        &value.settings,
+    )?;
     for member in &value.members {
         let policy = &member.policy;
         features::schema(&policy.feature_schema)?;
         features::artifact_ids(&policy.feature_artifact_ids)?;
-        if !(1..=2 * MAX_FEATURE_ARTIFACTS).contains(&member.feature_artifact_ids.len())
+        if member.feature_artifact_ids.len() < 1
             || member
                 .feature_artifact_ids
                 .iter()
@@ -454,7 +458,8 @@ pub fn result(
 ) -> Result<(), DomainError> {
     self::request(request)?;
     if serde_json::to_value(request).ok() != serde_json::to_value(&value.request).ok()
-        || value.consumed_fuel > request.total_fuel
+        || matches!(request.purpose, StrategyPortfolioPurposeV1::CurrentDecision { .. })
+            && !super::fuel_within_budget(value.consumed_fuel, request.total_fuel.map(|fuel| u128::from(fuel.get())))
         || value.native_versions
             != BTreeMap::from([
                 ("nautilus-backtest".into(), "0.63.0".into()),
@@ -475,10 +480,13 @@ pub fn result(
             if simulation_request.selection != request.selection
                 || serde_json::to_value(&simulation_request.settings).ok()
                     != serde_json::to_value(&request.settings).ok()
-                || simulation_request.settlements != crate::prediction::binary_option_settlements(
-                    request.binary_option.as_ref(), &request.members[0].policy.instrument_id,
-                    request.selection.decision_cutoff_ns)
-                || value.consumed_fuel != DbCounter::ZERO
+                || simulation_request.settlements
+                    != crate::prediction::binary_option_settlements(
+                        request.binary_option.as_ref(),
+                        &request.members[0].policy.instrument_id,
+                        request.selection.decision_cutoff_ns,
+                    )
+                || value.consumed_fuel != Some(DbCounter::ZERO)
             {
                 return Err(bad("strategy.replay_binding"));
             }
@@ -486,7 +494,10 @@ pub fn result(
                 crate::prediction::binary_option_target(request.binary_option.as_ref(), target)?;
             }
             super::output::check_simulation(simulation_request, simulation)?;
-            super::output::check_simulation_dataset(simulation, request.input_provenance.dataset_revision_id)?;
+            super::output::check_simulation_dataset(
+                simulation,
+                request.input_provenance.dataset_revision_id,
+            )?;
         }
         (
             StrategyPortfolioPurposeV1::CurrentDecision { account_start, .. },
@@ -496,14 +507,14 @@ pub fn result(
                 predictions_per_member,
             },
         ) => {
-            if value.consumed_fuel == DbCounter::ZERO
+            if value.consumed_fuel == Some(DbCounter::ZERO)
                 || account_start != actual.as_ref()
                 || target.asof_ns > request.selection.decision_cutoff_ns
                 || predictions_per_member.len() != request.members.len()
                 || request.members.iter().any(|m| {
                     predictions_per_member
                         .get(&m.alpha_version_id)
-                        .is_none_or(|n| n.get() == 0 || n.get() > MAX_EXPERIMENT_DECISIONS as u64)
+                        .is_none_or(|n| n.get() == 0)
                 })
                 || target.targets.len() != 1
                 || target.targets[0].instrument_id != request.members[0].policy.instrument_id
@@ -526,16 +537,24 @@ pub fn result(
             if request.binary_option.is_some() {
                 for member in &request.members {
                     let mut original = target.clone();
-                    original.valid_until_ns = target.asof_ns.get()
+                    original.valid_until_ns = target
+                        .asof_ns
+                        .get()
                         .checked_add(member.policy.target_ttl_ns.get())
                         .and_then(|n| DbCounter::new(n).ok())
                         .ok_or_else(|| bad("strategy.current_policy_lifetime"))?;
-                    crate::prediction::binary_option_current_target(request.binary_option.as_ref(), &original,
-                        request.selection.decision_cutoff_ns)?;
+                    crate::prediction::binary_option_current_target(
+                        request.binary_option.as_ref(),
+                        &original,
+                        request.selection.decision_cutoff_ns,
+                    )?;
                 }
             }
-            crate::prediction::binary_option_current_target(request.binary_option.as_ref(), target,
-                request.selection.decision_cutoff_ns)?;
+            crate::prediction::binary_option_current_target(
+                request.binary_option.as_ref(),
+                target,
+                request.selection.decision_cutoff_ns,
+            )?;
             constraints(
                 &request.mandate,
                 target,
@@ -558,10 +577,7 @@ pub fn current_continuation(
         .decisions
         .last()
         .ok_or_else(|| bad("strategy.source_fold"))?;
-    if predictions.get() <= fold.decisions.len() as u64
-        || predictions.get() > MAX_EXPERIMENT_DECISIONS as u64
-        || target.asof_ns <= last.decision_ns
-    {
+    if predictions.get() <= fold.decisions.len() as u64 || target.asof_ns <= last.decision_ns {
         return Err(bad("strategy.current_continuation"));
     }
     Ok(())

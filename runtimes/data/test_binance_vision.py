@@ -149,7 +149,7 @@ class ParsingTest(unittest.TestCase):
     def test_malformed_amounts_relationships_and_fields(self):
         for column, values in {1: ["NaN", "Infinity", "1e-8", "+1", " 1", "1 ", "01", "0", "-0", ".1", "1.", "1" * 101],
                               2: ["0.5"], 3: ["2"], 5: ["-1"], 8: ["1.0", "-1", "01", "18446744073709551616"],
-                              9: ["10"], 10: ["16"], 11: ["", "x" * 129]}.items():
+                              9: ["10"], 10: ["16"], 11: [""]}.items():
             for value in values:
                 fields = row()
                 fields[column] = value
@@ -164,7 +164,7 @@ class ParsingTest(unittest.TestCase):
                 self.decode(archive_bytes(changed))
         self.assertEqual(self.decode(archive_bytes(body.replace(b"\n", b"\r\n")))["counts"]["rows"], "1")
 
-    def test_checksum_exact_entry_and_budgets(self):
+    def test_checksum_exact_entry_and_invalid_large_archive(self):
         archive = archive_bytes()
         valid = checksum(archive)
         for changed in [b"", valid + valid, valid + b"\n", valid.replace(b"  BTC", b"  ../BTC"),
@@ -173,7 +173,7 @@ class ParsingTest(unittest.TestCase):
                 vision.decode(archive, changed, SELECTION)
         self.assertEqual(vision.decode(archive, valid.replace(b"  ", b" *"), SELECTION)["counts"]["rows"], "2")
         with self.assertRaises(ValueError):
-            self.decode(b"x" * (vision.LIMITS["archive_bytes"] + 1))
+            self.decode(b"x" * (1024 * 1024 + 1))
 
     def test_unsafe_members_compression_sizes_and_prefixes(self):
         name = vision.plan(SELECTION)["member_name"]
@@ -195,7 +195,7 @@ class ParsingTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.decode(b"prefix" + archive_bytes())
         with self.assertRaises(ValueError):
-            self.decode(archive_bytes(b"x" * (vision.LIMITS["csv_bytes"] + 1)))
+            self.decode(archive_bytes(b"x" * (4 * 1024 * 1024 + 1)))
         self.assertEqual(self.decode(archive_bytes(compression=zipfile.ZIP_STORED))["counts"]["rows"], "2")
 
     def test_corrupt_crc_truncation_encryption_and_nul(self):
@@ -235,11 +235,11 @@ class ParsingTest(unittest.TestCase):
                 with self.subTest(compression=compression, visible=len(visible)), self.assertRaises(ValueError):
                     self.decode(forged)
 
-    def test_forged_size_cannot_bypass_decoded_byte_budget(self):
-        archive = archive_bytes(b"x" * (vision.LIMITS["csv_bytes"] + 2))
+    def test_forged_size_cannot_hide_decoded_bytes_beyond_old_budget(self):
+        archive = archive_bytes(b"x" * (4 * 1024 * 1024 + 2))
         forged = forged_member_size(archive, b"")
-        self.assertLess(len(forged), vision.LIMITS["archive_bytes"])
-        with patch.object(vision, "decode_csv", side_effect=AssertionError("oversized bytes reached CSV parser")):
+        self.assertLess(len(forged), 1024 * 1024)
+        with patch.object(vision, "decode_csv", side_effect=AssertionError("unverified decoded bytes reached CSV parser")):
             with self.assertRaises(ValueError):
                 self.decode(forged)
 

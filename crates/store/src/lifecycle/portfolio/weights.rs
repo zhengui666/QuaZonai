@@ -21,6 +21,7 @@ pub(super) struct TargetSource {
     pub available_ns: DbCounter,
     pub input: RuntimeInputV1,
     pub origin: DataOrigin,
+    pub paper_initialization: Option<PaperInitializationRefV1>,
 }
 
 pub(super) async fn target<R, Read>(
@@ -37,7 +38,7 @@ where
         .bind(candidate_id.as_uuid()).bind(project.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::Invalid("portfolio_last_target"))?;
     let id = db::id(row.try_get("target_artifact_id")?)?;
     let size = counter(row.try_get("byte_count")?)?;
-    if size == DbCounter::ZERO || size.get() > 1024 * 1024 {
+    if size == DbCounter::ZERO {
         return Err(StoreError::Integrity);
     }
     let bytes = read(id, size).await?;
@@ -61,7 +62,7 @@ where
     .await?;
     let mut sorted = document.targets.clone();
     sorted.sort_by(|a, b| a.instrument_id.cmp(&b.instrument_id));
-    if targets.is_empty() || targets.len() != sorted.len() || targets.len() > MAX_ALLOCATION_ASSETS
+    if targets.is_empty() || targets.len() != sorted.len()
     {
         return Err(StoreError::Integrity);
     }
@@ -81,6 +82,15 @@ where
     if available_ns >= nanos(document.valid_until)? {
         return Err(StoreError::Invalid("portfolio_last_target_expired"));
     }
+    let paper_initialization = if let Some(root) =
+        db::optional_id(&row, "paper_initial_weights_artifact_id")?
+    {
+        let row = sqlx::query("SELECT * FROM app.paper_initial_capital_sources WHERE weights_artifact_id=$1 AND project_id=$2")
+            .bind(root.as_uuid()).bind(project.as_uuid()).fetch_one(&mut **tx).await?;
+        Some(paper_initial::reference(&row)?)
+    } else {
+        None
+    };
     Ok(TargetSource {
         document,
         available_ns,
@@ -91,6 +101,7 @@ where
             role: ArtifactInputRole::Report,
         },
         origin: db::enum_value(&row, "origin")?,
+        paper_initialization,
     })
 }
 
@@ -104,7 +115,12 @@ where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
 {
-    match request.current_weights_source {
+    match &request.current_weights_source {
+        PortfolioBuildWeightsV1::PaperInitialCapital { .. } => {
+            // Keep this new source's larger admission state off the existing
+            // nested Forecast delivery future used by original sources.
+            Box::pin(paper_initial::resolve(tx, project, request, read)).await
+        }
         PortfolioBuildWeightsV1::ForwardSnapshot { snapshot_id } => {
             let row = sqlx::query("SELECT s.*,a.byte_count,a.storage_version FROM app.forward_weight_snapshots s JOIN app.artifacts a ON a.id=s.report_artifact_id AND a.project_id=s.project_id AND a.kind='REPORT' AND a.schema_name='qz.portfolio_current_weights' AND a.schema_version='1' AND a.storage_backend='LOCAL' AND a.storage_object_ref=a.id::text AND a.access_class='RESEARCH' JOIN app.downstream_integrations d ON d.id=s.downstream_id AND d.enabled AND (d.environments='BOTH' OR d.environments=s.environment) WHERE s.id=$1 AND s.project_id=$2 AND s.environment=$3 FOR SHARE OF d")
                 .bind(snapshot_id.as_uuid()).bind(project.as_uuid()).bind(db::code(&request.environment)?).fetch_optional(&mut **tx).await?.ok_or(StoreError::Invalid("portfolio_weights_source"))?;
@@ -113,7 +129,7 @@ where
                     .map_err(|_| StoreError::Integrity)?;
             let id = db::id(row.try_get("report_artifact_id")?)?;
             let size = counter(row.try_get("byte_count")?)?;
-            if size == DbCounter::ZERO || size.get() > 1024 * 1024 {
+            if size == DbCounter::ZERO {
                 return Err(StoreError::Integrity);
             }
             let bytes = read(id, size).await?;
@@ -129,6 +145,7 @@ where
             {
                 return Err(StoreError::Integrity);
             }
+            paper_initial::validate(tx, project, request, &content).await?;
             Ok(Resolved {
                 content,
                 artifact: Some(RuntimeInputV1::Artifact {
@@ -145,11 +162,14 @@ where
             })
         }
         PortfolioBuildWeightsV1::LastTarget { candidate_id } => {
-            let source = target(tx, project, candidate_id, read).await?;
+            let source = target(tx, project, *candidate_id, read).await?;
             let document = source.document;
             let content = PortfolioCurrentWeightsV1 {
                 schema_version: SchemaV1,
-                source: PortfolioWeightsSourceV1::LastTarget { candidate_id },
+                source: PortfolioWeightsSourceV1::LastTarget {
+                    candidate_id: *candidate_id,
+                },
+                paper_initialization: source.paper_initialization,
                 asof_ns: nanos(document.asof)?,
                 available_ns: source.available_ns,
                 valid_until_ns: nanos(document.valid_until)?,
@@ -160,6 +180,7 @@ where
             if content.available_ns >= content.valid_until_ns {
                 return Err(StoreError::Invalid("portfolio_last_target_expired"));
             }
+            paper_initial::validate(tx, project, request, &content).await?;
             Ok(Resolved {
                 content,
                 artifact: None,

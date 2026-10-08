@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod account_observation;
+pub mod capital_exit;
 pub mod admission;
 pub mod agent_evaluation;
 pub mod artifacts;

@@ -12,7 +12,6 @@ use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, Utc};
 use contracts::{
     account_observation::{AccountConnectionV1, AccountObservationSubmitV1, NativeAccountTypeV1},
-    delivery::HandoffClaimViewV1,
     forward::ForwardEnvironmentV1,
     portfolio::{
         NAUTILUS_EXECUTION_VERSION, NAUTILUS_FEE_CLASS, NAUTILUS_FILL_CLASS, NAUTILUS_LATENCY_CLASS,
@@ -24,8 +23,8 @@ use contracts::{
 use job::{
     account_observer::project_snapshot,
     paper_node::{
-        data_config, data_engine_config, preflight, PaperConfig, PaperDataSource,
-        PaperLatencyModel, PaperNode, DATA_CLIENT,
+        data_config, data_engine_config, preflight_envelope as preflight, PaperConfig,
+        PaperDataSource, PaperLatencyModel, PaperNode, DATA_CLIENT,
     },
     paper_service::{start_control, PaperState},
 };
@@ -267,7 +266,7 @@ struct NativeEvents {
     snapshots: Vec<PortfolioSnapshot>,
 }
 
-fn fixture(directory: &Path) -> (PaperConfig, HandoffClaimViewV1) {
+fn fixture(directory: &Path) -> (PaperConfig, HandoffClaimViewV2) {
     let settings: NativeSimulationSettingsV1 = serde_json::from_value(json!({
         "schema_version": 1, "base_currency": "USDT", "starting_capital": "10000",
         "account_kind": "MARGIN", "leverage": "1", "snapshot_interval_ms": 50,
@@ -310,7 +309,7 @@ fn fixture(directory: &Path) -> (PaperConfig, HandoffClaimViewV1) {
         trader_id: "QZ-PAPER01".into(),
         account_id: ACCOUNT.into(),
         market_capability_version: CAPABILITY.into(),
-        execution_assumptions,
+        execution_assumptions: Some(execution_assumptions),
         paper_latency: PaperLatencyModel::NativeWallClock,
         source: PaperDataSource::BinanceSpotPublic {
             bar_interval_seconds: 1,
@@ -330,6 +329,17 @@ fn fixture(directory: &Path) -> (PaperConfig, HandoffClaimViewV1) {
     let mandate = Id::new();
     // REAL is a required input-contract discriminator, not evidence that this
     // fixture passed any Q research, approval, claim transaction or qualification.
+    let dataset = Id::new();
+    let metadata = Id::new();
+    let weights = Id::new();
+    let parameters = Id::new();
+    let report = Id::new();
+    let asof = now.timestamp_nanos_opt().unwrap() as u64;
+    let until = (now + ChronoDuration::seconds(60))
+        .timestamp_nanos_opt()
+        .unwrap() as u64;
+    let definition =
+        serde_json::to_value(InstrumentAny::CurrencyPair(currency_pair_btcusdt())).unwrap();
     let claim = serde_json::from_value(json!({
         "handoff": {
             "id": Id::new(), "project_id": config.project_id, "candidate_id": candidate,
@@ -342,26 +352,47 @@ fn fixture(directory: &Path) -> (PaperConfig, HandoffClaimViewV1) {
             "expires_at": now - ChronoDuration::seconds(10), "acknowledged_at": null
         },
         "package": {
-            "release_id": release, "package_schema_version": "1", "environment_origin": "REAL",
+            "release_id": release, "package_schema_version": "2", "environment_origin": "REAL",
+            "source_kind": "FORECAST_EVALUATION",
+            "source": { "build_run_id": Id::new(), "build_accepted_attempt_id": Id::new(),
+                "build_parameters_artifact_id": parameters, "build_report_artifact_id": report,
+                "build_input_set_id": Id::new(), "build_environment": "LIVE",
+                "forward_dataset_revision_id": dataset, "forward_metadata_artifact_id": metadata,
+                "current_weights_artifact_id": weights },
+            "forward_dataset": { "dataset_revision_id": dataset, "native_metadata_artifact_id": metadata,
+                "storage_version": "synthetic-test-only/1", "data_kind": "BAR", "partition": "FORWARD",
+                "origin": "REAL", "pit_status": "VERIFIED", "revision_policy": "AS_KNOWN_THEN",
+                "event_start": now - ChronoDuration::seconds(10), "event_end": now,
+                "available_through": now, "row_count": "10",
+                "selection": { "schema_version": 1, "bar_types": [format!("{INSTRUMENT}-1-SECOND-LAST-EXTERNAL")],
+                    "event_start_ns": (asof - 10_000_000_000).to_string(), "event_end_ns": asof.to_string(),
+                    "decision_cutoff_ns": asof.to_string(), "maximum_rows": 10 },
+                "instrument_definitions": [definition] },
+            "execution_settings": config.execution_assumptions.as_ref().unwrap().settings,
+            "current_weights": { "schema_version": 1,
+                "source": {"kind": "LAST_TARGET", "candidate_id": Id::new()},
+                "asof_ns": asof.to_string(), "available_ns": asof.to_string(), "valid_until_ns": until.to_string(),
+                "base_currency": "USDT", "cash_weight": "0.5",
+                "weights": [{"instrument_id": INSTRUMENT, "weight": "0.5", "currency": "USDT"}] },
             "project_id": config.project_id, "candidate_id": candidate, "mandate_id": mandate,
             "qualification_refs": [Id::new(), Id::new()], "evaluation_refs": [Id::new()],
-            "input_revision_refs": [Id::new()], "engine_versions": {"synthetic-test": "1"},
+            "input_revision_refs": [dataset], "engine_versions": {"synthetic-test": "1"},
             "asof": now, "valid_from": now + ChronoDuration::seconds(6),
             "valid_until": now + ChronoDuration::seconds(60),
             "base_currency": "USDT", "capital_assumption": "10000",
             "current_weights_source": "LAST_TARGET",
             "targets": [{"instrument_id": INSTRUMENT, "target_weight": "0.5", "currency": "USDT"}],
             "cash_weight": "0.5", "constraints_summary": input["constraints"],
-            "exposure_tolerance": "0.000001", "cost_assumption_ref": config.execution_assumptions.id,
+            "exposure_tolerance": "0.000001", "cost_assumption_ref": config.execution_assumptions.as_ref().unwrap().id,
             "compatible_market_capabilities": [CAPABILITY],
             "limitations": ["Synthetic engineering fixture; not research or real performance"],
-            "provenance_artifact_refs": [Id::new()]
+            "provenance_artifact_refs": [parameters, report, weights, metadata]
         }
     })).unwrap();
     (config, claim)
 }
 
-fn strategy_claim(config: &PaperConfig, claim: &HandoffClaimViewV1) -> HandoffClaimViewV2 {
+fn strategy_claim(config: &PaperConfig, claim: &HandoffClaimViewV2) -> HandoffClaimViewV2 {
     let mut value = serde_json::to_value(claim).unwrap();
     let package = value["package"].as_object_mut().unwrap();
     for field in [
@@ -369,6 +400,8 @@ fn strategy_claim(config: &PaperConfig, claim: &HandoffClaimViewV1) -> HandoffCl
         "qualification_refs",
         "evaluation_refs",
         "current_weights_source",
+        "current_weights",
+        "forward_dataset",
     ] {
         package.remove(field);
     }
@@ -381,12 +414,12 @@ fn strategy_claim(config: &PaperConfig, claim: &HandoffClaimViewV1) -> HandoffCl
     }));
     package.insert("account_start".into(), json!({
         "downstream_id":config.downstream_id,"trader_id":config.trader_id,"account_id":config.account_id,
-        "base_currency":config.execution_assumptions.settings.base_currency,"starting_capital":config.execution_assumptions.settings.starting_capital,
-        "execution_assumptions_id":config.execution_assumptions.id
+        "base_currency":config.execution_assumptions.as_ref().unwrap().settings.base_currency,"starting_capital":config.execution_assumptions.as_ref().unwrap().settings.starting_capital,
+        "execution_assumptions_id":config.execution_assumptions.as_ref().unwrap().id
     }));
     package.insert(
         "execution_settings".into(),
-        json!(&config.execution_assumptions.settings),
+        json!(&config.execution_assumptions.as_ref().unwrap().settings),
     );
     // This fixture tests the target consumer, not a stored research decision.
     // Keep constraints supported by the declared all-cash Paper start.
@@ -395,7 +428,7 @@ fn strategy_claim(config: &PaperConfig, claim: &HandoffClaimViewV1) -> HandoffCl
     constraints["max_participation"] = Value::Null;
     constraints["min_net_exposure"] = json!("0");
     constraints["max_cash_weight"] = json!("1");
-    constraints["transaction_costs_ref"] = json!(config.execution_assumptions.id);
+    constraints["transaction_costs_ref"] = json!(config.execution_assumptions.as_ref().unwrap().id);
     serde_json::from_value(value).unwrap()
 }
 
@@ -449,7 +482,7 @@ fn strategy_preflight_binds_full_initial_account_and_execution_settings() {
     assert!(!config.observations_file.exists());
 }
 
-fn source_contract(config: &PaperConfig, claim: &HandoffClaimViewV1) {
+fn source_contract(config: &PaperConfig, claim: &HandoffClaimViewV2) {
     let checked = preflight(config, claim).unwrap();
     assert_eq!(checked.execution_environment, "PAPER_SANDBOX");
     assert_eq!(
@@ -506,17 +539,43 @@ fn source_contract(config: &PaperConfig, claim: &HandoffClaimViewV1) {
     ] {
         let mut invalid = config.clone();
         match bad_settings {
-            "cash" => invalid.execution_assumptions.settings.account_kind = NativeAccountKind::Cash,
-            "leverage" => invalid.execution_assumptions.settings.leverage = "2".parse().unwrap(),
+            "cash" => {
+                invalid
+                    .execution_assumptions
+                    .as_mut()
+                    .unwrap()
+                    .settings
+                    .account_kind = NativeAccountKind::Cash
+            }
+            "leverage" => {
+                invalid
+                    .execution_assumptions
+                    .as_mut()
+                    .unwrap()
+                    .settings
+                    .leverage = "2".parse().unwrap()
+            }
             "fee" => {
-                invalid.execution_assumptions.settings.fee_rates[0].taker = "0".parse().unwrap()
+                invalid
+                    .execution_assumptions
+                    .as_mut()
+                    .unwrap()
+                    .settings
+                    .fee_rates[0]
+                    .taker = "0".parse().unwrap()
             }
             "account" => invalid.account_id = "OTHER-PAPER01".into(),
-            "assumption_project" => invalid.execution_assumptions.project_id = Id::new(),
-            "assumption_identity" => invalid.execution_assumptions.id = Id::new(),
+            "assumption_project" => {
+                invalid.execution_assumptions.as_mut().unwrap().project_id = Id::new()
+            }
+            "assumption_identity" => invalid.execution_assumptions.as_mut().unwrap().id = Id::new(),
             _ => unreachable!(),
         }
-        assert!(preflight(&invalid, claim).is_err(), "{bad_settings}");
+        // These original owner bindings apply to Native TargetDecision only.
+        assert!(
+            preflight(&invalid, &strategy_claim(config, claim)).is_err(),
+            "{bad_settings}"
+        );
     }
     assert!(!config.observations_file.exists());
     assert!(!config.credential_file.exists());
@@ -587,18 +646,20 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
         config.account_id = package.account_start.account_id.clone();
         config.execution_assumptions =
             serde_json::from_value(document["execution_assumptions"].clone()).unwrap();
-        config.market_capability_version =
-            config.execution_assumptions.venue_capability_ref.clone();
+        config.market_capability_version = config
+            .execution_assumptions
+            .as_ref()
+            .unwrap()
+            .venue_capability_ref
+            .clone();
         assert_eq!(config.account_id, ACCOUNT);
         original
     } else {
         match std::env::var("QZ_TEST_PAPER_PACKAGE_VERSION").as_deref() {
-            Ok("2") => strategy_claim(&config, &claim),
-            Err(std::env::VarError::NotPresent) | Ok("1") => HandoffClaimViewV2 {
-                handoff: claim.handoff.clone(),
-                package: TargetPackageEnvelopeV2::Forecast(Box::new(claim.package.clone())),
-            },
-            _ => panic!("QZ_TEST_PAPER_PACKAGE_VERSION must be 1 or 2"),
+            Err(std::env::VarError::NotPresent) | Ok("2") => strategy_claim(&config, &claim),
+            _ => panic!(
+                "QZ_TEST_PAPER_PACKAGE_VERSION must be 2; Forecast initialization is unsupported"
+            ),
         }
     };
     let package = domain::delivery::package_delivery(&wire_claim.package);
@@ -628,6 +689,7 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
     let capabilities = get(&client, &origin, "capabilities").await;
     assert_eq!(capabilities["delivery_mode"], "TARGET_ONLY");
     assert_eq!(capabilities["environments"], json!(["PAPER"]));
+    assert_eq!(capabilities["accepted_package_versions"], json!(["2"]));
     assert_eq!(
         capabilities["market_capability_versions"],
         json!([config.market_capability_version])
@@ -995,4 +1057,89 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
         output.sync_all().unwrap();
         assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
+}
+
+#[test]
+fn forecast_v2_uses_original_bundle_without_owner_economics_or_environment_rewrite() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut config, claim) = fixture(directory.path());
+    config.execution_assumptions = None;
+    let checked = preflight(&config, &claim).unwrap();
+    assert!(!checked.execution_supported && !checked.connects_market_data);
+    assert_eq!(
+        checked.execution_blocker,
+        Some("PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED")
+    );
+    let TargetPackageEnvelopeV2::Forecast(package) = &claim.package else {
+        panic!("Forecast V2");
+    };
+    assert_eq!(package.source.build_environment, ForwardEnvironmentV1::Live);
+    assert_eq!(claim.handoff.environment, ForwardEnvironmentV1::Paper);
+    assert_eq!(
+        package.current_weights.weights[0].weight,
+        "0.5".parse().unwrap()
+    );
+    let before = serde_json::to_value(&claim).unwrap();
+    // Returns before a native builder/account/data client exists; original
+    // nonzero research weights are never silently replaced by new cash.
+    let failure = PaperNode::build_envelope(&config, &claim).err().unwrap();
+    assert_eq!(
+        failure.to_string(),
+        "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"
+    );
+    assert_eq!(serde_json::to_value(&claim).unwrap(), before);
+    assert!(!config.observations_file.exists());
+}
+
+#[test]
+fn forecast_v2_preflight_rejects_tampered_frozen_sources_before_native_construction() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut config, original) = fixture(directory.path());
+    config.execution_assumptions = None;
+    for changed in [
+        "dataset",
+        "metadata",
+        "provenance",
+        "definitions",
+        "current_weights",
+        "settings",
+        "origin",
+        "pit",
+        "revision",
+        "partition",
+        "source",
+        "ttl",
+    ] {
+        let mut claim = original.clone();
+        let TargetPackageEnvelopeV2::Forecast(package) = &mut claim.package else {
+            panic!("Forecast V2");
+        };
+        match changed {
+            "dataset" => package.source.forward_dataset_revision_id = Id::new(),
+            "metadata" => package.source.forward_metadata_artifact_id = Id::new(),
+            "provenance" => package.provenance_artifact_refs.clear(),
+            "definitions" => package.forward_dataset.instrument_definitions.clear(),
+            "current_weights" => package.current_weights.weights[0].currency = "USD".into(),
+            "settings" => package.execution_settings.starting_capital = "9999".parse().unwrap(),
+            "origin" => package.forward_dataset.origin = contracts::research::DataOrigin::Synthetic,
+            "pit" => {
+                package.forward_dataset.pit_status = contracts::research::PitStatus::Unverified
+            }
+            "revision" => {
+                package.forward_dataset.revision_policy =
+                    contracts::catalogs::DataRevisionPolicy::Unknown
+            }
+            "partition" => {
+                package.forward_dataset.partition = contracts::research::DataPartition::Sealed
+            }
+            "source" => {
+                package.current_weights_source =
+                    contracts::portfolio::CandidateWeightsSourceV1::ForwardSnapshot
+            }
+            "ttl" => package.current_weights.valid_until_ns = DbCounter::new(1).unwrap(),
+            _ => unreachable!(),
+        }
+        assert!(preflight(&config, &claim).is_err(), "{changed}");
+    }
+    assert!(!config.observations_file.exists());
 }

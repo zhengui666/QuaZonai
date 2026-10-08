@@ -7,37 +7,15 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path};
 
-pub const MAX_TOTAL: usize = 96 * 1024 * 1024;
-const MAX_FILES: usize = 1100;
-
 #[derive(Default)]
-pub struct Budget {
-    bytes: usize,
-    files: usize,
-}
+pub struct Budget;
 impl Budget {
-    fn reserve(&mut self, bytes: &[u8]) -> Result<()> {
-        self.bytes = self
-            .bytes
-            .checked_add(bytes.len())
-            .ok_or("total input size limit")?;
-        self.files += 1;
-        if self.bytes > MAX_TOTAL || self.files > MAX_FILES {
-            return Err("total input work limit");
-        }
-        Ok(())
+    pub fn read(&mut self, path: &Path) -> Result<Vec<u8>> {
+        read(path)
     }
-    pub fn read(&mut self, path: &Path, max: usize) -> Result<Vec<u8>> {
-        if self.files >= MAX_FILES {
-            return Err("total input work limit");
-        }
-        let bytes = read(path, max.min(MAX_TOTAL.saturating_sub(self.bytes)))?;
-        self.reserve(&bytes)?;
-        Ok(bytes)
-    }
-    pub fn relative(&mut self, root: &Path, path: &str, max: usize) -> Result<Vec<u8>> {
+    pub fn relative(&mut self, root: &Path, path: &str) -> Result<Vec<u8>> {
         safe_relative(path)?;
-        self.read(&root.join(path), max)
+        self.read(&root.join(path))
     }
 }
 
@@ -107,8 +85,6 @@ pub fn create_directory(path: &Path) -> Result<()> {
 }
 
 pub type Result<T> = std::result::Result<T, &'static str>;
-pub const MAX_JSON: usize = 2 * 1024 * 1024;
-pub const MAX_SOURCE: usize = 64 * 1024 * 1024;
 
 pub fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -186,7 +162,7 @@ impl<'de> Deserialize<'de> for Unique {
 }
 
 pub fn parse<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    if bytes.is_empty() || bytes.len() > MAX_JSON {
+    if bytes.is_empty() {
         return Err("JSON size limit");
     }
     let value =
@@ -197,13 +173,10 @@ pub fn parse<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 pub fn json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(value).map_err(|_| "JSON serialization")?;
     bytes.push(b'\n');
-    if bytes.len() > MAX_JSON {
-        return Err("output JSON size limit");
-    }
     Ok(bytes)
 }
 
-pub fn read(path: &Path, max: usize) -> Result<Vec<u8>> {
+pub fn read(path: &Path) -> Result<Vec<u8>> {
     no_symlinks(path)?;
     let metadata = fs::symlink_metadata(path).map_err(|_| "missing input file")?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
@@ -212,10 +185,9 @@ pub fn read(path: &Path, max: usize) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     File::open(path)
         .map_err(|_| "input open")?
-        .take(max as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| "input read")?;
-    if bytes.is_empty() || bytes.len() > max {
+    if bytes.is_empty() {
         return Err("input size limit");
     }
     Ok(bytes)

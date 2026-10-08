@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type ComponentPropsWithRef } from 'react';
 import { api, ApiFailure, dataOf, displayTime, responseFailure, terminal } from './api';
 import { responseKind } from '@quazonai/web/response-contract/metadata';
 import type { Schema } from './api';
-import { decodeRunEvent } from './run-events';
+import { decodeRunEvent, runEventRetryDelay } from './run-events';
 import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useOnline } from './ui';
 
 type Run = Schema['RunSnapshotV1'];
@@ -84,7 +84,7 @@ function RunEvents({ snapshot }: { snapshot: Run }) {
   useEffect(() => {
     if (!online || stopped) return;
     const controller = new AbortController();
-    let retries = 0;
+    let retryDelay = 0;
     let refresh: ReturnType<typeof setTimeout> | undefined;
     const invalidate = () => {
       if (refresh) return;
@@ -103,14 +103,14 @@ function RunEvents({ snapshot }: { snapshot: Run }) {
         if (responseKind('/api/v2/runs/{id}/events', 'GET', response.status, response.headers.get('content-type')) !== 'event-stream') {
           throw new ApiFailure('HTTP_CONTRACT_ERROR', '运行事件接口没有返回合同声明的事件流。', response.status);
         }
-        retries = 0; setConnection('已连接');
+        retryDelay = 0; setConnection('已连接');
       },
       onmessage(frame) {
         if (controller.signal.aborted) return;
         const event = decodeRunEvent(frame, snapshot.id, last.current);
         if (!event) return;
         last.current = event.seq;
-        setEvents(previous => [...previous.slice(-99), event]);
+        setEvents(previous => [...previous, event]);
         invalidate();
       },
       onclose() {
@@ -121,8 +121,8 @@ function RunEvents({ snapshot }: { snapshot: Run }) {
         if (controller.signal.aborted) throw failure;
         setConnection('连接中断');
         if (failure instanceof ApiFailure) throw failure;
-        if (++retries >= 5) throw new ApiFailure('STREAM_DISCONNECTED', '事件连接多次中断。快照仍会定时刷新，请手动重新连接。');
-        return Math.min(1000 * 2 ** retries, 30_000);
+        retryDelay = runEventRetryDelay(retryDelay);
+        return retryDelay;
       },
     }).catch(failure => { if (!controller.signal.aborted) { setError(failure); setConnection('事件流已暂停'); } });
     return () => { controller.abort(); if (refresh) clearTimeout(refresh); };

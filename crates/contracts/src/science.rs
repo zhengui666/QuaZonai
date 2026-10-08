@@ -1,8 +1,16 @@
 //! Native job inputs and observable outputs. No path, credential or PASS authority.
-use crate::{portfolio::AllocationTargetV1, DbCounter, DecimalValue, SchemaV1};
+use crate::{DbCounter, DecimalValue, SchemaV1, portfolio::AllocationTargetV1};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
+
+// Explicit null records unmetered execution; an omitted measurement is malformed.
+// A field-level deserializer prevents serde from defaulting a missing Option to None.
+pub(crate) fn deserialize_consumed_fuel<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<DbCounter>, D::Error> {
+    Option::<DbCounter>::deserialize(deserializer)
+}
 
 mod validation;
 pub use validation::*;
@@ -18,13 +26,13 @@ pub use portfolio::*;
 pub struct NativeBarSelectionV1 {
     pub schema_version: SchemaV1,
     /// Complete native BarType strings, never SQL or directory prefixes.
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub bar_types: Vec<String>,
     pub event_start_ns: DbCounter,
     /// Exclusive event-time boundary.
     pub event_end_ns: DbCounter,
     pub decision_cutoff_ns: DbCounter,
-    #[schema(minimum = 1, maximum = 1000000)]
+    #[schema(minimum = 1)]
     pub maximum_rows: u32,
 }
 
@@ -32,13 +40,15 @@ pub struct NativeBarSelectionV1 {
 #[serde(deny_unknown_fields)]
 pub struct NativeForecastParametersV1 {
     pub schema_version: SchemaV1,
-    #[schema(minimum = 1, maximum = 10000)]
+    #[schema(minimum = 1)]
     pub fast_period: u32,
-    #[schema(minimum = 2, maximum = 10000)]
+    #[schema(minimum = 2)]
     pub slow_period: u32,
-    #[schema(minimum = 1, maximum = 100000)]
+    #[schema(minimum = 1)]
     pub label_horizon_observations: u32,
-    pub total_fuel: DbCounter,
+    /// Optional execution budget; absent disables Wasmi fuel metering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_fuel: Option<DbCounter>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -61,7 +71,7 @@ pub enum ForecastMissingReason {
 pub struct NativeForecastPointV1 {
     #[schema(min_length = 1, max_length = 200)]
     pub instrument_id: String,
-    #[schema(minimum = 0, maximum = 999999)]
+    #[schema(minimum = 0)]
     pub ordinal: u32,
     pub event_ns: DbCounter,
     pub available_ns: DbCounter,
@@ -87,8 +97,11 @@ pub struct NativeForecastPointV1 {
 pub struct NativeForecastResultV1 {
     pub schema_version: SchemaV1,
     pub native_versions: BTreeMap<String, String>,
-    pub consumed_fuel: DbCounter,
-    #[schema(min_items = 1, max_items = 1000000)]
+    /// None means some execution was unmetered, not a measured zero.
+    #[serde(deserialize_with = "crate::science::deserialize_consumed_fuel")]
+    #[schema(required = true)]
+    pub consumed_fuel: Option<DbCounter>,
+    #[schema(min_items = 1)]
     pub points: Vec<NativeForecastPointV1>,
 }
 
@@ -126,7 +139,7 @@ pub struct NativeSimulationSettingsV1 {
     #[schema(minimum = 1, maximum = 86400000)]
     pub snapshot_interval_ms: u32,
     pub exposure_tolerance: DecimalValue,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub fee_rates: Vec<NativeFeeRateV1>,
 }
 
@@ -136,7 +149,7 @@ pub struct NativeTargetPointV1 {
     pub schema_version: SchemaV1,
     pub asof_ns: DbCounter,
     pub valid_until_ns: DbCounter,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub targets: Vec<AllocationTargetV1>,
     pub cash_weight: DecimalValue,
 }
@@ -146,12 +159,11 @@ pub struct NativeTargetPointV1 {
 pub struct NativeSimulationRequestV1 {
     /// Complete original condition payouts; not inferred from a last bar or expiry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schema(max_items = 256)]
     pub settlements: Vec<crate::settlement::NativeSettlementGroupV1>,
     pub schema_version: SchemaV1,
     pub selection: NativeBarSelectionV1,
     pub settings: NativeSimulationSettingsV1,
-    #[schema(min_items = 1, max_items = 10000)]
+    #[schema(min_items = 1)]
     pub target_points: Vec<NativeTargetPointV1>,
 }
 

@@ -35,7 +35,7 @@ async fn setup(pool: &PgPool) -> (Store, Actor, Actor, AccountObservationSubmitV
                 configuration: DownstreamConfigurationV1 {
                     name: "Paper fixture".into(),
                     endpoint: "https://downstream.example".into(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: DownstreamEnvironments::Paper,
                     enabled: true,
                     development_http: false,

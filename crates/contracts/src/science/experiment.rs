@@ -5,20 +5,15 @@ use super::{
     NativeSimulationSettingsV1,
 };
 use crate::{
-    research::{DataPartition, SplitPolicyV1},
     DbCounter, DecimalValue, Id, SchemaV1,
+    research::{DataPartition, SplitPolicyV1},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
-pub const MAX_FEATURE_ARTIFACTS: usize = 16;
-pub const MAX_FEATURE_INPUT_BYTES: u64 = 32 * 1024 * 1024;
-pub const MAX_EXPERIMENT_FEATURES: usize = 64;
-pub const MAX_FEATURE_OBSERVATIONS: usize = 100_000;
-pub const MAX_EXPERIMENT_ROWS: u32 = 100_000;
-pub const MAX_EXPERIMENT_FOLDS: usize = 32;
-pub const MAX_EXPERIMENT_DECISIONS: usize = 10_000;
+// The persisted feature_count and observation feature_index use u16.
+pub const MAX_EXPERIMENT_FEATURES: usize = u16::MAX as usize;
 pub const FEATURE_MODEL_ABI_V2: &str =
     "qz_set_feature_v2(i32,f64,i32,i64,i64)->();qz_predict_v2(i64,i64,i32,i32,i32)->f64";
 
@@ -54,7 +49,7 @@ pub struct FeatureDefinitionV1 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FeatureObservationV1 {
-    #[schema(minimum = 0, maximum = 63)]
+    #[schema(minimum = 0, maximum = 65534)]
     pub feature_index: u16,
     pub event_ns: DbCounter,
     /// Actual historical receive/publication clock, if known; never synthesized.
@@ -70,16 +65,15 @@ pub struct FeatureObservationV1 {
     pub missing_reason: Option<String>,
 }
 
-/// Stored by the existing PARAMETERS upload. Its 2 MiB UTF-8 cap still applies
-/// in addition to these count bounds. It is never native SIGNALS evidence.
+/// Stored by the existing PARAMETERS upload. It is never native SIGNALS evidence.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FeatureObservationsV1 {
     pub schema_version: SchemaV1,
     pub partition: DataPartition,
-    #[schema(min_items = 1, max_items = 64)]
+    #[schema(min_items = 1, max_items = 65535)]
     pub feature_schema: Vec<FeatureDefinitionV1>,
-    #[schema(min_items = 1, max_items = 100000)]
+    #[schema(min_items = 1)]
     pub observations: Vec<FeatureObservationV1>,
 }
 
@@ -97,14 +91,16 @@ pub enum ExperimentDecisionOutputV1 {
 pub struct ExperimentEvaluationParametersV1 {
     pub schema_version: SchemaV1,
     pub dataset_revision_id: Id,
-    #[schema(min_items = 1, max_items = 16)]
+    #[schema(min_items = 1)]
     pub feature_artifact_ids: Vec<Id>,
     pub instrument_id: String,
-    #[schema(min_items = 1, max_items = 64)]
+    #[schema(min_items = 1, max_items = 65535)]
     pub feature_schema: Vec<FeatureDefinitionV1>,
-    #[schema(minimum = 1, maximum = 100000)]
+    #[schema(minimum = 1)]
     pub label_horizon_observations: u32,
-    pub total_fuel: DbCounter,
+    /// Optional execution budget; absent disables Wasmi fuel metering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_fuel: Option<DbCounter>,
     pub target_ttl_ns: DbCounter,
     pub decision_output: ExperimentDecisionOutputV1,
     pub settings: NativeSimulationSettingsV1,
@@ -119,12 +115,14 @@ pub struct NativeExperimentEvaluationRequestV1 {
     pub schema_version: SchemaV1,
     pub selection: NativeBarSelectionV1,
     pub instrument_id: String,
-    #[schema(min_items = 1, max_items = 64)]
+    #[schema(min_items = 1, max_items = 65535)]
     pub feature_schema: Vec<FeatureDefinitionV1>,
     pub split_policy: SplitPolicyV1,
-    #[schema(minimum = 1, maximum = 100000)]
+    #[schema(minimum = 1)]
     pub label_horizon_observations: u32,
-    pub total_fuel: DbCounter,
+    /// Optional execution budget; absent disables Wasmi fuel metering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_fuel: Option<DbCounter>,
     pub target_ttl_ns: DbCounter,
     pub decision_output: ExperimentDecisionOutputV1,
     pub settings: NativeSimulationSettingsV1,
@@ -179,7 +177,7 @@ pub struct NativeExperimentDecisionV1 {
     )]
     #[schema(required = true)]
     pub label_return: Option<f64>,
-    #[schema(min_items = 1, max_items = 64)]
+    #[schema(min_items = 1, max_items = 65535)]
     pub features: Vec<FeatureValueV1>,
     pub target_weight: DecimalValue,
 }
@@ -187,11 +185,11 @@ pub struct NativeExperimentDecisionV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeExperimentFoldV1 {
-    #[schema(minimum = 0, maximum = 31)]
+    #[schema(minimum = 0)]
     pub fold_index: u16,
     pub training_ordinals: Vec<u32>,
     pub training_end_available_ns: DbCounter,
-    #[schema(min_items = 1, max_items = 10000)]
+    #[schema(min_items = 1)]
     pub decisions: Vec<NativeExperimentDecisionV1>,
     /// Exact generated targets replayed through the existing native engine.
     pub simulation_request: NativeSimulationRequestV1,
@@ -207,13 +205,16 @@ pub struct NativeExperimentEvaluationResultV1 {
     pub model_artifact_id: Id,
     /// Original frozen request, including ordered feature meanings and limits.
     pub request: NativeExperimentEvaluationRequestV1,
-    #[schema(min_items = 1, max_items = 16)]
+    #[schema(min_items = 1)]
     pub feature_artifact_ids: Vec<Id>,
     pub instrument_id: String,
-    pub consumed_fuel: DbCounter,
+    /// None means some execution was unmetered, not a measured zero.
+    #[serde(deserialize_with = "crate::science::deserialize_consumed_fuel")]
+    #[schema(required = true)]
+    pub consumed_fuel: Option<DbCounter>,
     pub source_row_count: DbCounter,
-    #[schema(minimum = 1, maximum = 64)]
+    #[schema(minimum = 1, maximum = 65535)]
     pub feature_count: u16,
-    #[schema(min_items = 1, max_items = 32)]
+    #[schema(min_items = 1)]
     pub folds: Vec<NativeExperimentFoldV1>,
 }

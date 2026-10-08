@@ -38,7 +38,6 @@ where
         candidate.report_artifact_id,
         Some((candidate.run_id, candidate.accepted_attempt_id)),
         "qz.strategy_portfolio",
-        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
         read,
     )
     .await?;
@@ -52,7 +51,6 @@ where
         parameters_id,
         None,
         "qz.native_task",
-        8 * 1024 * 1024,
         read,
     )
     .await?;
@@ -261,7 +259,7 @@ where
     ))
 }
 
-async fn read_package<R, Read>(
+pub(super) async fn read_package<R, Read>(
     tx: &mut Tx<'_>,
     id: Id,
     project: Id,
@@ -273,7 +271,7 @@ where
 {
     let size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PACKAGE' AND schema_name='qz.target_package' AND schema_version='2' AND media_type='application/json' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND access_class='DELIVERY'")
         .bind(id.as_uuid()).bind(project.as_uuid()).fetch_one(&mut **tx).await?;
-    if !(1..=8 * 1024 * 1024).contains(&size) {
+    if size == 0 {
         return Err(StoreError::Integrity);
     }
     let bytes = read(id, counter(size)?).await?;

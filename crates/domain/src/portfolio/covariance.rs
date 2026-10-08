@@ -1,6 +1,5 @@
 //! Shared native estimator used by solving and publication.
-use crate::execution::validation::{MAX_VALIDATION_INDICES, MAX_VALIDATION_ROWS};
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use ndarray::Array2;
 use ndarray_stats::CorrelationExt;
 
@@ -11,20 +10,11 @@ pub fn sample_covariance(
     asset_returns: &[Vec<f64>],
 ) -> Result<Vec<Vec<f64>>> {
     let parameters = super::sample_covariance_parameters(model)?;
-    ensure!(
-        (1..=contracts::portfolio::MAX_ALLOCATION_ASSETS).contains(&asset_returns.len()),
-        "COVARIANCE_ASSET_LIMIT"
-    );
+    ensure!(!asset_returns.is_empty(), "COVARIANCE_ASSET_LIMIT");
     let observations = asset_returns[0].len();
+    ensure!(observations >= 2, "COVARIANCE_SAMPLE_LIMIT");
     ensure!(
-        (2..=MAX_VALIDATION_ROWS).contains(&observations),
-        "COVARIANCE_SAMPLE_LIMIT"
-    );
-    ensure!(
-        asset_returns
-            .len()
-            .checked_mul(observations)
-            .is_some_and(|n| n <= MAX_VALIDATION_INDICES),
+        asset_returns.len().checked_mul(observations).is_some(),
         "COVARIANCE_SIZE_LIMIT"
     );
     ensure!(

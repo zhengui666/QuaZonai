@@ -1,6 +1,6 @@
 //! Causal forecast-output associations, without evaluating or fitting the model.
 use super::{bad, instruments};
-use crate::{control::text, DomainError};
+use crate::{DomainError, control::text};
 use contracts::science::{ForecastMissingReason, NativeForecastRequestV1, NativeForecastResultV1};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,18 +11,17 @@ pub(super) fn shape(value: &NativeForecastResultV1) -> Result<(), DomainError> {
         ("wasmi".to_owned(), "2.0.0".to_owned()),
     ]);
     if value.native_versions != expected
-        || !(1..=1_000_000).contains(&value.points.len())
-        || !(1..=1_000_000_000).contains(&value.consumed_fuel.get())
+        || value.points.len() < 1
+        || value.consumed_fuel == Some(contracts::DbCounter::ZERO)
     {
         return Err(bad("native_output.forecast"));
     }
     let mut completed = BTreeSet::new();
     let mut previous = None::<&contracts::science::NativeForecastPointV1>;
-    let mut predictions = 0;
+    let mut had_prediction = false;
     for point in &value.points {
         text(&point.instrument_id, 1, 200, false)?;
-        if point.ordinal > 999_999
-            || point.event_ns > point.available_ns
+        if point.event_ns > point.available_ns
             || point.forecast.is_some_and(|number| !number.is_finite())
             || point.label_return.is_some_and(|number| !number.is_finite())
         {
@@ -30,14 +29,11 @@ pub(super) fn shape(value: &NativeForecastResultV1) -> Result<(), DomainError> {
         }
         match previous.filter(|prior| prior.instrument_id == point.instrument_id) {
             Some(prior)
-                if point.ordinal == prior.ordinal + 1
+                if prior.ordinal.checked_add(1) == Some(point.ordinal)
                     && point.event_ns > prior.event_ns
                     && point.available_ns > prior.available_ns => {}
             None if point.ordinal == 0 && completed.insert(point.instrument_id.as_str()) => {}
             _ => return Err(bad("native_output.forecast_order")),
-        }
-        if completed.len() > 256 {
-            return Err(bad("native_output.forecast_instruments"));
         }
         match (point.forecast, point.forecast_reason) {
             (None, Some(ForecastMissingReason::IndicatorWarmup)) => {
@@ -49,7 +45,7 @@ pub(super) fn shape(value: &NativeForecastResultV1) -> Result<(), DomainError> {
                 }
             }
             (Some(_), None) => {
-                predictions += 1;
+                had_prediction = true;
                 match (
                     point.label_return,
                     point.label_available_ns,
@@ -64,7 +60,7 @@ pub(super) fn shape(value: &NativeForecastResultV1) -> Result<(), DomainError> {
         }
         previous = Some(point);
     }
-    if predictions == 0 {
+    if !had_prediction {
         return Err(bad("native_output.no_predictions"));
     }
     Ok(())
@@ -79,9 +75,8 @@ pub(super) fn binding(
     let parameters = &request.parameters;
     if parameters.fast_period == 0
         || parameters.slow_period <= parameters.fast_period
-        || parameters.slow_period > 10_000
-        || !(1..=100_000).contains(&parameters.label_horizon_observations)
-        || value.consumed_fuel > parameters.total_fuel
+        || parameters.label_horizon_observations == 0
+        || !crate::execution::fuel_within_budget(value.consumed_fuel, parameters.total_fuel.map(|fuel| u128::from(fuel.get())))
         || value.points.len() > request.selection.maximum_rows as usize
     {
         return Err(bad("native_output.forecast_parameters"));

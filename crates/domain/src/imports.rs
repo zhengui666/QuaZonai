@@ -16,8 +16,6 @@ pub fn inspect_manifest(
     value: &HistoricalManifestV1,
 ) -> Result<Vec<HistoricalIssueV1>, DomainError> {
     if value.source_schema_version != "0029_portfolio_candidate_exposure"
-        || value.records.len() > 100_000
-        || value.exclusions.len() > 256
     {
         return Err(DomainError::Invalid("historical_manifest"));
     }
@@ -51,7 +49,6 @@ pub fn inspect_manifest(
         }
         if !text(&record.label, 240)
             || !text(&record.source_state, 100)
-            || record.relations.len() > 256
         {
             issue("record", HistoricalIssueCodeV1::InvalidField);
         }

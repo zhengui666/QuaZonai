@@ -59,16 +59,14 @@ class ProvidersTest(unittest.TestCase):
             ("coinbase-candles", Selection("BTC-USD", 0, 60, 61)),
             ("coinbase-candles", Selection("BTC-USD", 60, 0, 60)),
             ("coinbase-candles", Selection("BTC-USD", False, 60, 60)),
-            ("coinbase-candles", Selection("BTC-USD", 0, 129 * 299 * 60, 60)),
             ("polymarket-prices", Selection(str(2**256), 0, 60, 60)),
             ("polymarket-prices", Selection("00123", 0, 60, 60)),
             ("polymarket-prices", Selection("123", 0, 60, 61)),
-            ("polymarket-prices", Selection("123", 0, 129 * 86400, 60)),
         ]
         for provider, selection in cases:
             with self.subTest(provider=provider, selection=selection), self.assertRaises(ValueError):
                 acquire.plan(provider, selection)
-        for budget in (0, -1, True, 129 * 1024 * 1024):
+        for budget in (0, -1, True):
             with self.assertRaises(ValueError):
                 acquire.plan("coinbase-candles", Selection("BTC-USD", 0, 60, 60), budget)
 
@@ -199,7 +197,7 @@ class AcquisitionTest(unittest.TestCase):
 
     def test_duplicate_or_malformed_response_does_not_publish(self):
         for index, body in enumerate((b'[' + CANDLE + b',' + CANDLE + b']', b'not json',
-                                     b'[[0,3,1,2,2,1]]', b'[[0,1,3,2,2,1e-101]]')):
+                                     b'[[0,3,1,2,2,1]]', b'[[0,1,3,2,2,-1]]')):
             self.output = self.root / str(index)
             self.fetch.return_value = (body, deepcopy(OBSERVATION))
             with self.assertRaises(ValueError):
@@ -341,10 +339,11 @@ class AcquisitionTest(unittest.TestCase):
             self.download(max_bytes=1)
         self.assertFalse((self.output / "acquisition.json").exists())
 
-    def test_total_output_budget_and_remaining_download_bound(self):
-        with patch.object(acquire, "MAX_OUTPUT_BYTES", 1000), self.assertRaises(ValueError):
-            self.download(max_bytes=1000)
-        self.assertFalse((self.output / "acquisition.json").exists())
+    def test_output_has_no_implicit_budget_and_explicit_download_bound_remains(self):
+        manifest = self.download(max_bytes=1000)
+        self.assertGreater((self.output / "acquisition.json").stat().st_size, 1000)
+        self.assertIsNone(manifest["limits"]["max_output_bytes"])
+        self.assertEqual(acquire.verify(self.output)["record_count"], manifest["record_count"])
         self.output = self.root / "second"
         self.selection = Selection("BTC-USD", 0, 300 * 60, 60)
         later = {**OBSERVATION, "request_started_at": "2026-09-30T00:00:02Z",

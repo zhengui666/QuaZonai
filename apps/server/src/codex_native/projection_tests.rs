@@ -48,10 +48,12 @@ fn native_summary_selects_only_the_public_answer_and_preserves_missing_phase() {
         .is_err());
     let mut large = value;
     large["items"][1]["text"] = json!("x".repeat(64 * 1024 + 1));
-    assert!(serde_json::from_value::<projection::SummaryTurn>(large)
+    assert_eq!(serde_json::from_value::<projection::SummaryTurn>(large)
         .unwrap()
         .message()
-        .is_err());
+        .unwrap()
+        .unwrap()
+        .text.len(), 64 * 1024 + 1);
 }
 
 #[test]

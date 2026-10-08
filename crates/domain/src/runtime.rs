@@ -1,5 +1,5 @@
 //! Validate bounded native observations; never infer a missing capability.
-use crate::{control::text, research::invalid, DomainError};
+use crate::{DomainError, control::text, research::invalid};
 use chrono::{DateTime, Duration, Utc};
 use contracts::runtime::*;
 use std::collections::BTreeSet;
@@ -10,9 +10,9 @@ pub fn job_limits(
     capabilities: &RuntimeCapabilitiesV1,
     limits: &contracts::lifecycle::JobLimitsV1,
 ) -> Result<(), DomainError> {
-    let failure = if limits
-        .wall_seconds
-        .is_some_and(|seconds| seconds == 0 || seconds > capabilities.max_wall_seconds)
+    let failure = if limits.wall_seconds == Some(0)
+        || limits.wall_seconds.zip(capabilities.max_wall_seconds)
+            .is_some_and(|(requested, maximum)| requested > maximum)
         || (limits.wall_seconds.is_none()
             && capabilities
                 .engine_versions
@@ -21,7 +21,16 @@ pub fn job_limits(
                 != Some("1"))
     {
         Some("runtime_wall_seconds")
-    } else if limits.memory_mib == 0 || limits.memory_mib > capabilities.max_memory_mib {
+    } else if limits
+        .memory_mib
+        .is_some_and(|value| value == 0 || value > capabilities.max_memory_mib)
+        || (limits.memory_mib.is_none()
+            && capabilities
+                .engine_versions
+                .get("optional-memory-limit")
+                .map(String::as_str)
+                != Some("1"))
+    {
         Some("runtime_memory_mib")
     } else if limits.cpu_seconds.is_none()
         && capabilities
@@ -31,17 +40,27 @@ pub fn job_limits(
             != Some("1")
     {
         Some("runtime_cpu_budget")
+    } else if limits.cpu_seconds.is_none()
+        && capabilities
+            .engine_versions
+            .get("optional-cpu-rate")
+            .map(String::as_str)
+            != Some("1")
+    {
+        Some("native_cpu_capacity")
     } else if limits.wall_seconds.is_none() && limits.cpu_seconds.is_some() {
         Some("independent_cpu_enforcement")
-    } else if limits
-        .output_bytes
-        .is_some_and(|bytes| bytes.get() == 0 || bytes > capabilities.max_output_bytes)
-        || (limits.output_bytes.is_none()
-            && capabilities
-                .engine_versions
-                .get("optional-output-budget")
-                .map(String::as_str)
-                != Some("1"))
+    } else if limits.output_bytes.is_some_and(|bytes| {
+        bytes.get() == 0
+            || capabilities
+                .max_output_bytes
+                .is_some_and(|maximum| bytes > maximum)
+    }) || (limits.output_bytes.is_none()
+        && capabilities
+            .engine_versions
+            .get("optional-output-budget")
+            .map(String::as_str)
+            != Some("1"))
     {
         Some("runtime_output_bytes")
     } else {
@@ -102,10 +121,9 @@ pub fn capabilities(value: &RuntimeCapabilitiesV1, now: DateTime<Utc>) -> Result
             .iter()
             .any(|name| text(name, 1, 120, false).is_err())
         || value.max_cpu == 0
-        || value.max_cpu > 1024
         || value.max_memory_mib == 0
-        || value.max_output_bytes.get() == 0
-        || value.max_wall_seconds == 0
+        || value.max_output_bytes.is_some_and(|bytes| bytes.get() == 0)
+        || value.max_wall_seconds == Some(0)
         || value.checked_at > now + Duration::seconds(5)
         || value.checked_at < now - Duration::minutes(5)
     {
@@ -134,9 +152,6 @@ pub fn capabilities(value: &RuntimeCapabilitiesV1, now: DateTime<Utc>) -> Result
         }
     }
     let mut venues = BTreeSet::new();
-    if value.venues.len() > 256 {
-        return Err(bad());
-    }
     for venue in &value.venues {
         if text(&venue.venue, 1, 120, false).is_err()
             || !venues.insert(&venue.venue)

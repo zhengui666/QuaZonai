@@ -96,7 +96,7 @@ fn native_cash_binary_policy_and_historical_strategy_reuse_original_replay() {
             feature_artifact_ids: report.feature_artifact_ids.clone(),
             policy,
         }],
-        total_fuel: experiment::count(1_000_000),
+        total_fuel: Some(experiment::count(1_000_000)),
     };
     composition.mandate.target_ttl_seconds = 120;
     let result = job::strategy::compose(root.path(), &composition, |id| {

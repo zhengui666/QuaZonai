@@ -134,15 +134,15 @@ impl RuntimeService {
             .iter()
             .filter(|(_, phase, _)| phase != "QUEUED")
             .count();
-        let mut slots = (self.config.max_parallel_jobs as usize).saturating_sub(active);
+        let mut slots = self.config.max_parallel_jobs.map(|maximum| (maximum as usize).saturating_sub(active));
         let chosen: Vec<_> = pending
             .into_iter()
             .filter_map(|(id, phase, stopping)| {
                 if phase != "QUEUED" || stopping {
                     return Some(id);
                 }
-                if slots > 0 {
-                    slots -= 1;
+                if slots.is_none_or(|remaining| remaining > 0) {
+                    if let Some(remaining) = &mut slots { *remaining -= 1; }
                     Some(id)
                 } else {
                     None
@@ -337,15 +337,15 @@ impl RuntimeService {
                     .await?;
                 return Ok(());
             }
-            let bounded_output = spec.limits.output_bytes.is_some();
             let root = self.root.clone();
             let spec = spec.clone();
+            // Explicit output budgets apply to typed payloads, enforced by the
+            // native writer and final exact manifest adoption. Index metadata
+            // has no guessed allowance or per-file OS ceiling.
             let usage = tokio::task::spawn_blocking(move || {
                 files::output_usage(
                     &root.job(spec.run_id, spec.attempt_no).join("output"),
-                    spec.limits
-                        .output_bytes
-                        .map(|maximum| maximum.get() + 1024 * 1024),
+                    None,
                 )
             })
             .await
@@ -354,11 +354,7 @@ impl RuntimeService {
                 self.journal
                     .request_stop(
                         id,
-                        if bounded_output {
-                            RuntimeFailureCode::OutputLimit
-                        } else {
-                            RuntimeFailureCode::InvalidOutput
-                        },
+                        RuntimeFailureCode::InvalidOutput,
                     )
                     .await?;
             } else {

@@ -10,7 +10,6 @@ use crate::{
     Store, StoreError,
 };
 use contracts::{
-    artifacts::MAX_UPLOAD_BYTES,
     catalogs::RuntimeCatalogMetadataV1,
     control::{CommandResult, MachineScope, OperatorOperation},
     data::{
@@ -44,7 +43,7 @@ pub(crate) async fn resolve(
         .bind(artifact.as_uuid()).bind(project.as_uuid()).fetch_optional(&mut **tx).await?
         .ok_or(StoreError::Invalid("feature_artifact_source"))?;
     let bytes = row.try_get::<i64, _>("byte_count")?;
-    if !(1..=MAX_UPLOAD_BYTES as i64).contains(&bytes) {
+    if bytes <= 0 {
         return Err(StoreError::Invalid("feature_artifact_size"));
     }
     let origin = db::enum_value(&row, "origin")?;
@@ -156,7 +155,7 @@ where
     let id = dataset
         .native_metadata_artifact_id
         .ok_or(StoreError::Invalid("native_dataset_legacy_registration"))?;
-    let row = sqlx::query("SELECT a.byte_count,s.native_catalog_ref FROM app.artifacts a JOIN app.data_sources s ON s.id=$2 WHERE a.id=$1 AND a.kind='REPORT' AND a.schema_name='qz.native_catalog_metadata' AND a.schema_version='1' AND a.media_type='application/json' AND a.project_id IS NULL AND a.producer_run_id IS NULL AND a.producer_attempt_id IS NULL AND a.access_class='OPERATOR' AND a.created_by='RUNTIME' AND a.origin=$3 AND a.storage_backend='LOCAL' AND a.storage_object_ref=a.id::text AND a.storage_version='1' AND a.byte_count BETWEEN 1 AND 1048576")
+    let row = sqlx::query("SELECT a.byte_count,s.native_catalog_ref FROM app.artifacts a JOIN app.data_sources s ON s.id=$2 WHERE a.id=$1 AND a.kind='REPORT' AND a.schema_name='qz.native_catalog_metadata' AND a.schema_version='1' AND a.media_type='application/json' AND a.project_id IS NULL AND a.producer_run_id IS NULL AND a.producer_attempt_id IS NULL AND a.access_class='OPERATOR' AND a.created_by='RUNTIME' AND a.origin=$3 AND a.storage_backend='LOCAL' AND a.storage_object_ref=a.id::text AND a.storage_version='1' AND a.byte_count>0")
         .bind(id.as_uuid()).bind(dataset.source_id.as_uuid()).bind(db::code(&dataset.origin)?)
         .fetch_optional(&mut **tx).await?.ok_or(StoreError::Integrity)?;
     let size = DbCounter::new(row.try_get::<i64, _>("byte_count")? as u64)
@@ -409,11 +408,8 @@ impl Store {
             return Err(StoreError::NotFound);
         }
         let dataset = data::dataset_in_tx(&mut tx, dataset_id).await?;
-        let ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT artifact_id FROM app.feature_artifact_sources WHERE project_id=$1 AND dataset_revision_id=$2 ORDER BY feature_part_key LIMIT 17")
+        let ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT artifact_id FROM app.feature_artifact_sources WHERE project_id=$1 AND dataset_revision_id=$2 ORDER BY feature_part_key")
             .bind(query.project_id.as_uuid()).bind(dataset_id.as_uuid()).fetch_all(&mut *tx).await?;
-        if ids.len() > 16 {
-            return Err(StoreError::Integrity);
-        }
         let mut items = Vec::with_capacity(ids.len());
         if !ids.is_empty() {
             let native = metadata(&mut tx, &dataset, &mut reader).await?;

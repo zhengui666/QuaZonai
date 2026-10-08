@@ -1,12 +1,12 @@
 //! Fixed native result structure and exact task associations. These checks do not
 //! rerun a model, fit statistics, confer PIT, or replace independent qualification.
-use super::{selection, NativeTaskParametersV1};
-use crate::{control::text, research::invalid, DomainError};
+use super::{NativeTaskParametersV1, selection};
+use crate::{DomainError, control::text, research::invalid};
 use chrono::{DateTime, Utc};
 use contracts::{
     execution::{NativeDataQualityReportV1, NativeModelCompilationV1},
     portfolio::{AllocationResultV1, SolverStatus},
-    runtime_jobs::{native_output_contract, RuntimeOutputV1, MAX_JOB_OUTPUT_BYTES},
+    runtime_jobs::{native_output_contract, RuntimeOutputV1},
     science::{NativeBarSelectionV1, NativeForecastResultV1, NativeSimulationResultV1},
 };
 use serde::de::DeserializeOwned;
@@ -29,8 +29,8 @@ mod simulation;
 mod spot_cash_report;
 pub use equity_curve::{equity_curve_query, portfolio_equity_curve};
 pub(crate) use simulation::binding as check_simulation;
-pub(crate) use spot_cash_report::dataset as check_simulation_dataset;
 pub use simulation::metrics as portfolio_simulation_metrics;
+pub(crate) use spot_cash_report::dataset as check_simulation_dataset;
 mod study;
 pub use study::binding as check_portfolio_study;
 mod validation;
@@ -87,7 +87,7 @@ pub fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
         .and_then(|value| u64::try_from(value).ok())
         .ok_or_else(|| bad("native_output.checked_at"))?;
     if value.native_version != "nautilus-persistence/0.63.0"
-        || !(1..=256).contains(&value.datasets.len())
+        || value.datasets.len() < 1
         || !value
             .checked_at
             .timestamp_subsec_nanos()
@@ -142,7 +142,7 @@ fn compilation(value: &NativeModelCompilationV1) -> Result<(), DomainError> {
             contracts::science::FEATURE_MODEL_ABI_V2,
         ]
         .contains(&value.abi.as_str())
-        || !(8..=2 * 1024 * 1024).contains(&value.module_bytes.get())
+        || value.module_bytes.get() < 8
     {
         return Err(bad("native_output.compilation"));
     }
@@ -170,7 +170,7 @@ fn allocation(value: &AllocationResultV1) -> Result<(), DomainError> {
         text(reason, 1, 120, false)?;
     }
     if let Some(targets) = &value.targets {
-        if !(1..=256).contains(&targets.len())
+        if targets.len() < 1
             || value.objective_value.is_none()
             || value.primal_residual.is_none()
             || value.dual_residual.is_none()
@@ -200,13 +200,12 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         || output.storage_version.get() != 1
         || bytes.is_empty()
         || bytes.len() as u64 != output.byte_count.get()
-        || bytes.len() as u64 > MAX_JOB_OUTPUT_BYTES
     {
         return Err(bad("native_output"));
     }
     match contract.name {
         "qz.wasm_model"
-            if bytes.starts_with(b"\0asm\x01\0\0\0") && bytes.len() <= 2 * 1024 * 1024 =>
+            if bytes.starts_with(b"\0asm\x01\0\0\0") =>
         {
             Ok(())
         }
@@ -331,10 +330,16 @@ pub fn output_bindings(
             )?;
         }
         NativeTaskParametersV1::ValidateData { .. } => {}
-        NativeTaskParametersV1::StudyPortfolio { dataset_revision_id, request, .. } => {
+        NativeTaskParametersV1::StudyPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
             let result = decode(body("qz.portfolio_study")?.1)?;
             study::binding(request, &result)?;
-            if let Some(simulation) = &result.simulation { spot_cash_report::dataset(simulation, *dataset_revision_id)?; }
+            if let Some(simulation) = &result.simulation {
+                spot_cash_report::dataset(simulation, *dataset_revision_id)?;
+            }
             let original = contracts::portfolio_history::batch(request, &result)
                 .map_err(|_| bad("portfolio_history.source"))?;
             let actual = contracts::portfolio_history::read(body("qz.portfolio_history")?.1)
@@ -398,19 +403,39 @@ pub fn output_bindings(
             }
             sealed::binding(request, calibration, &decode(body("qz.alpha_sealed")?.1)?)?;
         }
-        NativeTaskParametersV1::ComposeStrategyTargets { dataset_revision_id, request, .. } => {
+        NativeTaskParametersV1::ComposeStrategyTargets {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
             let result = decode(body("qz.strategy_portfolio")?.1)?;
             super::strategy_composition_result(request, &result)?;
-            if let contracts::strategy_portfolio::StrategyCompositionOutcomeV1::HistoricalReplay { simulation, .. } = &result.outcome {
+            if let contracts::strategy_portfolio::StrategyCompositionOutcomeV1::HistoricalReplay {
+                simulation,
+                ..
+            } = &result.outcome
+            {
                 spot_cash_report::dataset(simulation, *dataset_revision_id)?;
             }
         }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {
             super::portfolio_build_result(request, &decode(body("qz.native_portfolio")?.1)?)?;
         }
-        NativeTaskParametersV1::SimulatePortfolio { dataset_revision_id, request, .. }
-        | NativeTaskParametersV1::SimulateCandidate { dataset_revision_id, request, .. }
-        | NativeTaskParametersV1::SimulatePortfolioSequence { dataset_revision_id, request, .. } => {
+        NativeTaskParametersV1::SimulatePortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        }
+        | NativeTaskParametersV1::SimulateCandidate {
+            dataset_revision_id,
+            request,
+            ..
+        }
+        | NativeTaskParametersV1::SimulatePortfolioSequence {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
             let result = decode(body("qz.native_simulation")?.1)?;
             simulation::binding(request, &result)?;
             spot_cash_report::dataset(&result, *dataset_revision_id)?;

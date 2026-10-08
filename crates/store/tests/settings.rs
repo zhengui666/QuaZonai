@@ -193,7 +193,7 @@ async fn downstream_pagination_and_rotation_preserve_immutable_receipts(pool: Pg
         configuration: DownstreamConfigurationV1 {
             name: "Recipient".into(),
             endpoint: "https://recipient.example".into(),
-            accepted_package_versions: vec![PackageSchemaVersion::V1],
+            accepted_package_versions: vec![PackageSchemaVersion::V2],
             environments: DownstreamEnvironments::Paper,
             enabled: true,
             development_http: false,

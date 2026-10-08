@@ -95,7 +95,10 @@ impl SecretVault {
     /// create_new still forbids replacement, including on retries or collisions.
     /// This method is never itself a plaintext HTTP or model-facing interface.
     pub fn put_at(&self, id: Id, purpose: &str, plaintext: &[u8]) -> Result<Id, SecretError> {
-        if plaintext.is_empty() || plaintext.len() > LIMIT || !valid_purpose(purpose) {
+        if plaintext.is_empty()
+            || (purpose != "TLS_CA" && plaintext.len() > LIMIT)
+            || !valid_purpose(purpose)
+        {
             return Err(SecretError::Invalid);
         }
         let aad = format!("{id}:{purpose}");
@@ -183,7 +186,7 @@ impl SecretVault {
             return Err(SecretError::Invalid);
         }
         let metadata = self.root.symlink_metadata(id.to_string())?;
-        if !metadata.is_file() || metadata.len() as usize > LIMIT + PREFIX.len() + 40 {
+        if !metadata.is_file() {
             return Err(SecretError::Invalid);
         }
         let mut options = OpenOptions::new();
@@ -194,11 +197,24 @@ impl SecretVault {
             options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
         }
         let mut file = self.root.open_with(id.to_string(), &options)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file()
+            || (purpose != "TLS_CA" && metadata.len() > (LIMIT + PREFIX.len() + 40) as u64)
+        {
+            return Err(SecretError::Invalid);
+        }
+        // TLS certificate bundles have no application byte quota. Read the
+        // exact opened ciphertext; native AEAD limits and authentication remain.
+        let length = usize::try_from(metadata.len()).map_err(|_| SecretError::Invalid)?;
         let mut bytes = Vec::new();
+        bytes.try_reserve_exact(length).map_err(|_| SecretError::Invalid)?;
         Read::by_ref(&mut file)
-            .take((LIMIT + 100) as u64)
+            .take(metadata.len().saturating_add(1))
             .read_to_end(&mut bytes)?;
-        if bytes.len() < PREFIX.len() + 24 + 16 || !bytes.starts_with(PREFIX) {
+        if bytes.len() != length
+            || bytes.len() < PREFIX.len() + 24 + 16
+            || !bytes.starts_with(PREFIX)
+        {
             return Err(SecretError::Invalid);
         }
         let nonce = XNonce::from_slice(&bytes[PREFIX.len()..PREFIX.len() + 24]);

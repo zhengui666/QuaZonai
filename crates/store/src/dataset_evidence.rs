@@ -18,7 +18,6 @@ async fn document<T, R, Read>(
     id: Id,
     schema: &str,
     kind: &str,
-    maximum: i64,
     origin: DataOrigin,
     reader: &mut R,
 ) -> Result<T, StoreError>
@@ -29,8 +28,8 @@ where
 {
     // IDs originate solely from the registered Dataset and its evidence row.
     // No arbitrary artifact IDs, locations, paths, or raw bytes reach the caller.
-    let row = sqlx::query("SELECT byte_count FROM app.artifacts WHERE id=$1 AND schema_name=$2 AND kind=$3 AND schema_version='1' AND media_type='application/json' AND project_id IS NULL AND producer_run_id IS NULL AND producer_attempt_id IS NULL AND access_class='OPERATOR' AND created_by='RUNTIME' AND origin=$4 AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND byte_count BETWEEN 1 AND $5")
-        .bind(id.as_uuid()).bind(schema).bind(kind).bind(db::code(&origin)?).bind(maximum)
+    let row = sqlx::query("SELECT byte_count FROM app.artifacts WHERE id=$1 AND schema_name=$2 AND kind=$3 AND schema_version='1' AND media_type='application/json' AND project_id IS NULL AND producer_run_id IS NULL AND producer_attempt_id IS NULL AND access_class='OPERATOR' AND created_by='RUNTIME' AND origin=$4 AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND byte_count>0")
+        .bind(id.as_uuid()).bind(schema).bind(kind).bind(db::code(&origin)?)
         .fetch_optional(&mut **tx).await?.ok_or(StoreError::Integrity)?;
     let size = DbCounter::new(row.try_get::<i64, _>("byte_count")? as u64)
         .map_err(|_| StoreError::Integrity)?;
@@ -122,7 +121,6 @@ impl Store {
             metadata_id,
             "qz.native_catalog_metadata",
             "REPORT",
-            1048576,
             dataset.origin,
             &mut reader,
         )
@@ -156,7 +154,6 @@ impl Store {
             dataset.quality_artifact_id,
             "qz.data_quality",
             "DATA_QUALITY",
-            1049600,
             dataset.origin,
             &mut reader,
         )

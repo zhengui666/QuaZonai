@@ -1,16 +1,14 @@
 //! Convert official native PortfolioSnapshot JSON into Q intake envelopes.
 //! No credentials, network, account connection or execution engine is started.
 use crate::account_observer::NativeAccountObserver;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use clap::Parser;
-use contracts::{account_observation::*, DbCounter};
+use contracts::{DbCounter, account_observation::*};
 use nautilus_model::events::PortfolioSnapshot;
 use std::{
     fs::{File, OpenOptions},
     io::{BufRead, Read, Write},
 };
-
-pub(crate) const MAX_RECORD_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Parser)]
 pub struct Args {
@@ -85,9 +83,6 @@ pub(crate) fn retain_envelope(
 ) -> Result<()> {
     let mut bytes = serde_json::to_vec(envelope)?;
     bytes.push(b'\n');
-    if bytes.len() > MAX_RECORD_BYTES {
-        bail!("projected envelope exceeds relay limit; retain original input and segment");
-    }
     output.write_all(&bytes)?;
     output.sync_data()?;
     Ok(())
@@ -102,9 +97,6 @@ pub(crate) fn retain_client_bound_envelope(
     domain::account_observation::client_observation(envelope)?;
     let mut bytes = serde_json::to_vec(envelope)?;
     bytes.push(b'\n');
-    if bytes.len() > MAX_RECORD_BYTES {
-        bail!("projected envelope exceeds relay limit; retain original input and segment");
-    }
     output.write_all(&bytes)?;
     output.sync_data()?;
     Ok(())
@@ -118,14 +110,9 @@ fn stream(
 ) -> Result<()> {
     loop {
         let mut line = Vec::new();
-        Read::by_ref(input)
-            .take(MAX_RECORD_BYTES as u64 + 1)
-            .read_until(b'\n', &mut line)?;
+        input.read_until(b'\n', &mut line)?;
         if line.is_empty() {
             return Ok(());
-        }
-        if line.len() > MAX_RECORD_BYTES {
-            bail!("native snapshot record exceeds limit; retain original input and segment");
         }
         if !line.ends_with(b"\n") {
             bail!("incomplete native snapshot record; retain original input and segment");
@@ -146,12 +133,7 @@ pub fn run(args: Args) -> Result<()> {
         return stream(&mut std::io::stdin().lock(), &mut output, &observer, now);
     }
     let mut bytes = Vec::new();
-    std::io::stdin()
-        .take(MAX_RECORD_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_RECORD_BYTES {
-        bail!("native snapshot input exceeds limit");
-    }
+    std::io::stdin().read_to_end(&mut bytes)?;
     let mut bytes = serde_json::to_vec(&envelope(&observer, &bytes, now()?)?)?;
     bytes.push(b'\n');
     let mut stdout = std::io::stdout().lock();
@@ -163,7 +145,7 @@ pub fn run(args: Args) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nautilus_core::{UnixNanos, UUID4};
+    use nautilus_core::{UUID4, UnixNanos};
     use nautilus_model::{enums::AccountType, identifiers::AccountId, types::Money};
 
     fn observer() -> NativeAccountObserver {
@@ -236,11 +218,11 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_or_oversize_native_record_stops_without_allocating_a_sequence() {
+    fn incomplete_or_malformed_native_record_stops_without_allocating_a_sequence() {
         let directory = tempfile::tempdir().unwrap();
         for (index, raw) in [
             serde_json::to_vec(&snapshot()).unwrap(),
-            vec![b' '; MAX_RECORD_BYTES + 1],
+            vec![b' '; 2 * 1024 * 1024 + 1],
         ]
         .into_iter()
         .enumerate()
@@ -248,10 +230,12 @@ mod tests {
             let observer = observer();
             let path = directory.path().join(index.to_string());
             let mut output = new_segment(&path).unwrap();
-            assert!(stream(&mut raw.as_slice(), &mut output, &observer, || {
-                Ok(DbCounter::new(3).unwrap())
-            })
-            .is_err());
+            assert!(
+                stream(&mut raw.as_slice(), &mut output, &observer, || {
+                    Ok(DbCounter::new(3).unwrap())
+                })
+                .is_err()
+            );
             assert_eq!(observer.cursor().0, DbCounter::ZERO);
             assert!(std::fs::read(path).unwrap().is_empty());
         }
@@ -259,10 +243,12 @@ mod tests {
         let path = directory.path().join("complete-prefix.ndjson");
         let mut output = new_segment(&path).unwrap();
         let raw = format!("{}\n{{", serde_json::to_string(&snapshot()).unwrap());
-        assert!(stream(&mut raw.as_bytes(), &mut output, &observer, || {
-            Ok(DbCounter::new(3).unwrap())
-        })
-        .is_err());
+        assert!(
+            stream(&mut raw.as_bytes(), &mut output, &observer, || {
+                Ok(DbCounter::new(3).unwrap())
+            })
+            .is_err()
+        );
         assert_eq!(observer.cursor().0.get(), 1);
         let retained = std::fs::read_to_string(path).unwrap();
         assert!(retained.ends_with('\n'));

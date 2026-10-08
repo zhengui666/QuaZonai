@@ -33,7 +33,6 @@ pub(crate) async fn document<R, Read>(
     project: Id,
     id: Id,
     schema: &str,
-    maximum: usize,
     read: &mut R,
 ) -> Result<Vec<u8>, StoreError>
 where
@@ -42,7 +41,7 @@ where
 {
     let size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND project_id=$2 AND schema_name=$3 AND schema_version='1' AND media_type='application/json' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND access_class='RESEARCH'")
         .bind(id.as_uuid()).bind(project.as_uuid()).bind(schema).fetch_optional(&mut **tx).await?.ok_or(StoreError::Integrity)?;
-    if size <= 0 || size as u64 > maximum as u64 {
+    if size <= 0 {
         return Err(StoreError::Integrity);
     }
     let bytes = read(
@@ -99,7 +98,6 @@ where
             project,
             parameter,
             "qz.native_task",
-            8 * 1024 * 1024,
             read,
         )
         .await?,
@@ -129,7 +127,6 @@ where
             project,
             db::id(row.try_get("result_manifest_artifact_id")?)?,
             "qz.job_result",
-            domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES,
             read,
         )
         .await?,
@@ -164,7 +161,6 @@ where
         project,
         report,
         "qz.data_quality",
-        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
         read,
     )
     .await?;
@@ -242,7 +238,6 @@ where
         project,
         id,
         "qz.rolling_bar_liquidity",
-        1024 * 1024,
         read,
     )
     .await?;

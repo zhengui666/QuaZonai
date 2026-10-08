@@ -17,10 +17,7 @@ use contracts::{
 };
 use reqwest::Client;
 use serde::{de::DeserializeOwned, Serialize};
-use std::time::Duration;
 use url::Url;
-
-pub(super) const MAX_RESPONSE_BYTES: usize = service_http::MAX_JSON_BYTES;
 
 pub(super) fn origin(value: &str, development_http: bool) -> Result<Url, Failure> {
     if value.trim() != value {
@@ -48,7 +45,7 @@ impl ControlClient {
     ) -> Result<Self, Failure> {
         let origin = origin(api_origin, development_http)?;
         integrations::authentication::machine_token(token).map_err(|_| Failure::Configuration)?;
-        let http = service_http::builder(service_http::bearer(token)?, Duration::from_secs(10))
+        let http = service_http::builder(service_http::bearer(token)?)
             .build()
             .map_err(|_| Failure::Configuration)?;
         Ok(Self {
@@ -89,7 +86,7 @@ impl ControlClient {
                 result => result?,
             };
         service_http::media(&response, "application/json")?;
-        let bytes = service_http::body(response, MAX_RESPONSE_BYTES).await?;
+        let bytes = service_http::body(response, None).await?;
         Ok(service_http::decode(&bytes, &self.credential)?)
     }
 

@@ -1,7 +1,6 @@
 //! Read-only native directory capabilities for one launcher-selected Mission.
 //! No ambient file API is exposed to tools. Publication uses the existing HTTP
 //! Artifact service; mutable worktree bytes are not immutable evidence by themselves.
-use contracts::artifacts::MAX_UPLOAD_BYTES;
 use std::{fs, io::Read, path::Path};
 use thiserror::Error;
 
@@ -14,18 +13,13 @@ pub struct MissionFiles {
 }
 
 fn components(value: &str) -> Result<Vec<&str>, MissionFileError> {
-    if value.is_empty()
-        || value.len() > 512
-        || value.contains('\\')
-        || value.chars().any(char::is_control)
-    {
+    if value.is_empty() || value.contains('\\') || value.chars().any(char::is_control) {
         return Err(MissionFileError);
     }
     let parts: Vec<_> = value.split('/').collect();
-    if parts.len() > 32
-        || parts
-            .iter()
-            .any(|part| part.is_empty() || part.starts_with('.'))
+    if parts
+        .iter()
+        .any(|part| part.is_empty() || part.starts_with('.'))
     {
         return Err(MissionFileError);
     }
@@ -64,25 +58,26 @@ impl MissionFiles {
 
     pub fn read_text(&self, relative: &str) -> Result<String, MissionFileError> {
         let bytes = self
-            .read_bytes(relative, MAX_UPLOAD_BYTES as u64)
+            .read_bytes(relative, u64::MAX)
             .map_err(|_| MissionFileError)?;
         String::from_utf8(bytes).map_err(|_| MissionFileError)
     }
 
     /// Each component is opened against an already-held native directory handle.
-    /// Links, special files, hidden metadata, traversal and unbounded reads fail.
+    /// Links, special files, hidden metadata and traversal fail. Reads preserve the
+    /// complete opened file and reject any concurrent change to its metadata.
     /// The deployment-side historical exporter also uses this for binary objects.
     #[cfg(unix)]
     pub fn read_bytes(&self, relative: &str, limit: u64) -> std::io::Result<Vec<u8>> {
-        self.read_bounded(relative, limit, crate::artifacts::MAX_LOCAL_OBJECT_BYTES)
+        self.read_bounded(relative, limit)
     }
 
     #[cfg(unix)]
-    fn read_bounded(&self, relative: &str, limit: u64, ceiling: u64) -> std::io::Result<Vec<u8>> {
+    fn read_bounded(&self, relative: &str, limit: u64) -> std::io::Result<Vec<u8>> {
         use rustix::fs::{openat, Mode, OFlags};
         use std::os::unix::fs::MetadataExt;
         let invalid = || std::io::Error::from(std::io::ErrorKind::InvalidInput);
-        if limit == 0 || limit > ceiling {
+        if limit == 0 {
             return Err(invalid());
         }
         let parts = components(relative).map_err(|_| invalid())?;
@@ -100,9 +95,11 @@ impl MissionFiles {
         if !before.is_file() || before.nlink() != 1 || before.len() == 0 || before.len() > limit {
             return Err(invalid());
         }
-        let mut bytes = Vec::with_capacity(before.len() as usize);
+        let capacity = usize::try_from(before.len()).map_err(|_| invalid())?;
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(capacity).map_err(|_| invalid())?;
         Read::by_ref(&mut file)
-            .take(limit + 1)
+            .take(before.len().saturating_add(1))
             .read_to_end(&mut bytes)?;
         let after = file.metadata()?;
         if bytes.len() as u64 != before.len()
@@ -125,7 +122,7 @@ impl MissionFiles {
     pub fn snapshot(&self, relative: &str, limit: u64) -> std::io::Result<FrozenFile> {
         use rustix::fs::{fcntl_add_seals, memfd_create, MemfdFlags, SealFlags};
         use std::io::Write;
-        let bytes = self.read_bounded(relative, limit, 512 * 1024 * 1024)?;
+        let bytes = self.read_bounded(relative, limit)?;
         let mut file = fs::File::from(memfd_create(
             "historical-export",
             MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
@@ -306,12 +303,46 @@ mod tests {
         let files = MissionFiles::open(parent.path()).unwrap();
         for (name, bytes) in [
             ("empty.rs", Vec::new()),
-            ("oversized.rs", vec![b'x'; MAX_UPLOAD_BYTES + 1]),
             ("binary.rs", vec![0xff, 0xfe]),
         ] {
             fs::write(parent.path().join(name), bytes).unwrap();
             assert!(files.read_text(name).is_err());
         }
+        let content = "界".repeat(2 * 1024 * 1024 / 3 + 1);
+        fs::write(parent.path().join("large.rs"), &content).unwrap();
+        assert_eq!(files.read_text("large.rs").unwrap(), content);
         assert!(components(&"a/".repeat(33)).is_err());
+    }
+
+    #[test]
+    fn native_relative_paths_cross_former_length_and_depth_caps() {
+        let parent = tempfile::tempdir().unwrap();
+        let files = MissionFiles::open(parent.path()).unwrap();
+        let long_component = "d".repeat(180);
+        let long = format!("{long_component}/{long_component}/{long_component}/report.json");
+        let deep = format!("{}report.json", "d/".repeat(40));
+        assert!(long.len() > 512);
+        assert!(deep.split('/').count() > 32);
+        for relative in [long, deep] {
+            let path = parent.path().join(&relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "complete original report").unwrap();
+            assert_eq!(
+                files.read_text(&relative).unwrap(),
+                "complete original report"
+            );
+
+            // Long/deep valid prefixes do not weaken traversal or link checks.
+            let prefix = relative.rsplit_once('/').unwrap().0;
+            assert!(
+                files
+                    .read_text(&format!("{prefix}/../report.json"))
+                    .is_err()
+            );
+            assert!(files.read_text(&format!("{prefix}/.hidden")).is_err());
+            let link = format!("{prefix}/alias.json");
+            symlink(&path, parent.path().join(&link)).unwrap();
+            assert!(files.read_text(&link).is_err());
+        }
     }
 }

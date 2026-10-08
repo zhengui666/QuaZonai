@@ -20,7 +20,7 @@ pub(crate) struct NativeTaskDefinition {
     pub parameters_artifact_id: Id,
     pub inputs: Vec<RuntimeInputV1>,
     pub image_ref: String,
-    pub cpu: u16,
+    pub cpu: Option<u32>,
     pub capability_snapshot_artifact_id: Id,
     pub output_schemas: Vec<contracts::runtime::RuntimeArtifactSchemaV1>,
     pub origin: DataOrigin,
@@ -62,13 +62,13 @@ pub(crate) async fn bind_task(
     if !matches!(
         definition.access,
         ArtifactAccess::Research | ArtifactAccess::EvaluatorOnly
-    ) || !(1..=1024).contains(&definition.cpu)
+    ) || definition.cpu == Some(0)
     {
         return Err(StoreError::Invalid("native_task_definition"));
     }
     sqlx::query("INSERT INTO app.run_native_tasks(run_id,parameters_artifact_id,input_bindings,image_ref,cpu,capability_snapshot_artifact_id,output_schemas,origin,access_class) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
         .bind(run.id.as_uuid()).bind(definition.parameters_artifact_id.as_uuid())
-        .bind(db::json(&definition.inputs)?).bind(definition.image_ref).bind(definition.cpu as i16)
+        .bind(db::json(&definition.inputs)?).bind(definition.image_ref).bind(definition.cpu.map(i64::from))
         .bind(definition.capability_snapshot_artifact_id.as_uuid())
         .bind(db::json(&definition.output_schemas)?).bind(db::code(&definition.origin)?)
         .bind(db::code(&definition.access)?).execute(&mut **tx).await?;
@@ -245,7 +245,10 @@ impl Store {
                     .map_err(|_| StoreError::Integrity)?,
                 parameters_artifact_id: db::id(definition.try_get("parameters_artifact_id")?)?,
                 limits: RuntimeJobLimitsV1 {
-                    cpu: u16::try_from(definition.try_get::<i16, _>("cpu")?)
+                    cpu: definition
+                        .try_get::<Option<i64>, _>("cpu")?
+                        .map(u32::try_from)
+                        .transpose()
                         .map_err(|_| StoreError::Integrity)?,
                     cpu_seconds: limits.cpu_seconds,
                     memory_mib: limits.memory_mib,
@@ -519,9 +522,7 @@ impl Store {
         F: FnOnce(Vec<NativeObjectPublication>) -> Fut,
         Fut: std::future::Future<Output = Result<(), StoreError>>,
     {
-        if raw_manifest.is_empty()
-            || raw_manifest.len() > domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES
-        {
+        if raw_manifest.is_empty() {
             return Err(StoreError::Invalid("native_manifest_size"));
         }
         let manifest: ResultManifestV1 = serde_json::from_slice(&raw_manifest)
@@ -548,7 +549,7 @@ impl Store {
             let size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND project_id=$2 AND producer_run_id=$3 AND producer_attempt_id=$4 AND schema_name='qz.job_result' AND schema_version='1' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1'")
                 .bind(original.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(run.as_uuid())
                 .bind(owner.attempt_id.as_uuid()).fetch_one(&mut *tx).await?;
-            if !(1..=domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES as i64).contains(&size) {
+            if size <= 0 {
                 return Err(StoreError::Integrity);
             }
             let bytes = read(original, counter(size)?).await?;
@@ -644,7 +645,7 @@ impl Store {
                     _ => None,
                 })
                 .ok_or(StoreError::Integrity)?;
-            if !(1..=8 * 1024 * 1024).contains(&size.get()) {
+            if size.get() == 0 {
                 return Err(StoreError::Integrity);
             }
             let bytes = read(spec.parameters_artifact_id, size).await?;
@@ -675,7 +676,7 @@ impl Store {
                             _ => None,
                         })
                         .ok_or(StoreError::Integrity)?;
-                    if !(1..=8 * 1024 * 1024).contains(&size.get()) {
+                    if size.get() == 0 {
                         return Err(StoreError::Integrity);
                     }
                     let bytes = read(*id, size).await?;

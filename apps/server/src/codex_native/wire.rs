@@ -1,6 +1,6 @@
-//! Small bounded JSONL transport for the native App Server, not an Agent loop.
+//! Correlated JSONL transport for the native App Server, not an Agent loop.
 //! Unselected payload fields remain RawValue/Serde IgnoredAny and are never logged.
-use super::{projection, NativeFailure, Observation, Result, MAX_FRAME};
+use super::{projection, NativeFailure, Observation, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
 use std::{collections::VecDeque, time::Duration};
@@ -74,9 +74,6 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
             return Err(NativeFailure::Closed);
         }
         let mut bytes = serde_json::to_vec(document).map_err(|_| NativeFailure::Contract)?;
-        if bytes.len() >= MAX_FRAME {
-            return Err(NativeFailure::FrameLimit);
-        }
         bytes.push(b'\n');
         self.writer
             .write_all(&bytes)
@@ -103,9 +100,6 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
             }
             let newline = available.iter().position(|byte| *byte == b'\n');
             let length = newline.map_or(available.len(), |index| index + 1);
-            if length > MAX_FRAME.saturating_sub(self.partial.len()) {
-                return Err(NativeFailure::FrameLimit);
-            }
             self.partial.extend_from_slice(&available[..length]);
             self.reader.consume(length);
             if newline.is_some() {
@@ -151,9 +145,6 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
                 self.observations.remove(index);
             }
         }
-        if self.observations.len() >= 128 {
-            return Err(NativeFailure::ObservationLimit);
-        }
         self.observations.push_back(observation);
         Ok(())
     }
@@ -163,23 +154,12 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
             return Err(NativeFailure::Closed);
         }
         self.in_flight = true;
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            self.send(&serde_json::json!({"method":method})),
-        )
-        .await;
+        let result = self.send(&serde_json::json!({"method":method})).await;
         self.in_flight = false;
-        match result {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                self.closed = true;
-                Err(error)
-            }
-            Err(_) => {
-                self.closed = true;
-                Err(NativeFailure::Unavailable)
-            }
+        if result.is_err() {
+            self.closed = true;
         }
+        result
     }
 
     pub async fn request(
@@ -187,7 +167,6 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
         id: RequestId,
         method: &'static str,
         params: Value,
-        timeout: Duration,
     ) -> Result<Box<RawValue>> {
         if self.closed() {
             return Err(NativeFailure::Closed);
@@ -196,7 +175,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
         let operation = async {
             self.send(&serde_json::json!({"id":id,"method":method,"params":params}))
                 .await?;
-            for _ in 0..4096 {
+            loop {
                 let frame = self.frame().await?;
                 if frame.method.is_some() {
                     self.notification_or_request(frame).await?;
@@ -211,12 +190,10 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
                     _ => Err(NativeFailure::Contract),
                 };
             }
-            Err(NativeFailure::ObservationLimit)
         };
-        let result = match tokio::time::timeout(timeout, operation).await {
-            Ok(result) => result,
-            Err(_) => Err(NativeFailure::Unavailable),
-        };
+        // A slow native response is not a failed model turn. The owner may
+        // cancel this future; in_flight then remains set to prevent another send.
+        let result = operation.await;
         self.in_flight = false;
         if result
             .as_ref()
@@ -235,14 +212,13 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Wire<R, W> {
             return Ok(self.take_observations());
         }
         let operation = async {
-            for _ in 0..4096 {
+            loop {
                 let frame = self.frame().await?;
                 self.notification_or_request(frame).await?;
                 if !self.observations.is_empty() {
                     return Ok(self.take_observations());
                 }
             }
-            Err(NativeFailure::ObservationLimit)
         };
         match tokio::time::timeout(wait, operation).await {
             Ok(Ok(result)) => Ok(result),
@@ -281,8 +257,7 @@ mod tests {
             wire.request(
                 RequestId::Text("native-1".into()),
                 "account/read",
-                serde_json::json!({}),
-                Duration::from_secs(1)
+                serde_json::json!({})
             ),
             native
         );
@@ -316,13 +291,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wrong_id_duplicate_binding_and_oversized_frames_invalidate_the_connection() {
+    async fn wrong_id_and_duplicate_binding_invalidate_the_connection() {
         for document in [
             b"{\"id\":\"other\",\"result\":{}}\n".to_vec(),
             b"{\"id\":\"a\",\"id\":\"a\",\"result\":{}}\n".to_vec(),
-            vec![b'x'; MAX_FRAME + 1],
         ] {
-            let (input, mut native_output) = duplex(MAX_FRAME + 2);
+            let (input, mut native_output) = duplex(8192);
             let (output, _native_input) = duplex(1024);
             let mut wire = Wire::new(input, output);
             native_output.write_all(&document).await.unwrap();
@@ -331,7 +305,6 @@ mod tests {
                     RequestId::Text("a".into()),
                     "account/read",
                     serde_json::json!({}),
-                    Duration::from_secs(1),
                 )
                 .await;
             assert!(result.is_err());
@@ -350,7 +323,6 @@ mod tests {
                 RequestId::Text("reserved-send".into()),
                 "turn/start",
                 serde_json::json!({}),
-                Duration::from_secs(1),
             );
             tokio::pin!(request);
             let mut line = String::new();
@@ -370,8 +342,7 @@ mod tests {
             wire.request(
                 RequestId::Text("new-send".into()),
                 "turn/start",
-                serde_json::json!({}),
-                Duration::from_secs(1)
+                serde_json::json!({})
             )
             .await,
             Err(NativeFailure::Closed)
@@ -402,4 +373,38 @@ mod tests {
         assert_eq!(response["error"]["code"], -32601);
         assert!(response.get("result").is_none());
     }
+    #[tokio::test]
+    async fn large_responses_and_many_native_observations_are_not_truncated() {
+        let (input, mut native_output) = duplex(8192);
+        let (output, native_input) = duplex(8192);
+        let mut wire = Wire::new(input, output);
+        let native = async move {
+            let mut reader = BufReader::new(native_input);
+            let mut request = String::new();
+            reader.read_line(&mut request).await.unwrap();
+            // Unknown events are ignored semantically, without a total frame quota.
+            for _ in 0..4097 {
+                native_output.write_all(b"{\"method\":\"item/reasoning/textDelta\",\"params\":{}}\n").await.unwrap();
+            }
+            for index in 0..129 {
+                let notification = serde_json::json!({"method":"account/login/completed",
+                    "params":{"loginId":format!("login-{index}"),"success":true,"error":null}});
+                let mut bytes = serde_json::to_vec(&notification).unwrap();
+                bytes.push(b'\n');
+                native_output.write_all(&bytes).await.unwrap();
+            }
+            let response = serde_json::json!({"id":"large","result":{"text":"x".repeat(2 * 1024 * 1024 + 1)}});
+            let mut bytes = serde_json::to_vec(&response).unwrap();
+            bytes.push(b'\n');
+            native_output.write_all(&bytes).await.unwrap();
+        };
+        let (result, ()) = tokio::join!(wire.request(RequestId::Text("large".into()), "account/read", serde_json::json!({})), native);
+        let value: Value = serde_json::from_str(result.unwrap().get()).unwrap();
+        assert_eq!(value["text"].as_str().unwrap().len(), 2 * 1024 * 1024 + 1);
+        let observations = wire.take_observations();
+        assert_eq!(observations.len(), 129);
+        assert!(matches!(&observations[128], Observation::LoginCompleted { login_id, success: true } if login_id == "login-128"));
+        assert!(!wire.closed());
+    }
+
 }

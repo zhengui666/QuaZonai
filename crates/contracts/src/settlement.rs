@@ -35,7 +35,7 @@ pub struct NativeSettlementGroupV1 {
 pub struct NativeBinaryOptionContextV1 {
     /// Original externally tagged BinaryOption versions, including native clocks,
     /// identity, activation/expiration, collateral and the recorded fee schedule.
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub instrument_definitions: Vec<serde_json::Value>,
     /// Complete two-outcome conditions; only original available closes are carried.
     pub settlements: Vec<NativeSettlementGroupV1>,

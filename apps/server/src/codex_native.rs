@@ -1,5 +1,5 @@
 //! Thin client for the official Codex App Server. Codex owns its tool loop,
-//! authentication and canonical history; QZ owns only bounded transport and bindings.
+//! authentication and canonical history; QZ owns transport correlation and bindings.
 mod close_diagnostics;
 pub(crate) mod container;
 mod mission;
@@ -31,9 +31,7 @@ use std::{collections::BTreeSet, fmt, time::Duration};
 use tokio::process::Child;
 use wire::{RequestId, Wire};
 
-pub const MAX_FRAME: usize = 2 * 1024 * 1024;
 const CLIENT: &str = "quazonai_native";
-const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 pub type Result<T> = std::result::Result<T, NativeFailure>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,7 +85,6 @@ pub struct Client {
     binary: std::path::PathBuf,
     codex_home: std::path::PathBuf,
     version: String,
-    rpc_timeout: Duration,
     reconciliation_thread: Option<String>,
 }
 
@@ -102,7 +99,6 @@ impl Client {
 
     async fn start_process(launch: Launch, mut limits: Option<MissionProcess>) -> Result<Self> {
         let codex_home = launch.codex_home.clone();
-        let mission = limits.is_some();
         let reconciliation_thread = limits
             .as_ref()
             .and_then(|limits| limits.reconciliation_thread_id.clone());
@@ -151,11 +147,6 @@ impl Client {
             codex_home,
             version: String::new(),
             reconciliation_thread,
-            rpc_timeout: if mission {
-                Duration::from_secs(60)
-            } else {
-                RPC_TIMEOUT
-            },
         };
         if let Some(limits) = native_limits {
             client.group = Some(
@@ -214,7 +205,7 @@ impl Client {
         let response = {
             let request = self
                 .wire
-                .request(RequestId::Text(id), method, params, self.rpc_timeout);
+                .request(RequestId::Text(id), method, params);
             tokio::pin!(request);
             loop {
                 tokio::select! {
@@ -270,15 +261,12 @@ impl Client {
         let mut ids = BTreeSet::new();
         let mut cursors = BTreeSet::new();
         let mut cursor = None::<String>;
-        for _ in 0..128 {
+        loop {
             let mut params = json!({"limit":100,"includeHidden":true});
             if let Some(cursor) = &cursor {
                 params["cursor"] = json!(cursor);
             }
             let page: projection::ModelPage = self.call("model/list", params).await?;
-            if page.data.len() > 100 || models.len() + page.data.len() > 4096 {
-                return Err(NativeFailure::ObservationLimit);
-            }
             for model in page.data {
                 model.validate()?;
                 if !ids.insert(model.id.clone()) {
@@ -303,7 +291,6 @@ impl Client {
                 }
             }
         }
-        Err(NativeFailure::ObservationLimit)
     }
 
     pub async fn start_thread(&mut self, options: &ThreadOptions) -> Result<Thread> {
@@ -371,15 +358,12 @@ impl Client {
         let mut ids = BTreeSet::new();
         let mut cursors = BTreeSet::new();
         let mut cursor = None::<String>;
-        for _ in 0..128 {
+        loop {
             let mut params = json!({"threadId":thread_id,"limit":100,"sortDirection":"desc","itemsView":"notLoaded"});
             if let Some(cursor) = &cursor {
                 params["cursor"] = json!(cursor);
             }
             let page: projection::TurnPage = self.call("thread/turns/list", params).await?;
-            if page.data.len() > 100 || turns.len() + page.data.len() > 4096 {
-                return Err(NativeFailure::ObservationLimit);
-            }
             for turn in page.data {
                 turn.validate()?;
                 if !ids.insert(turn.id.clone()) {
@@ -398,13 +382,9 @@ impl Client {
                 }
             }
         }
-        Err(NativeFailure::ObservationLimit)
     }
 
     pub async fn observations(&mut self, wait: Duration) -> Result<Vec<Observation>> {
-        if wait > Duration::from_secs(30) {
-            return Err(NativeFailure::Configuration);
-        }
         self.enforce_cpu().await?;
         self.wire.poll(wait).await
     }
@@ -420,8 +400,8 @@ impl Client {
         projection::text(turn_id, 200)?;
         let mut cursor = None::<String>;
         let mut cursors = BTreeSet::new();
-        for _ in 0..128 {
-            // One turn per page keeps large public user requests within MAX_FRAME.
+        loop {
+            // Read public summaries lazily, without limiting total history pages.
             let page:projection::SummaryPage=self.call("thread/turns/list",json!({
                 "threadId":thread_id,"itemsView":"summary","limit":1,"sortDirection":"desc","cursor":cursor
             })).await?;
@@ -446,7 +426,6 @@ impl Client {
                 }
             }
         }
-        Err(NativeFailure::ObservationLimit)
     }
 
     /// Kill-on-drop remains the failure fallback. Closing this transport never

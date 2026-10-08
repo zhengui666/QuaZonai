@@ -18,17 +18,21 @@ pub enum CostEnforcement {
 pub struct BudgetV1 {
     pub schema_version: SchemaV1,
     pub max_experiments: u32,
-    pub max_parallel_runs: u16,
-    pub max_turns_per_mission: u16,
-    pub max_repair_turns: u16,
+    /// None removes the application slot ceiling; native capability checks remain.
+    pub max_parallel_runs: Option<u32>,
+    /// None means no application Mission-turn cap.
+    pub max_turns_per_mission: Option<u32>,
+    /// None means no repair-turn cap; Some(0) explicitly disables repairs.
+    pub max_repair_turns: Option<u32>,
     /// None means no application wall-time budget; native service capability still applies.
     pub max_wall_seconds: Option<u32>,
     /// None means no application cumulative CPU budget; CPU rate is separate.
     pub max_cpu_seconds: Option<DbCounter>,
-    pub max_memory_mib: u32,
+    pub max_memory_mib: Option<u32>,
     /// None removes the task output budget, not transport/parser/storage safety.
     pub max_output_bytes: Option<DbCounter>,
-    pub max_cycles_per_day: u16,
+    /// None means no application daily Cycle quota.
+    pub max_cycles_per_day: Option<u32>,
     pub min_cycle_interval_seconds: u32,
     pub max_tokens: Option<DbCounter>,
     pub max_cost_decimal: Option<DecimalValue>,
@@ -83,16 +87,6 @@ impl PartialSchema for BudgetV1 {
             .required("schema_version");
         for (name, minimum, maximum, format) in [
             ("max_experiments", 1u64, u32::MAX as u64, KnownFormat::Int64),
-            ("max_parallel_runs", 1, u16::MAX as u64, KnownFormat::Int32),
-            (
-                "max_turns_per_mission",
-                1,
-                u16::MAX as u64,
-                KnownFormat::Int32,
-            ),
-            ("max_repair_turns", 0, u16::MAX as u64, KnownFormat::Int32),
-            ("max_memory_mib", 1, u32::MAX as u64, KnownFormat::Int64),
-            ("max_cycles_per_day", 1, u16::MAX as u64, KnownFormat::Int32),
             (
                 "min_cycle_interval_seconds",
                 0,
@@ -110,6 +104,26 @@ impl PartialSchema for BudgetV1 {
                         .maximum(Some(maximum)),
                 )
                 .required(name);
+        }
+        for (name, minimum) in [
+            ("max_parallel_runs", 1_u64),
+            ("max_turns_per_mission", 1),
+            ("max_repair_turns", 0),
+            ("max_cycles_per_day", 1),
+            ("max_memory_mib", 1),
+        ] {
+            fields = fields.property(
+                name,
+                OneOfBuilder::new()
+                    .item(ObjectBuilder::new().schema_type(Type::Null))
+                    .item(
+                        ObjectBuilder::new()
+                            .schema_type(Type::Integer)
+                            .format(Some(SchemaFormat::KnownFormat(KnownFormat::Int64)))
+                            .minimum(Some(minimum))
+                            .maximum(Some(u32::MAX as u64)),
+                    ),
+            );
         }
         for name in ["max_cpu_seconds", "max_output_bytes"] {
             fields = fields.property(name, crate::scalars::optional_positive_db_counter_schema());

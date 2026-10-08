@@ -530,33 +530,30 @@ fn path_traversal_absolute_paths_and_ambiguous_components_are_rejected() {
 }
 
 #[test]
-fn rejects_oversized_json_scenario_source_and_aggregate_reads() {
-    assert!(io::parse::<Value>(&vec![b' '; io::MAX_JSON + 1]).is_err());
-    for (file, size) in [
-        ("suite.json", io::MAX_JSON + 1),
-        ("scenario-0.txt", 256 * 1024 + 1),
-        ("source.txt", io::MAX_SOURCE + 1),
-    ] {
-        let pack = Pack::new();
-        let file = fs::File::create(pack.input.join(file)).unwrap();
-        file.set_len(size as u64).unwrap();
-        assert!(freeze(&pack.input, &pack.frozen).is_err());
-    }
+fn complete_large_json_scenario_source_and_aggregate_reads_are_preserved() {
+    let mut json = b"{\"schema_version\":1}".to_vec();
+    json.resize(2 * 1024 * 1024 + 1, b' ');
+    assert_eq!(io::parse::<Value>(&json).unwrap(), json!({"schema_version":1}));
+    let pack = Pack::new();
+    let scenario = vec![b'x'; 256 * 1024 + 1];
+    fs::write(pack.input.join("scenario-0.txt"), &scenario).unwrap();
+    let source = vec![b'x'; 64 * 1024 * 1024 + 1];
+    fs::write(pack.input.join("source.txt"), &source).unwrap();
+    let mut budget = io::Budget::default();
+    assert_eq!(budget.read(&pack.input.join("source.txt")).unwrap(), source);
+    assert_eq!(budget.read(&pack.input.join("scenario-0.txt")).unwrap(), scenario);
     let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("bounded");
-    fs::write(&path, vec![b'x'; 1024 * 1024]).unwrap();
-    let mut budget = io::Budget::default();
-    for _ in 0..96 {
-        budget.read(&path, io::MAX_JSON).unwrap();
+    let path = temp.path().join("repeated");
+    let original = vec![b'x'; 1024 * 1024];
+    fs::write(&path, &original).unwrap();
+    for _ in 0..97 {
+        assert_eq!(budget.read(&path).unwrap(), original);
     }
-    assert!(budget.read(&path, io::MAX_JSON).is_err());
-    let path = temp.path().join("small");
     fs::write(&path, b"x").unwrap();
-    let mut budget = io::Budget::default();
-    for _ in 0..1100 {
-        budget.read(&path, 1).unwrap();
+    for _ in 0..1101 {
+        assert_eq!(budget.read(&path).unwrap(), b"x");
     }
-    assert!(budget.read(&path, 1).is_err());
+    pack.freeze();
 }
 
 #[test]
@@ -655,7 +652,7 @@ fn strict_lock_and_index_contracts_reject_unknown_fields() {
 }
 
 #[test]
-fn bounded_case_and_assertion_work_is_enforced_before_reporting() {
+fn duplicate_identities_reject_but_complete_case_and_assertion_sets_are_preserved() {
     let mut pack = Pack::new();
     let case = pack.suite["tuning"]["cases"][0].clone();
     pack.suite["tuning"]["cases"] = json!(vec![case.clone(); 500]);
@@ -670,10 +667,10 @@ fn bounded_case_and_assertion_work_is_enforced_before_reporting() {
 
     let mut pack = Pack::new();
     let mut cases = Vec::new();
-    for n in 0..101 {
+    for n in 0..501 {
         let mut case = case.clone();
         case["id"] = json!(format!("many-{n}"));
-        case["assertions"] = json!((0..100)
+        case["assertions"] = json!((0..101)
             .map(|n| {
                 let mut assertion = assertion.clone();
                 assertion["id"] = json!(format!("assertion-{n}"));
@@ -684,10 +681,10 @@ fn bounded_case_and_assertion_work_is_enforced_before_reporting() {
     }
     pack.suite["tuning"]["cases"] = json!(cases);
     pack.save_suite();
-    assert_eq!(
-        freeze(&pack.input, &pack.frozen).unwrap_err(),
-        "assertion count limit"
-    );
+    freeze(&pack.input, &pack.frozen).unwrap();
+    let report = read(&pack.frozen.join("report.json"));
+    assert_eq!(report["cases"].as_array().unwrap().len(), 502);
+    assert_eq!(report["cases"][0]["required_assertions"].as_array().unwrap().len(), 101);
 }
 
 #[test]

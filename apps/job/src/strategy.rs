@@ -1,10 +1,10 @@
 //! Reuse FeatureReplay and one native target account. Historical members supply
 //! their original targets; a current decision executes the frozen MODEL from its
 //! original fold boundary, preserving WASM state and ordinal on every call.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use bigdecimal::BigDecimal;
 use contracts::{
-    research::DataPartition, science::*, strategy_portfolio::*, DbCounter, Id, SchemaV1,
+    DbCounter, Id, SchemaV1, research::DataPartition, science::*, strategy_portfolio::*,
 };
 use nautilus_model::instruments::Instrument;
 use std::{collections::BTreeMap, path::Path};
@@ -24,13 +24,21 @@ pub fn compose(
         let report: NativeExperimentEvaluationResultV1 =
             serde_json::from_slice(&read(member.policy.source.report_artifact_id)?)?;
         let fold = domain::execution::strategy::source(&member.policy, &report)?;
-        domain::prediction::binary_option_source(report.request.binary_option.as_ref(),
-            request.binary_option.as_ref(), &fold.simulation_request.selection)?;
+        domain::prediction::binary_option_source(
+            report.request.binary_option.as_ref(),
+            request.binary_option.as_ref(),
+            &fold.simulation_request.selection,
+        )?;
         reports.push(report);
     }
     let market = crate::catalog::load_catalog(root, &request.selection)?;
-    crate::prediction::bind_target_context(root, &market, &request.selection, request.binary_option.as_ref())?;
-    let mut fuel = request.total_fuel.get();
+    crate::prediction::bind_target_context(
+        root,
+        &market,
+        &request.selection,
+        request.binary_option.as_ref(),
+    )?;
+    let mut fuel = request.total_fuel.map(|fuel| fuel.get());
     let outcome = match &request.purpose {
         StrategyPortfolioPurposeV1::HistoricalReplay {} => {
             let folds = request
@@ -80,8 +88,11 @@ pub fn compose(
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             let simulation_request = NativeSimulationRequestV1 {
                 schema_version: SchemaV1,
-                settlements: domain::prediction::binary_option_settlements(request.binary_option.as_ref(),
-                    &request.members[0].policy.instrument_id, request.selection.decision_cutoff_ns),
+                settlements: domain::prediction::binary_option_settlements(
+                    request.binary_option.as_ref(),
+                    &request.members[0].policy.instrument_id,
+                    request.selection.decision_cutoff_ns,
+                ),
                 selection: request.selection.clone(),
                 settings: request.settings.clone(),
                 target_points: targets,
@@ -119,7 +130,7 @@ pub fn compose(
                     .ok_or_else(|| anyhow::anyhow!("STRATEGY_WARMUP_START_MISSING"))?;
                 let bars = &series.bars[start..];
                 ensure!(
-                    bars.len() > fold.decisions.len() && bars.len() <= MAX_EXPERIMENT_DECISIONS,
+                    bars.len() > fold.decisions.len(),
                     "STRATEGY_CURRENT_CONTINUATION_REQUIRED"
                 );
                 let clocks = bars
@@ -188,14 +199,13 @@ pub fn compose(
                     .flat_map(|part| part.observations.iter().cloned())
                     .collect::<Vec<_>>();
                 ensure!(
-                    observations.len() <= MAX_FEATURE_OBSERVATIONS
-                        && observations
-                            .iter()
-                            .all(|row| ids.insert((row.feature_index, row.sequence))),
+                    observations
+                        .iter()
+                        .all(|row| ids.insert((row.feature_index, row.sequence))),
                     "STRATEGY_FEATURE_SEQUENCE_COLLISION"
                 );
                 let module =
-                    crate::signals::SignalModule::new(&read(member.policy.model_artifact_id)?)?;
+                    crate::signals::SignalModule::new(&read(member.policy.model_artifact_id)?, fuel.is_some())?;
                 let decisions = crate::experiment::replay_features(
                     &member.policy.feature_schema,
                     &observations,
@@ -247,11 +257,17 @@ pub fn compose(
             // Check each policy's original TTL before blending; a shorter
             // mandate cannot conceal a policy target extending beyond expiry.
             for point in &targets {
-                domain::prediction::binary_option_current_target(request.binary_option.as_ref(), point,
-                    request.selection.decision_cutoff_ns)?;
+                domain::prediction::binary_option_current_target(
+                    request.binary_option.as_ref(),
+                    point,
+                    request.selection.decision_cutoff_ns,
+                )?;
             }
-            domain::prediction::binary_option_current_target(request.binary_option.as_ref(), &target,
-                request.selection.decision_cutoff_ns)?;
+            domain::prediction::binary_option_current_target(
+                request.binary_option.as_ref(),
+                &target,
+                request.selection.decision_cutoff_ns,
+            )?;
             domain::execution::strategy::constraints(
                 &request.mandate,
                 &target,
@@ -272,7 +288,11 @@ pub fn compose(
             ("wasmi".into(), "2.0.0".into()),
             ("strategy-composition".into(), "1".into()),
         ]),
-        consumed_fuel: count(request.total_fuel.get() - fuel)?,
+        consumed_fuel: if matches!(request.purpose, StrategyPortfolioPurposeV1::HistoricalReplay {}) {
+            Some(DbCounter::ZERO)
+        } else {
+            request.total_fuel.zip(fuel).map(|(total, left)| count(total.get() - left)).transpose()?
+        },
         outcome,
     };
     domain::execution::strategy_composition_result(request, &result)?;

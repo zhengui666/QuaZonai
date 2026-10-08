@@ -47,8 +47,6 @@ use std::{
     sync::Arc,
 };
 
-const MAX_TARGET_ORDERS: usize = 65_536;
-
 fn native_decimal(value: &DecimalValue) -> Result<Decimal> {
     Decimal::from_str(&value.as_decimal().to_plain_string())
         .map_err(|_| anyhow::anyhow!("NATIVE_DECIMAL_RANGE"))
@@ -124,6 +122,8 @@ pub(crate) struct TargetReplay {
     settlement_events: BTreeMap<InstrumentId, InstrumentClose>,
     status: Rc<RefCell<ReplayStatus>>,
     paper: Option<PaperClock>,
+    capital_exit_gate: Option<(crate::capital_exit_gate::CapitalExitGate, DbCounter)>,
+    capital_exit_source_pending: bool,
 }
 
 struct PaperClock {
@@ -182,15 +182,21 @@ nautilus_strategy!(TargetReplay, {
             self.status.borrow_mut().failure = Some("NATIVE_FILL_OUTSIDE_INSTRUMENT");
             return;
         }
+        // Original owner-issued reductions belong to the same native strategy
+        // and account. They do not reactivate or inherit the expired target's
+        // deferred buy instructions; Nautilus has already booked the original fill.
+        if self.capital_exit_gate.as_ref().is_some_and(|(gate, _)| {
+            gate.issued_order_ids()
+                .iter()
+                .any(|id| id == event.client_order_id.as_str())
+        }) {
+            return;
+        }
         if now <= self.status.borrow().submitted_after_ns || now >= self.active_expiry_ns {
             self.status.borrow_mut().failure = Some("NATIVE_NONCAUSAL_OR_EXPIRED_FILL");
             return;
         }
         if self.spot_cash.is_some() {
-            if self.status.borrow().spot_fills.len() >= 1_000_000 {
-                self.status.borrow_mut().failure = Some("SPOT_NATIVE_FILL_LIMIT");
-                return;
-            }
             self.status.borrow_mut().spot_fills.push(event.clone());
         }
         let fully_filled = self
@@ -302,7 +308,41 @@ impl TargetReplay {
         Ok(())
     }
 
+    /// Host must install this before registering the strategy. All target submit
+    /// paths (initial, deferred and position callbacks) share this exact gate.
+    #[cfg(feature = "native-paper")]
+    pub(crate) fn require_capital_exit_gate(
+        &mut self,
+        gate: crate::capital_exit_gate::CapitalExitGate,
+        claim: &contracts::strategy_portfolio::HandoffClaimViewV2,
+    ) -> Result<()> {
+        let epoch = gate.capture_target_claim(claim)?;
+        self.capital_exit_gate = Some((gate, epoch));
+        Ok(())
+    }
+
+    #[cfg(feature = "native-paper")]
+    pub(crate) fn await_capital_exit_source(&mut self) {
+        self.capital_exit_source_pending = true;
+    }
+
+    #[cfg(feature = "native-paper")]
+    pub(crate) fn authenticated_capital_exit_source(&mut self) {
+        self.capital_exit_source_pending = false;
+    }
+
+    fn target_fenced(&self) -> bool {
+        self.capital_exit_source_pending
+            || self
+                .capital_exit_gate
+                .as_ref()
+                .is_some_and(|(gate, _)| gate.control().is_some() || gate.recovery_required())
+    }
+
     fn submit_target_order(&mut self, order: OrderAny) -> Result<()> {
+        if let Some((gate, epoch)) = &self.capital_exit_gate {
+            gate.check_target(*epoch, &order)?;
+        }
         let client_id = if let Some(paper) = &self.paper {
             ensure!(
                 self.clock().timestamp_ns().as_u64() < self.active_expiry_ns,
@@ -381,6 +421,9 @@ impl TargetReplay {
     }
 
     fn resume_after_settlement(&mut self, receipt_ns: u64) {
+        if self.target_fenced() {
+            return;
+        }
         if !self.awaiting_settlement || !self.orders_settled() {
             return;
         }
@@ -416,6 +459,9 @@ impl TargetReplay {
     }
 
     fn submit_deferred(&mut self, now: u64) -> Result<()> {
+        if self.target_fenced() {
+            return Ok(());
+        }
         let now = if self.paper.is_some() {
             self.clock().timestamp_ns().as_u64()
         } else {
@@ -775,6 +821,9 @@ impl DataActor for TargetReplay {
         Ok(())
     }
     fn on_bar(&mut self, bar: &Bar) -> Result<()> {
+        if self.target_fenced() {
+            return Ok(());
+        }
         let result = self.accept_new_paper_bar(bar).and_then(|accepted| {
             if accepted {
                 self.apply_bar(bar, bar.ts_init.as_u64())
@@ -859,6 +908,8 @@ pub(crate) fn paper_target_strategy(
         settlement_events: BTreeMap::new(),
         status: status.clone(),
         strategy_constraints: None,
+        capital_exit_gate: None,
+        capital_exit_source_pending: false,
         paper: Some(PaperClock {
             execution_client_id: client_id,
             started_ns: 0,
@@ -1017,18 +1068,8 @@ fn validate_settings_with_currency(
         .map(|s| s.instrument.clone())
         .collect::<Vec<_>>();
     ensure!(
-        (1..=10_000).contains(&request.target_points.len())
-            && request
-                .target_points
-                .len()
-                .checked_mul(data.series.len())
-                .is_some_and(|n| n <= MAX_TARGET_ORDERS),
+        !request.target_points.is_empty(),
         "SIMULATION_TARGET_COUNT_LIMIT"
-    );
-    let span = request.selection.event_end_ns.get() - request.selection.event_start_ns.get();
-    ensure!(
-        span / (u64::from(settings.snapshot_interval_ms) * 1_000_000) <= 1_000_000,
-        "SIMULATION_SNAPSHOT_COUNT_LIMIT"
     );
     for (index, point) in request.target_points.iter().enumerate() {
         ensure!(
@@ -1308,6 +1349,8 @@ fn run_with_strategy_and_spot(
         outstanding_orders: BTreeSet::new(),
         settlement_events,
         status: status.clone(),
+        capital_exit_gate: None,
+        capital_exit_source_pending: false,
         paper: None,
     };
     let config = BacktestEngineConfig {
@@ -1403,7 +1446,7 @@ fn run_with_strategy_and_spot(
                 input.dataset_revision_id,
                 &market,
                 input.closed_rows,
-                1_000_000,
+                None,
                 Some(crate::spot_cash_runtime::execution_horizon(request)?),
             )?;
             strategy.spot_cash = Some(capture.handle(&engine)?);

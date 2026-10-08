@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan, freeze or verify bounded free public-source observations (never research admission)."""
+"""Plan, freeze or verify selected free public-source observations (never research admission)."""
 
 import argparse
 from copy import deepcopy
@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import time
 import urllib.error
@@ -21,11 +22,12 @@ from providers import MAX_RECORDS, MAX_REQUESTS, Selection, integer, provider_by
 from snapshot import publish_bytes, safe_local
 
 
-MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-DEFAULT_MAX_BYTES = 32 * 1024 * 1024
-MAX_OUTPUT_BYTES = 128 * 1024 * 1024
-MAX_TERMS_BYTES = 1024 * 1024
-MAX_MANIFEST_BYTES = 1024 * 1024
+# Retain manifest field names; null means no application-imposed cap.
+MAX_RESPONSE_BYTES = None
+DEFAULT_MAX_BYTES = None
+MAX_OUTPUT_BYTES = None
+MAX_TERMS_BYTES = None
+MAX_MANIFEST_BYTES = None
 SCHEMA = "qz.public_acquisition/1"
 ADMISSION = {"coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
              "research_qualified": False, "registered_in_quazonai": False,
@@ -54,10 +56,11 @@ def file_record(path, body):
 
 
 def plan(provider_id, selection, max_bytes=DEFAULT_MAX_BYTES):
-    integer(max_bytes, "max_bytes", minimum=1, maximum=MAX_OUTPUT_BYTES)
+    if max_bytes is not None:
+        integer(max_bytes, "max_bytes", minimum=1, maximum=None)
     provider = provider_by_id(provider_id)
     requests = provider.plan(selection)
-    if not 1 <= len(requests) <= MAX_REQUESTS:
+    if not requests:
         raise ValueError("provider request count is invalid")
     cursor = selection.start_seconds
     for request in requests:
@@ -79,37 +82,32 @@ def plan(provider_id, selection, max_bytes=DEFAULT_MAX_BYTES):
             "requests": [asdict(request) for request in requests], "admission": dict(ADMISSION)}
 
 
-def fetch(url, limit):
+def fetch(url, limit=None):
     """One request, no redirects, retries, credentials, cookies or paid fallback."""
-    if limit <= 0:
+    if limit is not None and limit <= 0:
         raise ValueError("download byte budget exhausted")
     request = urllib.request.Request(url, headers={"Accept": "application/json",
                                      "Accept-Encoding": "identity",
                                      "User-Agent": "QuaZonai-public-data/1.0"})
     started = now()
     with OPENER.open(request, timeout=30) as response:
-        deadline = time.monotonic() + 60
         media_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if (response.status != 200 or response.headers.get("Content-Encoding", "identity") != "identity"
                 or media_type != "application/json"):
             raise ValueError("unexpected public-source HTTP response")
         declared = response.headers.get("Content-Length")
         if declared is not None:
-            if not re.fullmatch(r"[0-9]+", declared) or int(declared) > limit:
+            if not re.fullmatch(r"[0-9]+", declared) or (limit is not None and int(declared) > limit):
                 raise ValueError("response exceeds byte budget")
             declared = int(declared)
         body = bytearray()
-        while len(body) < limit:
-            if time.monotonic() > deadline:
-                raise ValueError("response body deadline exceeded")
-            chunk = response.read1(min(64 * 1024, limit - len(body)))
-            if time.monotonic() > deadline:
-                raise ValueError("response body deadline exceeded")
+        while limit is None or len(body) < limit:
+            chunk = response.read1(64 * 1024 if limit is None else min(64 * 1024, limit - len(body)))
             if not chunk:
                 break
             body.extend(chunk)
         if ((declared is not None and len(body) != declared)
-                or (declared is None and len(body) == limit)):
+                or (limit is not None and declared is None and len(body) == limit)):
             raise ValueError("response truncated or byte budget exhausted")
         headers = {name: response.headers[name] for name in ("Content-Type", "Date", "ETag", "Last-Modified")
                    if name in response.headers}
@@ -117,15 +115,24 @@ def fetch(url, limit):
                          "request_started_at": started, "retrieved_at": now()}
 
 
-def local_bytes(path, limit):
+def local_bytes(path, limit=None):
     path = Path(os.path.abspath(path))
     safe_local(path.parent, path.name)
-    if not path.is_file() or path.stat().st_size > limit:
-        raise ValueError("local input missing, not a regular file or exceeds byte limit")
-    with path.open("rb") as stream:
-        body = stream.read(limit + 1)
-    if len(body) > limit:
-        raise ValueError("local input exceeds byte limit")
+    if not path.is_file():
+        raise ValueError("local input missing or not a regular file")
+    flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+             | getattr(os, "O_BINARY", 0))
+    with os.fdopen(os.open(path, flags), "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode) or (limit is not None and before.st_size > limit):
+            raise ValueError("local input is not a regular file or exceeds explicit byte limit")
+        body = stream.read() if limit is None else stream.read(limit + 1)
+        after = os.fstat(stream.fileno())
+    safe_local(path.parent, path.name)
+    identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+    if ((limit is not None and len(body) > limit) or len(body) != before.st_size
+            or identity(before) != identity(after) or identity(after) != identity(path.stat())):
+        raise ValueError("local input changed during read or exceeds explicit byte limit")
     return body
 
 
@@ -173,8 +180,6 @@ def collect_rows(accumulated, rows):
         timestamp = row["selection_time_seconds"]
         if timestamp in accumulated:
             raise ValueError("overlapping or duplicate selected observations")
-        if len(accumulated) >= MAX_RECORDS:
-            raise ValueError("selected record limit exceeded")
         accumulated[timestamp] = row
 
 
@@ -197,21 +202,18 @@ def acquire(provider_id, selection, output, terms_file, max_bytes=DEFAULT_MAX_BY
     publish_bytes(safe_local(root, terms_record["path"]), terms)
     (root / "raw").mkdir()
     responses, accumulated = [], {}
-    raw_size, output_size = 0, len(terms)
+    raw_size = 0
     previous_retrieved = None
     for index, request in enumerate(selection_plan["requests"]):
         if index:
-            time.sleep(0.35)  # Bounded sequential requests, not a real-time poller.
-        body, observation = fetch(request["url"], min(MAX_RESPONSE_BYTES, max_bytes - raw_size))
+            time.sleep(0.35)  # Sequential supplier-page requests, not a real-time poller.
+        body, observation = fetch(request["url"], None if max_bytes is None else max_bytes - raw_size)
         previous_retrieved = check_observation(observation, selection, previous_retrieved)
         raw_size += len(body)
-        if len(body) > MAX_RESPONSE_BYTES or raw_size > max_bytes:
+        if max_bytes is not None and raw_size > max_bytes:
             raise ValueError("response total exceeds byte budget")
         path = f"raw/{index:04d}.json"
-        output_size += len(body)
-        if output_size > MAX_OUTPUT_BYTES:
-            raise ValueError("output byte budget exhausted")
-        # Preserve the bounded original body even when source interpretation fails.
+        # Preserve the complete original body even when source interpretation fails.
         # Without the final manifest this directory remains explicitly unpublished.
         publish_bytes(safe_local(root, path), body)
         rows, counts = decoded_page(provider, body, selection, request, observation, path)
@@ -220,7 +222,6 @@ def acquire(provider_id, selection, output, terms_file, max_bytes=DEFAULT_MAX_BY
                           "file": {"path": path, "size": len(body)}, "counts": counts})
     records = record_bytes(accumulated)
     records_record = {"path": "records.jsonl", "size": len(records)}
-    output_size += len(records)
     manifest = {**selection_plan, "created_at": now(),
                 "source_terms": {"file": terms_record, "reference": provider.descriptor["terms_reference"],
                                  "evidence_status": "OPERATOR_SUPPLIED_NOT_INDEPENDENTLY_VERIFIED"},
@@ -230,8 +231,6 @@ def acquire(provider_id, selection, output, terms_file, max_bytes=DEFAULT_MAX_BY
     if utc_clock(manifest["created_at"]) < previous_retrieved:
         raise ValueError("publication clock precedes source retrieval")
     manifest_body = json_bytes(manifest)
-    if len(manifest_body) > MAX_MANIFEST_BYTES or output_size + len(manifest_body) > MAX_OUTPUT_BYTES:
-        raise ValueError("output byte budget exhausted")
     publish_bytes(safe_local(root, "records.jsonl"), records)
     # Final publication marker only after every original response and derived row validates.
     publish_bytes(safe_local(root, "acquisition.json"), manifest_body)
@@ -261,6 +260,16 @@ def verify(output):
         provider = provider_by_id(manifest["provider"]["id"])
         original_plan = plan(provider.descriptor["id"], selection,
                              manifest["limits"]["max_response_total_bytes"])
+        # Recognize the exact historical envelope without imposing its old
+        # read/output caps or rewriting frozen provenance. Other mutations fail.
+        recorded_limits = manifest["limits"]
+        legacy_limits = {"max_response_bytes": 4 * 1024 * 1024,
+                         "max_response_total_bytes": recorded_limits["max_response_total_bytes"],
+                         "max_requests": 128, "max_records": 100_000,
+                         "max_output_bytes": 128 * 1024 * 1024}
+        if json_bytes(recorded_limits) not in (json_bytes(original_plan["limits"]), json_bytes(legacy_limits)):
+            raise ValueError("invalid acquisition limit metadata")
+        original_plan["limits"] = recorded_limits
         expected_keys = set(original_plan) | {"created_at", "source_terms", "responses", "records",
                                               "record_count", "raw_response_bytes", "observation_status"}
         if (set(manifest) != expected_keys
@@ -278,7 +287,6 @@ def verify(output):
         publication = utc_clock(manifest["created_at"])
         previous_retrieved = None
         accumulated, raw_size = {}, 0
-        output_size = terms["file"]["size"]
         for index, (response, request) in enumerate(zip(responses, original_plan["requests"])):
             if response["request"] != request or response["observation"]["status"] != 200:
                 raise ValueError("source request or response mismatch")
@@ -287,7 +295,8 @@ def verify(output):
             path = f"raw/{index:04d}.json"
             body = checked_file(root, response["file"], path, MAX_RESPONSE_BYTES)
             raw_size += len(body)
-            if raw_size > original_plan["limits"]["max_response_total_bytes"]:
+            if (original_plan["limits"]["max_response_total_bytes"] is not None
+                    and raw_size > original_plan["limits"]["max_response_total_bytes"]):
                 raise ValueError("response total exceeds byte budget")
             rows, counts = decoded_page(provider, body, selection, request, observation, path)
             if counts != response["counts"]:
@@ -298,9 +307,6 @@ def verify(output):
                 or manifest["raw_response_bytes"] != raw_size
                 or manifest["observation_status"] != ("OBSERVED" if accumulated else "NO_OBSERVATIONS")):
             raise ValueError("derived records differ from original source responses")
-        output_size += raw_size + len(records) + len(json_bytes(manifest))
-        if output_size > MAX_OUTPUT_BYTES:
-            raise ValueError("output byte budget exhausted")
     except (KeyError, TypeError, AttributeError, OverflowError):
         raise ValueError("malformed acquisition manifest") from None
     return {"schema": SCHEMA, "integrity": "SOURCE_RECORDS_VALIDATED", "provider": provider.descriptor["id"],
@@ -321,7 +327,7 @@ def main(argv=None):
         sub.add_argument("--end-seconds", type=int, required=True)
         sub.add_argument("--interval-seconds", type=int, required=True)
         sub.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES,
-                         help="total response-body bytes (default 32 MiB; hard output limit 128 MiB)")
+                         help="optional explicit total response-body byte budget; default unlimited")
         if command == "download":
             sub.add_argument("--output", type=Path, required=True, help="new output directory")
             sub.add_argument("--terms-file", type=Path, required=True,

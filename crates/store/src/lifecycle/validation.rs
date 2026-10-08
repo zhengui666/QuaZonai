@@ -111,7 +111,6 @@ impl Store {
                 spec.parameters_artifact_id,
                 None,
                 "qz.native_task",
-                8 * 1024 * 1024,
                 &mut read,
             )
             .await?;
@@ -143,7 +142,6 @@ impl Store {
                 manifest_id.ok_or(StoreError::Integrity)?,
                 Some((run, attempt)),
                 "qz.job_result",
-                domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES,
                 &mut read,
             )
             .await?;
@@ -168,7 +166,6 @@ impl Store {
                 output,
                 Some((run, attempt)),
                 "qz.alpha_validation",
-                contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
                 &mut read,
             )
             .await?;
@@ -247,9 +244,6 @@ impl Store {
         let experiment = db::id(binding.try_get("experiment_id")?)?;
         let report = json!({"schema_version":1,"evaluation_id":evaluation,"experiment_id":experiment,"alpha_version_id":alpha,"run_id":run,"input_set_id":locked.run.input_set_id,"policy_id":policy_id,"evaluation_kind":"WALK_FORWARD","execution_status":locked.run.state,"evidence_status":gate.evidence_status,"decision":gate.decision,"reasons":gate.reasons,"origin":binding.try_get::<String,_>("origin")?,"native_report_artifact_id":native_report,"native_manifest_artifact_id":manifest_id,"native_versions":versions,"source_observations":source_rows,"unique_test_observations":observations,"concluded_at":concluded_at,"valid_until":valid_until});
         let bytes = serde_json::to_vec(&report).map_err(|_| StoreError::Integrity)?;
-        if bytes.len() > 64 * 1024 {
-            return Err(StoreError::Integrity);
-        }
         let size = bytes.len() as i64;
         publish(NativeObjectPublication {
             id: report_id,
@@ -284,9 +278,6 @@ impl Store {
             let id = Id::new();
             let artifact = Id::new();
             let bytes = serde_json::to_vec(&model).map_err(|_| StoreError::Integrity)?;
-            if bytes.len() > contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize {
-                return Err(StoreError::Integrity);
-            }
             let size = bytes.len() as i64;
             // PostgreSQL stores microseconds. Never round a future training
             // label backwards; the native model retains its original nanoseconds.
@@ -325,7 +316,6 @@ pub(super) async fn read_document<R, Read>(
     id: Id,
     producer: Option<(Id, Id)>,
     schema: &str,
-    maximum: usize,
     read: &mut R,
 ) -> Result<Vec<u8>, StoreError>
 where
@@ -352,7 +342,7 @@ where
         }
     }
     let size = counter(row.try_get("byte_count")?)?;
-    if size == DbCounter::ZERO || size.get() > maximum as u64 {
+    if size == DbCounter::ZERO {
         return Err(StoreError::Integrity);
     }
     let bytes = read(id, size).await?;

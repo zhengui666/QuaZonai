@@ -7,7 +7,7 @@ use contracts::{
     runtime_jobs::RuntimeInputV1,
     science::{NativeForecastParametersV1, NativeForecastRequestV1},
 };
-use native::{bind_task, NativeObjectPublication, NativeTaskDefinition};
+use native::{NativeObjectPublication, NativeTaskDefinition, bind_task};
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,13 +27,13 @@ enum AlphaStage {
 pub(super) fn native_cpu(
     limits: &JobLimitsV1,
     capabilities: &contracts::runtime::RuntimeCapabilitiesV1,
-) -> Result<u16, StoreError> {
+) -> Result<Option<u32>, StoreError> {
     domain::runtime::job_limits(capabilities, limits)?;
     if limits.wall_seconds == Some(0) {
         return Err(DomainError::BudgetExhausted("wall_seconds").into());
     }
     let cpu = domain::execution_limits::native_cpu_rate(limits.cpu_seconds, limits.wall_seconds)?;
-    if cpu == 0 || cpu > capabilities.max_cpu {
+    if cpu.is_some_and(|cpu| cpu == 0 || cpu > capabilities.max_cpu) {
         return Err(DomainError::CapabilityUnavailable("native_cpu_capacity").into());
     }
     Ok(cpu)
@@ -57,10 +57,10 @@ fn cpu_capacity_uses_the_actual_bounded_wall_allocation() {
         experiments: 0,
         cpu_seconds: Some(DbCounter::new(10).unwrap()),
         wall_seconds: Some(5),
-        memory_mib: 1024,
+        memory_mib: Some(1024),
         output_bytes: Some(DbCounter::new(1024).unwrap()),
     };
-    assert_eq!(native_cpu(&limits, &capabilities).unwrap(), 2);
+    assert_eq!(native_cpu(&limits, &capabilities).unwrap(), Some(2));
     limits.wall_seconds = Some(4);
     assert!(native_cpu(&limits, &capabilities).is_err());
     limits.wall_seconds = Some(0);
@@ -301,7 +301,7 @@ impl Store {
             None
         };
         let model_bytes = counter(model.try_get("byte_count")?)?;
-        if model_bytes == DbCounter::ZERO || model_bytes.get() > 2 * 1024 * 1024 {
+        if model_bytes == DbCounter::ZERO {
             return Err(StoreError::Integrity);
         }
         let parameters_id =
@@ -309,7 +309,7 @@ impl Store {
         let size: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PARAMETERS' AND schema_name='qz.research_parameters' AND schema_version='1' AND media_type='application/json' AND access_class='RESEARCH' AND storage_backend='LOCAL' AND storage_object_ref=id::text")
             .bind(parameters_id.as_uuid()).bind(locked.run.project_id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::Integrity)?;
         let size = counter(size)?;
-        if size == DbCounter::ZERO || size.get() > 2 * 1024 * 1024 {
+        if size == DbCounter::ZERO {
             return Err(StoreError::Integrity);
         }
         let raw = read(parameters_id, size).await?;
@@ -613,7 +613,7 @@ impl Store {
                 .bind(id.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(kind.code())
                 .bind(kind.media_type()).bind(kind.schema_name()).fetch_optional(&mut *tx).await?.ok_or(StoreError::Integrity)?;
             let size = counter(a.try_get("byte_count")?)?;
-            if size == DbCounter::ZERO || size.get() > 2 * 1024 * 1024 {
+            if size == DbCounter::ZERO {
                 return Err(StoreError::Integrity);
             }
             if id == code {

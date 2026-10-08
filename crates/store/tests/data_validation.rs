@@ -66,7 +66,7 @@ async fn native_validation_commits_parameters_definition_run_queue_and_one_origi
         selections[0].selection.decision_cutoff_ns,
         data::catalog_fixture::count(300_000_000_000)
     );
-    assert_eq!(job.spec.limits.cpu, 1);
+    assert_eq!(job.spec.limits.cpu, Some(1));
     let empty: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.experiments),(SELECT count(*) FROM app.evaluations),(SELECT count(*) FROM app.qualifications)")
         .fetch_one(&pool).await.unwrap();
     assert_eq!(empty, (0, 0, 0));
@@ -252,7 +252,7 @@ async fn cpu_shape_and_native_capacity_are_checked_before_parameter_publication_
     let msg = message(&f, run.id).await;
     let lease = lease(&f, &msg, "two-cpu-owner", 30).await;
     let job = f.data.store.native_job(run.id, &lease.fence).await.unwrap();
-    assert_eq!(job.spec.limits.cpu, 2);
+    assert_eq!(job.spec.limits.cpu, Some(2));
     domain::runtime_jobs::spec_shape(&job.spec).unwrap();
     let mut forbidden_trial = f.request.clone();
     forbidden_trial.limits.experiments = 1;

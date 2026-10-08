@@ -2,11 +2,11 @@
 //! This does not claim an external policy was trained without prior data access.
 use super::{bad, simulation};
 use crate::{
-    execution::{experiment_request, features, validation::validation_folds},
     DomainError,
+    execution::{experiment_request, features, validation::validation_folds},
 };
 use bigdecimal::BigDecimal;
-use contracts::{science::*, DbCounter, Id};
+use contracts::{DbCounter, Id, science::*};
 use std::collections::BTreeMap;
 
 pub(super) fn shape(value: &NativeExperimentEvaluationResultV1) -> Result<(), DomainError> {
@@ -20,24 +20,16 @@ pub(super) fn shape(value: &NativeExperimentEvaluationResultV1) -> Result<(), Do
             ("wasmi".into(), "2.0.0".into()),
         ])
         || value.source_row_count.get() == 0
-        || value.source_row_count.get() > u64::from(MAX_EXPERIMENT_ROWS)
         || usize::from(value.feature_count) > MAX_EXPERIMENT_FEATURES
         || value.feature_count == 0
-        || !(1..=MAX_EXPERIMENT_FOLDS).contains(&value.folds.len())
-        || value.consumed_fuel.get() > 1_000_000_000
+        || value.folds.is_empty()
     {
         return Err(bad("experiment_result"));
     }
-    let mut total = 0usize;
     for (index, fold) in value.folds.iter().enumerate() {
-        total = total
-            .checked_add(fold.decisions.len())
-            .ok_or_else(|| bad("experiment_decisions"))?;
         if usize::from(fold.fold_index) != index
             || fold.decisions.is_empty()
-            || total > MAX_EXPERIMENT_DECISIONS
             || fold.training_ordinals.len() < 3
-            || fold.training_ordinals.len() > MAX_EXPERIMENT_ROWS as usize
             || fold.training_ordinals.windows(2).any(|w| w[0] >= w[1])
             || fold
                 .training_ordinals
@@ -118,7 +110,7 @@ pub fn binding(
         || value.feature_artifact_ids != feature_artifact_ids
         || value.instrument_id != request.instrument_id
         || usize::from(value.feature_count) != request.feature_schema.len()
-        || value.consumed_fuel > request.total_fuel
+        || !crate::execution::fuel_within_budget(value.consumed_fuel, request.total_fuel.map(|fuel| u128::from(fuel.get())))
         || value.source_row_count.get() > u64::from(request.selection.maximum_rows)
     {
         return Err(bad("experiment_result.binding"));
@@ -203,9 +195,12 @@ pub fn binding(
             .and_then(|ordinal| source_clocks.get(&ordinal))
             .is_some_and(|(_, available)| *available != fold.training_end_available_ns)
             || fold.training_end_available_ns < request.selection.event_start_ns
-            || replay.settlements != crate::prediction::binary_option_settlements(
-                request.binary_option.as_ref(), &request.instrument_id,
-                replay.selection.decision_cutoff_ns)
+            || replay.settlements
+                != crate::prediction::binary_option_settlements(
+                    request.binary_option.as_ref(),
+                    &request.instrument_id,
+                    replay.selection.decision_cutoff_ns,
+                )
             || replay.selection.bar_types != request.selection.bar_types
             || replay.selection.event_start_ns != first.event_ns
             || Some(replay.selection.event_end_ns.get())

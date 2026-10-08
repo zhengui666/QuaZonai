@@ -1,9 +1,25 @@
 //! Freeze original target-only bytes before recording a Release. No approval.
 use super::*;
 use contracts::delivery::{
-    PackageOriginV1, PackageTargetV1, ReleaseCreateV1, ReleaseViewV1, TargetPackageV1,
+    ForecastEvaluationSourceV2, ForecastReleaseSourceV2, ForecastTargetPackageV2, PackageOriginV1,
+    PackageTargetV1, ReleaseCreateV1, ReleaseViewV1,
 };
 use std::future::Future;
+
+/// Active delivery may never replay an immutable V1 receipt as new authority.
+/// Keep this separate from historical views, which continue to show version 1.
+pub(super) async fn require_v2(tx: &mut Tx<'_>, release: Id) -> Result<(), StoreError> {
+    let version: String =
+        sqlx::query_scalar("SELECT package_schema_version FROM app.releases WHERE id=$1")
+            .bind(release.as_uuid())
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+    if version != "2" {
+        return Err(domain::DomainError::CapabilityUnavailable("target_package_version").into());
+    }
+    Ok(())
+}
 
 fn view(row: &PgRow) -> Result<ReleaseViewV1, StoreError> {
     Ok(ReleaseViewV1 {
@@ -38,7 +54,7 @@ impl Store {
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(StoreError::NotFound)?;
-        let rows = sqlx::query("SELECT r.*,c.project_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND ($2::uuid IS NULL OR r.id<$2) ORDER BY r.id DESC LIMIT $3").bind(project.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
+        let rows = sqlx::query("SELECT r.*,c.project_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE c.project_id=$1 AND r.source_kind='FORECAST_EVALUATION' AND ($2::uuid IS NULL OR r.id<$2) ORDER BY r.id DESC LIMIT $3").bind(project.as_uuid()).bind(query.cursor.map(Id::as_uuid)).bind(i64::from(query.limit)+1).fetch_all(&mut *tx).await?;
         let items = rows.iter().map(view).collect::<Result<Vec<_>, _>>()?;
         tx.commit().await?;
         Ok(crate::control::page(items, query.limit, |v| v.id))
@@ -46,7 +62,7 @@ impl Store {
 
     pub async fn release(&self, actor: &Actor, id: Id) -> Result<ReleaseViewV1, StoreError> {
         let mut tx = self.pool.begin().await?;
-        let row = sqlx::query("SELECT r.*,c.project_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE r.id=$1")
+        let row = sqlx::query("SELECT r.*,c.project_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE r.id=$1 AND r.source_kind='FORECAST_EVALUATION'")
             .bind(id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
         let project = db::id(row.try_get("project_id")?)?;
         crate::evidence::authorize(&mut tx, actor, project).await?;
@@ -79,7 +95,8 @@ impl Store {
             db::json(request)?,
         )
         .await?;
-        if let Some(replay) = prepared.replay()? {
+        if let Some(replay) = prepared.replay::<ReleaseViewV1>()? {
+            require_v2(&mut tx, replay.resource.id).await?;
             tx.commit().await?;
             return Ok(replay);
         }
@@ -141,13 +158,20 @@ where
     if original.valid_until <= now(&mut tx).await? {
         return Err(StoreError::Conflict);
     }
-    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PACKAGE','application/json','qz.target_package','1','LOCAL',$3,'1',$4,'DELIVERY','REAL',$5,'REFERENCED')")
-            .bind(artifact.as_uuid()).bind(project.as_uuid()).bind(artifact.to_string()).bind(size).bind(created_by).execute(&mut *tx).await?;
+    let origin = match original.environment_origin {
+        PackageOriginV1::Real => "REAL",
+        PackageOriginV1::Synthetic => "SYNTHETIC",
+        _ => return Err(StoreError::Integrity),
+    };
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PACKAGE','application/json','qz.target_package','2','LOCAL',$3,'1',$4,'DELIVERY',$6,$5,'REFERENCED')")
+            .bind(artifact.as_uuid()).bind(project.as_uuid()).bind(artifact.to_string()).bind(size).bind(created_by).bind(origin).execute(&mut *tx).await?;
     let market = &original.compatible_market_capabilities[0];
-    let created_at = sqlx::query_scalar("INSERT INTO app.releases(id,candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment) VALUES($1,$2,$3,'1',$4,$5,$6,$7,$8,$9,'REAL') RETURNING created_at")
+    let created_at = sqlx::query_scalar("INSERT INTO app.releases(id,candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment,source_kind,execution_environment,paper_initial_weights_artifact_id) VALUES($1,$2,$3,'2',$4,$5,$6,$7,$8,$9,$11,'FORECAST_EVALUATION',$10,$12) RETURNING created_at")
             .bind(release.as_uuid()).bind(request.candidate_id.as_uuid()).bind(artifact.as_uuid())
             .bind(original.mandate_id.as_uuid()).bind(request.evaluation_id.as_uuid()).bind(market)
-            .bind(original.asof).bind(original.valid_from).bind(original.valid_until).fetch_one(&mut *tx).await?;
+            .bind(original.asof).bind(original.valid_from).bind(original.valid_until)
+            .bind(db::code(&original.source.build_environment)?).bind(origin)
+            .bind(original.current_weights.paper_initialization.as_ref().map(|root|root.artifact_id.as_uuid())).fetch_one(&mut *tx).await?;
     let view = ReleaseViewV1 {
         id: release,
         project_id: project,
@@ -155,12 +179,12 @@ where
         mandate_id: original.mandate_id,
         evaluation_id: request.evaluation_id,
         package_artifact_id: artifact,
-        package_schema_version: original.package_schema_version,
+        package_schema_version: contracts::settings::PackageSchemaVersion::V2,
         market_capability_version: market.clone(),
         asof: original.asof,
         valid_from: original.valid_from,
         valid_until: original.valid_until,
-        environment: PackageOriginV1::Real,
+        environment: original.environment_origin,
         created_at,
     };
     Ok((tx, view))
@@ -172,7 +196,7 @@ pub(super) fn package<'a, 'tx: 'a, R, Read>(
     intent: &'a ReleaseCreateV1,
     release: Id,
     read: &'a mut R,
-) -> impl Future<Output = Result<TargetPackageV1, StoreError>> + 'a + use<'a, 'tx, R, Read>
+) -> impl Future<Output = Result<ForecastTargetPackageV2, StoreError>> + 'a + use<'a, 'tx, R, Read>
 where
     R: FnMut(Id, DbCounter) -> Read + 'a,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>> + 'a,
@@ -189,7 +213,7 @@ async fn package_inner<R, Read>(
     intent: &ReleaseCreateV1,
     release: Id,
     read: &mut R,
-) -> Result<TargetPackageV1, StoreError>
+) -> Result<ForecastTargetPackageV2, StoreError>
 where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
@@ -228,10 +252,17 @@ where
     crate::research::revalidate_frozen_inputs(tx, plan.input_set_id, project, build.runtime_id)
         .await?;
     let source = weights::target(tx, project, intent.candidate_id, read).await?;
-    if source.origin != DataOrigin::Real || candidate.header.origin != DataOrigin::Real {
+    let paper = source.paper_initialization.is_some();
+    if (!paper
+        && (source.origin != DataOrigin::Real || candidate.header.origin != DataOrigin::Real))
+        || (paper
+            && (source.origin != DataOrigin::Synthetic
+                || candidate.header.origin != DataOrigin::Synthetic
+                || build.environment != contracts::forward::ForwardEnvironmentV1::Paper))
+    {
         return Err(StoreError::Invalid("release_real_candidate"));
     }
-    let binding = sqlx::query("SELECT t.parameters_artifact_id,t.image_ref,a.id AS report_id FROM app.run_native_tasks t JOIN app.runs r ON r.id=t.run_id AND r.state='SUCCEEDED' JOIN app.run_native_outputs o ON o.attempt_id=r.active_attempt_id JOIN app.artifacts a ON a.id=o.artifact_id AND a.producer_run_id=r.id AND a.producer_attempt_id=r.active_attempt_id AND a.schema_name='qz.native_portfolio' AND a.schema_version='1' WHERE t.run_id=$1")
+    let binding = sqlx::query("SELECT t.parameters_artifact_id,t.image_ref,r.active_attempt_id,a.id AS report_id FROM app.run_native_tasks t JOIN app.runs r ON r.id=t.run_id AND r.state='SUCCEEDED' JOIN app.run_attempts attempt ON attempt.id=r.active_attempt_id AND attempt.run_id=r.id AND attempt.dispatch_state='TERMINAL' AND attempt.accepted_at IS NOT NULL JOIN app.run_terminal_receipts terminal ON terminal.run_id=r.id AND terminal.attempt_id=attempt.id AND terminal.terminal_state='SUCCEEDED' JOIN app.run_native_outputs o ON o.attempt_id=r.active_attempt_id JOIN app.artifacts a ON a.id=o.artifact_id AND a.producer_run_id=r.id AND a.producer_attempt_id=r.active_attempt_id AND a.schema_name='qz.native_portfolio' AND a.schema_version='1' WHERE t.run_id=$1")
         .bind(candidate.header.run_id.as_uuid()).fetch_all(&mut **tx).await?;
     let [binding] = binding.as_slice() else {
         return Err(StoreError::Integrity);
@@ -242,19 +273,21 @@ where
         parameters,
         None,
         "qz.native_task",
-        8 * 1024 * 1024,
         read,
     )
     .await?;
     // Delivery revalidation reaches this decode through a deep lifecycle poll
     // chain. Decode only owned bytes off that stack; keep SQL with this task.
-    let frozen = tokio::task::spawn_blocking(move || {
-        let NativeTaskParametersV1::BuildPortfolio { request, .. } =
-            serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?
+    let (forward_dataset, frozen) = tokio::task::spawn_blocking(move || {
+        let NativeTaskParametersV1::BuildPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } = serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?
         else {
             return Err(StoreError::Integrity);
         };
-        Ok(request)
+        Ok((dataset_revision_id, request))
     })
     .await
     .map_err(|_| StoreError::Integrity)??;
@@ -264,13 +297,16 @@ where
     {
         return Err(StoreError::Integrity);
     }
+    if frozen.current_weights.paper_initialization != source.paper_initialization {
+        return Err(StoreError::Integrity);
+    }
+    paper_initial::validate(tx, project, &build, &frozen.current_weights).await?;
     let report_id = db::id(binding.try_get("report_id")?)?;
     let bytes = validation::read_document(
         tx,
         report_id,
         None,
         "qz.native_portfolio",
-        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
         read,
     )
     .await?;
@@ -296,6 +332,80 @@ where
         read,
     )
     .await?;
+    // ForwardSnapshot uses its RESEARCH artifact, while LastTarget freezes a
+    // derived EVALUATOR_ONLY weights document. Check that original object too;
+    // a matching embedded task value alone does not attest its referenced bytes.
+    let weights_size: i64 = sqlx::query_scalar(
+        "SELECT byte_count FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='REPORT' AND schema_name='qz.portfolio_current_weights' AND schema_version='1' AND media_type='application/json' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND access_class IN ('RESEARCH','EVALUATOR_ONLY')",
+    )
+    .bind(frozen.current_weights_artifact_id.as_uuid())
+    .bind(project.as_uuid())
+    .fetch_one(&mut **tx)
+    .await?;
+    if weights_size == 0 {
+        return Err(StoreError::Integrity);
+    }
+    let weights_bytes = read(frozen.current_weights_artifact_id, counter(weights_size)?).await?;
+    let original_weights: PortfolioCurrentWeightsV1 =
+        serde_json::from_slice(&weights_bytes).map_err(|_| StoreError::Integrity)?;
+    if weights_bytes.len() as u64 != weights_size as u64
+        || original_weights != frozen.current_weights
+    {
+        return Err(StoreError::Integrity);
+    }
+    // Freeze the original task's dataset identity, not just equivalent selection
+    // coordinates. The same immutable input set must still resolve that ID.
+    let bindings = crate::data_validation::dataset_bindings(
+        tx,
+        build.input_set_id,
+        project,
+        build.runtime_id,
+        &[contracts::research::InputPurpose::Forward],
+        read,
+    )
+    .await?;
+    let [forward_binding] = bindings.as_slice() else {
+        return Err(StoreError::Integrity);
+    };
+    if forward_binding.selection.dataset_revision_id != forward_dataset
+        || forward_binding.selection.selection != frozen.selection
+    {
+        return Err(StoreError::Integrity);
+    }
+    let forward_metadata = db::id(
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT native_metadata_artifact_id FROM app.dataset_registration_evidence WHERE dataset_revision_id=$1",
+        )
+        .bind(forward_dataset.as_uuid())
+        .fetch_one(&mut **tx)
+        .await?,
+    )?;
+    let instrument_ids: BTreeSet<String> = frozen
+        .assets
+        .iter()
+        .map(|asset| asset.instrument_id.clone())
+        .chain(
+            frozen
+                .current_weights
+                .weights
+                .iter()
+                .map(|weight| weight.instrument_id.clone()),
+        )
+        .chain(
+            source
+                .document
+                .targets
+                .iter()
+                .map(|target| target.instrument_id.clone()),
+        )
+        .collect();
+    let forward_dataset_bundle = domain::delivery::freeze_forward_dataset(
+        forward_dataset,
+        forward_metadata,
+        &forward_binding.selection.selection,
+        &forward_binding.metadata,
+        &instrument_ids.into_iter().collect::<Vec<_>>(),
+    )?;
     let cost = sqlx::query("SELECT e.venue_capability_ref,e.cost_assumption_status,s.input_set_id FROM app.execution_assumptions e JOIN app.execution_assumption_sources s ON s.assumptions_id=e.id AND s.project_id=$2 AND s.runtime_id=$3 WHERE e.id=$1 AND e.cost_assumption_status<>'INSUFFICIENT'")
         .bind(mandate.content.execution_assumptions_id.as_uuid()).bind(project.as_uuid()).bind(build.runtime_id.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::Invalid("release_execution_assumptions"))?;
     let mut inputs = BTreeSet::from([
@@ -341,7 +451,6 @@ where
             db::id(row.try_get("producer_attempt_id")?)?,
         )),
         "qz.candidate_evaluation",
-        8 * 1024 * 1024,
         read,
     )
     .await?;
@@ -383,10 +492,29 @@ where
     if until <= current {
         return Err(StoreError::Invalid("release_expired"));
     }
-    let package = TargetPackageV1 {
+    let package = ForecastTargetPackageV2 {
         release_id: release,
-        package_schema_version: contracts::settings::PackageSchemaVersion::V1,
-        environment_origin: PackageOriginV1::Real,
+        package_schema_version: contracts::strategy_portfolio::TargetPackageVersionV2::V2,
+        source_kind: ForecastReleaseSourceV2::ForecastEvaluation,
+        source: ForecastEvaluationSourceV2 {
+            build_run_id: candidate.header.run_id,
+            build_accepted_attempt_id: db::id(binding.try_get("active_attempt_id")?)?,
+            build_parameters_artifact_id: parameters,
+            build_report_artifact_id: report_id,
+            build_input_set_id: build.input_set_id,
+            build_environment: build.environment,
+            forward_dataset_revision_id: forward_dataset,
+            forward_metadata_artifact_id: forward_metadata,
+            current_weights_artifact_id: frozen.current_weights_artifact_id,
+        },
+        forward_dataset: forward_dataset_bundle.clone(),
+        current_weights: frozen.current_weights.clone(),
+        execution_settings: frozen.execution_settings.clone(),
+        environment_origin: if paper {
+            PackageOriginV1::Synthetic
+        } else {
+            PackageOriginV1::Real
+        },
         project_id: project,
         candidate_id: intent.candidate_id,
         mandate_id: mandate.id,
@@ -437,9 +565,12 @@ where
             parameters,
             report_id,
             evaluation_report,
+            frozen.current_weights_artifact_id,
+            forward_metadata,
         ],
     };
     domain::delivery::target_package(&package, &source.document, &mandate, &candidate)?;
+    domain::delivery::forecast_source_binding(&package, &build, &frozen, &forward_dataset_bundle)?;
     Ok(package)
 }
 
@@ -447,8 +578,10 @@ fn envelope_view(
     row: &PgRow,
 ) -> Result<contracts::strategy_portfolio::ReleaseViewEnvelopeV2, StoreError> {
     use contracts::{forward::ForwardEnvironmentV1, strategy_portfolio::*};
-    if row.try_get::<String, _>("source_kind")? == "FORECAST_EVALUATION" {
-        return Ok(ReleaseViewEnvelopeV2::Forecast(view(row)?));
+    match row.try_get::<String, _>("source_kind")?.as_str() {
+        "FORECAST_EVALUATION" => return Ok(ReleaseViewEnvelopeV2::Forecast(view(row)?)),
+        "NATIVE_TARGET_DECISION" => {}
+        _ => return Err(StoreError::Integrity),
     }
     let candidate: StrategyPortfolioCandidateV1 =
         serde_json::from_value(row.try_get("strategy_detail")?)

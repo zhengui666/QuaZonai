@@ -44,7 +44,6 @@ impl ForwardSourcePlan {
         );
         ensure!(
             self.required_bars > 0
-                && self.required_bars as usize <= contracts::science::MAX_EXPERIMENT_DECISIONS
                 && self.first_close_ns.get() >= interval
                 && self.first_close_ns.get().is_multiple_of(interval),
             "FORWARD_BUSINESS_WINDOW_INVALID"

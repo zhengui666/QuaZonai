@@ -315,16 +315,13 @@ impl NativeModel {
         ] {
             text(value, 200)?;
         }
-        if self.supported_reasoning_efforts.is_empty()
-            || self.supported_reasoning_efforts.len() > 64
-            || self.service_tiers.len() > 64
-        {
+        if self.supported_reasoning_efforts.is_empty() {
             return Err(NativeFailure::Contract);
         }
         let mut efforts = std::collections::BTreeSet::new();
         for effort in &self.supported_reasoning_efforts {
             text(&effort.reasoning_effort, 200)?;
-            if effort.description.len() > 8192 || !efforts.insert(&effort.reasoning_effort) {
+            if !efforts.insert(&effort.reasoning_effort) {
                 return Err(NativeFailure::Contract);
             }
         }
@@ -335,7 +332,7 @@ impl NativeModel {
         for tier in &self.service_tiers {
             text(&tier.id, 200)?;
             text(&tier.name, 200)?;
-            if tier.description.len() > 8192 || !tiers.insert(&tier.id) {
+            if !tiers.insert(&tier.id) {
                 return Err(NativeFailure::Contract);
             }
         }
@@ -449,7 +446,7 @@ pub(super) struct SummaryTurn {
 impl SummaryTurn {
     pub fn message(self) -> Result<Option<PublicMessage>> {
         self.turn.validate()?;
-        if self.items_view != "summary" || self.items.len() > 2 {
+        if self.items_view != "summary" {
             return Err(NativeFailure::Contract);
         }
         let mut messages = self.items.into_iter().filter_map(|item| match item {
@@ -463,7 +460,6 @@ impl SummaryTurn {
         if let Some(message) = &message {
             text(&message.id, 200)?;
             if message.text.trim().is_empty()
-                || message.text.len() > 64 * 1024
                 || message.text.contains('\0')
                 || message
                     .phase

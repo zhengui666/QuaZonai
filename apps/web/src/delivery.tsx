@@ -8,7 +8,7 @@ import { ResourceSelect } from './resource-select';
 import { ForwardHistory } from './forward-history';
 import { Forward } from './forward';
 import { AutomationPolicies } from './automation-policies';
-import { isForecastRelease } from './producer-views';
+import { isForecastRelease, targetReleaseProtocol } from './producer-views';
 
 export function Delivery() {
   const [project, setProject] = useState<string>();
@@ -37,6 +37,7 @@ function Releases({ project }: { project: string }) {
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['ReleaseViewEnvelopeV2']> rowKey="id" dataSource={query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 800 }} locale={{ emptyText: <NoData text="暂无目标包" /> }} columns={[
         { title: '目标包版本', key: 'id', render: (_, item) => <Button type="link" disabled={query.isError} onClick={() => setSelected(item.id)}>Release {item.id.slice(-8)}</Button> },
+        { title: '协议', key: 'protocol', render: (_, item) => targetReleaseProtocol(item) },
         { title: '候选', dataIndex: 'candidate_id' }, { title: '来源（非交付环境）', key: 'origin', render: (_, item) => isForecastRelease(item) ? item.environment : item.source.input_provenance.market_data_origin },
         { title: '目标时点', dataIndex: 'asof', render: displayTime }, { title: '原有效期', dataIndex: 'valid_until', render: displayTime },
       ]} />
@@ -80,7 +81,7 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
         { key: 'id', label: 'Release 编号', children: item.id }, { key: 'project', label: '项目', children: item.project_id },
         { key: 'candidate', label: '原候选', children: item.candidate_id }, { key: 'mandate', label: '原组合配置', children: item.mandate_id },
         { key: 'evaluation', label: '原独立评估', children: isForecastRelease(item) ? item.evaluation_id : '不适用（原生目标决策，无预测评估引用）' }, { key: 'artifact', label: '不可变 Package 产物', children: item.package_artifact_id },
-        { key: 'schema', label: 'Package 协议版本', children: item.package_schema_version }, { key: 'market', label: '市场合同版本', children: item.market_capability_version },
+        { key: 'schema', label: 'Package 协议版本', children: targetReleaseProtocol(item) }, { key: 'market', label: '市场合同版本', children: item.market_capability_version },
         { key: 'origin', label: '数据来源', children: isForecastRelease(item) ? item.environment : item.source.input_provenance.market_data_origin }, { key: 'asof', label: '目标时点', children: displayTime(item.asof) },
         { key: 'start', label: '原有效起点', children: displayTime(item.valid_from) }, { key: 'end', label: '原有效终点', children: displayTime(item.valid_until) },
         { key: 'created', label: '冻结于', children: displayTime(item.created_at) },
@@ -97,6 +98,7 @@ export function ReleaseDetail({ id, project, close }: { id: string; project: str
     </QueryPanel>
     {item && !query.isError && <Button disabled={!online || query.isFetching || download.isPending} onClick={() => download.mutate()}>下载原始目标包</Button>}
     <ErrorNotice error={download.error} />
+    {item && item.package_schema_version !== '2' && <Alert showIcon type="warning" title="V1 历史目标包仅供查阅和下载，不可审批、Offer 或 Claim；不得改写为 V2。" />}
     {forecast?.environment === 'DEMO' && <Alert showIcon type="warning" title="该历史记录的来源不满足交付条件。" />}
     {forecast && !query.isError && <Collapse items={[
       { key: 'approvals', label: '原审批历史', children: <ReleaseApprovals release={forecast} /> },

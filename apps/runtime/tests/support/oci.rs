@@ -108,12 +108,12 @@ impl Fixture {
             })
             .collect(),
             catalogs: Vec::new(),
-            max_cpu: 1,
-            max_memory_mib: 1024,
-            max_wall_seconds: 120,
-            max_output_bytes: 64 * 1024 * 1024,
-            max_parallel_jobs: 2,
-            max_pending_jobs: 8,
+            max_cpu: Some(1),
+            max_memory_mib: Some(1024),
+            max_wall_seconds: Some(120),
+            max_output_bytes: None,
+            max_parallel_jobs: Some(2),
+            max_pending_jobs: Some(8),
             storage_quota_bytes: 256 * 1024 * 1024,
         };
         let config_path = directory.path().join("runtime.json");
@@ -123,7 +123,7 @@ impl Fixture {
             "docker_socket":config.docker_socket,"bind":config.bind.to_string(),
             "images":config.images.iter().map(|registration| json!({"job_kind":registration.job_kind,"image_ref":registration.image_ref})).collect::<Vec<_>>(),
             "catalogs":[],"max_cpu":1,"max_memory_mib":1024,"max_wall_seconds":120,
-            "max_output_bytes":67108864,"max_parallel_jobs":2,"max_pending_jobs":8,"storage_quota_bytes":268435456,
+            "max_output_bytes":null,"max_parallel_jobs":2,"max_pending_jobs":8,"storage_quota_bytes":268435456,
         });
         fs::write(&config_path, serde_json::to_vec(&config_json).unwrap()).unwrap();
         fs::set_permissions(&config_path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -315,9 +315,9 @@ impl Fixture {
             }],
             parameters_artifact_id: parameters,
             limits: RuntimeJobLimitsV1 {
-                cpu: 1,
+                cpu: Some(1),
                 cpu_seconds: Some(count(u64::from(wall_seconds))),
-                memory_mib: 512,
+                memory_mib: Some(512),
                 wall_seconds: Some(wall_seconds),
                 output_bytes: Some(count(4 * 1024 * 1024)),
             },

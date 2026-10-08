@@ -19,15 +19,13 @@ mod compiler_memory;
 use compiler_memory::CompilerMemory;
 pub use compiler_memory::CompilerMemoryLimit;
 
-const PARAMETERS_LIMIT: usize = 8 * 1024 * 1024;
-const SPEC_LIMIT: usize = 1024 * 1024;
 const COMPILER: &str = "/opt/rust/bin/rustc";
 
 fn counter(value: u64) -> Result<DbCounter> {
     DbCounter::new(value).map_err(|_| anyhow::anyhow!("NATIVE_COUNTER_RANGE"))
 }
 
-fn read(path: &Path, maximum: usize) -> Result<Vec<u8>> {
+fn read(path: &Path) -> Result<Vec<u8>> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -40,7 +38,7 @@ fn read(path: &Path, maximum: usize) -> Result<Vec<u8>> {
     let file = options.open(path)?;
     let metadata = file.metadata()?;
     ensure!(
-        metadata.is_file() && metadata.len() > 0 && metadata.len() <= maximum as u64,
+        metadata.is_file() && metadata.len() > 0,
         "NATIVE_FILE_LIMIT"
     );
     #[cfg(unix)]
@@ -48,16 +46,18 @@ fn read(path: &Path, maximum: usize) -> Result<Vec<u8>> {
         use std::os::unix::fs::MetadataExt;
         ensure!(metadata.nlink() == 1, "NATIVE_FILE_IDENTITY");
     }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.take(maximum as u64 + 1).read_to_end(&mut bytes)?;
+    let capacity = usize::try_from(metadata.len())?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(capacity)?;
+    file.take(metadata.len().saturating_add(1)).read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() == metadata.len() as usize,
         "NATIVE_FILE_CHANGED"
     );
     Ok(bytes)
 }
-fn document<T: DeserializeOwned>(path: &Path, maximum: usize) -> Result<T> {
-    Ok(serde_json::from_slice(&read(path, maximum)?)?)
+fn document<T: DeserializeOwned>(path: &Path) -> Result<T> {
+    Ok(serde_json::from_slice(&read(path)?)?)
 }
 fn frozen(file: &File) -> Result<()> {
     #[cfg(unix)]
@@ -155,9 +155,7 @@ impl Outputs {
             |stream| Ok(history::write(stream, &expected)?),
         )?;
         let bytes = read(
-            &self.root.join(id.to_string()),
-            contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
-        )?;
+            &self.root.join(id.to_string()))?;
         ensure!(
             history::read(&bytes)? == expected,
             "PORTFOLIO_HISTORY_ROUNDTRIP"
@@ -180,7 +178,7 @@ impl Outputs {
         let staged = tempfile::NamedTempFile::new_in(&self.root)?;
         let mut stream = LimitedFile {
             file: staged.as_file().try_clone()?,
-            remaining: Some(SPEC_LIMIT as u64),
+            remaining: None,
             written: 0,
         };
         serde_json::to_writer(&mut stream, &index)?;
@@ -234,7 +232,7 @@ fn compile_with(
     compiler: &Path,
 ) -> Result<()> {
     let source = input.join("objects").join(code.to_string());
-    let bytes = read(&source, crate::signals::MAX_SIGNAL_MODULE_BYTES)?;
+    let bytes = read(&source)?;
     std::str::from_utf8(&bytes)?;
     let memory = CompilerMemory::capture();
     let version = Command::new(compiler)
@@ -306,14 +304,14 @@ fn compile_with(
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    let wasm = read(&target, crate::signals::MAX_SIGNAL_MODULE_BYTES)?;
+    let wasm = read(&target)?;
     // Native Wasmi verifies imports, start functions, limits and exact predict ABI.
     let abi = if features {
-        let module = crate::signals::SignalModule::new(&wasm)?;
-        crate::feature_model::FeatureModel::new(&module, 1, 100_000)?;
+        let module = crate::signals::SignalModule::new(&wasm, false)?;
+        crate::feature_model::FeatureModel::new(&module, None, None)?;
         crate::feature_model::ABI
     } else {
-        crate::signals::WasmSignal::new(&wasm, 1, 100_000)?;
+        crate::signals::WasmSignal::new(&wasm, None, None)?;
         "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64"
     };
     let model = outputs.compiled_model(&wasm)?;
@@ -343,13 +341,11 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             "NATIVE_JOB_ROOT"
         );
     }
-    let spec: JobSpecV1 = document(&input.join("spec.json"), SPEC_LIMIT)?;
+    let spec: JobSpecV1 = document(&input.join("spec.json"))?;
     let parameters: NativeTaskParametersV1 = document(
         &input
             .join("objects")
-            .join(spec.parameters_artifact_id.to_string()),
-        PARAMETERS_LIMIT,
-    )?;
+            .join(spec.parameters_artifact_id.to_string()))?;
     domain::execution::task(&spec, &parameters)?;
     ensure!(
         !domain::execution_limits::expired(spec.deadline_at, chrono::Utc::now()),
@@ -429,12 +425,10 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             ..
         } => {
             let bytes = read(
-                &input.join("objects").join(model_artifact_id.to_string()),
-                crate::signals::MAX_SIGNAL_MODULE_BYTES,
-            )?;
+                &input.join("objects").join(model_artifact_id.to_string()))?;
             let parts = feature_artifact_ids
                 .iter()
-                .map(|id| document(&input.join("objects").join(id.to_string()), 2 * 1024 * 1024))
+                .map(|id| document(&input.join("objects").join(id.to_string())))
                 .collect::<Result<Vec<contracts::science::FeatureObservationsV1>>>()?;
             let result = crate::experiment::evaluate(
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
@@ -454,7 +448,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
         NativeTaskParametersV1::ValidateData { .. } => {}
         NativeTaskParametersV1::EvaluateForward { request, .. } => {
             let result = crate::forward::evaluate(&request, |id| {
-                let bytes = read(&input.join("objects").join(id.to_string()), 2 * 1024 * 1024)?;
+                let bytes = read(&input.join("objects").join(id.to_string()))?;
                 let expected = spec.inputs.iter().find_map(|i| match i {
                     contracts::runtime_jobs::RuntimeInputV1::Artifact {
                         artifact_id,
@@ -475,9 +469,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             ..
         } => {
             let bytes = read(
-                &input.join("objects").join(model_artifact_id.to_string()),
-                crate::signals::MAX_SIGNAL_MODULE_BYTES,
-            )?;
+                &input.join("objects").join(model_artifact_id.to_string()))?;
             let result = crate::forecast::forecast(
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
                 &request,
@@ -492,9 +484,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             ..
         } => {
             let bytes = read(
-                &input.join("objects").join(model_artifact_id.to_string()),
-                crate::signals::MAX_SIGNAL_MODULE_BYTES,
-            )?;
+                &input.join("objects").join(model_artifact_id.to_string()))?;
             let result = crate::validation::validate_alpha(
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
                 &request,
@@ -510,16 +500,12 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             ..
         } => {
             let bytes = read(
-                &input.join("objects").join(model_artifact_id.to_string()),
-                crate::signals::MAX_SIGNAL_MODULE_BYTES,
-            )?;
+                &input.join("objects").join(model_artifact_id.to_string()))?;
             let calibration: Option<contracts::science::NativeFrozenCalibrationV1> =
                 calibration_artifact_id
                     .map(|id| {
                         document(
-                            &input.join("objects").join(id.to_string()),
-                            PARAMETERS_LIMIT,
-                        )
+                            &input.join("objects").join(id.to_string()))
                     })
                     .transpose()?;
             let result = crate::validation::evaluate_sealed_alpha(
@@ -540,9 +526,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                 &request,
                 |id| {
                     read(
-                        &input.join("objects").join(id.to_string()),
-                        PARAMETERS_LIMIT,
-                    )
+                        &input.join("objects").join(id.to_string()))
                 },
             )?;
             outputs.json("qz.portfolio_study", RuntimeOutputKind::Report, &result)?;
@@ -560,9 +544,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                         .constraints
                         .transaction_costs_ref
                         .to_string(),
-                ),
-                PARAMETERS_LIMIT,
-            )?;
+                ))?;
             ensure!(
                 serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
                 "STRATEGY_SETTINGS_SOURCE_MISMATCH"
@@ -571,16 +553,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
                 &request,
                 |id| {
-                    let maximum = if request
-                        .members
-                        .iter()
-                        .any(|member| member.policy.source.report_artifact_id == id)
-                    {
-                        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize
-                    } else {
-                        2 * 1024 * 1024
-                    };
-                    read(&input.join("objects").join(id.to_string()), maximum)
+                    read(&input.join("objects").join(id.to_string()))
                 },
             )?;
             outputs.json("qz.strategy_portfolio", RuntimeOutputKind::Report, &result)?;
@@ -599,17 +572,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                     &request,
                     |id| {
                         read(
-                            &input.join("objects").join(id.to_string()),
-                            if request
-                                .bar_liquidity
-                                .as_ref()
-                                .is_some_and(|b| b.assumption.report_artifact_id == id)
-                            {
-                                contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize
-                            } else {
-                                PARAMETERS_LIMIT
-                            },
-                        )
+                            &input.join("objects").join(id.to_string()))
                     },
                 )?,
             )?;
@@ -636,14 +599,10 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             ..
         } => {
             let target: contracts::science::PortfolioTargetsV1 = serde_json::from_slice(&read(
-                &input.join("objects").join(target_artifact_id.to_string()),
-                PARAMETERS_LIMIT,
-            )?)?;
+                &input.join("objects").join(target_artifact_id.to_string()))?)?;
             let settings: contracts::science::NativeSimulationSettingsV1 =
                 serde_json::from_slice(&read(
-                    &input.join("objects").join(settings_artifact_id.to_string()),
-                    PARAMETERS_LIMIT,
-                )?)?;
+                    &input.join("objects").join(settings_artifact_id.to_string()))?)?;
             ensure!(
                 serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
                 "CANDIDATE_SIMULATION_SETTINGS_SOURCE_MISMATCH"
@@ -668,9 +627,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             ..
         } => {
             let settings: contracts::science::NativeSimulationSettingsV1 = document(
-                &input.join("objects").join(settings_artifact_id.to_string()),
-                PARAMETERS_LIMIT,
-            )?;
+                &input.join("objects").join(settings_artifact_id.to_string()))?;
             ensure!(
                 serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
                 "PORTFOLIO_SEQUENCE_SETTINGS_SOURCE_MISMATCH"
@@ -681,9 +638,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                     document(
                         &input
                             .join("objects")
-                            .join(source.target_artifact_id.to_string()),
-                        PARAMETERS_LIMIT,
-                    )
+                            .join(source.target_artifact_id.to_string()))
                 })
                 .collect::<Result<Vec<contracts::science::PortfolioTargetsV1>>>()?;
             domain::execution::portfolio_sequence(&sources, &targets, &request)?;
@@ -868,7 +823,7 @@ mod tests {
                 |stream| Ok(history::write(stream, &batch)?),
             )
             .unwrap();
-        let bytes = read(&root.path().join(id.to_string()), 16 * 1024).unwrap();
+        let bytes = read(&root.path().join(id.to_string())).unwrap();
         assert_eq!(history::read(&bytes).unwrap(), batch);
         let artifacts = outputs.items.clone();
         assert_eq!(
@@ -877,7 +832,7 @@ mod tests {
         );
         outputs.seal().unwrap();
         let index: NativeJobOutputIndexV1 =
-            document(&root.path().join("index.json"), SPEC_LIMIT).unwrap();
+            document(&root.path().join("index.json")).unwrap();
         assert_eq!(
             serde_json::to_value(index.artifacts).unwrap(),
             serde_json::to_value(artifacts).unwrap()
@@ -886,27 +841,45 @@ mod tests {
     }
 
     #[test]
-    fn failed_index_write_or_publish_leaves_no_partial_index() {
+    fn complete_large_index_and_failed_publish_preserve_original_files() {
         let root = tempfile::tempdir().unwrap();
         let mut outputs = test_outputs(root.path(), 1024);
         outputs
             .json("test", RuntimeOutputKind::Report, &true)
             .unwrap();
-        outputs.items[0].schema.name = "x".repeat(SPEC_LIMIT);
-        assert!(outputs
-            .seal()
-            .unwrap_err()
-            .to_string()
-            .contains("NATIVE_OUTPUT_LIMIT"));
-        assert!(!root.path().join("index.json").exists());
-        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+        assert_eq!(outputs.remaining, Some(1020));
+        outputs.items[0].schema.name = "x".repeat(1024 * 1024 + 1);
+        let expected = serde_json::to_vec(&NativeJobOutputIndexV1 {
+            schema_version: SchemaV1,
+            artifacts: outputs.items.clone(),
+        }).unwrap();
+        outputs.seal().unwrap();
+        assert_eq!(fs::read(root.path().join("index.json")).unwrap(), expected);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
 
-        fs::write(root.path().join("index.json"), b"original index").unwrap();
-        assert!(test_outputs(root.path(), 1024).seal().is_err());
+        // Retry publication against the actual immutable index. Rewriting this
+        // 0444 file would fail for non-root users before exercising NOREPLACE.
+        let original = fs::symlink_metadata(root.path().join("index.json")).unwrap();
+        assert!(original.is_file());
+        assert_eq!(original.nlink(), 1);
+        assert_eq!(original.mode() & 0o777, 0o444);
+        let error = test_outputs(root.path(), 1024).seal().unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
         assert_eq!(
             fs::read(root.path().join("index.json")).unwrap(),
-            b"original index"
+            expected
         );
+        let preserved = fs::symlink_metadata(root.path().join("index.json")).unwrap();
+        assert!(preserved.is_file());
+        assert_eq!(
+            (preserved.dev(), preserved.ino()),
+            (original.dev(), original.ino())
+        );
+        assert_eq!(preserved.nlink(), 1);
+        assert_eq!(preserved.mode() & 0o777, 0o444);
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
     }
 
@@ -970,9 +943,9 @@ exit "$(cat "$fixture/exit-code")"
             inputs: Vec::new(),
             parameters_artifact_id: Id::new(),
             limits: contracts::runtime_jobs::RuntimeJobLimitsV1 {
-                cpu: 1,
+                cpu: Some(1),
                 cpu_seconds: Some(counter(10).unwrap()),
-                memory_mib: 512,
+                memory_mib: Some(512),
                 wall_seconds: Some(10),
                 output_bytes: Some(counter(capacity).unwrap()),
             },
@@ -1032,7 +1005,7 @@ exit "$(cat "$fixture/exit-code")"
             .find(|item| item.kind == RuntimeOutputKind::Report)
             .unwrap();
         let report: NativeModelCompilationV1 =
-            document(&outputs.root.join(report.storage_ref.to_string()), 8192).unwrap();
+            document(&outputs.root.join(report.storage_ref.to_string())).unwrap();
         assert_eq!(report.model_storage_ref, model.storage_ref);
         assert_eq!(report.module_bytes.get(), wasm.len() as u64);
         assert_eq!(
@@ -1044,8 +1017,34 @@ exit "$(cat "$fixture/exit-code")"
         let output = fixture.path().join("output");
         assert_eq!(fs::read_dir(&output).unwrap().count(), 3);
         let index: NativeJobOutputIndexV1 =
-            document(&output.join("index.json"), SPEC_LIMIT).unwrap();
+            document(&output.join("index.json")).unwrap();
         assert_eq!(index.artifacts.len(), 2);
+    }
+
+    #[test]
+    fn compiler_preserves_valid_module_above_former_file_cap_and_every_custom_section_byte() {
+        let mut wasm = signal();
+        // A valid opaque custom section, including its empty name, crosses the
+        // old transport ceiling without changing the module's predict ABI.
+        let section_bytes = 2 * 1024 * 1024 + 1;
+        wasm.push(0);
+        let mut length = section_bytes as u32;
+        loop {
+            let byte = (length & 0x7f) as u8;
+            length >>= 7;
+            wasm.push(if length == 0 { byte } else { byte | 0x80 });
+            if length == 0 {
+                break;
+            }
+        }
+        wasm.resize(wasm.len() + section_bytes, 0);
+        let capacity = wasm.len() as u64 + 8192;
+        let (_fixture, outputs, result) = controlled_compile(&wasm, capacity, false, 0);
+        result.unwrap();
+        let model = outputs.items.iter().find(|item| item.kind == RuntimeOutputKind::Model).unwrap();
+        assert_eq!(model.byte_count.get(), wasm.len() as u64);
+        assert_eq!(fs::read(outputs.root.join(model.storage_ref.to_string())).unwrap(), wasm);
+        outputs.seal().unwrap();
     }
 
     #[test]
@@ -1065,11 +1064,11 @@ exit "$(cat "$fixture/exit-code")"
             (invalid_abi, 8192, false, 0, "SIGNAL_ABI_MISMATCH"),
             (wasm.clone(), 8192, true, 0, "FEATURE_MODEL_ABI_MISMATCH"),
             (
-                vec![0; crate::signals::MAX_SIGNAL_MODULE_BYTES + 1],
+                vec![0; 2 * 1024 * 1024 + 1],
                 8192,
                 false,
                 0,
-                "NATIVE_FILE_LIMIT",
+                "SIGNAL_REQUIRES_WASM_BINARY",
             ),
             (wasm, 8192, false, 1, "NATIVE_COMPILATION_FAILED"),
         ] {

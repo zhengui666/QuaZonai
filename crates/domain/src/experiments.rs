@@ -1,5 +1,5 @@
 //! Proposal validation, not scientific evaluation or qualification.
-use crate::{control, research::invalid, DomainError};
+use crate::{DomainError, control, research::invalid};
 use contracts::experiments::ExperimentProposalV1;
 
 pub fn proposal(request: &ExperimentProposalV1) -> Result<(), DomainError> {
@@ -41,8 +41,8 @@ pub fn evaluation_parameters(
     crate::execution::features::schema(&value.feature_schema)?;
     crate::execution::features::artifact_ids(&value.feature_artifact_ids)?;
     crate::control::text(&value.instrument_id, 1, 200, false)?;
-    if !(1..=100_000).contains(&value.label_horizon_observations)
-        || !(1..=1_000_000_000).contains(&value.total_fuel.get())
+    if value.label_horizon_observations == 0
+        || value.total_fuel == Some(contracts::DbCounter::ZERO)
         || value.target_ttl_ns == contracts::DbCounter::ZERO
     {
         return Err(invalid(
@@ -58,9 +58,6 @@ pub fn adopt_alpha(
     request: &contracts::strategy_portfolio::StrategyAlphaAdoptV1,
 ) -> Result<(), DomainError> {
     control::text(&request.name, 1, 200, false)?;
-    if usize::from(request.source_fold_index) >= contracts::science::MAX_EXPERIMENT_FOLDS {
-        return Err(invalid("source_fold_index", "EXPERIMENT_FOLD_INVALID"));
-    }
     Ok(())
 }
 
@@ -68,13 +65,13 @@ pub fn adopt_alpha(
 mod target_adoption_tests {
     use super::*;
     use contracts::{
+        Id, Revision, SchemaV1,
         control::{OperatorCommand, OperatorOperation},
         strategy_portfolio::*,
-        Id, Revision, SchemaV1,
     };
 
     #[test]
-    fn target_adoption_is_an_existing_experiment_command_with_bounded_fold_selection() {
+    fn target_adoption_preserves_command_identity_and_accepts_the_u16_fold_ordinal() {
         let mut intent = StrategyAlphaAdoptIntentV1 {
             schema_version: SchemaV1,
             experiment_id: Id::new(),
@@ -95,8 +92,8 @@ mod target_adoption_tests {
             command.normalized_request().unwrap(),
             serde_json::to_value(&intent).unwrap()
         );
-        intent.request.source_fold_index = 32;
-        assert!(adopt_alpha(&intent.request).is_err());
+        intent.request.source_fold_index = u16::MAX;
+        assert!(adopt_alpha(&intent.request).is_ok());
         intent.request.source_fold_index = 0;
         intent.request.name = " ".into();
         assert!(adopt_alpha(&intent.request).is_err());

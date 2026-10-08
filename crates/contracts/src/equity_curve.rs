@@ -1,9 +1,7 @@
 //! Display-only projections of adopted simulated equity, never account accounting.
-use crate::{research::DataOrigin, DbCounter, DecimalValue, Id, SchemaV1};
+use crate::{DbCounter, DecimalValue, Id, SchemaV1, research::DataOrigin};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
-
-pub const MAX_EQUITY_POINTS: usize = 10_000;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -48,7 +46,6 @@ pub struct EquitySeriesV1 {
     /// Actual resolution, never AUTO. Bucket ends retain their native timestamp.
     pub resolution: EquityResolution,
     pub sampled: bool,
-    #[schema(max_items = 10000)]
     pub points: Vec<EquityPointV1>,
 }
 

@@ -1,12 +1,10 @@
 //! Transport for the existing immutable recorded-feature Store operations.
 use super::*;
-use crate::artifacts::ArtifactCapacity;
 
 #[utoipa::path(get,operation_id="list_recorded_features",path="/api/v2/data/revisions/{id}/features",tag="Data administration",params(("id"=Id,Path),("project_id"=Id,Query)),responses((status=200,body=RecordedFeatureListV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn list(
     State(state): State<AppState>,
     Authority(actor): Authority,
-    capacity: ArtifactCapacity,
     id: Result<Path<Id>, PathRejection>,
     value: Result<Query<RecordedFeatureListQuery>, QueryRejection>,
 ) -> Result<Json<RecordedFeatureListV1>, ApiError> {
@@ -14,19 +12,13 @@ pub async fn list(
         .artifact_store
         .clone()
         .ok_or(StoreError::Invalid("artifact_store_unavailable"))?;
-    // An abandoned read must not release the slot while native file I/O runs.
-    let capacity = std::sync::Arc::new(capacity);
     Ok(Json(
         state
             .store
             .list_recorded_features(&actor, path(id)?, &query(value)?, move |id, size| {
                 let objects = objects.clone();
-                let capacity = capacity.clone();
                 async move {
-                    tokio::task::spawn_blocking(move || {
-                        let _capacity = capacity;
-                        objects.read(id, size)
-                    })
+                    tokio::task::spawn_blocking(move || objects.read(id, size))
                     .await
                     .map_err(|_| StoreError::Integrity)?
                     .map_err(|_| StoreError::Integrity)
@@ -40,7 +32,6 @@ pub async fn list(
 pub async fn register(
     State(state): State<AppState>,
     Authority(actor): Authority,
-    capacity: ArtifactCapacity,
     headers: HeaderMap,
     id: Result<Path<Id>, PathRejection>,
     body: Result<Json<RecordedFeatureRegisterV1>, JsonRejection>,
@@ -56,10 +47,9 @@ pub async fn register(
         .clone()
         .ok_or(StoreError::Invalid("artifact_store_unavailable"))?;
     let store = state.store.clone();
-    // Keep original bytes, authority, capacity and transaction alive if the HTTP
+    // Keep original bytes, authority and transaction alive if the HTTP
     // waiter disconnects while the non-abortable native file operation runs.
     let result = crate::settings::command(&state, async move {
-        let _capacity = capacity;
         let reading = objects.clone();
         let publishing = objects.clone();
         let mut allocated = None;

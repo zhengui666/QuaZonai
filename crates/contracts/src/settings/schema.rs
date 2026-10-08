@@ -33,11 +33,11 @@ fn secret_variant(purpose: IntegrationSecretPurpose) -> AllOfBuilder {
     let (minimum, maximum, pattern) = match purpose {
         IntegrationSecretPurpose::Runtime => (
             RUNTIME_CREDENTIAL_MIN_LENGTH,
-            8192,
+            Some(8192),
             r"^[\u0021-\u007E]+(?![\s\S])",
         ),
-        IntegrationSecretPurpose::Downstream => (1, 8192, r"^[\u0021-\u007E]+(?![\s\S])"),
-        IntegrationSecretPurpose::TlsCa => (1, 65536, r"^[\u0000-\u007F]+(?![\s\S])"),
+        IntegrationSecretPurpose::Downstream => (1, Some(8192), r"^[\u0021-\u007E]+(?![\s\S])"),
+        IntegrationSecretPurpose::TlsCa => (1, None, r"^[\u0000-\u007F]+(?![\s\S])"),
     };
     AllOfBuilder::new()
         .item(
@@ -50,7 +50,7 @@ fn secret_variant(purpose: IntegrationSecretPurpose) -> AllOfBuilder {
                         .schema_type(Type::String)
                         .write_only(Some(true))
                         .min_length(Some(minimum))
-                        .max_length(Some(maximum))
+                        .max_length(maximum)
                         .pattern(Some(pattern)),
                 )
                 .required("value"),
@@ -155,5 +155,25 @@ impl PartialSchema for RuntimeUpdate {
 impl ToSchema for RuntimeUpdate {
     fn schemas(schemas: &mut Vec<(String, RefOr<Schema>)>) {
         collect::<RuntimeConfigurationV1>(schemas);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_ca_material_has_no_application_length_quota() {
+        let schema = serde_json::to_value(IntegrationSecretCreate::schema()).unwrap();
+        for index in [0, 1] {
+            let value = &schema["oneOf"][index]["allOf"][0]["properties"]["value"];
+            assert_eq!(value["maxLength"], 8192);
+            assert_eq!(value["writeOnly"], true);
+        }
+        let ca = &schema["oneOf"][2]["allOf"][0]["properties"]["value"];
+        assert!(ca.get("maxLength").is_none());
+        assert_eq!(ca["minLength"], 1);
+        assert_eq!(ca["writeOnly"], true);
+        assert!(ca["pattern"].as_str().unwrap().contains("007F"));
     }
 }

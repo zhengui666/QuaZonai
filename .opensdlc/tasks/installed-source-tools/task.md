@@ -10,7 +10,7 @@ independent review/CI are coordinator-owned and pending.
 
 Ship the existing Python registry/acquisition modules and two optional native
 import/preparation binaries inside the application image, outside the directory
-extracted onto the host. Installed `manage.py source` chooses the active immutable
+extracted onto the host. Installed `manage.sh source` chooses the active immutable
 image, queries that image's network capabilities, and exposes only explicit
 read-only inputs and a separate output parent at identical host/container paths.
 Reserved container tools/system paths and installation/Codex state cannot be

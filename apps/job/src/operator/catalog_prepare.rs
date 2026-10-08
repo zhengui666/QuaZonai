@@ -23,8 +23,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const MAX_JSON_BYTES: u64 = 1024 * 1024;
-
 #[path = "preparation/archive_candles.rs"]
 mod archive_candles;
 #[path = "preparation/bars.rs"]
@@ -68,14 +66,11 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
             (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
         );
     }
-    let input = options.open(path)?;
+    let mut input = options.open(path)?;
     let size = input.metadata()?;
-    ensure!(
-        size.is_file() && size.len() <= MAX_JSON_BYTES,
-        "PREPARATION_INPUT_LIMIT"
-    );
+    ensure!(size.is_file(), "PREPARATION_INPUT_LIMIT");
     let mut bytes = Vec::new();
-    input.take(MAX_JSON_BYTES + 1).read_to_end(&mut bytes)?;
+    input.read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() as u64 == size.len(),
         "PREPARATION_INPUT_CHANGED"
@@ -114,7 +109,6 @@ fn originals(
             "DUPLICATE_SETTLEMENT"
         );
     }
-    ensure!(ids.len() <= 256, "CATALOG_INSTRUMENT_LIMIT");
     let mut catalog = native(root)?;
     let instruments = catalog.instruments(
         Some(&ids.iter().cloned().collect::<Vec<_>>()),
@@ -367,10 +361,6 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
         "CATALOG_ORIGINALS_READBACK_MISMATCH"
     );
     let bytes = serde_json::to_vec_pretty(&metadata)?;
-    ensure!(
-        bytes.len() as u64 <= MAX_JSON_BYTES,
-        "PREPARATION_METADATA_LIMIT"
-    );
     let partial = output.join("catalog-metadata.json.partial");
     let mut file = OpenOptions::new()
         .write(true)

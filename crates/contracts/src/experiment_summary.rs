@@ -1,4 +1,4 @@
-//! Bounded read-only views of an adopted independent frozen-policy replay.
+//! Read-only views of an adopted independent frozen-policy replay.
 use crate::{
     equity_curve::{EquityPointV1, EquityResolution},
     evidence::MetricStatus,
@@ -20,7 +20,7 @@ pub struct ExperimentSummaryV1 {
     pub report_artifact_id: Id,
     pub dataset_revision_id: Id,
     pub model_artifact_id: Id,
-    #[schema(min_items = 1, max_items = 16)]
+    #[schema(min_items = 1)]
     pub feature_artifact_ids: Vec<Id>,
     pub native_versions: BTreeMap<String, String>,
     pub instrument_id: String,
@@ -28,7 +28,7 @@ pub struct ExperimentSummaryV1 {
     /// Alpha qualification or investment-performance claim follows from it.
     pub interpretation: String,
     /// Each fold starts with fresh capital. No aggregate/average Sharpe or joined equity.
-    #[schema(min_items = 1, max_items = 32)]
+    #[schema(min_items = 1)]
     pub folds: Vec<ExperimentFoldSummaryV1>,
 }
 
@@ -127,6 +127,5 @@ pub struct ExperimentEquityPreviewV1 {
     /// Display only: first/last and uniformly spaced indices of the projected series.
     /// No interpolated values/timestamps; never use preview points to estimate metrics.
     pub sampling_method: String,
-    #[schema(max_items = 64)]
     pub points: Vec<EquityPointV1>,
 }

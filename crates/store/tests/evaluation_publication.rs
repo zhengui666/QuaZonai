@@ -128,7 +128,7 @@ async fn consuming_an_evaluation_seals_its_metrics_before_transaction_commit(poo
         .await
         .unwrap();
     // Use a valid DEMO consumer, not a fake calibration without native training.
-    sqlx::query("INSERT INTO app.releases(candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment) SELECT candidate_id,package_artifact_id,package_schema_version,mandate_id,$2,market_capability_version,asof,valid_from,valid_until,environment FROM app.releases WHERE id=$1")
+    sqlx::query("INSERT INTO app.releases(candidate_id,package_artifact_id,package_schema_version,mandate_id,evaluation_id,market_capability_version,asof,valid_from,valid_until,environment,execution_environment) SELECT candidate_id,package_artifact_id,package_schema_version,mandate_id,$2,market_capability_version,asof,valid_from,valid_until,environment,execution_environment FROM app.releases WHERE id=$1")
         .bind(original_release.as_uuid()).bind(evaluation.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlstate(
         metric(&mut tx, evaluation, f.report, "after-consumption")

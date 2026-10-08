@@ -4,9 +4,7 @@ use super::{bad, simulation};
 use crate::{research::invalid, DomainError};
 use chrono::Datelike;
 use contracts::{
-    equity_curve::{
-        EquityCurveQuery, EquityPointV1, EquityResolution, EquitySeriesV1, MAX_EQUITY_POINTS,
-    },
+    equity_curve::{EquityCurveQuery, EquityPointV1, EquityResolution, EquitySeriesV1},
     science::{NativeSimulationRequestV1, NativeSimulationResultV1},
     DbCounter, DecimalValue,
 };
@@ -37,10 +35,10 @@ fn bucket(time: u64, resolution: EquityResolution) -> i64 {
 }
 
 /// Keep first/last observations and the actual final observation in each bucket.
-/// Returning None signals too many points, never a silently truncated series.
-fn indices(points: &[EquityPointV1], resolution: EquityResolution) -> Option<Vec<usize>> {
+/// No total point ceiling; only the explicitly selected time bucket removes points.
+fn indices(points: &[EquityPointV1], resolution: EquityResolution) -> Vec<usize> {
     if points.is_empty() {
-        return Some(Vec::new());
+        return Vec::new();
     }
     let mut selected = vec![0];
     for index in 1..points.len() {
@@ -49,15 +47,12 @@ fn indices(points: &[EquityPointV1], resolution: EquityResolution) -> Option<Vec
             && selected.last() != Some(&(index - 1))
         {
             selected.push(index - 1);
-            if selected.len() > MAX_EQUITY_POINTS {
-                return None;
-            }
         }
     }
     if selected.last() != Some(&(points.len() - 1)) {
         selected.push(points.len() - 1);
     }
-    (selected.len() <= MAX_EQUITY_POINTS).then_some(selected)
+    selected
 }
 
 /// Preserve both ends of every recorded unavailable interval. Dropping the
@@ -77,34 +72,26 @@ pub(super) fn gap_boundaries(points: &[EquityPointV1]) -> Vec<usize> {
         .collect()
 }
 
-fn report_indices(points: &[EquityPointV1], resolution: EquityResolution) -> Option<Vec<usize>> {
+fn report_indices(points: &[EquityPointV1], resolution: EquityResolution) -> Vec<usize> {
     let mut selected: std::collections::BTreeSet<_> =
-        indices(points, resolution)?.into_iter().collect();
+        indices(points, resolution).into_iter().collect();
     selected.extend(gap_boundaries(points));
-    (selected.len() <= MAX_EQUITY_POINTS).then(|| selected.into_iter().collect())
+    selected.into_iter().collect()
 }
 
-/// Bounded preview indices, preserving real endpoints and unavailable intervals
-/// before spending the remaining budget on evenly distributed existing points.
-pub(super) fn report_preview_indices(
-    points: &[EquityPointV1],
-    maximum: usize,
-) -> Result<Vec<usize>, DomainError> {
-    if points.len() <= maximum {
-        return Ok((0..points.len()).collect());
+/// Automatic preview target, preserving real endpoints and unavailable intervals.
+/// Required gap boundaries can exceed the target; a display preference must never
+/// reject valid scientific evidence or reconnect an unknown valuation interval.
+pub(super) fn report_preview_indices(points: &[EquityPointV1], target: usize) -> Vec<usize> {
+    if points.len() <= target {
+        return (0..points.len()).collect();
     }
     let mut required: std::collections::BTreeSet<_> = gap_boundaries(points).into_iter().collect();
     required.extend([0, points.len() - 1]);
-    if required.len() > maximum {
-        return Err(invalid(
-            "experiment_summary.preview",
-            "EXPERIMENT_PREVIEW_TOO_MANY_VALUATION_GAPS",
-        ));
-    }
     let available: Vec<_> = (0..points.len())
         .filter(|index| !required.contains(index))
         .collect();
-    let remaining = (maximum - required.len()).min(available.len());
+    let remaining = target.saturating_sub(required.len()).min(available.len());
     for index in 0..remaining {
         let selected = if remaining == 1 {
             available.len() / 2
@@ -113,7 +100,7 @@ pub(super) fn report_preview_indices(
         };
         required.insert(available[selected]);
     }
-    Ok(required.into_iter().collect())
+    required.into_iter().collect()
 }
 
 pub fn portfolio_equity_curve(
@@ -205,27 +192,16 @@ pub fn portfolio_equity_curve(
             && query.end_ns.is_none_or(|end| point.timestamp_ns <= end)
     });
     let window_point_count = count(points.len() as u64)?;
-    let choices: &[EquityResolution] = if query.resolution == EquityResolution::Auto {
-        &[
-            EquityResolution::Native,
-            EquityResolution::Day,
-            EquityResolution::Week,
-            EquityResolution::Month,
-        ]
+    let resolution = if query.resolution == EquityResolution::Auto {
+        EquityResolution::Native
     } else {
-        std::slice::from_ref(&query.resolution)
+        query.resolution
     };
-    let (resolution, selected) = choices
-        .iter()
-        .find_map(|&resolution| {
-            let selected = if result.spot_cash_report.is_some() {
-                report_indices(&points, resolution)
-            } else {
-                indices(&points, resolution)
-            };
-            selected.map(|selected| (resolution, selected))
-        })
-        .ok_or_else(|| invalid("equity_curve.resolution", "EQUITY_CURVE_TOO_MANY_POINTS"))?;
+    let selected = if result.spot_cash_report.is_some() {
+        report_indices(&points, resolution)
+    } else {
+        indices(&points, resolution)
+    };
     // Preserve the existing chart contract: sampled describes only downsampling
     // within the distinct-clock query window, not duplicate-clock selection.
     let sampled = selected.len() < points.len();
@@ -274,35 +250,32 @@ mod tests {
             point(ns("2025-12-31T23:59:59Z")),
             point(ns("2026-01-01T01:00:00Z")),
         ];
-        assert_eq!(
-            indices(&points, EquityResolution::Day).unwrap(),
-            vec![0, 1, 2, 3, 4]
-        );
-        assert_eq!(
-            indices(&points, EquityResolution::Week).unwrap(),
-            vec![0, 1, 4]
-        );
-        assert_eq!(
-            indices(&points, EquityResolution::Month).unwrap(),
-            vec![0, 3, 4]
-        );
-        assert_eq!(
-            indices(&points[..1], EquityResolution::Month).unwrap(),
-            vec![0]
-        );
-        assert!(indices(&[], EquityResolution::Native).unwrap().is_empty());
+        assert_eq!(indices(&points, EquityResolution::Day), vec![0, 1, 2, 3, 4]);
+        assert_eq!(indices(&points, EquityResolution::Week), vec![0, 1, 4]);
+        assert_eq!(indices(&points, EquityResolution::Month), vec![0, 3, 4]);
+        assert_eq!(indices(&points[..1], EquityResolution::Month), vec![0]);
+        assert!(indices(&[], EquityResolution::Native).is_empty());
     }
 
     #[test]
-    fn million_observations_are_bounded_without_losing_the_end() {
+    fn million_native_observations_are_all_retained_and_bucketing_is_explicit() {
         let points: Vec<_> = (0..1_000_000).map(|n| point(n * 1_000_000_000)).collect();
-        assert!(indices(&points, EquityResolution::Native).is_none());
-        let selected = indices(&points, EquityResolution::Day).unwrap();
+        assert_eq!(
+            indices(&points, EquityResolution::Native),
+            (0..points.len()).collect::<Vec<_>>()
+        );
+        let selected = indices(&points, EquityResolution::Day);
         assert!(selected.len() < 20);
         assert_eq!(selected.first(), Some(&0));
         assert_eq!(selected.last(), Some(&999_999));
-        assert!(indices(&points[..10_000], EquityResolution::Native).is_some());
-        assert!(indices(&points[..10_001], EquityResolution::Native).is_none());
+        assert_eq!(
+            indices(&points[..10_000], EquityResolution::Native).len(),
+            10_000
+        );
+        assert_eq!(
+            indices(&points[..10_001], EquityResolution::Native).len(),
+            10_001
+        );
     }
 
     #[test]
@@ -344,11 +317,11 @@ mod report_gap_tests {
             observation(2 * DAY, Some("120")),
         ];
         assert_eq!(
-            indices(&points, EquityResolution::Day).unwrap(),
+            indices(&points, EquityResolution::Day),
             vec![0, 2, 3],
             "legacy selection is unchanged"
         );
-        let selected = report_indices(&points, EquityResolution::Day).unwrap();
+        let selected = report_indices(&points, EquityResolution::Day);
         assert_eq!(selected, vec![0, 1, 2, 3]);
         assert!(points[selected[1]].value.is_none());
     }
@@ -357,7 +330,7 @@ mod report_gap_tests {
         let points: Vec<_> = (0..65)
             .map(|index| observation(index, if index == 63 { None } else { Some("100") }))
             .collect();
-        let selected = report_preview_indices(&points, 64).unwrap();
+        let selected = report_preview_indices(&points, 64);
         assert_eq!(selected.len(), 64);
         assert_eq!(selected.first(), Some(&0));
         assert_eq!(selected.last(), Some(&64));
@@ -365,14 +338,28 @@ mod report_gap_tests {
         assert!(points[63].value.is_none());
     }
     #[test]
-    fn excessive_gap_boundaries_are_refused_instead_of_reconnected() {
+    fn preview_target_never_rejects_or_discards_required_gap_boundaries() {
         let points: Vec<_> = (0..130)
             .map(|index| observation(index, if index % 2 == 1 { None } else { Some("100") }))
             .collect();
-        assert!(report_preview_indices(&points, 64).is_err());
+        let selected = report_preview_indices(&points, 64);
+        let expected: Vec<_> = std::iter::once(0)
+            .chain((1..points.len()).step_by(2))
+            .collect();
+        assert_eq!(selected, expected);
+        assert!(selected.len() > 64);
+    }
+    #[test]
+    fn full_curves_preserve_all_gaps_beyond_the_old_point_ceiling() {
         let points: Vec<_> = (0..25_000)
             .map(|index| observation(index, if index % 2 == 1 { None } else { Some("100") }))
             .collect();
-        assert!(report_indices(&points, EquityResolution::Day).is_none());
+        let selected = report_indices(&points, EquityResolution::Day);
+        let expected: Vec<_> = std::iter::once(0)
+            .chain((1..points.len()).step_by(2))
+            .collect();
+        assert_eq!(selected, expected);
+        assert!(selected.len() > 10_000);
+        assert_eq!(selected.last(), Some(&(points.len() - 1)));
     }
 }

@@ -21,8 +21,18 @@ where
     Published: std::future::Future<Output = Result<(), StoreError>>,
 {
     let run = &locked.run;
-    let binding = sqlx::query("SELECT f.*,h.release_id,r.candidate_id,m.required_evaluation_policy_id FROM app.forward_evaluation_inputs f JOIN app.handoff_offers h ON h.id=f.handoff_id JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id AND c.project_id=f.project_id JOIN app.portfolio_mandates m ON m.id=c.mandate_id WHERE f.input_set_id=$1 AND f.project_id=$2")
+    let binding = sqlx::query("SELECT f.*,h.release_id,r.candidate_id,r.environment AS delivery_origin,m.required_evaluation_policy_id FROM app.forward_evaluation_inputs f JOIN app.handoff_offers h ON h.id=f.handoff_id JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id AND c.project_id=f.project_id JOIN app.portfolio_mandates m ON m.id=c.mandate_id WHERE f.input_set_id=$1 AND f.project_id=$2")
         .bind(run.input_set_id.as_uuid()).bind(run.project_id.as_uuid()).fetch_one(&mut *tx).await?;
+    let origin: String = binding.try_get("delivery_origin")?;
+    if origin != "REAL" {
+        let bound: Option<String> = sqlx::query_scalar("SELECT app.forward_delivery_origin($1)")
+            .bind(binding.try_get::<uuid::Uuid, _>("handoff_id")?)
+            .fetch_one(&mut *tx)
+            .await?;
+        if origin != "SYNTHETIC" || bound.as_deref() != Some("SYNTHETIC") {
+            return Err(StoreError::Invalid("forward_paper_root"));
+        }
+    }
     let prior: Option<uuid::Uuid> = sqlx::query_scalar("SELECT e.id FROM app.evaluations e JOIN app.forward_evidence_windows w ON w.evaluation_id=e.id WHERE e.run_id=$1 AND e.evaluation_kind='FORWARD'")
         .bind(run.id.as_uuid()).fetch_optional(&mut *tx).await?;
     if let Some(id) = prior {
@@ -73,7 +83,6 @@ where
             spec.parameters_artifact_id,
             None,
             "qz.native_task",
-            8 * 1024 * 1024,
             &mut read,
         )
         .await?;
@@ -88,7 +97,6 @@ where
             manifest_id.ok_or(StoreError::Integrity)?,
             Some((run.id, attempt)),
             "qz.job_result",
-            domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES,
             &mut read,
         )
         .await?;
@@ -107,8 +115,8 @@ where
         if output.schema.name != "qz.forward_evaluation" || output.schema.version != "1" {
             return Err(StoreError::Integrity);
         }
-        let ids:Vec<uuid::Uuid> = sqlx::query_scalar("SELECT a.id FROM app.run_native_outputs o JOIN app.artifacts a ON a.id=o.artifact_id WHERE o.attempt_id=$1 AND a.producer_run_id=$2 AND a.producer_attempt_id=$1 AND a.schema_name='qz.forward_evaluation' AND a.schema_version='1' AND a.kind='REPORT' AND a.access_class='EVALUATOR_ONLY' AND a.origin='REAL' AND o.remote_storage_ref=$3 AND a.media_type=$4 AND a.byte_count=$5")
-            .bind(attempt.as_uuid()).bind(run.id.as_uuid()).bind(output.storage_ref.as_uuid()).bind(&output.media_type).bind(output.byte_count.get() as i64).fetch_all(&mut *tx).await?;
+        let ids:Vec<uuid::Uuid> = sqlx::query_scalar("SELECT a.id FROM app.run_native_outputs o JOIN app.artifacts a ON a.id=o.artifact_id WHERE o.attempt_id=$1 AND a.producer_run_id=$2 AND a.producer_attempt_id=$1 AND a.schema_name='qz.forward_evaluation' AND a.schema_version='1' AND a.kind='REPORT' AND a.access_class='EVALUATOR_ONLY' AND a.origin=$6 AND o.remote_storage_ref=$3 AND a.media_type=$4 AND a.byte_count=$5")
+            .bind(attempt.as_uuid()).bind(run.id.as_uuid()).bind(output.storage_ref.as_uuid()).bind(&output.media_type).bind(output.byte_count.get() as i64).bind(&origin).fetch_all(&mut *tx).await?;
         let [id] = ids.as_slice() else {
             return Err(StoreError::Integrity);
         };
@@ -118,7 +126,6 @@ where
             id,
             Some((run.id, attempt)),
             "qz.forward_evaluation",
-            contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
             &mut read,
         )
         .await?;
@@ -174,7 +181,28 @@ where
         EvidenceStatus::Incomplete
     };
     let until = valid.then_some(effective_deadline);
-    portfolio::document(&mut tx,run,report,"qz.forward_measurement","REAL",json!({"schema_version":1,"evaluation_id":evaluation,"candidate_id":candidate,"policy_id":policy,"automation_policy_id":db::id(binding.try_get("policy_id")?)?,"run_id":run.id,"input_set_id":run.input_set_id,"evaluation_kind":"FORWARD","execution_status":run.state,"evidence_status":status,"decision":"INCONCLUSIVE","reasons":reasons,"window":request.window,"native_manifest_artifact_id":manifest_id,"native_report_artifact_id":native_report,"native_versions":versions,"concluded_at":concluded_at,"valid_until":until}),&mut publish).await?;
+    let mut measurement = json!({"schema_version":1,"evaluation_id":evaluation,"candidate_id":candidate,"policy_id":policy,"automation_policy_id":db::id(binding.try_get("policy_id")?)?,"run_id":run.id,"input_set_id":run.input_set_id,"evaluation_kind":"FORWARD","execution_status":run.state,"evidence_status":status,"decision":"INCONCLUSIVE","reasons":reasons,"window":request.window,"native_manifest_artifact_id":manifest_id,"native_report_artifact_id":native_report,"native_versions":versions,"concluded_at":concluded_at,"valid_until":until});
+    if origin == "SYNTHETIC" {
+        let root: uuid::Uuid = sqlx::query_scalar(
+            "SELECT paper_initial_weights_artifact_id FROM app.releases WHERE id=$1",
+        )
+        .bind(binding.try_get::<uuid::Uuid, _>("release_id")?)
+        .fetch_one(&mut *tx)
+        .await?;
+        measurement["execution_environment"] = json!("PAPER");
+        measurement["economic_origin"] = json!("SYNTHETIC");
+        measurement["paper_initial_weights_artifact_id"] = json!(root);
+    }
+    portfolio::document(
+        &mut tx,
+        run,
+        report,
+        "qz.forward_measurement",
+        &origin,
+        measurement,
+        &mut publish,
+    )
+    .await?;
     if valid && effective_deadline <= now(&mut tx).await? {
         return Err(StoreError::Conflict);
     }
@@ -221,7 +249,7 @@ impl Store {
         if !locked.run.state.is_terminal() {
             return Err(StoreError::Conflict);
         }
-        let row=sqlx::query("SELECT e.id AS evaluation_id,e.execution_status,e.evidence_status,e.valid_until,w.is_contiguous,w.complete_observations,w.freshness_deadline,f.policy_id,f.runtime_id,h.release_id FROM app.runs r JOIN app.forward_evaluation_inputs f ON f.input_set_id=r.input_set_id AND f.project_id=r.project_id JOIN app.handoff_offers h ON h.id=f.handoff_id JOIN app.releases release ON release.id=h.release_id JOIN app.evaluations e ON e.run_id=r.id AND e.input_set_id=r.input_set_id AND e.subject_candidate_id=release.candidate_id AND e.evaluation_kind='FORWARD' AND e.execution_status=r.state JOIN app.evaluation_publications published ON published.evaluation_id=e.id JOIN app.forward_evidence_windows w ON w.evaluation_id=e.id AND w.release_id=h.release_id AND w.input_set_id=e.input_set_id JOIN app.artifacts a ON a.id=e.report_artifact_id AND a.id=e.method_versions_artifact_id AND a.producer_run_id=r.id AND a.producer_attempt_id IS NOT DISTINCT FROM r.active_attempt_id AND a.schema_name='qz.forward_measurement' AND a.schema_version='1' AND a.origin='REAL' AND a.access_class='EVALUATOR_ONLY' JOIN app.run_terminal_receipts terminal ON terminal.run_id=r.id AND terminal.terminal_state=r.state AND terminal.attempt_id IS NOT DISTINCT FROM r.active_attempt_id WHERE r.id=$1")
+        let row=sqlx::query("SELECT e.id AS evaluation_id,e.execution_status,e.evidence_status,e.valid_until,w.is_contiguous,w.complete_observations,w.freshness_deadline,f.policy_id,f.runtime_id,h.release_id FROM app.runs r JOIN app.forward_evaluation_inputs f ON f.input_set_id=r.input_set_id AND f.project_id=r.project_id JOIN app.handoff_offers h ON h.id=f.handoff_id JOIN app.releases release ON release.id=h.release_id JOIN app.evaluations e ON e.run_id=r.id AND e.input_set_id=r.input_set_id AND e.subject_candidate_id=release.candidate_id AND e.evaluation_kind='FORWARD' AND e.execution_status=r.state JOIN app.evaluation_publications published ON published.evaluation_id=e.id JOIN app.forward_evidence_windows w ON w.evaluation_id=e.id AND w.release_id=h.release_id AND w.input_set_id=e.input_set_id JOIN app.artifacts a ON a.id=e.report_artifact_id AND a.id=e.method_versions_artifact_id AND a.producer_run_id=r.id AND a.producer_attempt_id IS NOT DISTINCT FROM r.active_attempt_id AND a.schema_name='qz.forward_measurement' AND a.schema_version='1' AND a.origin=release.environment AND release.environment IN ('REAL','SYNTHETIC') AND a.access_class='EVALUATOR_ONLY' JOIN app.run_terminal_receipts terminal ON terminal.run_id=r.id AND terminal.terminal_state=r.state AND terminal.attempt_id IS NOT DISTINCT FROM r.active_attempt_id WHERE r.id=$1")
             .bind(run.as_uuid()).fetch_one(&mut *tx).await?;
         let evaluation = db::id(row.try_get("evaluation_id")?)?;
         let policy_row = sqlx::query("SELECT * FROM app.automation_policies WHERE id=$1")

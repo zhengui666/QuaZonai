@@ -64,7 +64,7 @@ fn independent_native_folds_fit_only_original_training_labels() {
     assert!((reference_rmse - first.metrics[1].value.unwrap()).abs() < 1e-15);
     assert_eq!(actual.native_versions["solow-cv"], "0.7.3");
     assert_eq!(actual.native_versions["ndarray-stats"], "0.7.0");
-    assert!(actual.consumed_fuel.get() > 0);
+    assert!(actual.consumed_fuel.unwrap().get() > 0);
 }
 
 fn counter_model() -> Vec<u8> {
@@ -416,7 +416,7 @@ fn native_output_adoption_requires_every_original_fold_source_and_metric() {
                     .insert("solow-cv".into(), "unverified".into());
             }
             15 => bad.unique_test_observations = count(actual.unique_test_observations.get() + 1),
-            16 => bad.consumed_fuel = count(request.forecast.parameters.total_fuel.get() + 1),
+            16 => bad.consumed_fuel = Some(count(request.forecast.parameters.total_fuel.unwrap().get() + 1)),
             17 => bad.folds[0].training_end_available_ns = count(0),
             18 => {
                 bad.folds[0].training_end_available_ns =

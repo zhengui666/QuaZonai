@@ -14,7 +14,6 @@ use std::{
     fs::{self, OpenOptions},
     io::{BufRead, IsTerminal, Read, Write},
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -58,7 +57,7 @@ impl Profile {
         if !path.try_exists().map_err(|_| Failure::Configuration)? {
             return Err(Failure::LoginRequired);
         }
-        let profile: Self = serde_json::from_slice(&read_file(path, 16 * 1024, true)?)
+        let profile: Self = serde_json::from_slice(&read_file(path, Some(16 * 1024), true)?)
             .map_err(|_| Failure::Configuration)?;
         origin(&profile.origin, profile.development_http)?;
         if !device_token(&profile.token)? {
@@ -144,9 +143,9 @@ pub(super) fn http_client(
                 .map_err(|_| Failure::Configuration)?,
         );
     }
-    let mut builder = service_http::builder(headers, Duration::from_secs(20));
+    let mut builder = service_http::builder(headers);
     if let Some(path) = certificate {
-        let bytes = read_file(path, 65536, false)?;
+        let bytes = read_file(path, None, false)?;
         let certificates =
             reqwest::Certificate::from_pem_bundle(&bytes).map_err(|_| Failure::Configuration)?;
         if certificates.is_empty() || origin.scheme() != "https" {
@@ -213,7 +212,7 @@ pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bo
             Err(error) => return Err(error),
             Ok(response) => {
                 media(&response, "application/json")?;
-                let bytes = body(response, 16 * 1024).await?;
+                let bytes = body(response, None).await?;
                 let device: contracts::auth::CliDevice =
                     service_http::decode(&bytes, &connection.credential)?;
                 if name.is_some_and(|name| name != device.name) {
@@ -289,7 +288,7 @@ pub(super) async fn login(arguments: &Arguments, name: Option<&str>, replace: bo
     .await?;
     let response = checked_login(response, &password).await?;
     media(&response, "application/json")?;
-    let bytes = body(response, 16 * 1024).await?;
+    let bytes = body(response, None).await?;
     let result = login_result(&bytes, &password, name)?;
     Profile {
         schema_version: SchemaV1,
@@ -348,7 +347,7 @@ async fn checked_login(response: Response, password: &str) -> Result<Response> {
         return Err(Failure::Contract);
     }
     media(&response, "application/problem+json")?;
-    let bytes = body(response, 16 * 1024).await?;
+    let bytes = body(response, None).await?;
     Err(Failure::Rejected(Box::new(login_problem(
         &bytes, status, password,
     )?)))
@@ -414,6 +413,26 @@ fn login_problem(bytes: &[u8], status: u16, password: &str) -> Result<Problem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_ca_file_crosses_former_byte_limit_without_relaxing_tls() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("ca.pem");
+        // Repeated valid roots exercise complete bytes without granting a new identity.
+        let certificate = include_str!("../../tests/fixtures/capacity-ca.pem");
+        let bundle = certificate.repeat(65536 / certificate.len() + 1);
+        assert!(bundle.len() > 65536);
+        fs::write(&path, &bundle).unwrap();
+        assert_eq!(read_file(&path, None, false).unwrap(), bundle.as_bytes());
+        let https = Url::parse("https://runtime.example").unwrap();
+        assert!(http_client(&https, Some(&path), header::HeaderMap::new()).is_ok());
+        let http = Url::parse("http://127.0.0.1:8080").unwrap();
+        assert!(http_client(&http, Some(&path), header::HeaderMap::new()).is_err());
+        for invalid in ["", "not a PEM certificate", "-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----"] {
+            fs::write(&path, invalid).unwrap();
+            assert!(http_client(&https, Some(&path), header::HeaderMap::new()).is_err());
+        }
+    }
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 

@@ -89,7 +89,7 @@ export class NativeDataExecution {
       credential_file: credentialFile, docker_socket: this.socket, bind: `127.0.0.1:${port}`,
       images: [{ job_kind: 'DATA_VALIDATE', image_ref: this.image }],
       catalogs: [{ root: this.prepared.catalog_root, metadata_file: this.prepared.metadata_file }],
-      max_cpu: 1, max_memory_mib: 1024, max_wall_seconds: 120, max_output_bytes: 67108864,
+      max_cpu: 1, max_memory_mib: 1024, max_wall_seconds: 120, max_output_bytes: null,
       max_parallel_jobs: 1, max_pending_jobs: 4, storage_quota_bytes: 268435456,
     }), { mode: 0o600 });
     await this.start();

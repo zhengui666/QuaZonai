@@ -1,9 +1,6 @@
 //! Actual v2 Wasmi ABI and metering. Native process tests cover callback failure.
 use contracts::{science::*, DbCounter};
-use job::{
-    feature_model::FeatureModel,
-    signals::{SignalModule, SIGNAL_FUEL_PER_PREDICTION},
-};
+use job::{feature_model::FeatureModel, signals::SignalModule};
 use wasmi::{CompilationMode, Config, Engine, Linker, Module, Store, TrapCode};
 
 fn count(n: u64) -> DbCounter {
@@ -28,7 +25,7 @@ fn module_bytes(prefix: &str, set: &str, predict: &str) -> Vec<u8> {
     .unwrap()
 }
 fn module(prefix: &str, set: &str, predict: &str) -> SignalModule {
-    SignalModule::new(&module_bytes(prefix, set, predict)).unwrap()
+    SignalModule::new(&module_bytes(prefix, set, predict), true).unwrap()
 }
 
 #[test]
@@ -49,7 +46,7 @@ fn version_two_exposes_frozen_identity_and_source_freshness() {
     );
     let mut model = FeatureModel::new(&module, 1, 100_000).unwrap();
     assert_eq!(model.predict(10, 9, 4, &[input()]).unwrap(), 0.25);
-    assert!(model.remaining_fuel() < 100_000);
+    assert!(model.remaining_fuel().unwrap() < 100_000);
     assert!(model.predict(10, 9, 4, &[input()]).is_err());
 }
 
@@ -101,20 +98,20 @@ fn setter_work_is_metered_and_a_failed_instance_cannot_resume() {
     let setter = instance
         .get_typed_func::<(i32, f64, i32, i64, i64), ()>(&store, "qz_set_feature_v2")
         .unwrap();
-    store.set_fuel(SIGNAL_FUEL_PER_PREDICTION).unwrap();
+    store.set_fuel(1_000_000).unwrap();
     let error = setter.call(&mut store, (0, 0.0, 0, 7, 8)).unwrap_err();
     assert_eq!(error.as_trap_code(), Some(TrapCode::OutOfFuel));
-    let consumed = SIGNAL_FUEL_PER_PREDICTION - store.get_fuel().unwrap();
+    let consumed = 1_000_000 - store.get_fuel().unwrap();
     assert!(consumed > 0);
 
-    let module = SignalModule::new(&bytes).unwrap();
+    let module = SignalModule::new(&bytes, true).unwrap();
     let mut model = FeatureModel::new(&module, 10, 1_000_000).unwrap();
-    let before = model.remaining_fuel();
+    let before = model.remaining_fuel().unwrap();
     assert_eq!(
         model.predict(10, 9, 0, &[input()]).unwrap_err().to_string(),
         "FEATURE_MODEL_EXECUTION_FAILED"
     );
-    assert_eq!(model.remaining_fuel(), before - consumed);
+    assert_eq!(model.remaining_fuel(), Some(before - consumed));
     let after_failure = model.remaining_fuel();
     assert_eq!(
         model.predict(10, 9, 0, &[input()]).unwrap_err().to_string(),
@@ -135,4 +132,18 @@ fn fresh_v2_instances_do_not_share_globals_or_memory() {
     assert_eq!(first.predict(10, 9, 0, &[input()]).unwrap(), 0.25);
     assert_eq!(first.predict(10, 9, 1, &[input()]).unwrap(), 0.5);
     assert_eq!(second.predict(10, 9, 0, &[input()]).unwrap(), 0.25);
+}
+
+#[test]
+fn unmetered_features_have_no_hidden_per_prediction_or_input_count_cap() {
+    let bytes = module_bytes(
+        "",
+        "(local $n i32) i32.const 100000 local.set $n
+        (loop $again local.get $n i32.const 1 i32.sub local.tee $n br_if $again)",
+        "local.get 4 f64.convert_i32_u",
+    );
+    let module = SignalModule::new(&bytes, false).unwrap();
+    let mut model = FeatureModel::new(&module, None, None).unwrap();
+    assert_eq!(model.predict(10, 9, 0, &vec![input(); 65]).unwrap(), 65.0);
+    assert_eq!(model.remaining_fuel(), None);
 }

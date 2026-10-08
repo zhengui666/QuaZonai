@@ -28,8 +28,8 @@ import urllib.parse
 import uuid
 import zipfile
 
-import codex
-import manage
+import smoke_shell as manage
+from smoke_shell import codex
 import release
 
 # One disposable password per smoke process, retained across its upgrades.
@@ -51,13 +51,13 @@ def make_bundle(root: Path, tag: str, revision: str, images: dict) -> Path:
                    codex_image=images["codex_image"])
     bundle.mkdir()
     manage.unpack((assets / "quazonai-deploy.tar.gz").read_bytes(), bundle)
-    assert not (bundle / "Codex.Dockerfile").exists()
+    assert all((bundle / name).is_file() for name in ("manage.sh", "codex.sh", "json.awk"))
+    assert all(not (bundle / name).exists() for name in ("manage.py", "codex.py", "Codex.Dockerfile", "smoke_shell.py"))
     return bundle
 
 
 def invoke(bundle: Path, command: str, root: Path, *args: str, succeeds: bool = True) -> None:
-    result = subprocess.run([sys.executable, "-B", str(bundle / "manage.py"), command,
-                             "--directory", str(root), *args], check=False)
+    result = subprocess.run(manage.command(bundle, command, root, *args), check=False)
     if (result.returncode == 0) != succeeds:
         raise AssertionError(f"Unexpected {command} exit status: {result.returncode}")
 
@@ -167,22 +167,8 @@ def verify_app_restart(config: dict, expected: str) -> None:
 def verify_interrupted_shutdown(bundle: Path, installation: Path) -> None:
     # Terminate a separate installer process after the real Docker policy change,
     # without exception cleanup. Its durable pre-migration intent must survive.
-    program = '''
-import os
-import sys
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-import manage
-change_policy = manage.configure_app_restarts
-def interrupt(config, enabled):
-    change_policy(config, enabled)
-    if not enabled:
-        os._exit(99)
-manage.configure_app_restarts = interrupt
-manage.apply_update(Path(sys.argv[2]))
-'''
     before = fingerprint(installation)
-    result = subprocess.run([sys.executable, '-B', '-c', program, str(bundle), str(installation)],
+    result = subprocess.run(manage.fault_command(bundle, 'after-restart-disable', 'apply-update', installation),
                             check=False, timeout=120)
     assert result.returncode == 99, result.returncode
     pending = json.loads((installation / 'pending.json').read_text())
@@ -205,37 +191,8 @@ def processor_identity(config: dict) -> tuple[str, str]:
 def faulted_invoke(bundle: Path, mode: str, command: str, installation: Path, *args: str) -> None:
     # Only the installer boundary is interrupted. Docker, systemd, PostgreSQL,
     # the real server and migrations remain the actual release implementations.
-    program = '''
-import os
-import sys
-sys.path.insert(0, sys.argv[1])
-import manage
-mode = sys.argv[2]
-if mode == 'before-activation':
-    manage.activate = lambda *args: os._exit(99)
-elif mode == 'resume-without-ddl':
-    original = manage.compose
-    def compose(config, *args, **kwargs):
-        assert 'migrate' not in args, 'starting retry repeated DDL'
-        return original(config, *args, **kwargs)
-    def configure(config):
-        raise AssertionError('starting retry rewrote the Worker')
-    manage.compose, manage.configure_worker = compose, configure
-elif mode == 'race-after-admissions-close':
-    original_idle = manage.require_idle
-    calls = 0
-    def idle(config):
-        global calls
-        original_idle(config)
-        calls += 1
-        if calls == 2:
-            raise ValueError('test interruption at the post-admission idle boundary')
-    manage.require_idle = idle
-sys.argv = ['manage.py', sys.argv[3], '--directory', sys.argv[4], *sys.argv[5:]]
-manage.main()
-'''
-    result = subprocess.run([sys.executable, '-B', '-c', program, str(bundle), mode, command,
-                             str(installation), *args], check=False, timeout=240)
+    result = subprocess.run(manage.fault_command(bundle, mode, command, installation, *args),
+                            check=False, timeout=240)
     expected = {'before-activation': 99, 'resume-without-ddl': 0, 'race-after-admissions-close': 1}[mode]
     assert result.returncode == expected, (mode, result.returncode)
 
@@ -413,7 +370,7 @@ def cleanup_installation(installation: Path) -> None:
 
 @contextlib.contextmanager
 def installation_tools(directory: Path):
-    """Fail, rather than silently succeed, if the installer tries to build anything."""
+    """Fail on host Python or build tools; the CI wrapper itself uses an absolute interpreter."""
     directory.mkdir()
     previous = os.environ["PATH"]
     docker = shutil.which("docker")
@@ -429,18 +386,18 @@ blocked = name != "docker" or not args or args[0] in ("build", "buildx", "builde
 with open({log!r}, "a") as stream:
     stream.write(json.dumps({{"tool": name, "operation": args[0] if args else "", "blocked": blocked}}) + "\\n")
 if blocked:
-    Path({forbidden!r}).write_text("deployment attempted a build")
+    Path({forbidden!r}).write_text("deployment attempted host Python or a build")
     sys.exit(97)
 os.execv({docker!r}, [{docker!r}, *args])
 """.format(log=str(log), forbidden=str(forbidden), docker=docker)
-    for name in ("docker", "cargo", "rustup", "rustc", "npm", "npx", "node", "make", "cmake", "gcc", "cc", "clang"):
+    for name in ("docker", "python", "python3", "cargo", "rustup", "rustc", "npm", "npx", "node", "make", "cmake", "gcc", "cc", "clang"):
         path = directory / name
         path.write_text(wrapper)
         path.chmod(0o755)
     os.environ["PATH"] = str(directory) + os.pathsep + previous
     try:
         yield log
-        assert not forbidden.exists(), "Deployment tried to compile or build an image"
+        assert not forbidden.exists(), "Deployment tried host Python, a compiler or an image build"
     finally:
         os.environ["PATH"] = previous
 
@@ -644,8 +601,8 @@ def reconcile_source_invocation(config: dict, invocation: str, *, uncertain: boo
 
 def invoke_installed_source(config: dict, root: Path, arguments: list[str], inputs=(), output=None):
     def command_for(invocation):
-        command = [sys.executable, '-B', str(Path(config['bundle']) / 'manage.py'), 'source',
-                   '--directory', config['root'], '--invocation-id', invocation]
+        command = manage.command(Path(config['bundle']), 'source', Path(config['root']),
+                                 '--invocation-id', invocation)
         for path in inputs:
             command += ['--read-only', str(path)]
         if output:
@@ -773,38 +730,17 @@ def verify_source_output_reuse(config: dict, root: Path, arguments: list[str], i
              'cli_returncode': None, 'local_timeout': False}
     record = diagnostics / (invocation + '.json')
     record.write_text(json.dumps(facts, indent=2) + '\n')
-    program = '''
-import importlib.util, json, sys
-from pathlib import Path
-spec = importlib.util.spec_from_file_location('installed_source_manager', sys.argv[1])
-manager = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(manager)
-calls = []
-def forbidden(*args, **kwargs):
-    calls.append(True)
-    raise AssertionError('Output reuse reached process launch')
-manager.run = forbidden
-manager.subprocess.run = forbidden
-manager.subprocess.Popen = forbidden
-manager.os.execv = forbidden
-manager.os.execvp = forbidden
-try:
-    manager.source_command(Path(sys.argv[2]), [Path(value) for value in json.loads(sys.argv[3])],
-                           Path(sys.argv[4]), json.loads(sys.argv[5]), sys.argv[6])
-except ValueError as error:
-    assert str(error) == 'Source output must be new; original and failed artifacts are retained.'
-else:
-    raise AssertionError('Installed preflight accepted an existing output')
-assert not calls
-print(json.dumps({'rejected_before_launch': True, 'docker_calls': 0}))
-'''
+    forbidden = diagnostics / (invocation + '.forbidden-launch')
     try:
-        result = subprocess.run([sys.executable, '-B', '-c', program,
-                                 str(Path(config['bundle']) / 'manage.py'), config['root'],
-                                 json.dumps([str(path) for path in inputs]), str(output),
-                                 json.dumps(arguments), invocation], capture_output=True, text=True, timeout=20, check=False)
-        facts.update(cli_returncode=result.returncode, state='preflight_rejection_unconfirmed')
-        if result.returncode == 0 and json.loads(result.stdout) == {'rejected_before_launch': True, 'docker_calls': 0}:
+        result = subprocess.run(manage.reuse_command(config, invocation, inputs, output, arguments, forbidden),
+                                capture_output=True, text=True, timeout=20, check=False)
+        calls = len(forbidden.read_text().splitlines()) if forbidden.exists() else 0
+        facts.update(cli_returncode=result.returncode, docker_calls=calls,
+                     state='preflight_rejection_unconfirmed')
+        # The production shell rejects the existing destination before any
+        # Docker call or final exec. Standard host utilities remain real.
+        reason = 'Deployment failed: Source output must be a new absolute child of the mounted output parent.'
+        if result.returncode == 1 and reason in result.stderr.splitlines() and calls == 0:
             facts.update(state='rejected_before_launch', container_cleanup_confirmed=True)
     except subprocess.TimeoutExpired:
         facts.update(state='preflight_timeout', local_timeout=True)
@@ -1054,7 +990,7 @@ def verify_runtime(config: dict) -> None:
             "docker_socket": config["docker_socket"], "bind": f"127.0.0.1:{port}",
             "images": [{"job_kind": "DATA_VALIDATE", "image_ref": config["runtime_image"]}],
             "catalogs": [], "max_cpu": 1, "max_memory_mib": 1024, "max_wall_seconds": 120,
-            "max_output_bytes": 67108864, "max_parallel_jobs": 2, "max_pending_jobs": 8,
+            "max_output_bytes": None, "max_parallel_jobs": 2, "max_pending_jobs": 8,
             "storage_quota_bytes": 268435456,
         }
         path = directory / "runtime.json"
@@ -1262,7 +1198,7 @@ def main() -> None:
                 "installed_archive_freeze_conversion_preparation": "passed",
                 "source_successful_invocation_terminal_observation": "passed",
                 "source_real_docker_timeout_cancellation": "not_run",
-                "host_build_commands": 0,
+                "host_build_commands": 0, "host_python_commands": 0,
             }, indent=2) + "\n")
 
 

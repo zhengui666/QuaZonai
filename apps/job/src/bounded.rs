@@ -1,21 +1,20 @@
 //! Native GNU timeout owns configured wall deadlines even after the Runtime gateway exits.
 //! Explicit absent wall limits execute directly; resource limits and cancellation remain.
 //! The OCI init/cgroup owns process-tree cleanup; there is no application watchdog daemon.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use contracts::runtime_jobs::JobSpecV1;
 use std::{fs::OpenOptions, io::Read, process::Command};
 
 #[cfg(unix)]
 pub fn run() -> Result<()> {
     use std::os::unix::{fs::OpenOptionsExt, process::CommandExt};
-    let file = OpenOptions::new()
+    let mut file = OpenOptions::new()
         .read(true)
         .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
         .open("/input/spec.json")?;
     ensure!(file.metadata()?.is_file(), "NATIVE_SPEC_FILE");
     let mut bytes = Vec::new();
-    file.take(1024 * 1024 + 1).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= 1024 * 1024, "NATIVE_SPEC_SIZE");
+    file.read_to_end(&mut bytes)?;
     let spec: JobSpecV1 = serde_json::from_slice(&bytes)?;
     domain::runtime_jobs::spec_shape(&spec)?;
     let remaining = domain::execution_limits::earlier(

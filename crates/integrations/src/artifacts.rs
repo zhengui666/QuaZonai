@@ -13,8 +13,6 @@ use std::{
 };
 use thiserror::Error;
 
-pub const MAX_LOCAL_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
-
 #[derive(Debug, Error)]
 pub enum ArtifactError {
     #[error("artifact storage operation failed")]
@@ -60,7 +58,7 @@ impl ArtifactStore {
     /// Publish exactly one object. A reported failure never authorizes DB publication.
     /// An uncertain directory sync retains the object, never deletes a possible reference.
     pub fn put(&self, id: Id, bytes: &[u8]) -> Result<(), ArtifactError> {
-        if bytes.is_empty() || bytes.len() as u64 > MAX_LOCAL_OBJECT_BYTES {
+        if bytes.is_empty() {
             return Err(ArtifactError::Invalid);
         }
         let pending = format!(".pending-{}", Id::new());
@@ -112,7 +110,7 @@ impl ArtifactStore {
 
     pub fn read(&self, id: Id, expected_bytes: DbCounter) -> Result<Vec<u8>, ArtifactError> {
         let count = expected_bytes.get();
-        if count == 0 || count > MAX_LOCAL_OBJECT_BYTES {
+        if count == 0 {
             return Err(ArtifactError::Invalid);
         }
         let name = id.to_string();
@@ -138,7 +136,9 @@ impl ArtifactStore {
         if opened.permissions().mode() & 0o777 != 0o400 {
             return Err(ArtifactError::Invalid);
         }
-        let mut bytes = Vec::with_capacity(count as usize);
+        let capacity = usize::try_from(count).map_err(|_| ArtifactError::Invalid)?;
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(capacity).map_err(|_| ArtifactError::Invalid)?;
         Read::by_ref(&mut file)
             .take(count + 1)
             .read_to_end(&mut bytes)?;
@@ -219,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_or_unbounded_objects_before_allocation() {
+    fn rejects_empty_or_missing_objects_before_allocation() {
         let parent = tempfile::tempdir().unwrap();
         let store = ArtifactStore::open(&parent.path().join("objects")).unwrap();
         assert!(store.put(Id::new(), b"").is_err());
@@ -227,7 +227,7 @@ mod tests {
         assert!(store
             .read(
                 Id::new(),
-                DbCounter::new(MAX_LOCAL_OBJECT_BYTES + 1).unwrap()
+                DbCounter::new(64 * 1024 * 1024 + 1).unwrap()
             )
             .is_err());
     }

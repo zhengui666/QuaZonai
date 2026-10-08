@@ -1,8 +1,8 @@
 //! Arithmetic for an admission transaction, not an in-memory scheduler or queue.
 use contracts::{
+    DbCounter, DecimalValue, Id,
     budget::{BudgetV1, CostEnforcement, StopRuleV1},
     runs::ProjectState,
-    DbCounter, DecimalValue, Id,
 };
 
 use crate::DomainError;
@@ -14,7 +14,7 @@ pub struct BudgetUsage {
     pub reserved_experiments: u32,
     pub used_experiments: u32,
     pub reserved_cpu_seconds: DbCounter,
-    pub active_runs: u16,
+    pub active_runs: u64,
     pub reserved_tokens: DbCounter,
     pub used_tokens: DbCounter,
     /// Required when a cost cap exists. None is unknown, never an implicit zero.
@@ -41,10 +41,10 @@ pub struct CostEstimate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MissionUsage {
     pub mission_id: Id,
-    pub used_turns: u16,
-    pub reserved_turns: u16,
-    pub used_repair_turns: u16,
-    pub reserved_repair_turns: u16,
+    pub used_turns: u64,
+    pub reserved_turns: u64,
+    pub used_repair_turns: u64,
+    pub reserved_repair_turns: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,7 +69,7 @@ pub struct Reservation {
     pub experiments: u32,
     pub cpu_seconds: Option<DbCounter>,
     pub wall_seconds: Option<u32>,
-    pub memory_mib: u32,
+    pub memory_mib: Option<u32>,
     pub output_bytes: Option<DbCounter>,
     /// None denotes a non-model job. The trusted dispatcher determines this.
     pub model: Option<ModelReservation>,
@@ -77,16 +77,17 @@ pub struct Reservation {
 
 pub fn validate_budget(budget: &BudgetV1, stop: &StopRuleV1) -> Result<(), DomainError> {
     if budget.max_experiments == 0
-        || budget.max_parallel_runs == 0
-        || budget.max_turns_per_mission == 0
+        || budget.max_parallel_runs == Some(0)
+        || budget.max_turns_per_mission == Some(0)
         || budget.max_wall_seconds == Some(0)
         || budget.max_cpu_seconds.is_some_and(|value| value.get() == 0)
-        || budget.max_memory_mib == 0
+        || budget.max_memory_mib == Some(0)
         || budget
             .max_output_bytes
             .is_some_and(|value| value.get() == 0)
-        || budget.max_cycles_per_day == 0
-        || budget.max_repair_turns > budget.max_turns_per_mission
+        || budget.max_cycles_per_day == Some(0)
+        || budget.max_turns_per_mission.zip(budget.max_repair_turns)
+            .is_some_and(|(turns, repairs)| repairs > turns)
         || budget.max_tokens.is_some_and(|value| value.get() == 0)
     {
         return Err(DomainError::Invalid("budget"));
@@ -160,7 +161,7 @@ pub fn reserve_mission(
     usage: &BudgetUsage,
     request: &Reservation,
 ) -> Result<BudgetUsage, DomainError> {
-    reserve_job(project, budget, stop, usage, request, false, 1)
+    reserve_job(project, budget, stop, usage, request, false, Some(1))
 }
 
 /// Per-job upper bounds shared by reservation and staged-execution preflight.
@@ -168,11 +169,11 @@ pub fn reserve_mission(
 pub fn job_resource_limits(
     budget: &BudgetV1,
     wall_seconds: Option<u32>,
-    memory_mib: u32,
+    memory_mib: Option<u32>,
     output_bytes: Option<DbCounter>,
 ) -> Result<(), DomainError> {
     if crate::execution_limits::exceeds(wall_seconds, budget.max_wall_seconds)
-        || memory_mib > budget.max_memory_mib
+        || crate::execution_limits::exceeds(memory_mib, budget.max_memory_mib)
         || crate::execution_limits::exceeds(output_bytes, budget.max_output_bytes)
     {
         return Err(DomainError::BudgetExhausted("job_resource_limit"));
@@ -187,7 +188,7 @@ fn reserve_job(
     usage: &BudgetUsage,
     request: &Reservation,
     scientific_trial: bool,
-    parallel_limit: u16,
+    parallel_limit: Option<u32>,
 ) -> Result<BudgetUsage, DomainError> {
     validate_budget(budget, stop)?;
     if project != ProjectState::Active {
@@ -196,7 +197,7 @@ fn reserve_job(
     if scientific_trial != (request.experiments > 0)
         || request.cpu_seconds.is_some_and(|value| value.get() == 0)
         || request.wall_seconds == Some(0)
-        || request.memory_mib == 0
+        || request.memory_mib == Some(0)
         || request.output_bytes.is_some_and(|value| value.get() == 0)
     {
         return Err(DomainError::Invalid("reservation"));
@@ -240,7 +241,7 @@ fn reserve_job(
         .active_runs
         .checked_add(1)
         .ok_or(DomainError::BudgetExhausted("parallel_runs"))?;
-    if active_runs > parallel_limit {
+    if parallel_limit.is_some_and(|maximum| active_runs > u64::from(maximum)) {
         return Err(DomainError::BudgetExhausted("parallel_runs"));
     }
     let mut next = reserve_model_resources(budget, usage, request.model.as_ref())?;
@@ -315,18 +316,18 @@ fn reserve_model_resources(
                 .used_turns
                 .checked_add(reserved_turns)
                 .ok_or(DomainError::BudgetExhausted("mission_turns"))?;
-            if total > budget.max_turns_per_mission {
+            if budget.max_turns_per_mission.is_some_and(|limit| total > u64::from(limit)) {
                 return Err(DomainError::BudgetExhausted("mission_turns"));
             }
             let reserved_repair_turns = known
                 .reserved_repair_turns
-                .checked_add(u16::from(request.turn_kind == TurnKind::Repair))
+                .checked_add(u64::from(request.turn_kind == TurnKind::Repair))
                 .ok_or(DomainError::BudgetExhausted("repair_turns"))?;
             let repairs = known
                 .used_repair_turns
                 .checked_add(reserved_repair_turns)
                 .ok_or(DomainError::BudgetExhausted("repair_turns"))?;
-            if repairs > budget.max_repair_turns {
+            if budget.max_repair_turns.is_some_and(|limit| repairs > u64::from(limit)) {
                 return Err(DomainError::BudgetExhausted("repair_turns"));
             }
             Some(MissionUsage {

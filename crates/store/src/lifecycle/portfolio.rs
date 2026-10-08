@@ -17,6 +17,8 @@ mod automated;
 mod decisions;
 mod evaluation;
 mod handoffs;
+mod paper_execution;
+mod paper_initial;
 mod publication;
 mod rebalance;
 mod release;
@@ -194,7 +196,18 @@ where
     let weights_input = if let Some(artifact) = resolved.artifact {
         artifact
     } else {
-        let id = Id::new();
+        let id = if matches!(
+            &weights.source,
+            PortfolioWeightsSourceV1::PaperInitialCapital { .. }
+        ) {
+            weights
+                .paper_initialization
+                .as_ref()
+                .ok_or(StoreError::Integrity)?
+                .artifact_id
+        } else {
+            Id::new()
+        };
         let bytes = serde_json::to_vec(&weights).map_err(|_| StoreError::Integrity)?;
         let size = counter(bytes.len() as i64)?;
         derived = Some(NativeObjectPublication { id, bytes });
@@ -255,7 +268,7 @@ where
     let cost_bytes: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PARAMETERS' AND schema_name='qz.native_simulation_settings' AND schema_version='1' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND access_class='RESEARCH' AND origin='SYNTHETIC'")
             .bind(costs.as_uuid()).bind(project.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::Integrity)?;
     let cost_bytes = counter(cost_bytes)?;
-    if cost_bytes == DbCounter::ZERO || cost_bytes.get() > 1024 * 1024 {
+    if cost_bytes == DbCounter::ZERO {
         return Err(StoreError::Integrity);
     }
     let original = read(costs, cost_bytes).await?;
@@ -450,6 +463,13 @@ where
         publish(object).await?;
         sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'REPORT','application/json','qz.portfolio_current_weights','1','LOCAL',$3,'1',$4,'EVALUATOR_ONLY',$5,$6,'REFERENCED')")
                 .bind(id.as_uuid()).bind(project.as_uuid()).bind(id.to_string()).bind(size.get() as i64).bind(db::code(&origin)?).bind(created_by).execute(&mut *tx).await?;
+        let NativeTaskParametersV1::BuildPortfolio {
+            request: frozen, ..
+        } = &task
+        else {
+            return Err(StoreError::Integrity);
+        };
+        paper_initial::record(&mut tx, project, request, &frozen.current_weights, id).await?;
     }
     let bytes = serde_json::to_vec(&task).map_err(|_| StoreError::Integrity)?;
     let size = counter(bytes.len() as i64)?;
@@ -532,16 +552,28 @@ where
         },
     )
     .await?;
-    let (snapshot, candidate) = match request.current_weights_source {
+    let (snapshot, candidate) = match &request.current_weights_source {
         PortfolioBuildWeightsV1::ForwardSnapshot { snapshot_id } => {
             (Some(snapshot_id.as_uuid()), None)
         }
         PortfolioBuildWeightsV1::LastTarget { candidate_id } => {
             (None, Some(candidate_id.as_uuid()))
         }
+        PortfolioBuildWeightsV1::PaperInitialCapital { .. } => (None, None),
     };
-    sqlx::query("INSERT INTO app.portfolio_build_tasks(run_id,mandate_id,snapshot_id,last_target_candidate_id,request) VALUES($1,$2,$3,$4,$5)")
-            .bind(run.resource.id.as_uuid()).bind(request.mandate_id.as_uuid()).bind(snapshot).bind(candidate).bind(db::json(request)?).execute(&mut *tx).await?;
+    let NativeTaskParametersV1::BuildPortfolio {
+        request: frozen, ..
+    } = &task
+    else {
+        return Err(StoreError::Integrity);
+    };
+    let root = frozen
+        .current_weights
+        .paper_initialization
+        .as_ref()
+        .map(|root| root.artifact_id.as_uuid());
+    sqlx::query("INSERT INTO app.portfolio_build_tasks(run_id,mandate_id,snapshot_id,last_target_candidate_id,request,paper_initial_weights_artifact_id) VALUES($1,$2,$3,$4,$5,$6)")
+            .bind(run.resource.id.as_uuid()).bind(request.mandate_id.as_uuid()).bind(snapshot).bind(candidate).bind(db::json(request)?).bind(root).execute(&mut *tx).await?;
     let window = BuildWindow {
         decision_asof,
         assumptions_input: db::id(assumption.try_get("input_set_id")?)?,
@@ -594,7 +626,6 @@ where
         db::id(row.try_get("parameters_artifact_id")?)?,
         None,
         "qz.native_task",
-        8 * 1024 * 1024,
         read,
     )
     .await?;

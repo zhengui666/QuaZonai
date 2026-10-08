@@ -1,6 +1,9 @@
 //! Account envelopes -> real Axum/TCP, credentials and PostgreSQL/PGMQ.
 //! The explicitly invoked native pipeline test also runs Portfolio::build_snapshot,
-//! the converter and portable submit/read commands. No test establishes a Paper/Live connection.
+//! the converter and portable submit/read commands. The explicitly selected capital-exit
+//! bridge adds an official controlled Sandbox owner; no test connects a Live account.
+#[path = "support/capital_exit_native_pipeline.rs"]
+mod capital_exit_native_pipeline;
 #[path = "support/client.rs"]
 #[allow(dead_code)]
 mod client;
@@ -11,8 +14,8 @@ mod portable_client;
 mod support;
 
 use axum::http::StatusCode;
-use contracts::{settings::*, Id, SchemaV1};
-use serde_json::{json, Value};
+use contracts::{Id, SchemaV1, settings::*};
+use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::{fs, os::unix::fs::PermissionsExt};
 use store::authority::Actor;
@@ -66,7 +69,7 @@ async fn downstream(
                 configuration: DownstreamConfigurationV1 {
                     name: key.into(),
                     endpoint: "https://downstream.example".into(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: DownstreamEnvironments::Paper,
                     enabled: true,
                     development_http: false,
@@ -106,6 +109,9 @@ async fn downstream(
 }
 
 async fn fixture(pool: &PgPool) -> AccountFixture {
+    fixture_with_paper_exit(pool, false).await
+}
+async fn fixture_with_paper_exit(pool: &PgPool, capital_exit: bool) -> AccountFixture {
     let f = support::fixture(pool.clone()).await;
     let cookie = support::local_session(&f).await.cookie.unwrap();
     let login: uuid::Uuid = sqlx::query_scalar("SELECT id FROM app.browser_logins")
@@ -117,7 +123,27 @@ async fn fixture(pool: &PgPool) -> AccountFixture {
     };
     let project = project(&f, &cookie, "native-account-project").await;
     let (downstream, token) = downstream(&f, &actor, &cookie, project, "paper-observer").await;
-    let (origin, listener) = client::listen(&f).await;
+    let owners = if capital_exit {
+        server::paper_capital_exit::PaperCapitalExitOwners::new(vec![
+            server::paper_capital_exit::PaperCapitalExitOwnerConfiguration {
+                schema_version: SchemaV1,
+                project_id: project,
+                downstream_id: downstream,
+                native_trader_id: "QZEXIT-001".into(),
+                native_account_id: "QZEXIT-001".into(),
+                native_client_id: "QZ-EXIT-SANDBOX".into(),
+                native_version: "0.63.0".into(),
+                venue: "QZEXIT".into(),
+                collateral_currency: "USDC".into(),
+                instrument_id: "YES.QZEXIT".into(),
+                controlled_strategy_ids: vec!["EXIT-FIXTURE-001".into()],
+            },
+        ])
+        .unwrap()
+    } else {
+        server::paper_capital_exit::PaperCapitalExitOwners::default()
+    };
+    let (origin, listener) = client::listen_with_paper_owners(&f, owners).await;
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .build()
@@ -676,9 +702,10 @@ async fn actual_native_client_observations_reach_http_sql_and_original_readback(
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     assert!(!rows.is_empty());
-    assert!(rows
-        .iter()
-        .any(|row| !row["observation"]["snapshot"].is_null()));
+    assert!(
+        rows.iter()
+            .any(|row| !row["observation"]["snapshot"].is_null())
+    );
     let mut receipts = Vec::new();
     let mut last_snapshot = None;
     for original in &rows {
@@ -829,10 +856,12 @@ async fn native_portfolio_submit_preserves_values_and_original_receipts(pool: Pg
         assert_eq!(receipt["resource"]["observation"], *envelope);
         assert_eq!(receipt["resource"]["downstream_id"], json!(a.downstream));
         assert_eq!(receipt["resource"]["gap_before"], false);
-        assert!(chrono::DateTime::parse_from_rfc3339(
-            receipt["resource"]["received_at"].as_str().unwrap()
-        )
-        .is_ok());
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(
+                receipt["resource"]["received_at"].as_str().unwrap()
+            )
+            .is_ok()
+        );
     }
     let first = &receipts[0]["resource"];
     let latest = &receipts[1]["resource"];
@@ -947,3 +976,15 @@ async fn native_portfolio_submit_preserves_values_and_original_receipts(pool: Pg
     assert_eq!(fs::read(&native_path).unwrap(), exported.stdout);
     eprintln!("NATIVE_ACCOUNT_SUBMIT_ACCEPTANCE_OK native_records=2 receipts=2 replayed=2");
 }
+
+#[path = "support/paper_capital_exit_registration.rs"]
+mod paper_capital_exit_registration;
+
+#[path = "support/paper_service_acceptance.rs"]
+mod paper_service_acceptance;
+
+#[path = "support/capital_exit_bridge_diagnostics.rs"]
+mod capital_exit_bridge_diagnostics;
+
+#[path = "support/capital_exit_body_limit.rs"]
+mod capital_exit_body_limit;

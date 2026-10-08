@@ -1,22 +1,22 @@
 //! Transport-only intake and owner reads for downstream native account observations.
 use crate::{
+    AppState,
     access::Authority,
     auth::json,
     error::{ApiError, Problem},
-    AppState,
 };
 use axum::{
-    extract::{
-        rejection::{JsonRejection, PathRejection, QueryRejection},
-        Path, Query, State,
-    },
-    http::StatusCode,
     Json,
+    extract::{
+        Path, Query, State,
+        rejection::{JsonRejection, PathRejection, QueryRejection},
+    },
+    http::{HeaderMap, HeaderValue, StatusCode},
 };
 use contracts::{
+    Id,
     account_observation::*,
     control::{ListQuery, Page},
-    Id,
 };
 
 #[utoipa::path(post,path="/api/v2/forward/account-observations",operation_id="submit_account_observation",tag="Forward",request_body=AccountObservationSubmitV1,responses((status=201,body=AccountObservationReceiptV1),(status=401,body=Problem),(status=403,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
@@ -34,21 +34,33 @@ pub async fn submit(
     Ok((StatusCode::CREATED, Json(result)))
 }
 
-#[utoipa::path(post,path="/api/v2/forward/client-account-observations",operation_id="submit_client_account_observation",tag="Forward",request_body=AccountObservationSubmitV2,responses((status=201,body=AccountObservationReceiptV2),(status=401,body=Problem),(status=403,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
+#[utoipa::path(post,path="/api/v2/forward/client-account-observations",operation_id="submit_client_account_observation",tag="Forward",request_body=AccountObservationSubmitV2,responses((status=201,body=AccountObservationReceiptV2,headers(("x-qz-capital-exit-source"=String,description="Present only after deployment-opted-in Paper owner registration succeeds for this exact original source. Absent means no capital-exit registration acknowledgement; it is not funds readiness."))),(status=401,body=Problem),(status=403,body=Problem),(status=409,body=Problem),(status=422,body=Problem)))]
 pub async fn submit_client_bound(
     State(state): State<AppState>,
     Authority(actor): Authority,
     body: Result<Json<AccountObservationSubmitV2>, JsonRejection>,
-) -> Result<(StatusCode, Json<AccountObservationReceiptV2>), ApiError> {
+) -> Result<(StatusCode, HeaderMap, Json<AccountObservationReceiptV2>), ApiError> {
     let request = json(body)?;
     let store = state.store.clone();
-    let result = crate::settings::command(&state, async move {
-        store
+    let owners = state.paper_capital_exit_owners.clone();
+    let (result, registered_source) = crate::settings::command(&state, async move {
+        let receipt = store
             .submit_client_account_observation(&actor, &request)
-            .await
+            .await?;
+        let registered = owners
+            .register_observed_source(&store, &actor, &receipt)
+            .await?;
+        Ok((receipt, registered))
     })
     .await?;
-    Ok((StatusCode::CREATED, Json(result)))
+    let mut headers = HeaderMap::new();
+    if let Some(source) = registered_source {
+        headers.insert(
+            crate::paper_capital_exit::REGISTERED_SOURCE_HEADER,
+            HeaderValue::from_str(&source.to_string()).map_err(|_| ApiError::internal())?,
+        );
+    }
+    Ok((StatusCode::CREATED, headers, Json(result)))
 }
 
 #[utoipa::path(get,path="/api/v2/projects/{project_id}/account-sources/{source_id}/client-binding",operation_id="get_account_client_binding",tag="Forward",params(("project_id"=Id,Path),("source_id"=Id,Path)),responses((status=200,body=AccountClientBindingV2),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]

@@ -107,7 +107,18 @@ class InstalledSourceTests(unittest.TestCase):
         self.assertIn('io.quazonai.source.owner=' + str(os.getuid()), command)
         self.assertRegex(command[command.index('--name') + 1], r'^quazonai-source-[0-9a-f]{32}$')
 
+    def installed_shell_bundle(self):
+        self.config.update(self.release, home=str(self.root), path=os.environ['PATH'],
+                           password='synthetic-not-a-credential', port=18081, database_port=15432)
+        bundle = Path(self.config['bundle'])
+        bundle.mkdir()
+        for name in ('manage.sh', 'codex.sh', 'json.awk'):
+            shutil.copyfile(Path(smoke.__file__).parent / name, bundle / name)
+        (bundle / 'release.json').write_text(json.dumps(self.release))
+        (self.installation / 'installation.json').write_text(json.dumps(self.config))
+
     def test_packaged_history_smoke_is_offline_owned_and_uses_literal_mounts(self):
+        self.installed_shell_bundle()
         observed = {}
         def execute(config, root, operation, command_for):
             command = command_for('a' * 32)
@@ -277,11 +288,7 @@ class InstalledSourceTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
     def test_real_installed_preflight_rejects_reuse_without_starting_docker(self):
-        bundle = Path(self.config['bundle'])
-        bundle.mkdir()
-        shutil.copyfile(manage.__file__, bundle / 'manage.py')
-        (bundle / 'release.json').write_text(json.dumps(self.release))
-        (self.installation / 'installation.json').write_text(json.dumps(self.config))
+        self.installed_shell_bundle()
         reused = self.output / 'existing'
         reused.mkdir()
         original = reused / 'catalog-metadata.json'
@@ -298,25 +305,39 @@ class InstalledSourceTests(unittest.TestCase):
 
 
 class LegacySourceBundleTests(unittest.TestCase):
-    def test_current_archive_retains_old_updater_exact_member_contract(self):
-        # Frozen from the installed schema-2 updater, not computed from new code.
+    def test_shell_bundle_requires_target_bootstrap_and_old_updater_preserves_state(self):
+        # Frozen from the installed schema-2 updater, not inferred from new code.
         old_members = {'manage.py', 'deploy.sh', 'update.sh', 'compose.yaml', 'release.json', 'README.md',
                        'codex.py', 'codex-update.sh', 'codex-login.sh', 'runtime.sh', 'codex.apparmor', '.env.example'}
+        new_members = (old_members - {'manage.py', 'codex.py'}) | {'manage.sh', 'codex.sh', 'json.awk'}
         selected = metadata()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            installation = root / 'existing installation'
+            installation.mkdir()
+            retained = {'installation.json': b'{"schema_version":1,"project":"original"}',
+                        '.env': b'CODEX_VERSION=0.157.0\n', 'master.key': b'original private key',
+                        'pending.json': b'{"operation":"update","phase":"starting"}'}
+            for name, data in retained.items():
+                (installation / name).write_bytes(data)
             release.bundle(selected['version'], selected['revision'], selected['image'], root,
                            runtime_image=selected['runtime_image'], codex_version=selected['codex_version'],
                            codex_image=selected['codex_image'])
             data = (root / 'quazonai-deploy.tar.gz').read_bytes()
             with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
                 members = archive.getmembers()
-                self.assertEqual(len(members), len(old_members))
-                self.assertEqual({item.name for item in members}, old_members)
-                self.assertTrue(all(item.isfile() and item.size <= 512_000 for item in members))
-                manifest = json.load(archive.extractfile('release.json'))
-                self.assertEqual(manifest, selected)
-                self.assertEqual(manifest['schema_version'], 2)
+                self.assertEqual(len(members), len(new_members))
+                self.assertEqual({item.name for item in members}, new_members)
+                self.assertTrue(all(item.isfile() for item in members))
+                self.assertEqual(json.load(archive.extractfile('release.json')), selected)
+            # Exercise the old exact-member rejection before extraction or manager
+            # invocation. The new one-line bootstrap dispatch is covered separately
+            # by install.test.mjs, including schema-1 and pending-update cases.
+            with patch.object(manage, 'BUNDLE_FILES', old_members), self.assertRaisesRegex(ValueError, 'Unexpected deployment bundle files'):
+                manage.unpack(data, installation)
+            self.assertEqual({path.name for path in installation.iterdir()}, set(retained))
+            for name, content in retained.items():
+                self.assertEqual((installation / name).read_bytes(), content)
 
 
 class SourceSmokeRecoveryTests(unittest.TestCase):
@@ -339,7 +360,7 @@ class SourceSmokeRecoveryTests(unittest.TestCase):
 
     def test_only_verified_owned_container_is_stopped_and_absence_confirmed(self):
         with patch.object(smoke, 'source_container_ids', side_effect=[[self.container], [], []]), \
-                patch.object(manage, 'run', return_value=json.dumps(self.inspected)), \
+                patch.object(smoke.manage, 'run', return_value=json.dumps(self.inspected)), \
                 patch.object(smoke.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as stop:
             self.assertTrue(smoke.reconcile_source_invocation(self.config, self.invocation, uncertain=True))
         self.assertEqual(stop.call_args.args[0], ['docker', 'stop', '--time', '10', self.container])
@@ -347,13 +368,13 @@ class SourceSmokeRecoveryTests(unittest.TestCase):
     def test_wrong_owner_or_unconfirmed_stop_never_deletes_a_container(self):
         self.inspected['Config']['Labels']['io.quazonai.source.owner'] = 'someone-else'
         with patch.object(smoke, 'source_container_ids', return_value=[self.container]), \
-                patch.object(manage, 'run', return_value=json.dumps(self.inspected)), \
+                patch.object(smoke.manage, 'run', return_value=json.dumps(self.inspected)), \
                 patch.object(smoke.subprocess, 'run') as stop:
             self.assertFalse(smoke.reconcile_source_invocation(self.config, self.invocation, uncertain=True))
         stop.assert_not_called()
         self.inspected['Config']['Labels']['io.quazonai.source.owner'] = str(self.config['uid'])
         with patch.object(smoke, 'source_container_ids', return_value=[self.container]), \
-                patch.object(manage, 'run', return_value=json.dumps(self.inspected)), \
+                patch.object(smoke.manage, 'run', return_value=json.dumps(self.inspected)), \
                 patch.object(smoke.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)) as stop:
             self.assertFalse(smoke.reconcile_source_invocation(self.config, self.invocation, uncertain=True))
         self.assertEqual(stop.call_count, 1)

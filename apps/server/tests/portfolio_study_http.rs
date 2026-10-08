@@ -439,7 +439,7 @@ async fn claim_http(
         assert!(headers[axum::http::header::AUTHORIZATION]==format!("Bearer {PROBE_SECRET}"),"probe fixture bearer mismatch");
         counted.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
         let market=market.clone();
-        async move {axum::Json(serde_json::json!({"schema_version":1,"delivery_mode":"TARGET_ONLY","accepted_package_versions":["1"],"environments":["PAPER"],"market_capability_versions":[market],"accepting_targets":true,"checked_at":chrono::Utc::now()}))}
+        async move {axum::Json(serde_json::json!({"schema_version":1,"delivery_mode":"TARGET_ONLY","accepted_package_versions":["2"],"environments":["PAPER"],"market_capability_versions":[market],"accepting_targets":true,"checked_at":chrono::Utc::now()}))}
     }));
     let probe_server =
         tokio::spawn(async move { axum::serve(probe_socket, probe_app).await.unwrap() });
@@ -453,7 +453,7 @@ async fn claim_http(
                 configuration: DownstreamConfigurationV1 {
                     name: "Claim HTTP protocol fixture".into(),
                     endpoint: probe_endpoint.clone(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: DownstreamEnvironments::Paper,
                     enabled: true,
                     development_http: true,
@@ -486,7 +486,7 @@ async fn claim_http(
                 capabilities: DownstreamCapabilitiesV1 {
                     schema_version: SchemaV1,
                     delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: vec![ForwardEnvironmentV1::Paper],
                     market_capability_versions: vec![release.market_capability_version.clone()],
                     accepting_targets: true,
@@ -841,7 +841,7 @@ async fn claim_http(
         assert!(page.items.iter().any(|item| item.id == approval.id));
     }
     let id = offer.id.to_string();
-    let body = serde_json::json!({"schema_version":1,"external_claim_id":"http-original-claim","package_schema_version":"1"});
+    let body = serde_json::json!({"schema_version":1,"external_claim_id":"http-original-claim","package_schema_version":"2"});
     for replayed in [false, true] {
         let response = client::invoke(
             &origin,
@@ -870,7 +870,7 @@ async fn claim_http(
         assert_eq!(result.resource.handoff.state, HandoffStateV1::Claimed);
         assert_eq!(result.resource.package.release_id, release.id);
     }
-    let changed = serde_json::json!({"schema_version":1,"external_claim_id":"second-http-claim","package_schema_version":"1"});
+    let changed = serde_json::json!({"schema_version":1,"external_claim_id":"second-http-claim","package_schema_version":"2"});
     let denied = client::invoke(
         &origin,
         &credential,
@@ -1031,4 +1031,194 @@ async fn healthy_paper_live_scenario(pool: PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn frozen_policy_worker_rebalance_advances_original_study_release_and_paper(pool: PgPool) {
     Box::pin(automatic_rebalance::scenario(pool)).await;
+}
+
+/// The original controlled qualification chain reaches the real authenticated
+/// HTTP consume endpoint. No host, order, deposit or market execution is run.
+#[sqlx::test(migrations = "../../migrations")]
+async fn paper_initial_execution_http_authenticates_original_claim_and_replays_only_state(
+    pool: PgPool,
+) {
+    let http_pool = pool.clone();
+    Box::pin(
+        qualified_portfolio::paper_initial_checks::exercise_with_consumer(
+            pool,
+            move |store, machine, claim, request| async move {
+                use axum::{
+                    body::{to_bytes, Body},
+                    http::{Request, StatusCode},
+                };
+                use contracts::{control::CommandResult, delivery::PaperInitialExecutionViewV1};
+                use integrations::authentication::{
+                    capability_verifier, format_machine_token, random_capability,
+                };
+                use tower::ServiceExt;
+                let fixture = support::fixture(http_pool.clone()).await;
+                let store::authority::Actor::Machine {
+                    credential_id,
+                    verifier_ref,
+                    ..
+                } = machine
+                else {
+                    panic!("downstream")
+                };
+                let public: String = sqlx::query_scalar(
+                    "SELECT public_token_id FROM app.machine_credentials WHERE id=$1",
+                )
+                .bind(credential_id.as_uuid())
+                .fetch_one(&http_pool)
+                .await
+                .unwrap();
+                let public: Id = public.try_into().unwrap();
+                // The fixture issued the original credential through Store; publish
+                // its verifier only into this isolated test's normal native vault.
+                let vault = integrations::secrets::SecretVault::open(
+                    &fixture._state.path().join("secrets"),
+                    &fixture._state.path().join("master.key"),
+                )
+                .unwrap();
+                let secret = random_capability();
+                vault
+                    .put_at(
+                        verifier_ref,
+                        "MACHINE_VERIFIER",
+                        capability_verifier(&secret).unwrap().as_bytes(),
+                    )
+                    .unwrap();
+                let token = format_machine_token(public, &secret).unwrap();
+                let path = format!(
+                    "/api/v2/handoffs/{}/paper-initial-execution/consume",
+                    claim.handoff.id
+                );
+                let key = request.owner_instance_id.to_string();
+                let send = |authorization: Option<String>,
+                            origin: Option<&'static str>,
+                            key: Option<String>,
+                            body: serde_json::Value| {
+                    let app = fixture.app.clone();
+                    let path = path.clone();
+                    async move {
+                        let mut builder = Request::builder()
+                            .method("POST")
+                            .uri(path)
+                            .header("host", "localhost")
+                            .header("content-type", "application/json");
+                        if let Some(value) = origin {
+                            builder = builder.header("origin", value);
+                        }
+                        if let Some(value) = authorization {
+                            builder = builder.header("authorization", format!("Bearer {value}"));
+                        }
+                        if let Some(value) = key {
+                            builder = builder.header("idempotency-key", value);
+                        }
+                        let response = app
+                            .oneshot(
+                                builder
+                                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                                    .unwrap(),
+                            )
+                            .await
+                            .unwrap();
+                        let status = response.status();
+                        let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
+                            .await
+                            .unwrap();
+                        (
+                            status,
+                            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+                        )
+                    }
+                };
+                let body = serde_json::to_value(&request).unwrap();
+                // Without a bearer, a mutation must pass the browser Origin
+                // boundary before the authority extractor can reject the session.
+                let (status, problem) = send(None, None, Some(key.clone()), body.clone()).await;
+                assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+                assert_eq!(problem["code"], "INVALID_ORIGIN", "{problem}");
+                let (status, problem) = send(
+                    None,
+                    Some("https://localhost"),
+                    Some(key.clone()),
+                    body.clone(),
+                )
+                .await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "{problem}");
+                assert_eq!(problem["code"], "AUTH_REQUIRED", "{problem}");
+                let (status, problem) = send(
+                    Some("invalid-machine-token".into()),
+                    None,
+                    Some(key.clone()),
+                    body.clone(),
+                )
+                .await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "{problem}");
+                assert_eq!(problem["code"], "AUTH_REQUIRED", "{problem}");
+                // A valid original bearer with a different downstream binding
+                // reaches authorization and must remain forbidden, not unauthenticated.
+                let mut wrong_scope = body.clone();
+                wrong_scope["paper_initialization"]["downstream_id"] =
+                    serde_json::json!(Id::new());
+                let (status, problem) = send(
+                    Some(token.clone()),
+                    None,
+                    Some(key.clone()),
+                    wrong_scope,
+                )
+                .await;
+                assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+                assert_eq!(problem["code"], "FORBIDDEN", "{problem}");
+                assert_eq!(
+                    send(Some(token.clone()), None, None, body.clone()).await.0,
+                    StatusCode::UNPROCESSABLE_ENTITY
+                );
+                let mut extra = body.clone();
+                extra["targets"] = serde_json::json!([]);
+                assert_eq!(
+                    send(Some(token.clone()), None, Some(key.clone()), extra).await.0,
+                    StatusCode::UNPROCESSABLE_ENTITY
+                );
+                let (status, first) =
+                    send(Some(token.clone()), None, Some(key.clone()), body.clone()).await;
+                assert_eq!(status, StatusCode::OK, "{first}");
+                let first: CommandResult<PaperInitialExecutionViewV1> =
+                    serde_json::from_value(first).unwrap();
+                assert!(!first.replayed);
+                assert_eq!(
+                    serde_json::to_value(&first.resource.claim).unwrap(),
+                    serde_json::to_value(&claim).unwrap()
+                );
+                let (status, replay) = send(Some(token.clone()), None, Some(key), body.clone()).await;
+                assert_eq!(status, StatusCode::OK);
+                assert_eq!(replay["replayed"], true);
+                let mut restarted = body;
+                restarted["owner_instance_id"] = serde_json::json!(Id::new());
+                let (status, _) = send(
+                    Some(token),
+                    None,
+                    Some("different-process-journal".into()),
+                    restarted,
+                )
+                .await;
+                assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+                assert_eq!(
+                    store
+                        .handoff(
+                            &store::authority::Actor::Machine {
+                                credential_id,
+                                verifier_ref,
+                                operator_grant: None
+                            },
+                            claim.handoff.id
+                        )
+                        .await
+                        .unwrap()
+                        .state,
+                    contracts::delivery::HandoffStateV1::Claimed
+                );
+                first
+            },
+        ),
+    )
+    .await;
 }

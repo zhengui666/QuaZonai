@@ -1,8 +1,8 @@
 //! Exact target-history wire format, shared by the native writer and artifact adoption.
 //! No optimizer, simulated account, qualification or filesystem policy lives here.
 use crate::{
-    science::{NativePortfolioStudyRequestV1, NativePortfolioStudyResultV1},
     DecimalValue,
+    science::{NativePortfolioStudyRequestV1, NativePortfolioStudyResultV1},
 };
 use arrow_array::{ArrayRef, Decimal128Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use arrow_ipc::{reader::FileReader, writer::FileWriter};
@@ -15,7 +15,6 @@ use std::{
 
 pub const NAME: &str = "qz.portfolio_history";
 pub const MEDIA_TYPE: &str = "application/vnd.apache.arrow.file";
-pub const MAX_ROWS: usize = 256 * 256;
 
 fn invalid() -> ArrowError {
     ArrowError::InvalidArgumentError("PORTFOLIO_HISTORY_CONTRACT_INVALID".into())
@@ -70,7 +69,7 @@ pub fn batch(
     request: &NativePortfolioStudyRequestV1,
     result: &NativePortfolioStudyResultV1,
 ) -> Result<RecordBatch, ArrowError> {
-    if !(1..=256).contains(&request.assets.len()) || !(1..=256).contains(&result.frames.len()) {
+    if request.assets.len() < 1 || result.frames.len() < 1 {
         return Err(invalid());
     }
     let mut cutoffs = Vec::new();
@@ -148,7 +147,7 @@ pub fn batch(
 }
 
 pub fn write(writer: impl Write, batch: &RecordBatch) -> Result<(), ArrowError> {
-    if batch.schema() != schema() || !(1..=MAX_ROWS).contains(&batch.num_rows()) {
+    if batch.schema() != schema() || batch.num_rows() < 1 {
         return Err(invalid());
     }
     let mut writer = FileWriter::try_new(writer, &batch.schema())?;
@@ -157,7 +156,7 @@ pub fn write(writer: impl Write, batch: &RecordBatch) -> Result<(), ArrowError> 
 }
 
 pub fn read(bytes: &[u8]) -> Result<RecordBatch, ArrowError> {
-    if bytes.is_empty() || bytes.len() as u64 > crate::runtime_jobs::MAX_JOB_OUTPUT_BYTES {
+    if bytes.is_empty() {
         return Err(invalid());
     }
     let mut reader = FileReader::try_new(Cursor::new(bytes), None)?;
@@ -165,7 +164,7 @@ pub fn read(bytes: &[u8]) -> Result<RecordBatch, ArrowError> {
         return Err(invalid());
     }
     let batch = reader.next().transpose()?.ok_or_else(invalid)?;
-    if !(1..=MAX_ROWS).contains(&batch.num_rows()) || reader.next().is_some() {
+    if batch.num_rows() < 1 || reader.next().is_some() {
         return Err(invalid());
     }
     Ok(batch)

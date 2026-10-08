@@ -153,7 +153,7 @@ pub(super) async fn check(
         };
         store.complete_downstream_probe(*ticket, DownstreamProbeOutcomeV1::Available { capabilities: DownstreamCapabilitiesV1 {
             schema_version: SchemaV1, delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
-            accepted_package_versions: vec![PackageSchemaVersion::V1],
+            accepted_package_versions: vec![PackageSchemaVersion::V2],
             environments: vec![ForwardEnvironmentV1::Paper, ForwardEnvironmentV1::Live],
             market_capability_versions: vec![release.market_capability_version.clone()],
             accepting_targets: true, checked_at: chrono::Utc::now(),
@@ -271,7 +271,7 @@ pub(super) async fn check(
         let claim = HandoffClaimV1 {
             schema_version: SchemaV1,
             external_claim_id: key.clone(),
-            package_schema_version: PackageSchemaVersion::V1,
+            package_schema_version: PackageSchemaVersion::V2,
         };
         if changed {
             for (stream, mean, expected_reason) in [
@@ -399,7 +399,7 @@ async fn quota(
                 configuration: DownstreamConfigurationV1 {
                     name: "Same Candidate daily quota".into(),
                     endpoint: "https://quota.example".into(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: DownstreamEnvironments::Both,
                     enabled: true,
                     development_http: false,
@@ -432,7 +432,7 @@ async fn quota(
                 capabilities: DownstreamCapabilitiesV1 {
                     schema_version: SchemaV1,
                     delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: vec![ForwardEnvironmentV1::Paper, ForwardEnvironmentV1::Live],
                     market_capability_versions: vec![release.market_capability_version.clone()],
                     accepting_targets: true,

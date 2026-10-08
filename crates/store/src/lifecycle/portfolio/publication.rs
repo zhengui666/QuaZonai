@@ -49,7 +49,6 @@ where
         parameter,
         None,
         "qz.native_task",
-        8 * 1024 * 1024,
         &mut read,
     )
     .await?;
@@ -96,7 +95,6 @@ where
             manifest_id.ok_or(StoreError::Integrity)?,
             Some((run.id, attempt)),
             "qz.job_result",
-            domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES,
             &mut read,
         )
         .await?;
@@ -147,7 +145,6 @@ where
             id,
             Some((run.id, attempt)),
             "qz.native_portfolio",
-            contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
             &mut read,
         )
         .await?;
@@ -239,12 +236,13 @@ where
             other => other,
         })?;
     }
-    let source = match frozen.current_weights.source {
+    let source = match &frozen.current_weights.source {
         PortfolioWeightsSourceV1::ForwardSnapshot { .. } => "FORWARD_SNAPSHOT",
         PortfolioWeightsSourceV1::LastTarget { .. } => "LAST_TARGET",
+        PortfolioWeightsSourceV1::PaperInitialCapital { .. } => "PAPER_INITIAL_CAPITAL",
     };
-    sqlx::query("INSERT INTO app.portfolio_candidates(id,project_id,mandate_id,input_set_id,decision_asof,run_id,solver_status,evidence_status,reason_code,forecast_artifact_id,diagnostics_artifact_id,target_artifact_id,cash_weight,current_weights_source,current_weights_artifact_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$15,$14)")
-        .bind(candidate.as_uuid()).bind(run.project_id.as_uuid()).bind(request.mandate_id.as_uuid()).bind(run.input_set_id.as_uuid()).bind(asof).bind(run.id.as_uuid()).bind(db::code(&solver)?).bind(db::code(&status)?).bind(reason).bind(native_report.map(Id::as_uuid)).bind(diagnostics.as_uuid()).bind(target_artifact.map(Id::as_uuid)).bind(cash.as_ref().map(|v|v.as_decimal())).bind(frozen.current_weights_artifact_id.as_uuid()).bind(source).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO app.portfolio_candidates(id,project_id,mandate_id,input_set_id,decision_asof,run_id,solver_status,evidence_status,reason_code,forecast_artifact_id,diagnostics_artifact_id,target_artifact_id,cash_weight,current_weights_source,current_weights_artifact_id,paper_initial_weights_artifact_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$15,$14,$16)")
+        .bind(candidate.as_uuid()).bind(run.project_id.as_uuid()).bind(request.mandate_id.as_uuid()).bind(run.input_set_id.as_uuid()).bind(asof).bind(run.id.as_uuid()).bind(db::code(&solver)?).bind(db::code(&status)?).bind(reason).bind(native_report.map(Id::as_uuid)).bind(diagnostics.as_uuid()).bind(target_artifact.map(Id::as_uuid)).bind(cash.as_ref().map(|v|v.as_decimal())).bind(frozen.current_weights_artifact_id.as_uuid()).bind(source).bind(frozen.current_weights.paper_initialization.as_ref().map(|root|root.artifact_id.as_uuid())).execute(&mut *tx).await?;
     for (chosen, member) in request.members.iter().zip(&frozen.members) {
         let calibration: Option<uuid::Uuid> = sqlx::query_scalar(
             "SELECT calibration_id FROM app.alpha_versions WHERE id=$1 AND project_id=$2",
@@ -399,7 +397,6 @@ where
         project,
         frozen.mandate.constraints.transaction_costs_ref,
         "qz.native_simulation_settings",
-        1024 * 1024,
         read,
     )
     .await?;

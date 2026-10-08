@@ -4,10 +4,10 @@ mod exit_observations;
 #[path = "../../../tests/support/runtime.rs"]
 mod protocol;
 use contracts::{
-    research::ArtifactInputRole, runs::RunKind, runtime::RuntimeCapabilitiesV1, runtime_jobs::*,
-    DbCounter, Id, Revision, SchemaV1,
+    DbCounter, Id, Revision, SchemaV1, research::ArtifactInputRole, runs::RunKind,
+    runtime::RuntimeCapabilitiesV1, runtime_jobs::*,
 };
-use runtime::{journal::Journal, now, Failure};
+use runtime::{Failure, journal::Journal, now};
 use std::collections::BTreeMap;
 
 fn count(value: u64) -> DbCounter {
@@ -50,9 +50,9 @@ async fn fixture() -> (tempfile::TempDir, Journal, JobSpecV1, RuntimeCapabilitie
         }],
         parameters_artifact_id: parameter,
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: Some(count(1)),
-            memory_mib: 64,
+            memory_mib: Some(64),
             wall_seconds: Some(30),
             output_bytes: Some(count(4096)),
         },
@@ -219,7 +219,7 @@ async fn concurrent_submissions_allocate_one_identity_and_conflicting_specs_neve
     assert_ne!(a.1, b.1);
     assert_eq!(journal.pending(10).await.unwrap().len(), 1);
     let mut conflict = spec.clone();
-    conflict.limits.memory_mib += 1;
+    conflict.limits.memory_mib = conflict.limits.memory_mib.map(|memory| memory + 1);
     assert!(matches!(
         journal.submit(&conflict, &capability).await,
         Err(Failure::Conflict)
@@ -598,4 +598,100 @@ async fn absent_execution_caps_survive_native_journal_reopen_and_remain_cancella
         .cancel_requested_us
         .is_some());
     reopened.close().await;
+}
+
+#[tokio::test]
+async fn absent_pending_ceiling_survives_reopen_and_numeric_choices_above_4096() {
+    let (directory, journal, spec, capability) = fixture().await;
+    journal.close().await;
+    for maximum in [None, Some(4097)] {
+        let reopened = Journal::open(
+            &directory.path().join("journal.sqlite"),
+            64 * 1024 * 1024,
+            maximum,
+        )
+        .await
+        .unwrap();
+        for _ in 0..5 {
+            let mut next = spec.clone();
+            next.run_id = Id::new();
+            next.external_job_id = domain::runtime_jobs::external_id(next.run_id, 1).unwrap();
+            reopened.submit(&next, &capability).await.unwrap();
+        }
+        assert!(reopened.pending(4097).await.unwrap().len() >= 5);
+        assert!(reopened.scheduling().await.unwrap().len() >= 5);
+        reopened.close().await;
+    }
+}
+
+#[tokio::test]
+async fn optional_quotas_replay_original_spec_and_launch_without_refreshing_capability() {
+    for optional in [false, true] {
+        let (directory, journal, mut spec, capability) = fixture().await;
+        spec.limits.cpu_seconds = None;
+        if optional {
+            spec.limits.cpu = None;
+            spec.limits.memory_mib = None;
+        }
+        let frozen_spec = serde_json::to_string(&spec).unwrap();
+        let image = runtime::engine::NativeImage {
+            id: format!("sha256:{}", "a".repeat(64)),
+            versions: if optional {
+                BTreeMap::from([
+                    ("optional-cpu-rate".into(), "1".into()),
+                    ("optional-memory-limit".into(), "1".into()),
+                ])
+            } else {
+                BTreeMap::new()
+            },
+        };
+        let launch = runtime::engine::NativeEngine::launch(
+            journal.instance_id,
+            &spec,
+            &image,
+            vec![],
+            false,
+        )
+        .unwrap();
+        let frozen_launch = serde_json::to_string(&launch).unwrap();
+        let (original, replayed) = journal.submit(&spec, &capability).await.unwrap();
+        assert!(!replayed);
+        journal
+            .prepare_launch(&spec.external_job_id, &launch)
+            .await
+            .unwrap();
+        journal.close().await;
+        let journal = Journal::open(
+            &directory.path().join("journal.sqlite"),
+            64 * 1024 * 1024,
+            4,
+        )
+        .await
+        .unwrap();
+        let mut changed_capability = capability;
+        changed_capability.checked_at -= chrono::Duration::days(365);
+        changed_capability.engine_versions.clear();
+        let (replayed, is_replay) = journal.submit(&spec, &changed_capability).await.unwrap();
+        assert!(is_replay);
+        assert_eq!(original, replayed);
+        let persisted = journal.get(&spec.external_job_id).await.unwrap();
+        assert_eq!(persisted.spec_json.as_deref(), Some(frozen_spec.as_str()));
+        assert_eq!(
+            persisted.launch_json.as_deref(),
+            Some(frozen_launch.as_str())
+        );
+        for axis in 0..2 {
+            let mut changed = spec.clone();
+            if axis == 0 {
+                changed.limits.cpu = if optional { Some(1) } else { None };
+            } else {
+                changed.limits.memory_mib = if optional { Some(64) } else { None };
+            }
+            assert!(matches!(
+                journal.submit(&changed, &changed_capability).await,
+                Err(Failure::Conflict)
+            ));
+        }
+        journal.close().await;
+    }
 }

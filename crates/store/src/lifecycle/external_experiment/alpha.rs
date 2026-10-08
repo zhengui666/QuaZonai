@@ -45,7 +45,7 @@ where
         .bind(id.as_uuid()).bind(project.as_uuid()).bind(kind).bind(schema)
         .fetch_optional(&mut **tx).await?.ok_or(StoreError::Integrity)?;
     let size = counter(size)?;
-    if size == DbCounter::ZERO || size.get() > contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES {
+    if size == DbCounter::ZERO {
         return Err(StoreError::Integrity);
     }
     let bytes = read(id, size).await?;

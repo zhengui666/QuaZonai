@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
+import sys
 import stat
 import subprocess
 import tarfile
@@ -25,6 +27,29 @@ def metadata(tag="v1.2.3"):
             "codex_version": "0.157.0",
             "codex_image": "ghcr.io/zhengui666/quazonai-codex@sha256:" + "d" * 64,
             "database_image": manage.DATABASE_IMAGE}
+
+
+class ColdProducerTests(unittest.TestCase):
+    def test_release_bundle_imports_without_legacy_python_or_checkout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ('release.py', 'release_support.py'):
+                shutil.copyfile(manage.BUNDLE / name, root / name)
+            for name in manage.BUNDLE_FILES - {'release.json'}:
+                (root / name).write_text('@QUAZONAI_VERSION@\n' if name == 'README.md' else 'fixture\n')
+            selected = metadata()
+            program = """import json, pathlib, release, sys, tarfile
+assert 'manage' not in sys.modules and 'codex' not in sys.modules
+m=json.loads(sys.argv[1])
+r=release.bundle(m['version'],m['revision'],m['image'],pathlib.Path('assets'),runtime_image=m['runtime_image'],codex_version=m['codex_version'],codex_image=m['codex_image'],published=True)
+assert r==m
+with tarfile.open('assets/quazonai-deploy.tar.gz') as archive:
+    assert set(archive.getnames())==release.BUNDLE_FILES
+    assert not {'manage.py','codex.py','release_support.py'} & set(archive.getnames())
+    assert json.load(archive.extractfile('release.json'))==m
+"""
+            env = {key: value for key, value in os.environ.items() if key != 'PYTHONPATH'}
+            subprocess.run([sys.executable, '-B', '-c', program, json.dumps(selected)], cwd=root, env=env, check=True)
 
 
 class ManifestTests(unittest.TestCase):
@@ -928,13 +953,13 @@ class PrebuiltImageTests(unittest.TestCase):
         self.assertNotIn('Codex.Dockerfile', manage.BUNDLE_FILES)
         self.assertNotIn('release.py', manage.BUNDLE_FILES)
         self.assertIn('runtime.sh', manage.BUNDLE_FILES)
-        for name in ('manage.py', 'codex.py'):
-            tree = ast.parse((manage.BUNDLE / name).read_text())
-            # Inspect executed argv literals, not prose mentioning failures.
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.List, ast.Tuple)):
-                    literals = [item.value for item in node.elts if isinstance(item, ast.Constant)]
-                    self.assertFalse('docker' in literals and any(word in literals for word in ('build', 'buildx', 'builder')))
+        self.assertNotIn('manage.py', manage.BUNDLE_FILES)
+        self.assertNotIn('codex.py', manage.BUNDLE_FILES)
+        self.assertTrue({'manage.sh', 'codex.sh', 'json.awk'}.issubset(manage.BUNDLE_FILES))
+        for name in ('manage.sh', 'codex.sh'):
+            source = (manage.BUNDLE / name).read_text()
+            subprocess.run(['bash', '-n'], input=source, text=True, check=True)
+            self.assertNotRegex(source, r'\bdocker\s+(?:build|buildx|builder)\b')
 
     def test_runtime_launch_uses_image_extracted_binary_and_exact_digest(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -130,7 +130,10 @@ fn secret_intent_excludes_plaintext_and_value_validation_is_purpose_bounded() {
     assert!(secret_value(intent.purpose, &"x".repeat(8192)).is_ok());
     assert!(secret_value(intent.purpose, &"x".repeat(8193)).is_err());
     assert!(secret_value(IntegrationSecretPurpose::TlsCa, "a\nb\n").is_ok()); // native PEM parsing is a separate mandatory step
-    assert!(secret_value(IntegrationSecretPurpose::TlsCa, &"x".repeat(65537)).is_err());
+    assert!(secret_value(IntegrationSecretPurpose::TlsCa, &"x".repeat(65537)).is_ok());
+    for value in ["", "中文"] {
+        assert!(secret_value(IntegrationSecretPurpose::TlsCa, value).is_err());
+    }
 }
 
 #[test]
@@ -153,13 +156,13 @@ fn strict_wire_rejects_injected_probes_authority_and_unknown_versions() {
     let mut c = DownstreamConfigurationV1 {
         name: "Target-only recipient".into(),
         endpoint: "https://downstream.example".into(),
-        accepted_package_versions: vec![PackageSchemaVersion::V1],
+        accepted_package_versions: vec![PackageSchemaVersion::V2],
         environments: DownstreamEnvironments::Paper,
         enabled: true,
         development_http: false,
     };
     assert!(downstream_configuration(&c).is_ok());
-    c.accepted_package_versions.push(PackageSchemaVersion::V1);
+    c.accepted_package_versions.push(PackageSchemaVersion::V2);
     assert!(downstream_configuration(&c).is_err());
     c.accepted_package_versions.clear();
     assert!(downstream_configuration(&c).is_err());
@@ -169,7 +172,7 @@ fn strict_wire_rejects_injected_probes_authority_and_unknown_versions() {
 }
 
 #[test]
-fn downstream_negotiates_v1_v2_without_duplicate_or_empty_versions() {
+fn downstream_new_writes_require_only_v2_and_keep_historical_readability() {
     let mut config = DownstreamConfigurationV1 {
         name: "Native Paper".into(),
         endpoint: "http://127.0.0.1:8099".into(),
@@ -178,9 +181,11 @@ fn downstream_negotiates_v1_v2_without_duplicate_or_empty_versions() {
         enabled: true,
         development_http: true,
     };
-    assert!(downstream_configuration(&config).is_ok());
+    assert!(downstream_configuration(&config).is_err());
+    let historical = serde_json::to_value(&config).unwrap();
+    assert!(serde_json::from_value::<DownstreamConfigurationV1>(historical).is_ok());
     config.accepted_package_versions.reverse();
-    assert!(downstream_configuration(&config).is_ok());
+    assert!(downstream_configuration(&config).is_err());
     config.accepted_package_versions = vec![PackageSchemaVersion::V2];
     assert!(downstream_configuration(&config).is_ok());
     config

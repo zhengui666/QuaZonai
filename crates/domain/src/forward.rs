@@ -9,11 +9,17 @@ mod window;
 pub use window::{window, ForwardWindow, ForwardWindowSource};
 
 pub fn weights(request: &DownstreamWeightsSubmitV1) -> Result<(), DomainError> {
+    if let Some(root) = &request.paper_initialization {
+        crate::portfolio::paper_account_scope(&root.trader_id, &root.account_id)?;
+        if request.environment != contracts::forward::ForwardEnvironmentV1::Paper {
+            return Err(DomainError::Invalid("paper_initialization_environment"));
+        }
+    }
     text(&request.external_message_id, 1, 200, false)?;
     if request.asof_ns > request.available_ns
         || request.available_ns >= request.valid_until_ns
         || !contracts::research_currency::supported(&request.base_currency)
-        || !(1..=256).contains(&request.weights.len())
+        || request.weights.is_empty()
     {
         return Err(DomainError::Invalid("forward_weights"));
     }
@@ -50,7 +56,6 @@ fn report(r: &contracts::forward::ForwardReportContentV1) -> Result<(), DomainEr
             .any(|t| t.timestamp_subsec_nanos() % 1000 != 0)
         || r.window_end <= r.window_start
         || r.issued_at < r.window_end
-        || r.returns.len() > 10000
         || (r.complete && (r.returns.is_empty() || r.returns.iter().any(|p| p.value.is_none())))
     {
         return Err(DomainError::Invalid("forward_report"));
@@ -185,5 +190,37 @@ mod tests {
         let mut value = serde_json::to_value(&request).unwrap();
         value["report"]["account_nav"] = serde_json::json!(100);
         assert!(serde_json::from_value::<ForwardMessageSubmitV1>(value).is_err());
+    }
+}
+
+/// Shared registered destination capability, independent of transport freshness.
+/// Unknown configuration is fail-closed. Used for both owner admission and reads.
+pub fn downstream_environment_enabled(
+    enabled: bool,
+    environments: &str,
+    environment: contracts::forward::ForwardEnvironmentV1,
+) -> bool {
+    enabled
+        && (environments == "BOTH"
+            || matches!(
+                (environments, environment),
+                ("PAPER", contracts::forward::ForwardEnvironmentV1::Paper)
+                    | ("LIVE", contracts::forward::ForwardEnvironmentV1::Live)
+            ))
+}
+
+#[cfg(test)]
+mod capital_exit_capability_tests {
+    use super::downstream_environment_enabled;
+    use contracts::forward::ForwardEnvironmentV1::{Live, Paper};
+    #[test]
+    fn capital_exit_current_owner_environment_is_the_same_admission_predicate() {
+        assert!(downstream_environment_enabled(true, "BOTH", Live));
+        assert!(downstream_environment_enabled(true, "LIVE", Live));
+        assert!(!downstream_environment_enabled(true, "PAPER", Live));
+        assert!(downstream_environment_enabled(true, "PAPER", Paper));
+        assert!(!downstream_environment_enabled(true, "LIVE", Paper));
+        assert!(!downstream_environment_enabled(false, "BOTH", Live));
+        assert!(!downstream_environment_enabled(true, "UNKNOWN", Live));
     }
 }

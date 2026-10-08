@@ -1,6 +1,6 @@
 //! Public vendor schemas stop at this operator boundary. Scientific jobs stay offline.
-use super::{epoch_ns, historical_instrument, NativeArchive, MAX_INPUT_BYTES, MAX_ROWS};
-use anyhow::{bail, ensure, Context, Result};
+use super::{NativeArchive, epoch_ns, historical_instrument};
+use anyhow::{Context, Result, bail, ensure};
 use chrono::{DateTime, Utc};
 use nautilus_data::aggregation::BarBuilder;
 use nautilus_model::{
@@ -129,14 +129,10 @@ struct Quality {
 }
 
 fn read_input_bytes(path: &Path) -> Result<Vec<u8>> {
-    let file = fs::File::open(path)?;
-    ensure!(
-        file.metadata()?.is_file() && file.metadata()?.len() <= MAX_INPUT_BYTES,
-        "INPUT_FILE_LIMIT"
-    );
+    let mut file = fs::File::open(path)?;
+    ensure!(file.metadata()?.is_file(), "INPUT_FILE_LIMIT");
     let mut bytes = Vec::new();
-    file.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() as u64 <= MAX_INPUT_BYTES, "INPUT_FILE_LIMIT");
+    file.read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
@@ -170,10 +166,7 @@ fn verified_files(snapshot: &Snapshot, root: &Path) -> Result<Vec<PathBuf>> {
             && snapshot.retrieved_at <= Utc::now(),
         "SOURCE_PROVENANCE_REQUIRED"
     );
-    ensure!(
-        !snapshot.files.is_empty() && snapshot.files.len() <= 100_000,
-        "SOURCE_FILE_LIMIT"
-    );
+    ensure!(!snapshot.files.is_empty(), "SOURCE_FILE_LIMIT");
     let mut seen = BTreeSet::new();
     let mut files = Vec::new();
     for source in &snapshot.files {
@@ -303,7 +296,7 @@ fn instruments_from_bytes(
 ) -> Result<(Vec<InstrumentAny>, BTreeMap<String, InstrumentAny>)> {
     // Preserve the original typed parser, including duplicate-field rejection.
     let instruments: Vec<InstrumentAny> = serde_json::from_slice(bytes)?;
-    ensure!((1..=256).contains(&instruments.len()), "INSTRUMENT_LIMIT");
+    ensure!(!instruments.is_empty(), "INSTRUMENT_LIMIT");
     let mut by_token = BTreeMap::new();
     for instrument in &instruments {
         historical_instrument(instrument)?;
@@ -435,7 +428,6 @@ fn book(
         ("asks_json", OrderSide::Sell),
     ] {
         let levels: Vec<[Decimal; 2]> = serde_json::from_str(text(row, name)?)?;
-        ensure!(levels.len() <= 10_000, "BOOK_LEVEL_LIMIT");
         let mut native = Vec::new();
         for [price, size] in levels {
             ensure!(
@@ -462,10 +454,6 @@ fn book(
         }
         sides.push(native);
     }
-    ensure!(
-        archive.deltas.len() + sides[0].len() + sides[1].len() < MAX_ROWS,
-        "NATIVE_ROW_LIMIT"
-    );
     archive
         .deltas
         .push(OrderBookDelta::clear(instrument.id(), 0, at, at));
@@ -748,10 +736,6 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
                 }
             };
             quality.selected_rows += 1;
-            ensure!(
-                archive.trades.len() + archive.quotes.len() + archive.deltas.len() <= MAX_ROWS,
-                "NATIVE_ROW_LIMIT"
-            );
             identities.insert(identity, signature);
         }
         if let Some(states) = &file_states {
@@ -1178,20 +1162,24 @@ mod tests {
         args.end_seconds = 120;
         assert_eq!(prepare(&args).unwrap().trades.len(), 1);
         args.end_seconds = 86_460;
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("SELECTION_WINDOW_OUTSIDE_REQUEST"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("SELECTION_WINDOW_OUTSIDE_REQUEST")
+        );
         args.start_seconds = 0;
         args.end_seconds = 120;
         alter_selection(&args, |value| {
             value["plan"]["request"]["start_date"] = "1970-01-02".into();
             value["plan"]["request"]["end_date"] = "1970-01-03".into();
         });
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("SELECTION_WINDOW_OUTSIDE_REQUEST"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("SELECTION_WINDOW_OUTSIDE_REQUEST")
+        );
     }
 
     #[test]
@@ -1267,12 +1255,14 @@ mod tests {
                     let end = bytes.len() - 4;
                     bytes[4..end].fill(0);
                     fs::write(&cached, bytes).unwrap();
-                    assert!(hf_selection::load(
-                        args.selection.as_ref().unwrap(),
-                        args.start_seconds,
-                        args.end_seconds
-                    )
-                    .is_ok());
+                    assert!(
+                        hf_selection::load(
+                            args.selection.as_ref().unwrap(),
+                            args.start_seconds,
+                            args.end_seconds
+                        )
+                        .is_ok()
+                    );
                     assert!(SerializedFileReader::new(fs::File::open(&cached).unwrap()).is_err());
                 }
                 "reordered" => {
@@ -1351,10 +1341,12 @@ mod tests {
             let moved = directory.path().join("original");
             fs::rename(&target, &moved).unwrap();
             symlink(&moved, &target).unwrap();
-            assert!(prepare(&args)
-                .unwrap_err()
-                .to_string()
-                .contains("SELECTION_SYMLINK"));
+            assert!(
+                prepare(&args)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("SELECTION_SYMLINK")
+            );
             assert!(!args.output.exists());
         }
     }
@@ -1432,15 +1424,19 @@ mod tests {
             directory.path(),
             &[row("137_1_1", 10, "420000"), row("137_1_1", 10, "500000")],
         );
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("CONFLICTING_SOURCE_EVENT"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("CONFLICTING_SOURCE_EVENT")
+        );
         args.start_seconds = 1;
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("FULL_BAR_INTERVALS_REQUIRED"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("FULL_BAR_INTERVALS_REQUIRED")
+        );
         args.start_seconds = 0;
         fs::write(
             directory
@@ -1449,10 +1445,12 @@ mod tests {
             b"corrupted",
         )
         .unwrap();
-        assert!(prepare(&args)
-            .unwrap_err()
-            .to_string()
-            .contains("SOURCE_CHECKSUM_MISMATCH"));
+        assert!(
+            prepare(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("SOURCE_CHECKSUM_MISMATCH")
+        );
         assert!(!args.output.exists());
     }
 
@@ -1557,12 +1555,14 @@ mod tests {
                 .len(),
             1
         );
-        assert!(book(
-            &make("60", "[[0.9,2]]", "[[0.75,5.76]]"),
-            &instrument(),
-            &mut archive,
-            &mut Quality::default()
-        )
-        .is_err());
+        assert!(
+            book(
+                &make("60", "[[0.9,2]]", "[[0.75,5.76]]"),
+                &instrument(),
+                &mut archive,
+                &mut Quality::default()
+            )
+            .is_err()
+        );
     }
 }

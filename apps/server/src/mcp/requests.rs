@@ -34,7 +34,7 @@ pub struct BoundReadRequest {}
 pub struct ArtifactFileRequest {
     #[schemars(schema_with = "kind")]
     pub kind: ResearchArtifactKind,
-    #[schemars(length(min = 1, max = 512))]
+    #[schemars(length(min = 1))]
     pub workspace_relative_path: String,
     #[schemars(length(min = 1, max = 200))]
     pub idempotency_key: String,
@@ -198,5 +198,19 @@ mod tests {
         let mut invalid = value;
         invalid["kind"] = json!("PACKAGE");
         assert!(serde_json::from_value::<ArtifactFileRequest>(invalid).is_err());
+    }
+
+    #[test]
+    fn file_submission_schema_does_not_impose_a_path_capacity_quota() {
+        let schema = serde_json::to_value(schemars::schema_for!(ArtifactFileRequest)).unwrap();
+        let path = &schema["properties"]["workspace_relative_path"];
+        assert_eq!(path["minLength"], 1);
+        assert!(path.get("maxLength").is_none());
+        let relative = format!("{}report.json", "directory/".repeat(65));
+        let request = serde_json::from_value::<ArtifactFileRequest>(json!({
+            "kind": "REPORT", "workspace_relative_path": relative, "idempotency_key": "one"
+        }))
+        .unwrap();
+        assert_eq!(request.workspace_relative_path, relative);
     }
 }

@@ -12,8 +12,6 @@ use contracts::{
 use serde_json::{json, Value};
 use sqlx::{Postgres, Row, Transaction};
 
-const MAX_NATIVE_METADATA: usize = 1024 * 1024;
-
 type Tx<'a> = Transaction<'a, Postgres>;
 
 pub enum RegistrationPreparation {
@@ -115,7 +113,7 @@ fn publication(
     artifact_kind: &'static str,
     bytes: Vec<u8>,
 ) -> Result<NativeMetadataPublication, StoreError> {
-    if bytes.is_empty() || bytes.len() > MAX_NATIVE_METADATA + 1024 {
+    if bytes.is_empty() {
         return Err(StoreError::Invalid("native_metadata_size"));
     }
     Ok(NativeMetadataPublication {
@@ -201,7 +199,7 @@ where
         .to_string()
         .try_into()
         .map_err(|_| StoreError::Integrity)?;
-    if count.get() == 0 || count.get() > (MAX_NATIVE_METADATA + 1024) as u64 {
+    if count.get() == 0 {
         return Err(StoreError::Invalid("native_metadata_size"));
     }
     let bytes = reader(artifact, count).await?;
@@ -318,7 +316,7 @@ impl Store {
         P: FnOnce(Vec<NativeMetadataPublication>) -> Published,
         Published: std::future::Future<Output = Result<(), StoreError>>,
     {
-        if raw_metadata.is_empty() || raw_metadata.len() > MAX_NATIVE_METADATA {
+        if raw_metadata.is_empty() {
             return Err(StoreError::Invalid("native_metadata_size"));
         }
         let native: RuntimeCatalogMetadataV1 = serde_json::from_slice(&raw_metadata)

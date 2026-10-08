@@ -134,6 +134,9 @@ enum Command {
             hide_env_values = true
         )]
         downstream_targets: String,
+        /// Optional exact native Paper owner bindings. No credentials or HTTP-selected keys.
+        #[arg(long, env = "PAPER_CAPITAL_EXIT_OWNERS", default_value = "[]", hide_env_values = true)]
+        paper_capital_exit_owners: String,
         /// Deployment-only export references and absolute directories, frozen at startup.
         #[arg(
             long,
@@ -165,8 +168,8 @@ enum Command {
         downstream_targets: String,
         #[arg(long, env = "DEVELOPMENT_HTTP", default_value_t = false)]
         development_http: bool,
-        #[arg(long, env = "WORKER_PARALLELISM", default_value_t = 2)]
-        parallelism: usize,
+        #[arg(long, env = "WORKER_PARALLELISM")]
+        parallelism: Option<usize>,
         /// The same browser/API origin used by serve and its local proxy.
         #[arg(long, env = "PUBLIC_URL")]
         public_url: Option<String>,
@@ -211,9 +214,6 @@ fn parse_integration_targets(
     text: &str,
     development_http: bool,
 ) -> Result<server::runtime_transport::RuntimeTargets, &'static str> {
-    if text.len() > 65536 {
-        return Err("integration targets exceed deployment configuration limit");
-    }
     let targets = serde_json::from_str::<Vec<server::runtime_transport::RuntimeTarget>>(text)
         .map_err(|_| "invalid integration targets deployment configuration")?;
     server::runtime_transport::RuntimeTargets::new(targets, development_http)
@@ -522,6 +522,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::Serve {
+            paper_capital_exit_owners,
             historical_exports,
             database,
             state_dir,
@@ -532,9 +533,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             runtime_targets,
             downstream_targets,
         } => {
-            if historical_exports.len() > 65536 {
-                return Err("historical export registrations exceed limit".into());
-            }
+            let paper_capital_exit_owners = server::paper_capital_exit::PaperCapitalExitOwners::parse(&paper_capital_exit_owners)?;
             let registrations = serde_json::from_str(&historical_exports)
                 .map_err(|_| "invalid historical export registrations")?;
             let historical_exports = server::migrations::HistoricalExports::load(registrations)?;
@@ -562,6 +561,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let objects = ArtifactStore::open(&state_dir.join("artifacts"))?;
             let app = server::router(
                 AppState::new(store, vault, policy)
+                    .with_paper_capital_exit_owners(paper_capital_exit_owners)
                     .with_historical_exports(historical_exports)
                     .with_artifact_store(objects)
                     .with_historical_artifact_store(ArtifactStore::open(

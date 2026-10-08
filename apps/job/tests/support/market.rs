@@ -49,7 +49,7 @@ pub fn forecast_request(simulation: &NativeSimulationRequestV1) -> NativeForecas
             fast_period: 2,
             slow_period: 3,
             label_horizon_observations: 2,
-            total_fuel: count(100_000_000),
+            total_fuel: Some(count(100_000_000)),
         },
     }
 }
@@ -141,7 +141,7 @@ fn study_with_volume(volume: &str) -> (tempfile::TempDir, NativePortfolioStudyRe
         asset.current_weight = "0".parse().unwrap();
     }
     for member in &mut request.members {
-        member.parameters.total_fuel = count(100_000_000);
+        member.parameters.total_fuel = Some(count(100_000_000));
     }
     (catalog, request, model)
 }

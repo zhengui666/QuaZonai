@@ -24,8 +24,8 @@ import providers
 import snapshot
 
 
-MAX_REPORT_BYTES = 1024 * 1024
-MAX_EVIDENCE_BYTES = 128 * 1024 * 1024
+MAX_REPORT_BYTES = None
+MAX_EVIDENCE_BYTES = None
 ARCHIVE_FORMATS = ("moose-fills", "time-seventeen-v2", "sii-order-filled", "joseph-books")
 
 
@@ -144,7 +144,7 @@ def archive_verify(args):
 
 def byte_budget_options(parser):
     parser.add_argument("--max-bytes", type=int, default=snapshot.DEFAULT_MAX_BYTES,
-                        help="explicit total snapshot file byte budget (default 128 MiB)")
+                        help="optional explicit total snapshot file byte budget; default unlimited")
 
 
 def snapshot_options(parser, download=False):
@@ -170,11 +170,12 @@ def snapshot_verify_options(parser):
     byte_budget_options(parser)
 
 
-def verified_snapshot(path, max_bytes):
+def verified_snapshot(path, max_bytes=None):
     """Offline file integrity only; format interpretation stays in the native adapter."""
-    providers.integer(max_bytes, "max_bytes", minimum=1, maximum=2**63 - 1)
+    if max_bytes is not None:
+        providers.integer(max_bytes, "max_bytes", minimum=1, maximum=None)
     path = local_path(path)
-    manifest = load_json(path, 32 * snapshot.CHUNK)
+    manifest = load_json(path)
     expected = {"schema_version", "repository", "revision", "license", "license_reference",
                 "retrieved_at", "files"}
     if (set(manifest) != expected or type(manifest["schema_version"]) is not int
@@ -190,7 +191,7 @@ def verified_snapshot(path, max_bytes):
     if acquire.utc_clock(manifest["retrieved_at"]) > acquire.utc_clock(acquire.now()):
         raise ValueError("snapshot observation is in the future")
     files = manifest["files"]
-    if not isinstance(files, list) or not 1 <= len(files) <= 100_000:
+    if not isinstance(files, list) or not files:
         raise ValueError("invalid snapshot file count")
     seen, total = set(), 0
     for item in files:
@@ -202,7 +203,7 @@ def verified_snapshot(path, max_bytes):
         seen.add(relative)
         providers.integer(item["size"], "snapshot file size", maximum=max_bytes)
         total += item["size"]
-        if total > max_bytes:
+        if max_bytes is not None and total > max_bytes:
             raise ValueError("snapshot exceeds the explicit byte budget")
         expected_url = (f"{snapshot.HUB}/datasets/{manifest['repository']}/resolve/"
                         f"{manifest['revision']}/{urllib.parse.quote(relative)}")
@@ -268,7 +269,7 @@ def run_native(args, argv, binary_name="catalog-prepare"):
     # Diagnostics and original native stdout are retained on stderr, leaving one JSON result on stdout.
     result = subprocess.run([str(binary), *argv, "--output", str(output)],
                             stdin=subprocess.DEVNULL, stdout=sys.stderr, stderr=sys.stderr,
-                            shell=False, check=False, timeout=3600)
+                            shell=False, check=False)
     if result.returncode != 0:
         raise ValueError(f"native converter exited {result.returncode}; original diagnostics and artifacts retained")
     return output
@@ -310,7 +311,7 @@ def published_native(output):
             or any(not isinstance(item, str) or not item.strip() for item in report["limitations"])):
         raise ValueError("invalid native publication report or admission boundary")
     for key in ("instruments", "instrument_versions"):
-        providers.integer(report.get(key), f"native report {key}", minimum=1, maximum=1_000_000)
+        providers.integer(report.get(key), f"native report {key}", minimum=1, maximum=None)
     if report["instruments"] > report["instrument_versions"]:
         raise ValueError("invalid native instrument counts")
     published_catalog(output)
@@ -396,7 +397,7 @@ def history_convert(args, capture=False):
         argv += ["--bar-seconds", str(args.bar_seconds)]
     if capture:
         if (not isinstance(args.market_slug, str)
-                or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,255}", args.market_slug)):
+                or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", args.market_slug)):
             raise ValueError("invalid explicit market slug")
         argv += ["--market-slug", args.market_slug]
         native_format = "lokima-dual-capture"
@@ -431,7 +432,7 @@ def history_convert(args, capture=False):
         raise ValueError("native capture evidence does not match its selected market")
     total = 0
     for key in ("trades", "quotes", "deltas", "bars", "closes"):
-        providers.integer(report.get(key), f"native {key}", maximum=1_000_000)
+        providers.integer(report.get(key), f"native {key}", maximum=None)
         if not isinstance(evidence.get(key), list) or len(evidence[key]) != report[key]:
             raise ValueError("native history counts differ from preserved evidence")
         total += report[key]
@@ -511,7 +512,7 @@ def hf_history_convert(args):
     hf_publication_clock(metadata, report, evidence)
     total = 0
     for key in ("trades", "quotes", "deltas", "bars", "closes"):
-        providers.integer(report.get(key), f"native {key}", maximum=1_000_000)
+        providers.integer(report.get(key), f"native {key}", maximum=None)
         if not isinstance(evidence.get(key), list) or len(evidence[key]) != report[key]:
             raise ValueError("native history counts differ from preserved HF evidence")
         total += report[key]
@@ -560,8 +561,7 @@ def catalog_identity(value):
     if (not isinstance(value, dict) or type(value.get("schema_version")) is not int
             or value["schema_version"] != 1
             or any(not isinstance(value.get(key), str) or not value[key].strip()
-                   or len(value[key]) > limit
-                   for key, limit in (("registered_ref", 512), ("storage_version", 120)))):
+                   for key in ("registered_ref", "storage_version"))):
         raise ValueError("catalog preparation requires explicit valid identity hints")
     return {"native_catalog_ref": value["registered_ref"],
             "native_storage_version": value["storage_version"]}
@@ -687,7 +687,7 @@ def prepare_source(plugin_id, args):
     identity = catalog_identity(declared)
     load_json(selection)  # Bounded original JSON only; the native parser owns selection semantics.
     report, evidence = published_native(source)
-    providers.integer(report.get("bars"), "native preparation bars", minimum=1, maximum=1_000_000)
+    providers.integer(report.get("bars"), "native preparation bars", minimum=1, maximum=None)
     validate_native(plugin_id, report, evidence, declaration=declared)
     if not unchanged():
         raise ValueError("catalog preparation inputs changed during input checks")

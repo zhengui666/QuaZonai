@@ -11,21 +11,18 @@ use requests::{ArtifactFileRequest, BoundReadRequest, ProposalRequest};
 use rmcp::{
     handler::server::wrapper::Parameters,
     model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
+    service::RequestContext,
+    tool, tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
 };
 use serde::Serialize;
+use tokio_util::sync::CancellationToken;
 use std::{fmt, future::Future, path::Path, sync::Arc, time::Duration};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
-    sync::Semaphore,
-    time::{timeout, timeout_at, Instant},
+    io::{AsyncRead, AsyncWrite},
+    sync::watch,
+    time::{timeout_at, Instant},
 };
 
-const MAX_CALLS: usize = 4;
-const CALL_TIMEOUT: Duration = Duration::from_secs(15);
-// Bound the native SDK's input buffering even for a peer that never sends a newline.
-// This is a lifetime input quota, not a per-frame size or a domain token budget.
-pub const MAX_SESSION_INPUT_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug)]
 pub struct MissionBinding {
@@ -41,6 +38,7 @@ pub struct MissionBinding {
 pub enum Failure {
     Configuration,
     Authority,
+    Cancelled,
     Contract,
     Unavailable,
     File,
@@ -61,6 +59,7 @@ impl Failure {
         match self {
             Self::Configuration => "MCP_CONFIGURATION_INVALID",
             Self::Authority => "MCP_AUTHORITY_REJECTED",
+            Self::Cancelled => "MCP_REQUEST_CANCELLED",
             Self::Contract => "MCP_CONTRACT_INCOMPATIBLE",
             Self::Unavailable => "MCP_CONTROL_UNAVAILABLE",
             Self::File => "MCP_WORKSPACE_FILE_REJECTED",
@@ -102,9 +101,7 @@ impl std::error::Error for Failure {}
 pub struct MissionMcp {
     control: client::ControlClient,
     binding: MissionBinding,
-    deadline: Instant,
-    slots: Arc<Semaphore>,
-    file_slots: Arc<Semaphore>,
+    deadline: watch::Sender<Instant>,
     files: Option<Arc<MissionFiles>>,
 }
 
@@ -117,24 +114,12 @@ impl MissionMcp {
         binding: MissionBinding,
     ) -> Result<Self, Failure> {
         let control = client::ControlClient::new(api_origin, development_http, token, binding)?;
-        let (_, expires) = timeout(CALL_TIMEOUT, control.authority())
-            .await
-            .map_err(|_| Failure::Deadline)??;
-        let remaining = (expires - Utc::now())
-            .to_std()
-            .map_err(|_| Failure::Deadline)?;
-        if remaining.is_zero() {
-            return Err(Failure::Deadline);
-        }
-        let deadline = Instant::now()
-            .checked_add(remaining)
-            .ok_or(Failure::Deadline)?;
+        let (_, expires) = control.authority().await?;
+        let (deadline, _) = watch::channel(authority_deadline(expires)?);
         Ok(Self {
             control,
             binding,
             deadline,
-            slots: Arc::new(Semaphore::new(MAX_CALLS)),
-            file_slots: Arc::new(Semaphore::new(MAX_CALLS)),
             files: None,
         })
     }
@@ -149,21 +134,14 @@ impl MissionMcp {
 
     async fn bounded<T: Serialize>(
         &self,
+        request_cancel: CancellationToken,
         operation: impl Future<Output = Result<T, Failure>>,
     ) -> Result<CallToolResult, McpError> {
         let result = async {
-            let _permit = self.slots.try_acquire().map_err(|_| Failure::Capacity)?;
-            if Instant::now() >= self.deadline {
-                return Err(Failure::Deadline);
-            }
-            let deadline = self.deadline.min(Instant::now() + CALL_TIMEOUT);
-            let value = timeout_at(deadline, operation)
-                .await
-                .map_err(|_| Failure::Deadline)??;
+            // Follow the server's current lease authority. A prior heartbeat
+            // expiry must not become a new, non-renewable Mission timeout.
+            let value = under_authority(self.deadline.subscribe(), request_cancel, operation).await?;
             let text = serde_json::to_string(&value).map_err(|_| Failure::Contract)?;
-            if text.len() > client::MAX_RESPONSE_BYTES {
-                return Err(Failure::ResponseLimit);
-            }
             Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
         }
         .await;
@@ -178,13 +156,12 @@ impl MissionMcp {
     async fn get_brief(
         &self,
         Parameters(_): Parameters<BoundReadRequest>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.bounded(async {
-            let (_, expires) = self.control.authority().await?;
+        self.bounded(context.ct, async {
+            self.control.authority().await?;
             let brief = self.control.brief().await?;
-            if expires <= Utc::now() {
-                return Err(Failure::Deadline);
-            }
+            self.control.authority().await?;
             Ok(brief)
         })
         .await
@@ -197,8 +174,9 @@ impl MissionMcp {
     async fn get_run(
         &self,
         Parameters(_): Parameters<BoundReadRequest>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.bounded(async {
+        self.bounded(context.ct, async {
             let (run, _) = self.control.authority().await?;
             Ok(run)
         })
@@ -212,19 +190,14 @@ impl MissionMcp {
     async fn submit_artifact(
         &self,
         Parameters(request): Parameters<ArtifactFileRequest>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.bounded(async {
+        self.bounded(context.ct, async {
             self.control.require(MachineScope::ArtifactSubmit).await?;
             let files = self.files.clone().ok_or(Failure::Configuration)?;
-            let permit = self
-                .file_slots
-                .clone()
-                .try_acquire_owned()
-                .map_err(|_| Failure::Capacity)?;
-            // Non-abortable native file work retains its own capacity even if a
-            // timed-out tool future drops the join handle before I/O completes.
+            // Native file work remains isolated to this exact workspace;
+            // dropping a caller cannot widen its paths or publication authority.
             let content = tokio::task::spawn_blocking(move || {
-                let _permit = permit;
                 files
                     .read_text(&request.workspace_relative_path)
                     .map_err(|_| Failure::File)
@@ -252,8 +225,9 @@ impl MissionMcp {
     async fn propose_experiment(
         &self,
         Parameters(request): Parameters<ProposalRequest>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.bounded(async {
+        self.bounded(context.ct, async {
             let (key, proposal) = request.into_native(self.binding.cycle_id)?;
             self.control.propose(&key, &proposal).await
         })
@@ -278,22 +252,123 @@ impl MissionMcp {
         R: AsyncRead + Send + Unpin + 'static,
         W: AsyncWrite + Send + Unpin + 'static,
     {
-        let deadline = self.deadline;
-        let handshake_deadline = deadline.min(Instant::now() + CALL_TIMEOUT);
-        let service = timeout_at(
-            handshake_deadline,
-            self.serve((read.take(MAX_SESSION_INPUT_BYTES), write)),
-        )
-        .await
-        .map_err(|_| Failure::Deadline)?
-        .map_err(|_| Failure::Protocol)?;
+        let control = self.control.clone();
+        let deadlines = self.deadline.clone();
+        let authority = refresh_authority(control, deadlines);
+        tokio::pin!(authority);
+        let connecting = self.serve((read, write));
+        tokio::pin!(connecting);
+        let service = tokio::select! {
+            result = &mut connecting => result.map_err(|_| Failure::Protocol)?,
+            result = &mut authority => return result,
+        };
         let cancellation = service.cancellation_token();
         tokio::select! {
             result = service.waiting() => result.map(|_| ()).map_err(|_| Failure::Protocol),
-            _ = tokio::time::sleep_until(deadline) => {
+            result = &mut authority => {
                 cancellation.cancel();
-                Err(Failure::Deadline)
+                result
             }
         }
     }
+}
+
+// Observed expiry is a server authority boundary. It is never extended locally.
+fn authority_deadline(expires: chrono::DateTime<Utc>) -> Result<Instant, Failure> {
+    let remaining = (expires - Utc::now()).to_std().map_err(|_| Failure::Deadline)?;
+    if remaining.is_zero() {
+        return Err(Failure::Deadline);
+    }
+    Instant::now().checked_add(remaining).ok_or(Failure::Deadline)
+}
+
+async fn refresh_authority(
+    control: client::ControlClient,
+    deadlines: watch::Sender<Instant>,
+) -> Result<(), Failure> {
+    loop {
+        let current = *deadlines.borrow();
+        let remaining = current.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Failure::Deadline);
+        }
+        // Check before the currently authorized lease expires, without spinning
+        // near a real fixed expiry. This cadence is not an execution budget.
+        tokio::time::sleep((remaining / 2).max(Duration::from_millis(100)).min(remaining)).await;
+        let (_, expires) = timeout_at(current, control.authority()).await
+            .map_err(|_| Failure::Deadline)??;
+        deadlines.send_replace(authority_deadline(expires)?);
+    }
+}
+
+async fn under_authority<T>(
+    mut deadline: watch::Receiver<Instant>,
+    request_cancel: CancellationToken,
+    operation: impl Future<Output = Result<T, Failure>>,
+) -> Result<T, Failure> {
+    tokio::pin!(operation);
+    loop {
+        let current = *deadline.borrow_and_update();
+        tokio::select! {
+            biased;
+            _ = request_cancel.cancelled() => return Err(Failure::Cancelled),
+            changed = deadline.changed() => { changed.map_err(|_| Failure::Authority)?; },
+            _ = tokio::time::sleep_until(current) => return Err(Failure::Deadline),
+            result = &mut operation => return result,
+        }
+    }
+}
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_renewed_server_lease_does_not_leave_a_stale_tool_deadline() {
+        let (sender, receiver) = watch::channel(Instant::now() + Duration::from_millis(100));
+        let (release, received) = tokio::sync::oneshot::channel();
+        let operation = under_authority(receiver, CancellationToken::new(), async { received.await.map_err(|_| Failure::Authority) });
+        let renew = async move {
+            sender.send_replace(Instant::now() + Duration::from_secs(5));
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            release.send(7).unwrap();
+            // Keep the authoritative channel alive until the operation observes completion.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        let (result, ()) = tokio::join!(operation, renew);
+        assert_eq!(result.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn expiry_and_lost_authority_still_stop_pending_tools() {
+        let (sender, receiver) = watch::channel(Instant::now());
+        assert_eq!(under_authority(receiver, CancellationToken::new(), std::future::pending::<Result<(), Failure>>()).await,
+            Err(Failure::Deadline));
+        let (_sender, receiver) = watch::channel(Instant::now() + Duration::from_secs(5));
+        drop(_sender);
+        assert_eq!(under_authority(receiver, CancellationToken::new(), std::future::pending::<Result<(), Failure>>()).await,
+            Err(Failure::Authority));
+        drop(sender);
+    }
+    #[tokio::test]
+    async fn request_cancellation_releases_slots_even_while_lease_authority_lives() {
+        let (authority, receiver) = watch::channel(Instant::now() + Duration::from_secs(60));
+        let slots = tokio::sync::Semaphore::new(1);
+        let permit = slots.acquire().await.unwrap();
+        let cancellation = CancellationToken::new();
+        let operation = async {
+            let _permit = permit;
+            std::future::pending::<Result<(), Failure>>().await
+        };
+        let cancelled = async {
+            tokio::task::yield_now().await;
+            assert_eq!(slots.available_permits(), 0);
+            cancellation.cancel();
+        };
+        let (result, ()) = tokio::join!(under_authority(receiver, cancellation.clone(), operation), cancelled);
+        assert_eq!(result, Err(Failure::Cancelled));
+        assert_eq!(slots.available_permits(), 1);
+        assert!(*authority.borrow() > Instant::now());
+    }
+
 }

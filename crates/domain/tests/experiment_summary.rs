@@ -52,7 +52,7 @@ fn report(large: bool) -> NativeExperimentEvaluationResultV1 {
             sealed_revision_id: Id::new(),
         },
         label_horizon_observations: 1,
-        total_fuel: count(1_000_000),
+        total_fuel: Some(count(1_000_000)),
         target_ttl_ns: count(60_000_000_000),
         decision_output: ExperimentDecisionOutputV1::TargetWeight,
         settings: NativeSimulationSettingsV1 {
@@ -325,7 +325,7 @@ fn historical_strategy(
         .iter()
         .map(|&id| (id, contracts::research::DataOrigin::Synthetic))
         .collect();
-    report.consumed_fuel = DbCounter::ZERO;
+    report.consumed_fuel = Some(DbCounter::ZERO);
     report.outcome = StrategyCompositionOutcomeV1::HistoricalReplay {
         simulation_request: Box::new(fold.simulation_request.clone()),
         simulation: Box::new(fold.simulation.clone()),

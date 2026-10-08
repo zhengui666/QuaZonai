@@ -375,7 +375,7 @@ class HfDatasetTest(unittest.TestCase):
         result = hf_dataset.download(selection, self.cache, self.output)
         self.assertEqual([Path(f["local_path"]).read_bytes() for f in result["files"]], [b"one", b"two", b"three"])
 
-    def test_csv_first_logical_record_supports_multiline_quotes_and_remains_bounded(self):
+    def test_csv_first_logical_record_supports_multiline_quotes_without_size_cap(self):
         path = self.root / "multiline.csv"
         body = b'"column\nname",other\n1,2\n'
         path.write_bytes(body)
@@ -389,17 +389,20 @@ class HfDatasetTest(unittest.TestCase):
         self.assertEqual(csv.field_size_limit(), original_limit)
         body = b'"' + b'x' * snapshot.CHUNK + b'",other\n'
         path.write_bytes(body)
-        with self.assertRaisesRegex(ValueError, "exceeds"):
-            hf_dataset.inspect_file(path, {"size": len(body), "format": "csv"})
+        self.assertEqual(hf_dataset.inspect_file(path, {"size": len(body), "format": "csv"}), "CSV_FIRST_ROW")
+        self.assertEqual(path.read_bytes(), body)
+        self.assertEqual(csv.field_size_limit(), original_limit)
 
-    def test_unreadable_final_manifest_is_rejected_before_data_or_output_creation(self):
+    def test_final_manifest_is_fully_preserved_and_verified_without_capacity_gate(self):
         selection = self.plan()
         self.requests.clear()
-        with patch.object(hf_dataset, "MAX_SELECTION_BYTES", 1500), self.assertRaisesRegex(ValueError, "manifest exceeds"):
-            hf_dataset.download(selection, self.cache, self.output)
+        result = hf_dataset.download(selection, self.cache, self.output)
+        self.assertEqual(json.loads((self.output / "selection.json").read_bytes()), result)
+        self.assertEqual(hf_dataset.verify(self.output / "selection.json")["files"], len(selection["files"]))
+        self.assertEqual(len(self.requests), len(selection["files"]))
+        self.requests.clear()
+        self.assertEqual(hf_dataset.download(selection, self.cache, self.output), result)
         self.assertEqual(self.requests, [])
-        self.assertFalse(self.output.exists())
-        self.assertFalse(self.cache.exists())
 
     def test_plugin_real_dispatch_and_package_include_new_module(self):
         options = ["--dataset", DATASET, "--manifest", "partitions.json", "--market", "market-a",
