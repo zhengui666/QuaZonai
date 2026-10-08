@@ -337,6 +337,8 @@ pub(crate) struct Poller {
     assessed_requests: Vec<(Revision, CapitalExitPreviewRequestV1, chrono::DateTime<chrono::Utc>)>,
     observation_at: Option<std::time::Instant>,
     observation_required: bool,
+    confirmed_continuation: bool,
+    observation_continuation_used: bool,
 }
 
 impl Poller {
@@ -360,6 +362,8 @@ impl Poller {
             assessed_requests: Vec::new(),
             observation_at: None,
             observation_required: false,
+            confirmed_continuation: false,
+            observation_continuation_used: false,
         }
     }
 
@@ -382,6 +386,10 @@ impl Poller {
                 self.receipt = Some(receipt);
                 self.observation_at = Some(std::time::Instant::now());
                 self.observation_required = false;
+                // A stream of observations alone is not an unbounded burst.
+                // Another accepted control/assessment outcome must replenish it.
+                self.confirmed_continuation = !self.observation_continuation_used;
+                self.observation_continuation_used = true;
                 Ok(())
             }
             Pending::Assessment(_preview_id, request) => {
@@ -400,6 +408,7 @@ impl Poller {
             }
             Pending::Claim(id, key, request) => {
                 self.transport.claim(*id, key, request).await?;
+                self.confirmed_continuation = true;
                 Ok(())
             }
             Pending::Evidence(request) => {
@@ -419,6 +428,8 @@ impl Poller {
                     request.evidence,
                     CapitalExitEvidenceKindV1::FenceApplied { .. }
                 ) {
+                    self.confirmed_continuation =
+                        self.acknowledged_command != Some(request.command_id);
                     self.acknowledged_command = Some(request.command_id);
                 } else {
                     // Availability can remain stable while a new Resume preview
@@ -429,6 +440,9 @@ impl Poller {
                 if let CapitalExitEvidenceKindV1::NativeProgress { phase, .. } = &request.evidence {
                     // A FENCE also projects WAITING_EVIDENCE in Store, but does
                     // not prove Advance cancelled/reduced the original work.
+                    self.confirmed_continuation =
+                        *phase == CapitalExitStateV1::WaitingEvidence
+                            && self.progress_ready_command != Some(request.command_id);
                     self.progress_ready_command = if *phase == CapitalExitStateV1::WaitingEvidence {
                         Some(request.command_id)
                     } else {
@@ -451,6 +465,9 @@ impl Poller {
             }
         };
         result?;
+        if !matches!(self.pending, Some(Pending::Observation(_))) {
+            self.observation_continuation_used = false;
+        }
         self.pending = None;
         Ok(())
     }
@@ -575,6 +592,9 @@ impl Poller {
     }
 
     async fn step(&mut self) -> Result<()> {
+        // Only an ACK in this step can request a finite immediate continuation.
+        // A new timestamp/sequence or a repeated progress projection cannot.
+        self.confirmed_continuation = false;
         if self.pending.is_some() {
             return self.send_pending().await;
         }
@@ -740,7 +760,9 @@ impl Poller {
                     }
                 });
             }
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            if result.is_err() || !self.confirmed_continuation {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
         }
     }
 }
@@ -948,6 +970,7 @@ mod tests {
         response_mode.store(mode, std::sync::atomic::Ordering::SeqCst);
         let result = availability_step(&mut poller, &inbox, &availability, mode == 1).await;
         assert_eq!(result.is_ok(), mode == 0);
+        assert!(!poller.confirmed_continuation, "Availability and every failure retain ordinary pacing");
         assert!(
             poller.assessment_due,
             "first attempt must restore later Resume discovery even on failure"
@@ -971,6 +994,7 @@ mod tests {
             let before_retry = attempts.lock().unwrap().len();
             response_mode.store(0, std::sync::atomic::Ordering::SeqCst);
             poller.step().await.unwrap();
+            assert!(!poller.confirmed_continuation, "unknown Availability replay must not start a busy loop");
             let calls = attempts.lock().unwrap();
             assert_eq!(
                 calls.len(),
@@ -1198,3 +1222,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/paper_poller_schedule.rs"]
+mod schedule_tests;
