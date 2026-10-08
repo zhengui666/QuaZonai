@@ -503,6 +503,62 @@ fn assert_replays(proxy: &Proxy) {
     }
 }
 
+fn assert_first_availability_before_discovery(proxy: &Proxy) -> Result<()> {
+    let attempts = proxy.attempts.lock().unwrap();
+    let mut released_commands = std::collections::BTreeSet::new();
+    for (index, attempt) in attempts.iter().enumerate() {
+        if !attempt.path.ends_with("/evidence")
+            || !(200..300).contains(&attempt.status)
+            || attempt.withheld.is_some()
+        {
+            continue;
+        }
+        let value: CapitalExitOwnerEvidenceV1 = serde_json::from_slice(&attempt.body)?;
+        if !matches!(
+            value.evidence,
+            CapitalExitEvidenceKindV1::NativeProgress {
+                phase: CapitalExitStateV1::WaitingEvidence,
+                ..
+            }
+        ) || !released_commands.insert(value.command_id)
+        {
+            continue;
+        }
+        let first_availability = attempts
+            .iter()
+            .enumerate()
+            .skip(index + 1)
+            .find(|(_, next)| {
+                next.path.ends_with("/evidence")
+                    && serde_json::from_slice::<CapitalExitOwnerEvidenceV1>(&next.body).is_ok_and(
+                        |next| {
+                            next.command_id == value.command_id
+                                && matches!(
+                                    next.evidence,
+                                    CapitalExitEvidenceKindV1::WithdrawabilityObserved { .. }
+                                )
+                        },
+                    )
+            })
+            .map(|(index, _)| index)
+            .ok_or_else(|| anyhow!("accepted_release_missing_first_availability_attempt"))?;
+        ensure!(
+            !attempts[index + 1..first_availability]
+                .iter()
+                .any(|next| next.method == "GET"
+                    && next
+                        .path
+                        .starts_with("/api/v2/downstream/capital-exit-assessments")),
+            "assessment_discovery_delayed_first_native_availability"
+        );
+    }
+    ensure!(
+        !released_commands.is_empty(),
+        "original_native_release_ack_missing"
+    );
+    Ok(())
+}
+
 async fn run(input: Input) -> Result<()> {
     ensure!(
         matches!(
@@ -865,6 +921,7 @@ async fn run(input: Input) -> Result<()> {
     driver?;
     let mut result = result?;
     assert_replays(&proxy);
+    assert_first_availability_before_discovery(&proxy)?;
     let attempts = proxy.attempts.lock().unwrap().clone();
     let mut evidence = BTreeMap::new();
     for attempt in attempts
