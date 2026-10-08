@@ -73,6 +73,10 @@ if [[ $mode == pg ]]; then
   run_required pg capital-store-11 store test capital_exit '' capital_exit_availability_requires_the_trusted_venue_binding
   run_required pg capital-store-12 store test capital_exit '' capital_exit_stale_withdrawal_report_recovers_on_original_command_and_epoch
   run_required pg capital-store-13 store test capital_exit '' capital_exit_stale_cancel_accepts_fresh_terminal_evidence_on_original_command
+  run_required pg capital-start-expiry-cursor store test capital_exit_start_expiry '' capital_exit_start_preview_expiry_during_cursor_lock_rolls_back
+  run_required pg capital-start-expiry-reservation store test capital_exit_start_expiry '' capital_exit_start_assessment_expiry_during_reservation_lock_rolls_back
+  run_required pg capital-start-expiry-queue store test capital_exit_start_expiry '' capital_exit_start_expiry_during_queue_lock_rolls_back
+  run_required pg capital-start-expiry-replay store test capital_exit_start_expiry '' capital_exit_start_fresh_lock_wait_and_expired_replay_keep_original_receipt
   run_required pg capital-http-01 server test capital_exit_http 'native-codex' capital_exit_preview_http_is_read_only_strict_idempotent_and_owner_only
   run_required pg capital-http-02 server test capital_exit_http 'native-codex' capital_exit_http_start_pause_and_route_body_mismatch_preserve_original_intent
   run_required pg capital-binding-01 store test paper_capital_exit_binding '' paper_capital_exit_concurrent_cross_project_alias_cannot_duplicate_engine_budget

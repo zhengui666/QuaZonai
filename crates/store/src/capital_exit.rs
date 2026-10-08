@@ -735,7 +735,6 @@ impl Store {
         if current != preview.original_observation_id {
             return Err(StoreError::Invalid("capital_exit_preview_stale"));
         }
-        verify_observation(&mut tx, preview.account_source_id, current, checked).await?;
         let reserve = resolve_reservation(
             &mut tx,
             preview.account_source_id,
@@ -759,7 +758,6 @@ impl Store {
                 a.request.scope != preview.scope
                     || a.request.policy != preview.policy
                     || a.request.expected_source_observation_id != current
-                    || a.valid_until <= checked
                     || a.capability != CapitalExitCapabilityV1::Supported
                     || !a.reason_codes.is_empty()
             })
@@ -769,6 +767,13 @@ impl Store {
         {
             return Err(StoreError::Invalid("capital_exit_preview_stale"));
         }
+        let assessment_valid_until = reserve
+            .assessment
+            .as_ref()
+            .ok_or(StoreError::Integrity)?
+            .valid_until;
+        // Source and reservation locks can outlive either original deadline.
+        let checked = recheck_start_freshness(&mut tx, &preview, assessment_valid_until).await?;
         let revision = reserve.revision.next().ok_or(StoreError::Integrity)?;
         let epoch = DbCounter::new(
             reserve
@@ -800,8 +805,8 @@ impl Store {
             reason_codes: vec!["capital_exit_owner_fence_pending".into()],
             preview_id: preview.id,
             plan_artifact_id: preview.plan_artifact_id,
-            scope: preview.scope,
-            policy: preview.policy,
+            scope: preview.scope.clone(),
+            policy: preview.policy.clone(),
             command_id,
             owner_command: CapitalExitOwnerCommandV1 {
                 schema_version: SchemaV1,
@@ -822,7 +827,7 @@ impl Store {
                 evidence_valid_until: None,
                 withdrawability: CapitalExitWithdrawabilityV1::Unverified,
             },
-            evidence_refs: preview.evidence_refs,
+            evidence_refs: preview.evidence_refs.clone(),
             created_at: checked,
             updated_at: checked,
         };
@@ -832,6 +837,9 @@ impl Store {
             .bind(&view.managed_account_key).bind(revision.get() as i64).bind(epoch.get() as i64).bind(view.funds.reserved_amount.amount.as_decimal().to_plain_string()).bind(view.id.as_uuid()).execute(&mut *tx).await?;
         enqueue(&mut tx, &view).await?;
         let result = finish_intent_command(&mut tx, prepared, view, 202).await?;
+        // FK, queue and receipt writes may also wait. None of those changes is
+        // visible until commit; expiration here rolls all of them back together.
+        recheck_start_freshness(&mut tx, &preview, assessment_valid_until).await?;
         tx.commit().await?;
         Ok(result)
     }
@@ -1428,6 +1436,29 @@ impl Store {
         tx.commit().await?;
         Ok(result)
     }
+}
+
+/// New starts must still be admissible after lock waits and immediately before
+/// commit. Original receipt replay bypasses this check without renewing its plan.
+async fn recheck_start_freshness(
+    tx: &mut Tx<'_>,
+    preview: &CapitalExitPreviewV1,
+    assessment_valid_until: DateTime<Utc>,
+) -> Result<DateTime<Utc>, StoreError> {
+    // PostgreSQL now()/CURRENT_TIMESTAMP would retain the transaction start time.
+    let checked = now(tx).await?;
+    domain::capital_exit::admit_preview(preview, checked)?;
+    if assessment_valid_until <= checked {
+        return Err(StoreError::Invalid("capital_exit_preview_stale"));
+    }
+    verify_observation(
+        tx,
+        preview.account_source_id,
+        preview.original_observation_id,
+        checked,
+    )
+    .await?;
+    Ok(checked)
 }
 
 async fn verify_observation(
